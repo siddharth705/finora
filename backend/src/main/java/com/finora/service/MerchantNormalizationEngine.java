@@ -1,6 +1,7 @@
 package com.finora.service;
 
 import com.finora.entity.Merchant;
+import com.finora.entity.MerchantAlias;
 import com.finora.repository.MerchantAliasRepository;
 import com.finora.repository.MerchantCategoryLearningRepository;
 import com.finora.repository.MerchantRepository;
@@ -140,8 +141,19 @@ public class MerchantNormalizationEngine {
             // an alias row already scoped to this user -- but MerchantRepository's own comment
             // states the rule as "never a bare findById", and a rule with one silent exception is
             // a rule the next reader cannot trust. Same query cost, no exception to explain.
-            return merchantRepository.findByIdAndUserId(existingAlias.get().getMerchantId(), userId)
-                    .orElseGet(() -> createMerchantAndAlias(userId, description, normalizedAlias));
+            var byAlias = merchantRepository.findByIdAndUserId(existingAlias.get().getMerchantId(), userId);
+            if (byAlias.isPresent()) return byAlias.get();
+            // Bug 56: a dangling alias -- its target merchant is gone (e.g.
+            // MerchantReviewService.discard() removes a merchant with no attached transactions but,
+            // unlike MerchantService.merge(), never touches its alias rows). createMerchantAndAlias
+            // would not have fixed this: its addAlias() is an INSERT ... ON CONFLICT DO NOTHING
+            // against (user_id, normalized_alias), which already has a row here -- just pointing at
+            // a dead merchant -- so the insert silently no-ops and the dangling row is left exactly
+            // as broken as it was. Every future call for this same alias would repeat this path and
+            // spawn a fresh, never-linked duplicate merchant, forever. Repointing the EXISTING row
+            // at a fresh merchant instead is the same repair MerchantService.merge() already does
+            // when it repoints an absorbed merchant's aliases onto the surviving one.
+            return repointDanglingAlias(userId, description, existingAlias.get());
         }
 
         // extractMerchant, not the raw normalised alias -- see firstSignificantToken for why the
@@ -282,6 +294,24 @@ public class MerchantNormalizationEngine {
     }
 
     private Merchant createMerchantAndAlias(UUID userId, String description, String normalizedAlias) {
+        Merchant merchant = createMerchant(userId, description);
+        addAlias(merchant.getId(), userId, normalizedAlias);
+        return merchant;
+    }
+
+    /**
+     * Bug 56's repair path: the alias row already exists (just pointing at a merchant that's gone),
+     * so it must be repointed at this new merchant rather than inserted again -- see resolve()'s own
+     * comment on why addAlias()/insertIfAbsent cannot do that repair itself.
+     */
+    private Merchant repointDanglingAlias(UUID userId, String description, MerchantAlias danglingAlias) {
+        Merchant replacement = createMerchant(userId, description);
+        danglingAlias.setMerchantId(replacement.getId());
+        merchantAliasRepository.save(danglingAlias);
+        return replacement;
+    }
+
+    private Merchant createMerchant(UUID userId, String description) {
         Merchant merchant = new Merchant();
         merchant.setUserId(userId);
         // merchants.canonical_name is VARCHAR(255) too, and is derived from the same description,
@@ -297,9 +327,7 @@ public class MerchantNormalizationEngine {
         // Never blocks the import. The merchant is created and returned exactly as before -- the
         // only difference is that it now admits what it is.
         merchant.setLifecycleStatus(Merchant.Lifecycle.TEMPORARY);
-        merchant = merchantRepository.save(merchant);
-        addAlias(merchant.getId(), userId, normalizedAlias);
-        return merchant;
+        return merchantRepository.save(merchant);
     }
 
     /** Never let parser output exceed what the column can hold; see resolve()'s own reasoning. */

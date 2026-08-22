@@ -499,6 +499,50 @@ cd mobile && npx eas build --platform android --profile preview
 `preview` produces an installable APK (`eas.json` sets `buildType: apk`); `production` follows
 `autoIncrement` and is what a release goes through.
 
+### `dev` profile — local builds only, points at Railway's Dev environment
+
+A fourth, additive profile (`development`/`preview`/`production` above are untouched) for testing
+against `dev-api.finoratech.info` instead of production, with its own separate Firebase project
+(never production's — see `docs/operations/deployment/deployment-guide.md`'s "Dev environment"
+section for why). `eas.json` inlines its API URL directly:
+
+```jsonc
+"dev": {
+  "distribution": "internal",
+  "android": { "buildType": "apk" },
+  "env": { "EXPO_PUBLIC_API_BASE_URL": "https://dev-api.finoratech.info" }
+}
+```
+
+**This profile is built locally, not on EAS's cloud build service** — unlike `preview`/`production`
+above. EAS's server-side environment-variable store (what holds `GOOGLE_SERVICES_JSON` for the
+other profiles) only accepts the three names `production`/`preview`/`development` on Free/Starter
+EAS plans; a genuinely new name like `dev` needs the Production ($199/mo) or Enterprise plan. Rather
+than pay for that or overload the existing `development` environment (which would silently start
+serving the Dev Firebase config to the *existing* `development` profile too, on its next cloud
+build — exactly the kind of change this profile is meant not to make), build it locally instead:
+
+```bash
+cd mobile && eas build --profile dev --platform android --local
+```
+
+(and the iOS equivalent, macOS-only). A local build reads whatever `google-services.json` /
+`GoogleService-Info.plist` are physically present in `mobile/` at build time — the same
+per-developer convention already used for `development` builds (see "Firebase Android app" /
+"Firebase iOS app" above), just temporarily pointed at the Dev project's files instead. Remember to
+register that build's signing fingerprints against the **Dev** Firebase project too (Firebase
+doesn't share fingerprint registrations across projects — see "Signing fingerprints" above).
+
+If a paid EAS plan is ever adopted and cloud builds become worth it for this profile, the
+equivalent of the `production` example above would be:
+
+```bash
+cd mobile && npx eas env:set dev --name GOOGLE_SERVICES_JSON --type file --value ./google-services.json --visibility secret
+```
+
+(`eas env:set`, not `env:create` — the CLI's current help output no longer lists `env:create` as a
+command; `env:set` is its replacement for both creating and updating a variable.)
+
 ---
 
 ## Android validation status

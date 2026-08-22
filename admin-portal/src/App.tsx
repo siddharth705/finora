@@ -3,6 +3,7 @@ import { lazy, Suspense } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AdminAuthProvider } from './context/AdminAuthContext';
 import { NotificationProvider } from './context/NotificationContext';
+import { ThemeProvider } from './context/ThemeContext';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ProtectedRoute } from './components/ProtectedRoute';
 // Login stays eager: with no token it is the first paint for every visitor, so making it lazy
@@ -49,6 +50,7 @@ const queryClient = new QueryClient({
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
+      <ThemeProvider>
       <NotificationProvider>
         <AdminAuthProvider>
           {/* No `future` prop since the v7 upgrade: v7_startTransition and v7_relativeSplatPath
@@ -108,6 +110,7 @@ export default function App() {
           </BrowserRouter>
         </AdminAuthProvider>
       </NotificationProvider>
+      </ThemeProvider>
     </QueryClientProvider>
   );
 }

@@ -22,7 +22,7 @@
     "@playwright/test": "^1.49.1",
     "@types/pg": "^8.15.6",
     "pg": "^8.22.0",
-    "typescript": "^5.9.3"
+    "typescript": "^7.0.2"
   },
   "engines": {
     "node": ">=20.19.0"

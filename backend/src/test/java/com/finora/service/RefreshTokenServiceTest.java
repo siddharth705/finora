@@ -78,4 +78,46 @@ class RefreshTokenServiceTest {
 
         verify(refreshTokenRepository, never()).save(any());
     }
+
+    /**
+     * Bug 14 (docs/quality/bug-reports/BUG_REVIEW_REPORT.md). Nothing previously deleted a
+     * refresh_tokens row at all -- see this method's own production-code doc comment for the full
+     * reasoning, including why this keys on expiresAt rather than revokedAt (deleting a revoked
+     * row early would defeat rotate()'s reuse-detection for a stolen token's remaining lifetime).
+     * This test pins the METHOD CALLED, not just "some rows got deleted" -- proving the fix
+     * queries by expiry, not by revocation status, is the whole point of the fix.
+     */
+    @Test
+    void sweepExpiredTokens_deletesExpiredRows_regardlessOfWhoOwnsThem() {
+        RefreshToken someoneElsesExpired = tokenWithId(UUID.randomUUID());
+        when(refreshTokenRepository.findByExpiresAtBeforeOrderByExpiresAtAsc(any(), any()))
+                .thenReturn(List.of(someoneElsesExpired));
+
+        assertThat(service.sweepExpiredTokens()).isEqualTo(1);
+
+        verify(refreshTokenRepository).deleteAll(List.of(someoneElsesExpired));
+    }
+
+    @Test
+    void sweepExpiredTokens_returnsZero_andDoesNotCallDeleteAll_whenNothingIsExpired() {
+        when(refreshTokenRepository.findByExpiresAtBeforeOrderByExpiresAtAsc(any(), any()))
+                .thenReturn(List.of());
+
+        assertThat(service.sweepExpiredTokens()).isZero();
+
+        verify(refreshTokenRepository, never()).deleteAll(any());
+    }
+
+    @Test
+    void sweepExpiredTokens_boundsTheQueryToASinglePage() {
+        when(refreshTokenRepository.findByExpiresAtBeforeOrderByExpiresAtAsc(any(), any()))
+                .thenReturn(List.of());
+
+        service.sweepExpiredTokens();
+
+        org.mockito.ArgumentCaptor<org.springframework.data.domain.Pageable> page =
+                org.mockito.ArgumentCaptor.forClass(org.springframework.data.domain.Pageable.class);
+        verify(refreshTokenRepository).findByExpiresAtBeforeOrderByExpiresAtAsc(any(), page.capture());
+        assertThat(page.getValue().getPageSize()).isLessThanOrEqualTo(200);
+    }
 }

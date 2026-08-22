@@ -9,6 +9,13 @@ import { mockAdminAuthState } from '../test/mockAdminAuth';
 import { adminMerchantTemplatesApi } from '../api/endpoints';
 import type { TestMerchantTemplateResult } from '../types';
 
+// AdminLayout now renders ThemeToggle (dark-mode support), which calls useTheme() --
+// same reason adminSearchApi is stubbed below for GlobalSearch: a real ThemeProvider isn't
+// mounted in these tests, so without this mock every AdminLayout-wrapped page throws before
+// any assertion runs.
+vi.mock('../context/ThemeContext', () => ({
+  useTheme: () => ({ theme: 'system', resolvedTheme: 'light', setTheme: vi.fn() }),
+}));
 vi.mock('../context/AdminAuthContext', () => ({
   useAdminAuth: vi.fn(),
 }));
@@ -49,6 +56,7 @@ function mockAuth(permissions: string[]) {
 
 const EXISTING_TEMPLATE = {
   id: 'tmpl-1', merchantDomain: 'uber.com', merchantName: 'Uber', receiptMarker: 'Trip Fare',
+  nonReceiptMarker: null,
   amountPattern: 'Total: Rs. {amount}', datePattern: 'Trip Date: {date}', enabled: true,
   createdByUserId: null, createdAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z',
   domainIsTrusted: true,
@@ -126,6 +134,42 @@ describe('MerchantTemplates', () => {
     }));
     // Dry-run only -- create() must never be called by the test panel itself.
     expect(adminMerchantTemplatesApi.create).not.toHaveBeenCalled();
+  });
+
+  it('the test panel reports not-a-receipt with a reason when the non-receipt marker matches', async () => {
+    mockAuth(['MERCHANT_MANAGE']);
+    vi.mocked(adminMerchantTemplatesApi.list).mockResolvedValue([]);
+    vi.mocked(adminMerchantTemplatesApi.test).mockResolvedValue({
+      status: 'NOT_A_RECEIPT', reason: 'matched non-receipt marker "Refund Processed"',
+      amount: null, transactionDate: null, confidence: null, violations: [],
+    });
+    const user = userEvent.setup();
+
+    renderPage();
+
+    await user.click(await screen.findByText('New template'));
+    await user.type(screen.getByPlaceholderText('e.g. swiggy.com'), 'swiggy.com');
+    await user.type(screen.getByPlaceholderText('e.g. Swiggy'), 'Swiggy');
+    await user.type(
+      screen.getByPlaceholderText('A literal phrase every receipt from this merchant contains, e.g. Order Summary'),
+      'Order Summary'
+    );
+    await user.type(
+      screen.getByPlaceholderText("Phrases (separated by |) that mean this isn't a purchase, e.g. Refund Processed|Return Initiated"),
+      'Refund Processed'
+    );
+    await user.type(screen.getByPlaceholderText('e.g. Grand Total: Rs. {amount}'), 'Grand Total: Rs. {amount}');
+    await user.type(screen.getByPlaceholderText('e.g. Order Date: {date}'), 'Order Date: {date}');
+    await user.type(
+      screen.getByPlaceholderText("Paste the sample email's HTML (or plain text) here"),
+      'Order Summary Refund Processed Grand Total: Rs. 499.00 Order Date: August 12, 2026'
+    );
+    await user.click(screen.getByText('Test template'));
+
+    await waitFor(() => expect(screen.getByText(/Not a receipt -- matched non-receipt marker/)).toBeInTheDocument());
+    expect(adminMerchantTemplatesApi.test).toHaveBeenCalledWith(expect.objectContaining({
+      nonReceiptMarker: 'Refund Processed',
+    }));
   });
 
   it('shows a success notification after creating a template, disabled', async () => {

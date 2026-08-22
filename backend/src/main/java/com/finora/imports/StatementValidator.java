@@ -47,15 +47,15 @@ public class StatementValidator {
     }
 
     /** One row's running-balance observation, kept alongside its transaction date and signed
-     *  amount so the day's true first/last transaction can be reconstructed from the balance
-     *  chain itself (see {@link BalanceChainUtil}) rather than assumed from file position -- a
-     *  real bank export's line order within a single calendar day does NOT reliably tell you
+     *  amount so the statement's true transaction order can be reconstructed from the balance
+     *  chain itself (see {@link BalanceSequenceResolver}) rather than assumed from file position --
+     *  a real bank export's line order within a single calendar day does NOT reliably tell you
      *  which one happened first, and guessing wrong silently produces a wrong opening/closing
      *  balance (confirmed against a real PNB ONE statement: a 7-transaction same-day cluster on
      *  the statement's earliest date, where "first line for that date" was actually the day's
      *  LAST transaction, not its first). */
     private record BalanceObservation(LocalDate date, BigDecimal signedAmount,
-                                       BigDecimal balance, String description) implements BalanceChainUtil.ChainLink {
+                                       BigDecimal balance, String description) implements BalanceSequenceResolver.DatedLink {
         @Override public BigDecimal balanceAfter() { return balance; }
     }
 
@@ -123,33 +123,20 @@ public class StatementValidator {
         LocalDate statementEnd = printedPeriod[1] != null ? printedPeriod[1]
                 : staged.stream().map(StagedRow::date).max(LocalDate::compareTo).orElse(null);
 
-        BigDecimal openingBalance = null;
-        BigDecimal closingBalance = null;
-        if (!acc.balanceObservations.isEmpty()) {
-            LocalDate minDate = acc.balanceObservations.stream().map(BalanceObservation::date).min(LocalDate::compareTo).orElseThrow();
-            LocalDate maxDate = acc.balanceObservations.stream().map(BalanceObservation::date).max(LocalDate::compareTo).orElseThrow();
-            List<BalanceObservation> minDateGroup = acc.balanceObservations.stream().filter(o -> o.date().equals(minDate)).toList();
-            List<BalanceObservation> maxDateGroup = acc.balanceObservations.stream().filter(o -> o.date().equals(maxDate)).toList();
-
-            BalanceObservation trueFirstOfDay = BalanceChainUtil.first(minDateGroup);
-            BalanceObservation trueLastOfDay = BalanceChainUtil.last(maxDateGroup);
-
-            // Bug fix: this used to unconditionally back out the first row's own signed amount,
-            // on the assumption every statement's earliest balance observation is an ordinary
-            // transaction rather than an explicit "OPENING BALANCE" label row. TransactionNormalizer
-            // falls back to the balance/running-balance column as the amount for such label rows
-            // (no debit/credit value to read), which made this subtract balance - (-balance),
-            // silently doubling the detected opening balance whenever a CSV export prints one of
-            // these rows. Mirrors the identical fix already applied on the PDF path
-            // (PdfPreviewGenerator.buildDetectedAccountInfo's isExplicitOpeningRow) -- only skip the
-            // signed-amount subtraction when the row actually IS that kind of explicit label row.
-            boolean isExplicitOpeningRow = trueFirstOfDay.description() != null
-                    && trueFirstOfDay.description().toLowerCase(Locale.ROOT).contains("opening balance");
-            openingBalance = isExplicitOpeningRow
-                    ? trueFirstOfDay.balance()
-                    : trueFirstOfDay.balance().subtract(trueFirstOfDay.signedAmount());
-            closingBalance = trueLastOfDay.balance();
-        }
+        // Phase 2G: was independent BalanceChainUtil.first(minDateGroup)/last(maxDateGroup) calls,
+        // each only ever looking at its own boundary date in isolation. Silently wrong whenever a
+        // boundary day's transactions include a same-day reversal (a credit immediately offset by a
+        // debit of the same amount) -- the two candidates close a numeric loop no within-group
+        // heuristic can resolve, and the old fallback picked the day's peak balance as "last"
+        // instead of its true last transaction (confirmed on two real documents; see
+        // docs/architecture/system-design/same-day-reversal-closing-balance-investigation.md).
+        // BalanceSequenceResolver walks every day in order instead of just the two boundaries, using
+        // the statement's own explicit opening-balance declaration (when present) as its anchor, and
+        // returns no opening/closing balance at all -- rather than a guess -- when a day's ordering
+        // genuinely cannot be determined.
+        BalanceSequenceResolver.Resolution resolution = BalanceSequenceResolver.resolve(acc.balanceObservations);
+        BigDecimal openingBalance = resolution.openingBalance();
+        BigDecimal closingBalance = resolution.closingBalance();
 
         List<String> bankTextHints = collectBankTextHints(allRows, headerIdx);
         BankRegistry.BankInfo bank = BankRegistry.detect(filename, bankTextHints);

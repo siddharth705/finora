@@ -103,13 +103,23 @@ public class BudgetService {
      */
     @Transactional
     public BudgetDto upsert(UUID userId, BudgetDto.UpsertRequest req) {
-        Category category = categoryRepository.findByUserIdAndName(userId, req.categoryName())
-                .orElseGet(() -> {
-                    Category c = new Category();
-                    c.setUserId(userId);
-                    c.setName(req.categoryName());
-                    return categoryRepository.save(c);
-                });
+        // Bug 16: same case-sensitive lookup CategorizationService.resolveOrCreateCategory had --
+        // see CategoryRepository.findByUserIdAndNameIgnoreCaseOrderByIdAsc's own doc comment for
+        // what this does and does not close, including why it returns a list. Without it,
+        // budgeting "dining" after already having a "Dining" category from an import creates a
+        // second row, and the existing budget attaches to only one of the two -- showing the
+        // wrong spend for the category the user thinks they set.
+        String categoryName = req.categoryName().trim();
+        List<Category> categoryMatches = categoryRepository.findByUserIdAndNameIgnoreCaseOrderByIdAsc(userId, categoryName);
+        Category category;
+        if (!categoryMatches.isEmpty()) {
+            category = categoryMatches.get(0);
+        } else {
+            category = new Category();
+            category.setUserId(userId);
+            category.setName(categoryName);
+            category = categoryRepository.save(category);
+        }
 
         Budget budget = budgetRepository.findByUserIdAndCategoryId(userId, category.getId())
                 .orElseGet(Budget::new);
@@ -123,7 +133,28 @@ public class BudgetService {
         // feed with no way to answer "who/when changed this budget."
         auditService.record(userId, "BUDGET_UPSERTED", "Budget", saved.getId(),
                 Map.of("category", category.getName(), "monthlyLimit", req.monthlyLimit()));
-        return new BudgetDto(saved.getId(), category.getId(), category.getName(), saved.getMonthlyLimit(), BigDecimal.ZERO);
+        // Bug 35 (docs/quality/bug-reports/BUG_REVIEW_REPORT.md). This hardcoded BigDecimal.ZERO
+        // regardless of what the category had actually accrued this month -- listForUser computes
+        // the real figure, this didn't. A client that updates local state from the mutation
+        // response (the standard optimistic-update pattern) showed 0% progress on a category
+        // that was already over budget, until an unrelated refetch corrected it -- most visibly on
+        // editing an EXISTING budget's limit, the common case.
+        BigDecimal spent = spentThisMonth(userId, category.getId());
+        return new BudgetDto(saved.getId(), category.getId(), category.getName(), saved.getMonthlyLimit(), spent);
+    }
+
+    /** Same query/filter shape as {@link #listForUser}'s spendByCategory map, scoped to one
+     *  category -- upsert() only ever needs one, and building the full per-category map here
+     *  would be strictly more work for no benefit. */
+    private BigDecimal spentThisMonth(UUID userId, UUID categoryId) {
+        YearMonth thisMonth = YearMonth.now(safeZoneId(userId));
+        LocalDate from = thisMonth.atDay(1);
+        LocalDate to = thisMonth.atEndOfMonth();
+        return transactionRepository.findByUserIdAndTxnDateBetween(userId, from, to).stream()
+                .filter(t -> t.getTxnType() == Transaction.Type.EXPENSE && !t.isTransfer() && t.getIsDuplicateOf() == null
+                        && categoryId.equals(t.getCategoryId()))
+                .map(Transaction::getAmount)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
     }
 
     /** Delegates to {@link com.finora.util.UserZone} -- one of four hand-copied implementations,

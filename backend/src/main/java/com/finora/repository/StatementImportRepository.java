@@ -145,6 +145,10 @@ public interface StatementImportRepository extends JpaRepository<StatementImport
     // StatementImportHealthProvider's class comment for how this feeds the health panel.
     long countByImportedAtAfter(Instant threshold);
 
+    // Admin Portal, Operational Dashboard "vs yesterday" delta -- yesterday's count for the same
+    // "Imports today" tile.
+    long countByImportedAtBetween(Instant start, Instant end);
+
     /** D-27 PR3-D: the "first import" activation-funnel stage -- how many distinct users have
      *  EVER completed a statement import. Native, bypassing {@code @SQLRestriction} the same way
      *  as {@code BudgetRepository.countDistinctUsersEverActivated} -- see that method's own doc
@@ -154,6 +158,12 @@ public interface StatementImportRepository extends JpaRepository<StatementImport
 
     @Query("SELECT COUNT(s) FROM StatementImport s WHERE s.importedAt >= :threshold AND s.transactionsSkipped > 0")
     long countWithSkippedRowsAfter(@Param("threshold") Instant threshold);
+
+    // Admin Portal, Operational Dashboard "vs yesterday" delta for the same tile. Inclusive on
+    // both ends, matching Spring Data's own Between semantics -- same as the derived
+    // countByImportedAtBetween sibling just above, which can't be told to do otherwise.
+    @Query("SELECT COUNT(s) FROM StatementImport s WHERE s.importedAt >= :start AND s.importedAt <= :end AND s.transactionsSkipped > 0")
+    long countWithSkippedRowsBetween(@Param("start") Instant start, @Param("end") Instant end);
 
     // Admin Portal, Operational Dashboard -- "Recent Imports" tile (see Phase 7's scope-reduction
     // note: this codebase has no background job queue, so a real per-import status list is the

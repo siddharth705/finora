@@ -65,6 +65,12 @@ test.describe('Phase 10 — one user cannot see or shape another', () => {
   /**
    * The API boundary, not just the data model. A per-user schema is no protection if an endpoint
    * will hand over someone else's row to anyone who knows its id.
+   *
+   * There is no `GET /transactions/{id}` (only list, `/needs-review`, and `/{id}/explanation`
+   * fetch by id), so this hits `/{id}/explanation` instead -- the one read endpoint keyed by
+   * transaction id. Asserting a specific 403 also matters here: this route previously targeted a
+   * path that didn't exist at all, so the 405 Spring returns for an unmapped method satisfied a
+   * loose `>= 400` check without ever reaching OwnershipGuard.
    */
   test("one user's API token cannot read another user's transactions", async () => {
     const alice = await createUser('alice');
@@ -74,11 +80,11 @@ test.describe('Phase 10 — one user cannot see or shape another', () => {
     const aliceTransactions = await transactionsFor(alice.id);
     const bobApi = new Api(bob.token);
 
-    const response = await bobApi.getRaw(`/transactions/${aliceTransactions[0].id}`);
+    const response = await bobApi.getRaw(`/transactions/${aliceTransactions[0].id}/explanation`);
     expect(
       response.status,
       "Bob asked for Alice's transaction by id and got something other than a refusal"
-    ).toBeGreaterThanOrEqual(400);
+    ).toBe(403);
   });
 
   /** Duplicate detection is per user. Two customers buying the same thing on the same day for the
@@ -253,5 +259,8 @@ test.describe('Phase 10 — one user cannot see or shape another', () => {
       'phone_change_sessions',
       'relationships',
     ]);
+    // payments/referral_codes/subscriptions/wallet_ledger (D-28's billing/wallet/referral
+    // tables) were fixed to ON DELETE CASCADE by V106 -- see that migration's own comment for
+    // why all four belong to the user rather than needing to survive as an audit trail.
   });
 });

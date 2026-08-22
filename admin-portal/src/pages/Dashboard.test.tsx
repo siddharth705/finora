@@ -13,6 +13,13 @@ import type { OperationalDashboardDto } from '../types';
  * (the Activation Funnel section), not the whole existing page (health banner, needs attention,
  * system status), matching frontend's own Dashboard.test.tsx's stated scoping discipline.
  */
+// AdminLayout now renders ThemeToggle (dark-mode support), which calls useTheme() --
+// same reason adminSearchApi is stubbed below for GlobalSearch: a real ThemeProvider isn't
+// mounted in these tests, so without this mock every AdminLayout-wrapped page throws before
+// any assertion runs.
+vi.mock('../context/ThemeContext', () => ({
+  useTheme: () => ({ theme: 'system', resolvedTheme: 'light', setTheme: vi.fn() }),
+}));
 vi.mock('../context/AdminAuthContext', () => ({
   useAdminAuth: vi.fn(),
 }));
@@ -42,17 +49,19 @@ function mockAuth(permissions: string[]) {
   }));
 }
 
-function overview(): OperationalDashboardDto {
+function overview(overrides: Partial<OperationalDashboardDto> = {}): OperationalDashboardDto {
   return {
     totalUsers: 1240,
     activeUsersToday: 80,
     transactionsToday: 300,
     importsToday: 12,
     importsWithSkippedRowsToday: 0,
+    previousDay: { activeUsers: 80, transactions: 300, imports: 12, importsWithSkippedRows: 0 },
     needsAttention: { importsWithSkippedRowsToday: 0, lockedAccounts: 0, transactionsNeedingCategoryReview: 0, transactionsFlaggedAsDuplicates: 0 },
     health: { overallStatus: 'UP', providers: [] },
     alerts: [],
     recentActivity: [],
+    ...overrides,
   };
 }
 
@@ -108,5 +117,77 @@ describe('Dashboard — Activation Funnel', () => {
     expect(await screen.findByText('Activation funnel')).toBeInTheDocument();
     // Every stage shows 0 (0%), never NaN% -- the section's own divide-by-zero guard.
     expect(screen.getAllByText('(0%)').length).toBe(4);
+  });
+});
+
+describe('Dashboard — stat tile deltas', () => {
+  beforeEach(() => {
+    vi.mocked(useAdminAuth).mockReset();
+    vi.mocked(adminDashboardApi.activationFunnel).mockReset().mockResolvedValue({
+      signedUp: 0, firstImport: 0, firstBudget: 0, firstGoal: 0,
+    });
+    vi.mocked(adminStatsApi.overview).mockReset().mockResolvedValue({
+      totalAccounts: 0, newUsersLast7Days: 0, totalStatementImports: 0, suspendedUsers: 0,
+    } as any);
+    vi.mocked(adminSystemApi.health).mockReset();
+    mockAuth(['PLATFORM_STATS_VIEW']);
+  });
+
+  it('colors an up-is-good tile green when its count rose', async () => {
+    vi.mocked(adminDashboardApi.overview).mockReset().mockResolvedValue(overview({
+      transactionsToday: 100,
+      previousDay: { activeUsers: 80, transactions: 80, imports: 12, importsWithSkippedRows: 0 },
+    }));
+
+    renderPage();
+
+    const delta = await screen.findByText('+25% vs yesterday');
+    expect(delta).toHaveClass('text-success');
+  });
+
+  it('colors "Imports w/ skipped rows" red when it rises -- the same direction that is green on every other tile', async () => {
+    vi.mocked(adminDashboardApi.overview).mockReset().mockResolvedValue(overview({
+      importsWithSkippedRowsToday: 8,
+      previousDay: { activeUsers: 80, transactions: 300, imports: 12, importsWithSkippedRows: 4 },
+    }));
+
+    renderPage();
+
+    const delta = await screen.findByText('+100% vs yesterday');
+    expect(delta).toHaveClass('text-danger');
+  });
+
+  it('colors "Imports w/ skipped rows" green when it falls -- proving polarity is per-metric, not sign-based', async () => {
+    vi.mocked(adminDashboardApi.overview).mockReset().mockResolvedValue(overview({
+      importsWithSkippedRowsToday: 2,
+      previousDay: { activeUsers: 80, transactions: 300, imports: 12, importsWithSkippedRows: 4 },
+    }));
+
+    renderPage();
+
+    const delta = await screen.findByText('-50% vs yesterday');
+    expect(delta).toHaveClass('text-success');
+  });
+
+  it('shows "No change" rather than 0% when both days are identical', async () => {
+    vi.mocked(adminDashboardApi.overview).mockReset().mockResolvedValue(overview({
+      transactionsToday: 300,
+      previousDay: { activeUsers: 80, transactions: 300, imports: 12, importsWithSkippedRows: 0 },
+    }));
+
+    renderPage();
+
+    expect((await screen.findAllByText('No change')).length).toBeGreaterThan(0);
+  });
+
+  it('shows "New today" rather than a divide-by-zero when yesterday had none at all', async () => {
+    vi.mocked(adminDashboardApi.overview).mockReset().mockResolvedValue(overview({
+      importsToday: 3,
+      previousDay: { activeUsers: 80, transactions: 300, imports: 0, importsWithSkippedRows: 0 },
+    }));
+
+    renderPage();
+
+    expect(await screen.findByText('New today')).toBeInTheDocument();
   });
 });

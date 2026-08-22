@@ -125,10 +125,10 @@ class GmailMerchantStatsServiceTest {
     @DisplayName("an unknown domain falls back to itself, same as the review queue's display name")
     void unknownDomainDisplayNameFallsBackToTheDomain() {
         when(processedMessages.merchantOutcomeCounts(since)).thenReturn(List.<Object[]>of(
-                row("swiggy.com", Outcome.PARSED, 1, since)
+                row("unknown-merchant.example", Outcome.PARSED, 1, since)
         ));
 
-        assertThat(service.parserStats(since).get(0).merchant()).isEqualTo("swiggy.com");
+        assertThat(service.parserStats(since).get(0).merchant()).isEqualTo("unknown-merchant.example");
     }
 
     @Test

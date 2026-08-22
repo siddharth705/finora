@@ -35,6 +35,14 @@ app:
     sweep:
       enabled: false
 
+  # Bug 14. Same reasoning as import.session-cleanup above: a background thread deleting
+  # refresh_tokens rows mid-run is exactly the cross-test pollution BH-058 was about. Tests that
+  # exercise the sweep call RefreshTokenService.sweepExpiredTokens() directly, which deliberately
+  # does not consult this flag.
+  security:
+    refresh-token-cleanup:
+      enabled: false
+
   # Same reasoning as statement-storage.sweep above: a background thread purging accounts mid-run
   # is exactly the cross-test pollution BH-058 was about. Tests that exercise the sweep call
   # AccountPurgeSweepService.sweep() directly, which does not consult this flag.

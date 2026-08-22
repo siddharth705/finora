@@ -102,4 +102,30 @@ describe('ThemeContext', () => {
     await waitFor(() => expect(screen.getByTestId('theme')).toHaveTextContent('dark'));
     expect(localStorage.getItem('finora_theme')).toBe('dark');
   });
+
+  /**
+   * Bug 43. AUTH_CHANGED_EVENT used to only ever mean "a session started" -- the sync effect's
+   * no-token branch just returned, so it never reset anything. AuthContext.logout() now dispatches
+   * the same event on sign-out specifically so this branch can distinguish "no token because
+   * nothing has loaded yet" from "no token because the session just ended," and reset rather than
+   * leave the previous user's theme active for whatever renders next (the login screen, or a
+   * different user's session on a shared device).
+   */
+  it('resets to "system" and clears storage when AUTH_CHANGED_EVENT fires after logout', async () => {
+    setAccessToken('a-real-token');
+    render(
+      <ThemeProvider>
+        <Probe />
+      </ThemeProvider>
+    );
+
+    await waitFor(() => expect(screen.getByTestId('theme')).toHaveTextContent('dark'));
+    expect(localStorage.getItem('finora_theme')).toBe('dark');
+
+    setAccessToken(null);
+    window.dispatchEvent(new Event(AUTH_CHANGED_EVENT));
+
+    await waitFor(() => expect(screen.getByTestId('theme')).toHaveTextContent('system'));
+    expect(localStorage.getItem('finora_theme')).toBeNull();
+  });
 });

@@ -315,12 +315,33 @@ app:
     # behind Railway (or any other trusted reverse proxy) so RateLimitFilter reads the real client
     # IP from X-Forwarded-For instead.
     trust-proxy-headers: ${TRUST_PROXY_HEADERS:false}
+    # Bug 24 (docs/quality/bug-reports/BUG_REVIEW_REPORT.md). How many trailing X-Forwarded-For
+    # entries were appended by a trusted proxy -- 1 matches Finora's current single-hop Railway
+    # deployment (only Railway's own edge proxy sits in front of the app) and reproduces the exact
+    # prior "always take the last entry" behavior. Only relevant when trust-proxy-headers is true;
+    # would need raising if a second trusted hop (a CDN, a load balancer) is ever added in front
+    # of Railway -- see ClientIpResolver's own doc comment.
+    trusted-proxy-hops: ${TRUSTED_PROXY_HOPS:1}
+    # Bug 53 (docs/quality/bug-reports/BUG_REVIEW_REPORT.md). Lax is correct only while the SPA
+    # and API share a registrable domain (see RefreshTokenCookie's own doc comment) -- true today
+    # per that comment, but a deployment where that stops holding would silently lose the refresh
+    # cookie entirely (browsers withhold a Lax cookie cross-site, with no error) rather than fail
+    # loudly. Set to "None" only if that precondition genuinely no longer holds.
+    refresh-cookie-same-site: ${REFRESH_COOKIE_SAME_SITE:Lax}
     # How long a started Change Password flow (PasswordChangeSession) stays usable before its own
     # isExpired() check starts rejecting verify-otp/complete calls against it. A property rather
     # than a hardcoded constant so it can be tuned per-deployment without a code change.
     password-change-session-expiry-minutes: ${PASSWORD_CHANGE_SESSION_EXPIRY_MINUTES:15}
     # Same property, same reasoning, for the Change Phone Number flow (PhoneChangeSession).
     phone-change-session-expiry-minutes: ${PHONE_CHANGE_SESSION_EXPIRY_MINUTES:15}
+    # Bug 14 (docs/quality/bug-reports/BUG_REVIEW_REPORT.md). Same shape as
+    # app.import.session-cleanup below -- RefreshTokenService.scheduledCleanup, keyed on
+    # refresh_tokens.expiresAt. Hourly by default: refresh tokens live far longer than import
+    # sessions (days, not hours), so there is no benefit to sweeping as often.
+    refresh-token-cleanup:
+      enabled: ${REFRESH_TOKEN_CLEANUP_ENABLED:true}
+      interval-ms: ${REFRESH_TOKEN_CLEANUP_INTERVAL_MS:3600000}
+      initial-delay-ms: ${REFRESH_TOKEN_CLEANUP_INITIAL_DELAY_MS:120000}
   # Per-IP ceilings for the endpoints RateLimitFilter guards. Every default below is the value that
   # used to be hardcoded in that class, so leaving this block alone changes nothing.
   #
@@ -546,7 +567,11 @@ app:
       # Where the callback returns the browser. Configuration rather than a request parameter --
       # the callback is unauthenticated by necessity, so a request-supplied target would be an
       # open redirect.
-      post-connect-redirect: ${GOOGLE_OAUTH_POST_CONNECT_REDIRECT:https://app.finoratech.info/settings}
+      #
+      # /app/settings, not /settings -- the frontend's Settings page lives under the /app prefix
+      # (App.tsx's route table); anything else falls through the router's catch-all to the public
+      # marketing homepage, which reads as "Finora logged me out" even on a successful connection.
+      post-connect-redirect: ${GOOGLE_OAUTH_POST_CONNECT_REDIRECT:https://app.finoratech.info/app/settings}
 
       # Gmail message discovery (Phase C4) and receipt extraction (Phase C5-B), one worker, one
       # config block -- extraction runs immediately after discovery for the same connection, not

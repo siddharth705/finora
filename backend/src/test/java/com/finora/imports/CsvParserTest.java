@@ -4,10 +4,54 @@ import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 class CsvParserTest {
+
+    private final CsvParser csvParser = new CsvParser();
+
+    /**
+     * Bug 33 (docs/quality/bug-reports/BUG_REVIEW_REPORT.md). A Debit/Credit-style export that
+     * labels both columns "Amount" -- real bank exports do this -- used to let the positionally
+     * LAST occurrence unconditionally overwrite the first, discarding whichever side actually had
+     * the row's real value whenever the debit column (not the credit one) came second.
+     */
+    @Test
+    void zipRow_keepsTheNonBlankValue_whenAHeaderRepeatsAndOnlyOneSideIsPopulated() {
+        String[] headers = {"Date", "Description", "Amount", "Amount", "Balance"};
+
+        // Credit column (second "Amount") populated, debit column (first) blank.
+        Map<String, String> creditRow = csvParser.zipRow(headers, new String[]{"01/07/2026", "Salary", "", "50000.00", "150000.00"});
+        assertThat(creditRow.get("Amount")).isEqualTo("50000.00");
+
+        // Debit column (first "Amount") populated, credit column (second) blank -- the order the
+        // pre-fix code got wrong, since the blank second occurrence used to overwrite it.
+        Map<String, String> debitRow = csvParser.zipRow(headers, new String[]{"02/07/2026", "Groceries", "500.00", "", "149500.00"});
+        assertThat(debitRow.get("Amount")).isEqualTo("500.00");
+    }
+
+    @Test
+    void zipRow_stillTakesTheLastOccurrence_whenBothAreGenuinelyNonBlank() {
+        // Not this class's real-world case (a debit/credit pair never has both sides populated on
+        // one row), but the fallback for genuinely ambiguous data should stay predictable rather
+        // than silently drop one of two real values in some other way.
+        String[] headers = {"Amount", "Amount"};
+        Map<String, String> row = csvParser.zipRow(headers, new String[]{"111.00", "222.00"});
+        assertThat(row.get("Amount")).isEqualTo("222.00");
+    }
+
+    @Test
+    void zipRow_doesNotAffectNonDuplicatedHeaders() {
+        String[] headers = {"Date", "Description", "Amount", "Balance"};
+        Map<String, String> row = csvParser.zipRow(headers, new String[]{"01/07/2026", "Rent", "500.00", "1000.00"});
+        assertThat(row)
+                .containsEntry("Date", "01/07/2026")
+                .containsEntry("Description", "Rent")
+                .containsEntry("Amount", "500.00")
+                .containsEntry("Balance", "1000.00");
+    }
 
     @Test
     void parseNumeric_stripsARupeeGlyphArtifactRenderedAsALiteralC() {
@@ -40,6 +84,33 @@ class CsvParserTest {
     void parseNumeric_stillHandlesTrailingDrCrSuffixes() {
         assertThat(CsvParser.parseNumeric("37.94 Dr")).isEqualByComparingTo(new BigDecimal("-37.94"));
         assertThat(CsvParser.parseNumeric("10,081.99 Cr")).isEqualByComparingTo("10081.99");
+    }
+
+    /**
+     * Bug 34 (docs/quality/bug-reports/BUG_REVIEW_REPORT.md). The accounting convention for a
+     * negative amount -- the whole cell wrapped in parentheses -- wasn't recognised at all:
+     * `new BigDecimal("(1,234.00)")` throws, so the cell parsed as null. In combination with Bug
+     * 30 that isn't a dropped row, it's the running BALANCE silently staged as the transaction
+     * amount instead -- see TransactionNormalizer's own test for that half of the fix.
+     */
+    @Test
+    void parseNumeric_recognisesParenthesizedAmountsAsNegative() {
+        assertThat(CsvParser.parseNumeric("(1,234.00)")).isEqualByComparingTo(new BigDecimal("-1234.00"));
+        assertThat(CsvParser.parseNumeric("(500)")).isEqualByComparingTo(new BigDecimal("-500"));
+    }
+
+    @Test
+    void parseNumeric_recognisesParenthesizedAmounts_withACurrencyPrefixInsideTheParens() {
+        assertThat(CsvParser.parseNumeric("(Rs. 1,234.00)")).isEqualByComparingTo(new BigDecimal("-1234.00"));
+        assertThat(CsvParser.parseNumeric("(₹99.99)")).isEqualByComparingTo(new BigDecimal("-99.99"));
+    }
+
+    @Test
+    void parseNumeric_stillReturnsNull_forGenuinelyUnparseableParenthesizedContent() {
+        // Stripping the parens must not turn a real parse failure into a silent zero or a
+        // misleading value -- it should fail exactly the way an unwrapped version of the same
+        // garbage already does.
+        assertThat(CsvParser.parseNumeric("(not a number)")).isNull();
     }
 
     @Test
@@ -202,5 +273,27 @@ class CsvParserTest {
         assertThat(CsvParser.normalizeHeaderCell("  Closing Balance  ")).isEqualTo("closing balance");
         // Interior punctuation is untouched -- only the edges are noise.
         assertThat(CsvParser.normalizeHeaderCell("Chq./Ref.No.")).isEqualTo("chq./ref.no");
+    }
+
+    /**
+     * Bug 32. parseDate and maskAccountNumber were the two outliers in this file that never
+     * adopted the "null in, null out" convention every sibling parsing helper here already
+     * follows (parseNumeric, detectSignFromRawAmount, hasTrailingDrCrMarker) -- calling either
+     * with a null cell threw NullPointerException instead of returning null.
+     */
+    @Test
+    void parseDate_returnsNullRatherThanThrowing_whenGivenNull() {
+        assertThat(CsvParser.parseDate(null)).isNull();
+    }
+
+    @Test
+    void maskAccountNumber_returnsNullRatherThanThrowing_whenGivenNull() {
+        assertThat(CsvParser.maskAccountNumber(null)).isNull();
+    }
+
+    @Test
+    void maskAccountNumber_masksAllButTheLastFourDigits() {
+        assertThat(CsvParser.maskAccountNumber("000123456789")).isEqualTo("••••6789"); // synthetic-ok
+        assertThat(CsvParser.maskAccountNumber("1234")).isEqualTo("1234");
     }
 }

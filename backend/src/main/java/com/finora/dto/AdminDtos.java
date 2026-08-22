@@ -76,10 +76,26 @@ public class AdminDtos {
             long transactionsToday,
             long importsToday,
             long importsWithSkippedRowsToday,
+            PreviousDayDto previousDay,
             NeedsAttentionDto needsAttention,
             HealthDtos.PlatformHealthDto health,
             List<HealthDtos.AlertDto> alerts,
             List<AuditLogDto> recentActivity
+    ) {}
+
+    /**
+     * Yesterday's counts for the four stat tiles that reset daily, backing each tile's "vs
+     * yesterday" delta on the admin Dashboard. totalUsers has no sibling here and never will --
+     * it's a running total, not a daily-reset metric, and "vs yesterday" has no sensible meaning
+     * for a monotonically-growing count (see AdminOperationalDashboardService.overview()). Both
+     * bounds are calendar-day boundaries in the platform reporting zone, the same midnight-to-
+     * midnight window importsToday/activeUsersToday/etc. themselves use, one day earlier.
+     */
+    public record PreviousDayDto(
+            long activeUsers,
+            long transactions,
+            long imports,
+            long importsWithSkippedRows
     ) {}
 
     /**

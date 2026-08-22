@@ -39,6 +39,19 @@ describe('csvCell', () => {
 
 describe('toCsv', () => {
   it('joins rows with every cell escaped', () => {
-    expect(toCsv([['Category', 'Amount'], ['=cmd', -5]])).toBe('"Category","Amount"\n"\'=cmd","-5"');
+    expect(toCsv([['Category', 'Amount'], ['=cmd', -5]]))
+      .toBe('\uFEFF"Category","Amount"\n"\'=cmd","-5"');
+  });
+
+  /**
+   * Bug 45. Without a leading UTF-8 byte order mark, Excel (particularly on Windows) guesses the
+   * file's encoding from its bytes alone and defaults to the system codepage instead of UTF-8 --
+   * any non-ASCII character (₹, or an accented/non-Latin merchant or category name, both genuinely
+   * user-controlled) renders as mojibake the moment the file is opened.
+   */
+  it('prefixes the output with a UTF-8 byte order mark', () => {
+    const csv = toCsv([['Category', 'Amount'], ['Café', 100]]);
+    expect(csv.charCodeAt(0)).toBe(0xfeff);
+    expect(csv).toBe('\uFEFF"Category","Amount"\n"Café","100"');
   });
 });

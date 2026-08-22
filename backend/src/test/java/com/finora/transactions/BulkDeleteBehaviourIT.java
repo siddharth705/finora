@@ -109,7 +109,7 @@ class BulkDeleteBehaviourIT extends AbstractIntegrationTest {
         UUID rentDeposit = addExpense(f, "RENT DEPOSIT", "2000.00", 3);
         assertThat(balanceOf(f)).isEqualByComparingTo("2450.00");
 
-        transactionService.bulkDelete(f.user().getId(), List.of(coffee, lunch));
+        transactionService.bulkDelete(f.user().getId(), List.of(coffee, lunch), f.user().getId());
 
         assertThat(liveTransactionIds(f))
                 .as("the two requested are gone; the one that was not requested stays")
@@ -127,7 +127,7 @@ class BulkDeleteBehaviourIT extends AbstractIntegrationTest {
         UUID myCoffee = addExpense(mine, "COFFEE", "150.00", 1);
         UUID theirLunch = addExpense(theirs, "THEIR LUNCH", "400.00", 2);
 
-        assertThatThrownBy(() -> transactionService.bulkDelete(mine.user().getId(), List.of(myCoffee, theirLunch)))
+        assertThatThrownBy(() -> transactionService.bulkDelete(mine.user().getId(), List.of(myCoffee, theirLunch), mine.user().getId()))
                 .isInstanceOf(ApiException.class)
                 .satisfies(e -> assertThat(((ApiException) e).getStatus())
                         .as("forbidden, not 'not found' -- the row exists and belongs to someone")
@@ -153,7 +153,7 @@ class BulkDeleteBehaviourIT extends AbstractIntegrationTest {
         UUID coffee = addExpense(f, "COFFEE", "150.00", 1);
         UUID neverExisted = UUID.randomUUID();
 
-        assertThatThrownBy(() -> transactionService.bulkDelete(f.user().getId(), List.of(coffee, neverExisted)))
+        assertThatThrownBy(() -> transactionService.bulkDelete(f.user().getId(), List.of(coffee, neverExisted), f.user().getId()))
                 .isInstanceOf(ApiException.class)
                 .satisfies(e -> assertThat(((ApiException) e).getStatus())
                         .as("not found, distinct from forbidden -- the two mean different things to a client")
@@ -173,13 +173,13 @@ class BulkDeleteBehaviourIT extends AbstractIntegrationTest {
         UUID coffee = addExpense(f, "COFFEE", "150.00", 1);
         UUID lunch = addExpense(f, "LUNCH", "400.00", 2);
 
-        transactionService.bulkDelete(f.user().getId(), List.of(coffee));
+        transactionService.bulkDelete(f.user().getId(), List.of(coffee), f.user().getId());
         BigDecimal afterFirstDelete = balanceOf(f);
 
         // Soft delete means the row is still physically present, so "already deleted" is a state a
         // lookup has to be filtered for rather than an absence. Getting that wrong would let the
         // reversal run twice and move the balance by 150.00 again.
-        assertThatThrownBy(() -> transactionService.bulkDelete(f.user().getId(), List.of(coffee, lunch)))
+        assertThatThrownBy(() -> transactionService.bulkDelete(f.user().getId(), List.of(coffee, lunch), f.user().getId()))
                 .isInstanceOf(ApiException.class);
 
         assertThat(liveTransactionIds(f))
@@ -218,7 +218,7 @@ class BulkDeleteBehaviourIT extends AbstractIntegrationTest {
                 .as("a purchase increases what is owed")
                 .isEqualByComparingTo("2300.00");
 
-        transactionService.bulkDelete(savedUser.getId(), List.of(purchase));
+        transactionService.bulkDelete(savedUser.getId(), List.of(purchase), savedUser.getId());
 
         assertThat(accountRepository.findById(savedCard.getId()).orElseThrow().getBalance())
                 .as("removing it reduces the debt back -- the opposite direction from a savings account")

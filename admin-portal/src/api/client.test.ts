@@ -165,4 +165,31 @@ describe('api response interceptor', () => {
 
     expect(localStorage.getItem('finora_admin_session_ended_reason')).toBeNull();
   });
+
+  /**
+   * Bug 40. The error-shape reduction below used to drop everything except message and
+   * errorCode -- see the user frontend's identical client.test.ts for the full story (same fix,
+   * same root cause, fixed there first). Any structured ApiException (field-level import errors,
+   * per-row validation, remaining-attempt counts) reached this interceptor and was silently
+   * truncated to a bare string before any admin-portal caller could ever see it.
+   */
+  it('carries the details payload through the error-shape reduction, not just message and errorCode', async () => {
+    const caught = await rejectedHandler()({
+      response: {
+        status: 422,
+        data: {
+          message: 'Could not find a transaction table in this file',
+          errorCode: 'IMPORT_001',
+          details: { rowsSkipped: 3 },
+        },
+      },
+      config: { url: '/import/pdf/stage', _retried: false, headers: {} },
+    }).catch((e: unknown) => e);
+
+    expect((caught as any).response.data).toEqual({
+      message: 'Could not find a transaction table in this file',
+      errorCode: 'IMPORT_001',
+      details: { rowsSkipped: 3 },
+    });
+  });
 });

@@ -17,7 +17,8 @@ from an environment variable, never a hardcoded value in source.
 4. [Railway (backend + Postgres)](#railway-backend--postgres)
 5. [Before running more than one backend instance](#before-running-more-than-one-backend-instance)
 6. [Cloudflare (both frontends)](#cloudflare-both-frontends)
-7. [Frontend environment variables](#frontend-environment-variables)
+7. [Dev environment (admin-portal, frontend, mobile)](#dev-environment-admin-portal-frontend-mobile)
+8. [Frontend environment variables](#frontend-environment-variables)
 
 ---
 
@@ -334,6 +335,65 @@ build — unlike a `VITE_*` variable change, this one takes effect without a red
   guide's checklist (CORS, `APP_BASE_URL`, Resend) touches this list — it's tracked only by Firebase,
   so it's the one step a domain cutover silently breaks if skipped: every OTP screen on the new
   domain fails with `auth/unauthorized-domain` while the rest of the app works normally.
+
+## Dev environment (admin-portal, frontend, mobile)
+
+The backend already runs on two Railway environments — Production (`api.finoratech.info`) and Dev
+(`dev-api.finoratech.info`). This section covers giving the three client surfaces (admin-portal,
+frontend, mobile) a matching Dev tier, so a feature can be exercised end-to-end against a live
+backend before it ever touches production data, Firebase, or real Google accounts.
+
+**Nothing shared with Production here — a deliberately separate Firebase project.** Production's
+convention (one Firebase project, same values in both `frontend/` and `admin-portal/` — see
+"Frontend environment variables" below) still holds *within* each tier, but Dev gets its own
+project, its own service-account key, and its own Google Sign-In OAuth client, not Production's.
+Testing against Dev should never send a real SMS through Production's Firebase project or
+authenticate against a real Google account tied to Production's OAuth consent screen.
+
+**`dev` is a persistent git branch**, not a feature branch, protected with the same ruleset as
+`main` (required status checks, no direct pushes, `enforce_admins` on — see "Branch protection"
+below). `.github/workflows/sync-dev-branch.yml` keeps it caught up with `main`'s tip on every push
+to `main` by opening (or reusing) a `main → dev` PR and enabling auto-merge on it — a direct push
+would be rejected by the protection rule itself, so this goes through the same required checks
+(`Backend (Java 25)`, `User frontend`, `Admin portal`, `Mobile (Expo)`, `End-to-end smoke
+(Chromium)`) as any other change to a protected branch, rather than bypassing them. Cloudflare
+Pages binds `dev-app.finoratech.info` / `dev-admin.finoratech.info` to this branch as a
+**branch-alias custom domain** (Pages project → Settings → Custom domains → set up a custom
+domain, then repoint that hostname's DNS CNAME at `dev.<pages-project>.pages.dev` instead of the
+bare `<pages-project>.pages.dev`) — not a second Pages project.
+
+### Branch protection (`main` and `dev`)
+
+Both branches require: a pull request (no direct pushes, `enforce_admins` enabled so this applies
+to admins too), the same 5 CI checks passing, and `strict: true` (the PR's branch must be
+up-to-date with the base before merging). Deliberately **no required approving review count** —
+this repo has no second human reviewer today, and requiring one would block merging your own PRs
+entirely. Revisit this once that changes. The repo's "Allow auto-merge" setting is on, which
+`sync-dev-branch.yml` above depends on.
+
+Cloudflare Pages' environment-variable UI has only two buckets, Production and Preview — there is
+no native per-branch scoping. The Dev-specific `VITE_*` values (the six `VITE_FIREBASE_*` keys,
+`VITE_API_BASE_URL=https://dev-api.finoratech.info`, plus `VITE_GOOGLE_LOGIN_CLIENT_ID` on
+`frontend/` and `VITE_BACKEND_ORIGIN` on `admin-portal/`) go in the **Preview** bucket — which
+means every open PR's preview deployment also picks them up, not just the `dev` branch. That's the
+intended outcome: no PR preview should ever be able to reach Production's Firebase project or data.
+
+**Railway's Dev environment** needs its own `CORS_ORIGINS`/`APP_BASE_URL`/`ADMIN_APP_BASE_URL`
+(pointed at the two `dev-*` origins, same format as the Production values documented above) plus its
+own `GOOGLE_APPLICATION_CREDENTIALS_BASE64` and `GOOGLE_LOGIN_CLIENT_IDS` (the Dev Firebase
+project's own service-account key and OAuth client id — see the Railway section above for exactly
+how each of those is shaped; the Dev environment's copies just point at the new project instead of
+the existing one).
+
+**Mobile has no cloud-built Dev profile.** `mobile/eas.json`'s `dev` build profile inlines
+`EXPO_PUBLIC_API_BASE_URL=https://dev-api.finoratech.info` directly (no confidentiality reason to
+route a public API origin through EAS's environment-variable store — see `mobile-setup.md` for why
+`EXPO_PUBLIC_*` values are inlined into the client bundle regardless), but a genuinely custom EAS
+environment name for the Dev Firebase config files is only available on a paid EAS plan. Build the
+`dev` profile locally instead (`eas build --profile dev --platform android --local`, and the iOS
+equivalent), with the Dev project's `google-services.json`/`GoogleService-Info.plist` physically
+present in `mobile/` at build time — same file-based convention the existing `development` profile
+already uses. See `docs/engineering/mobile/mobile-setup.md` for the full walkthrough.
 
 ## Frontend environment variables
 

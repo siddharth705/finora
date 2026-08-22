@@ -238,23 +238,88 @@ class RecurringServiceTest {
                 .containsEntry("recurringTransactionsFlagged", 3L);
     }
 
+    /**
+     * Bug 10 (docs/quality/bug-reports/BUG_REVIEW_REPORT.md). This used to assert the OPPOSITE --
+     * that an audit row is written even when nothing is recurring -- which was exactly the "one
+     * audit row per page view" the bug report flagged, since Dashboard.tsx/Insights.tsx call this
+     * on ordinary page load via a plain GET. A transaction that was never recurring and still
+     * isn't after this run is not a change; see RecurringService's own class doc comment.
+     */
     @Test
-    void detectForUser_recordsTheSummary_evenWhenNothingIsRecurring() {
+    void detectForUser_writesNoAuditRecord_whenNothingChanged() {
         Transaction t = expense("one-off-purchase", LocalDate.of(2026, 7, 1), BigDecimal.valueOf(2000));
         when(transactionRepository.findByUserId(userId)).thenReturn(List.of(t));
 
-        recurringService.detectForUser(userId);
+        var results = recurringService.detectForUser(userId);
+
+        assertThat(results).isEmpty();
+        verify(transactionRepository, never()).saveAll(any());
+        verifyNoInteractions(auditService);
+    }
+
+    /** The other half of Bug 10's fix: a transaction that WAS recurring and genuinely stops (the
+     *  reset-to-false path) is a real change and must still be written and audited -- the fix
+     *  only skips writes for transactions whose flag doesn't move, not every "nothing found"
+     *  outcome. */
+    @Test
+    void detectForUser_writesAndAudits_whenAPreviouslyRecurringTransactionStopsBeingOne() {
+        Transaction t = expense("cancelled-subscription", LocalDate.of(2026, 7, 1), BigDecimal.valueOf(499));
+        t.setRecurring(true);
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(t));
+
+        var results = recurringService.detectForUser(userId);
+
+        assertThat(results).isEmpty();
+        assertThat(t.isRecurring()).isFalse();
+        verify(transactionRepository).saveAll(List.of(t));
 
         @SuppressWarnings("unchecked")
         org.mockito.ArgumentCaptor<java.util.Map<String, Object>> metadataCaptor =
                 org.mockito.ArgumentCaptor.forClass(java.util.Map.class);
         verify(auditService).record(eq(userId), eq("RECURRING_DETECTION_RUN"), eq("Transaction"),
                 org.mockito.ArgumentMatchers.isNull(), metadataCaptor.capture());
-
         assertThat(metadataCaptor.getValue())
                 .containsEntry("transactionsProcessed", 1)
                 .containsEntry("recurringGroupsFound", 0)
                 .containsEntry("recurringTransactionsFlagged", 0L);
+    }
+
+    /** A second, otherwise-untouched transaction must not be re-saved or re-audited alongside a
+     *  genuinely changed one -- proving `changed` is a real filter, not saveAll(active) with
+     *  extra steps. */
+    @Test
+    void detectForUser_savesOnlyTheChangedTransaction_notEveryActiveOne() {
+        Transaction changing = expense("cancelled-subscription", LocalDate.of(2026, 7, 1), BigDecimal.valueOf(499));
+        changing.setRecurring(true);
+        Transaction unrelated = expense("one-off-purchase", LocalDate.of(2026, 7, 2), BigDecimal.valueOf(2000));
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(changing, unrelated));
+
+        recurringService.detectForUser(userId);
+
+        verify(transactionRepository).saveAll(List.of(changing));
+    }
+
+    /**
+     * Bug 38. `active` only ever includes Type.EXPENSE, non-transfer, non-duplicate transactions,
+     * so a transaction that was flagged recurring under a prior run and then had its type changed
+     * away from EXPENSE never appears in `active` again -- the reset-then-recompute pass above only
+     * considers `active`, so its stale flag was never revisited and kept showing the badge forever.
+     */
+    @Test
+    void detectForUser_clearsTheRecurringFlag_whenATransactionsTypeChangedAwayFromExpense() {
+        Transaction noLongerAnExpense = expense("cancelled-subscription", LocalDate.of(2026, 7, 1),
+                BigDecimal.valueOf(499));
+        noLongerAnExpense.setRecurring(true);
+        noLongerAnExpense.setTxnType(Transaction.Type.INCOME);
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(noLongerAnExpense));
+
+        var results = recurringService.detectForUser(userId);
+
+        assertThat(results).isEmpty();
+        assertThat(noLongerAnExpense.isRecurring())
+                .as("the stale badge must be cleared even though this transaction is no longer in `active`")
+                .isFalse();
+        verify(transactionRepository).saveAll(List.of(noLongerAnExpense));
     }
 
     // --- Admin Portal Phase 8: RECURRING_DETECTION_ENABLED feature flag gate ---
