@@ -63,6 +63,27 @@ class GmailStagingBridgeTest {
         assertThat(row.confidence()).isEqualTo(0.9);
     }
 
+    @Test
+    @DisplayName("a receipt with a counterparty uses it as the description, not the raw domain")
+    void counterpartyNamePreferredOverDomainForDescription() {
+        ParsedReceipt receiptWithCounterparty = new ParsedReceipt("msg-1", "phonepe.com",
+                "Sunrise General Store", Money.of(new BigDecimal("480.00")),
+                LocalDate.of(2026, 7, 14), 0.9);
+
+        bridge.stage(userId, receiptWithCounterparty);
+
+        assertThat(capturedRows().get(0).description()).isEqualTo("Sunrise General Store");
+    }
+
+    @Test
+    @DisplayName("a receipt with no counterparty falls back to the raw domain, same as before")
+    void domainUsedWhenNoCounterparty() {
+        bridge.stage(userId, receipt("msg-1", "amazon.in",
+                Money.of(new BigDecimal("1299.00")), LocalDate.of(2026, 8, 10), 0.9));
+
+        assertThat(capturedRows().get(0).description()).isEqualTo("amazon.in");
+    }
+
     /**
      * No merchant-to-category engine exists yet, and guessing one would be exactly the "wrong
      * answer nobody asked for" this codebase's own account-detection refuses to do elsewhere. This
