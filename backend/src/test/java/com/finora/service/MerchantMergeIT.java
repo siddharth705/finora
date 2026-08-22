@@ -371,7 +371,13 @@ class MerchantMergeIT extends AbstractIntegrationTest {
         List<MerchantLearningAudit> tied =
                 auditRepository.findByUserIdAndMerchantIdOrderByCreatedAtDesc(userId, merchant.getId());
         assertThat(tied).hasSize(2);
-        assertThat(tied).extracting(MerchantLearningAudit::getCreatedAt).containsOnly(tiedInstant);
+        // Not compared against `tiedInstant` itself: Postgres's timestamptz column truncates to
+        // microseconds, while Instant.now() on some JVM/OS combinations (observed in CI, not
+        // locally) carries full nanosecond precision -- the round-tripped value and the original
+        // in-memory one can legitimately differ by sub-microsecond digits even though both rows
+        // came from the exact same `tiedInstant`. What the test actually needs is that both
+        // ROUND-TRIPPED values are equal to EACH OTHER, which is the tie the fix is about.
+        assertThat(tied.get(0).getCreatedAt()).isEqualTo(tied.get(1).getCreatedAt());
 
         UUID categoryExpectedToBeReverted = tied.get(0).getNewCategoryId();
         UUID categoryExpectedToSurvive =
