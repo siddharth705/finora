@@ -902,8 +902,16 @@ public class AuthService {
      */
     @Transactional(noRollbackFor = ApiException.class)
     public RefreshResponse refresh(RefreshRequest request) {
-        var rotation = refreshTokenService.rotate(request.refreshToken());
-        User user = userRepository.findById(rotation.userId())
+        // Bug 27. These account-status checks must run BEFORE refreshTokenService.rotate(), not
+        // after -- rotate() revokes the presented token and mints + persists a replacement as its
+        // first mutations, and (per its own doc comment) those writes join THIS transaction rather
+        // than opening their own. A rejection thrown only after rotate() had already returned still
+        // committed a fresh, valid, unused rotated token to the database on a request this method
+        // ultimately rejects -- a real token "spent" for nothing on every refresh attempt a
+        // suspended/deactivated/deleted account makes. resolveUserId() is a read-only lookup, so
+        // gating on it first means a rejection here writes nothing.
+        UUID userId = refreshTokenService.resolveUserId(request.refreshToken());
+        User user = userRepository.findById(userId)
                 .orElseThrow(() -> new ApiException(HttpStatus.UNAUTHORIZED, "User no longer exists"));
         // A suspension that happens mid-session must actually take effect, not just block future
         // logins -- without this check, a suspended user with an unexpired refresh token could
@@ -930,6 +938,7 @@ public class AuthService {
                     "This account is no longer active. Please sign in again.");
         }
 
+        var rotation = refreshTokenService.rotate(request.refreshToken());
         String newAccessToken = jwtService.generateToken(user.getId(), user.getEmail(),
                 rotation.newToken().sessionId(), user.getAccountScope());
         return new RefreshResponse(newAccessToken, rotation.newToken().rawToken());

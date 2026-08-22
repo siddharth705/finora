@@ -121,6 +121,26 @@ public class RefreshTokenService {
      * called, the verification passed, and no transaction existed to undo it. It took an
      * end-to-end test that replayed a used cookie and then checked an untouched second device.
      */
+    /**
+     * Read-only peek at which user a presented raw refresh token belongs to. Exists so
+     * {@link com.finora.service.AuthService#refresh} can run its account-status checks (suspended,
+     * deactivated, pending deletion) BEFORE calling {@link #rotate}, instead of after -- rotate()
+     * revokes the presented token and mints a new one as its very first mutations, and those writes
+     * join the caller's transaction rather than opening their own, so a suspension check that ran
+     * only after rotate() had already returned was gating a response the database had already
+     * committed to, not the mutation itself.
+     *
+     * <p>Deliberately does not validate revocation, expiry, idle timeout, or the absolute cap --
+     * rotate() remains the sole source of truth for whether the token itself is still usable. This
+     * only resolves ownership, using the same "invalid token" error rotate() throws for the same
+     * not-found case, so an unrecognized token behaves identically either way.
+     */
+    public UUID resolveUserId(String rawToken) {
+        return refreshTokenRepository.findByTokenHash(TokenHasher.sha256(rawToken))
+                .orElseThrow(() -> new ApiException(ErrorCode.AUTH_TOKEN_EXPIRED, "Invalid refresh token"))
+                .getUserId();
+    }
+
     @Transactional(noRollbackFor = ApiException.class)
     public RotationResult rotate(String rawToken) {
         RefreshToken rt = refreshTokenRepository.findByTokenHash(TokenHasher.sha256(rawToken))
