@@ -23,6 +23,7 @@ const UserDetail = lazy(() => import('./pages/UserDetail'));
 const Roles = lazy(() => import('./pages/Roles'));
 const Banks = lazy(() => import('./pages/Banks'));
 const MerchantIntelligence = lazy(() => import('./pages/MerchantIntelligence'));
+const MerchantTemplates = lazy(() => import('./pages/MerchantTemplates'));
 const GlobalRules = lazy(() => import('./pages/GlobalRules'));
 const LearningEngine = lazy(() => import('./pages/LearningEngine'));
 const LearningQueue = lazy(() => import('./pages/LearningQueue'));
@@ -79,6 +80,7 @@ export default function App() {
               <Route path="/roles" element={<ProtectedRoute><Roles /></ProtectedRoute>} />
               <Route path="/banks" element={<ProtectedRoute><Banks /></ProtectedRoute>} />
               <Route path="/merchants" element={<ProtectedRoute><MerchantIntelligence /></ProtectedRoute>} />
+              <Route path="/merchant-templates" element={<ProtectedRoute><MerchantTemplates /></ProtectedRoute>} />
               <Route path="/rules" element={<ProtectedRoute><GlobalRules /></ProtectedRoute>} />
               <Route path="/learning" element={<ProtectedRoute><LearningEngine /></ProtectedRoute>} />
               <Route path="/merchant-review" element={<ProtectedRoute><MerchantReview /></ProtectedRoute>} />
