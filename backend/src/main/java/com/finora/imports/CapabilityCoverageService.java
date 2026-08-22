@@ -97,6 +97,19 @@ public class CapabilityCoverageService {
             // docs/architecture/system-design/transaction-boundary-phase2a-investigation.md for the
             // real-corpus evidence this closes. See PdfTableLocator.STATEMENT_CLOSING_MARKER.
             "TRANSACTION_TABLE_CLOSED",
+            // Phase 2C. A real Kotak Mahindra Bank credit-card statement prints its own
+            // "Total Purchase & Other Charges" column-total row directly beneath the last real
+            // transaction, before its MITC/fees-and-charges legal schedule begins -- the same
+            // failure shape as TRANSACTION_TABLE_CLOSED, evidenced from a different bank. See
+            // PdfTableLocator.TRANSACTION_TABLE_TOTAL_MARKER.
+            "TRANSACTION_TABLE_TOTAL_CLOSED",
+            // Phase 2C. A real ICICI Bank credit-card statement opens its MITC/legal appendix with
+            // an all-caps "MOST IMPORTANT TERMS AND CONDITIONS (MITC)" heading immediately after
+            // the last real transaction and its rewards summary -- same failure shape again,
+            // evidenced from a third bank. Deliberately case-sensitive; see
+            // PdfTableLocator.MITC_SECTION_MARKER for why (two other real documents mention the
+            // same phrase, mixed-case, mid-document, well before their own real content ends).
+            "MITC_SECTION_CLOSED",
             // A transaction printed as a two-physical-line visual block (day-of-month + narration
             // + amount, then month/year + a bare Cr/Dr marker) rather than a table row at all --
             // found on the same AU statement, once the illustrative sections above stopped
@@ -144,7 +157,17 @@ public class CapabilityCoverageService {
             // not "how many documents took this code path". Distinct from INFERRED_HEADERLESS_LAYOUT
             // itself, which fires on every document that path accepts regardless of whether a
             // duplicate was present to remove.
-            "PHYSICAL_ROW_DEDUP_EVIDENCE");
+            "PHYSICAL_ROW_DEDUP_EVIDENCE",
+            // Phase 2E.2. The header quality gate judged the row this document was about to accept
+            // as its header too weak to explain its own upcoming rows (most of them carry more raw
+            // values than the header has columns for), and the reconstruction engine recovered a
+            // better one by composing it with the physical line immediately above -- a fragment
+            // wrappedHeaderAt never reaches, because it only ever looks forward. Motivated by a real
+            // SBI Credit Card statement's supplementary-cardholder section, whose header prints
+            // "Transaction Details" one line above "Date | Amount ( ` )", the row that gets accepted
+            // on its own. See PdfTableLocator.reconstructHeader and
+            // docs/architecture/system-design/header-reconstruction-design.md.
+            "HEADER_RECONSTRUCTED");
 
     /**
      * @param importsAnalysed    how many imports these counts are drawn from -- a coverage figure

@@ -16,6 +16,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
@@ -164,7 +165,7 @@ class CategorizationServiceTest {
         Category existing = new Category();
         existing.setUserId(userId);
         existing.setName("Dining");
-        when(categoryRepository.findByUserIdAndName(userId, "Dining")).thenReturn(Optional.of(existing));
+        when(categoryRepository.findByUserIdAndNameIgnoreCaseOrderByIdAsc(userId, "Dining")).thenReturn(List.of(existing));
 
         Category result = categorizationService.resolveOrCreateCategory(userId, "Dining");
 
@@ -174,7 +175,7 @@ class CategorizationServiceTest {
 
     @Test
     void resolveOrCreateCategory_createsNew_whenNameDoesNotExist() {
-        when(categoryRepository.findByUserIdAndName(userId, "Custom Category")).thenReturn(Optional.empty());
+        when(categoryRepository.findByUserIdAndNameIgnoreCaseOrderByIdAsc(userId, "Custom Category")).thenReturn(List.of());
         when(categoryRepository.save(any(Category.class))).thenAnswer(inv -> inv.getArgument(0));
 
         Category result = categorizationService.resolveOrCreateCategory(userId, "Custom Category");
@@ -182,6 +183,112 @@ class CategorizationServiceTest {
         assertThat(result.getName()).isEqualTo("Custom Category");
         assertThat(result.isSystem()).isFalse();
         verify(categoryRepository).save(any(Category.class));
+    }
+
+    /**
+     * Bug 04 (docs/quality/bug-reports/BUG_REVIEW_REPORT.md). categories.name is VARCHAR(80) NOT
+     * NULL with no upstream length check on the import-confirm path -- an oversized category cell
+     * used to make the INSERT fail against the column constraint, which marks the whole confirm
+     * transaction rollback-only and discards the entire import. Same fix shape as
+     * MerchantNormalizationEngine.fitToColumn for merchant names on the identical parser-output
+     * code path: truncate before the write is ever attempted, not after it fails.
+     */
+    @Test
+    void resolveOrCreateCategory_truncatesAnOversizedName_ratherThanFailingTheInsert() {
+        String oversized = "x".repeat(100);
+        String truncated = "x".repeat(80);
+        when(categoryRepository.findByUserIdAndNameIgnoreCaseOrderByIdAsc(userId, truncated)).thenReturn(List.of());
+        when(categoryRepository.save(any(Category.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        Category result = categorizationService.resolveOrCreateCategory(userId, oversized);
+
+        assertThat(result.getName()).isEqualTo(truncated);
+        assertThat(result.getName()).hasSize(80);
+    }
+
+    @Test
+    void resolveOrCreateCategory_trimsSurroundingWhitespace_beforeCheckingLength() {
+        String padded = " ".repeat(5) + "Dining" + " ".repeat(5);
+        when(categoryRepository.findByUserIdAndNameIgnoreCaseOrderByIdAsc(userId, "Dining")).thenReturn(List.of());
+        when(categoryRepository.save(any(Category.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        Category result = categorizationService.resolveOrCreateCategory(userId, padded);
+
+        assertThat(result.getName()).isEqualTo("Dining");
+    }
+
+    /**
+     * Bug 16. resolveOrCreateCategory now matches case-insensitively and trims whitespace, so
+     * "dining" resolves to an existing "Dining" row instead of creating a sibling that would
+     * split a budget and double-count in reports.
+     */
+    @Test
+    void resolveOrCreateCategory_matchesCaseInsensitively_andTrimsWhitespace() {
+        Category existing = new Category();
+        existing.setUserId(userId);
+        existing.setName("Dining");
+        when(categoryRepository.findByUserIdAndNameIgnoreCaseOrderByIdAsc(userId, "dining")).thenReturn(List.of(existing));
+
+        Category result = categorizationService.resolveOrCreateCategory(userId, " dining ");
+
+        assertThat(result).isSameAs(existing);
+        verify(categoryRepository, never()).save(any());
+    }
+
+    /**
+     * Self-review catch: a pre-existing case-variant duplicate (a user who already has both
+     * "Dining" and "dining" from BEFORE the Bug 16 fix shipped) must resolve to one of them
+     * deterministically, not throw. A single-result derived query
+     * (findByUserIdAndNameIgnoreCase, this method's first version) would have thrown
+     * IncorrectResultSizeDataAccessException the moment it matched more than one row -- turning
+     * every future category action for exactly the affected users into an unhandled 500.
+     */
+    @Test
+    void resolveOrCreateCategory_picksOneDeterministically_whenAPreExistingCaseVariantDuplicateExists() {
+        Category dining = new Category();
+        dining.setUserId(userId);
+        dining.setName("Dining");
+        Category lowercaseDining = new Category();
+        lowercaseDining.setUserId(userId);
+        lowercaseDining.setName("dining");
+        when(categoryRepository.findByUserIdAndNameIgnoreCaseOrderByIdAsc(userId, "Dining"))
+                .thenReturn(List.of(dining, lowercaseDining));
+
+        Category result = categorizationService.resolveOrCreateCategory(userId, "Dining");
+
+        assertThat(result).isSameAs(dining);
+        verify(categoryRepository, never()).save(any());
+    }
+
+    /**
+     * Guards against a regression the Bug 16 fix above could otherwise introduce:
+     * TransactionService.updateCategory passes an unvalidated Map value straight through with no
+     * upstream null check, unlike every other caller (which either validates via @NotBlank or
+     * checks != null first). Before trimming was added, a null name reached
+     * categoryRepository.save() with a NOT NULL column and came back as a confusing 409 CONFLICT.
+     * Trimming a null would instead throw an unhandled NullPointerException into the generic 500
+     * handler -- worse than the bug it replaced. This must throw a clean 400 instead.
+     *
+     * <p>Merge-conflict resolution note (Bug 04 x Bug 16): Bug 04's own version of this method
+     * defaulted null/blank to "Other" instead of throwing, for the import-confirm path's "don't
+     * fail the whole import over one bad cell" reasoning. That degradation now lives at
+     * ImportService.confirm's own call site instead (see
+     * ImportServiceAskOnceTest#confirm_fallsBackToOther_whenTheStatementsCategoryCellWasNullOrBlank)
+     * -- this method throwing for every OTHER caller is what Bug 16's fix actually needs, since a
+     * blank name reaching e.g. TransactionService.updateCategory is a malformed request, not a
+     * parser artifact to paper over.
+     */
+    @Test
+    void resolveOrCreateCategory_rejectsANullOrBlankName_withA400_ratherThanNpeOrANotNullViolation() {
+        assertThatThrownBy(() -> categorizationService.resolveOrCreateCategory(userId, null))
+                .isInstanceOf(com.finora.exception.ApiException.class)
+                .satisfies(e -> assertThat(((com.finora.exception.ApiException) e).getStatus())
+                        .isEqualTo(org.springframework.http.HttpStatus.BAD_REQUEST));
+
+        assertThatThrownBy(() -> categorizationService.resolveOrCreateCategory(userId, "   "))
+                .isInstanceOf(com.finora.exception.ApiException.class);
+
+        verify(categoryRepository, never()).save(any());
     }
 
     // --- Rule engine integration (docs/rule-engine-relationship-engine-eds.md §4: rule engine
@@ -317,7 +424,7 @@ class CategorizationServiceTest {
         ReflectionTestUtils.setField(investments, "id", UUID.randomUUID());
         investments.setUserId(userId);
         investments.setName("Investments");
-        when(categoryRepository.findByUserIdAndName(userId, "Investments")).thenReturn(Optional.of(investments));
+        when(categoryRepository.findByUserIdAndNameIgnoreCaseOrderByIdAsc(userId, "Investments")).thenReturn(List.of(investments));
 
         Transaction t = txnFor("SIP MUTUAL FUND DEDUCTION");
         Category result = categorizationService.applySideEffectRules(userId, t);
@@ -335,7 +442,7 @@ class CategorizationServiceTest {
         ReflectionTestUtils.setField(sipEquity, "id", UUID.randomUUID());
         sipEquity.setUserId(userId);
         sipEquity.setName("SIP - Equity");
-        when(categoryRepository.findByUserIdAndName(userId, "SIP - Equity")).thenReturn(Optional.of(sipEquity));
+        when(categoryRepository.findByUserIdAndNameIgnoreCaseOrderByIdAsc(userId, "SIP - Equity")).thenReturn(List.of(sipEquity));
 
         Transaction t = txnFor("SIP MUTUAL FUND DEDUCTION");
         categorizationService.applySideEffectRules(userId, t);

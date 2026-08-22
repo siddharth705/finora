@@ -9,6 +9,8 @@ import com.finora.repository.RefreshTokenRepository;
 import com.finora.util.TokenHasher;
 import com.finora.util.UserAgentParser;
 import jakarta.servlet.http.HttpServletRequest;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -34,11 +36,20 @@ import java.util.UUID;
 @Service
 public class RefreshTokenService {
 
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(RefreshTokenService.class);
+
+    /** Same reasoning as ImportSessionService.CLEANUP_BATCH_SIZE -- bounds the cost of one sweep;
+     *  a backlog drains across subsequent runs rather than in one unbounded delete. */
+    private static final int CLEANUP_BATCH_SIZE = 200;
+
     private final RefreshTokenRepository refreshTokenRepository;
     private final JwtProperties jwtProperties;
     private final HttpServletRequest request;
     private final ClientIpResolver clientIpResolver;
     private final SecureRandom secureRandom = new SecureRandom();
+
+    @Value("${app.security.refresh-token-cleanup.enabled:true}")
+    private boolean cleanupEnabled;
 
     public RefreshTokenService(RefreshTokenRepository refreshTokenRepository, JwtProperties jwtProperties,
                                 HttpServletRequest request, ClientIpResolver clientIpResolver) {
@@ -177,6 +188,58 @@ public class RefreshTokenService {
             rt.setRevokedAt(Instant.now());
             refreshTokenRepository.save(rt);
         });
+    }
+
+    /**
+     * Bug 14 (docs/quality/bug-reports/BUG_REVIEW_REPORT.md). Nothing deleted a
+     * {@code refresh_tokens} row, ever -- every sign-in creates one and every rotation creates
+     * another, only ever setting {@code revokedAt} on the old one. An actively used session
+     * rotates roughly every 15 minutes (the access token's own lifetime), so the table grew
+     * without bound: a permanently retained, ever-growing store of device-tracking PII
+     * ({@code tokenHash}, {@code lastSeenIp}, {@code browser}, {@code device}) with no retention
+     * policy at all.
+     *
+     * <p>Same opportunistic-sweep-turned-scheduled-job shape as
+     * {@code ImportSessionService.sweepExpiredSessions}/{@code scheduledSweep} (BH-047) --
+     * {@link com.finora.config.BackgroundWorkConfig} already enables scheduling unconditionally,
+     * so there is no reason for this to be reactive/opportunistic the way the import-session sweep
+     * originally, mistakenly was.
+     *
+     * <p>See {@link RefreshTokenRepository#findByExpiresAtBeforeOrderByExpiresAtAsc} for why this
+     * keys on {@code expiresAt} alone, not {@code revokedAt IS NOT NULL} -- deleting a revoked row
+     * before its own natural expiry would defeat {@link #rotate}'s reuse-detection for however much
+     * of the stolen token's original lifetime remained.
+     *
+     * @return how many rows were removed, so a caller or a test can see the sweep did something
+     */
+    @Transactional
+    public int sweepExpiredTokens() {
+        List<RefreshToken> expired = refreshTokenRepository.findByExpiresAtBeforeOrderByExpiresAtAsc(
+                Instant.now(), PageRequest.of(0, CLEANUP_BATCH_SIZE));
+        if (expired.isEmpty()) return 0;
+        refreshTokenRepository.deleteAll(expired);
+        return expired.size();
+    }
+
+    /**
+     * The scheduled trigger. Gated by a flag for the same reason every other scheduler in this
+     * codebase is (see application-test.yml's own comments on the pattern): an integration suite
+     * needs the sweep to be deterministic, and a background thread deleting rows mid-test is
+     * exactly the cross-test pollution BH-058 was about. {@code application-test.yml} turns it
+     * off; tests drive {@link #sweepExpiredTokens()} directly.
+     *
+     * <p>{@code fixedDelay}, not {@code fixedRate}: the next sweep starts after the previous one
+     * finishes, so a slow sweep cannot pile up overlapping runs.
+     */
+    @org.springframework.scheduling.annotation.Scheduled(
+            fixedDelayString = "${app.security.refresh-token-cleanup.interval-ms:3600000}",
+            initialDelayString = "${app.security.refresh-token-cleanup.initial-delay-ms:120000}")
+    public void scheduledCleanup() {
+        if (!cleanupEnabled) return;
+        int removed = sweepExpiredTokens();
+        if (removed > 0) {
+            log.info("Removed {} expired refresh token row(s).", removed);
+        }
     }
 
     /** Backs the device-management "your active sessions" list -- ordered most-recently-active

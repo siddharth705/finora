@@ -593,8 +593,13 @@ public class TransactionService {
                         "actorId", actingAdminId.toString()));
     }
 
+    /**
+     * Bug 36: recorded no actorId at all, unlike {@link #delete}, which was fixed for the exact
+     * same reason -- an admin bulk-deleting a user's transactions was indistinguishable from the
+     * user doing it themself, for the higher-impact operation of the pair.
+     */
     @Transactional
-    public void bulkDelete(UUID userId, List<UUID> ids) {
+    public void bulkDelete(UUID userId, List<UUID> ids, UUID actingAdminId) {
         List<Transaction> owned = getOwnedAll(userId, ids);
         clearReconciliationPointersTo(owned.stream().map(Transaction::getId).toList());
         for (Transaction t : owned) {
@@ -604,7 +609,7 @@ public class TransactionService {
         reconciliationService.reconcileForUser(userId);
         recurringService.detectForUser(userId);
         auditService.record(userId, "TRANSACTION_BULK_DELETED", "Transaction", null,
-                Map.of("count", ids.size(), "ids", ids));
+                Map.of("count", ids.size(), "ids", ids, "actorId", actingAdminId.toString()));
     }
 
     /**
@@ -680,8 +685,9 @@ public class TransactionService {
      * <p>Single, interactive recategorization ({@link #updateCategory}, {@link #confirmMerchantCategory},
      * {@link #create}) deliberately stays synchronous — see {@code CategorizationService.learn}.
      */
+    /** Bug 36: same missing-actorId gap as {@link #bulkDelete}, same fix. */
     @Transactional
-    public void bulkRecategorize(UUID userId, List<UUID> ids, String categoryName) {
+    public void bulkRecategorize(UUID userId, List<UUID> ids, String categoryName, UUID actingAdminId) {
         Category category = categorizationService.resolveOrCreateCategory(userId, categoryName);
         // BH-057: one query for the whole list rather than one per id -- see getOwnedAll.
         for (Transaction t : getOwnedAll(userId, ids)) {
@@ -694,7 +700,7 @@ public class TransactionService {
             transactionRepository.save(t);
         }
         auditService.record(userId, "TRANSACTION_BULK_RECATEGORIZED", "Transaction", null,
-                Map.of("count", ids.size(), "newCategory", categoryName));
+                Map.of("count", ids.size(), "newCategory", categoryName, "actorId", actingAdminId.toString()));
     }
 
     /**

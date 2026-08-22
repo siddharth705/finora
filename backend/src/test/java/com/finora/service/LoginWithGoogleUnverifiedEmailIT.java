@@ -41,7 +41,7 @@ class LoginWithGoogleUnverifiedEmailIT extends AbstractIntegrationTest {
     @DisplayName("the freshly minted verification token survives the ApiException it's thrown alongside, not rolled back with it")
     void unverifiedAutoLinkAttempt_stillPersistsTheFreshVerificationToken() {
         String email = "google-unverified-" + UUID.randomUUID() + "@example.test";
-        authService.register(new RegisterRequest(email, "SecurePass123", "Jane Doe", "+919876500001" /* synthetic-ok */));
+        authService.register(new RegisterRequest(email, "SecurePass123", "Jane Doe", "+919876500001" /* synthetic-ok */, null));
         User registered = userRepository.findByEmailIgnoreCaseAndAccountScope(email, User.SCOPE_USER).orElseThrow();
         assertThat(registered.isEmailVerified())
                 .as("register() must leave a self-service account unverified until the link is clicked")

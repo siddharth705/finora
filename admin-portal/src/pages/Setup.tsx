@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import { Link, Navigate, useNavigate } from 'react-router-dom';
 import { Sparkles, ShieldAlert, UserPlus, ShieldCheck, Check } from 'lucide-react';
 import { setupApi } from '../api/endpoints';
+import { PasswordInput } from '../components/PasswordInput';
 
 type Step = 'checking' | 'key' | 'create-admin' | 'done';
 
@@ -163,14 +164,13 @@ export default function Setup() {
                 </p>
               )}
 
-              <input
-                type="password"
+              <PasswordInput
                 required
                 autoFocus
                 placeholder="Installation key"
                 value={installationKey}
-                onChange={(e) => setInstallationKey(e.target.value)}
-                className="w-full bg-bg border border-border rounded-lg px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                onChange={setInstallationKey}
+                className="w-full bg-bg border border-border rounded-lg px-3.5 py-2.5 pr-10 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
               />
 
               {error && <p className="text-sm text-danger bg-danger-bg rounded-lg px-3.5 py-2.5">{error}</p>}
@@ -229,23 +229,21 @@ export default function Setup() {
                 onChange={(e) => setPhoneNumber(e.target.value)}
                 className="w-full bg-bg border border-border rounded-lg px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
               />
-              <input
-                type="password"
+              <PasswordInput
                 required
                 minLength={8}
                 maxLength={72}
                 placeholder="Password (at least 8 characters)"
                 value={adminPassword}
-                onChange={(e) => setAdminPassword(e.target.value)}
-                className="w-full bg-bg border border-border rounded-lg px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                onChange={setAdminPassword}
+                className="w-full bg-bg border border-border rounded-lg px-3.5 py-2.5 pr-10 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
               />
-              <input
-                type="password"
+              <PasswordInput
                 required
                 placeholder="Confirm password"
                 value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                className="w-full bg-bg border border-border rounded-lg px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                onChange={setConfirmPassword}
+                className="w-full bg-bg border border-border rounded-lg px-3.5 py-2.5 pr-10 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
               />
 
               {error && <p className="text-sm text-danger bg-danger-bg rounded-lg px-3.5 py-2.5">{error}</p>}

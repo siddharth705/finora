@@ -136,7 +136,7 @@ class BulkRecategorizeLearningIT extends AbstractIntegrationTest {
     void bulkRecategorizeQueuesItsLearningAndAppliesNothingInline() {
         Fixture f = fixture();
 
-        transactionService.bulkRecategorize(f.user().getId(), f.transactionIds(), TARGET_CATEGORY);
+        transactionService.bulkRecategorize(f.user().getId(), f.transactionIds(), TARGET_CATEGORY, f.user().getId());
 
         // Recategorized and committed. The gap between here and the drain below IS the fix:
         // learning is no longer part of the bulk action's unit of work.
@@ -163,7 +163,7 @@ class BulkRecategorizeLearningIT extends AbstractIntegrationTest {
     void aQueuedBulkEventClaimsNoStatementAndNoSession() {
         Fixture f = fixture();
 
-        transactionService.bulkRecategorize(f.user().getId(), f.transactionIds(), TARGET_CATEGORY);
+        transactionService.bulkRecategorize(f.user().getId(), f.transactionIds(), TARGET_CATEGORY, f.user().getId());
 
         assertThat(eventsFor(f)).isNotEmpty().allSatisfy(e -> {
             assertThat(e.getSourceStatementImportId()).isNull();
@@ -194,7 +194,7 @@ class BulkRecategorizeLearningIT extends AbstractIntegrationTest {
         doThrow(new DataIntegrityViolationException("duplicate key value violates unique constraint"))
                 .when(learningService).confirm(any(), any(), any());
 
-        transactionService.bulkRecategorize(f.user().getId(), f.transactionIds(), TARGET_CATEGORY);
+        transactionService.bulkRecategorize(f.user().getId(), f.transactionIds(), TARGET_CATEGORY, f.user().getId());
 
         // Previously: an exception out of bulkRecategorize and zero rows changed.
         assertThat(transactionsFor(f)).hasSize(DESCRIPTIONS.size())
@@ -218,7 +218,7 @@ class BulkRecategorizeLearningIT extends AbstractIntegrationTest {
     @Test
     void oneMerchantsLearningFailingLeavesEveryRecategorizationIntact() {
         Fixture f = fixture();
-        transactionService.bulkRecategorize(f.user().getId(), f.transactionIds(), TARGET_CATEGORY);
+        transactionService.bulkRecategorize(f.user().getId(), f.transactionIds(), TARGET_CATEGORY, f.user().getId());
 
         UUID doomedMerchantId = eventsFor(f).get(0).getMerchantId();
         doThrow(new DataIntegrityViolationException("duplicate key value violates unique constraint"))
@@ -253,7 +253,7 @@ class BulkRecategorizeLearningIT extends AbstractIntegrationTest {
     @Test
     void everyMerchantsLearningFailingStillLeavesEveryRecategorizationIntact() {
         Fixture f = fixture();
-        transactionService.bulkRecategorize(f.user().getId(), f.transactionIds(), TARGET_CATEGORY);
+        transactionService.bulkRecategorize(f.user().getId(), f.transactionIds(), TARGET_CATEGORY, f.user().getId());
 
         doThrow(new DataIntegrityViolationException("everything lost its race"))
                 .when(learningService).confirm(any(), any(), any());
@@ -289,7 +289,7 @@ class BulkRecategorizeLearningIT extends AbstractIntegrationTest {
         UUID notTheirs = UUID.randomUUID();
 
         assertThatThrownBy(() -> transactionService.bulkRecategorize(
-                f.user().getId(), List.of(ownedId, notTheirs), TARGET_CATEGORY))
+                f.user().getId(), List.of(ownedId, notTheirs), TARGET_CATEGORY, f.user().getId()))
                 .isInstanceOf(ApiException.class);
 
         assertThat(eventsFor(f)).isEmpty();

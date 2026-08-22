@@ -65,7 +65,11 @@ public class TemplateEmailParser implements MerchantEmailParser {
         return parse(message, template.get());
     }
 
-    private ParserResult parse(SanitizedGmailMessage message, MerchantTemplate template) {
+    /** Package-private, not private: {@code MerchantTemplateTestRunner} (the admin test sandbox)
+     *  calls this directly against a throwaway, never-persisted {@link MerchantTemplate} so a
+     *  template can be verified before it is saved -- reusing the exact matching logic the real
+     *  pipeline runs, rather than a second implementation that could drift from it. */
+    ParserResult parse(SanitizedGmailMessage message, MerchantTemplate template) {
         String text = message.plainText();
 
         if (!template.matchesReceiptMarker(text)) {

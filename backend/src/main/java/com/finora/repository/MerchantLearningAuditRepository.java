@@ -3,6 +3,7 @@ package com.finora.repository;
 import com.finora.entity.MerchantLearningAudit;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import java.util.List;
 import java.util.UUID;
@@ -15,7 +16,26 @@ public interface MerchantLearningAuditRepository extends JpaRepository<MerchantL
     // doc comment: not wired in until Milestone B), but fixed proactively -- an unscoped query
     // like this is a landmine for whoever wires it up next, not a "safe because unused today"
     // situation.
-    List<MerchantLearningAudit> findByUserIdAndMerchantIdOrderByCreatedAtDesc(UUID userId, UUID merchantId);
+    //
+    // Self-review catch (Phase 4c mediums batch, while investigating Bug 54): this used to be a
+    // name-derived query with no tiebreaker on createdAt -- exactly the failure mode
+    // findByUserIdOrderByCreatedAtAscIdAsc's own comment below already documents and fixes for
+    // the OTHER audit query in this interface. MerchantLearningAudit.createdAt is a plain
+    // `Instant.now()` field initializer, not a DB sequence, so two rows written back-to-back (a
+    // worker or an admin bulk action confirming several categories for the same merchant in a
+    // tight loop) can land in the same clock tick. undo() reads exactly this list's FIRST element
+    // as "the most recent action" and reverts whatever category it named -- with no tiebreaker, a
+    // tie between two DIFFERENT categories' entries left which one "most recent" meant
+    // unspecified, so undo() could revert the wrong one. Converted from a name-derived query to
+    // an explicit @Query specifically so the tiebreaker could be added without renaming a method
+    // called from MerchantService.auditHistory/merge, MerchantLearningService.undo, and several
+    // tests. Same caveat as the sibling query: id (a random UUID) doesn't reconstruct true
+    // insertion order for a genuine tie -- it only guarantees a deterministic answer, which is
+    // all either query can promise once the wall clock itself cannot tell two rows apart.
+    @Query("SELECT a FROM MerchantLearningAudit a WHERE a.userId = :userId AND a.merchantId = :merchantId "
+            + "ORDER BY a.createdAt DESC, a.id DESC")
+    List<MerchantLearningAudit> findByUserIdAndMerchantIdOrderByCreatedAtDesc(
+            @Param("userId") UUID userId, @Param("merchantId") UUID merchantId);
 
     // Cross-merchant, unlike the query above -- backs AnalyticsService.learningGrowth() (grouped
     // by month in-memory) and the Workspace's future Learning Engine timeline (task #69). Still

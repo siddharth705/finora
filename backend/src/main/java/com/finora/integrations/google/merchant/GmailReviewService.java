@@ -61,14 +61,72 @@ public class GmailReviewService {
      *  (see its own record), and querying the template table plus hardcoding the hand-written
      *  parsers' names for a label nothing downstream reads programmatically would be more moving
      *  parts than this list, not fewer. A domain missing from this map is not an error -- it falls
-     *  back to the domain itself, exactly as honest as showing nothing extra. */
-    private static final Map<String, String> DISPLAY_NAMES = Map.of(
-            "amazon.in", "Amazon",
-            "olacabs.com", "Ola",
-            "uber.com", "Uber",
-            "zomato.com", "Zomato",
-            "myntra.com", "Myntra",
-            "booking.com", "Booking.com");
+     *  back to the domain itself, exactly as honest as showing nothing extra.
+     *
+     *  <p>{@code Map.ofEntries}, not {@code Map.of} -- V103's 50-merchant readiness seed pushed
+     *  this past {@code Map.of}'s 10-pair overload ceiling. The 50 new entries are display labels
+     *  only; they say nothing about whether that merchant's template is enabled or has ever
+     *  actually parsed anything (V103's own comment: every one of those 50 templates is seeded
+     *  disabled, unverified against a real sample). */
+    private static final Map<String, String> DISPLAY_NAMES = Map.ofEntries(
+            Map.entry("amazon.in", "Amazon"),
+            Map.entry("olacabs.com", "Ola"),
+            Map.entry("uber.com", "Uber"),
+            Map.entry("zomato.com", "Zomato"),
+            Map.entry("myntra.com", "Myntra"),
+            Map.entry("booking.com", "Booking.com"),
+            // V103 readiness seed -- see that migration's own comment for why these 50 domains
+            // are trusted but their templates are not yet enabled.
+            Map.entry("swiggy.com", "Swiggy"),
+            Map.entry("blinkit.com", "Blinkit"),
+            Map.entry("zeptonow.com", "Zepto"),
+            Map.entry("bigbasket.com", "BigBasket"),
+            Map.entry("flipkart.com", "Flipkart"),
+            Map.entry("meesho.com", "Meesho"),
+            Map.entry("ajio.com", "Ajio"),
+            Map.entry("nykaa.com", "Nykaa"),
+            Map.entry("tatacliq.com", "Tata Cliq"),
+            Map.entry("snapdeal.com", "Snapdeal"),
+            Map.entry("firstcry.com", "FirstCry"),
+            Map.entry("lenskart.com", "Lenskart"),
+            Map.entry("decathlon.in", "Decathlon"),
+            Map.entry("croma.com", "Croma"),
+            Map.entry("reliancedigital.in", "Reliance Digital"),
+            Map.entry("dominos.co.in", "Domino's"),
+            Map.entry("pizzahut.co.in", "Pizza Hut"),
+            Map.entry("eatsure.com", "EatSure"),
+            Map.entry("licious.in", "Licious"),
+            Map.entry("countrydelight.in", "Country Delight"),
+            Map.entry("irctc.co.in", "IRCTC"),
+            Map.entry("makemytrip.com", "MakeMyTrip"),
+            Map.entry("yatra.com", "Yatra"),
+            Map.entry("goibibo.com", "Goibibo"),
+            Map.entry("cleartrip.com", "Cleartrip"),
+            Map.entry("easemytrip.com", "EaseMyTrip"),
+            Map.entry("redbus.in", "RedBus"),
+            Map.entry("bookmyshow.com", "BookMyShow"),
+            Map.entry("pvrcinemas.com", "PVR Cinemas"),
+            Map.entry("inoxmovies.com", "INOX"),
+            Map.entry("phonepe.com", "PhonePe"),
+            Map.entry("paytm.com", "Paytm"),
+            Map.entry("cred.club", "CRED"),
+            Map.entry("rapido.bike", "Rapido"),
+            Map.entry("urbancompany.com", "Urban Company"),
+            Map.entry("dunzo.com", "Dunzo"),
+            Map.entry("porter.in", "Porter"),
+            Map.entry("1mg.com", "1mg"),
+            Map.entry("pharmeasy.in", "PharmEasy"),
+            Map.entry("netmeds.com", "Netmeds"),
+            Map.entry("netflix.com", "Netflix"),
+            Map.entry("hotstar.com", "Disney+ Hotstar"),
+            Map.entry("sonyliv.com", "SonyLIV"),
+            Map.entry("spotify.com", "Spotify"),
+            Map.entry("airtel.in", "Airtel"),
+            Map.entry("jio.com", "Jio"),
+            Map.entry("myvi.in", "Vi"),
+            Map.entry("tatapower.com", "Tata Power"),
+            Map.entry("policybazaar.com", "Policybazaar"),
+            Map.entry("hdfcergo.com", "HDFC ERGO"));
 
     private final ImportSessionRepository importSessionRepository;
     private final ImportSessionService importSessionService;

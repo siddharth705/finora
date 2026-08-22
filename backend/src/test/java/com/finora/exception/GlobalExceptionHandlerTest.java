@@ -306,4 +306,36 @@ class GlobalExceptionHandlerTest {
             logger.detachAppender(appender);
         }
     }
+
+    // ---------------------------------------------------------------- Bug 09
+
+    /**
+     * Bug 09. A wrong HTTP verb on an existing route (GET on a POST-only endpoint, say) used to
+     * fall through the catch-all below and come back as a 500 INTERNAL_ERROR instead of the 405
+     * Spring's own DefaultHandlerExceptionResolver would have produced unassisted.
+     */
+    @Test
+    void handleMethodNotSupported_returns405_notTheGeneric500() {
+        GlobalExceptionHandler handler = new GlobalExceptionHandler(mock(Environment.class));
+
+        var response = handler.handleMethodNotSupported(
+                new org.springframework.web.HttpRequestMethodNotSupportedException("GET"));
+
+        assertThat(response.getStatusCode().value()).isEqualTo(405);
+        assertThat(response.getBody().errorCode()).isEqualTo("METHOD_NOT_ALLOWED");
+        assertThat(response.getBody().message()).contains("GET");
+    }
+
+    /** Bug 09's other half -- a wrong Content-Type used to hit the same catch-all. */
+    @Test
+    void handleMediaTypeNotSupported_returns415_notTheGeneric500() {
+        GlobalExceptionHandler handler = new GlobalExceptionHandler(mock(Environment.class));
+
+        var response = handler.handleMediaTypeNotSupported(
+                new org.springframework.web.HttpMediaTypeNotSupportedException(
+                        "text/plain", java.util.List.of(org.springframework.http.MediaType.APPLICATION_JSON)));
+
+        assertThat(response.getStatusCode().value()).isEqualTo(415);
+        assertThat(response.getBody().errorCode()).isEqualTo("UNSUPPORTED_MEDIA_TYPE");
+    }
 }

@@ -102,14 +102,14 @@ public class TransactionController {
 
     @PostMapping("/bulk-delete")
     public ResponseEntity<ApiResponse<Void>> bulkDelete(@Valid @RequestBody TransactionDto.BulkDeleteRequest request) {
-        transactionService.bulkDelete(currentUser.id(), request.ids());
+        transactionService.bulkDelete(currentUser.id(), request.ids(), currentUser.id());
         return ResponseEntity.ok(ApiResponse.ok(null, request.ids().size() + " transaction(s) deleted"));
     }
 
     @PostMapping("/bulk-category")
     public ResponseEntity<ApiResponse<Void>> bulkRecategorize(
             @Valid @RequestBody TransactionDto.BulkRecategorizeRequest request) {
-        transactionService.bulkRecategorize(currentUser.id(), request.ids(), request.category());
+        transactionService.bulkRecategorize(currentUser.id(), request.ids(), request.category(), currentUser.id());
         return ResponseEntity.ok(ApiResponse.ok(null, request.ids().size() + " transaction(s) recategorized"));
     }
 }

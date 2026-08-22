@@ -47,11 +47,13 @@ Category and so made the name "ambiguous"). It is fixed by the same change.
 
 ACCEPTING A FALSE POSITIVE
 --------------------------
-The accept-list below is deliberately EMPTY. If you need to add an entry, follow
-check-dependency-advisories.py's contract, which this mirrors: an accepted entry that no longer
-corresponds to a real finding FAILS, so the list cannot quietly rot the way the docstring list
-above did. Prefer fixing the checker -- both survivors above looked like unfixable regex trivia and
-were both real bugs affecting every file, not just the one that surfaced them.
+Follow check-dependency-advisories.py's contract, which this mirrors: an accepted entry that no
+longer corresponds to a real finding FAILS, so the list cannot quietly rot the way the docstring
+list above did. Prefer fixing the checker -- every survivor above looked like unfixable regex
+trivia and was a real bug affecting every file, not just the one that surfaced it. The one entry
+below is different in kind: telling a capitalised identifier in a declarator position from a type
+reference needs a real Java parser, not a tokeniser (see its own reason for why that is not worth
+building for one occurrence).
 
 USAGE
 -----
@@ -87,20 +89,48 @@ class Accepted:
         return (self.path, self.type_name, self.declared_in)
 
 
-# Emptied when V62's MerchantLearningEvent introduced a second nested type named Status.
+# Bug 47. V62's MerchantLearningEvent introduced a second nested type named Status
+# (PasswordChangeSession already had one), and the old ambiguity handling treated "declared in
+# more than one file" as reason to skip every occurrence of the name EVERYWHERE, in every file --
+# not just the two declaring ones. That silently blinded the checker to `Status` across the whole
+# tree, which is exactly the failure mode this script's own docstring already records happening
+# once with Category and was rewritten to stop doing. `scan()` below now resolves a duplicated
+# simple name PER REFERENCING FILE against every location that declares it, and only reports a
+# problem when NONE of them are visible without an import -- so two files each nesting a `Status`
+# no longer costs the checker its ability to see either one. See SELF_TEST_SOURCES' DupHolderA/
+# DupHolderB/DupImporterBroken fixtures, which reproduce this exact shape and pin the fix.
 #
-# The removed entry excused `Status` in TwoFactorSmsProvider -- a record COMPONENT name mirroring
-# 2Factor's JSON response shape, which the tokeniser could not distinguish from a reference to
-# PasswordChangeSession.Status. It went stale, but NOT because that file changed: a second type
-# named Status now exists, so the name is declared in more than one file, and the `ambiguous` rule
-# below skips every Status occurrence everywhere. The false positive is suppressed rather than
-# fixed, and one real reference to Status would now be missed along with it.
-#
-# That is the same mechanic this module's docstring already records happening once with Category.
-# The consequence worth writing down: if MerchantLearningEvent.Status is ever renamed or removed,
-# Status stops being ambiguous, the false positive comes back, and this entry has to come back
-# with it. Restore it from git history rather than rewriting the reasoning from scratch.
-ACCEPTED_FALSE_POSITIVES = []
+# Fixing that brought back the ONE genuine false positive `Status`'s ambiguity used to hide as a
+# side effect (see the commit that emptied this list for the original entry, restored below
+# almost verbatim): now that the checker actually looks at every occurrence again, TWO more
+# unrelated `Status` types (com.finora.integrations.google, .merchant) also declared later than
+# this list was last non-empty widen the reported `declared_in` beyond the original single
+# package, but the reference itself, and why it is not one, are unchanged.
+ACCEPTED_FALSE_POSITIVES = [
+    Accepted(
+        path="backend/src/main/java/com/finora/service/TwoFactorSmsProvider.java",
+        type_name="Status",
+        declared_in="com.finora.entity, com.finora.integrations.google, com.finora.integrations.google.merchant",
+        reason=(
+            "Not a type reference. The file declares\n"
+            "      `private record TwoFactorResponse(String Status, String Details) {}` -- 'Status'\n"
+            "      is a record COMPONENT NAME, capitalised only because it mirrors 2Factor's JSON\n"
+            "      response shape, and renaming it would break Jackson binding to a third-party API.\n"
+            "      This file uses none of the (now three) unrelated com.finora types also named\n"
+            "      Status.\n"
+            "\n"
+            "      Accepted rather than fixed because separating a capitalised identifier in a\n"
+            "      declarator position from a type reference needs a real Java parser, not a\n"
+            "      tokeniser. That is a disproportionate amount of machinery for one occurrence,\n"
+            "      and every cheaper heuristic tried (ignore a capitalised token preceded by\n"
+            "      another capitalised token) also suppresses genuine references like\n"
+            "      `Map<String, Foo>`.\n"
+            "\n"
+            "      Revisit if this pattern spreads: more than two or three of these means the\n"
+            "      tokeniser is the wrong tool and the check should move to ArchUnit, which has\n"
+            "      real type information."),
+    ),
+]
 
 
 # --------------------------------------------------------------------------- lexing
@@ -163,6 +193,29 @@ IMPORT_RE = re.compile(r"^\s*import\s+(?:static\s+)?([\w.]+(?:\.\*)?)\s*;", re.M
 TOKEN_RE = re.compile(r"(?<![.\w])([A-Z]\w*)")
 
 
+def _import_covers(fqn, imports, wildcards, raw):
+    """Whether one candidate declaring location is reachable from a file's own imports/text.
+
+    Split out of scan()'s main loop so a duplicated simple name (Bug 47) can be checked against
+    EACH of its declaring locations in turn, rather than only the first one found.
+    """
+    # A wildcard `X.*` covers exactly the types whose fully-qualified name is `X.<simple>`, so the
+    # test is on the fqn's parent -- which is the PACKAGE for a top-level type and the ENCLOSING
+    # CLASS for a nested one. Checking `decl_pkg in wildcards` instead looks equivalent and is
+    # not: `import com.finora.dto.AuthDtos.*;` is how most of this codebase's request/response
+    # records are imported, and a package-only test misses every one of them. It appeared to work
+    # only because fully-qualified names used to be built flat, so two bugs cancelled; fixing the
+    # nesting exposed this one across 67 references.
+    if fqn in imports or fqn.rsplit(".", 1)[0] in wildcards:
+        return True
+    # An enclosing type imported instead of the nested one: `import a.b.Outer;` then `Outer.Inner`.
+    # The token scan already ignores dotted references, but the enclosing import legitimately
+    # covers this file.
+    if any(fqn.startswith(imp + ".") for imp in imports):
+        return True
+    return fqn in raw
+
+
 # --------------------------------------------------------------------------- scan
 
 def scan(files):
@@ -191,8 +244,6 @@ def scan(files):
             fqn = ".".join([pkg] + enclosing + [name])
             declarations[name].append((fqn, pkg, path))
 
-    ambiguous = {n for n, locs in declarations.items() if len({f for f, _, _ in locs}) > 1}
-
     problems = []
     for path, meta in info.items():
         pkg = meta["pkg"]
@@ -206,30 +257,36 @@ def scan(files):
         # this the checker fires on every collision with a third-party simple name.
         bound_names = {i.rsplit(".", 1)[1] for i in meta["imports"] if not i.endswith(".*")}
         for name, locs in declarations.items():
-            if name in ambiguous or name not in meta["tokens"] or name in bound_names:
+            if name not in meta["tokens"] or name in bound_names:
                 continue
-            fqn, decl_pkg, decl_file = locs[0]
-            if decl_file == path or decl_pkg == pkg:
+            # Bug 47: a simple name can be declared in more than one file (two unrelated classes
+            # both nesting a type called Status, say). That used to mean "skip this name
+            # everywhere" -- which blinded the checker to every real reference to it, in every
+            # file, not just the ambiguous ones. Every declaring location is instead treated as a
+            # candidate the bare reference could resolve to, and the reference is only a problem
+            # if NONE of them are visible without an import.
+            #
+            # A location this file can already see without one -- itself, or another type in its
+            # own package -- resolves the bare name outright, whatever else also happens to share
+            # the name. Checked across ALL locations before candidates are even built: a file that
+            # nests its own Status must not get flagged just because an UNRELATED Status also
+            # exists somewhere else in the tree.
+            if any(decl_file == path or decl_pkg == pkg for _, decl_pkg, decl_file in locs):
                 continue
-            if decl_pkg == "com.finora" or not decl_pkg.startswith("com.finora"):
+            candidates = [
+                (fqn, decl_pkg, decl_file)
+                for fqn, decl_pkg, decl_file in locs
+                if decl_pkg != "com.finora" and decl_pkg.startswith("com.finora")
+            ]
+            if not candidates:
                 continue
-            # A wildcard `X.*` covers exactly the types whose fully-qualified name is `X.<simple>`,
-            # so the test is on the fqn's parent -- which is the PACKAGE for a top-level type and
-            # the ENCLOSING CLASS for a nested one. Checking `decl_pkg in wildcards` instead looks
-            # equivalent and is not: `import com.finora.dto.AuthDtos.*;` is how most of this
-            # codebase's request/response records are imported, and a package-only test misses
-            # every one of them. It appeared to work only because fully-qualified names used to be
-            # built flat, so two bugs cancelled; fixing the nesting exposed this one across 67
-            # references.
-            if fqn in meta["imports"] or fqn.rsplit(".", 1)[0] in wildcards:
+            if any(_import_covers(fqn, meta["imports"], wildcards, meta["raw"])
+                   for fqn, _, _ in candidates):
                 continue
-            # An enclosing type imported instead of the nested one: `import a.b.Outer;` then
-            # `Outer.Inner`. The token scan already ignores dotted references, but the enclosing
-            # import legitimately covers this file.
-            if any(fqn.startswith(imp + ".") for imp in meta["imports"]):
-                continue
-            if fqn in meta["raw"]:
-                continue
+            # Ambiguous and unresolved: report every candidate's package, since the checker
+            # cannot tell which one the file meant to import -- that is the caller's call, not
+            # something to guess at and possibly get wrong.
+            decl_pkg = ", ".join(sorted({decl_pkg for _, decl_pkg, _ in candidates}))
             problems.append((os.path.relpath(path, REPO_ROOT).replace("\\", "/"), name, decl_pkg))
 
     return sorted(set(problems))
@@ -302,6 +359,38 @@ SELF_TEST_SOURCES = {
             ProbeTarget field;
         }
     """,
+    # Bug 47's exact shape: two unrelated classes, in two different packages, each nest a type
+    # called Dup. Neither DupHolderA nor DupHolderB is DupImporterBroken's own file or package.
+    "main/java/com/finora/probe/DupHolderA.java": """
+        package com.finora.probe;
+        public class DupHolderA {
+            public enum Dup { X }
+        }
+    """,
+    "main/java/com/finora/other2/DupHolderB.java": """
+        package com.finora.other2;
+        public class DupHolderB {
+            public enum Dup { Y }
+        }
+    """,
+    # Correctly imports ONE of the two Dup types. Must NOT be reported -- the old ambiguity
+    # handling already got this case right; a fix must not regress it.
+    "main/java/com/finora/other/DupImporterCorrect.java": """
+        package com.finora.other;
+        import com.finora.probe.DupHolderA.Dup;
+        public class DupImporterCorrect {
+            Dup field;
+        }
+    """,
+    # No import for EITHER Dup. This is the regression Bug 47 describes: before the fix, Dup being
+    # declared in more than one file made the checker skip every occurrence of it everywhere, so
+    # this genuinely broken file was silently missed. Must be reported.
+    "main/java/com/finora/other/DupImporterBroken.java": """
+        package com.finora.other;
+        public class DupImporterBroken {
+            Dup field;
+        }
+    """,
 }
 
 
@@ -325,8 +414,16 @@ def self_test():
             failures.append(
                 "MISSED a genuinely missing import (BrokenUser -> ProbeTarget). The checker is "
                 "vacuous: it would pass every future run without checking anything.")
+        # Bug 47: two files (DupHolderA, DupHolderB) each declare a nested type with the same
+        # simple name. That must not blind the checker to a genuinely missing import for it.
+        if ("DupImporterBroken.java", "Dup") not in names:
+            failures.append(
+                "MISSED a genuinely missing import for a name declared in more than one file "
+                "(DupImporterBroken -> Dup). This is the exact regression Bug 47 describes: a "
+                "duplicated simple name silently disabled the checker for that name everywhere.")
         for basename in ("NestedImporter.java", "UrlInString.java", "NestedWildcard.java",
-                         "PackageWildcard.java", "ShadowedByThirdParty.java"):
+                         "PackageWildcard.java", "ShadowedByThirdParty.java",
+                         "DupImporterCorrect.java"):
             for f, t in names:
                 if f == basename:
                     failures.append(f"FALSE POSITIVE on {basename}: flagged '{t}'.")
@@ -337,7 +434,8 @@ def self_test():
                 print("  - " + f, file=sys.stderr)
             return 1
         print("check-imports self-test passed "
-              "(detects a real break; no FP on nested imports or URLs in strings)")
+              "(detects a real break; no FP on nested imports, URLs in strings, or a name "
+              "declared in more than one file)")
         return 0
     finally:
         shutil.rmtree(tmp, ignore_errors=True)

@@ -24,6 +24,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 /**
@@ -172,7 +173,7 @@ class BudgetServiceTest {
     @Test
     void upsert_updatesTheExistingRow_ratherThanInsertingASecondBudgetForTheSameCategory() {
         Category dining = category("Dining");
-        when(categoryRepository.findByUserIdAndName(userId, "Dining")).thenReturn(Optional.of(dining));
+        when(categoryRepository.findByUserIdAndNameIgnoreCaseOrderByIdAsc(userId, "Dining")).thenReturn(List.of(dining));
 
         Budget existing = budget(dining.getId(), new BigDecimal("3000.00"));
         when(budgetRepository.findByUserIdAndCategoryId(userId, dining.getId())).thenReturn(Optional.of(existing));
@@ -184,5 +185,64 @@ class BudgetServiceTest {
         assertThat(existing.getMonthlyLimit()).isEqualByComparingTo("6000.00");
         // Exactly one write. Two means the dead catch has been reintroduced.
         verify(budgetRepository, times(1)).save(any());
+    }
+
+    /**
+     * Bug 35 (docs/quality/bug-reports/BUG_REVIEW_REPORT.md). This used to hardcode
+     * BigDecimal.ZERO regardless of what the category had actually accrued this month --
+     * listForUser computed the real figure, upsert() didn't. A client updating local state from
+     * the mutation response (the standard optimistic-update pattern) showed 0% progress on a
+     * category already over budget, most visibly when editing an EXISTING budget's limit.
+     */
+    @Test
+    void upsert_reportsTheRealSpendThisMonth_notHardcodedZero() {
+        Category dining = category("Dining");
+        when(categoryRepository.findByUserIdAndNameIgnoreCaseOrderByIdAsc(userId, "Dining")).thenReturn(List.of(dining));
+        when(budgetRepository.findByUserIdAndCategoryId(userId, dining.getId())).thenReturn(Optional.empty());
+        when(budgetRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        YearMonth thisMonth = YearMonth.now(ZoneId.systemDefault());
+        Transaction spent1 = expense(new BigDecimal("4000.00"), dining.getId());
+        spent1.setTxnDate(thisMonth.atDay(1));
+        Transaction spent2 = expense(new BigDecimal("2000.00"), dining.getId());
+        spent2.setTxnDate(thisMonth.atEndOfMonth());
+        when(transactionRepository.findByUserIdAndTxnDateBetween(eq(userId), any(), any()))
+                .thenReturn(List.of(spent1, spent2));
+
+        BudgetDto result = budgetService.upsert(userId, new BudgetDto.UpsertRequest("Dining", new BigDecimal("5000.00")));
+
+        assertThat(result.spentThisMonth()).isEqualByComparingTo("6000.00");
+    }
+
+    @Test
+    void upsert_reportsZeroSpend_whenNothingWasSpentThisMonth() {
+        Category dining = category("Dining");
+        when(categoryRepository.findByUserIdAndNameIgnoreCaseOrderByIdAsc(userId, "Dining")).thenReturn(List.of(dining));
+        when(budgetRepository.findByUserIdAndCategoryId(userId, dining.getId())).thenReturn(Optional.empty());
+        when(budgetRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        BudgetDto result = budgetService.upsert(userId, new BudgetDto.UpsertRequest("Dining", new BigDecimal("5000.00")));
+
+        assertThat(result.spentThisMonth()).isEqualByComparingTo(BigDecimal.ZERO);
+    }
+
+    /**
+     * Bug 16. Budgeting "dining" must attach to an existing "Dining" category rather than
+     * creating a sibling that would leave the existing budget attached to the wrong one of the
+     * two rows.
+     */
+    @Test
+    void upsert_matchesAnExistingCategoryCaseInsensitively() {
+        Category dining = category("Dining");
+        when(categoryRepository.findByUserIdAndNameIgnoreCaseOrderByIdAsc(userId, "dining")).thenReturn(List.of(dining));
+
+        Budget existing = budget(dining.getId(), new BigDecimal("3000.00"));
+        when(budgetRepository.findByUserIdAndCategoryId(userId, dining.getId())).thenReturn(Optional.of(existing));
+        when(budgetRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        budgetService.upsert(userId, new BudgetDto.UpsertRequest("dining", new BigDecimal("6000.00")));
+
+        verify(categoryRepository, never()).save(any());
+        assertThat(existing.getMonthlyLimit()).isEqualByComparingTo("6000.00");
     }
 }

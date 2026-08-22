@@ -127,6 +127,24 @@ class AdminTrustedSenderEndpointIT extends AbstractIntegrationTest {
         }
     }
 
+    /** V103's readiness seed -- 50 more domains, trusted (ACTIVE) but paired with disabled
+     *  templates (see AdminMerchantTemplateEndpointIT's own migration test for the template
+     *  half). Only a small representative sample across the seed's category spread (food
+     *  delivery, e-commerce, travel, payments, OTT, telecom, insurance), not all 50 -- proving the
+     *  migration landed at all does not need enumerating every row, the same reasoning
+     *  theMigrationSeedsTheInitialMerchantDomainsAsActive already applies to V82's own 6. */
+    @Test
+    void theReadinessSeedTrustsFiftyMoreDomains() {
+        for (String domain : new String[]{"swiggy.com", "flipkart.com", "irctc.co.in",
+                                          "phonepe.com", "netflix.com", "airtel.in", "hdfcergo.com"}) {
+            assertThat(domains.findByDomain(domain))
+                    .as("%s should be seeded ACTIVE by V103", domain)
+                    .isPresent()
+                    .get()
+                    .matches(TrustedSenderDomain::isActive, "active");
+        }
+    }
+
     /** The unique index is what actually prevents a domain existing twice with different statuses,
      *  which would make "is this trusted?" depend on which row a query happened to read. */
     @Test

@@ -16,6 +16,43 @@ import { safeStorage } from './safeStorage';
  */
 const ENABLED_KEY = 'finora_app_lock_enabled';
 
+/**
+ * Module-level, not component state -- authenticate() has two independent callers
+ * (AppLockGate's own re-lock prompt, and AppLockSection's "confirm to enable" prompt in
+ * Settings), and presenting the native Face ID/Touch ID sheet drives AppState through
+ * inactive/background and back to active as a side effect of the prompt itself, confirmed
+ * on-device. AppLockGate's foreground listener needs to recognize BOTH sources -- state scoped
+ * to AppLockGate alone left it blind to AppLockSection's call entirely, which is what turning the
+ * setting ON in Settings actually triggers first: that prompt's own blip reached AppLockGate,
+ * which had no idea an authenticate() call was running anywhere, decided this looked like a
+ * genuine foreground return, and locked the whole app on top of the confirmation the user had
+ * just given -- the reported loop's real starting point, not something scoped to AppLockGate's
+ * own re-lock flow.
+ */
+let authenticatingCount = 0;
+let lastResolvedAt = 0;
+
+/** True for the entire duration of any authenticate() call in progress, from any caller. */
+export function isAuthenticating(): boolean {
+  return authenticatingCount > 0;
+}
+
+/** True if some authenticate() call (from any caller) resolved within the last `windowMs`. */
+export function justFinishedAuthenticating(windowMs: number): boolean {
+  return Date.now() - lastResolvedAt < windowMs;
+}
+
+/** Test-only. This module-level state is meant to persist for the life of the app process, but
+ *  that is exactly what makes it a cross-test hazard: `lastResolvedAt` is stamped with the REAL
+ *  wall-clock time by every test that completes a real authenticate() call, and Jest runs tests
+ *  in the same file milliseconds apart -- comfortably inside justFinishedAuthenticating's own
+ *  windows -- so without a reset between tests, an early test's authenticate() call can silently
+ *  suppress a later, unrelated test's foreground check. */
+export function __resetAuthenticatingStateForTests(): void {
+  authenticatingCount = 0;
+  lastResolvedAt = 0;
+}
+
 export async function isSupported(): Promise<boolean> {
   const [hasHardware, isEnrolled] = await Promise.all([
     LocalAuthentication.hasHardwareAsync(),
@@ -43,6 +80,7 @@ export async function setEnabled(enabled: boolean): Promise<void> {
  *  biometric, user cancelled, hardware unavailable, nothing enrolled) is collapsed to false --
  *  the caller has exactly one thing to decide either way: stay locked, or unlock. */
 export async function authenticate(promptMessage: string): Promise<boolean> {
+  authenticatingCount++;
   try {
     const result = await LocalAuthentication.authenticateAsync({
       promptMessage,
@@ -61,5 +99,8 @@ export async function authenticate(promptMessage: string): Promise<boolean> {
     // ever answers locked or unlocked" -- a thrown error must fail closed to locked, the same as
     // every other rejection path.
     return false;
+  } finally {
+    authenticatingCount--;
+    lastResolvedAt = Date.now();
   }
 }

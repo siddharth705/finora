@@ -226,10 +226,22 @@ api.interceptors.response.use(
       return Promise.reject(error);
     }
 
-    // Error responses use the same {success:false, message, errorCode} envelope as the user
-    // frontend's backend calls -- surface message/errorCode where callers expect them.
+    // Error responses use the same {success:false, message, errorCode, details} envelope as the
+    // user frontend's backend calls -- surface message/errorCode where callers expect them.
+    // Bug 40: `details` used to be dropped here, same as the user frontend's client.ts once did
+    // (see that file's own comment on this block) -- silently truncating every structured
+    // ApiException (field-level import errors, per-row validation, remaining-attempt counts) to
+    // a bare string before any admin-portal caller could ever see it. That includes
+    // AUTH_MFA_REQUIRED's mfaChallengeToken (see AdminMfaService/AuthService.login()'s MFA
+    // branch) -- dropping `details` would have made the login-time MFA step unreachable from the
+    // browser. Mirrors frontend/src/api/client.ts's identical fix for
+    // AUTH_ACCOUNT_DEACTIVATED's reactivationToken.
     if (error.response?.data?.message) {
-      error.response.data = { message: error.response.data.message, errorCode: error.response.data.errorCode };
+      error.response.data = {
+        message: error.response.data.message,
+        errorCode: error.response.data.errorCode,
+        details: error.response.data.details,
+      };
     }
     return Promise.reject(error);
   }

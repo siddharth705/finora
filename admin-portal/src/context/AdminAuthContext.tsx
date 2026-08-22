@@ -43,6 +43,11 @@ export const ADMIN_PORTAL_PERMISSIONS = [
   // listed: nothing in the frontend gates on it directly (the page always renders the dropdown;
   // the backend alone rejects an unauthorized change), so it isn't a portal-entry permission.
   'SUBSCRIPTION_MANAGEMENT_VIEW',
+  // Referrals page (D-28 PR4-C) -- same reasoning as SUBSCRIPTION_MANAGEMENT_VIEW immediately
+  // above: REFERRAL_MANAGEMENT_MANAGE (crediting a reward) is deliberately NOT listed, since the
+  // frontend always renders the "Credit Reward" button and only the backend rejects an
+  // unauthorized attempt.
+  'REFERRAL_MANAGEMENT_VIEW',
 ];
 
 export interface AdminAuthState {
@@ -57,6 +62,7 @@ export interface AdminAuthState {
   // to route to /verify-phone or straight into the dashboard, same pattern as frontend/'s
   // AuthContext.login().
   login: (identifier: string, password: string) => Promise<boolean>;
+  completeMfaChallenge: (challengeToken: string, code: string) => Promise<boolean>;
   completePhoneVerification: () => Promise<void>;
   logout: () => void;
   hasPermission: (permission: string) => boolean;
@@ -66,8 +72,22 @@ const AdminAuthContext = createContext<AdminAuthState | null>(null);
 
 /** Thrown by login() with a message already safe to show the user directly -- LoginPage doesn't
  *  need to know the difference between "wrong password," "not phone-verified," and "no admin
- *  permissions," it just displays whatever this carries. */
-class AdminAccessError extends Error {}
+ *  permissions," it just displays whatever this carries.
+ *
+ *  `code`/`details` added for Admin MFA UI (SEC-03): AUTH_MFA_REQUIRED (wire code "AUTH_008")
+ *  carries a `mfaChallengeToken` in `details` that Login.tsx needs to start the MFA-challenge
+ *  step -- a message-only error had nowhere for that to travel. Both optional and unused by every
+ *  other failure this constructs (wrong password, not phone-verified, no admin permission), which
+ *  keep working exactly as before. */
+export class AdminAccessError extends Error {
+  code?: string;
+  details?: Record<string, unknown>;
+  constructor(message: string, code?: string, details?: Record<string, unknown>) {
+    super(message);
+    this.code = code;
+    this.details = details;
+  }
+}
 
 export function AdminAuthProvider({ children }: { children: ReactNode }) {
   // SEC-01 (docs/quality/bug-reports/2026-08-19-security-review-findings.md). getAdminToken()
@@ -185,18 +205,12 @@ export function AdminAuthProvider({ children }: { children: ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- runs exactly once, on mount, by design.
   }, []);
 
-  async function login(identifier: string, password: string): Promise<boolean> {
-    let response;
-    try {
-      response = await authApi.login(identifier, password);
-    } catch (err: any) {
-      // Never PHONE_VERIFICATION_REQUIRED here -- /auth/login is excluded from
-      // PhoneVerificationFilter, and AuthService.login() itself never checks phone status either,
-      // so login always succeeds regardless of verification state. See loadAccess() below for
-      // where that error can actually occur.
-      throw new AdminAccessError(err?.response?.data?.message ?? 'Sign in failed. Check your credentials and try again.');
-    }
-
+  /** Shared by login() and completeMfaChallenge() below -- once EITHER a password or a completed
+   *  MFA challenge has produced a real session, applying it (persist the token, sync local state,
+   *  decide phone-verification vs. loadAccess()) is identical regardless of which one it was. */
+  async function applySuccessfulAuth(response: {
+    token: string; email: string; fullName: string; phoneVerified: boolean;
+  }): Promise<boolean> {
     // BH-012: response.refreshToken is deliberately not passed through to persistAdminSession --
     // see that function's own comment in client.ts. The same token already arrived as an
     // HttpOnly cookie the browser attaches itself.
@@ -208,11 +222,11 @@ export function AdminAuthProvider({ children }: { children: ReactNode }) {
     setFullName(response.fullName);
     setPhoneVerified(response.phoneVerified);
 
-    // The login response already tells us whether verification is needed -- checking it here,
-    // rather than always calling loadAccess() and reacting to the 403 it'd get back, is what
-    // ADR-0001 means by reusing the existing capability: the info was already available, it was
-    // just being ignored. When phoneVerified is false, Login.tsx routes to /verify-phone instead
-    // of calling loadAccess() (which would only fail); completePhoneVerification() below is what
+    // The response already tells us whether verification is needed -- checking it here, rather
+    // than always calling loadAccess() and reacting to the 403 it'd get back, is what ADR-0001
+    // means by reusing the existing capability: the info was already available, it was just
+    // being ignored. When phoneVerified is false, Login.tsx routes to /verify-phone instead of
+    // calling loadAccess() (which would only fail); completePhoneVerification() below is what
     // calls it once verification actually finishes.
     if (!response.phoneVerified) {
       return false;
@@ -228,6 +242,43 @@ export function AdminAuthProvider({ children }: { children: ReactNode }) {
       throw err;
     }
     return true;
+  }
+
+  async function login(identifier: string, password: string): Promise<boolean> {
+    let response;
+    try {
+      response = await authApi.login(identifier, password);
+    } catch (err: any) {
+      // Never PHONE_VERIFICATION_REQUIRED here -- /auth/login is excluded from
+      // PhoneVerificationFilter, and AuthService.login() itself never checks phone status either,
+      // so login always succeeds regardless of verification state. See loadAccess() below for
+      // where that error can actually occur.
+      //
+      // AUTH_MFA_REQUIRED (an MFA-enabled admin, password correct) IS expected here -- errorCode
+      // and details (carrying mfaChallengeToken) are threaded through so Login.tsx can start the
+      // MFA-challenge step instead of just displaying this as a failure.
+      throw new AdminAccessError(
+        err?.response?.data?.message ?? 'Sign in failed. Check your credentials and try again.',
+        err?.response?.data?.errorCode,
+        err?.response?.data?.details,
+      );
+    }
+    return applySuccessfulAuth(response);
+  }
+
+  /** Finishes a login that came back AUTH_MFA_REQUIRED -- Login.tsx calls this instead of login()
+   *  once the admin has entered their authenticator code (or a recovery code). Same
+   *  challengeToken can only be consumed once (AdminMfaService.verifyChallenge marks it used on
+   *  success), so a wrong code here just throws and the admin retries with the same token. */
+  async function completeMfaChallenge(challengeToken: string, code: string): Promise<boolean> {
+    let response;
+    try {
+      response = await authApi.verifyMfa(challengeToken, code);
+    } catch (err: any) {
+      throw new AdminAccessError(
+        err?.response?.data?.message ?? "That code didn't work. Check your authenticator app and try again.");
+    }
+    return applySuccessfulAuth(response);
   }
 
   /** Called by VerifyPhone.tsx after a successful OTP check -- marks verification complete and
@@ -276,7 +327,7 @@ export function AdminAuthProvider({ children }: { children: ReactNode }) {
 
   return (
     <AdminAuthContext.Provider
-      value={{ token, email, fullName, phoneVerified, permissions, roles, loading, login, completePhoneVerification, logout, hasPermission }}
+      value={{ token, email, fullName, phoneVerified, permissions, roles, loading, login, completeMfaChallenge, completePhoneVerification, logout, hasPermission }}
     >
       {children}
     </AdminAuthContext.Provider>

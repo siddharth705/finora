@@ -1,17 +1,18 @@
 import { api, rawApi, type ApiEnvelope } from './client';
 import type {
 
-  AccountDto, ActivationFunnelDto, AdminUpdateUserRequest, AuditLogDto, BankDto, CategoryConfidencePoint,
-  CreateAccountRequest, CreateBankRequest, CreateRelationshipRequest,
+  AccountDto, ActivationFunnelDto, AdminReferralSummaryDto, AdminUpdateUserRequest, AuditLogDto, BankDto, CategoryConfidencePoint,
+  CreateAccountRequest, CreateBankRequest, CreateMerchantTemplateRequest, CreateRelationshipRequest,
   CreateRuleRequest, CreateUserRequest, FeatureFlagDto, GmailMerchantParserStatDto, LearningGrowthPoint, LearningPlatformStatsDto, LearningSummaryDto,
   LearningTimelineEntry,
-  MeAccessDto, MerchantDto, MerchantMergeRequest, MerchantStatDto,
+  MeAccessDto, MerchantDto, MerchantMergeRequest, MerchantStatDto, MerchantTemplateDto,
   MerchantUpdateRequest, OperationalDashboardDto, PagedResponse, PermissionDto, PlatformAnalyticsDto,
   PlatformDiagnosticsDto, PlatformSettingsDto, PlatformStatsDto, ReconciliationStatsDto, RecentImportDto,
   RelationshipDto, RelationshipMergeRequest, RoleDto, RuleDto,
   SearchResultDto, SubscriptionSummaryDto, SystemHealthDto,
-  TestRuleRequest, TestRuleResult, TopCategoryPoint, TopMerchantPoint, TransactionDto, TrendPoint,
-  UpdateBankRequest, UpdateFeatureFlagRequest,
+  TestMerchantTemplateRequest, TestMerchantTemplateResult, TestRuleRequest, TestRuleResult,
+  TopCategoryPoint, TopMerchantPoint, TransactionDto, TrendPoint,
+  UpdateBankRequest, UpdateFeatureFlagRequest, UpdateMerchantTemplateRequest,
   UpdatePlatformSettingsRequest, UpdateRelationshipRequest,
   UpdateRuleRequest, UserDetailDto, UserSummaryDto, WorkspaceSummaryDto,
   StatementAnalysisDto,
@@ -63,18 +64,41 @@ export const authApi = {
     api.post<{ phoneNumber: string }>('/auth/reset-password/phone', { token }).then((r) => r.data),
   resetPassword: (token: string, firebaseIdToken: string, newPassword: string) =>
     api.post<{ message: string }>('/auth/reset-password', { token, firebaseIdToken, newPassword }).then((r) => r.data),
+  // Second step of a login that came back AUTH_MFA_REQUIRED (Admin MFA UI, SEC-03) -- the
+  // challenge token travels in that error's `details.mfaChallengeToken` (see client.ts's
+  // interceptor). Same response shape as login() itself; AdminAuthContext.completeMfaChallenge()
+  // is what applies it, exactly like completePhoneVerification() finishes login() for the
+  // phone-verification branch.
+  verifyMfa: (challengeToken: string, code: string) =>
+    api.post<{ token: string; refreshToken: string; email: string; fullName: string; phoneVerified: boolean }>(
+      '/auth/mfa/verify', { challengeToken, code }).then((r) => r.data),
 };
 
 export const meApi = {
   access: () => api.get<MeAccessDto>('/users/me/access').then((r) => r.data),
 };
 
-// The current admin's own settings -- only phoneNumber is used here (VerifyPhone.tsx needs the
-// real number to hand to Firebase's signInWithPhoneNumber()), same /users/me endpoint the user
-// app (frontend/) calls for the same reason. Not gated behind any admin permission -- it's just
-// "my own account," same as meApi.access() above.
+// The current admin's own settings -- same /users/me endpoint the user app (frontend/) calls for
+// the same reason, not gated behind any admin permission (it's just "my own account," same as
+// meApi.access() above). signInMethod added alongside phoneNumber (Admin MFA UI, SEC-03): the
+// backend's UserSettingsDto has always carried it, this just widens the type this app reads it
+// as -- see frontend/src/api/endpoints.ts's UserSettings for the full shape this is a subset of.
+// GoogleReauthPrompt needs it to decide whether disabling MFA asks for a password or a fresh
+// Google credential.
 export const userApi = {
-  get: () => api.get<{ phoneNumber: string }>('/users/me').then((r) => r.data),
+  get: () => api.get<{ phoneNumber: string; signInMethod: 'PASSWORD' | 'GOOGLE' }>('/users/me').then((r) => r.data),
+};
+
+// SEC-03: self-service TOTP MFA for the signed-in admin's own account -- see AdminMfaController's
+// own doc comment on why this is gated on PORTAL_ADMIN alone rather than a specific permission
+// (managing your own second factor isn't an action against another admin's data). Off entirely
+// (every call 404s with AUTH_MFA_NOT_AVAILABLE) until app.admin-mfa.enabled=true server-side.
+export const adminMfaApi = {
+  status: () => api.get<{ enabled: boolean }>('/admin-mfa/status').then((r) => r.data),
+  enroll: () => api.post<{ secret: string; provisioningUri: string }>('/admin-mfa/enroll').then((r) => r.data),
+  confirm: (code: string) => api.post<{ recoveryCodes: string[] }>('/admin-mfa/confirm', { code }).then((r) => r.data),
+  disable: (currentPassword: string | null, googleIdToken: string | null) =>
+    api.post<void>('/admin-mfa/disable', { currentPassword, googleIdToken }).then((r) => r.data),
 };
 
 // Just one endpoint now -- there's no backend-triggered "send" step (Firebase's own client SDK
@@ -248,6 +272,13 @@ export const adminSubscriptionsApi = {
     api.put(`/admin/subscriptions/${userId}/plan`, { planCode, reason }),
 };
 
+// D-28 PR4-C. REFERRAL_MANAGEMENT_VIEW/_MANAGE-gated (V101), same split as adminSubscriptionsApi.
+export const adminReferralsApi = {
+  list: () => api.get<AdminReferralSummaryDto[]>('/admin/referrals').then((r) => r.data),
+  creditReward: (referralId: string, amount: number, reason: string) =>
+    api.post(`/admin/referrals/${referralId}/credit`, { amount, reason }),
+};
+
 export const adminSystemApi = {
   health: () => api.get<SystemHealthDto>('/admin/system/health').then((r) => r.data),
   // Admin Portal Phase 7 -- the closest honest equivalent to a background-job monitor this
@@ -313,6 +344,27 @@ export const adminMerchantsApi = {
     api.get<GmailMerchantParserStatDto[]>('/admin/merchants/gmail-parser-stats', {
       params: { since: since.toISOString() },
     }).then((r) => r.data),
+};
+
+/** Admin CRUD + a test sandbox for Gmail merchant templates -- lets an admin add or fix a
+ *  declarative receipt parser without a backend deploy. Gated MERCHANT_MANAGE, same as
+ *  adminMerchantsApi above -- not SYSTEM_SETTINGS -- see AdminMerchantTemplateController's own
+ *  class doc for why. New templates come back disabled; activate is a separate call, always
+ *  taken only after a successful test (see MerchantTemplates.tsx's own TestTemplatePanel). */
+export const adminMerchantTemplatesApi = {
+  list: () => api.get<MerchantTemplateDto[]>('/admin/merchant-templates').then((r) => r.data),
+  create: (request: CreateMerchantTemplateRequest) =>
+    api.post<MerchantTemplateDto>('/admin/merchant-templates', request).then((r) => r.data),
+  update: (id: string, request: UpdateMerchantTemplateRequest) =>
+    api.put<MerchantTemplateDto>(`/admin/merchant-templates/${id}`, request).then((r) => r.data),
+  activate: (id: string) =>
+    api.post<MerchantTemplateDto>(`/admin/merchant-templates/${id}/activate`).then((r) => r.data),
+  deactivate: (id: string) =>
+    api.post<MerchantTemplateDto>(`/admin/merchant-templates/${id}/deactivate`).then((r) => r.data),
+  // Dry-run against a pasted sample email -- never creates or persists a template. See
+  // AdminMerchantTemplateController's /test endpoint doc comment.
+  test: (request: TestMerchantTemplateRequest) =>
+    api.post<TestMerchantTemplateResult>('/admin/merchant-templates/test', request).then((r) => r.data),
 };
 
 /** Admin, support-assisted merchant management for a specific user -- AdminUserMerchantController

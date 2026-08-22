@@ -444,8 +444,10 @@ class MerchantLearningQueueIT extends AbstractIntegrationTest {
                 .as("recovery returns the stranded event to the queue")
                 .isEqualTo(MerchantLearningEvent.Status.PENDING);
         assertThat(recovered.getAttemptCount())
-                .as("the abandonment counts as an attempt, so a repeatedly crashing apply still terminates")
-                .isPositive();
+                .as("Bug 18: a worker dying is not the event's fault, so recovery must not spend a "
+                        + "retry attempt -- otherwise five stranded claims exhaust the entire budget "
+                        + "and mark an event that never actually ran permanently FAILED")
+                .isZero();
     }
 
     // --- helpers ------------------------------------------------------------------------------

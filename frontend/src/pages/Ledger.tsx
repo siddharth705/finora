@@ -6,6 +6,7 @@ import { transactionsApi, categoriesApi, type TransactionFilters, type UpdateTra
 import { AskOnceCard } from '../components/AskOnceCard';
 import { MerchantLogo } from '../components/MerchantLogo';
 import type { Transaction } from '../types';
+import { ConfirmDialog } from '../design-system';
 
 function fmt(n: number) {
   // Negative amounts (e.g. a month where spend exceeded income) must render as "-₹500",
@@ -39,6 +40,7 @@ export default function Ledger() {
   const [explaining, setExplaining] = useState<Transaction | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<Transaction | null>(null);
 
   // Ledger doesn't unmount between two TopBar searches fired while already on this page (same
   // route, just a new ?q=), so the useState initializer above only covers the first visit —
@@ -92,7 +94,6 @@ export default function Ledger() {
   }
 
   async function handleDelete(t: Transaction) {
-    if (!confirm(`Delete "${t.description || t.merchant}" (${fmt(t.amount)})? This can't be undone.`)) return;
     setDeletingId(t.id);
     setError(null);
     try {
@@ -203,7 +204,7 @@ export default function Ledger() {
                         type="button"
                         title="Delete transaction"
                         disabled={deletingId === t.id}
-                        onClick={() => handleDelete(t)}
+                        onClick={() => setConfirmDelete(t)}
                         className="w-7 h-7 rounded border border-border flex items-center justify-center text-danger hover:bg-danger-bg disabled:opacity-40"
                       >
                         <Trash2 size={13} />
@@ -261,6 +262,21 @@ export default function Ledger() {
 
       {explaining && (
         <ExplanationModal transaction={explaining} onClose={() => setExplaining(null)} />
+      )}
+
+      {confirmDelete && (
+        <ConfirmDialog
+          title={`Delete "${confirmDelete.description || confirmDelete.merchant}"?`}
+          message={`${fmt(confirmDelete.amount)} — this can't be undone.`}
+          confirmLabel="Delete"
+          danger
+          onConfirm={() => {
+            const t = confirmDelete;
+            setConfirmDelete(null);
+            void handleDelete(t);
+          }}
+          onCancel={() => setConfirmDelete(null)}
+        />
       )}
     </div>
   );
