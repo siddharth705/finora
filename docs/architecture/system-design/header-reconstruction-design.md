@@ -112,6 +112,9 @@ addressed separately in §8 and Document 2.
 
 ### HSBC DB.pdf — confirmed still live via OCR; mechanism is a strong hypothesis, not fully traced
 
+**Update, §9.4:** the row-bucket mechanism this section flags as unconfirmed was confirmed on
+2026-08-22. Left as originally written below for the historical trace; see §9.4 for the resolution.
+
 Reproduced directly against the real OCR-routed pipeline (`RoutingTextAcquirer` +
 `TesseractRecogniser`, not the plain-extraction diagnostic tools, which do not exercise OCR at all).
 Acquisition succeeds (244 runs, matching prior evidence — the earlier "0 runs" reading was a
@@ -435,9 +438,10 @@ every adjacent problem the investigation happened to surface:
   recover a column whose name was never presented as a separate fragment in the first place — this
   must be fixed upstream, independently, before IOB can fully recover even with the new engine in
   place.
-- **HSBC's row-grouping mechanism**, until confirmed. Kept as a *suspected contributor* per §3. If
-  confirmed, the fix is very likely a `groupIntoRows`/row-formation change (a y-tolerance question
-  for OCR-sourced text specifically), not a header-reconstruction one — the new engine can only
+- **HSBC's row-grouping mechanism** — confirmed 2026-08-22, see §9.4 (was *suspected contributor*
+  per §3 when this line was written): a `groupIntoRows`/row-formation defect (a fixed-anchor-vs-chain
+  clustering question for OCR-sourced text specifically), not a header-reconstruction one — the new
+  engine can only
   compose fragments it is handed as a coherent header *region*; it cannot repair rows that were
   mis-formed before reaching it.
 - **A bank-specific branch of any kind.** No `if SBI` / `if HSBC OCR: increase tolerance`. Every
@@ -454,3 +458,142 @@ every adjacent problem the investigation happened to surface:
   questions at different frequencies — one is asked of every row in a document, the other once per
   section, right before a header is committed to. Merging them would slow and complicate the
   common, already-correct path for no benefit.
+
+## 9. Correction (2026-08-22) — what 2E.2 actually shipped, and what 2E.5 needs to complete
+
+2E.2 (`reconstructHeader`, `PdfTableLocator.java:2292-2375`) shipped as a **narrowed prototype** of
+this design's §4.6–§4.9, not a full implementation — its own doc comment says so directly: *"Phase
+2E.2 prototype of the Header Reconstruction Engine (design doc §4.6-4.9), narrowed to exactly the
+one shape this phase was scoped to prove out"* (`PdfTableLocator.java:2292-2293`). Resuming 2E
+(2E.3/2E.4 both closed not-reproduced) surfaced that the plan's own framing of what 2E.5 needs — "the
+general, multi-tier header-composition case" folding in IOB, HSBC, *and* ICICI together — doesn't
+survive contact with what the shipped prototype and a real-corpus check actually show. Recorded here
+in place, per this project's standing correction discipline, rather than silently editing §3/§4/§8
+above.
+
+### 9.1 Narrowed in two ways, not one
+
+The prototype's own doc comment names both restrictions explicitly:
+
+1. **Single fragment, not multi-fragment.** `nonBlankCount(above) != 1` (`PdfTableLocator.java:2351`)
+   admits exactly one orphaned cell one physical line above the accepted header — never a genuine
+   multi-cell tier.
+2. **Backward-only, not multi-directional.** *"Deliberately does NOT attempt `wrappedHeaderAt`'s
+   forward composition too (IOB's shape, and the general multi-directional case): per the design
+   doc's non-goals and the explicit scope for this phase, a document needing that is left exactly as
+   it is today"* (`PdfTableLocator.java:2295-2299`). The prototype only ever looks at
+   `rows.get(headerIndex - 1)` (`:2333`) — one line *above* whichever row already got accepted as the
+   header. It structurally cannot reach a fragment that belongs *after* the accepted row, regardless
+   of how many fragments there are.
+
+These are two independent gaps, and IOB and ICICI each hit a different one — not the same "general
+case" the plan's §4d table currently implies.
+
+### 9.2 ICICI is not broken today, and the regression is already documented in the shipped code
+
+Running `PdfPipelineDiagnostic` against the real ICICI savings statement on current `main` confirms
+`STATEMENT_TOTALS: VERIFIED` — this document works. It is resolved entirely by a *different*,
+already-shipped mechanism: `resolveDuplicateColumnNames` (part of `buildHeaderColumns`'s four-step
+recovery pipeline, `PdfTableLocator.java:2275-2290`, called unconditionally for every accepted header
+row, before `reconstructHeader` is ever relevant). ICICI's accepted line has two identically-named
+amount columns (one genuinely blank-named); this mechanism qualifies/renames them from a nearby
+tier's labels. `reconstructHeader` is never reached for this document at all.
+
+The regression the plan references — from an experimental widening of `nonBlankCount(above) != 1`
+that was **never committed** — is already recorded by the shipped code's own doc comment, in detail
+precise enough that no re-investigation of the real PDF was needed to trace it:
+
+> *"A multi-cell line above is a genuine second header TIER — found on a real ICICI savings statement
+> while widening this gate: its middle tier is three cells, 'Sr No.' / 'Ref No' / 'Particulars', and
+> composing all three [as] unresolved extra columns recovered SOME real transactions but left the
+> aggregate statement-total check failing, a partial, unvalidated result this phase is not scoped to
+> ship."* (`PdfTableLocator.java:2337-2342`)
+
+**The precise mechanism**, reasoned from this comment plus `rowsCleanlyExplainedBy`'s actual
+validation logic (`:2421-2465`): composing "Sr No." / "Ref No" / "Particulars" as three brand-new
+columns does not address ICICI's real defect at all — none of those three fragments sit anywhere near
+the accepted line's genuinely broken columns (the duplicate-named amount pair). The widened candidate
+adds three unrelated columns while leaving the actual ambiguity exactly as broken as before. It still
+passes `rowsCleanlyExplainedBy`'s two checks — no raw-cell collision, date parses — because that
+validation is deliberately vocabulary-free and checks structural bucketing only (`:2426-2427`,
+*"Collision is measured as `bucketed.size() <` the row's own raw non-blank cell count"*); it has no
+way to notice that two *columns* share a name or that an amount landed under the wrong one, and §5's
+"balance chain is internally consistent" strong-evidence signal was never actually implemented as a
+candidate-time check — balance-chain validation only runs downstream, after a header is already
+committed. A structurally-clean candidate can still be semantically wrong, and nothing in the shipped
+validation catches that class of error.
+
+**Recommendation: keep ICICI explicitly out of 2E.5's scope**, as its own already-correct reference
+case for the "qualify-existing" operation (§9.3), not a target needing a new mechanism. Folding it
+back in without adding the missing invariant below would very likely reproduce the same regression.
+
+### 9.3 What IOB genuinely needs — confirmed live against the real document
+
+Running the diagnostic tool against the real IOB statement (`Statement.pdf`) on current `main`:
+`Detected table columns: [Date), Type]` — only two badly-degraded columns survive; nearly all of the
+real header vocabulary (the source prints a Date/Reference/Description line immediately followed by
+a Particulars/Debit/Credit/Balance line) is lost, and almost every transaction's fields collapse into
+one catch-all column. This is a **forward-composition** case per §9.1's second gap, exactly as
+`reconstructHeader`'s own doc comment names it — not a fragment-count problem `nonBlankCount(above)`
+governs at all. Widening that single check would not reach IOB; the method's directional constraint
+(`rows.get(headerIndex - 1)`, backward-only) would still exclude it.
+
+**IOB is ready for its own implementation phase**, but it is the forward-composition generalization
+of §4.6–§4.9 (multi-fragment collection spanning the full header region, §4.8's multi-candidate
+generation, §5's tiered validation) — materially more than relaxing `reconstructHeader`'s existing
+single-fragment gate. Per §9.2, any implementation reaching this general shape must also add the
+invariant the prototype never needed: a per-fragment decision between **fill-empty** (a fragment with
+no existing anchor on the accepted line — IOB's need) and **qualify-existing** (a fragment that
+renames/qualifies a column the accepted line already has, however badly named — ICICI's need,
+already correctly handled by `resolveDuplicateColumnNames`). A general engine that treats every
+fragment as fill-empty will reproduce §9.2's regression the day it is pointed at a qualify-shaped
+document, even if it never regresses IOB itself.
+
+### 9.4 HSBC — confirmed, and it is not a header-composition problem at all
+
+§3/§8's hypothesis is now confirmed with a precise mechanism, closing the one open question
+`header-reconstruction-phase2e1-investigation.md` left ("the exact physical-row bucket each label
+landed in" was not dumped there). A throwaway, instrumented reflection-based probe against
+`groupIntoRows` (`PdfTableLocator.java:1823-1849`), run against the real, unredacted HSBC DB.pdf
+through the actual OCR-routing pipeline and deleted immediately after, confirms: the document's one
+printed header line (5 labels: Date, Details, Withdrawals, Deposits, Balance) splits into two
+physical row buckets — `[Balance, Date]` and `[Details, Withdrawals, Deposits]` — exactly matching
+the `[Date, Balance]`-accepted / `withdrawals`+`deposits`-vocabulary-only-signal outcome already
+observed.
+
+**Root cause**: `groupIntoRows` clusters by comparing every run to a *fixed* anchor — the row's
+first member — never to the row's own most recently added member (`ROW_Y_TOLERANCE = 3.0f`,
+`PdfTableLocator.java:73`; comparison at `:1838`). OCR's per-word y-jitter across this header line
+totals 5.28pt end to end, exceeding the 3.0pt tolerance measured against the stale first-member
+anchor, even though each individual consecutive gap (2.16pt, then 3.12pt) is smaller than the total.
+An anchor-based comparison has no way to accumulate a chain of small, individually-tolerable gaps;
+a chain-based comparison (each run compared to the *previous* run, not the first) would.
+
+**This is conclusively not a header-composition problem.** It happens entirely upstream, in row
+formation, before `mergeHeaderLines`, `HeaderQualityValidator`, or any reconstruction engine ever
+sees the text — confirming §8's existing non-goal precisely rather than just leaving it as an
+assumption. A fix (not designed or implemented here) would touch `groupIntoRows`' clustering logic
+itself — either the tolerance or, more likely given the chain-vs-anchor mechanism identified, the
+comparison basis — and needs its own regression consideration, since `ROW_Y_TOLERANCE` also governs
+row separation for every native-PDF document today. **Whatever IOB's fix becomes, HSBC's fix is a
+separate, smaller, unrelated change** — it should not be bundled into the same implementation phase
+just because both were named under "2E.5" in the plan.
+
+### 9.5 Net effect on 2E.5's scope
+
+- **ICICI**: excluded. Already correct; not a 2E.5 target.
+- **IOB**: ready for implementation — the forward-composition generalization above, including the
+  fill-empty/qualify-existing distinction §9.2's regression shows is required. This is header
+  reconstruction's actual remaining scope.
+- **HSBC**: confirmed (§9.4) to be a `groupIntoRows` row-formation defect, entirely unrelated to
+  header composition. Not part of this design at all; belongs in its own small, separately-scoped
+  fix with its own regression consideration for `ROW_Y_TOLERANCE`'s effect on native-PDF documents.
+- **Net scope of "2E.5" going forward is narrower than the plan implied**: one real implementation
+  task (IOB's forward-composition engine) plus one small, unrelated row-formation fix (HSBC) — not
+  one general engine serving three documents.
+- IOB's forward-composition engine is materially more implementation than 2E.2's narrow prototype —
+  a second engineering phase with its own real regression risk (per §7's two required properties),
+  not a one-line widening of the shipped gate. Per this project's standing discipline (2E.2 itself
+  was scoped down from this same design only after an explicit owner decision), starting the actual
+  `PdfTableLocator` implementation for either fix should wait for that same kind of explicit
+  go-ahead, separate from the go-ahead to investigate.
