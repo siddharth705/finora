@@ -4,6 +4,8 @@ import com.finora.dto.PasswordChangeDtos.*;
 import com.finora.entity.PasswordChangeSession;
 import com.finora.entity.User;
 import com.finora.exception.ApiException;
+import com.finora.integrations.apple.login.AppleIdTokenVerifierService;
+import com.finora.integrations.apple.login.AppleIdentity;
 import com.finora.integrations.google.login.GoogleIdTokenVerifierService;
 import com.finora.integrations.google.login.GoogleIdentity;
 import com.finora.repository.PasswordChangeSessionRepository;
@@ -36,6 +38,7 @@ class PasswordChangeServiceTest {
     private PasswordChangeSessionRepository sessionRepository;
     private PasswordEncoder passwordEncoder;
     private GoogleIdTokenVerifierService googleIdTokenVerifierService;
+    private AppleIdTokenVerifierService appleIdTokenVerifierService;
     private PhoneVerificationProvider phoneVerificationProvider;
     private RefreshTokenService refreshTokenService;
     private AuditService auditService;
@@ -54,6 +57,7 @@ class PasswordChangeServiceTest {
         sessionRepository = mock(PasswordChangeSessionRepository.class);
         passwordEncoder = mock(PasswordEncoder.class);
         googleIdTokenVerifierService = mock(GoogleIdTokenVerifierService.class);
+        appleIdTokenVerifierService = mock(AppleIdTokenVerifierService.class);
         phoneVerificationProvider = mock(PhoneVerificationProvider.class);
         refreshTokenService = mock(RefreshTokenService.class);
         auditService = mock(AuditService.class);
@@ -76,7 +80,7 @@ class PasswordChangeServiceTest {
         when(userRepository.save(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
 
         service = new PasswordChangeService(userRepository, sessionRepository, passwordEncoder,
-                new GoogleReauthVerifier(passwordEncoder, googleIdTokenVerifierService),
+                new GoogleReauthVerifier(passwordEncoder, googleIdTokenVerifierService, appleIdTokenVerifierService),
                 phoneVerificationProvider, refreshTokenService, auditService, emailProvider,
                 mock(PasswordHistoryService.class));
     }
@@ -111,7 +115,7 @@ class PasswordChangeServiceTest {
         when(userRepository.findById(userId)).thenReturn(Optional.of(user));
         when(passwordEncoder.matches("OldPass123!", "hashed-old-password")).thenReturn(true);
 
-        var response = service.start(userId, new StartRequest("OldPass123!", null));
+        var response = service.start(userId, new StartRequest("OldPass123!", null, null));
 
         assertThat(response.sessionId()).isNotBlank();
         assertThat(response.phoneNumber()).isEqualTo("+919876543210");
@@ -125,7 +129,7 @@ class PasswordChangeServiceTest {
         when(userRepository.findById(userId)).thenReturn(Optional.of(existingUser()));
         when(passwordEncoder.matches("WrongPassword", "hashed-old-password")).thenReturn(false);
 
-        assertThatThrownBy(() -> service.start(userId, new StartRequest("WrongPassword", null)))
+        assertThatThrownBy(() -> service.start(userId, new StartRequest("WrongPassword", null, null)))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("Current password is incorrect");
 
@@ -141,7 +145,7 @@ class PasswordChangeServiceTest {
         when(googleIdTokenVerifierService.verify("fresh-google-token"))
                 .thenReturn(new GoogleIdentity(user.getEmail(), "Jane"));
 
-        var response = service.start(userId, new StartRequest(null, "fresh-google-token"));
+        var response = service.start(userId, new StartRequest(null, "fresh-google-token", null));
 
         assertThat(response.sessionId()).isNotBlank();
         verify(passwordEncoder, never()).matches(any(), any());
@@ -156,7 +160,7 @@ class PasswordChangeServiceTest {
         when(googleIdTokenVerifierService.verify("someone-elses-token"))
                 .thenReturn(new GoogleIdentity("someone-else@example.com", "Someone Else"));
 
-        assertThatThrownBy(() -> service.start(userId, new StartRequest(null, "someone-elses-token")))
+        assertThatThrownBy(() -> service.start(userId, new StartRequest(null, "someone-elses-token", null)))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("verify your Google account");
 
@@ -170,7 +174,53 @@ class PasswordChangeServiceTest {
         user.setSignInMethod(User.SIGN_IN_METHOD_GOOGLE);
         when(userRepository.findById(userId)).thenReturn(Optional.of(user));
 
-        assertThatThrownBy(() -> service.start(userId, new StartRequest("hashed-old-password", null)))
+        assertThatThrownBy(() -> service.start(userId, new StartRequest("hashed-old-password", null, null)))
+                .isInstanceOf(ApiException.class);
+
+        verify(passwordEncoder, never()).matches(any(), any());
+    }
+
+    // D-26 gap closed: an Apple-only account (createOAuthUserRecord's random unguessable
+    // password) used to fall through to the password branch here and fail forever -- see
+    // GoogleReauthVerifier's own doc comment. Mirrors the three Google tests immediately above.
+    @Test
+    void start_onAnAppleAccount_verifiesAFreshAppleTokenInsteadOfAPassword() {
+        User user = existingUser();
+        user.setSignInMethod(User.SIGN_IN_METHOD_APPLE);
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+        when(appleIdTokenVerifierService.verify("fresh-apple-token"))
+                .thenReturn(new AppleIdentity(user.getEmail(), "apple-subject"));
+
+        var response = service.start(userId, new StartRequest(null, null, "fresh-apple-token"));
+
+        assertThat(response.sessionId()).isNotBlank();
+        verify(passwordEncoder, never()).matches(any(), any());
+        verify(auditService).record(userId, "CURRENT_PASSWORD_VERIFIED", "User", userId);
+    }
+
+    @Test
+    void start_onAnAppleAccount_rejectsATokenThatVerifiesToADifferentEmail() {
+        User user = existingUser();
+        user.setSignInMethod(User.SIGN_IN_METHOD_APPLE);
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+        when(appleIdTokenVerifierService.verify("someone-elses-token"))
+                .thenReturn(new AppleIdentity("someone-else@example.com", "someone-elses-subject"));
+
+        assertThatThrownBy(() -> service.start(userId, new StartRequest(null, null, "someone-elses-token")))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("verify your Apple account");
+
+        verify(auditService).record(userId, "INVALID_CURRENT_PASSWORD", "User", userId);
+        verify(sessionRepository, never()).save(any());
+    }
+
+    @Test
+    void start_onAnAppleAccount_ignoresACurrentPasswordEvenIfOneWereSomehowSupplied() {
+        User user = existingUser();
+        user.setSignInMethod(User.SIGN_IN_METHOD_APPLE);
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+
+        assertThatThrownBy(() -> service.start(userId, new StartRequest("hashed-old-password", null, null)))
                 .isInstanceOf(ApiException.class);
 
         verify(passwordEncoder, never()).matches(any(), any());
@@ -182,7 +232,7 @@ class PasswordChangeServiceTest {
         user.setStatus("SUSPENDED");
         when(userRepository.findById(userId)).thenReturn(Optional.of(user));
 
-        assertThatThrownBy(() -> service.start(userId, new StartRequest("OldPass123!", null)))
+        assertThatThrownBy(() -> service.start(userId, new StartRequest("OldPass123!", null, null)))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("suspended");
 
@@ -572,7 +622,7 @@ class PasswordChangeServiceTest {
         user.setStatus(User.STATUS_PENDING_DELETION);
         when(userRepository.findById(userId)).thenReturn(Optional.of(user));
 
-        assertThatThrownBy(() -> service.start(userId, new StartRequest("OldPass123!", null)))
+        assertThatThrownBy(() -> service.start(userId, new StartRequest("OldPass123!", null, null)))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("scheduled for deletion");
 

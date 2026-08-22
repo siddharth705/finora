@@ -18,13 +18,14 @@ public class PasswordChangeDtos {
 
     /** The proof of ownership that starts the flow -- no token/OTP yet at this point, the same
      *  way it is for any "re-enter your credential" confirmation elsewhere. Exactly one of the
-     *  two fields is actually required, and neither is {@code @NotBlank}: which one depends on
+     *  three fields is actually required, and none is {@code @NotBlank}: which one depends on
      *  the account's own User.signInMethod, known only server-side -- see GoogleReauthVerifier,
      *  which is what enforces that rather than a request-layer annotation that would have to
      *  guess. currentPassword is for an ordinary account; googleIdToken (a fresh Google Identity
      *  Services credential, re-verified server-side, never trusted from an old sign-in) is for
-     *  one created via Sign in with Google. */
-    public record StartRequest(String currentPassword, String googleIdToken) {}
+     *  one created via Sign in with Google; appleIdToken is the same idea for Sign in with
+     *  Apple. */
+    public record StartRequest(String currentPassword, String googleIdToken, String appleIdToken) {}
 
     /** sessionId is what the frontend carries forward to the next two steps -- deliberately
      *  opaque (a random UUID), not something a client could compute or guess. phoneNumber (the
