@@ -84,6 +84,64 @@ class HeaderReconstructionEngineTest {
     }
 
     /**
+     * The real shape found on Statement.pdf/IOB: the tier immediately above the accepted header is
+     * not a single orphaned cell (SBI's shape, above) but a genuine multi-cell tier -- four column
+     * names, all sitting far enough from the accepted line's own two anchors that none of them could
+     * be mistaken for renaming an existing column. Phase 2E.2's prototype declined this shape outright
+     * ({@code nonBlankCount(above) != 1}); this is the fill-empty generalization design doc §9.3
+     * describes, mirroring IOB's real coordinate geometry (traced via a throwaway reflection probe
+     * against the real document, not reproduced here) -- not its actual values.
+     */
+    @Test
+    void multiCellPartitionedTierImmediatelyAbove_recoversAllFourColumns() {
+        List<PositionedText> positioned = new ArrayList<>();
+        // Tier above (y=192): four column names, none within HEADER_WRAP_MAX_COLUMN_JOIN of either
+        // of the accepted line's two anchors (40, 500) -- every one is a genuine fill-empty addition.
+        positioned.add(run("Particulars", 150f, 80f, 192f));
+        positioned.add(run("Debit", 280f, 40f, 192f));
+        positioned.add(run("Credit", 350f, 40f, 192f));
+        positioned.add(run("Balance", 420f, 50f, 192f));
+        // Accepted line (y=200, 8pt gap -- inside HEADER_WRAP_MAX_GAP): scores alone (date hint +
+        // one other recognized name, "type" -- matching real IOB's own accepted row, which also
+        // recovers via "Type") but explains almost none of the real rows below -- weak by row
+        // compatibility, the same signal SBI's case is weak by.
+        positioned.add(run("Date", 40f, 30f, 200f));
+        positioned.add(run("Type", 500f, 50f, 200f));
+        positioned.addAll(iobRow("01 Aug 26", "SAMPLE ONLINE PURCHASE", "500.00", "", "9,500.00", "UPI", 212f));
+        positioned.addAll(iobRow("03 Aug 26", "SAMPLE SALARY CREDIT", "", "10,000.00", "19,500.00", "NEFT", 220f));
+        positioned.addAll(iobRow("05 Aug 26", "SAMPLE UTILITY PAYMENT", "1,200.00", "", "18,300.00", "UPI", 228f));
+        positioned.addAll(iobRow("07 Aug 26", "SAMPLE RENT PAYMENT", "6,000.00", "", "12,300.00", "UPI", 236f));
+
+        DocumentContext ctx = new DocumentContext("PDF", "test");
+        PdfTableLocator.LocatedDocument doc = new PdfTableLocator().locateAll(positioned, ctx);
+
+        assertThat(doc.sections()).hasSize(1);
+        List<Map<String, String>> rows = doc.sections().get(0).rows();
+        assertThat(rows).hasSize(4);
+        assertThat(rows.get(0)).containsEntry("Date", "01 Aug 26");
+        assertThat(rows.get(0)).containsEntry("Particulars", "SAMPLE ONLINE PURCHASE");
+        assertThat(rows.get(0)).containsEntry("Debit", "500.00");
+        assertThat(rows.get(0)).containsEntry("Balance", "9,500.00");
+        assertThat(rows.get(0)).containsEntry("Type", "UPI");
+        assertThat(rows.get(1)).containsEntry("Credit", "10,000.00");
+
+        assertThat(ctx.capabilities().stream().map(c -> c.capability()))
+                .contains("HEADER_RECONSTRUCTED");
+    }
+
+    private static List<PositionedText> iobRow(String date, String particulars, String debit,
+            String credit, String balance, String refNo, float y) {
+        List<PositionedText> row = new ArrayList<>();
+        row.add(run(date, 40f, 45f, y));
+        row.add(run(particulars, 150f, particulars.length() * 5.0f, y));
+        if (!debit.isEmpty()) row.add(run(debit, 280f, 40f, y));
+        if (!credit.isEmpty()) row.add(run(credit, 350f, 40f, y));
+        row.add(run(balance, 420f, 50f, y));
+        row.add(run(refNo, 500f, 50f, y));
+        return row;
+    }
+
+    /**
      * A different bank flavor of the same general shape (§2 of the design doc: "columns
      * PARTITIONED, not refined, across physical lines") -- a savings-style statement whose Balance
      * column name sits alone one line ABOVE a "Date | Narration" line that scores alone. Proves the
@@ -162,6 +220,46 @@ class HeaderReconstructionEngineTest {
         if (!credit.isEmpty()) row.add(run(credit, 420f, 35f, y));
         row.add(run(balance, 490f, 45f, y));
         return row;
+    }
+
+    /**
+     * Found via a full-corpus regression sweep after generalizing the engine to multi-cell tiers
+     * (the test above): a genuine prose caption or disclaimer line sitting one physical line above
+     * a weak header -- carrying no date/number value and matching no structural-marker regex, so it
+     * passes every guard the multi-cell walk already had -- was composed in as a brand-new header
+     * column named after the whole sentence, corrupting every row's real value into that garbage
+     * column. {@code findQualifyingLabel} and {@code recoverMissingSerialNumberColumn} already guard
+     * against exactly this shape via {@code hasProseLengthCell} (real SBI/ICICI/AU regressions their
+     * own doc comments describe); this engine's backward walk needs the identical guard.
+     */
+    @Test
+    void proseCaptionLineImmediatelyAbove_isNeverComposedAsAColumn() {
+        List<PositionedText> positioned = new ArrayList<>();
+        // A long disclaimer sentence -- carries no date/number, matches no SECTION_MARKER/
+        // PAGE_FOOTER/STATEMENT_CLOSING_MARKER pattern, and sits well clear of the accepted line's
+        // two anchors (40, 500) -- passing every guard the walk had before this fix.
+        positioned.add(run("Please retain this statement for your records and report any discrepancies "
+                + "within thirty days of the statement date to avoid forfeiting your claim", 150f, 300f, 192f));
+        positioned.add(run("Date", 40f, 30f, 200f));
+        positioned.add(run("Type", 500f, 50f, 200f));
+        positioned.addAll(iobRow("01 Aug 26", "SAMPLE ONLINE PURCHASE", "500.00", "", "9,500.00", "UPI", 212f));
+        positioned.addAll(iobRow("03 Aug 26", "SAMPLE SALARY CREDIT", "", "10,000.00", "19,500.00", "NEFT", 220f));
+        positioned.addAll(iobRow("05 Aug 26", "SAMPLE UTILITY PAYMENT", "1,200.00", "", "18,300.00", "UPI", 228f));
+        positioned.addAll(iobRow("07 Aug 26", "SAMPLE RENT PAYMENT", "6,000.00", "", "12,300.00", "UPI", 236f));
+
+        DocumentContext ctx = new DocumentContext("PDF", "test");
+        PdfTableLocator.LocatedDocument doc = new PdfTableLocator().locateAll(positioned, ctx);
+
+        assertThat(doc.sections()).hasSize(1);
+        assertThat(ctx.capabilities().stream().map(c -> c.capability()))
+                .as("nothing safely composable above a prose-only line -- the engine must decline, "
+                        + "not compose the sentence in as a column")
+                .doesNotContain("HEADER_RECONSTRUCTED");
+        for (Map<String, String> row : doc.sections().get(0).rows()) {
+            assertThat(row.keySet())
+                    .as("no composed column name may contain the disclaimer's own text")
+                    .noneMatch(name -> name.contains("retain this statement"));
+        }
     }
 
     /**
