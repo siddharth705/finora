@@ -410,7 +410,13 @@ class SplitHeaderRunsPdfTableLocatorTest {
                 // always was. See HeaderProseRejectionTest for the full before/after and the
                 // pollution checks proving the rejected prose didn't leak into these rows.
                 Map.entry("icici-credit-card-statement", List.of(1, 6)),
-                Map.entry("icici-savings-ledger-validation", List.of(1, 2)),
+                // 2 before Phase 2E.5's leading-narration fix, 12 after -- the fix now attaches the
+                // narration-only line right under the header to the transaction it belongs to instead
+                // of swallowing it as a false-header prose block. All 11 real transactions verified via
+                // BALANCE_CHAIN and STATEMENT_TOTALS with zero discrepancies; the 12th row is the
+                // pre-existing flushPendingLeading mechanism carrying page-2 glossary content, not new
+                // behavior. See LeadingNarrationBeforeFirstAnchorPdfTableLocatorTest.
+                Map.entry("icici-savings-ledger-validation", List.of(1, 12)),
                 Map.entry("kotak-credit-card-ledger-validation", List.of(0)),
                 Map.entry("kotak-savings-ledger-validation", List.of(1, 2)),
                 Map.entry("pnb-savings-ledger-validation", List.of(1, 62)),

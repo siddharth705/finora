@@ -205,9 +205,13 @@ class MultiSectionZeroExtractionTest {
     // ---------------------------------------------------------------- the whole corpus
 
     /**
-     * Every committed trace, and exactly what it stages. The eleven documents listed here staged
-     * these counts before this fix and stage them after it; any change to this table is this fix
-     * having reached a document that parses, which it must not.
+     * Every committed trace, and exactly what it stages. The documents listed here staged these
+     * counts before this fix and stage them after it; any change to this table is this fix having
+     * reached a document that parses, which it must not. icici-savings-ledger-validation moved into
+     * this map from ALREADY_REJECTED_BEFORE_THIS_FIX in Phase 2E.5, whose leading-narration and
+     * header-reconstruction fixes are what now let it stage transactions at all -- see
+     * SplitHeaderRunsPdfTableLocatorTest and WrappedHeaderOnAScoringLinePdfTableLocatorTest for the
+     * row-count evidence behind the 12.
      */
     private static final Map<String, Integer> STAGES_TRANSACTIONS = stagesTransactions();
 
@@ -224,6 +228,12 @@ class MultiSectionZeroExtractionTest {
         m.put("hdfc-savings-single-page-ledger", 8);
         m.put("hdfc-txn-date-narration-header", 4);
         m.put("icici-credit-card-statement", 3);
+        // PdfTableLocator locates 12 rows in this section (see SplitHeaderRunsPdfTableLocatorTest /
+        // WrappedHeaderOnAScoringLinePdfTableLocatorTest), but only 11 stage as transactions here --
+        // the 12th, page-2 glossary content carried in by the pre-existing flushPendingLeading
+        // mechanism, does not parse as a transaction and is dropped at staging, same as before this
+        // fix touched anything downstream of location.
+        m.put("icici-savings-ledger-validation", 11);
         m.put("pnb-savings-ledger-validation", 61);
         m.put("union-bank-savings-ledger-validation", 19);
         return m;
@@ -247,7 +257,6 @@ class MultiSectionZeroExtractionTest {
 
     private static final List<String> ALREADY_REJECTED_BEFORE_THIS_FIX = List.of(
             "hsbc-savings-ledger-validation",
-            "icici-savings-ledger-validation",
             "kotak-savings-ledger-validation");
 
     @Test
