@@ -80,8 +80,10 @@ export default function Landing() {
 
       <main id="main-content">
         <Hero />
-        {/* Hero already fades toward #FBFCFE, so this picks up close to where it ends. */}
-        <Transition from="#FBFCFE" to={WHITE} height={48} />
+        {/* Hero's dark radial-gradient background bottoms out at #05070C (see Hero.tsx) -- this
+            bridges that into white, the same way every other section boundary on this page does.
+            Hero does not own any of its own exit fade; this band is the single place that does. */}
+        <Transition from="#05070C" to={WHITE} height={80} />
 
         <Problem />
         <Transition from={WHITE} to={WHITE} height={0} />
