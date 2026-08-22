@@ -4,24 +4,75 @@ name: Sync dev branch
 # Railway Dev environment). `dev` is a persistent branch that Cloudflare Pages binds
 # dev-app.finoratech.info/dev-admin.finoratech.info to (as a branch-alias custom domain, not a
 # second Pages project) -- it exists purely to always reflect main's latest commit, not to carry
-# any history of its own. Fast-forward only, never a merge or a force-push: a genuine divergence
-# (someone committed directly to `dev`, which nothing in this workflow should ever cause) fails
-# this workflow loudly instead of silently discarding whatever was there.
+# any history of its own.
+#
+# Goes through a PR + auto-merge rather than a direct push: `dev` is now a protected branch (same
+# ruleset as `main` -- required status checks, enforce_admins, no direct pushes), so the original
+# `git push origin HEAD:refs/heads/dev` this workflow used before that protection existed would now
+# be rejected by GitHub itself. gh pr merge --auto still only merges once every required check has
+# passed on THIS PR -- so a broken merge to main can't silently propagate to dev either.
+#
+# A merge commit, not a rebase or squash: keeps `dev`'s history a literal superset of `main`'s
+# rather than a rewritten copy, so `git merge-base --is-ancestor main dev` stays true and this
+# workflow's own "is there anything to sync" check keeps working correctly next time.
 on:
   push:
     branches: [main]
   workflow_dispatch: {}
 
+# Two pushes to main close together must not race each other into creating two sync PRs (the
+# second run's "does a PR already exist" check can pass before the first run's gh pr create has
+# actually landed). cancel-in-progress: false, not true -- the queued second run should still
+# execute once the first finishes, so it can correctly find "nothing left to sync" via the
+# merge-base check below, same reasoning ci.yml/e2e-nightly.yml already apply to their own jobs.
+concurrency:
+  group: sync-dev-branch
+  cancel-in-progress: false
+
 permissions:
   contents: write
+  pull-requests: write
 
 jobs:
-  fast-forward:
+  sync:
     runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
-      - name: Fast-forward dev to main
-        run: git push origin HEAD:refs/heads/dev
+      - name: Open (or reuse) the main -> dev sync PR and auto-merge it
+        run: |
+          git fetch origin main dev
+
+          if git merge-base --is-ancestor origin/main origin/dev; then
+            echo "dev is already up to date with main -- nothing to sync."
+            exit 0
+          fi
+
+          existing=$(gh pr list --base dev --head main --state open --json number --jq '.[0].number')
+          if [ -n "$existing" ]; then
+            pr="$existing"
+            echo "Reusing existing sync PR #$pr"
+          else
+            # gh pr create has no --json/--jq output mode -- it prints the new PR's URL to stdout
+            # on success, so the number is just the URL's last path segment.
+            url=$(gh pr create --base dev --head main \
+              --title "Sync dev with main" \
+              --body "Automated -- keeps the Dev environment's branch reflecting main's latest commit. Merges once the same required checks main already passed re-confirm on this PR.")
+            pr="${url##*/}"
+            echo "Opened sync PR #$pr"
+          fi
+
+          # Idempotent: a queued re-run of this workflow (see concurrency: above) can land here
+          # against the SAME PR a previous run already enabled auto-merge on. Re-running
+          # `gh pr merge --auto` on a PR that already has it enabled is untested territory in gh's
+          # own docs, so this checks first rather than relying on that call being a safe no-op.
+          alreadyEnabled=$(gh pr view "$pr" --json autoMergeRequest --jq '.autoMergeRequest != null')
+          if [ "$alreadyEnabled" = "true" ]; then
+            echo "Auto-merge already enabled on #$pr -- nothing more to do."
+          else
+            gh pr merge "$pr" --auto --merge
+          fi
