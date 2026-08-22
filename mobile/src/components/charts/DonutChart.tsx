@@ -4,6 +4,7 @@ import { fmtCurrency } from '../../lib/format';
 import {
   DONUT_CENTER, DONUT_RADIUS, DONUT_SIZE, DONUT_STROKE, arcPath, buildArcs,
 } from '../../lib/chartGeometry';
+import { useLargeFontScale } from '../../lib/useLargeFontScale';
 import { spacing, useTheme } from '../../theme';
 
 export interface Slice {
@@ -22,6 +23,7 @@ export interface Slice {
  */
 export function DonutChart({ slices, centerLabel }: { slices: Slice[]; centerLabel?: string }) {
   const c = useTheme();
+  const largeText = useLargeFontScale();
   const arcs = buildArcs(slices);
   // By position, not by label -- see ArcSlice.index. Looking the colour up by label gave two
   // same-named holdings the same colour and one shared React key.
@@ -89,10 +91,10 @@ export function DonutChart({ slices, centerLabel }: { slices: Slice[]; centerLab
         {arcs.map((a) => (
           <View key={a.index} style={styles.legendRow} accessible accessibilityLabel={`${a.label}: ${fmtCurrency(a.value)}`}>
             <View style={[styles.swatch, { backgroundColor: colorFor(a.index) }]} />
-            <Text style={[styles.legendLabel, { color: c.ink }]} numberOfLines={1}>
+            <Text style={[styles.legendLabel, { color: c.ink }]} numberOfLines={largeText ? 2 : 1}>
               {a.label}
             </Text>
-            <Text style={[styles.legendValue, { color: c.muted }]}>{fmtCurrency(a.value)}</Text>
+            <Text style={[styles.legendValue, { color: c.mutedInk }]}>{fmtCurrency(a.value)}</Text>
           </View>
         ))}
       </View>
