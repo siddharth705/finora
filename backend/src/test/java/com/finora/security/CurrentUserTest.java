@@ -1,6 +1,5 @@
 package com.finora.security;
 
-import com.finora.repository.UserRepository;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.security.authentication.AnonymousAuthenticationToken;
@@ -14,7 +13,6 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.Mockito.mock;
 
 /**
  * Bug 50 (docs/quality/bug-reports/BUG_REVIEW_REPORT.md). id() used to cast the principal to
@@ -25,7 +23,7 @@ import static org.mockito.Mockito.mock;
  */
 class CurrentUserTest {
 
-    private final CurrentUser currentUser = new CurrentUser(mock(UserRepository.class));
+    private final CurrentUser currentUser = new CurrentUser();
 
     @AfterEach
     void tearDown() {

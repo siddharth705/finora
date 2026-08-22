@@ -1,6 +1,5 @@
 package com.finora.security;
 
-import com.finora.repository.UserRepository;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -16,12 +15,6 @@ import java.util.UUID;
  */
 @Component
 public class CurrentUser {
-
-    private final UserRepository userRepository;
-
-    public CurrentUser(UserRepository userRepository) {
-        this.userRepository = userRepository;
-    }
 
     /**
      * The authenticated user's id.
