@@ -61,6 +61,30 @@ export interface AlertDto {
   detail: string;
 }
 
+// --- Integrations (AdminIntegrationsController / com.finora.service.AdminIntegrationsService) ---
+// IntegrationDto reuses the SAME live status ProviderStatusDto carries, plus a curated
+// description -- see the backend DTO's own comment for why Database/Financial Intelligence
+// Engine/Statement Import are internal engine checks, not integrations, and stay off this page.
+
+export interface IntegrationDto {
+  name: string;
+  category: string;
+  description: string;
+  status: 'UP' | 'DEGRADED' | 'DOWN';
+  detail: string;
+}
+
+/** No status field: nothing is running yet for these, so there is nothing to check. */
+export interface UpcomingIntegrationDto {
+  name: string;
+  description: string;
+}
+
+export interface IntegrationsOverviewDto {
+  integrations: IntegrationDto[];
+  upcoming: UpcomingIntegrationDto[];
+}
+
 /** Every field here is a real, currently-unaddressed platform-wide count -- see backend
  *  NeedsAttentionDto's own doc comment. Not a fabricated to-do list. */
 export interface NeedsAttentionDto {
