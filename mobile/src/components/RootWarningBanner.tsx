@@ -1,5 +1,5 @@
-import { useEffect, useState, type ReactNode } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { AccessibilityInfo, Platform, StyleSheet, Text, View } from 'react-native';
 import * as Device from 'expo-device';
 import { SafeAreaInsetsContext, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { spacing, useTheme } from '../theme';
@@ -43,6 +43,11 @@ function useIsRooted(): boolean {
   return rooted;
 }
 
+/** Single source of truth for the warning message -- spoken by iOS below, and rendered by the
+ *  banner's own <Text> further down, so the two can never drift apart. */
+const ROOT_WARNING_MESSAGE =
+  "This device appears to be rooted or jailbroken — Finora's own protections may not be fully effective here";
+
 /** Nest inside OfflineBoundary (or vice versa) freely -- both follow the identical "consume the
  *  real top inset once, then zero it for children" pattern, so stacking either order composes
  *  correctly with no double notch spacing. See App.tsx for the actual ordering used. */
@@ -50,6 +55,21 @@ export function RootWarningBoundary({ children }: { children: ReactNode }) {
   const c = useTheme();
   const insets = useSafeAreaInsets();
   const rooted = useIsRooted();
+
+  // accessibilityLiveRegion below is Android-only -- React Native has no iOS equivalent, so a
+  // VoiceOver user gets no signal that this banner just appeared unless something explicitly
+  // speaks it. Same fix, same reasoning, as OfflineBanner's identical gap: announce only on the
+  // false -> true transition (never on mount already-rooted), which in practice fires at most
+  // once per session since root status doesn't change mid-session -- but tracking it as a
+  // transition rather than "just announce whenever rooted is true" keeps this component's
+  // behavior identical in shape to OfflineBanner's, which this already mirrors structurally.
+  const wasRooted = useRef(rooted);
+  useEffect(() => {
+    if (Platform.OS === 'ios' && !wasRooted.current && rooted) {
+      AccessibilityInfo.announceForAccessibility(ROOT_WARNING_MESSAGE);
+    }
+    wasRooted.current = rooted;
+  }, [rooted]);
 
   if (!rooted) return <>{children}</>;
 
@@ -61,9 +81,7 @@ export function RootWarningBoundary({ children }: { children: ReactNode }) {
         accessibilityRole="alert"
         accessibilityLiveRegion="polite"
       >
-        <Text style={[styles.text, { color: c.warningInk }]}>
-          This device appears to be rooted or jailbroken — Finora's own protections may not be fully effective here
-        </Text>
+        <Text style={[styles.text, { color: c.warningInk }]}>{ROOT_WARNING_MESSAGE}</Text>
       </View>
       <SafeAreaInsetsContext.Provider value={{ ...insets, top: 0 }}>
         <View style={styles.flex}>{children}</View>

@@ -99,6 +99,23 @@ class MerchantTemplateTest {
         assertThat(dateGroup("2026-08-12 and more text")).isEqualTo("2026-08-12");
         assertThat(dateGroup("12 August 2026, thank you")).isEqualTo("12 August 2026");
         assertThat(dateGroup("12/08/2026. See you soon")).isEqualTo("12/08/2026");
+        assertThat(dateGroup("12-08-2026. See you soon")).isEqualTo("12-08-2026");
+    }
+
+    /**
+     * dd-MM-yyyy (day first) and yyyy-MM-dd (ISO, year first) are both hyphen-separated, so the
+     * capture regex has to tell them apart by digit-group width alone -- a 4-digit first group can
+     * only be the ISO shape, a 1-2 digit first group can only be the day-first shape. Proven here
+     * because a subtle overlap would silently produce the wrong date rather than fail loudly.
+     */
+    @Test
+    @DisplayName("day-first and ISO hyphenated dates do not get confused with each other")
+    void hyphenatedDayFirstAndIsoDatesAreDistinguished() {
+        assertThat(dateGroup("2026-08-12")).isEqualTo("2026-08-12");
+        assertThat(dateGroup("12-08-2026")).isEqualTo("12-08-2026");
+
+        assertThat(ReceiptDateFormats.tryParse("2026-08-12")).isEqualTo(java.time.LocalDate.of(2026, 8, 12));
+        assertThat(ReceiptDateFormats.tryParse("12-08-2026")).isEqualTo(java.time.LocalDate.of(2026, 8, 12));
     }
 
     private static String dateGroup(String textAfterLabel) {

@@ -3,6 +3,8 @@ package com.finora.util;
 import com.finora.exception.ApiException;
 import org.springframework.http.HttpStatus;
 
+import java.util.Locale;
+
 /**
  * Bug fix: {@code Transaction.Type.valueOf(rawString)} ran directly on caller-supplied strings in
  * four places (TransactionService's filter/create/update, ImportService.confirm() -- the latter
@@ -22,8 +24,15 @@ public final class EnumParsing {
         if (raw == null || raw.isBlank()) {
             throw new ApiException(HttpStatus.BAD_REQUEST, fieldName + " is required");
         }
+        // Bug 51. Enum.valueOf ran on the value exactly as received, with no trim/case
+        // normalization -- some callers (AdminLearningQueueService) already worked around this
+        // themselves by calling .trim().toUpperCase() before ever reaching here, while others
+        // (ImportService, TransactionService) didn't, so whether " active"/"Active" was accepted
+        // silently depended on which call site happened to remember the workaround. Normalizing
+        // once, here, makes every caller consistent and lets those per-caller workarounds be
+        // removed as redundant.
         try {
-            return Enum.valueOf(enumType, raw);
+            return Enum.valueOf(enumType, raw.trim().toUpperCase(Locale.ROOT));
         } catch (IllegalArgumentException e) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "Unrecognized " + fieldName + ": " + raw);
         }

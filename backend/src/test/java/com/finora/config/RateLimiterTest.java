@@ -2,6 +2,12 @@ package com.finora.config;
 
 import org.junit.jupiter.api.Test;
 
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+
 import static org.assertj.core.api.Assertions.assertThat;
 
 class RateLimiterTest {
@@ -93,5 +99,57 @@ class RateLimiterTest {
         assertThat(limiter.allow("192.0.2.1"))
                 .as("still inside its 60s window and already at the limit -- a sweep must not reset it")
                 .isFalse();
+    }
+
+    /**
+     * Bug 25. allow() used to read {@code window.count().get()} back *after* compute() had already
+     * released the per-key lock, so a concurrent caller for the same key could squeeze its own
+     * compute() (and its own increment) into the gap before this call's read -- the count this
+     * request actually landed on was correct, but by the time it got read back it could reflect a
+     * later caller's increment too, spuriously rejecting a request that was within limit at the
+     * moment it was counted. The fix captures the post-increment count inside compute()'s lambda.
+     *
+     * <p>The bug could only ever cause fewer than maxRequests to be let through (a stale read is
+     * always equal to or higher than the true value at increment time, never lower), so asserting
+     * the allowed count is exactly maxRequests -- not merely "at most" -- is what would have caught
+     * the regression.
+     */
+    @Test
+    void allow_underConcurrentLoad_permitsExactlyMaxRequests() throws InterruptedException {
+        int maxRequests = 20;
+        int callers = 100;
+        RateLimiter limiter = new RateLimiter(maxRequests, 60);
+
+        ExecutorService pool = Executors.newFixedThreadPool(callers);
+        CountDownLatch ready = new CountDownLatch(callers);
+        CountDownLatch start = new CountDownLatch(1);
+        AtomicInteger allowedCount = new AtomicInteger();
+
+        try {
+            for (int i = 0; i < callers; i++) {
+                pool.submit(() -> {
+                    ready.countDown();
+                    try {
+                        start.await();
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        return;
+                    }
+                    if (limiter.allow("contended-client")) {
+                        allowedCount.incrementAndGet();
+                    }
+                });
+            }
+            ready.await();
+            start.countDown();
+            pool.shutdown();
+            assertThat(pool.awaitTermination(10, TimeUnit.SECONDS)).isTrue();
+        } finally {
+            pool.shutdownNow();
+        }
+
+        assertThat(allowedCount.get())
+                .as("exactly the limit should be let through, no spurious rejections from a stale read")
+                .isEqualTo(maxRequests);
     }
 }

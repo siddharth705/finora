@@ -164,8 +164,10 @@ class ClosingBalanceCircularFinancialValidationTest {
 
     /**
      * The complete set of {@code statementTotalsOutcome=FAILED} documents in C-9 §2.2's measured
-     * corpus -- all five, all recorded {@code suspectedCause=OPENING_BALANCE}, all previously
-     * recorded {@code financialValidationStatus=SUPPORTED}.
+     * corpus -- all four remaining ones (see
+     * {@link #singularDepositWithdrawalColumnsSample_nowResolvesAmbiguous_ratherThanGuessing} for the
+     * fifth), all recorded {@code suspectedCause=OPENING_BALANCE}, all previously recorded
+     * {@code financialValidationStatus=SUPPORTED}.
      */
     static java.util.stream.Stream<Arguments> c9FailedCorpus() {
         return java.util.stream.Stream.of(
@@ -173,8 +175,6 @@ class ClosingBalanceCircularFinancialValidationTest {
                         (FixtureBytes) PdfFixtureBuilder::buildReferenceNumberAndBalanceSample),
                 Arguments.of("buildReverseChronologicalRunningBalanceSample",
                         (FixtureBytes) PdfFixtureBuilder::buildReverseChronologicalRunningBalanceSample),
-                Arguments.of("buildSingularDepositWithdrawalColumnsSample",
-                        (FixtureBytes) PdfFixtureBuilder::buildSingularDepositWithdrawalColumnsSample),
                 Arguments.of("buildSingleTrailingBalanceDiscrepancySample",
                         (FixtureBytes) PdfFixtureBuilder::buildSingleTrailingBalanceDiscrepancySample),
                 Arguments.of("merged-amount-single-run",
@@ -214,6 +214,48 @@ class ClosingBalanceCircularFinancialValidationTest {
                 .isEqualTo(new BigDecimal("8300.00"));
         assertThat(observed.suspectedCause()).isEqualTo("OPENING_BALANCE");
         assertThat(observed.closingBalanceDimension().status()).isEqualTo(EvidenceStatus.INSUFFICIENT);
+    }
+
+    /**
+     * The fifth C-9 {@code FAILED} document, moved out of {@link #c9FailedCorpus()} because Phase 2G
+     * ({@code balance-chain-ordering-design.md}) changed its precondition, not just its outcome.
+     *
+     * <p>This fixture's earliest date carries two same-day transactions whose balances do not chain
+     * to each other in EITHER order (not a reversal loop -- they don't net to zero, they simply were
+     * never made consistent with one another). Before {@link com.finora.imports.BalanceSequenceResolver},
+     * {@code BalanceChainUtil.first()}'s own unvalidated {@code min}-implied-start fallback silently
+     * picked one of the two anyway, which is exactly the "guess presented as fact" shape C-9/C-10 were
+     * written to catch -- it just wasn't the specific guess those investigations happened to trace.
+     * {@code BalanceSequenceResolver} recognizes this day cannot be ordered (two candidates with no
+     * predecessor is precisely {@code resolveInternally}'s ambiguous case) and, with no explicit
+     * opening-balance declaration to anchor from either, correctly reports the whole section
+     * {@code AmbiguityStatus.AMBIGUOUS} rather than guessing -- so {@code detectedAccount()} now
+     * carries no opening/closing balance for this document at all.
+     *
+     * <p>{@code StatementTotalsValidator} therefore no longer reaches {@code FAILED} (it requires both
+     * balances) -- it reports {@code NOT_APPLICABLE}, same as any statement that prints no balance.
+     * Verified directly against the validator rather than through this file's {@link #observe} helper:
+     * that helper (mirroring {@code ClosingBalanceEvidenceRederivationService}) builds a
+     * {@link FieldFact} for the closing-balance CLAIM unconditionally, which requires a non-null
+     * value by contract -- correct for what it tests (the evidence pipeline's handling of a claim that
+     * DOES exist), but this fixture no longer produces one at all. That is not a production gap: the
+     * real entry point, {@code ClosingBalanceEvidenceShadowObserver.observe}, already guards on
+     * exactly this ({@code if (closingBalanceClaim == null) return}; its own doc comment: "null is
+     * not observable and returns immediately, since there is no claim to assess") -- so a document that
+     * resolves ambiguous is simply never submitted to the evidence pipeline in the first place, not a
+     * document this pipeline mishandles.
+     */
+    @Test
+    void singularDepositWithdrawalColumnsSample_nowResolvesAmbiguous_ratherThanGuessing() throws Exception {
+        var section = stageSection(PdfFixtureBuilder.buildSingularDepositWithdrawalColumnsSample());
+
+        assertThat(section.detectedAccount().openingBalance()).isNull();
+        assertThat(section.detectedAccount().closingBalance()).isNull();
+
+        List<StagedRow> realRows = realTransactionRows(section.rows());
+        ImportDto.VerificationFinding statementTotals =
+                new StatementTotalsValidator().check(realRows, null, null);
+        assertThat(statementTotals.outcome()).isEqualTo("NOT_APPLICABLE");
     }
 
     // ================================================================

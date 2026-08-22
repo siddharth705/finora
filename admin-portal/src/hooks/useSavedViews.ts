@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { safeStorage } from '../lib/safeStorage';
 
 export interface SavedView<T extends Record<string, string>> {
@@ -36,8 +36,19 @@ function readViews<T extends Record<string, string>>(storageKey: string): SavedV
  */
 export function useSavedViews<T extends Record<string, string>>(storageKey: string) {
   const [views, setViews] = useState<SavedView<T>[]>(() => readViews<T>(storageKey));
+  // Bug 46. save()/remove() used to compute their result from the `views` closed over at render
+  // time, via a `[views, persist]` dependency. That closure is only as fresh as the last commit --
+  // it does not update again until React re-renders -- so two calls landing before a render could
+  // run (a fast Enter-then-click, or a double-click on the same save button) both read the SAME
+  // pre-update `views`, and the second's setViews(next) silently overwrote the first's result.
+  // Mirroring the latest value in a ref, updated synchronously inside persist() itself, means the
+  // very next call -- even one still in the same tick -- reads what the previous call just wrote,
+  // not a stale render-time snapshot.
+  const viewsRef = useRef(views);
+  viewsRef.current = views;
 
   const persist = useCallback((next: SavedView<T>[]) => {
+    viewsRef.current = next;
     setViews(next);
     // Bug fix: this used to call localStorage.setItem directly, unlike readViews() above --
     // in a storage-restricted browser (private browsing with 0 quota, a policy blocking site
@@ -53,13 +64,13 @@ export function useSavedViews<T extends Record<string, string>>(storageKey: stri
   const save = useCallback((name: string, values: T) => {
     const trimmed = name.trim();
     if (!trimmed) return;
-    const withoutExisting = views.filter((v) => v.name !== trimmed);
+    const withoutExisting = viewsRef.current.filter((v) => v.name !== trimmed);
     persist([...withoutExisting, { name: trimmed, values }]);
-  }, [views, persist]);
+  }, [persist]);
 
   const remove = useCallback((name: string) => {
-    persist(views.filter((v) => v.name !== name));
-  }, [views, persist]);
+    persist(viewsRef.current.filter((v) => v.name !== name));
+  }, [persist]);
 
   return { views, save, remove };
 }

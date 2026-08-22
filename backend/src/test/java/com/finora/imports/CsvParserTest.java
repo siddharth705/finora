@@ -274,4 +274,26 @@ class CsvParserTest {
         // Interior punctuation is untouched -- only the edges are noise.
         assertThat(CsvParser.normalizeHeaderCell("Chq./Ref.No.")).isEqualTo("chq./ref.no");
     }
+
+    /**
+     * Bug 32. parseDate and maskAccountNumber were the two outliers in this file that never
+     * adopted the "null in, null out" convention every sibling parsing helper here already
+     * follows (parseNumeric, detectSignFromRawAmount, hasTrailingDrCrMarker) -- calling either
+     * with a null cell threw NullPointerException instead of returning null.
+     */
+    @Test
+    void parseDate_returnsNullRatherThanThrowing_whenGivenNull() {
+        assertThat(CsvParser.parseDate(null)).isNull();
+    }
+
+    @Test
+    void maskAccountNumber_returnsNullRatherThanThrowing_whenGivenNull() {
+        assertThat(CsvParser.maskAccountNumber(null)).isNull();
+    }
+
+    @Test
+    void maskAccountNumber_masksAllButTheLastFourDigits() {
+        assertThat(CsvParser.maskAccountNumber("000123456789")).isEqualTo("••••6789"); // synthetic-ok
+        assertThat(CsvParser.maskAccountNumber("1234")).isEqualTo("1234");
+    }
 }

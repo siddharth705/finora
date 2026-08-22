@@ -75,7 +75,7 @@ export function AppLockSection() {
       <View style={[styles.row, { borderBottomColor: c.border }]}>
         <View style={styles.rowMain}>
           <Text style={[styles.rowTitle, { color: c.ink }]}>App Lock</Text>
-          <Text style={[styles.rowMeta, { color: c.muted }]}>
+          <Text style={[styles.rowMeta, { color: c.mutedInk }]}>
             Set up a fingerprint, face, or passcode on this device to use App Lock.
           </Text>
         </View>
@@ -88,7 +88,7 @@ export function AppLockSection() {
       <View style={[styles.row, { borderBottomColor: c.border }]}>
         <View style={styles.rowMain}>
           <Text style={[styles.rowTitle, { color: c.ink }]}>App Lock</Text>
-          <Text style={[styles.rowMeta, { color: c.muted }]}>
+          <Text style={[styles.rowMeta, { color: c.mutedInk }]}>
             Require your fingerprint, face, or device passcode to open Finora.
           </Text>
         </View>

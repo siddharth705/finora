@@ -86,9 +86,11 @@ public class RecurringService {
             return List.of();
         }
 
-        List<Transaction> active = transactionRepository.findByUserId(userId).stream()
+        List<Transaction> allTransactions = transactionRepository.findByUserId(userId);
+        List<Transaction> active = allTransactions.stream()
                 .filter(t -> t.getIsDuplicateOf() == null && !t.isTransfer() && t.getTxnType() == Transaction.Type.EXPENSE)
                 .toList();
+        Set<UUID> activeIds = active.stream().map(Transaction::getId).collect(java.util.stream.Collectors.toSet());
 
         Map<String, List<Transaction>> byMerchant = new HashMap<>();
         active.stream()
@@ -174,10 +176,24 @@ public class RecurringService {
         // -- an unchanged transaction is never touched, so it never version-bumps and can never
         // produce an OptimisticLockingFailureException against a concurrent identical run, and a
         // run that changes nothing writes no audit row either.
-        List<Transaction> changed = active.stream()
+        List<Transaction> changed = new ArrayList<>(active.stream()
                 .filter(t -> t.isRecurring() != desiredRecurring.get(t.getId()))
-                .toList();
+                .toList());
         changed.forEach(t -> t.setRecurring(desiredRecurring.get(t.getId())));
+
+        // Bug 38. `active` deliberately excludes duplicates, transfers, and anything not
+        // Type.EXPENSE, so a transaction that WAS flagged recurring under a prior run and then left
+        // that set entirely -- e.g. its type changed away from EXPENSE, or it got marked a transfer
+        // or a duplicate -- never appears in `active` again. The reset-then-recompute pass above
+        // only ever considers `active`, so that transaction's stale `recurring = true` flag was
+        // never revisited and survived indefinitely. Reset it explicitly for anything outside
+        // `active` that still carries the flag.
+        List<Transaction> staleRecurring = allTransactions.stream()
+                .filter(t -> !activeIds.contains(t.getId()) && t.isRecurring())
+                .toList();
+        staleRecurring.forEach(t -> t.setRecurring(false));
+        changed.addAll(staleRecurring);
+
         if (!changed.isEmpty()) {
             transactionRepository.saveAll(changed);
         }

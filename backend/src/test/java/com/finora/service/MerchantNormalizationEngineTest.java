@@ -256,6 +256,41 @@ class MerchantNormalizationEngineTest {
                 .isEqualTo(afterFirst);
     }
 
+    /**
+     * Bug 56. An alias row can outlive its target merchant -- e.g. MerchantReviewService.discard()
+     * removes a merchant with no attached transactions but, unlike MerchantService.merge(), never
+     * repoints or deletes its aliases. Before this fix, resolve() found the dangling alias, missed
+     * the merchant lookup, and fell into createMerchantAndAlias -- whose addAlias() is an
+     * INSERT ... ON CONFLICT DO NOTHING that silently no-ops because the alias already exists (just
+     * pointing at the dead merchant). Every single call for that description created and returned a
+     * BRAND NEW merchant, none of which the alias table ever pointed at -- a fresh duplicate every
+     * time, forever.
+     */
+    @Test
+    @DisplayName("Bug 56: a dangling alias is repointed, not left to spawn a new merchant every call")
+    void danglingAliasIsRepointedRatherThanSpawningANewMerchantForever() {
+        Merchant original = engine.resolve(userId, "SWIGGY BANGALORE");
+        assertThat(aliases).hasSize(1);
+
+        // Simulate the merchant having been deleted (e.g. discard()) without touching its alias --
+        // the alias is now dangling, pointing at an id no longer in `merchants`.
+        merchants.removeIf(m -> m.getId().equals(original.getId()));
+
+        Merchant repaired = engine.resolve(userId, "SWIGGY BANGALORE");
+        Merchant repairedAgain = engine.resolve(userId, "SWIGGY BANGALORE");
+
+        assertThat(repaired.getId())
+                .as("a replacement merchant is created for the now-missing one")
+                .isNotEqualTo(original.getId());
+        assertThat(repairedAgain.getId())
+                .as("the SECOND call must find the repointed alias, not spawn yet another merchant")
+                .isEqualTo(repaired.getId());
+        assertThat(aliases)
+                .as("the dangling row is repointed in place, never duplicated")
+                .hasSize(1);
+        assertThat(aliases.get(0).getMerchantId()).isEqualTo(repaired.getId());
+    }
+
     // ---- cost ----
 
     /**
