@@ -13,6 +13,8 @@ import com.finora.dto.DataExportDto.Manifest;
 import com.finora.dto.DataExportDto.ManifestEntry;
 import com.finora.dto.DataExportDto.MerchantExportDto;
 import com.finora.dto.DataExportDto.NetWorthSnapshotExportDto;
+import com.finora.dto.DataExportDto.PlanChangeExportDto;
+import com.finora.dto.DataExportDto.SubscriptionExportDto;
 import com.finora.dto.ImportDto.ImportSessionSummaryDto;
 import com.finora.dto.ImportDto.StagedAccountSection;
 import com.finora.dto.RelationshipDto;
@@ -22,6 +24,9 @@ import com.finora.dto.WorkspaceSettingsDto;
 import com.finora.entity.Account;
 import com.finora.entity.Category;
 import com.finora.entity.ImportSession;
+import com.finora.entity.Plan;
+import com.finora.entity.PlanChange;
+import com.finora.entity.Subscription;
 import com.finora.entity.User;
 import com.finora.exception.ApiException;
 import com.finora.goals.Goal;
@@ -38,8 +43,11 @@ import com.finora.repository.ImportJobRepository;
 import com.finora.repository.ImportSessionRepository;
 import com.finora.repository.MerchantRepository;
 import com.finora.repository.NetWorthSnapshotRepository;
+import com.finora.repository.PlanChangeRepository;
+import com.finora.repository.PlanRepository;
 import com.finora.repository.StatementImportRepository;
 import com.finora.repository.StatementImportRepository.StatementMetadata;
+import com.finora.repository.SubscriptionRepository;
 import com.finora.repository.TransactionRepository;
 import com.finora.repository.UserRepository;
 import com.finora.rules.RuleDto;
@@ -56,8 +64,10 @@ import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 import java.util.zip.ZipEntry;
@@ -73,7 +83,11 @@ import java.util.zip.ZipOutputStream;
  * bookkeeping), {@code password_history} (never had anything to show), and the merchant-learning
  * tables ({@code merchant_aliases}/{@code merchant_category_map}/{@code
  * merchant_category_learning}/{@code merchant_learning_audit}/{@code merchant_learning_event} --
- * derived categorization intelligence, not data the user provided).
+ * derived categorization intelligence, not data the user provided). {@code subscription_events}
+ * (D-28 PR4-A) joins that same excluded set for the same reason as {@code audit_logs}: an
+ * internal lifecycle/analytics log, not data the user provided -- the subscription itself, and
+ * its upgrade/downgrade history, are still read, into {@code subscriptions.json} and {@code
+ * plan_changes.json} respectively.
  *
  * <h2>Two phases, for one specific reason</h2>
  * {@link #buildBundle} runs entirely inside one {@code @Transactional(readOnly = true)} call,
@@ -120,6 +134,9 @@ public class DataExportService {
     private final WorkspaceSettingsService workspaceSettingsService;
     private final BankManagementService bankManagementService;
     private final AuditService auditService;
+    private final SubscriptionRepository subscriptionRepository;
+    private final PlanRepository planRepository;
+    private final PlanChangeRepository planChangeRepository;
     private final ObjectMapper objectMapper;
 
     public DataExportService(UserRepository userRepository, GoogleReauthVerifier googleReauthVerifier,
@@ -132,7 +149,9 @@ public class DataExportService {
                               ImportSessionService importSessionService, StatementImportRepository statementImportRepository,
                               StatementImportService statementImportService, GmailConnectionRepository gmailConnectionRepository,
                               UserSettingsService userSettingsService, WorkspaceSettingsService workspaceSettingsService,
-                              BankManagementService bankManagementService, AuditService auditService, ObjectMapper objectMapper) {
+                              BankManagementService bankManagementService, AuditService auditService,
+                              SubscriptionRepository subscriptionRepository, PlanRepository planRepository,
+                              PlanChangeRepository planChangeRepository, ObjectMapper objectMapper) {
         this.userRepository = userRepository;
         this.googleReauthVerifier = googleReauthVerifier;
         this.accountRepository = accountRepository;
@@ -155,6 +174,9 @@ public class DataExportService {
         this.workspaceSettingsService = workspaceSettingsService;
         this.bankManagementService = bankManagementService;
         this.auditService = auditService;
+        this.subscriptionRepository = subscriptionRepository;
+        this.planRepository = planRepository;
+        this.planChangeRepository = planChangeRepository;
         this.objectMapper = objectMapper;
     }
 
@@ -296,9 +318,40 @@ public class DataExportService {
         UserSettingsDto userSettings = userSettingsService.get(userId);
         WorkspaceSettingsDto workspaceSettings = workspaceSettingsService.get(userId);
 
+        // D-28 PR4-A: subscriptions and plan_changes are now in AccountPurgeSweepService's purge
+        // scope (see SubscriptionRepository.hardDeleteByUserId's own doc comment -- plan_changes
+        // cascades from subscriptions via subscription_id), so this class's own "mirrors the
+        // purge scope exactly" rule means they belong here too. Reads via
+        // findByUserIdIncludingDeletedOrderByCreatedAtDesc, the same soft-delete-aware treatment
+        // accounts.json/goals.json already get.
+        List<Subscription> subscriptions = subscriptionRepository.findByUserIdIncludingDeletedOrderByCreatedAtDesc(userId);
+        List<PlanChange> planChanges = planChangeRepository.findBySubscriptionIdInOrderByCreatedAtDesc(
+                subscriptions.stream().map(Subscription::getId).toList());
+
+        // One batched Plan lookup shared by both DTOs below -- every planId a subscription is
+        // currently on, plus every fromPlanId/toPlanId a plan_changes row ever referenced (a
+        // downgrade's fromPlanId can be a plan the subscription isn't on anymore).
+        Set<UUID> planIdsToResolve = new HashSet<>();
+        subscriptions.forEach(s -> planIdsToResolve.add(s.getPlanId()));
+        planChanges.forEach(pc -> {
+            if (pc.getFromPlanId() != null) planIdsToResolve.add(pc.getFromPlanId());
+            planIdsToResolve.add(pc.getToPlanId());
+        });
+        Map<UUID, Plan> plansById = planRepository.findAllById(planIdsToResolve.stream().toList()).stream()
+                .collect(Collectors.toMap(Plan::getId, p -> p));
+
+        // planId/fromPlanId/toPlanId resolved to the plan's own code/name, not left as raw FKs --
+        // same treatment transactions.json already gives categoryId.
+        List<SubscriptionExportDto> subscriptionExports = subscriptions.stream()
+                .map(s -> SubscriptionExportDto.from(s, plansById.get(s.getPlanId())))
+                .toList();
+        List<PlanChangeExportDto> planChangeExports = planChanges.stream()
+                .map(pc -> PlanChangeExportDto.from(pc, plansById.get(pc.getFromPlanId()), plansById.get(pc.getToPlanId())))
+                .toList();
+
         return new ExportBundle(userId, user.getEmail(), accounts, transactions, budgets, goals, goalContributions,
                 categories, categoryRules, relationships, netWorthSnapshots, merchants, importJobs, importSessions,
-                statementSummaries, gmailConnections, userSettings, workspaceSettings);
+                statementSummaries, gmailConnections, userSettings, workspaceSettings, subscriptionExports, planChangeExports);
     }
 
     /**
@@ -333,6 +386,8 @@ public class DataExportService {
             writeJsonEntry(zos, "gmail_connection.json", bundle.gmailConnections());
             writeJsonEntry(zos, "account_settings.json", bundle.userSettings());
             writeJsonEntry(zos, "workspace_settings.json", bundle.workspaceSettings());
+            writeJsonEntry(zos, "subscriptions.json", bundle.subscriptions());
+            writeJsonEntry(zos, "plan_changes.json", bundle.planChanges());
 
             for (Summary statement : bundle.statementSummaries()) {
                 String entryName = "statements/" + statement.id() + "-" + sanitize(statement.fileName());
@@ -414,7 +469,9 @@ public class DataExportService {
                 new ManifestEntry("statements/", "The original statement files you uploaded, where still retrievable.", bundle.statementSummaries().size()),
                 new ManifestEntry("gmail_connection.json", "Your Gmail connection status, if any (no credentials).", bundle.gmailConnections().size()),
                 new ManifestEntry("account_settings.json", "Your profile and account preferences.", null),
-                new ManifestEntry("workspace_settings.json", "Your categorization workspace preferences.", null)
+                new ManifestEntry("workspace_settings.json", "Your categorization workspace preferences.", null),
+                new ManifestEntry("subscriptions.json", "Your plan and subscription history.", bundle.subscriptions().size()),
+                new ManifestEntry("plan_changes.json", "Your subscription upgrade/downgrade history.", bundle.planChanges().size())
         );
         List<ManifestEntry> excluded = List.of(
                 new ManifestEntry("audit_logs", "Your own actions are logged for security, not collected as your data.", null),
@@ -422,7 +479,8 @@ public class DataExportService {
                         "Derived categorization intelligence Finora builds from your transactions, not data you provided directly.", null),
                 new ManifestEntry("refresh_tokens", "Login session bookkeeping (device/IP history), not your financial data.", null),
                 new ManifestEntry("password_history", "Used only to block password reuse; never held anything to show.", null),
-                new ManifestEntry("statement_analysis_sessions", "Internal parsing evidence Finora keeps to improve statement recognition, not part of your ledger.", null)
+                new ManifestEntry("statement_analysis_sessions", "Internal parsing evidence Finora keeps to improve statement recognition, not part of your ledger.", null),
+                new ManifestEntry("subscription_events", "An internal lifecycle/analytics log of your subscription, not data you provided -- your plan history itself is in subscriptions.json and plan_changes.json.", null)
         );
         return new Manifest(Instant.now(), bundle.userId(), bundle.email(), included, excluded);
     }
@@ -478,6 +536,7 @@ public class DataExportService {
             List<MerchantExportDto> merchants, List<ImportJobDto.Progress> importJobs,
             List<ImportSessionSummaryDto> importSessions,
             List<Summary> statementSummaries, List<GmailConnectionExportDto> gmailConnections,
-            UserSettingsDto userSettings, WorkspaceSettingsDto workspaceSettings
+            UserSettingsDto userSettings, WorkspaceSettingsDto workspaceSettings,
+            List<SubscriptionExportDto> subscriptions, List<PlanChangeExportDto> planChanges
     ) {}
 }
