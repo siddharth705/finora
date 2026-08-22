@@ -24,7 +24,7 @@ vi.mock('../context/AdminAuthContext', () => ({
   useAdminAuth: vi.fn(),
 }));
 vi.mock('../api/endpoints', () => ({
-  adminDashboardApi: { overview: vi.fn(), activationFunnel: vi.fn() },
+  adminDashboardApi: { overview: vi.fn(), activationFunnel: vi.fn(), activityTrend: vi.fn() },
   adminStatsApi: { overview: vi.fn() },
   adminSystemApi: { health: vi.fn() },
 }));
@@ -49,17 +49,20 @@ function mockAuth(permissions: string[]) {
   }));
 }
 
-function overview(): OperationalDashboardDto {
+function overview(overrides: Partial<OperationalDashboardDto> = {}): OperationalDashboardDto {
   return {
     totalUsers: 1240,
     activeUsersToday: 80,
     transactionsToday: 300,
     importsToday: 12,
     importsWithSkippedRowsToday: 0,
+    inactiveUsersLast7Days: 0,
+    previousDay: { activeUsers: 80, transactions: 300, imports: 12, importsWithSkippedRows: 0 },
     needsAttention: { importsWithSkippedRowsToday: 0, lockedAccounts: 0, transactionsNeedingCategoryReview: 0, transactionsFlaggedAsDuplicates: 0 },
     health: { overallStatus: 'UP', providers: [] },
     alerts: [],
     recentActivity: [],
+    ...overrides,
   };
 }
 
@@ -68,6 +71,7 @@ describe('Dashboard — Activation Funnel', () => {
     vi.mocked(useAdminAuth).mockReset();
     vi.mocked(adminDashboardApi.overview).mockReset().mockResolvedValue(overview());
     vi.mocked(adminDashboardApi.activationFunnel).mockReset();
+    vi.mocked(adminDashboardApi.activityTrend).mockReset().mockResolvedValue([]);
     vi.mocked(adminStatsApi.overview).mockReset().mockResolvedValue({
       totalAccounts: 0, newUsersLast7Days: 0, totalStatementImports: 0, suspendedUsers: 0,
     } as any);
@@ -115,5 +119,161 @@ describe('Dashboard — Activation Funnel', () => {
     expect(await screen.findByText('Activation funnel')).toBeInTheDocument();
     // Every stage shows 0 (0%), never NaN% -- the section's own divide-by-zero guard.
     expect(screen.getAllByText('(0%)').length).toBe(4);
+  });
+});
+
+describe('Dashboard — stat tile deltas', () => {
+  beforeEach(() => {
+    vi.mocked(useAdminAuth).mockReset();
+    vi.mocked(adminDashboardApi.activationFunnel).mockReset().mockResolvedValue({
+      signedUp: 0, firstImport: 0, firstBudget: 0, firstGoal: 0,
+    });
+    vi.mocked(adminDashboardApi.activityTrend).mockReset().mockResolvedValue([]);
+    vi.mocked(adminStatsApi.overview).mockReset().mockResolvedValue({
+      totalAccounts: 0, newUsersLast7Days: 0, totalStatementImports: 0, suspendedUsers: 0,
+    } as any);
+    vi.mocked(adminSystemApi.health).mockReset();
+    mockAuth(['PLATFORM_STATS_VIEW']);
+  });
+
+  it('colors an up-is-good tile green when its count rose', async () => {
+    vi.mocked(adminDashboardApi.overview).mockReset().mockResolvedValue(overview({
+      transactionsToday: 100,
+      previousDay: { activeUsers: 80, transactions: 80, imports: 12, importsWithSkippedRows: 0 },
+    }));
+
+    renderPage();
+
+    const delta = await screen.findByText('+25% vs yesterday');
+    expect(delta).toHaveClass('text-success');
+  });
+
+  it('colors "Imports w/ skipped rows" red when it rises -- the same direction that is green on every other tile', async () => {
+    vi.mocked(adminDashboardApi.overview).mockReset().mockResolvedValue(overview({
+      importsWithSkippedRowsToday: 8,
+      previousDay: { activeUsers: 80, transactions: 300, imports: 12, importsWithSkippedRows: 4 },
+    }));
+
+    renderPage();
+
+    const delta = await screen.findByText('+100% vs yesterday');
+    expect(delta).toHaveClass('text-danger');
+  });
+
+  it('colors "Imports w/ skipped rows" green when it falls -- proving polarity is per-metric, not sign-based', async () => {
+    vi.mocked(adminDashboardApi.overview).mockReset().mockResolvedValue(overview({
+      importsWithSkippedRowsToday: 2,
+      previousDay: { activeUsers: 80, transactions: 300, imports: 12, importsWithSkippedRows: 4 },
+    }));
+
+    renderPage();
+
+    const delta = await screen.findByText('-50% vs yesterday');
+    expect(delta).toHaveClass('text-success');
+  });
+
+  it('shows "No change" rather than 0% when both days are identical', async () => {
+    vi.mocked(adminDashboardApi.overview).mockReset().mockResolvedValue(overview({
+      transactionsToday: 300,
+      previousDay: { activeUsers: 80, transactions: 300, imports: 12, importsWithSkippedRows: 0 },
+    }));
+
+    renderPage();
+
+    expect((await screen.findAllByText('No change')).length).toBeGreaterThan(0);
+  });
+
+  it('shows "New today" rather than a divide-by-zero when yesterday had none at all', async () => {
+    vi.mocked(adminDashboardApi.overview).mockReset().mockResolvedValue(overview({
+      importsToday: 3,
+      previousDay: { activeUsers: 80, transactions: 300, imports: 0, importsWithSkippedRows: 0 },
+    }));
+
+    renderPage();
+
+    expect(await screen.findByText('New today')).toBeInTheDocument();
+  });
+});
+
+describe('Dashboard — Platform Activity chart + Insights row', () => {
+  beforeEach(() => {
+    vi.mocked(useAdminAuth).mockReset();
+    vi.mocked(adminDashboardApi.overview).mockReset().mockResolvedValue(overview());
+    vi.mocked(adminDashboardApi.activationFunnel).mockReset().mockResolvedValue({
+      signedUp: 0, firstImport: 0, firstBudget: 0, firstGoal: 0,
+    });
+    vi.mocked(adminDashboardApi.activityTrend).mockReset().mockResolvedValue([]);
+    vi.mocked(adminStatsApi.overview).mockReset().mockResolvedValue({
+      totalAccounts: 0, newUsersLast7Days: 0, totalStatementImports: 0, suspendedUsers: 0,
+    } as any);
+    vi.mocked(adminSystemApi.health).mockReset();
+    mockAuth(['PLATFORM_STATS_VIEW']);
+  });
+
+  it('renders the Platform Activity chart once the trend query resolves with data', async () => {
+    vi.mocked(adminDashboardApi.activityTrend).mockResolvedValue([
+      { date: '2026-08-22', signups: 4, imports: 5, transactions: 20 },
+    ]);
+
+    renderPage();
+
+    expect(await screen.findByText('Platform activity')).toBeInTheDocument();
+  });
+
+  it('does not render the Platform Activity section while the trend query is empty or unresolved', async () => {
+    vi.mocked(adminDashboardApi.activityTrend).mockReturnValue(new Promise(() => {})); // never resolves
+
+    renderPage();
+
+    await waitFor(() => expect(screen.getByText('Operational Dashboard')).toBeInTheDocument());
+    expect(screen.queryByText('Platform activity')).not.toBeInTheDocument();
+  });
+
+  it('shows the clean-import rate as a fraction, not a fabricated failure signal', async () => {
+    vi.mocked(adminDashboardApi.overview).mockResolvedValue(overview({
+      importsToday: 12,
+      importsWithSkippedRowsToday: 2,
+    }));
+
+    renderPage();
+
+    // 10 clean out of 12 = 83%.
+    expect(await screen.findByText('83% clean (10/12)')).toBeInTheDocument();
+  });
+
+  it('shows "No imports yet today" rather than a 0% or 100% rate when there have been none', async () => {
+    vi.mocked(adminDashboardApi.overview).mockResolvedValue(overview({
+      importsToday: 0,
+      importsWithSkippedRowsToday: 0,
+    }));
+
+    renderPage();
+
+    expect(await screen.findByText('No imports yet today')).toBeInTheDocument();
+  });
+
+  it('clamps the clean-import rate at 0 rather than showing a negative count', async () => {
+    // Regression guard: the two backend counts this subtracts use slightly different boundary
+    // comparisons at the exact-instant edge, so importsWithSkippedRowsToday could in theory
+    // exceed importsToday -- the card must never show a negative "clean" count.
+    vi.mocked(adminDashboardApi.overview).mockResolvedValue(overview({
+      importsToday: 5,
+      importsWithSkippedRowsToday: 7,
+    }));
+
+    renderPage();
+
+    expect(await screen.findByText('0% clean (0/5)')).toBeInTheDocument();
+  });
+
+  it('renders the inactive-7+-days count from the overview response', async () => {
+    vi.mocked(adminDashboardApi.overview).mockResolvedValue(overview({
+      inactiveUsersLast7Days: 17,
+    }));
+
+    renderPage();
+
+    expect(await screen.findByText('17 users')).toBeInTheDocument();
+    expect(screen.getByText('Inactive 7+ days')).toBeInTheDocument();
   });
 });

@@ -3,12 +3,17 @@ import { Link } from 'react-router-dom';
 import {
   Users, UserCheck, ArrowLeftRight, FileStack, AlertTriangle, ShieldAlert,
   Wallet, TrendingUp, RefreshCw, UserPlus, Landmark, KeyRound,
-  ScrollText, SlidersHorizontal, Lock, Tag, Copy, CheckCircle2,
+  ScrollText, SlidersHorizontal, CheckCircle2, FileCheck2, UserMinus,
 } from 'lucide-react';
 import { AdminLayout } from '../components/AdminLayout';
-import { StatCard } from '../components/StatCard';
+import { StatCard, type StatDelta } from '../components/StatCard';
+import { RecentImportsPanel } from '../components/RecentImportsPanel';
+import { PlatformActivityChart } from '../components/PlatformActivityChart';
 import { useAdminAuth } from '../context/AdminAuthContext';
-import { adminDashboardApi, adminStatsApi, adminSystemApi } from '../api/endpoints';
+import { useDashboardOverview } from '../hooks/useDashboardOverview';
+import { useActivityTrend } from '../hooks/useActivityTrend';
+import { needsAttentionItems } from '../lib/needsAttentionItems';
+import { adminStatsApi, adminSystemApi, adminDashboardApi } from '../api/endpoints';
 import type { AlertDto, ProviderStatusDto, NeedsAttentionDto, ActivationFunnelDto } from '../types';
 
 const STATUS_DOT: Record<string, string> = {
@@ -65,6 +70,28 @@ function formatUptime(seconds: number) {
 }
 
 /**
+ * Turns today's count and yesterday's count into a StatCard delta. `goodDirection` is per-metric,
+ * not inferred from the sign -- "Imports w/ skipped rows" going down is the good outcome, the
+ * opposite of every other daily tile, so the caller must say which way is good rather than this
+ * function guessing from whether the number rose or fell.
+ *
+ * Two edge cases besides the plain percentage: both days at zero has nothing to compare (shown as
+ * "No change" rather than a 0% that implies a real, measured non-change), and yesterday at zero
+ * with a nonzero today has no finite percentage to report (shown as "New today" rather than a
+ * fabricated "+100%" or a divide-by-zero).
+ */
+function computeDelta(today: number, yesterday: number, goodDirection: 'up' | 'down'): StatDelta {
+  if (yesterday === 0) {
+    if (today === 0) return { direction: 'flat', label: 'No change', isGood: true };
+    return { direction: 'up', label: 'New today', isGood: goodDirection === 'up' };
+  }
+  const pct = Math.round(((today - yesterday) / yesterday) * 100);
+  if (pct === 0) return { direction: 'flat', label: 'No change', isGood: true };
+  const direction = pct > 0 ? 'up' : 'down';
+  return { direction, label: `${pct > 0 ? '+' : ''}${pct}% vs yesterday`, isGood: direction === goodDirection };
+}
+
+/**
  * Every tile here maps to one field on NeedsAttentionDto -- see that record's backend doc
  * comment. Deliberately no "Pending Reconciliation" or generic "Security Alerts" tile: neither
  * concept exists in this codebase today (reconciliation runs fully automatically with no
@@ -73,36 +100,7 @@ function formatUptime(seconds: number) {
  * is zero, the section shows a calm "nothing needs attention" line instead of empty tiles.
  */
 function NeedsAttentionSection({ data }: { data: NeedsAttentionDto }) {
-  const items = [
-    {
-      count: data.importsWithSkippedRowsToday,
-      icon: AlertTriangle,
-      label: 'imports had skipped rows today',
-      to: '/diagnostics',
-      linkLabel: 'View in Diagnostics',
-    },
-    {
-      count: data.lockedAccounts,
-      icon: Lock,
-      label: 'accounts are currently locked out',
-      to: '/users',
-      linkLabel: 'Go to Users',
-    },
-    {
-      count: data.transactionsNeedingCategoryReview,
-      icon: Tag,
-      label: 'transactions still need category review',
-      to: null,
-      linkLabel: null,
-    },
-    {
-      count: data.transactionsFlaggedAsDuplicates,
-      icon: Copy,
-      label: 'transactions are flagged as potential duplicates',
-      to: null,
-      linkLabel: null,
-    },
-  ].filter((item) => item.count > 0);
+  const items = needsAttentionItems(data);
 
   if (items.length === 0) {
     return (
@@ -214,6 +212,47 @@ const QUICK_ACTIONS = [
 ];
 
 /**
+ * "Success rate" is deliberately reframed as the clean-import rate (imports today with zero
+ * skipped rows / imports today) rather than a true attempt/failure rate -- see
+ * OperationalDashboardDto's own doc comment on importsWithSkippedRowsToday for why this pipeline
+ * has no real FAILED signal to report. null (not 0% or 100%) when there have been no imports yet
+ * today -- there is no rate to report, not a perfect or a failing one.
+ */
+function ImportSuccessRateCard({ importsToday, importsWithSkippedRowsToday }: { importsToday: number; importsWithSkippedRowsToday: number }) {
+  // Clamped defensively: the two backend counts use slightly different boundary comparisons at
+  // the exact-instant edge (see StatementImportRepository.countByImportedAtAfter vs
+  // .countWithSkippedRowsAfter), so a negative value is theoretically possible even though
+  // "with skipped rows" is meant to be a subset of "all imports."
+  const cleanImports = Math.max(0, importsToday - importsWithSkippedRowsToday);
+  const rate = importsToday > 0 ? Math.round((cleanImports / importsToday) * 100) : null;
+  return (
+    <div className="flex items-center gap-3 bg-card border border-border rounded-xl2 shadow-card px-4 py-3.5">
+      <FileCheck2 size={18} className="text-success flex-shrink-0" />
+      <div className="min-w-0">
+        <p className="text-xs text-muted uppercase tracking-wide">Import success rate</p>
+        <p className="text-sm font-mono font-semibold text-ink">
+          {rate === null ? 'No imports yet today' : `${rate}% clean (${cleanImports}/${importsToday})`}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+/** Inverse of the "Active today" tile's own query -- see
+ *  AdminOperationalDashboardService.overview()'s doc comment on inactiveUsersLast7Days. */
+function InactiveUsersCard({ count }: { count: number }) {
+  return (
+    <div className="flex items-center gap-3 bg-card border border-border rounded-xl2 shadow-card px-4 py-3.5">
+      <UserMinus size={18} className="text-muted flex-shrink-0" />
+      <div className="min-w-0">
+        <p className="text-xs text-muted uppercase tracking-wide">Inactive 7+ days</p>
+        <p className="text-sm font-mono font-semibold text-ink">{count.toLocaleString()} users</p>
+      </div>
+    </div>
+  );
+}
+
+/**
  * The Operational Dashboard -- "Is Finora healthy?" as one screen, meant to be this app's actual
  * home rather than a launchpad into other pages. Alerts and system status come entirely from
  * AdminHealthRegistryService's extensible provider registry (see com.finora.health
@@ -221,19 +260,26 @@ const QUICK_ACTIONS = [
  * backend gets one new @Component, and this page picks it up automatically with zero changes
  * here, since it just renders whatever the /admin/dashboard/overview response contains.
  *
- * Every figure on this screen is a real, live query result -- no fabricated charts or gauges.
- * Some panels a generic "ops dashboard" template might include (a 7-day transaction trend line,
- * infrastructure resource gauges) aren't here because there's no honest backing data for them
- * yet (see OperationalDashboardDto's own doc comment on importsWithSkippedRowsToday as the
- * deliberate substitute for a fabricated "failed imports" figure) -- the same discipline applies
- * to what this page chooses to visualize, not just what the backend chooses to compute.
+ * Every figure on this screen is a real, live query result -- no fabricated charts or gauges. The
+ * Platform Activity chart (dashboard redesign PR4) is a real 7-day trend against
+ * GET /admin/dashboard/activity-trend, not a decorative sparkline -- see
+ * AdminOperationalDashboardService.activityTrend()'s own doc comment. Some panels a generic "ops
+ * dashboard" template might include (infrastructure resource gauges) still aren't here because
+ * there's no honest backing data for them (see OperationalDashboardDto's own doc comment on
+ * importsWithSkippedRowsToday as the deliberate substitute for a fabricated "failed imports"
+ * figure) -- the same discipline applies to what this page chooses to visualize, not just what
+ * the backend chooses to compute.
  */
 function DashboardContent() {
   const { fullName, hasPermission } = useAdminAuth();
-  const { data, isLoading, dataUpdatedAt, refetch, isFetching } = useQuery({
-    queryKey: ['admin-dashboard-overview'],
-    queryFn: () => adminDashboardApi.overview(),
-  });
+  // Shared with AdminLayout's NotificationBell -- same cache entry, one fetch either surface can
+  // trigger, both stay in sync. See useDashboardOverview's own doc comment for the permission
+  // gating this relies on.
+  const { data, isLoading, dataUpdatedAt, refetch, isFetching } = useDashboardOverview();
+  // Platform Activity chart -- its own query, not folded into useDashboardOverview, since the
+  // 7-day trend costs materially more on the backend and only this page needs it (unlike overview
+  // data, which NotificationBell also shares). See useActivityTrend's own doc comment.
+  const { data: activityTrend } = useActivityTrend();
   // Lifetime totals (accounts/statement imports/suspended users) aren't part of the "today"
   // operational view -- kept as a secondary panel below, still backed by the original
   // PLATFORM_STATS_VIEW-gated endpoint rather than duplicated into the new one.
@@ -325,27 +371,55 @@ function DashboardContent() {
 
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-8">
           <StatCard icon={Users} label="Total users" value={isLoading ? '…' : data?.totalUsers ?? 0} />
-          <StatCard icon={UserCheck} label="Active today" value={isLoading ? '…' : data?.activeUsersToday ?? 0} />
-          <StatCard icon={ArrowLeftRight} label="Transactions today" value={isLoading ? '…' : data?.transactionsToday ?? 0} />
-          <StatCard icon={FileStack} label="Imports today" value={isLoading ? '…' : data?.importsToday ?? 0} />
+          <StatCard
+            icon={UserCheck}
+            label="Active today"
+            value={isLoading ? '…' : data?.activeUsersToday ?? 0}
+            delta={data && computeDelta(data.activeUsersToday, data.previousDay.activeUsers, 'up')}
+          />
+          <StatCard
+            icon={ArrowLeftRight}
+            label="Transactions today"
+            value={isLoading ? '…' : data?.transactionsToday ?? 0}
+            delta={data && computeDelta(data.transactionsToday, data.previousDay.transactions, 'up')}
+          />
+          <StatCard
+            icon={FileStack}
+            label="Imports today"
+            value={isLoading ? '…' : data?.importsToday ?? 0}
+            delta={data && computeDelta(data.importsToday, data.previousDay.imports, 'up')}
+          />
           <StatCard
             icon={AlertTriangle}
             label="Imports w/ skipped rows"
             value={isLoading ? '…' : data?.importsWithSkippedRowsToday ?? 0}
             tone={(data?.importsWithSkippedRowsToday ?? 0) > 0 ? 'warning' : 'default'}
+            delta={data && computeDelta(data.importsWithSkippedRowsToday, data.previousDay.importsWithSkippedRows, 'down')}
           />
         </div>
 
-        {activationFunnel && (
-          <div className="mb-8">
-            <h2 className="text-sm font-semibold text-muted uppercase tracking-wide mb-3">Activation funnel</h2>
-            <ActivationFunnelSection data={activationFunnel} />
-          </div>
-        )}
       </div>
 
+      {activityTrend && activityTrend.length > 0 && (
+        <div>
+          <h2 className="text-sm font-semibold text-muted uppercase tracking-wide mb-3">Platform activity</h2>
+          <PlatformActivityChart data={activityTrend} />
+        </div>
+      )}
+
+      {/* Activation funnel + System status side by side -- both are "how is the platform doing
+          overall" snapshots, same visual weight, same row. */}
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
         <div className="lg:col-span-3">
+          {activationFunnel && (
+            <>
+              <h2 className="text-sm font-semibold text-muted uppercase tracking-wide mb-3">Activation funnel</h2>
+              <ActivationFunnelSection data={activationFunnel} />
+            </>
+          )}
+        </div>
+
+        <div className="lg:col-span-2">
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-sm font-semibold text-muted uppercase tracking-wide">System status</h2>
             <Link to="/health" className="text-xs text-primary font-medium">View infrastructure details →</Link>
@@ -354,6 +428,23 @@ function DashboardContent() {
             {isLoading && <p className="text-sm text-muted px-4 py-4">Loading…</p>}
             {data?.health.providers.map((p) => <ProviderRow key={p.name} provider={p} />)}
           </div>
+        </div>
+      </div>
+
+      {/* Insights -- small, secondary figures under the funnel/system-status row, same visual
+          weight as a footnote rather than a headline stat. */}
+      {data && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <ImportSuccessRateCard importsToday={data.importsToday} importsWithSkippedRowsToday={data.importsWithSkippedRowsToday} />
+          <InactiveUsersCard count={data.inactiveUsersLast7Days} />
+        </div>
+      )}
+
+      {/* Recent imports + lifetime totals/quick actions -- day-to-day activity next to the two
+          things an admin most often wants to jump into from here. */}
+      <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
+        <div className="lg:col-span-3">
+          <RecentImportsPanel limit={5} viewAllTo="/health" />
         </div>
 
         <div className="lg:col-span-2 space-y-6">

@@ -29,6 +29,36 @@ export const hero = {
   ],
 };
 
+/**
+ * Copy for the cinematic hero's score ring, intelligence-scan checklist, and floating data
+ * badges. Same rule as the rest of this file: these are illustrative figures, kept internally
+ * consistent with the numbers DashboardMock already shows elsewhere on the page (see
+ * DashboardMock.tsx's own note on why that matters).
+ */
+export const heroScore = {
+  label: 'Financial Health',
+  value: 84,
+  delta: '+6 this month',
+};
+
+export const heroIntelligence = {
+  heading: 'Analyzing your finances…',
+  steps: [
+    'Spending patterns detected',
+    'Subscription detected',
+    'Saving opportunity found',
+    'Financial health calculated',
+  ],
+};
+
+export const heroBadges = [
+  { label: '+₹1,24,500 Salary' },
+  { label: 'Investment +12%' },
+  { label: 'Goal 72%' },
+  { label: 'AI Insight ✨' },
+  { label: 'Savings improved' },
+];
+
 export const problem = {
   eyebrow: 'Why this is hard',
   title: "Managing money shouldn't feel like work.",
