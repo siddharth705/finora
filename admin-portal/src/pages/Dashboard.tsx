@@ -3,13 +3,15 @@ import { Link } from 'react-router-dom';
 import {
   Users, UserCheck, ArrowLeftRight, FileStack, AlertTriangle, ShieldAlert,
   Wallet, TrendingUp, RefreshCw, UserPlus, Landmark, KeyRound,
-  ScrollText, SlidersHorizontal, Lock, Tag, Copy, CheckCircle2,
+  ScrollText, SlidersHorizontal, CheckCircle2,
 } from 'lucide-react';
 import { AdminLayout } from '../components/AdminLayout';
 import { StatCard, type StatDelta } from '../components/StatCard';
 import { RecentImportsPanel } from '../components/RecentImportsPanel';
 import { useAdminAuth } from '../context/AdminAuthContext';
-import { adminDashboardApi, adminStatsApi, adminSystemApi } from '../api/endpoints';
+import { useDashboardOverview } from '../hooks/useDashboardOverview';
+import { needsAttentionItems } from '../lib/needsAttentionItems';
+import { adminStatsApi, adminSystemApi, adminDashboardApi } from '../api/endpoints';
 import type { AlertDto, ProviderStatusDto, NeedsAttentionDto, ActivationFunnelDto } from '../types';
 
 const STATUS_DOT: Record<string, string> = {
@@ -96,36 +98,7 @@ function computeDelta(today: number, yesterday: number, goodDirection: 'up' | 'd
  * is zero, the section shows a calm "nothing needs attention" line instead of empty tiles.
  */
 function NeedsAttentionSection({ data }: { data: NeedsAttentionDto }) {
-  const items = [
-    {
-      count: data.importsWithSkippedRowsToday,
-      icon: AlertTriangle,
-      label: 'imports had skipped rows today',
-      to: '/diagnostics',
-      linkLabel: 'View in Diagnostics',
-    },
-    {
-      count: data.lockedAccounts,
-      icon: Lock,
-      label: 'accounts are currently locked out',
-      to: '/users',
-      linkLabel: 'Go to Users',
-    },
-    {
-      count: data.transactionsNeedingCategoryReview,
-      icon: Tag,
-      label: 'transactions still need category review',
-      to: null,
-      linkLabel: null,
-    },
-    {
-      count: data.transactionsFlaggedAsDuplicates,
-      icon: Copy,
-      label: 'transactions are flagged as potential duplicates',
-      to: null,
-      linkLabel: null,
-    },
-  ].filter((item) => item.count > 0);
+  const items = needsAttentionItems(data);
 
   if (items.length === 0) {
     return (
@@ -253,10 +226,10 @@ const QUICK_ACTIONS = [
  */
 function DashboardContent() {
   const { fullName, hasPermission } = useAdminAuth();
-  const { data, isLoading, dataUpdatedAt, refetch, isFetching } = useQuery({
-    queryKey: ['admin-dashboard-overview'],
-    queryFn: () => adminDashboardApi.overview(),
-  });
+  // Shared with AdminLayout's NotificationBell -- same cache entry, one fetch either surface can
+  // trigger, both stay in sync. See useDashboardOverview's own doc comment for the permission
+  // gating this relies on.
+  const { data, isLoading, dataUpdatedAt, refetch, isFetching } = useDashboardOverview();
   // Lifetime totals (accounts/statement imports/suspended users) aren't part of the "today"
   // operational view -- kept as a secondary panel below, still backed by the original
   // PLATFORM_STATS_VIEW-gated endpoint rather than duplicated into the new one.
