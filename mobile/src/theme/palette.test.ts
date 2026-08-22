@@ -39,13 +39,23 @@ describe('theme palette contrast', () => {
     expect(contrastRatio(p.mutedInk, p.card)).toBeGreaterThanOrEqual(AA_SMALL_TEXT);
   });
 
-  it.each([
-    ['light', light],
-    ['dark', dark],
-  ])('%s: mutedInk has a real margin over muted, not just a token rename', (_name, p) => {
+  it('light.mutedInk has a real margin over light.muted, not just a token rename', () => {
     // Guards against a future edit accidentally setting mutedInk back to muted's exact value,
-    // which would silently undo this fix while every call site still compiles.
-    expect(contrastRatio(p.mutedInk, p.bg)).toBeGreaterThan(contrastRatio(p.muted, p.bg) - 0.01);
+    // which would silently undo this fix while every call site still compiles. A margin of at
+    // least +1.0 can't be satisfied by rounding noise or a near-identical color -- it forces the
+    // fix to still be a real darkening, the same shape of regression warningInk already guards.
+    const before = contrastRatio(light.muted, light.bg);
+    const after = contrastRatio(light.mutedInk, light.bg);
+    expect(after).toBeGreaterThan(before + 1.0);
+  });
+
+  it("dark.mutedInk intentionally equals dark.muted, since dark theme already clears AA", () => {
+    // The inverse of the light-mode guard above: dark.muted already sits at ~7.3:1 (see palette.ts's
+    // comment), so mutedInk correctly makes no change there -- same shape as dark.warningInk
+    // equalling dark.warning. Pinned explicitly so the two guards can't be satisfied by accident in
+    // opposite directions (e.g. a future edit that darkens dark.mutedInk too, which the AA-floor
+    // test alone wouldn't catch since a darker color still clears 4.5:1).
+    expect(dark.mutedInk).toBe(dark.muted);
   });
 
   it.each([
