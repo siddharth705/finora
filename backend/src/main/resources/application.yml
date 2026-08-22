@@ -609,6 +609,8 @@ app:
           enabled: ${GMAIL_PARSER_PHONEPE_ENABLED:false}
         cred:
           enabled: ${GMAIL_PARSER_CRED_ENABLED:false}
+        paytm:
+          enabled: ${GMAIL_PARSER_PAYTM_ENABLED:false}
 
 # Reversible encryption at rest for third-party credentials Finora must read back -- OAuth refresh
 # tokens first (ADR-007). NOT for passwords or Finora's own session tokens, which are hashed via
