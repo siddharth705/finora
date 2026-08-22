@@ -1,7 +1,7 @@
 import { Suspense, lazy, useState } from 'react';
 import { useReducedMotion } from 'framer-motion';
 import { isWebglAvailable } from './webglSupport';
-import { useIsDesktop } from './useIsDesktop';
+import { useIsDesktop } from '../hooks/useIsDesktop';
 
 const AmbientScene = lazy(() =>
   import('./AmbientScene').then((mod) => ({ default: mod.AmbientScene }))

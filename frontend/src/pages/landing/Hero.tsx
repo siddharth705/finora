@@ -1,4 +1,3 @@
-import { Link } from 'react-router-dom';
 import { ArrowRight, Check } from 'lucide-react';
 import { motion, useReducedMotion } from 'framer-motion';
 import { hero } from './landing-config';
@@ -7,6 +6,7 @@ import { FloatingDashboardCard } from './hero/FloatingDashboardCard';
 import { HealthScoreRing } from './hero/HealthScoreRing';
 import { IntelligenceScan } from './hero/IntelligenceScan';
 import { FloatingBadges } from './hero/FloatingBadges';
+import { MagneticLink, MagneticAnchor } from './MagneticLink';
 
 const EASE = [0.16, 1, 0.3, 1] as const;
 
@@ -71,16 +71,16 @@ export function Hero() {
               {hero.blurb}
             </p>
             <div className="flex flex-col sm:flex-row gap-3 mb-8">
-              <Link to="/register" className="m-btn m-btn-primary w-full sm:w-auto">
+              <MagneticLink to="/register" className="m-btn m-btn-primary w-full sm:w-auto">
                 {hero.primaryCta} <ArrowRight size={16} />
-              </Link>
-              <a
+              </MagneticLink>
+              <MagneticAnchor
                 href="#how"
                 className="m-btn m-btn-ghost w-full sm:w-auto"
                 style={{ background: 'transparent', color: '#F8FAFC', borderColor: 'rgba(255,255,255,0.25)' }}
               >
                 {hero.secondaryCta}
-              </a>
+              </MagneticAnchor>
             </div>
             <ul className="grid sm:grid-cols-2 gap-x-6 gap-y-2.5">
               {hero.assurances.map((t) => (

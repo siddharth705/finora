@@ -2,7 +2,7 @@ import { render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('./webglSupport', () => ({ isWebglAvailable: vi.fn() }));
-vi.mock('./useIsDesktop', () => ({ useIsDesktop: vi.fn() }));
+vi.mock('../hooks/useIsDesktop', () => ({ useIsDesktop: vi.fn() }));
 vi.mock('./AmbientScene', () => ({
   AmbientScene: () => <div data-testid="ambient-scene-stub" />,
 }));
@@ -18,7 +18,7 @@ vi.mock('framer-motion', async (importOriginal) => {
 
 import { useReducedMotion } from 'framer-motion';
 import { isWebglAvailable } from './webglSupport';
-import { useIsDesktop } from './useIsDesktop';
+import { useIsDesktop } from '../hooks/useIsDesktop';
 import { AmbientCanvas } from './AmbientCanvas';
 
 describe('AmbientCanvas', () => {
