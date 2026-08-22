@@ -186,6 +186,38 @@ class CategorizationServiceTest {
     }
 
     /**
+     * Bug 04 (docs/quality/bug-reports/BUG_REVIEW_REPORT.md). categories.name is VARCHAR(80) NOT
+     * NULL with no upstream length check on the import-confirm path -- an oversized category cell
+     * used to make the INSERT fail against the column constraint, which marks the whole confirm
+     * transaction rollback-only and discards the entire import. Same fix shape as
+     * MerchantNormalizationEngine.fitToColumn for merchant names on the identical parser-output
+     * code path: truncate before the write is ever attempted, not after it fails.
+     */
+    @Test
+    void resolveOrCreateCategory_truncatesAnOversizedName_ratherThanFailingTheInsert() {
+        String oversized = "x".repeat(100);
+        String truncated = "x".repeat(80);
+        when(categoryRepository.findByUserIdAndNameIgnoreCaseOrderByIdAsc(userId, truncated)).thenReturn(List.of());
+        when(categoryRepository.save(any(Category.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        Category result = categorizationService.resolveOrCreateCategory(userId, oversized);
+
+        assertThat(result.getName()).isEqualTo(truncated);
+        assertThat(result.getName()).hasSize(80);
+    }
+
+    @Test
+    void resolveOrCreateCategory_trimsSurroundingWhitespace_beforeCheckingLength() {
+        String padded = " ".repeat(5) + "Dining" + " ".repeat(5);
+        when(categoryRepository.findByUserIdAndNameIgnoreCaseOrderByIdAsc(userId, "Dining")).thenReturn(List.of());
+        when(categoryRepository.save(any(Category.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        Category result = categorizationService.resolveOrCreateCategory(userId, padded);
+
+        assertThat(result.getName()).isEqualTo("Dining");
+    }
+
+    /**
      * Bug 16. resolveOrCreateCategory now matches case-insensitively and trims whitespace, so
      * "dining" resolves to an existing "Dining" row instead of creating a sibling that would
      * split a budget and double-count in reports.
@@ -236,6 +268,15 @@ class CategorizationServiceTest {
      * categoryRepository.save() with a NOT NULL column and came back as a confusing 409 CONFLICT.
      * Trimming a null would instead throw an unhandled NullPointerException into the generic 500
      * handler -- worse than the bug it replaced. This must throw a clean 400 instead.
+     *
+     * <p>Merge-conflict resolution note (Bug 04 x Bug 16): Bug 04's own version of this method
+     * defaulted null/blank to "Other" instead of throwing, for the import-confirm path's "don't
+     * fail the whole import over one bad cell" reasoning. That degradation now lives at
+     * ImportService.confirm's own call site instead (see
+     * ImportServiceAskOnceTest#confirm_fallsBackToOther_whenTheStatementsCategoryCellWasNullOrBlank)
+     * -- this method throwing for every OTHER caller is what Bug 16's fix actually needs, since a
+     * blank name reaching e.g. TransactionService.updateCategory is a malformed request, not a
+     * parser artifact to paper over.
      */
     @Test
     void resolveOrCreateCategory_rejectsANullOrBlankName_withA400_ratherThanNpeOrANotNullViolation() {

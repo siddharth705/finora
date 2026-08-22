@@ -9,6 +9,8 @@ import com.finora.exception.ApiException;
 import com.finora.repository.CategoryRepository;
 import com.finora.repository.MerchantCategoryLearningRepository;
 import com.finora.util.CategoryRules;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
@@ -31,6 +33,8 @@ import java.util.UUID;
  */
 @Service
 public class CategorizationService {
+
+    private static final Logger log = LoggerFactory.getLogger(CategorizationService.class);
 
     private final MerchantNormalizationEngine merchantNormalizationEngine;
     private final MerchantLearningService merchantLearningService;
@@ -346,12 +350,27 @@ public class CategorizationService {
         return newCategory;
     }
 
+    // categories.name is VARCHAR(80) NOT NULL (V1__init_schema.sql). ImportService's confirm path
+    // feeds this an unbounded raw CSV/PDF cell with no upstream length check -- unlike the manual
+    // creation path in TransactionService, which only ever reaches here with an explicit non-null
+    // category or an engine suggestion. A too-long name previously hit the column constraint on
+    // INSERT, which marks the whole confirm transaction rollback-only: same failure mode
+    // MerchantNormalizationEngine.fitToColumn already guards against for merchant names, on the
+    // same parser-output code path. By the time the constraint fires the transaction is already
+    // poisoned, and no handling un-poisons it -- the write simply must not be attempted.
+    private static final int MAX_CATEGORY_NAME_LENGTH = 80;
+
     /**
      * Bug 16: trims and matches case-insensitively so "dining", "Dining" and "Dining " all
      * resolve to one category instead of splitting into siblings that fragment a budget and
      * double-count in reports -- see
      * {@link CategoryRepository#findByUserIdAndNameIgnoreCaseOrderByIdAsc} for what this does
      * and does not close, including why it returns a list rather than a single result.
+     *
+     * <p>Bug 04: also caps the name at {@code categories.name}'s {@code VARCHAR(80)} limit (see
+     * {@link #MAX_CATEGORY_NAME_LENGTH}'s own comment). Applied here rather than only at the
+     * import call site so every caller gets the same defense, even though the import path is the
+     * only one actually reachable with a name this long.
      *
      * <p>The null/blank guard is a side effect of adding {@code .trim()} above, not incidental:
      * {@code TransactionService.updateCategory} passes an unvalidated {@code Map<String, String>}
@@ -365,20 +384,40 @@ public class CategorizationService {
      * {@code NullPointerException} straight into the generic 500 handler -- worse than the bug
      * it replaced. This throws the correct 400 instead, closing both the confusing-409 case and
      * the potential NPE at the same time.
+     *
+     * <p>Deliberately does NOT default null/blank to "Other" the way {@code ImportService.confirm}
+     * needs to for the exact same {@code VARCHAR(80)} exposure (Bug 04's own reproduction: "A
+     * null/blank {@code row.category()} hits the same path against {@code NOT NULL}") -- that
+     * degradation belongs at ImportService's own call site (see its comment there), where the
+     * reasoning is "an unparseable category cell should not fail the whole import." A caller
+     * reaching here with a null/blank name that was NOT already sanitized for that reason is a
+     * genuinely malformed request, not a parser artifact -- throwing keeps that distinction
+     * visible instead of silently reinterpreting every blank name as "Other," which would mask
+     * real client bugs (a dropped form field, an `undefined` making it into a request body) behind
+     * a default value.
      */
     public Category resolveOrCreateCategory(UUID userId, String name) {
         if (name == null || name.isBlank()) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "Category name can't be blank.");
         }
         String trimmed = name.trim();
-        List<Category> matches = categoryRepository.findByUserIdAndNameIgnoreCaseOrderByIdAsc(userId, trimmed);
+        String safeName = trimmed.length() <= MAX_CATEGORY_NAME_LENGTH ? trimmed : truncateForColumn(trimmed);
+        List<Category> matches = categoryRepository.findByUserIdAndNameIgnoreCaseOrderByIdAsc(userId, safeName);
         if (!matches.isEmpty()) {
             return matches.get(0);
         }
         Category c = new Category();
         c.setUserId(userId);
-        c.setName(trimmed);
+        c.setName(safeName);
         c.setSystem(false);
         return categoryRepository.save(c);
+    }
+
+    private static String truncateForColumn(String trimmed) {
+        log.warn("Truncating a {}-character category name to {} for import confirm. This is a "
+                + "PARSER fault, not a data fault: a category cell that long means column "
+                + "segmentation absorbed surrounding page text.",
+                trimmed.length(), MAX_CATEGORY_NAME_LENGTH);
+        return trimmed.substring(0, MAX_CATEGORY_NAME_LENGTH);
     }
 }
