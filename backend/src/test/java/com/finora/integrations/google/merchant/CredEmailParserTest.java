@@ -66,6 +66,21 @@ class CredEmailParserTest {
         assertThat(receipt.confidence()).isBetween(0.0, 1.0);
     }
 
+    /** Regression coverage from code review: the bank-name capture must not require the name to
+     *  literally end in the word "Bank" -- real Indian bank names don't all ("State Bank of
+     *  India" ends in "India"), and this exact name already appears as flavor text in this PR's own
+     *  PhonePe fixture, showing it's a realistic value, not a contrived edge case. */
+    @Test
+    @DisplayName("a bank name not ending in the literal word \"Bank\" is still captured")
+    void shouldParseBankNameThatDoesNotEndInTheWordBank() {
+        SanitizedGmailMessage message = load("payment-successful-non-bank-suffix.html", "msg-5");
+
+        ParserResult result = parser.parse(message);
+
+        assertThat(result.isParsed()).isTrue();
+        assertThat(result.receipt().counterpartyName()).isEqualTo("State Bank of India •••• 9042");
+    }
+
     @Test
     @DisplayName("a bill-generated notice is not-a-receipt -- no money has moved yet")
     void shouldIgnoreBillGeneratedNotice() {

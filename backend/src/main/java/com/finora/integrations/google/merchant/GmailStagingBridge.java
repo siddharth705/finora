@@ -123,7 +123,8 @@ public class GmailStagingBridge {
     /** {@code identity}, not the receipt HTML, is what {@code storeContent} persists as this
      *  session's "file" -- a 20-odd byte provenance marker, never the email's content. */
     private static String descriptionFor(ParsedReceipt receipt) {
-        return receipt.counterpartyName() != null ? receipt.counterpartyName() : receipt.merchantDomain();
+        String counterparty = receipt.counterpartyName();
+        return counterparty != null && !counterparty.isBlank() ? counterparty : receipt.merchantDomain();
     }
 
     /** Purely cosmetic — what the "Continue previous import" card list (file-upload-shaped UI,

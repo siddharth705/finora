@@ -30,6 +30,14 @@ public class PaytmEmailParser implements MerchantEmailParser {
         return enabled && DOMAIN.equals(authenticatedDomain);
     }
 
+    /** Unconditional, unlike {@link #canParse} -- this domain is Paytm's regardless of whether the
+     *  feature flag above happens to be on, so the admin collision guard must see it as claimed
+     *  even while the flag is off. See {@link MerchantEmailParser#claimsDomain} for why. */
+    @Override
+    public boolean claimsDomain(String authenticatedDomain) {
+        return DOMAIN.equals(authenticatedDomain);
+    }
+
     @Override
     public ParserResult parse(SanitizedGmailMessage message) {
         return ParserResult.malformed("PaytmEmailParser has no verified extraction pattern yet -- "

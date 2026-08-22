@@ -45,9 +45,14 @@ public class CredEmailParser implements MerchantEmailParser {
 
     /** The bank name and masked card sit right after "successful in N seconds", e.g. "successful
      *  in 9 seconds Yes Bank •••• 9042" — captured together since that anchor is what keeps the
-     *  bank-name group from matching the wrong "Bank" occurrence elsewhere in the message. */
+     *  bank-name group bounded to just the text between "seconds" and the masked card, without
+     *  requiring the name to literally end in the word "Bank" (real Indian bank names don't all —
+     *  "State Bank of India" ends in "India"). {@link #NAME} bounds the capture to a sane length so
+     *  an adversarial body with no bullet run can't force an unbounded scan, the same defensive
+     *  reasoning {@code AmazonEmailParser}'s own amount pattern already documents. */
+    private static final int NAME = 80;
     private static final Pattern BANK_AND_CARD = Pattern.compile(
-            "successful in \\d+ seconds\\s+(.+?\\s+Bank)\\s*•{4}\\s*(\\d{4})",
+            "successful in \\d+ seconds\\s+(.{1," + NAME + "}?)\\s*•{4}\\s*(\\d{4})",
             Pattern.CASE_INSENSITIVE);
 
     private static final Pattern AMOUNT = Pattern.compile(
@@ -62,6 +67,14 @@ public class CredEmailParser implements MerchantEmailParser {
     @Override
     public boolean canParse(String authenticatedDomain) {
         return enabled && DOMAIN.equals(authenticatedDomain);
+    }
+
+    /** Unconditional, unlike {@link #canParse} -- this domain is CRED's regardless of whether the
+     *  feature flag above happens to be on, so the admin collision guard must see it as claimed
+     *  even while the flag is off. See {@link MerchantEmailParser#claimsDomain} for why. */
+    @Override
+    public boolean claimsDomain(String authenticatedDomain) {
+        return DOMAIN.equals(authenticatedDomain);
     }
 
     @Override

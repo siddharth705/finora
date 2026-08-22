@@ -44,10 +44,14 @@ public class PhonePeEmailParser implements MerchantEmailParser {
      * ("Paid to &lt;name&gt; ₹ &lt;amount&gt;") — anchoring the name capture to stop at the
      * currency symbol is what keeps it from swallowing the rest of the line. The amount has no
      * mandatory decimal part: real PhonePe amounts seen so far are plain integers ("₹ 27000"),
-     * unlike Amazon's always-two-decimal totals.
+     * unlike Amazon's always-two-decimal totals. The name capture is bounded to a sane length
+     * (80 chars, generous for a real payee name) so a message body with "Paid to" but no ₹ symbol
+     * anywhere after it — attacker-controlled input, per {@link MerchantEmailSanitizer}'s own
+     * class doc — can't force an unbounded scan, the same defensive reasoning
+     * {@code AmazonEmailParser}'s own amount pattern already documents.
      */
     private static final Pattern PAID_TO = Pattern.compile(
-            "Paid to\\s+(.+?)\\s*₹\\s*(?<!\\d)([\\d,]{1,18}(?:\\.\\d{2})?)(?!\\d)");
+            "Paid to\\s+(.{1,80}?)\\s*₹\\s*(?<!\\d)([\\d,]{1,18}(?:\\.\\d{2})?)(?!\\d)");
 
     /** The date line has no label at all — it sits right after "PhonePe" and right before "Paid
      *  to" ("PhonePe Jul 14, 2026 Paid to ..."), an abbreviated-month format {@link
@@ -61,6 +65,14 @@ public class PhonePeEmailParser implements MerchantEmailParser {
     @Override
     public boolean canParse(String authenticatedDomain) {
         return enabled && DOMAIN.equals(authenticatedDomain);
+    }
+
+    /** Unconditional, unlike {@link #canParse} -- this domain is PhonePe's regardless of whether
+     *  the feature flag above happens to be on, so the admin collision guard must see it as claimed
+     *  even while the flag is off. See {@link MerchantEmailParser#claimsDomain} for why. */
+    @Override
+    public boolean claimsDomain(String authenticatedDomain) {
+        return DOMAIN.equals(authenticatedDomain);
     }
 
     @Override

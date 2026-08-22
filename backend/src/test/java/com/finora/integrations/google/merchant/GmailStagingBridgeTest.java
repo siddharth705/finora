@@ -84,6 +84,23 @@ class GmailStagingBridgeTest {
         assertThat(capturedRows().get(0).description()).isEqualTo("amazon.in");
     }
 
+    /** Regression coverage from code review: a counterparty-capturing regex with a reluctant group
+     *  can in principle match a whitespace-only string (e.g. extra spaces where a name should be) —
+     *  {@link ParsedReceipt}'s own constructor deliberately allows a blank {@code counterpartyName}
+     *  since only null is a parser bug. A blank string is not a usable description, so it must fall
+     *  back to the domain the same way null does, rather than staging an empty transaction
+     *  description. */
+    @Test
+    @DisplayName("a receipt with a blank (not null) counterparty falls back to the raw domain too")
+    void domainUsedWhenCounterpartyIsBlank() {
+        ParsedReceipt receiptWithBlankCounterparty = new ParsedReceipt("msg-1", "phonepe.com",
+                "   ", Money.of(new BigDecimal("480.00")), LocalDate.of(2026, 7, 14), 0.9);
+
+        bridge.stage(userId, receiptWithBlankCounterparty);
+
+        assertThat(capturedRows().get(0).description()).isEqualTo("phonepe.com");
+    }
+
     /**
      * No merchant-to-category engine exists yet, and guessing one would be exactly the "wrong
      * answer nobody asked for" this codebase's own account-detection refuses to do elsewhere. This
