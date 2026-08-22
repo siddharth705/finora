@@ -478,16 +478,20 @@ The prototype's own doc comment names both restrictions explicitly:
 1. **Single fragment, not multi-fragment.** `nonBlankCount(above) != 1` (`PdfTableLocator.java:2351`)
    admits exactly one orphaned cell one physical line above the accepted header — never a genuine
    multi-cell tier.
-2. **Backward-only, not multi-directional.** *"Deliberately does NOT attempt `wrappedHeaderAt`'s
-   forward composition too (IOB's shape, and the general multi-directional case): per the design
-   doc's non-goals and the explicit scope for this phase, a document needing that is left exactly as
-   it is today"* (`PdfTableLocator.java:2295-2299`). The prototype only ever looks at
-   `rows.get(headerIndex - 1)` (`:2333`) — one line *above* whichever row already got accepted as the
-   header. It structurally cannot reach a fragment that belongs *after* the accepted row, regardless
-   of how many fragments there are.
+2. **Single step, not multi-step.** `above = rows.get(headerIndex - 1)` (`:2333`) only ever looks at
+   the one physical line immediately preceding whichever row already got accepted as the header. It
+   structurally cannot reach a second row further back, however many header-region rows exist,
+   because it never walks — it takes exactly one fixed step and stops. This is distinct from
+   `wrappedHeaderAt`'s own forward-walking loop (`:1956-1966`, up to `HEADER_WRAP_MAX_LINES` spans),
+   which the prototype's doc comment names but does not reuse: *"Deliberately does NOT attempt
+   `wrappedHeaderAt`'s forward composition too (IOB's shape, and the general multi-directional case):
+   per the design doc's non-goals and the explicit scope for this phase, a document needing that is
+   left exactly as it is today"* (`PdfTableLocator.java:2295-2299`).
 
-These are two independent gaps, and IOB and ICICI each hit a different one — not the same "general
-case" the plan's §4d table currently implies.
+These are two independent gaps. §9.3's direct trace shows **IOB hits both simultaneously** — its
+immediate-neighbor row fails gap 1 (4 cells, not 1), and a second, further row fails gap 2 entirely
+(unreachable in one step regardless of cell count) — not one gap each, as the plan's §4d table
+currently implies by naming IOB and ICICI as needing the same "general multi-tier case."
 
 ### 9.2 ICICI is not broken today, and the regression is already documented in the shipped code
 
@@ -527,20 +531,55 @@ validation catches that class of error.
 case for the "qualify-existing" operation (§9.3), not a target needing a new mechanism. Folding it
 back in without adding the missing invariant below would very likely reproduce the same regression.
 
-### 9.3 What IOB genuinely needs — confirmed live against the real document
+### 9.3 What IOB genuinely needs — confirmed live against the real document, and corrected
 
-Running the diagnostic tool against the real IOB statement (`Statement.pdf`) on current `main`:
-`Detected table columns: [Date), Type]` — only two badly-degraded columns survive; nearly all of the
-real header vocabulary (the source prints a Date/Reference/Description line immediately followed by
-a Particulars/Debit/Credit/Balance line) is lost, and almost every transaction's fields collapse into
-one catch-all column. This is a **forward-composition** case per §9.1's second gap, exactly as
-`reconstructHeader`'s own doc comment names it — not a fragment-count problem `nonBlankCount(above)`
-governs at all. Widening that single check would not reach IOB; the method's directional constraint
-(`rows.get(headerIndex - 1)`, backward-only) would still exclude it.
+**Correction, same day, before this PR merged:** an earlier draft of this section mischaracterized
+IOB's shape as needing fragments *after* the accepted header row ("forward composition," read too
+literally off `reconstructHeader`'s own doc comment without independently re-tracing IOB's real row
+geometry first). Direct evidence —
+reflection-probing `PdfTableLocator`'s private methods against the real document, not inference —
+shows the opposite: IOB's missing fragments sit *before* the accepted row, and the accepted row
+itself is already the *last* of three real header-region rows. Left as originally written would
+have pointed an implementation at the wrong end of the header region. Corrected below; the
+underlying recommendation (IOB is ready for its own implementation phase) is unchanged.
 
-**IOB is ready for its own implementation phase**, but it is the forward-composition generalization
-of §4.6–§4.9 (multi-fragment collection spanning the full header region, §4.8's multi-candidate
-generation, §5's tiered validation) — materially more than relaxing `reconstructHeader`'s existing
+Real, unredacted document, physical rows (`groupIntoRows` output, row index and y-coordinate
+confirmed via a throwaway reflection probe — deleted after use, nothing committed):
+
+| Row | y | Cells | `looksLikeHeaderRow` |
+|---|---|---|---|
+| 12 | 284.1 | `Date(Value Ref No.` *(fused — the §8 extraction artifact)*, `Transaction` | false |
+| 13 | 287.3 | `Particulars`, `Debit(Rs)`, `Credit(Rs)`, `Balance(Rs)` | false |
+| 14 | 292.8 | `Date)`, `/Cheque No`, `Type` | **true — accepted today** |
+
+`Detected table columns: [Date), Type]` on `main` today is row 14 alone. Directly confirmed, by
+invoking the real methods via reflection against this document: `mergeHeaderLines([12,13])`,
+`mergeHeaderLines([13,14])`, `wrappedHeaderAt` starting from row 12, `wrappedHeaderAt` starting from
+row 13, and `reconstructHeader(row14, rows, 14, 0)` **all return `null`**. The last one is not a
+directional miss — `reconstructHeader`'s `above = rows.get(headerIndex - 1)` **does** land on row
+13, but row 13 has 4 non-blank cells, so it fails the exact same `nonBlankCount(above) != 1` gate
+that excludes ICICI's case (§9.2), at a single step. Row 12 is a second, independent gap: it is two
+rows before the accepted row, structurally unreachable by any single-step-backward mechanism
+regardless of its cell count.
+
+**What "forward composition" in `reconstructHeader`'s doc comment actually refers to**: `wrappedHeaderAt`
+(`PdfTableLocator.java:1941`) anchors at an *early* row and walks toward *later* ones (its `span`
+loop, `:1956-1966`) — for IOB that means starting at row 12, the first row of the real header region,
+not the row that ends up accepted. "Forward" describes that walk's direction from an early anchor,
+not the location of IOB's missing fragments relative to today's accepted row — they are earlier,
+not later. `reconstructHeader`'s single backward step from an *already-accepted* row is a
+structurally different, narrower mechanism, and extending it further backward would just reimplement
+`wrappedHeaderAt`'s forward walk in reverse.
+
+**IOB is ready for its own implementation phase**, but the natural home for it is generalizing
+`wrappedHeaderAt`'s existing forward walk — anchored at the header region's first row, already built
+to span multiple lines (`HEADER_WRAP_MAX_LINES`) — to attempt §4.6–§4.9's fragment-based composition
+when `mergeHeaderLines`'s refinement-only model refuses a given span, instead of refusing outright.
+Concretely: at row 12, `mergeHeaderLines([12,13])` refuses (partition, not refinement); a
+composition-capable fallback would collect fragments from the whole spanned block (rows 12-14) and
+build/validate candidates per §4.8-§4.9, the same architecture `reconstructHeader` already prototypes
+in miniature, just triggered from the forward walk's own refusal point rather than a backward step
+off an already-accepted row. Materially more than relaxing `reconstructHeader`'s existing
 single-fragment gate. Per §9.2, any implementation reaching this general shape must also add the
 invariant the prototype never needed: a per-fragment decision between **fill-empty** (a fragment with
 no existing anchor on the accepted line — IOB's need) and **qualify-existing** (a fragment that
