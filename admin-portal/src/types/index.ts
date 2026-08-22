@@ -79,10 +79,21 @@ export interface OperationalDashboardDto {
   transactionsToday: number;
   importsToday: number;
   importsWithSkippedRowsToday: number;
+  previousDay: PreviousDayDto;
   needsAttention: NeedsAttentionDto;
   health: PlatformHealthDto;
   alerts: AlertDto[];
   recentActivity: AuditLogDto[];
+}
+
+/** Mirrors backend PreviousDayDto exactly -- yesterday's counts for the four stat tiles that
+ *  reset daily, backing each tile's "vs yesterday" delta. No totalUsers sibling: see that
+ *  record's own doc comment for why a running total has no "vs yesterday" comparison. */
+export interface PreviousDayDto {
+  activeUsers: number;
+  transactions: number;
+  imports: number;
+  importsWithSkippedRows: number;
 }
 
 /** D-27 PR3-D. Mirrors backend ActivationFunnelDto exactly -- see that record's own doc comment
