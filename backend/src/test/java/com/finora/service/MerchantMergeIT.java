@@ -246,4 +246,68 @@ class MerchantMergeIT extends AbstractIntegrationTest {
         List<MerchantLearningAudit> history = auditRepository.findByUserIdAndMerchantIdOrderByCreatedAtDesc(userId, merchant.getId());
         assertThat(history).anySatisfy(a -> assertThat(a.getAction()).isEqualTo(MerchantLearningAudit.Action.UNDONE));
     }
+
+    /**
+     * Bug 54 (docs/quality/bug-reports/BUG_REVIEW_REPORT.md), CORRECTED: the report claimed
+     * repeated confirm/undo cycles after a merge can erode a pair's count below what the merge
+     * absorbed, eventually deleting the row and destroying the absorbed merchant's evidence.
+     * Reproduced against real Postgres before attempting a fix, under both readings of the
+     * report's repro: neither erodes the baseline.
+     *
+     * <ul>
+     *   <li>confirm+undo, repeated: each undo reverts exactly its own paired confirm (mostRecent
+     *       is always that specific LEARNED entry), so the count returns to the merge baseline
+     *       every round -- never below it.</li>
+     *   <li>confirm x4 then undo x4 in a row: only the FIRST undo succeeds. The second finds an
+     *       UNDONE entry as mostRecent and is rejected by the existing "can't undo an undo"
+     *       guard -- the same guard already hardened for RESET (see undo()'s own doc comment).
+     *       Consecutive, un-interspersed undos were never reachable through this API to begin
+     *       with.</li>
+     * </ul>
+     *
+     * <p>No code change made. Left as a passing regression test pinning the actual (safe)
+     * behaviour, since nothing here was previously covered by a merge+undo interaction test.
+     */
+    @Test
+    void undo_afterMergeAndRepeatedConfirmation_neverErodesTheMergedBaselineBelowWhatWasAbsorbed() {
+        Merchant a = merchant("A");
+        Merchant b = merchant("B");
+        learningPair(a.getId(), shoppingCategoryId, 1, 100);
+        learningPair(b.getId(), shoppingCategoryId, 3, 100);
+
+        merchantService.merge(userId, a.getId(), b.getId(), actingAdminId);
+        int baseline = learningRepository.findByUserIdAndMerchantId(userId, a.getId()).get(0).getConfirmationCount();
+        assertThat(baseline).as("1 (A's own) + 3 (absorbed from B)").isEqualTo(4);
+
+        for (int i = 0; i < 4; i++) {
+            merchantLearningService.confirm(userId, a.getId(), shoppingCategoryId);
+            merchantLearningService.undo(userId, a.getId(), actingAdminId);
+            List<MerchantCategoryLearning> pairs = learningRepository.findByUserIdAndMerchantId(userId, a.getId());
+            assertThat(pairs)
+                    .as("round %d: confirm+undo must be exactly symmetric, never touching the merge baseline", i)
+                    .hasSize(1);
+            assertThat(pairs.get(0).getConfirmationCount()).isEqualTo(baseline);
+        }
+
+        for (int i = 0; i < 4; i++) {
+            merchantLearningService.confirm(userId, a.getId(), shoppingCategoryId);
+        }
+        assertThat(learningRepository.findByUserIdAndMerchantId(userId, a.getId()).get(0).getConfirmationCount())
+                .isEqualTo(baseline + 4);
+
+        merchantLearningService.undo(userId, a.getId(), actingAdminId);
+        assertThat(learningRepository.findByUserIdAndMerchantId(userId, a.getId()).get(0).getConfirmationCount())
+                .as("exactly one undo succeeds, reverting exactly one of the four confirms")
+                .isEqualTo(baseline + 3);
+
+        for (int i = 0; i < 3; i++) {
+            assertThatThrownBy(() -> merchantLearningService.undo(userId, a.getId(), actingAdminId))
+                    .as("a second, un-interspersed undo is rejected -- it would find its own "
+                            + "UNDONE entry as mostRecent, never one of the still-pending confirms")
+                    .isInstanceOf(ApiException.class);
+        }
+        assertThat(learningRepository.findByUserIdAndMerchantId(userId, a.getId()).get(0).getConfirmationCount())
+                .as("the rejected undo attempts changed nothing -- the row survives with evidence intact")
+                .isEqualTo(baseline + 3);
+    }
 }

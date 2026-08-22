@@ -103,11 +103,17 @@ public class BudgetService {
      */
     @Transactional
     public BudgetDto upsert(UUID userId, BudgetDto.UpsertRequest req) {
-        Category category = categoryRepository.findByUserIdAndName(userId, req.categoryName())
+        // Bug 16: same case-sensitive lookup CategorizationService.resolveOrCreateCategory had --
+        // see CategoryRepository.findByUserIdAndNameIgnoreCase's own doc comment for what this
+        // does and does not close. Without it, budgeting "dining" after already having a "Dining"
+        // category from an import creates a second row, and the existing budget attaches to only
+        // one of the two -- showing the wrong spend for the category the user thinks they set.
+        String categoryName = req.categoryName().trim();
+        Category category = categoryRepository.findByUserIdAndNameIgnoreCase(userId, categoryName)
                 .orElseGet(() -> {
                     Category c = new Category();
                     c.setUserId(userId);
-                    c.setName(req.categoryName());
+                    c.setName(categoryName);
                     return categoryRepository.save(c);
                 });
 
