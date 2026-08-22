@@ -1,7 +1,7 @@
 import { api, rawApi, type ApiEnvelope } from './client';
 import type {
 
-  AccountDto, ActivationFunnelDto, AdminReferralSummaryDto, AdminUpdateUserRequest, AuditLogDto, BankDto, CategoryConfidencePoint,
+  AccountDto, ActivationFunnelDto, ActivityTrendPointDto, AdminReferralSummaryDto, AdminUpdateUserRequest, AuditLogDto, BankDto, CategoryConfidencePoint,
   CreateAccountRequest, CreateBankRequest, CreateMerchantTemplateRequest, CreateRelationshipRequest,
   CreateRuleRequest, CreateUserRequest, FeatureFlagDto, GmailMerchantParserStatDto, LearningGrowthPoint, LearningPlatformStatsDto, LearningSummaryDto,
   LearningTimelineEntry,
@@ -262,6 +262,7 @@ export const adminStatsApi = {
 export const adminDashboardApi = {
   overview: () => api.get<OperationalDashboardDto>('/admin/dashboard/overview').then((r) => r.data),
   activationFunnel: () => api.get<ActivationFunnelDto>('/admin/dashboard/activation-funnel').then((r) => r.data),
+  activityTrend: () => api.get<ActivityTrendPointDto[]>('/admin/dashboard/activity-trend').then((r) => r.data),
 };
 
 // D-28 PR4-A. SUBSCRIPTION_MANAGEMENT_VIEW/_MANAGE-gated (V99) -- its own permission, not folded
