@@ -60,4 +60,24 @@ describe('ConfirmDialog', () => {
     await user.click(screen.getByRole('button', { name: 'Working…' }));
     expect(onConfirm).not.toHaveBeenCalled();
   });
+
+  it('calls onCancel when Escape is pressed', async () => {
+    const user = userEvent.setup();
+    const onCancel = vi.fn();
+    render(<ConfirmDialog title="Sure?" message="..." onConfirm={vi.fn()} onCancel={onCancel} />);
+
+    await user.keyboard('{Escape}');
+
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+
+  it('ignores Escape while busy', async () => {
+    const user = userEvent.setup();
+    const onCancel = vi.fn();
+    render(<ConfirmDialog title="Sure?" message="..." busy onConfirm={vi.fn()} onCancel={onCancel} />);
+
+    await user.keyboard('{Escape}');
+
+    expect(onCancel).not.toHaveBeenCalled();
+  });
 });

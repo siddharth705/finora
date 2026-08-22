@@ -205,8 +205,13 @@ function UserDetailContent({ id }: { id: string }) {
                   // it meant AuthorizationService kept granting that role's whole permission set
                   // through the legacy path and the revoke silently did nothing. It really takes
                   // effect, so it is worth confirming.
+                  //
+                  // Bug fix, caught by self-review: this button was never disabled while its own
+                  // mutation was in flight, unlike every other confirm-guarded action on this page
+                  // -- a fast double-click could fire revokeRoleMutation twice for the same role.
+                  disabled={revokeRoleMutation.isPending}
                   onClick={() => setConfirmRevokeRole(name)}
-                  className="w-4 h-4 rounded-full bg-border hover:bg-danger hover:text-white text-[10px] flex items-center justify-center"
+                  className="w-4 h-4 rounded-full bg-border hover:bg-danger hover:text-white text-[10px] flex items-center justify-center disabled:opacity-40"
                 >
                   ×
                 </button>
@@ -260,7 +265,6 @@ function UserDetailContent({ id }: { id: string }) {
           message="They will be signed out and unable to log in until reactivated."
           confirmLabel="Suspend"
           danger
-          busy={suspendMutation.isPending}
           onConfirm={() => { setConfirmSuspend(false); suspendMutation.mutate(); }}
           onCancel={() => setConfirmSuspend(false)}
         />
@@ -272,7 +276,6 @@ function UserDetailContent({ id }: { id: string }) {
           message="They lose its permissions immediately."
           confirmLabel="Revoke"
           danger
-          busy={revokeRoleMutation.isPending}
           onConfirm={() => {
             const name = confirmRevokeRole;
             setConfirmRevokeRole(null);

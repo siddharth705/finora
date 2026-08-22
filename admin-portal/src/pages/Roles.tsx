@@ -231,7 +231,6 @@ function RoleCard({
           message="This only works if no account currently holds it."
           confirmLabel="Delete"
           danger
-          busy={deleteMutation.isPending}
           onConfirm={() => { setConfirmDeleteRole(false); deleteMutation.mutate(); }}
           onCancel={() => setConfirmDeleteRole(false)}
         />
@@ -243,7 +242,6 @@ function RoleCard({
           message="Every user with this role loses it immediately."
           confirmLabel="Revoke"
           danger
-          busy={revokeMutation.isPending}
           onConfirm={() => {
             const permissionId = confirmRevokePermission.id;
             setConfirmRevokePermission(null);
@@ -420,7 +418,6 @@ function RolesContent() {
           message="This only works if no role currently grants it."
           confirmLabel="Delete"
           danger
-          busy={deletePermissionMutation.isPending}
           onConfirm={() => {
             const id = confirmDeletePermission.id;
             setConfirmDeletePermission(null);

@@ -394,7 +394,6 @@ function UsersTable() {
           message="They will be signed out and unable to log in until reactivated."
           confirmLabel="Suspend"
           danger
-          busy={suspendMutation.isPending}
           onConfirm={() => {
             const id = confirmSuspend.id;
             setConfirmSuspend(null);

@@ -400,7 +400,6 @@ function GlobalRulesContent() {
           message="It stops applying to every user immediately."
           confirmLabel="Delete"
           danger
-          busy={deleteMutation.isPending}
           onConfirm={() => {
             const id = confirmDeleteRule.id;
             setConfirmDeleteRule(null);

@@ -230,7 +230,6 @@ export function RelationshipRow({ userId, relationship, allRelationships }: {
           message="This can't be undone."
           confirmLabel="Merge"
           danger
-          busy={mergeMutation.isPending}
           onConfirm={() => { setConfirmMerge(false); mergeMutation.mutate(mergeFrom); }}
           onCancel={() => setConfirmMerge(false)}
         />
@@ -242,7 +241,6 @@ export function RelationshipRow({ userId, relationship, allRelationships }: {
           message="This can't be undone."
           confirmLabel="Delete"
           danger
-          busy={deleteMutation.isPending}
           onConfirm={() => { setConfirmDelete(false); deleteMutation.mutate(); }}
           onCancel={() => setConfirmDelete(false)}
         />

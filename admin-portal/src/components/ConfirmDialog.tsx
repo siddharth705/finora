@@ -1,3 +1,5 @@
+import { useEffect } from 'react';
+
 /**
  * Replaces the browser's own native `confirm()` for destructive/state-changing actions across the
  * admin portal -- that dialog renders as unstyled OS/browser chrome (literally titled with the
@@ -6,7 +8,8 @@
  *
  * Not a global singleton or a hook-based imperative API: the caller owns the "what am I
  * confirming" state (typically `useState<T | null>`) and conditionally renders this component,
- * same convention EntityDrawer's own overlay/backdrop pattern already establishes here.
+ * same convention EntityDrawer's own overlay/backdrop pattern already establishes here -- including
+ * Escape-to-cancel, which this component matches (EntityDrawer's own effect is the reference).
  */
 export function ConfirmDialog({
   title, message, confirmLabel = 'Confirm', cancelLabel = 'Cancel', danger, busy, onConfirm, onCancel,
@@ -22,6 +25,15 @@ export function ConfirmDialog({
   onConfirm: () => void;
   onCancel: () => void;
 }) {
+  useEffect(() => {
+    if (busy) return;
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape') onCancel();
+    }
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [busy, onCancel]);
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center" role="dialog" aria-modal="true" aria-labelledby="confirm-dialog-title">
       <div className="absolute inset-0 bg-black/30" onClick={busy ? undefined : onCancel} />

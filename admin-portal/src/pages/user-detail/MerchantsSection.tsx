@@ -194,7 +194,6 @@ export function MerchantRow({
           message="This can't be undone."
           confirmLabel="Merge"
           danger
-          busy={mergeMutation.isPending}
           onConfirm={() => { setConfirmMerge(false); mergeMutation.mutate(mergeFrom); }}
           onCancel={() => setConfirmMerge(false)}
         />
@@ -206,7 +205,6 @@ export function MerchantRow({
           message="This can't be undone."
           confirmLabel="Undo"
           danger
-          busy={undoMutation.isPending}
           onConfirm={() => { setConfirmUndo(false); undoMutation.mutate(); }}
           onCancel={() => setConfirmUndo(false)}
         />
@@ -218,7 +216,6 @@ export function MerchantRow({
           message="This can't be undone."
           confirmLabel="Reset"
           danger
-          busy={resetLearningMutation.isPending}
           onConfirm={() => { setConfirmResetLearning(false); resetLearningMutation.mutate(); }}
           onCancel={() => setConfirmResetLearning(false)}
         />

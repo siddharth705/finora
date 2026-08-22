@@ -543,7 +543,6 @@ function BanksContent() {
           message="This only works if no account uses it."
           confirmLabel="Remove"
           danger
-          busy={deleteMutation.isPending}
           onConfirm={() => {
             const id = confirmDeleteBank.id;
             setConfirmDeleteBank(null);

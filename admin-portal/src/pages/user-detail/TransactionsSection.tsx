@@ -67,7 +67,6 @@ export function TransactionsSection({ userId }: { userId: string }) {
           message={`"${confirmDelete.description}" — this can't be undone.`}
           confirmLabel="Delete"
           danger
-          busy={deleteMutation.isPending}
           onConfirm={() => {
             const id = confirmDelete.id;
             setConfirmDelete(null);

@@ -292,7 +292,6 @@ export function AccountsSection({ userId }: { userId: string }) {
           message="This also removes its transactions."
           confirmLabel="Delete"
           danger
-          busy={deleteMutation.isPending}
           onConfirm={() => {
             const id = confirmDeleteAccount.id;
             setConfirmDeleteAccount(null);

@@ -1,3 +1,5 @@
+import { useEffect } from 'react';
+
 /**
  * Replaces the browser's own native `confirm()` for destructive/discard actions across the app --
  * that dialog renders as unstyled OS/browser chrome (literally titled with the page's own origin,
@@ -6,7 +8,8 @@
  * Not a global singleton or a hook-based imperative API: the caller owns the "what am I
  * confirming" state (typically `useState<T | null>`) and conditionally renders this component,
  * same convention every other modal on these pages already uses (see StatementHistory.tsx's own
- * ReimportPasswordModal/StatementDetailModal).
+ * ReimportPasswordModal/StatementDetailModal). Escape cancels, same as a native confirm()'s own
+ * Esc-dismisses-the-dialog behavior -- this replaces that dialog, so it should keep that much of it.
  */
 export function ConfirmDialog({
   title, message, confirmLabel = 'Confirm', cancelLabel = 'Cancel', danger, busy, onConfirm, onCancel,
@@ -22,6 +25,15 @@ export function ConfirmDialog({
   onConfirm: () => void;
   onCancel: () => void;
 }) {
+  useEffect(() => {
+    if (busy) return;
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape') onCancel();
+    }
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [busy, onCancel]);
+
   return (
     <>
       <div className="fixed inset-0 bg-black/40 z-30" onClick={busy ? undefined : onCancel} />

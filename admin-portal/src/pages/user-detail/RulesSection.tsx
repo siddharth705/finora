@@ -204,7 +204,6 @@ export function RuleRow({ userId, rule }: { userId: string; rule: RuleDto }) {
           message="This can't be undone."
           confirmLabel="Delete"
           danger
-          busy={deleteMutation.isPending}
           onConfirm={() => { setConfirmDelete(false); deleteMutation.mutate(); }}
           onCancel={() => setConfirmDelete(false)}
         />
