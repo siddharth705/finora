@@ -350,13 +350,26 @@ project, its own service-account key, and its own Google Sign-In OAuth client, n
 Testing against Dev should never send a real SMS through Production's Firebase project or
 authenticate against a real Google account tied to Production's OAuth consent screen.
 
-**`dev` is a persistent git branch**, not a feature branch — `.github/workflows/sync-dev-branch.yml`
-fast-forwards it to `main`'s tip on every push to `main` (fast-forward only; a genuine divergence
-fails the workflow rather than silently discarding history). Cloudflare Pages binds
-`dev-app.finoratech.info` / `dev-admin.finoratech.info` to this branch as a **branch-alias custom
-domain** (Pages project → Settings → Custom domains → set up a custom domain, then repoint that
-hostname's DNS CNAME at `dev.<pages-project>.pages.dev` instead of the bare
-`<pages-project>.pages.dev`) — not a second Pages project.
+**`dev` is a persistent git branch**, not a feature branch, protected with the same ruleset as
+`main` (required status checks, no direct pushes, `enforce_admins` on — see "Branch protection"
+below). `.github/workflows/sync-dev-branch.yml` keeps it caught up with `main`'s tip on every push
+to `main` by opening (or reusing) a `main → dev` PR and enabling auto-merge on it — a direct push
+would be rejected by the protection rule itself, so this goes through the same required checks
+(`Backend (Java 25)`, `User frontend`, `Admin portal`, `Mobile (Expo)`, `End-to-end smoke
+(Chromium)`) as any other change to a protected branch, rather than bypassing them. Cloudflare
+Pages binds `dev-app.finoratech.info` / `dev-admin.finoratech.info` to this branch as a
+**branch-alias custom domain** (Pages project → Settings → Custom domains → set up a custom
+domain, then repoint that hostname's DNS CNAME at `dev.<pages-project>.pages.dev` instead of the
+bare `<pages-project>.pages.dev`) — not a second Pages project.
+
+### Branch protection (`main` and `dev`)
+
+Both branches require: a pull request (no direct pushes, `enforce_admins` enabled so this applies
+to admins too), the same 5 CI checks passing, and `strict: true` (the PR's branch must be
+up-to-date with the base before merging). Deliberately **no required approving review count** —
+this repo has no second human reviewer today, and requiring one would block merging your own PRs
+entirely. Revisit this once that changes. The repo's "Allow auto-merge" setting is on, which
+`sync-dev-branch.yml` above depends on.
 
 Cloudflare Pages' environment-variable UI has only two buckets, Production and Preview — there is
 no native per-branch scoping. The Dev-specific `VITE_*` values (the six `VITE_FIREBASE_*` keys,

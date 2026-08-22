@@ -21,9 +21,18 @@ public interface RefreshTokenRepository extends JpaRepository<RefreshToken, UUID
     /** Backs the device-management list endpoint — unlike findByUserIdAndRevokedAtIsNull above,
      *  also excludes tokens that have simply expired without ever being explicitly revoked, since
      *  those can no longer be used to refresh and so aren't a real "active session" to show or
-     *  let the user sign out of. */
+     *  let the user sign out of.
+     *
+     * <p>Bug 28. A derived-name query here compiled to a plain {@code ORDER BY last_seen_at DESC},
+     * and Postgres's default null ordering for DESC is NULLS FIRST — so a row with no
+     * {@code lastSeenAt} (captureDeviceMetadata skips it silently when there's no live request
+     * context, see RefreshTokenService) sorted ahead of every genuinely-recent session instead of
+     * behind them. {@code NULLS LAST} makes the explicit intent (documented above: most-recent
+     * first) hold regardless of the database's default. */
+    @Query("SELECT r FROM RefreshToken r WHERE r.userId = :userId AND r.revokedAt IS NULL "
+            + "AND r.expiresAt > :now ORDER BY r.lastSeenAt DESC NULLS LAST")
     List<RefreshToken> findByUserIdAndRevokedAtIsNullAndExpiresAtAfterOrderByLastSeenAtDesc(
-            UUID userId, Instant now);
+            @Param("userId") UUID userId, @Param("now") Instant now);
 
     Optional<RefreshToken> findByIdAndUserId(UUID id, UUID userId);
 
