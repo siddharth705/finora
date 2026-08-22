@@ -372,7 +372,7 @@
     <dependency>
       <groupId>io.sentry</groupId>
       <artifactId>sentry-spring-boot-starter-jakarta</artifactId>
-      <version>7.14.0</version>
+      <version>8.53.0</version>
     </dependency>
 
     <!-- Metrics export. Micrometer core already arrives with spring-boot-starter-actuator; this
