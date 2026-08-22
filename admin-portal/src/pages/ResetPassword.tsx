@@ -3,6 +3,7 @@ import type { FormEvent } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { ShieldAlert } from 'lucide-react';
 import { authApi } from '../api/endpoints';
+import { PasswordInput } from '../components/PasswordInput';
 import { sendPhoneVerificationCode, confirmPhoneVerificationCode, resetPhoneVerification } from '../lib/phoneAuth';
 import { maskPhone } from '../lib/maskPhone';
 import type { ConfirmationResult } from 'firebase/auth';
@@ -193,17 +194,16 @@ export default function ResetPassword() {
               )}
 
               <label htmlFor="reset-new-password" className="block text-sm font-medium text-ink mb-1.5">New password</label>
-              <input
+              <PasswordInput
                 id="reset-new-password"
-                type="password"
                 required
                 minLength={8}
                 maxLength={72}
                 autoComplete="new-password"
                 value={password}
-                onChange={(e) => setPassword(e.target.value)}
+                onChange={setPassword}
                 onBlur={() => markTouched('password')}
-                className="w-full bg-bg border border-border rounded-lg px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                className="w-full bg-bg border border-border rounded-lg px-3.5 py-2.5 pr-10 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
               />
               {password.length > 0 && (
                 <div className="mt-2 mb-1">
@@ -222,15 +222,14 @@ export default function ResetPassword() {
               </p>
 
               <label htmlFor="reset-confirm-password" className="block text-sm font-medium text-ink mb-1.5">Confirm password</label>
-              <input
+              <PasswordInput
                 id="reset-confirm-password"
-                type="password"
                 required
                 autoComplete="new-password"
                 value={confirm}
-                onChange={(e) => setConfirm(e.target.value)}
+                onChange={setConfirm}
                 onBlur={() => markTouched('confirm')}
-                className="w-full bg-bg border border-border rounded-lg px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 mb-1"
+                className="w-full bg-bg border border-border rounded-lg px-3.5 py-2.5 pr-10 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 mb-1"
               />
               <p className="text-[11px] mb-4 h-3.5">
                 {touched.confirm && !passwordsMatch && <span className="text-danger">Passwords don't match.</span>}

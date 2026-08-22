@@ -13,6 +13,13 @@ import type { OperationalDashboardDto } from '../types';
  * (the Activation Funnel section), not the whole existing page (health banner, needs attention,
  * system status), matching frontend's own Dashboard.test.tsx's stated scoping discipline.
  */
+// AdminLayout now renders ThemeToggle (dark-mode support), which calls useTheme() --
+// same reason adminSearchApi is stubbed below for GlobalSearch: a real ThemeProvider isn't
+// mounted in these tests, so without this mock every AdminLayout-wrapped page throws before
+// any assertion runs.
+vi.mock('../context/ThemeContext', () => ({
+  useTheme: () => ({ theme: 'system', resolvedTheme: 'light', setTheme: vi.fn() }),
+}));
 vi.mock('../context/AdminAuthContext', () => ({
   useAdminAuth: vi.fn(),
 }));

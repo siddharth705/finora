@@ -19,6 +19,13 @@ import type { PermissionDto, RoleDto } from '../types';
  * and the create/grant/revoke mutations RoleCard and RolesContent expose.
  */
 
+// AdminLayout now renders ThemeToggle (dark-mode support), which calls useTheme() --
+// same reason adminSearchApi is stubbed below for GlobalSearch: a real ThemeProvider isn't
+// mounted in these tests, so without this mock every AdminLayout-wrapped page throws before
+// any assertion runs.
+vi.mock('../context/ThemeContext', () => ({
+  useTheme: () => ({ theme: 'system', resolvedTheme: 'light', setTheme: vi.fn() }),
+}));
 vi.mock('../context/AdminAuthContext', () => ({
   useAdminAuth: vi.fn(),
 }));

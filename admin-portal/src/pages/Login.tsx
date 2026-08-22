@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { Navigate, useLocation, useNavigate, Link } from 'react-router-dom';
 import { useAdminAuth } from '../context/AdminAuthContext';
 import { BrandMark } from '../components/BrandMark';
+import { PasswordInput } from '../components/PasswordInput';
 import { setupApi } from '../api/endpoints';
 import { ADMIN_SESSION_ENDED_REASON_KEY } from '../api/client';
 import { safeStorage } from '../lib/safeStorage';
@@ -119,13 +120,12 @@ export default function Login() {
               <label htmlFor="login-password" className="block text-sm font-medium text-ink">Password</label>
               <Link to="/forgot-password" className="text-xs text-primary font-medium">Forgot password?</Link>
             </div>
-            <input
+            <PasswordInput
               id="login-password"
-              type="password"
               required
               value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="w-full bg-bg border border-border rounded-lg px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+              onChange={setPassword}
+              className="w-full bg-bg border border-border rounded-lg px-3.5 py-2.5 pr-10 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
             />
           </div>
 
