@@ -23,7 +23,8 @@ final class ReceiptDateFormats {
             DateTimeFormatter.ofPattern("MMMM d, yyyy", Locale.ENGLISH),
             DateTimeFormatter.ISO_LOCAL_DATE,
             DateTimeFormatter.ofPattern("d MMMM yyyy", Locale.ENGLISH),
-            DateTimeFormatter.ofPattern("dd/MM/yyyy", Locale.ENGLISH));
+            DateTimeFormatter.ofPattern("dd/MM/yyyy", Locale.ENGLISH),
+            DateTimeFormatter.ofPattern("dd-MM-yyyy", Locale.ENGLISH));
 
     private ReceiptDateFormats() {}
 
