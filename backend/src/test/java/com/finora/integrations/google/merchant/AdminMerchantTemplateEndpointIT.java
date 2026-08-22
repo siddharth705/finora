@@ -115,6 +115,23 @@ class AdminMerchantTemplateEndpointIT extends AbstractIntegrationTest {
         }
     }
 
+    /** V103's readiness seed -- 50 more templates, unlike V85/V86's Uber/Zomato rows these are
+     *  seeded DISABLED on purpose (see that migration's own comment: every pattern is a best
+     *  guess, none verified against a real sample email). Checked here specifically because that
+     *  disabled-by-default state is the entire reason a 50-row bulk seed of unverified patterns is
+     *  safe at all -- if this regressed to enabled, wrong guesses could mis-stage real amounts. */
+    @Test
+    void theReadinessSeedTemplatesAreDisabledByDefault() {
+        for (String domain : new String[]{"swiggy.com", "flipkart.com", "irctc.co.in",
+                                          "phonepe.com", "netflix.com", "airtel.in", "hdfcergo.com"}) {
+            assertThat(templates.findByMerchantDomain(domain))
+                    .as("%s should be seeded by V103, disabled pending a real test", domain)
+                    .isPresent()
+                    .get()
+                    .matches(t -> !t.isEnabled(), "disabled");
+        }
+    }
+
     @Test
     @DisplayName("create -> test -> activate happy path")
     void createTestActivateHappyPath() {

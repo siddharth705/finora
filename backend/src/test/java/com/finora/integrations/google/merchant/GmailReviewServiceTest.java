@@ -110,7 +110,8 @@ class GmailReviewServiceTest {
     @Test
     @DisplayName("a domain with no known display name falls back to the domain itself")
     void unknownDomainFallsBackToItself() {
-        assertThat(GmailReviewService.displayNameFor("swiggy.com")).isEqualTo("swiggy.com");
+        assertThat(GmailReviewService.displayNameFor("unknown-merchant.example"))
+                .isEqualTo("unknown-merchant.example");
     }
 
     @Test
