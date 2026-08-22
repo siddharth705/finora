@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { AuthProvider, useAuth } from './AuthContext';
 import { authApi, userApi } from '../api/endpoints';
 import { getAccessToken, setAccessToken } from '../api/client';
+import { AUTH_CHANGED_EVENT } from './ThemeContext';
 
 /**
  * AuthContext itself had no direct test -- every other test in this codebase mocks useAuth()
@@ -201,5 +202,32 @@ describe('AuthContext', () => {
 
     expect(authApi.logout).not.toHaveBeenCalled();
     expect(screen.getByTestId('token')).toHaveTextContent('none');
+  });
+
+  /**
+   * Bug 43. persist() (used by login/register/loginWithGoogle) dispatches this event specifically
+   * so ThemeProvider -- which wraps AuthProvider and so can't consume useAuth() directly -- can
+   * react to a session starting. logout() never dispatched the same event, so ThemeProvider had no
+   * way to know a session had ENDED: the previous user's theme stayed active for whatever rendered
+   * next (the login screen, or a different user's session on a shared device).
+   */
+  it('logout() dispatches AUTH_CHANGED_EVENT so ThemeProvider can reset', async () => {
+    const user = userEvent.setup();
+    vi.mocked(authApi.login).mockResolvedValue({ data: AUTH_RESPONSE } as any);
+    vi.mocked(authApi.logout).mockResolvedValue(undefined as any);
+    renderHarness();
+
+    await user.click(screen.getByRole('button', { name: 'Log in' }));
+    await waitFor(() => expect(screen.getByTestId('token')).toHaveTextContent('access-token-1'));
+
+    const listener = vi.fn();
+    window.addEventListener(AUTH_CHANGED_EVENT, listener);
+    try {
+      await user.click(screen.getByRole('button', { name: 'Log out' }));
+      await waitFor(() => expect(screen.getByTestId('token')).toHaveTextContent('none'));
+      expect(listener).toHaveBeenCalledTimes(1);
+    } finally {
+      window.removeEventListener(AUTH_CHANGED_EVENT, listener);
+    }
   });
 });

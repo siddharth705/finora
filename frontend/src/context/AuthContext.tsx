@@ -155,6 +155,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setEmail(null);
     setFullName(null);
     setPhoneVerifiedState(false);
+    // Bug 43. persist() (below) dispatches this after login/register so ThemeProvider -- which
+    // wraps AuthProvider and so can't consume useAuth() directly -- can react to a NEW session.
+    // logout() never dispatched the same event, so ThemeProvider had no way to know a session had
+    // ENDED either: its own theme sync only ever no-ops when there's no token, it never resets, so
+    // the previous user's theme stayed active for whatever renders next.
+    window.dispatchEvent(new Event(AUTH_CHANGED_EVENT));
   }
 
   // SEC-01 bootstrap. The access token no longer survives a reload (it's in-memory only, see
