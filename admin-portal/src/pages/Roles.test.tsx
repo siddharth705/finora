@@ -172,6 +172,8 @@ describe('Roles', () => {
     // (a tooltip), not its accessible name (computed from the visible "×" text content), so this
     // targets it via getByTitle rather than getByRole's name matcher.
     await user.click(screen.getByTitle('Revoke'));
+    // Custom in-app confirmation (ConfirmDialog), not the browser's own confirm().
+    await user.click(await screen.findByRole('button', { name: 'Revoke' }));
 
     await waitFor(() => expect(adminRolesApi.revokePermission).toHaveBeenCalledWith('role-1', 'perm-1'));
   });

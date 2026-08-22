@@ -25,18 +25,6 @@ public class TrustedSenderDomainService {
 
     private static final Logger log = LoggerFactory.getLogger(TrustedSenderDomainService.class);
 
-    /**
-     * Rejects anything that is not a plausible bare domain.
-     *
-     * <p>Not decoration. The gate matches on exactly this string, so a value carrying a scheme, a
-     * path, a wildcard, or whitespace would either never match anything (a silently useless entry an
-     * admin believes is protecting them) or match something unintended. Wildcards are refused
-     * outright rather than interpreted, since the one thing this registry must never support is a
-     * pattern.
-     */
-    private static final java.util.regex.Pattern PLAUSIBLE_DOMAIN =
-            java.util.regex.Pattern.compile("^[a-z0-9]([a-z0-9\\-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9\\-]*[a-z0-9])?)+$");
-
     private final TrustedSenderDomainRepository domains;
     private final AuditService auditService;
 
@@ -146,20 +134,14 @@ public class TrustedSenderDomainService {
         return saved;
     }
 
+    /** See {@link TrustedSenderDomain#requireValid}'s own doc comment -- shared with
+     *  {@code MerchantTemplateAdminService} so an admin-entered domain is validated identically
+     *  by both callers. */
     private String requireValidDomain(String rawDomain) {
-        if (rawDomain == null || rawDomain.isBlank()) {
-            throw new ApiException(HttpStatus.BAD_REQUEST, "A domain is required.");
+        try {
+            return TrustedSenderDomain.requireValid(rawDomain);
+        } catch (IllegalArgumentException e) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, e.getMessage());
         }
-        String domain = TrustedSenderDomain.normalize(rawDomain);
-        if (domain.contains("*") || domain.contains("/") || domain.contains("@") || domain.contains(" ")) {
-            throw new ApiException(HttpStatus.BAD_REQUEST,
-                    "Enter a bare domain such as amazon.in -- wildcards, addresses and URLs are not "
-                            + "accepted, because matching is exact by design.");
-        }
-        if (!PLAUSIBLE_DOMAIN.matcher(domain).matches() || domain.length() > 253) {
-            throw new ApiException(HttpStatus.BAD_REQUEST,
-                    "That does not look like a domain. Enter a bare domain such as amazon.in.");
-        }
-        return domain;
     }
 }

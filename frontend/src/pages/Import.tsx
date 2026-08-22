@@ -24,6 +24,7 @@ import {
   type RowReview,
 } from '../lib/importReview';
 import { toNewAccountPayload } from '../lib/newAccountPayload';
+import { ConfirmDialog } from '../design-system';
 import type { ImportNavState } from '../lib/importNavState';
 import type { Account, DetectedAccountInfo, VerificationReport, ImportSummary, StagedAccountSection, StagedRow, UnparseableRow } from '../types';
 import { formatDate, formatDateDDMMMYYYY } from '../utils/date';
@@ -219,6 +220,10 @@ export default function Import() {
   // sessions (ImportSessionService.listActiveSessions), so there is no ownership check to add
   // here -- only whether to show what it returns.
   const [discardingSessionId, setDiscardingSessionId] = useState<string | null>(null);
+  // Which unfinished session's discard confirmation is showing, if any -- a custom in-app modal
+  // (ConfirmDialog) instead of the browser's own confirm(), which rendered as unstyled OS chrome
+  // (literally titled with the page's own origin) rather than looking like part of the product.
+  const [confirmDiscardId, setConfirmDiscardId] = useState<string | null>(null);
   const { data: unfinishedSessions } = useQuery({
     queryKey: ['import-sessions'],
     queryFn: () => importApi.listSessions(),
@@ -412,7 +417,6 @@ export default function Import() {
   }
 
   async function discardStagedSession(id: string) {
-    if (!confirm('Discard this unfinished import? You can upload the statement again later.')) return;
     // Bug fix, caught by review: this function never cleared the banner on success, unlike every
     // other action on this page -- an unrelated error left showing (e.g. an ACTION_REQUIRED parse
     // failure, amber-colored) would sit there indefinitely, now misleadingly still reading as
@@ -822,7 +826,7 @@ export default function Import() {
                   <button
                     type="button"
                     title="Discard Unfinished Import"
-                    onClick={() => void discardStagedSession(s.id)}
+                    onClick={() => setConfirmDiscardId(s.id)}
                     disabled={discardingSessionId === s.id}
                     className="w-8 h-8 rounded-lg border border-border flex items-center justify-center text-muted hover:bg-danger-bg hover:text-danger disabled:opacity-40"
                   >
@@ -833,6 +837,21 @@ export default function Import() {
             ))}
           </div>
         </div>
+      )}
+
+      {confirmDiscardId && (
+        <ConfirmDialog
+          title="Discard this unfinished import?"
+          message="You can upload the statement again later."
+          confirmLabel="Discard"
+          danger
+          onConfirm={() => {
+            const id = confirmDiscardId;
+            setConfirmDiscardId(null);
+            void discardStagedSession(id);
+          }}
+          onCancel={() => setConfirmDiscardId(null)}
+        />
       )}
 
       {/* Arrival from the Failed Imports section's "Try again" action (Premium Import

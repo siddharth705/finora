@@ -284,6 +284,86 @@ public class PdfTableLocator {
             "(?i)\\bfollowing\\s+illustration\\s+will\\s+indicate\\b"
                     + "|(?i)\\billustration\\s+for\\s+calculating\\b");
 
+    // TRANSACTION_TABLE_TOTAL_CLOSED. A real Kotak Mahindra Bank credit-card statement prints a
+    // column-total row -- "Total Purchase & Other Charges  5,178.69" -- directly beneath the last
+    // real transaction, before the MITC/fees-and-charges legal schedule begins. Same failure shape
+    // Phase 2A's investigation found on Axis (see
+    // docs/architecture/system-design/transaction-boundary-phase2a-investigation.md): without this,
+    // the trailing MITC content still gets bucketed as candidate rows, surviving only because
+    // row-continuation merging happens to fuse it into a blob whose date cell fails
+    // TransactionNormalizer's Stage-4 parse. Confirmed single-occurrence on this document (`grep`),
+    // not present anywhere else in the real corpus -- narrow to this exact phrasing rather than
+    // broadened to a generic "Total ... Charges" shape, which real column labels elsewhere in the
+    // corpus (e.g. "Other Debit&Charges") would false-positive against.
+    private static final Pattern TRANSACTION_TABLE_TOTAL_MARKER = Pattern.compile(
+            "(?i)total\\s+purchase\\s*&\\s*other\\s+charges");
+
+    // MITC_SECTION_CLOSED. A real ICICI Bank credit-card statement prints "MOST IMPORTANT TERMS AND
+    // CONDITIONS (MITC)" as an all-caps section heading immediately after the last real transaction
+    // and its rewards summary, opening a multi-page legal/T&C appendix. Same failure shape as
+    // TRANSACTION_TABLE_TOTAL_MARKER and STATEMENT_CLOSING_MARKER above -- see the Phase 2A
+    // investigation doc.
+    //
+    // Deliberately CASE-SENSITIVE, matching only the exact all-caps heading form. Two real
+    // documents in the corpus (AU, SBI) mention the same concept in ordinary mixed-case prose
+    // *before* their own real transactions end -- AU's "Most Important Terms and conditions" (a
+    // footer link, page 1) and SBI's "Most Important Terms & Conditions" / "Most Important Terms
+    // and Conditions (MITC)" (an insurance disclosure aside and a payment-terms mention, both mid-
+    // document, both using "&" or lowercase "and" rather than this pattern's spelled-out "AND").
+    // A case-insensitive match would have closed both of those documents' sections dozens of pages
+    // early. The case requirement is not a stylistic choice -- it is the one thing that lets this
+    // pattern fire on ICICI's own genuine section-opening heading without also firing on either
+    // false positive, verified against the full real corpus before this was written this way.
+    private static final Pattern MITC_SECTION_MARKER = Pattern.compile(
+            "MOST IMPORTANT TERMS AND CONDITIONS");
+
+    /** One row-shaped trigger the trailing-content suppression gate checks for, paired with the
+     *  capability name to record when it fires -- see {@link #trailingContentTriggerCapability}. */
+    private record TrailingContentTrigger(Pattern pattern, String capability) {}
+
+    // Checked in this order, first match wins -- order has no behavioral significance among these
+    // four (each is evidenced from a different real document and none has been found to overlap
+    // with another's territory), but a stable order keeps a diff of this list reviewable.
+    private static final List<TrailingContentTrigger> TRAILING_CONTENT_TRIGGERS = List.of(
+            new TrailingContentTrigger(ILLUSTRATIVE_EXAMPLE_MARKER, "ILLUSTRATIVE_BLOCK_SUPPRESSED"),
+            new TrailingContentTrigger(STATEMENT_CLOSING_MARKER, "TRANSACTION_TABLE_CLOSED"),
+            new TrailingContentTrigger(TRANSACTION_TABLE_TOTAL_MARKER, "TRANSACTION_TABLE_TOTAL_CLOSED"),
+            new TrailingContentTrigger(MITC_SECTION_MARKER, "MITC_SECTION_CLOSED"));
+
+    /** The capability name of the first {@link #TRAILING_CONTENT_TRIGGERS} entry matching {@code
+     *  rowLine}, or null if none match. A dedicated method (rather than the boolean-chain shape
+     *  this replaced) so a fifth real-document-evidenced trigger is a one-line addition to the list
+     *  above, not another `!a && !b && ...` clause to get right. */
+    private static String trailingContentTriggerCapability(String rowLine) {
+        for (TrailingContentTrigger trigger : TRAILING_CONTENT_TRIGGERS) {
+            if (trigger.pattern().matcher(rowLine).find()) return trigger.capability();
+        }
+        return null;
+    }
+
+    /** Records one of {@link #TRAILING_CONTENT_TRIGGERS}' capabilities against {@code ctx}.
+     *
+     *  <p>Deliberately an explicit switch with the capability name spelled out as a quoted string
+     *  constant in each branch, not a passthrough that hands {@code capability} straight to {@code
+     *  DocumentContext.record}. {@code CapabilityCorpusCoverageTest} proves every capability the
+     *  engine can record by scanning this source tree for a quoted-string argument at each real
+     *  recording call site; a passthrough is invisible to that scan, since the argument there is a
+     *  variable, not a quoted constant -- all four Phase 2C capabilities silently reporting as
+     *  uncovered is what surfaced this. The {@code default} branch throws rather than silently doing
+     *  nothing, so a fifth trigger added to {@link #TRAILING_CONTENT_TRIGGERS} without a matching
+     *  branch here fails loudly the first time it fires, not silently forever. */
+    private static void recordTrailingContentTrigger(DocumentContext ctx, String capability) {
+        if (ctx == null) return;
+        switch (capability) {
+            case "ILLUSTRATIVE_BLOCK_SUPPRESSED" -> ctx.record("ILLUSTRATIVE_BLOCK_SUPPRESSED");
+            case "TRANSACTION_TABLE_CLOSED" -> ctx.record("TRANSACTION_TABLE_CLOSED");
+            case "TRANSACTION_TABLE_TOTAL_CLOSED" -> ctx.record("TRANSACTION_TABLE_TOTAL_CLOSED");
+            case "MITC_SECTION_CLOSED" -> ctx.record("MITC_SECTION_CLOSED");
+            default -> throw new IllegalStateException(
+                    "Unknown trailing-content trigger capability: " + capability);
+        }
+    }
+
     // LEADING_NARRATION_CONTINUATION: how many dateless rows immediately after a transaction's
     // date row are still trusted to be genuinely TRAILING continuations of that same transaction,
     // before a further dateless row is instead treated as the LEADING narration of the NEXT
@@ -656,24 +736,12 @@ public class PdfTableLocator {
         // If a future real document needs resumption, that is new evidence to design against, not
         // something to guess at now.
         //
-        // Two independent triggers share this one flag rather than each getting its own, because
+        // Four independent triggers share this one flag rather than each getting its own, because
         // they mean the same thing structurally ("nothing genuine follows this line") even though
-        // they're evidenced from different real documents and get their own capability names so
-        // it stays visible which one fired:
-        //   - ILLUSTRATIVE_EXAMPLE_MARKER (a worked fee/interest example table, AU) -- unchanged,
-        //     moved into this shared gate rather than duplicated.
-        //   - STATEMENT_CLOSING_MARKER (a literal "End of Statement" line, Axis) -- new. Before
-        //     this, STATEMENT_CLOSING_MARKER was checked in three OTHER, narrower code paths
-        //     (page-footer-style pre-header scanning, the headerless-continuation fallback, the
-        //     two-line-date-block fallback) but never in this main header-based loop, which is
-        //     what most real documents -- including the one this trigger is evidenced from --
-        //     actually go through. Confirmed via CorpusProbe against the real Axis Bank Neo Rupay
-        //     statement this is evidenced from: 111 raw bucketed rows before this change (108 real
-        //     transactions plus 3 rows of trailing boilerplate that happened to survive bucketing
-        //     and only failed to become phantom transactions because row-continuation merging
-        //     fused them into a blob whose date cell failed TransactionNormalizer's Stage-4 parse
-        //     -- see docs/architecture/system-design/transaction-boundary-phase2a-investigation.md)
-        //     drops to 108 raw bucketed rows after it, with the real total unchanged either way.
+        // they're evidenced from different real documents and get their own capability names (see
+        // TRAILING_CONTENT_TRIGGERS below) so it stays visible which one fired. See
+        // docs/architecture/system-design/transaction-boundary-phase2a-investigation.md for the
+        // shared Phase 2A/2C investigation this whole family of triggers comes from.
         boolean trailingContentSuppressed = false;
 
         for (int rowIndex = 0; rowIndex < rows.size(); rowIndex++) {
@@ -700,9 +768,8 @@ public class PdfTableLocator {
                 pendingAuxiliary.add(rowLine);
                 continue;
             }
-            boolean illustrativeMarker = ILLUSTRATIVE_EXAMPLE_MARKER.matcher(rowLine).find();
-            boolean closingMarker = !illustrativeMarker && STATEMENT_CLOSING_MARKER.matcher(rowLine).find();
-            if (illustrativeMarker || closingMarker) {
+            String trailingContentTrigger = trailingContentTriggerCapability(rowLine);
+            if (trailingContentTrigger != null) {
                 trailingContentSuppressed = true;
                 // Closes whatever REAL section is open exactly the same way the header-signature
                 // fallback below does (flush pendingLeading, stage the section) -- a document with
@@ -722,9 +789,7 @@ public class PdfTableLocator {
                 // a split that has nothing to do with the identity line that set it.
                 pendingIdentityMismatch = false;
                 pendingAccountIdCandidate = null;
-                if (ctx != null) {
-                    ctx.record(illustrativeMarker ? "ILLUSTRATIVE_BLOCK_SUPPRESSED" : "TRANSACTION_TABLE_CLOSED");
-                }
+                recordTrailingContentTrigger(ctx, trailingContentTrigger);
                 pendingAuxiliary.add(rowLine);
                 continue;
             }
@@ -950,17 +1015,33 @@ public class PdfTableLocator {
                 // resolved to Amount, skipping over Transaction Details entirely, and the whole
                 // description merged into the amount cell -- silently defeating every real amount on
                 // the statement.
-                List<PositionedText> coalesced = new ArrayList<>(coalesceHeaderRuns(stripEmbeddedDateRange(row)));
-                coalesced.sort(Comparator.comparing(PositionedText::x));
-                for (PositionedText t : coalesced) {
-                    headerNames.add(t.text().trim());
-                    headerAnchors.add(t.x());
-                    headerEnds.add(t.endX());
+                buildHeaderColumns(row, headerNames, headerAnchors, headerEnds, rows, rowIndex, ctx);
+                // Header Quality Gate + Reconstruction Engine (Phase 2E.2 prototype) -- runs AFTER
+                // the recovery pipeline just above, evaluating what it actually produced, never
+                // before it. recoverMissingDescriptionColumn already tries to solve exactly this
+                // class of problem (a fragment one physical line above the header, naming a column
+                // the accepted line is missing) and correctly declines a single-cell candidate as
+                // too ambiguous on its own evidence alone -- see that method's own doc comment and
+                // HeaderColumnRecoveryTest.loneSingleCellCaptionLine_isNotRecoveredAsAColumn, a real
+                // regression this exact interaction found on the same real SBI statement. This
+                // engine is reached only when that narrower, evidence-light mechanism has already
+                // had its chance and the header is STILL weak -- its own extra evidence (row
+                // compatibility against the section's real upcoming data, design doc §4.9) is what
+                // makes admitting a single-cell fragment safe in exactly the cases the older
+                // mechanism has to decline for lack of any such evidence. Also why this cannot merge
+                // two sections that should stay separate: the REPEATED_HEADER/closeCurrentSection
+                // decision above has already run, against the ORIGINAL row's signature -- by the
+                // time this reconstructs anything, which section is open or new is already decided.
+                if (headerQualityWeak(headerNames, headerAnchors, headerEnds, rows, rowIndex, wrappedHeaderLines)) {
+                    List<PositionedText> reconstructed = reconstructHeader(row, rows, rowIndex, wrappedHeaderLines);
+                    if (reconstructed != null) {
+                        headerNames = new ArrayList<>();
+                        headerAnchors = new ArrayList<>();
+                        headerEnds = new ArrayList<>();
+                        buildHeaderColumns(reconstructed, headerNames, headerAnchors, headerEnds, rows, rowIndex, ctx);
+                        if (ctx != null) ctx.record("HEADER_RECONSTRUCTED");
+                    }
                 }
-                resolveDuplicateColumnNames(headerNames, headerAnchors, rows, rowIndex, ctx);
-                resolveBlankColumnNames(headerNames, headerAnchors, rows, rowIndex, ctx);
-                recoverMissingDescriptionColumn(headerNames, headerAnchors, headerEnds, rows, rowIndex, ctx);
-                recoverMissingSerialNumberColumn(headerNames, headerAnchors, headerEnds, rows, rowIndex, ctx);
                 if (ctx != null) ctx.recordHeaders(headerNames);
                 currentHeaderSignature = signature;
                 currentRows = new ArrayList<>();
@@ -2110,6 +2191,283 @@ public class PdfTableLocator {
             if (CsvParser.parseDate(cell) != null || CsvParser.parseNumeric(cell) != null) return false;
         }
         return true;
+    }
+
+    // How many of a section's own upcoming rows the header-quality gate and the reconstruction
+    // engine sample before judging fit -- see headerQualityWeak and reconstructHeader. Not
+    // calibrated against the corpus (no numeric weight is; see the design doc's stance on that);
+    // just large enough that a single unusual row cannot swing the verdict on its own, small
+    // enough that this never scans meaningfully into a document.
+    private static final int HEADER_QUALITY_SAMPLE_SIZE = 10;
+
+    // Never judge quality from fewer than this many sampled rows -- a section with only one or two
+    // real rows visible this close to its header is exactly the case where guessing is riskiest and
+    // evidence is thinnest. Mirrors this class's existing discipline of doing nothing rather than
+    // acting on too little (e.g. accountIdentityIn returning null rather than guessing an account
+    // number). Below this, headerQualityWeak reports "not weak" -- not because the header is known
+    // good, but because there is not enough here to say otherwise.
+    private static final int HEADER_QUALITY_MIN_SAMPLE = 2;
+
+    /**
+     * Phase 2E.2 prototype of the Header Quality Gate
+     * (docs/architecture/system-design/header-reconstruction-design.md §4.1-4.2). Judges
+     * {@code headerColumns} -- the FINAL column count this section's header actually has, after
+     * {@link #buildHeaderColumns}'s whole existing recovery pipeline has already run (duplicate
+     * resolution, blank-name qualification, missing description/serial-number recovery) -- by
+     * whether the section's own real upcoming rows fit under that many columns, never by how
+     * header-like the original line looked in isolation.
+     *
+     * <p>Deliberately evaluated AFTER recovery, not before: {@link #recoverMissingDescriptionColumn}
+     * already attempts to solve exactly this class of problem (a fragment one line above the header
+     * naming a column the accepted line is missing) and correctly declines when its own candidate is
+     * a single, ambiguous cell -- see that method's own doc comment. Judging quality on the PRE-
+     * recovery column count would make this gate fire on documents that recovery was always going to
+     * fix on its own (a real regression, found against a real ICICI three-tier header while building
+     * this gate -- see {@code HeaderColumnRecoveryTest}), triggering the heavier reconstruction
+     * engine below where the older, narrower, already-correct mechanism was already going to succeed.
+     *
+     * <p>Also deliberately NOT keyed on whether a wrap-merge attempt failed: traced against a real
+     * SBI credit-card statement, the row that ends up accepted as this document's Section 1 header
+     * ("Date | Amount ( ` )") was never itself the subject of a failed merge -- the merge that failed
+     * ran on a DIFFERENT row, one physical line above, which never scored as a header on its own and
+     * so never reached this gate at all. See the design doc §4.1 for the full trace.
+     *
+     * <p>Row fit is measured the same way {@link #reconstructHeader} measures it: by actually
+     * bucketing a sample of the section's own real rows against {@code headerNames}/
+     * {@code headerAnchors}/{@code headerEnds} (the real {@link #bucketRow}, not an approximation of
+     * it) via {@link #rowsCleanlyExplainedBy} -- both the date column and, when one is recognized,
+     * the amount column must hold a cleanly parseable value. A header is weak when the MAJORITY of
+     * the sample does not clear that bar. Deliberately NOT a raw cell-count comparison ("does the
+     * header have enough columns") and deliberately NOT date-only either -- both were tried and both
+     * were found blind to a real failure mode while writing this gate's own tests. Cell-count alone
+     * passed its own tests while silently producing a header whose Date anchor didn't line up with
+     * where dates are actually printed, collapsing every real row into one unparseable blob at the
+     * SAME cell-count that looked fully explained. Date-only was blind to the opposite failure: a
+     * header missing its description column still buckets a perfectly parseable date every time (the
+     * date run is always first in raw order and claims the date column before anything else
+     * competes), while the missing description silently corrupts the amount column instead --
+     * {@link #rowsCleanlyExplainedBy}'s own doc comment has the full trace. Checking what
+     * {@code bucketRow} actually PLACES, in both of the columns that matter, is what catches both.
+     *
+     * <p>Returns {@code false} -- "not weak" -- whenever there is not enough evidence to say
+     * otherwise (fewer than {@link #HEADER_QUALITY_MIN_SAMPLE} real rows found nearby). This is the
+     * gate's own version of the reconstruction engine's no-forced-guess rule (design doc §4.3): a
+     * judgment made without evidence is not a safer default, it is a guess wearing a confident
+     * label.
+     */
+    private boolean headerQualityWeak(List<String> headerNames, List<Float> headerAnchors,
+                                       List<Float> headerEnds, List<List<PositionedText>> rows,
+                                       int headerIndex, int wrappedHeaderLines) {
+        if (headerNames.isEmpty()) return false; // nothing to judge -- an empty header is someone else's problem
+        List<List<PositionedText>> sample = sampleRealDataRows(
+                rows, headerIndex + wrappedHeaderLines + 1, HEADER_QUALITY_SAMPLE_SIZE);
+        if (sample.size() < HEADER_QUALITY_MIN_SAMPLE) return false;
+        int explained = rowsCleanlyExplainedBy(new HeaderColumns(headerNames, headerAnchors, headerEnds), sample);
+        return explained * 2 < sample.size();
+    }
+
+    /** Turns an accepted header {@code row} into {@code headerNames}/{@code headerAnchors}/
+     *  {@code headerEnds} -- coalesce, x-sort, then the existing four-step recovery pipeline
+     *  (duplicate names, blank names, missing description column, missing serial-number column).
+     *  Extracted so the Header Quality Gate below can run this SAME pipeline a second time, on a
+     *  reconstructed row, without duplicating it -- every one of the four recovery calls still runs
+     *  exactly once per row it is actually given, so nothing about their own behavior changes. */
+    private void buildHeaderColumns(List<PositionedText> row, List<String> headerNames, List<Float> headerAnchors,
+                                     List<Float> headerEnds, List<List<PositionedText>> rows, int rowIndex,
+                                     DocumentContext ctx) {
+        List<PositionedText> coalesced = new ArrayList<>(coalesceHeaderRuns(stripEmbeddedDateRange(row)));
+        coalesced.sort(Comparator.comparing(PositionedText::x));
+        for (PositionedText t : coalesced) {
+            headerNames.add(t.text().trim());
+            headerAnchors.add(t.x());
+            headerEnds.add(t.endX());
+        }
+        resolveDuplicateColumnNames(headerNames, headerAnchors, rows, rowIndex, ctx);
+        resolveBlankColumnNames(headerNames, headerAnchors, rows, rowIndex, ctx);
+        recoverMissingDescriptionColumn(headerNames, headerAnchors, headerEnds, rows, rowIndex, ctx);
+        recoverMissingSerialNumberColumn(headerNames, headerAnchors, headerEnds, rows, rowIndex, ctx);
+    }
+
+    /**
+     * Phase 2E.2 prototype of the Header Reconstruction Engine (design doc §4.6-4.9), narrowed to
+     * exactly the one shape this phase was scoped to prove out: SBI's Section 1, where the real
+     * header's OTHER column lives one physical line ABOVE the row that gets accepted, not below it
+     * -- {@link #wrappedHeaderAt} only ever looks forward, so it never finds this. Deliberately does
+     * NOT attempt {@code wrappedHeaderAt}'s forward composition too (IOB's shape, and the general
+     * multi-directional case): per the design doc's non-goals and the explicit scope for this phase,
+     * a document needing that is left exactly as it is today -- retained as
+     * {@code HeaderReconstructionFinding}, never a forced guess.
+     *
+     * <p>Steps, matching the design doc's numbering:
+     * <ol>
+     *   <li><b>Collect fragments (§4.6).</b> The one line immediately above {@code headerRow}, if
+     *       (and only if) it is itself a plausible orphaned header fragment: EXACTLY one non-blank
+     *       cell (not zero, not a genuine multi-cell second tier -- see the scope note at this
+     *       method's own {@code nonBlankCount(above) != 1} check for why that boundary is drawn
+     *       here specifically), no date/number of its own, not a structural line, and within the
+     *       same physical-adjacency window {@link #wrapsOnto} already uses for the forward case --
+     *       reusing that method rather than a second copy of its gap/page checks.</li>
+     *   <li><b>Classify vocabulary (§4.7).</b> Reuses {@link #looksLikeHeaderRow} directly: the
+     *       composed candidate must clear the exact same bar every other accepted header in this
+     *       document does, not a looser one built just for reconstructed headers.</li>
+     *   <li><b>Build the candidate (§4.8).</b> Exactly one candidate, for this narrowed scope: every
+     *       non-blank fragment from both lines as its own column, x-sorted -- the "no line refines
+     *       another, every fragment is independent" reading the design doc's §2 describes as what
+     *       {@code mergeHeaderLines} has no model for at all.</li>
+     *   <li><b>Validate against real rows (§4.9).</b> Accepted only if it explains STRICTLY MORE of
+     *       the sampled sample than {@code headerRow} did -- never a tie, never "looks more
+     *       complete." A composition that does not demonstrably improve row fit is not an
+     *       improvement, the same standard {@link #refinesRatherThanRedefines}'s gate 4 already
+     *       holds the forward-wrap case to.</li>
+     * </ol>
+     *
+     * <p>Returns {@code null} -- no reconstruction, {@code HeaderReconstructionFinding} stands
+     * exactly as it does today -- when any step fails to clear its bar. Never returns a candidate
+     * merely because it is the only one tried; §4.9's validation is not optional just because there
+     * was nothing to compare it against but the original.
+     */
+    private List<PositionedText> reconstructHeader(List<PositionedText> headerRow,
+                                                     List<List<PositionedText>> rows, int headerIndex,
+                                                     int wrappedHeaderLines) {
+        if (headerIndex <= 0) return null;
+        List<PositionedText> above = rows.get(headerIndex - 1);
+        if (above.isEmpty() || !carriesNoDataValue(above) || carriesStructuralMeaning(above)) return null;
+        // Scoped, deliberately, to exactly one orphaned fragment -- a SINGLE cell sitting alone one
+        // physical line above the accepted header, SBI's real shape and the only shape this phase
+        // was scoped to prove out. A multi-cell line above is a genuine second header TIER (a
+        // real, more complex shape -- found on a real ICICI savings statement while widening this
+        // gate: its middle tier is three cells, "Sr No." / "Ref No" / "Particulars", and composing
+        // all three in unresolved this simply as extra columns recovered SOME real transactions but
+        // left the aggregate statement-total check failing, a partial, unvalidated result this
+        // phase is not scoped to ship). A multi-cell tier needs the general, multi-directional
+        // composition the design doc's non-goals defer (§8) -- not a wider version of this narrower
+        // mechanism. Mirrors the same single-vs-multi-cell distinction
+        // {@link #recoverMissingColumn}'s OWN admission rule already draws, from the opposite side:
+        // that method requires >= 2 cells because a lone cell is too ambiguous for IT to trust on
+        // vocabulary alone; this engine's extra evidence (row compatibility, validated below) is
+        // what earns a lone cell trust that mechanism cannot give it -- but only when there genuinely
+        // is just one, not when the real shape is a whole additional tier this phase cannot yet
+        // validate as thoroughly.
+        if (nonBlankCount(above) != 1) return null;
+        if (!wrapsOnto(above, headerRow)) return null;
+
+        List<PositionedText> candidate = new ArrayList<>();
+        for (PositionedText t : above) if (!t.text().isBlank()) candidate.add(t);
+        for (PositionedText t : headerRow) if (!t.text().isBlank()) candidate.add(t);
+        if (candidate.size() <= nonBlankCount(headerRow)) return null; // nothing new to compose
+        candidate.sort(Comparator.comparing(PositionedText::x));
+
+        if (!looksLikeHeaderRow(candidate)) return null;
+
+        List<List<PositionedText>> sample = sampleRealDataRows(
+                rows, headerIndex + wrappedHeaderLines + 1, HEADER_QUALITY_SAMPLE_SIZE);
+        if (sample.size() < HEADER_QUALITY_MIN_SAMPLE) return null;
+
+        // Validated by actually bucketing the sample against each header's real anchors, not by
+        // comparing cell counts -- see headerQualityWeak's doc comment for why a count-only version
+        // of this check passed its own tests while producing a header whose Date anchor didn't
+        // actually line up with the data, silently collapsing every real row into one blob.
+        int before = rowsCleanlyExplainedBy(coalescedNamesAnchorsEnds(headerRow), sample);
+        int after = rowsCleanlyExplainedBy(coalescedNamesAnchorsEnds(candidate), sample);
+        if (after <= before) return null;
+
+        return candidate;
+    }
+
+    /** {@code (names, anchors, ends)} for a header row, coalesced and x-sorted exactly as
+     *  {@link #buildHeaderColumns} builds them for real -- but WITHOUT that method's four recovery
+     *  calls, which record capabilities as a side effect and must fire at most once per row this
+     *  class actually commits to. Used only to VALIDATE a candidate before commitment; the row that
+     *  is ultimately accepted is built for real, exactly once, via {@link #buildHeaderColumns}. */
+    private HeaderColumns coalescedNamesAnchorsEnds(List<PositionedText> row) {
+        List<PositionedText> coalesced = new ArrayList<>(coalesceHeaderRuns(stripEmbeddedDateRange(row)));
+        coalesced.sort(Comparator.comparing(PositionedText::x));
+        List<String> names = new ArrayList<>();
+        List<Float> anchors = new ArrayList<>();
+        List<Float> ends = new ArrayList<>();
+        for (PositionedText t : coalesced) {
+            names.add(t.text().trim());
+            anchors.add(t.x());
+            ends.add(t.endX());
+        }
+        return new HeaderColumns(names, anchors, ends);
+    }
+
+    private record HeaderColumns(List<String> names, List<Float> anchors, List<Float> ends) {}
+
+    /** Up to {@code maxCount} of this section's own upcoming rows that plausibly carry real
+     *  transaction data -- skips rows that carry no date/number of their own (repeated headers,
+     *  captions, blank spacer lines), stops at the first structurally-meaningful line (a section
+     *  banner, page footer, or closing marker means there is nothing left of THIS section's data to
+     *  sample), and never scans further than {@code maxCount * 3} rows looking for them, so an
+     *  unusual document cannot make this silently walk deep into a section it has no evidence about
+     *  yet. Shared by {@link #headerQualityWeak} and {@link #reconstructHeader} so both judge a
+     *  header against the exact same evidence. */
+    private List<List<PositionedText>> sampleRealDataRows(List<List<PositionedText>> rows, int fromIndex,
+                                                            int maxCount) {
+        List<List<PositionedText>> sample = new ArrayList<>();
+        int scanLimit = Math.min(rows.size(), fromIndex + maxCount * 3);
+        for (int i = Math.max(fromIndex, 0); i < scanLimit && sample.size() < maxCount; i++) {
+            List<PositionedText> row = rows.get(i);
+            if (row.isEmpty()) continue;
+            if (carriesStructuralMeaning(row)) break;
+            if (carriesNoDataValue(row)) continue;
+            sample.add(row);
+        }
+        return sample;
+    }
+
+    /**
+     * How many of {@code sample}'s rows both (a) bucket with NO COLLISION -- every raw non-blank
+     * cell lands in its own column, none sharing with another -- and (b) end up with a cleanly
+     * parseable date in whichever column {@link #isDateColumn} recognizes. {@code header} is
+     * bucketed for real via {@link #bucketRow}, never approximated.
+     *
+     * <p>Collision is measured as {@code bucketed.size() < } the row's own raw non-blank cell count:
+     * {@code bucketRow} has no maximum join distance and always folds an unaccounted value into
+     * whichever column is nearest rather than leave it out, so two raw cells sharing one column
+     * is the only way the bucketed map ends up with fewer entries than the row had values. This is
+     * deliberately vocabulary-free -- it does not need to recognize a column as "the amount column"
+     * to notice that two real values collapsed into one. An earlier version of this method checked
+     * only whether a NAMED amount column parsed cleanly, and that was blind whenever the missing
+     * column's neighbor wasn't itself amount-shaped: a two-column [Date, Narration] header missing
+     * a Balance column still merges the balance value into Narration, corrupting it, but "Narration"
+     * matches no amount vocabulary, so nothing was ever checked there. Checking for the collision
+     * directly, rather than inferring it from whichever specific column happened to absorb it,
+     * catches every shape of it. Date-only validation (checked even earlier) was blind for a
+     * related reason: the date run is always first in raw row order and claims the date column
+     * before anything else competes for it, so a missing column can corrupt everything ELSE while
+     * the date keeps parsing perfectly -- collision detection catches that failure directly too,
+     * without needing the date check to somehow notice a problem in a column it isn't looking at.
+     *
+     * <p>Passing {@code null} for {@code ctx} to {@code bucketRow} is deliberate -- this runs
+     * speculatively, on candidates that may never be adopted, and {@code bucketRow}'s own capability
+     * recordings (RIGHT_ALIGNED_AMOUNTS, OFFSET_COLUMN_ANCHORS) must fire only for rows actually
+     * bucketed for real, inside {@link #buildHeaderColumns}'s real, single, committed run.
+     */
+    private int rowsCleanlyExplainedBy(HeaderColumns header, List<List<PositionedText>> sample) {
+        int dateColumn = -1;
+        for (int i = 0; i < header.names().size(); i++) {
+            if (isDateColumn(header.names().get(i))) { dateColumn = i; break; }
+        }
+        if (dateColumn < 0) return 0;
+        String dateColumnName = header.names().get(dateColumn);
+        int explained = 0;
+        for (List<PositionedText> row : sample) {
+            int rawCells = nonBlankCount(row);
+            Map<String, String> bucketed = bucketRow(row, header.names(), header.anchors(), header.ends(), null);
+            if (bucketed.size() < rawCells) continue; // collision -- two raw values shared one column
+            String dateValue = bucketed.get(dateColumnName);
+            if (dateValue == null || CsvParser.parseDate(dateValue.trim()) == null) continue;
+            explained++;
+        }
+        return explained;
+    }
+
+    private int nonBlankCount(List<PositionedText> row) {
+        int count = 0;
+        for (PositionedText t : row) if (!t.text().isBlank()) count++;
+        return count;
     }
 
     /**

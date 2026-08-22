@@ -1,12 +1,16 @@
+import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAdminAuth } from '../../context/AdminAuthContext';
 import { Trash2 } from 'lucide-react';
 import { adminTransactionsApi } from '../../api/endpoints';
+import { ConfirmDialog } from '../../components/ConfirmDialog';
+import type { TransactionDto } from '../../types';
 
 export function TransactionsSection({ userId }: { userId: string }) {
   const { hasPermission } = useAdminAuth();
   const queryClient = useQueryClient();
   const canDelete = hasPermission('TRANSACTION_DELETE');
+  const [confirmDelete, setConfirmDelete] = useState<TransactionDto | null>(null);
 
   const { data: transactions, isLoading } = useQuery({
     queryKey: ['admin-user-transactions', userId],
@@ -46,9 +50,7 @@ export function TransactionsSection({ userId }: { userId: string }) {
                   type="button"
                   title="Delete"
                   disabled={deleteMutation.isPending}
-                  onClick={() => {
-                    if (confirm('Delete this transaction?')) deleteMutation.mutate(t.id);
-                  }}
+                  onClick={() => setConfirmDelete(t)}
                   className="w-7 h-7 rounded-lg hover:bg-danger-bg text-muted hover:text-danger inline-flex items-center justify-center"
                 >
                   <Trash2 size={13} />
@@ -58,6 +60,21 @@ export function TransactionsSection({ userId }: { userId: string }) {
           </div>
         ))}
       </div>
+
+      {confirmDelete && (
+        <ConfirmDialog
+          title="Delete this transaction?"
+          message={`"${confirmDelete.description}" — this can't be undone.`}
+          confirmLabel="Delete"
+          danger
+          onConfirm={() => {
+            const id = confirmDelete.id;
+            setConfirmDelete(null);
+            deleteMutation.mutate(id);
+          }}
+          onCancel={() => setConfirmDelete(null)}
+        />
+      )}
     </div>
   );
 }

@@ -3,6 +3,8 @@ package com.finora.repository;
 import com.finora.entity.RefreshToken;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import java.time.Instant;
 import java.util.List;
@@ -65,4 +67,12 @@ public interface RefreshTokenRepository extends JpaRepository<RefreshToken, UUID
      * entire natural lifetime, whether it was rotated early or simply expired unused.
      */
     List<RefreshToken> findByExpiresAtBeforeOrderByExpiresAtAsc(Instant now, Pageable pageable);
+
+    /** D-28 PR4-C: the reuse proposal §4 asks for -- "check device/IP overlap between
+     *  referrer_user_id and referred_user_id's sessions before crediting a reward, rather than
+     *  building a parallel fingerprinting system." Distinct, non-null IPs only: a null
+     *  {@code last_seen_ip} (never populated, e.g. a row created before this column existed) must
+     *  never be treated as a shared signal between two accounts. */
+    @Query("SELECT DISTINCT r.lastSeenIp FROM RefreshToken r WHERE r.userId = :userId AND r.lastSeenIp IS NOT NULL")
+    List<String> findDistinctLastSeenIpsByUserId(@Param("userId") UUID userId);
 }

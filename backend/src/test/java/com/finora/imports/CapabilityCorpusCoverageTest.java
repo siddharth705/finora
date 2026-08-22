@@ -128,6 +128,28 @@ class CapabilityCorpusCoverageTest {
                         + "INLINE_LABEL_VALUE strategy motivated by a real AU statement's label-left/value-right "
                         + "layout. Covered by synthetic fixtures in CreditCardSummaryExtractorTest, "
                         + "not yet by a committed real-document trace.");
+        DECLARED_WITHOUT_A_TRACE.put("TRANSACTION_TABLE_TOTAL_CLOSED",
+                "no trace yet -- motivated by a real Kotak Mahindra Bank credit-card statement's "
+                        + "own \"Total Purchase & Other Charges\" column-total row; real-corpus verified "
+                        + "directly against the unredacted document (CorpusProbe/PdfPipelineDiagnostic, "
+                        + "not just a synthetic reproduction) in the Phase 2A/2C investigation. Capturing "
+                        + "a redacted trace from this specific document was attempted and refused by "
+                        + "TraceValidator (zero sections survive redaction on this layout) -- an "
+                        + "unrelated pre-existing gap in trace capture for this document's shape, not "
+                        + "something this change is scoped to fix. Covered by a synthetic fixture in "
+                        + "StatementClosingMarkerPdfPreviewGeneratorTest instead, mutation-checked "
+                        + "against the pre-fix code.");
+        DECLARED_WITHOUT_A_TRACE.put("MITC_SECTION_CLOSED",
+                "no trace yet -- motivated by a real ICICI Bank credit-card statement's own all-caps "
+                        + "\"MOST IMPORTANT TERMS AND CONDITIONS (MITC)\" section heading; real-corpus "
+                        + "verified directly against the unredacted document in the Phase 2A/2C "
+                        + "investigation. A redacted trace WAS captured from this document, but the "
+                        + "heading sits on page 2 and the captured trace's own text does not reach that "
+                        + "far, so it exercises this document's other capabilities without exercising "
+                        + "this one -- not committed, since a trace that cannot exercise the capability "
+                        + "it would be cited for is not real coverage. Covered by a synthetic fixture in "
+                        + "StatementClosingMarkerPdfPreviewGeneratorTest instead, mutation-checked "
+                        + "against the pre-fix code.");
         // RIGHT_ALIGNED_AMOUNTS was here, with the note "either the three traces genuinely avoid
         // right-aligned amount columns, or the recording sits on a path they do not take. Measure
         // before capturing." It was measured, and the answer was a third thing: the two HDFC
@@ -183,6 +205,30 @@ class CapabilityCorpusCoverageTest {
                 "no trace, and none is planned -- same reasoning as BLANK_COLUMN_NAME_QUALIFIED, "
                         + "same real document. Covered instead by HeaderColumnRecoveryTest's fully "
                         + "hand-synthesized fixtures.");
+        DECLARED_WITHOUT_A_TRACE.put("HEADER_RECONSTRUCTED",
+                "no trace, deliberately -- motivated by a real SBI Credit Card statement's "
+                        + "supplementary-cardholder section (Phase 2E.1/2E.2), whose header prints one "
+                        + "column alone on the physical line above the row that gets accepted on its "
+                        + "own. Real-corpus verified directly against the committed "
+                        + "sbi-credit-card-statement.trace during development, and does not fire on it, "
+                        + "for two independent reasons found while widening this gate. First: this "
+                        + "engine is deliberately scoped to exactly ONE orphaned single-cell fragment "
+                        + "(PdfTableLocator.reconstructHeader's nonBlankCount(above) != 1 guard) -- a "
+                        + "real ICICI savings statement in the same corpus has a genuine THREE-cell "
+                        + "second tier one line above ITS accepted header, and composing all three in "
+                        + "unresolved recovered some real transactions but left the statement's own "
+                        + "aggregate balance-total check failing, a partial result this phase is not "
+                        + "scoped to ship (the general, multi-tier composition case is explicitly "
+                        + "deferred, design doc §8). Second, independently: even within scope, this "
+                        + "engine's row-compatibility validation (does the candidate's date column "
+                        + "bucket cleanly, with no two raw values colliding into one cell, across the "
+                        + "section's real rows) correctly refuses to prefer a reconstruction it cannot "
+                        + "verify improves anything, and the SBI trace's own redacted dates are not "
+                        + "parseable at all -- the same refusal a genuinely bad candidate would get, "
+                        + "which is the point: the engine cannot and must not tell those two cases "
+                        + "apart from evidence alone. Covered instead by HeaderReconstructionEngineTest's "
+                        + "fully hand-synthesized fixtures, which reproduce the single-fragment shape "
+                        + "with realistic, parseable dates.");
     }
 
     /**

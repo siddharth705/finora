@@ -9,6 +9,7 @@ import { BankLogo } from '../components/BankLogo';
 import { MaskedAccountNumber } from '../components/MaskedAccountNumber';
 import type { Account, BankInfo } from '../types';
 import { formatDate } from '../utils/date';
+import { ConfirmDialog } from '../design-system';
 
 const TYPE_LABEL: Record<Account['accountType'], string> = {
   SAVINGS: 'Savings Account',
@@ -62,6 +63,7 @@ export default function Setup() {
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [menuOpenFor, setMenuOpenFor] = useState<string | null>(null);
+  const [confirmRemoveId, setConfirmRemoveId] = useState<string | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
 
@@ -97,7 +99,6 @@ export default function Setup() {
   }
 
   async function remove(id: string) {
-    if (!confirm('Delete this account?')) return;
     setMenuOpenFor(null);
     try {
       await accountsApi.remove(id);
@@ -241,7 +242,7 @@ export default function Setup() {
                             <Link to="/app/statements" onClick={() => setMenuOpenFor(null)} className="w-full text-left px-3 py-2 text-xs text-ink hover:bg-bg flex items-center gap-2">
                               <FileText size={13} /> View Statements
                             </Link>
-                            <button onClick={() => remove(a.id)} className="w-full text-left px-3 py-2 text-xs text-danger hover:bg-bg flex items-center gap-2">
+                            <button onClick={() => { setMenuOpenFor(null); setConfirmRemoveId(a.id); }} className="w-full text-left px-3 py-2 text-xs text-danger hover:bg-bg flex items-center gap-2">
                               <Trash2 size={13} /> Delete Account
                             </button>
                           </div>
@@ -377,6 +378,21 @@ export default function Setup() {
         </div>
       </details>
       {error && <p className="text-danger text-sm">{error}</p>}
+
+      {confirmRemoveId && (
+        <ConfirmDialog
+          title="Delete this account?"
+          message="This can't be undone."
+          confirmLabel="Delete"
+          danger
+          onConfirm={() => {
+            const id = confirmRemoveId;
+            setConfirmRemoveId(null);
+            void remove(id);
+          }}
+          onCancel={() => setConfirmRemoveId(null)}
+        />
+      )}
     </div>
   );
 }
