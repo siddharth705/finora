@@ -11,7 +11,7 @@ vi.mock('../context/AuthContext', () => ({
 
 const registerMock = vi.fn();
 
-function renderRegister() {
+function renderRegister(initialEntries: string[] = ['/register']) {
   vi.mocked(useAuth).mockReturnValue({
     token: null,
     bootstrapping: false,
@@ -26,7 +26,7 @@ function renderRegister() {
     logout: vi.fn(),
   });
   return render(
-    <MemoryRouter>
+    <MemoryRouter initialEntries={initialEntries}>
       <Register />
     </MemoryRouter>
   );
@@ -102,7 +102,21 @@ describe('Register — mobile number field', () => {
     await user.click(screen.getByRole('button', { name: /Create account/i }));
 
     expect(registerMock).toHaveBeenCalledWith(
-      'jane@example.com', 'Str0ng!Pass', 'Jane Doe', '+919876543210'
+      'jane@example.com', 'Str0ng!Pass', 'Jane Doe', '+919876543210' /* synthetic-ok */, undefined
+    );
+  });
+
+  // D-28 PR4-C: a referral link's `?ref=` param is the only way this page ever learns a referral
+  // code -- there's no visible form field for it, by design (see Referrals.tsx's own doc comment).
+  it('passes a referral code from the URL through to register()', async () => {
+    const user = userEvent.setup();
+    renderRegister(['/register?ref=ABCD1234']);
+
+    await fillValidFormExceptPhone(user);
+    await user.click(screen.getByRole('button', { name: /Create account/i }));
+
+    expect(registerMock).toHaveBeenCalledWith(
+      'jane@example.com', 'Str0ng!Pass', 'Jane Doe', '+919876543210' /* synthetic-ok */, 'ABCD1234'
     );
   });
 

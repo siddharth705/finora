@@ -1,5 +1,5 @@
 import { useMemo, useState, type FormEvent } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ShieldCheck, UploadCloud, TrendingUp, PiggyBank, Target, LineChart,
   User, Mail, CheckCircle2, ArrowRight, Wallet, PieChart as PieChartIcon, BarChart3,
@@ -67,6 +67,11 @@ const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 export default function Register() {
   const { register, loginWithGoogle } = useAuth();
   const navigate = useNavigate();
+  // D-28 PR4-C: captured once at mount, not re-read on every render -- a referral link's `?ref=`
+  // is only ever meaningful for the signup this page load represents, never something that
+  // should change if the URL is edited after the fact.
+  const [searchParams] = useSearchParams();
+  const referralCode = searchParams.get('ref') ?? undefined;
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [phoneNumber, setPhoneNumber] = useState('');
@@ -121,7 +126,7 @@ export default function Register() {
       // phoneNumber only ever holds the 10-digit local number now (see the Mobile number field
       // below) -- +91 is prepended here, once, at the actual submission boundary, rather than
       // being stored in state at all.
-      const { phoneVerified } = await register(email.trim(), password, trimmedName, `+91${phoneNumber}`);
+      const { phoneVerified } = await register(email.trim(), password, trimmedName, `+91${phoneNumber}`, referralCode);
       // VerifyPhone.tsx fetches the account's own phone number itself (now that registration
       // leaves the user authenticated) rather than needing it passed through router state.
       void navigate(phoneVerified ? '/app' : '/verify-phone');

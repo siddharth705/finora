@@ -59,6 +59,11 @@ import java.util.List;
  *   -&gt; buildParenthesizedDrCrRunningBalanceSample, buildStatementClosingMarkerSample
  * TRANSACTION_TABLE_CLOSED
  *   -&gt; buildStatementClosingMarkerWithTrailingLookalikeSample
+ * TRANSACTION_TABLE_TOTAL_CLOSED
+ *   -&gt; buildTransactionTableTotalMarkerWithTrailingLookalikeSample
+ * MITC_SECTION_CLOSED
+ *   -&gt; buildMitcSectionMarkerWithTrailingLookalikeSample,
+ *      buildMixedCaseMitcMentionDoesNotCloseSample (negative case)
  * COMPOSITE_STATEMENT / MULTI_ACCOUNT
  *   -&gt; buildMultiSectionCompositeStatementSample
  * CREDIT_CARD_SUMMARY_SIGNAL
@@ -394,6 +399,67 @@ public final class PdfFixtureBuilder {
                 .row(col, "15/07/2026", "UPI/SAMPLEB ENTERPRISES/PAYCO.S111111@PTY/90000", "1,240.00 Dr")
                 .line("**** End of Statement ****")
                 .row(col, "25/09/2026", "Illustrative Purchase Example", "5,000.00 Dr");
+
+        return render(List.of(page));
+    }
+
+    /**
+     * TRANSACTION_TABLE_TOTAL_CLOSED. Phase 2C. A real Kotak Mahindra Bank credit-card statement
+     * prints "Total Purchase & Other Charges  5,178.69" directly beneath its last real transaction,
+     * before a MITC/fees-and-charges legal schedule begins -- the same failure shape as
+     * TRANSACTION_TABLE_CLOSED (buildStatementClosingMarkerWithTrailingLookalikeSample), evidenced
+     * from a different bank. See docs/architecture/system-design/transaction-boundary-phase2a-
+     * investigation.md.
+     */
+    public static byte[] buildTransactionTableTotalMarkerWithTrailingLookalikeSample() throws IOException {
+        float[] col = {LEFT_MARGIN, 110f, 480f};
+
+        PageBuilder page = new PageBuilder();
+        page.row(col, "DATE", "TRANSACTION DETAILS", "AMOUNT (Rs.)")
+                .row(col, "12/03/2026", "SAMPLE RETAIL STORE", "450.00")
+                .row(col, "18/03/2026", "UPI-SAMPLE0001234567-SAMPLEVENDOR", "225.50") // synthetic-ok
+                .line("Total Purchase & Other Charges                                          675.50") // synthetic-ok
+                .row(col, "05/05/2026", "Illustrative Fee Example", "1,000.00");
+
+        return render(List.of(page));
+    }
+
+    /**
+     * MITC_SECTION_CLOSED. Phase 2C. A real ICICI Bank credit-card statement opens its MITC/legal
+     * appendix with an all-caps "MOST IMPORTANT TERMS AND CONDITIONS (MITC)" heading immediately
+     * after the last real transaction and its rewards summary -- same failure shape again,
+     * evidenced from a third bank. See the Phase 2A/2C investigation doc.
+     */
+    public static byte[] buildMitcSectionMarkerWithTrailingLookalikeSample() throws IOException {
+        float[] col = {LEFT_MARGIN, 110f, 480f};
+
+        PageBuilder page = new PageBuilder();
+        page.row(col, "DATE", "TRANSACTION DETAILS", "AMOUNT (Rs.)")
+                .row(col, "09/04/2026", "SAMPLE ONLINE SERVICE IN", "899.00")
+                .row(col, "16/04/2026", "SAMPLE SUBSCRIPTION APP IN", "1,499.00")
+                .line("MOST IMPORTANT TERMS AND CONDITIONS (MITC)")
+                .row(col, "11/09/2026", "Illustrative Interest Example", "500.00");
+
+        return render(List.of(page));
+    }
+
+    /**
+     * MITC_SECTION_CLOSED, negative case. {@link PdfTableLocator#MITC_SECTION_MARKER} is
+     * deliberately case-sensitive -- real AU and SBI statements both mention the same concept in
+     * ordinary mixed-case prose ("Most Important Terms and conditions" / "Most Important Terms &
+     * Conditions") WHILE their own real transactions are still ongoing, well before the document's
+     * true end. A case-insensitive match would close those documents' sections early. This fixture
+     * reproduces that mixed-case shape, with a real-looking transaction row after it, and asserts
+     * the row survives -- proving the case sensitivity is load-bearing, not incidental.
+     */
+    public static byte[] buildMixedCaseMitcMentionDoesNotCloseSample() throws IOException {
+        float[] col = {LEFT_MARGIN, 110f, 480f};
+
+        PageBuilder page = new PageBuilder();
+        page.row(col, "DATE", "TRANSACTION DETAILS", "AMOUNT (Rs.)")
+                .row(col, "09/04/2026", "SAMPLE ONLINE SERVICE IN", "899.00")
+                .line("Log onto examplebank.com to view the \"Most Important Terms & Conditions\"")
+                .row(col, "16/04/2026", "SAMPLE SUBSCRIPTION APP IN", "1,499.00");
 
         return render(List.of(page));
     }

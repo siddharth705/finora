@@ -42,7 +42,7 @@ class RegisterRequestValidationTest {
     }
 
     private RegisterRequest request(String email, String password, String fullName, String phoneNumber) {
-        return new RegisterRequest(email, password, fullName, phoneNumber);
+        return new RegisterRequest(email, password, fullName, phoneNumber, null);
     }
 
     private boolean violatesField(Set<ConstraintViolation<RegisterRequest>> violations, String field) {
