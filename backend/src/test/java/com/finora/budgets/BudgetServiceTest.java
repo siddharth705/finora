@@ -172,7 +172,7 @@ class BudgetServiceTest {
     @Test
     void upsert_updatesTheExistingRow_ratherThanInsertingASecondBudgetForTheSameCategory() {
         Category dining = category("Dining");
-        when(categoryRepository.findByUserIdAndNameIgnoreCase(userId, "Dining")).thenReturn(Optional.of(dining));
+        when(categoryRepository.findByUserIdAndNameIgnoreCaseOrderByIdAsc(userId, "Dining")).thenReturn(List.of(dining));
 
         Budget existing = budget(dining.getId(), new BigDecimal("3000.00"));
         when(budgetRepository.findByUserIdAndCategoryId(userId, dining.getId())).thenReturn(Optional.of(existing));
@@ -194,7 +194,7 @@ class BudgetServiceTest {
     @Test
     void upsert_matchesAnExistingCategoryCaseInsensitively() {
         Category dining = category("Dining");
-        when(categoryRepository.findByUserIdAndNameIgnoreCase(userId, "dining")).thenReturn(Optional.of(dining));
+        when(categoryRepository.findByUserIdAndNameIgnoreCaseOrderByIdAsc(userId, "dining")).thenReturn(List.of(dining));
 
         Budget existing = budget(dining.getId(), new BigDecimal("3000.00"));
         when(budgetRepository.findByUserIdAndCategoryId(userId, dining.getId())).thenReturn(Optional.of(existing));

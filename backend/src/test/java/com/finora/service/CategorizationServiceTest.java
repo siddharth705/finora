@@ -165,7 +165,7 @@ class CategorizationServiceTest {
         Category existing = new Category();
         existing.setUserId(userId);
         existing.setName("Dining");
-        when(categoryRepository.findByUserIdAndNameIgnoreCase(userId, "Dining")).thenReturn(Optional.of(existing));
+        when(categoryRepository.findByUserIdAndNameIgnoreCaseOrderByIdAsc(userId, "Dining")).thenReturn(List.of(existing));
 
         Category result = categorizationService.resolveOrCreateCategory(userId, "Dining");
 
@@ -175,7 +175,7 @@ class CategorizationServiceTest {
 
     @Test
     void resolveOrCreateCategory_createsNew_whenNameDoesNotExist() {
-        when(categoryRepository.findByUserIdAndNameIgnoreCase(userId, "Custom Category")).thenReturn(Optional.empty());
+        when(categoryRepository.findByUserIdAndNameIgnoreCaseOrderByIdAsc(userId, "Custom Category")).thenReturn(List.of());
         when(categoryRepository.save(any(Category.class))).thenAnswer(inv -> inv.getArgument(0));
 
         Category result = categorizationService.resolveOrCreateCategory(userId, "Custom Category");
@@ -195,11 +195,36 @@ class CategorizationServiceTest {
         Category existing = new Category();
         existing.setUserId(userId);
         existing.setName("Dining");
-        when(categoryRepository.findByUserIdAndNameIgnoreCase(userId, "dining")).thenReturn(Optional.of(existing));
+        when(categoryRepository.findByUserIdAndNameIgnoreCaseOrderByIdAsc(userId, "dining")).thenReturn(List.of(existing));
 
         Category result = categorizationService.resolveOrCreateCategory(userId, " dining ");
 
         assertThat(result).isSameAs(existing);
+        verify(categoryRepository, never()).save(any());
+    }
+
+    /**
+     * Self-review catch: a pre-existing case-variant duplicate (a user who already has both
+     * "Dining" and "dining" from BEFORE the Bug 16 fix shipped) must resolve to one of them
+     * deterministically, not throw. A single-result derived query
+     * (findByUserIdAndNameIgnoreCase, this method's first version) would have thrown
+     * IncorrectResultSizeDataAccessException the moment it matched more than one row -- turning
+     * every future category action for exactly the affected users into an unhandled 500.
+     */
+    @Test
+    void resolveOrCreateCategory_picksOneDeterministically_whenAPreExistingCaseVariantDuplicateExists() {
+        Category dining = new Category();
+        dining.setUserId(userId);
+        dining.setName("Dining");
+        Category lowercaseDining = new Category();
+        lowercaseDining.setUserId(userId);
+        lowercaseDining.setName("dining");
+        when(categoryRepository.findByUserIdAndNameIgnoreCaseOrderByIdAsc(userId, "Dining"))
+                .thenReturn(List.of(dining, lowercaseDining));
+
+        Category result = categorizationService.resolveOrCreateCategory(userId, "Dining");
+
+        assertThat(result).isSameAs(dining);
         verify(categoryRepository, never()).save(any());
     }
 
@@ -358,7 +383,7 @@ class CategorizationServiceTest {
         ReflectionTestUtils.setField(investments, "id", UUID.randomUUID());
         investments.setUserId(userId);
         investments.setName("Investments");
-        when(categoryRepository.findByUserIdAndNameIgnoreCase(userId, "Investments")).thenReturn(Optional.of(investments));
+        when(categoryRepository.findByUserIdAndNameIgnoreCaseOrderByIdAsc(userId, "Investments")).thenReturn(List.of(investments));
 
         Transaction t = txnFor("SIP MUTUAL FUND DEDUCTION");
         Category result = categorizationService.applySideEffectRules(userId, t);
@@ -376,7 +401,7 @@ class CategorizationServiceTest {
         ReflectionTestUtils.setField(sipEquity, "id", UUID.randomUUID());
         sipEquity.setUserId(userId);
         sipEquity.setName("SIP - Equity");
-        when(categoryRepository.findByUserIdAndNameIgnoreCase(userId, "SIP - Equity")).thenReturn(Optional.of(sipEquity));
+        when(categoryRepository.findByUserIdAndNameIgnoreCaseOrderByIdAsc(userId, "SIP - Equity")).thenReturn(List.of(sipEquity));
 
         Transaction t = txnFor("SIP MUTUAL FUND DEDUCTION");
         categorizationService.applySideEffectRules(userId, t);

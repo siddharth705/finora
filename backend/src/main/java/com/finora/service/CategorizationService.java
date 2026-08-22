@@ -349,8 +349,9 @@ public class CategorizationService {
     /**
      * Bug 16: trims and matches case-insensitively so "dining", "Dining" and "Dining " all
      * resolve to one category instead of splitting into siblings that fragment a budget and
-     * double-count in reports -- see {@link CategoryRepository#findByUserIdAndNameIgnoreCase}
-     * for what this does and does not close.
+     * double-count in reports -- see
+     * {@link CategoryRepository#findByUserIdAndNameIgnoreCaseOrderByIdAsc} for what this does
+     * and does not close, including why it returns a list rather than a single result.
      *
      * <p>The null/blank guard is a side effect of adding {@code .trim()} above, not incidental:
      * {@code TransactionService.updateCategory} passes an unvalidated {@code Map<String, String>}
@@ -370,12 +371,14 @@ public class CategorizationService {
             throw new ApiException(HttpStatus.BAD_REQUEST, "Category name can't be blank.");
         }
         String trimmed = name.trim();
-        return categoryRepository.findByUserIdAndNameIgnoreCase(userId, trimmed).orElseGet(() -> {
-            Category c = new Category();
-            c.setUserId(userId);
-            c.setName(trimmed);
-            c.setSystem(false);
-            return categoryRepository.save(c);
-        });
+        List<Category> matches = categoryRepository.findByUserIdAndNameIgnoreCaseOrderByIdAsc(userId, trimmed);
+        if (!matches.isEmpty()) {
+            return matches.get(0);
+        }
+        Category c = new Category();
+        c.setUserId(userId);
+        c.setName(trimmed);
+        c.setSystem(false);
+        return categoryRepository.save(c);
     }
 }

@@ -25,8 +25,20 @@ public interface CategoryRepository extends JpaRepository<Category, UUID> {
      * is a schema change out of scope for this fix -- this closes the reported, and by far the
      * more common, sequential-request case (a user or an import typing the same category two
      * different ways over time).
+     *
+     * <p>Self-review catch: returns a {@code List}, not {@code Optional}, and ordered, on
+     * purpose. A single-result derived query throws {@code IncorrectResultSizeDataAccessException}
+     * -- an unhandled 500 -- the moment it matches more than one row, and this exact bug's own
+     * scenario (a user who already has both "Dining" and "dining" from BEFORE this fix shipped)
+     * guarantees precisely that for every affected user, on every future category action, from
+     * here on. Callers take the list's first element deterministically instead of crashing --
+     * {@code id} is a random {@code UUID} ({@code @GeneratedValue}), so "first" carries no
+     * chronological meaning, only repeatability (the same duplicate pair always resolves to the
+     * same row rather than picking differently query to query). That gracefully degrades a
+     * pre-existing duplicate into "pick one and keep working" rather than turning it into a hard
+     * outage this fix would otherwise have introduced for exactly the users it was meant to help.
      */
-    Optional<Category> findByUserIdAndNameIgnoreCase(UUID userId, String name);
+    List<Category> findByUserIdAndNameIgnoreCaseOrderByIdAsc(UUID userId, String name);
 
     /** AccountPurgeSweepService -- called after every table that FK's to categories (transactions,
      *  budgets, merchant_category_learning, merchant_learning_events, merchant_learning_audit) is

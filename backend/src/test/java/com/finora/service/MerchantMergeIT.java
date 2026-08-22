@@ -23,9 +23,11 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.dao.DataAccessException;
 
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.UUID;
@@ -309,5 +311,83 @@ class MerchantMergeIT extends AbstractIntegrationTest {
         assertThat(learningRepository.findByUserIdAndMerchantId(userId, a.getId()).get(0).getConfirmationCount())
                 .as("the rejected undo attempts changed nothing -- the row survives with evidence intact")
                 .isEqualTo(baseline + 3);
+    }
+
+    /**
+     * Self-review catch, surfaced while investigating Bug 54 above: {@code
+     * MerchantLearningAuditRepository.findByUserIdAndMerchantIdOrderByCreatedAtDesc} -- which
+     * {@code undo()} reads as "the most recent action" -- had no tiebreaker on {@code createdAt}.
+     * {@code MerchantLearningAudit.createdAt} is a plain {@code Instant.now()} field initializer,
+     * not a DB sequence, so two entries for DIFFERENT categories landing in the same clock tick
+     * (a worker or an admin bulk action confirming several categories for one merchant in a tight
+     * loop) left which one "most recent" meant unspecified -- {@code undo()} could revert the
+     * wrong category. Fixed by adding {@code id DESC} as a tiebreaker, the same fix (and the same
+     * reasoning) {@code findByUserIdOrderByCreatedAtAscIdAsc}'s own comment already applies to the
+     * sibling audit query in this repository.
+     *
+     * <p>The tie is forced directly -- {@code createdAt} is {@code updatable = false}, so setting
+     * it via reflection AFTER the initial save (as a real timing collision would require) would
+     * silently not persist; both entries are built with the tied timestamp already in place
+     * before their first (and only) save, exactly like the existing {@code priorHistory}
+     * construction earlier in this file. Real back-to-back {@code confirm()} calls are also far
+     * too slow (each does multiple DB round trips) to reliably collide within one test run.
+     *
+     * <p>Deliberately does not assert WHICH category wins the tiebreak -- id is a random UUID, so
+     * that has no meaning to assert on, and Java's {@code UUID.compareTo} ordering is not
+     * guaranteed to agree with Postgres's own UUID sort order anyway. What must hold is that
+     * {@code undo()}'s internal choice agrees with what a fresh call to the ordering query itself
+     * returns as element zero -- i.e. the choice is deterministic, not left to query-plan
+     * happenstance, which is the actual property a missing tiebreaker put at risk.
+     */
+    @Test
+    void undo_breaksACreatedAtTieDeterministically_whenTwoDifferentCategoriesTie() {
+        Merchant merchant = merchant("Tied Merchant");
+        Category other = new Category();
+        other.setUserId(userId);
+        other.setName("Other");
+        other = categoryRepository.save(other);
+        UUID otherCategoryId = other.getId();
+
+        learningPair(merchant.getId(), shoppingCategoryId, 1, 100);
+        learningPair(merchant.getId(), otherCategoryId, 1, 100);
+
+        Instant tiedInstant = Instant.now();
+        MerchantLearningAudit forShopping = new MerchantLearningAudit();
+        forShopping.setUserId(userId);
+        forShopping.setMerchantId(merchant.getId());
+        forShopping.setAction(MerchantLearningAudit.Action.LEARNED);
+        forShopping.setNewCategoryId(shoppingCategoryId);
+        ReflectionTestUtils.setField(forShopping, "createdAt", tiedInstant);
+        auditRepository.save(forShopping);
+
+        MerchantLearningAudit forOther = new MerchantLearningAudit();
+        forOther.setUserId(userId);
+        forOther.setMerchantId(merchant.getId());
+        forOther.setAction(MerchantLearningAudit.Action.LEARNED);
+        forOther.setNewCategoryId(otherCategoryId);
+        ReflectionTestUtils.setField(forOther, "createdAt", tiedInstant);
+        auditRepository.save(forOther);
+
+        List<MerchantLearningAudit> tied =
+                auditRepository.findByUserIdAndMerchantIdOrderByCreatedAtDesc(userId, merchant.getId());
+        assertThat(tied).hasSize(2);
+        assertThat(tied).extracting(MerchantLearningAudit::getCreatedAt).containsOnly(tiedInstant);
+
+        UUID categoryExpectedToBeReverted = tied.get(0).getNewCategoryId();
+        UUID categoryExpectedToSurvive =
+                categoryExpectedToBeReverted.equals(shoppingCategoryId) ? otherCategoryId : shoppingCategoryId;
+
+        merchantLearningService.undo(userId, merchant.getId(), actingAdminId);
+
+        List<MerchantCategoryLearning> pairs = learningRepository.findByUserIdAndMerchantId(userId, merchant.getId());
+        assertThat(pairs)
+                .as("only the query's own first result (the tiebreak-selected entry) should have "
+                        + "been reverted -- its pair had count 1, so undo() deletes it")
+                .noneMatch(p -> p.getCategoryId().equals(categoryExpectedToBeReverted));
+        assertThat(pairs)
+                .filteredOn(p -> p.getCategoryId().equals(categoryExpectedToSurvive))
+                .as("the OTHER category's confirmation must survive untouched -- reverting it "
+                        + "instead is exactly what a missing tiebreaker could get wrong")
+                .hasSize(1);
     }
 }
