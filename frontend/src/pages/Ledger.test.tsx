@@ -117,3 +117,42 @@ describe('Ledger — Why this category?', () => {
     await waitFor(() => expect(screen.queryByText('Why this category?')).not.toBeInTheDocument());
   });
 });
+
+// Custom in-app confirmation (ConfirmDialog) rather than the browser's own confirm(), which
+// rendered as unstyled OS/browser chrome instead of looking like part of the product.
+describe('Ledger — delete confirmation', () => {
+  beforeEach(() => {
+    vi.mocked(transactionsApi.search).mockReset().mockResolvedValue({
+      content: [txn()], page: 0, size: 10, totalElements: 1, totalPages: 1,
+    });
+    vi.mocked(transactionsApi.needsReview).mockReset().mockResolvedValue([]);
+    vi.mocked(categoriesApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(transactionsApi.remove).mockReset().mockResolvedValue(undefined as never);
+  });
+
+  it('shows a confirmation naming the transaction before deleting it', async () => {
+    const user = userEvent.setup();
+    renderLedger();
+
+    await user.click(await screen.findByTitle('Delete transaction'));
+
+    expect(await screen.findByText('Delete "AMAZON PAY"?')).toBeInTheDocument();
+    expect(transactionsApi.remove).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole('button', { name: 'Delete' }));
+
+    await waitFor(() => expect(transactionsApi.remove).toHaveBeenCalledWith('txn-1'));
+  });
+
+  it('does not delete when the confirmation is cancelled', async () => {
+    const user = userEvent.setup();
+    renderLedger();
+
+    await user.click(await screen.findByTitle('Delete transaction'));
+    await screen.findByText('Delete "AMAZON PAY"?');
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    expect(transactionsApi.remove).not.toHaveBeenCalled();
+    expect(screen.queryByText('Delete "AMAZON PAY"?')).not.toBeInTheDocument();
+  });
+});

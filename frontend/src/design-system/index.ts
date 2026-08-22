@@ -5,3 +5,4 @@ export { SectionHeader } from './SectionHeader';
 export { QuickActionCard } from './QuickActionCard';
 export { ChartContainer, baseChartOptions } from './ChartContainer';
 export { Badge } from './Badge';
+export { ConfirmDialog } from './ConfirmDialog';
