@@ -3,16 +3,17 @@ import { ErrorBoundary } from './ErrorBoundary';
 import { Sidebar } from './Sidebar';
 import { GlobalSearch } from './GlobalSearch';
 import { ThemeToggle } from './ThemeToggle';
+import { NotificationBell } from './NotificationBell';
 import { useAdminAuth } from '../context/AdminAuthContext';
 import { initials } from '../lib/initials';
 
 /**
  * Deliberately simpler than the user app's AppShell + TopBar (finora/frontend/src/App.tsx,
- * TopBar.tsx) -- no notification bell (yet). This app now has a header search box (GlobalSearch,
- * Admin Portal Phase 2) fanning out across Users/Merchants/Banks/Global Rules server-side
- * (AdminSearchController), a theme toggle (ThemeContext, local-only -- no dashboard-query
- * dependencies this app's dependency footprint has deliberately kept separate from the user
- * app's), and an initials avatar (same helper Sidebar's own footer avatar uses) alongside the
+ * TopBar.tsx). This app now has a header search box (GlobalSearch, Admin Portal Phase 2) fanning
+ * out across Users/Merchants/Banks/Global Rules server-side (AdminSearchController), a theme
+ * toggle (ThemeContext, local-only), an operational alerts bell (NotificationBell, dashboard
+ * redesign PR3 -- reuses the same overview data Dashboard.tsx renders, not a new notification
+ * platform), and an initials avatar (same helper Sidebar's own footer avatar uses) alongside the
  * existing email pill.
  */
 export function AdminLayout({ title, subtitle, children }: { title: string; subtitle?: string; children: ReactNode }) {
@@ -29,6 +30,7 @@ export function AdminLayout({ title, subtitle, children }: { title: string; subt
           <div className="flex items-center gap-3 flex-shrink-0">
             <GlobalSearch />
             <ThemeToggle />
+            <NotificationBell />
             <span className="text-xs text-muted bg-card border border-border rounded-full px-3 py-1.5 shadow-card whitespace-nowrap">
               {email}
             </span>
