@@ -18,6 +18,14 @@ export const light = {
   border: '#E6EAF2',
   ink: '#0F172A',
   muted: '#64748B',
+  // `muted` (#64748B on this screen's #F8FAFC background) sits at ~4.55:1 -- just over WCAG AA's
+  // 4.5:1 floor for the 11-13pt sizes it's used at (transaction dates, hints, goal metadata), with
+  // almost no margin for a darker background variant or a slightly-off display. Same shape of
+  // problem as `warningInk` below, and the same fix: a separate token rather than a change to
+  // `muted` itself, since that value is shared with frontend/src/index.css's --color-muted and is
+  // fine in the roles it's actually used for there. This slate-600 clears 7.25:1 on the same
+  // background -- real margin, not just over the line.
+  mutedInk: '#475569',
   primary: '#262A33',
   primaryDark: '#15171C',
   primaryLight: '#F4F1EC',
@@ -47,6 +55,9 @@ export const dark: typeof light = {
   border: '#253044',
   ink: '#E2E8F0',
   muted: '#94A3B8',
+  // Dark theme's `muted` already clears AA comfortably (~7.3:1 on this screen's #0B1220
+  // background), so this is the same value as `muted` -- same reasoning as dark.warningInk below.
+  mutedInk: '#94A3B8',
   primary: '#F4F1EC',
   primaryDark: '#DAD5C9',
   primaryLight: '#26241F',

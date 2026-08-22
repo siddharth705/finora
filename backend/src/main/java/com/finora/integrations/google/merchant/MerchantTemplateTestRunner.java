@@ -63,12 +63,13 @@ public class MerchantTemplateTestRunner {
      *                       resulting {@link ParsedReceipt#merchantDomain()} so a test result looks
      *                       exactly like what real staging would produce
      */
-    public TestOutcome test(String merchantDomain, String receiptMarker, String amountPattern,
-                             String datePattern, String sampleHtml) {
+    public TestOutcome test(String merchantDomain, String receiptMarker, String nonReceiptMarker,
+                             String amountPattern, String datePattern, String sampleHtml) {
         MerchantTemplate probe = new MerchantTemplate();
         probe.setMerchantDomain(merchantDomain);
         probe.setMerchantName("(test)");
         probe.setReceiptMarker(receiptMarker);
+        probe.setNonReceiptMarker(nonReceiptMarker);
         probe.setAmountPattern(amountPattern);
         probe.setDatePattern(datePattern);
 

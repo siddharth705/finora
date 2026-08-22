@@ -215,6 +215,43 @@ class AdminMerchantTemplateEndpointIT extends AbstractIntegrationTest {
     }
 
     @Test
+    @DisplayName("a non-receipt marker excludes a refund-shaped sample but not a genuine receipt, end to end")
+    void testEndpoint_nonReceiptMarkerExcludesARefundButNotAGenuineReceipt() {
+        User admin = createUser("ADMIN");
+        HttpHeaders headers = bearerFor(admin);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        String domain = "it-refund-" + UUID.randomUUID().toString().substring(0, 8) + ".example";
+
+        ResponseEntity<Map> refundResponse = restTemplate.exchange(BASE + "/test", HttpMethod.POST,
+                new HttpEntity<>(Map.of(
+                        "merchantDomain", domain, "receiptMarker", "Order Summary",
+                        "nonReceiptMarker", "Refund Processed|Order Cancelled",
+                        "amountPattern", "Grand Total: Rs. {amount}", "datePattern", "Order Date: {date}",
+                        "sampleHtml", "<html><body>Order Summary<br>Refund Processed<br>"
+                                + "Grand Total: Rs. 499.00<br>Order Date: August 12, 2026</body></html>"),
+                        headers),
+                Map.class);
+        assertThat(refundResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
+        Map<String, Object> refundResult = (Map<String, Object>) refundResponse.getBody().get("data");
+        assertThat(refundResult.get("status")).isEqualTo("NOT_A_RECEIPT");
+        assertThat((String) refundResult.get("reason")).contains("non-receipt marker");
+
+        ResponseEntity<Map> receiptResponse = restTemplate.exchange(BASE + "/test", HttpMethod.POST,
+                new HttpEntity<>(Map.of(
+                        "merchantDomain", domain, "receiptMarker", "Order Summary",
+                        "nonReceiptMarker", "Refund Processed|Order Cancelled",
+                        "amountPattern", "Grand Total: Rs. {amount}", "datePattern", "Order Date: {date}",
+                        "sampleHtml", "<html><body>Order Summary<br>Grand Total: Rs. 499.00<br>"
+                                + "Order Date: August 12, 2026</body></html>"),
+                        headers),
+                Map.class);
+        assertThat(receiptResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
+        Map<String, Object> receiptResult = (Map<String, Object>) receiptResponse.getBody().get("data");
+        assertThat(receiptResult.get("status")).isEqualTo("PARSED");
+        assertThat(receiptResult.get("amount")).isEqualTo(499.0);
+    }
+
+    @Test
     @DisplayName("creating a template for amazon.in (already a hand-written parser) is refused")
     void creating_refusesADomainAHandWrittenParserAlreadyClaims() {
         User admin = createUser("ADMIN");

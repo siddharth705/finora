@@ -75,7 +75,7 @@ function StagedRowCardInner({
           <Text style={[styles.description, { color: c.ink }]} numberOfLines={2}>
             {row.description || 'Transaction'}
           </Text>
-          <Text style={[styles.date, { color: c.muted }]}>{row.date}</Text>
+          <Text style={[styles.date, { color: c.mutedInk }]}>{row.date}</Text>
         </View>
 
         <Text style={[styles.amount, { color: row.type === 'INCOME' ? c.success : c.ink }]}>
@@ -139,7 +139,7 @@ function StagedRowCardInner({
                 {fmtCurrency(Math.abs(match.existingAmount))}
               </Text>
             </View>
-            <Text style={[styles.matchMeta, { color: c.muted }]}>{match.existingDate}</Text>
+            <Text style={[styles.matchMeta, { color: c.mutedInk }]}>{match.existingDate}</Text>
           </View>
 
           <View style={styles.reviewActions}>

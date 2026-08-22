@@ -2,6 +2,7 @@ package com.finora.service;
 
 import com.finora.dto.AdminDtos.OperationalDashboardDto;
 import com.finora.dto.AdminDtos.NeedsAttentionDto;
+import com.finora.dto.AdminDtos.PreviousDayDto;
 import com.finora.dto.AdminDtos.ActivationFunnelDto;
 import com.finora.dto.AuditLogDto;
 import com.finora.dto.HealthDtos.AlertDto;
@@ -101,12 +102,21 @@ public class AdminOperationalDashboardService {
         // half hours of each working day were attributed to yesterday.
         ZoneId zone = platformReportingZone();
         Instant startOfToday = LocalDate.now(zone).atStartOfDay(zone).toInstant();
+        Instant startOfYesterday = LocalDate.now(zone).minusDays(1).atStartOfDay(zone).toInstant();
 
         long totalUsers = userRepository.countByRoleNot("BOOTSTRAP_ADMIN");
         long activeUsersToday = auditLogRepository.countDistinctUsersByActionSince("USER_LOGIN", startOfToday);
         long transactionsToday = transactionRepository.countByCreatedAtAfter(startOfToday);
         long importsToday = statementImportRepository.countByImportedAtAfter(startOfToday);
         long importsWithSkippedRowsToday = statementImportRepository.countWithSkippedRowsAfter(startOfToday);
+
+        // Same four "today" tiles, one calendar day earlier -- backs each tile's "vs yesterday"
+        // delta. totalUsers deliberately has no sibling here; see PreviousDayDto's own doc comment.
+        PreviousDayDto previousDay = new PreviousDayDto(
+                auditLogRepository.countDistinctUsersByActionBetween("USER_LOGIN", startOfYesterday, startOfToday),
+                transactionRepository.countByCreatedAtBetween(startOfYesterday, startOfToday),
+                statementImportRepository.countByImportedAtBetween(startOfYesterday, startOfToday),
+                statementImportRepository.countWithSkippedRowsBetween(startOfYesterday, startOfToday));
 
         PlatformHealthDto health = healthRegistryService.platformHealth();
         List<AlertDto> alerts = alertsFrom(health);
@@ -125,7 +135,7 @@ public class AdminOperationalDashboardService {
                 .toList();
 
         return new OperationalDashboardDto(totalUsers, activeUsersToday, transactionsToday, importsToday,
-                importsWithSkippedRowsToday, needsAttention, health, alerts, recentActivity);
+                importsWithSkippedRowsToday, previousDay, needsAttention, health, alerts, recentActivity);
     }
 
     /** D-27 PR3-D. See {@link ActivationFunnelDto}'s own class doc for exactly what "reached" and
