@@ -245,6 +245,6 @@ class GmailStagingBridgeTest {
 
     private static ParsedReceipt receipt(String gmailMessageId, String domain, Money amount,
                                          LocalDate date, double confidence) {
-        return new ParsedReceipt(gmailMessageId, domain, amount, date, confidence);
+        return new ParsedReceipt(gmailMessageId, domain, null, amount, date, confidence);
     }
 }

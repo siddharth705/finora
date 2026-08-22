@@ -99,6 +99,6 @@ class GmailReviewServiceIT extends AbstractIntegrationTest {
 
     private ParsedReceipt receipt(String gmailMessageId, String domain, BigDecimal amount,
                                    LocalDate date, double confidence) {
-        return new ParsedReceipt(gmailMessageId, domain, Money.of(amount), date, confidence);
+        return new ParsedReceipt(gmailMessageId, domain, null, Money.of(amount), date, confidence);
     }
 }

@@ -113,6 +113,6 @@ class ParsedReceiptValidatorTest {
     }
 
     private static ParsedReceipt receipt(Money amount, LocalDate date) {
-        return new ParsedReceipt("msg-1", "amazon.in", amount, date, 0.9);
+        return new ParsedReceipt("msg-1", "amazon.in", null, amount, date, 0.9);
     }
 }
