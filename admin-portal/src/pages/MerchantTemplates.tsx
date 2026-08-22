@@ -218,6 +218,11 @@ function TemplateForm({
             onChange={(e) => setForm({ ...form, nonReceiptMarker: e.target.value })}
             className="w-full bg-bg border border-border rounded-lg px-3 py-2 text-sm"
           />
+          <p className="text-[11px] text-muted mt-1">
+            Safety check, applied before the receipt marker above: a matching email (a refund,
+            return, exchange, or cancellation notice) is never staged as an expense, even if it
+            also contains a valid-looking amount and date.
+          </p>
         </div>
         <div>
           <label htmlFor={`${id}-amount`} className="text-xs font-medium text-muted mb-1 block">Amount pattern</label>
