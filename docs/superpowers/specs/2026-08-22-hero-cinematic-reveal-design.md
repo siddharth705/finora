@@ -22,8 +22,9 @@ Build order: 1 → 2 → 3 → 4. Each gets its own brainstorm/spec/plan cycle w
 
 ## Decisions carried into this spec
 
-- **Visual direction is a full replace**, not a variant alongside the current page. The
-  existing Hero.tsx is rewritten in place.
+- **Visual direction is a full replace**, not a variant alongside the current page — but this
+  means the *implementation* (`Hero.tsx`) is replaced in code, not the product messaging.
+  Existing claims, copy, and trust positioning are unchanged; see the next bullet.
 - **Copy does not change.** `landing-config.ts` and its claims-test discipline
   (`landing-claims.test.tsx`) stay as-is; only the visual/motion treatment changes. The
   hero's plain-language, specific claims ("Money tells a story...") are the actual product,
@@ -47,7 +48,7 @@ Build order: 1 → 2 → 3 → 4. Each gets its own brainstorm/spec/plan cycle w
 | `hero/FloatingDashboardCard.tsx` | Wraps the existing `DashboardMock` in a CSS-3D glass shell — `perspective`/`rotateX/Y`, Framer Motion `useMotionValue`/springs for mouse-tilt and the entrance settle (blur+scale+translateY → 0, with an 8°/-5° rotate settle) |
 | `hero/HealthScoreRing.tsx` | Circular SVG progress + glow, count-up via the **existing** `CountUp` primitive (`primitives.tsx`) |
 | `hero/IntelligenceScan.tsx` | The "Analyzing your finances... ✓ ..." checklist, built on the **existing** `useStagedReveal` primitive |
-| `hero/FloatingBadges.tsx` | The `+₹90,000 Salary` / `Investment +12%` pills, slow independent Framer Motion `animate` loops, randomized per-badge delay |
+| `hero/FloatingBadges.tsx` | The `+₹90,000 Salary` / `Investment +12%` pills, slow independent Framer Motion `animate` loops, **deterministic** fixed per-badge delay (e.g. `[0, 1.2, 2.4, 3.6]s`, not `Math.random()`) |
 
 **Reuse, not reinvention:** `primitives.tsx` already has `Reveal`, `CountUp`, and
 `useStagedReveal` — hand-rolled equivalents of what Framer Motion provides, each with
@@ -58,8 +59,15 @@ what the existing primitives don't do: spring-based mouse-tilt physics and decla
 `staggerChildren` sequencing of "background → particles → dashboard → charts → score →
 insights" as one parent variant tree, instead of hand-timed `setTimeout` chains.
 
-New dependencies: `framer-motion`, `@react-three/fiber`, `@react-three/drei`, `three`
-(+ `@types/three` if not bundled).
+Badge delays are fixed values, not `Math.random()`: randomized motion produces inconsistent
+screenshots, flaky visual-regression coverage, and (for anything derived at render time)
+hydration mismatches — none of which buys anything the brief actually asked for. Deterministic
+delays still read as organic floating motion at these durations.
+
+New dependencies: `framer-motion`, `@react-three/fiber`, `three` (+ `@types/three` if not
+bundled). **`@react-three/drei` is deliberately not added** — the ambient layer only needs a
+`Canvas`, a camera, and a simple particle field (a hand-rolled `Points` mesh), which plain
+`@react-three/fiber`/`three` covers without pulling in drei's much larger helper surface.
 
 ## Fallbacks & accessibility
 
@@ -81,6 +89,10 @@ New dependencies: `framer-motion`, `@react-three/fiber`, `@react-three/drei`, `t
   assertions, not animation-frame assertions.
 - Render each new component with `IntersectionObserver`/`matchMedia` mocked both ways
   (reduced-motion on and off) and assert the correct *end-state* content is present.
+- Explicit `prefers-reduced-motion: reduce` test asserting all three of:
+  - the Hero renders its final visual state immediately (no intermediate/zero states);
+  - no animation timers keep running after mount (no leaked `setTimeout`/rAF loops);
+  - `AmbientCanvas` is not mounted at all.
 - One test forcing WebGL-unavailable to confirm `AmbientCanvas` falls back cleanly instead of
   crashing the page.
 - One test confirming mobile viewport skips `AmbientCanvas`/tilt.
@@ -95,6 +107,17 @@ New dependencies: `framer-motion`, `@react-three/fiber`, `@react-three/drei`, `t
   or interactivity.
 - Target smooth behavior on mid-range devices, not just high-end ones — this is the reason
   for the mobile fallback and the WebGL feature-detection above, not an additional mechanism.
+
+**Bundle constraints:**
+
+- `three`/`@react-three/fiber` must not increase the initial route payload — `AmbientCanvas`
+  and its imports stay in a separate, code-split chunk (the `React.lazy` boundary above is
+  what achieves this; it is a bundle-splitting requirement, not just a UX one).
+- The landing page must be interactive (buttons, links, form) before that chunk finishes
+  loading — initial interactivity never waits on the WebGL bundle.
+- Verify with the existing build tooling (`vite build` output / bundle report) once
+  implemented that the main landing route chunk hasn't absorbed the three.js dependency
+  graph.
 
 ## Non-goals
 
