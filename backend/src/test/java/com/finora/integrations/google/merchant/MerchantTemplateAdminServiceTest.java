@@ -6,9 +6,11 @@ import com.finora.service.AuditService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -170,9 +172,13 @@ class MerchantTemplateAdminServiceTest {
         assertThat(result.isEnabled())
                 .as("an untested fix must not go live just because it was typed into an edit form")
                 .isFalse();
+        ArgumentCaptor<Map<String, Object>> metadata = ArgumentCaptor.forClass(Map.class);
         verify(auditService).record(eq(adminId), eq("GMAIL_MERCHANT_TEMPLATE_UPDATED"),
-                eq("MerchantTemplate"), eq(entry.getId()),
-                argThat(m -> Boolean.TRUE.equals(m.get("autoDisabled"))));
+                eq("MerchantTemplate"), eq(entry.getId()), metadata.capture());
+        assertThat(metadata.getValue().get("autoDisabled")).isEqualTo(true);
+        assertThat(metadata.getValue().get("changedFields"))
+                .as("only receiptMarker actually changed -- amount/date/nonReceiptMarker did not")
+                .isEqualTo(List.of("receiptMarker"));
     }
 
     @Test
@@ -187,9 +193,27 @@ class MerchantTemplateAdminServiceTest {
                 .as("changing which emails a live template excludes is a matching-field change too")
                 .isFalse();
         assertThat(result.getNonReceiptMarker()).isEqualTo("Trip Cancelled");
+        ArgumentCaptor<Map<String, Object>> metadata = ArgumentCaptor.forClass(Map.class);
         verify(auditService).record(eq(adminId), eq("GMAIL_MERCHANT_TEMPLATE_UPDATED"),
-                eq("MerchantTemplate"), eq(entry.getId()),
-                argThat(m -> Boolean.TRUE.equals(m.get("autoDisabled"))));
+                eq("MerchantTemplate"), eq(entry.getId()), metadata.capture());
+        assertThat(metadata.getValue().get("autoDisabled")).isEqualTo(true);
+        assertThat(metadata.getValue().get("changedFields")).isEqualTo(List.of("nonReceiptMarker"));
+    }
+
+    @Test
+    @DisplayName("editing only the merchant name reports no changed matching fields")
+    void update_relabellingAloneReportsNoChangedFields() {
+        MerchantTemplate entry = existing("uber.com", true);
+
+        service.update(adminId, entry.getId(), "Uber India",
+                entry.getReceiptMarker(), entry.getNonReceiptMarker(), entry.getAmountPattern(),
+                entry.getDatePattern());
+
+        ArgumentCaptor<Map<String, Object>> metadata = ArgumentCaptor.forClass(Map.class);
+        verify(auditService).record(eq(adminId), eq("GMAIL_MERCHANT_TEMPLATE_UPDATED"),
+                eq("MerchantTemplate"), eq(entry.getId()), metadata.capture());
+        assertThat(metadata.getValue().get("autoDisabled")).isEqualTo(false);
+        assertThat(metadata.getValue().get("changedFields")).isEqualTo(List.of());
     }
 
     @Test
