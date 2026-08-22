@@ -253,9 +253,8 @@ test.describe('Phase 10 — one user cannot see or shape another', () => {
       'phone_change_sessions',
       'relationships',
     ]);
-    // 2026-08-22: payments/referral_codes/subscriptions/wallet_ledger (D-28's billing/wallet/
-    // referral tables) were fixed to ON DELETE CASCADE by V106 -- see that migration's own
-    // comment for why all four belong to the user rather than needing to survive as an audit
-    // trail.
+    // payments/referral_codes/subscriptions/wallet_ledger (D-28's billing/wallet/referral
+    // tables) were fixed to ON DELETE CASCADE by V106 -- see that migration's own comment for
+    // why all four belong to the user rather than needing to survive as an audit trail.
   });
 });
