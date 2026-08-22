@@ -38,27 +38,26 @@ Remaining decomposition, for context:
 
 | File | Change |
 |---|---|
-| `Landing.tsx` | A 1px sentinel `<div ref={heroEndRef} aria-hidden="true" className="h-px" />` placed immediately after `<Hero />` (not inside it — `Hero.tsx` itself is untouched). An `IntersectionObserver` on that ref, `rootMargin: '-${NAV_HEIGHT}px 0px 0px 0px'` and `threshold: 0` (so the callback fires right as the sentinel crosses the nav-height line), drives `overHero: boolean` — passed as `<Nav overHero={overHero} />`. See the note below on why the decision uses `boundingClientRect.top`, not `entry.isIntersecting` directly. |
+| `Landing.tsx` | Wraps `<Hero />` in a plain `<div ref={heroRef}>` (not inside `Hero.tsx` — that file stays untouched) and observes that wrapper directly with an `IntersectionObserver`, `rootMargin: '-${NAV_HEIGHT}px 0px 0px 0px'`, `threshold: 0`. `overHero` is set to `entry.isIntersecting` directly — no `boundingClientRect` branching. Passed down as `<Nav overHero={overHero} />`. See the note below for why observing the Hero element itself (rather than a 1px sentinel at its trailing edge) makes the naive `isIntersecting` read already correct. |
 | `Nav.tsx` | Accepts `overHero: boolean`. Replaces the old `scrolled` (`scrollY > 8`) state entirely — while `overHero`: transparent background, no blur, no shadow, white/light text, `<Logo invert />`, light-bordered mobile-menu button; once past Hero: today's translucent-glass look (unchanged). CSS-transitioned (`transition-all` ~300ms) — no Framer Motion here, consistent with Nav's existing lightweight-CSS approach; the navbar state change stays CSS-only even as other parts of the page pick up Framer Motion, deliberately, so the page doesn't turn into `motion.div` everywhere. The mobile dropdown panel (when open) gets an explicit dark translucent background while `overHero`, since it would otherwise inherit a transparent header background and show hero content bleeding through behind its links. |
-| `landing/hooks/useIsDesktop.ts` | **Moved** from `landing/hero/useIsDesktop.ts` — promoted to a shared landing hooks folder now that Nav's magnetic buttons need it too, not just Hero's sub-components. `hero/FloatingDashboardCard.tsx`, `hero/AmbientCanvas.tsx`, and their tests update their import path accordingly. |
-| `landing/hooks/useMagnetic.ts` (new) | Pointer-relative spring transform (Framer Motion `useSpring`): `maxDistance: 10px`, `stiffness: 180`, `damping: 15`, `mass: 0.3` — small, subtle follow, not an aggressive jump. Reset on pointer leave. Disabled under `prefers-reduced-motion` and on non-desktop (reuses the moved `useIsDesktop`) — mirrors `FloatingDashboardCard`'s own `use3D`-style gating. |
-| `landing/MagneticLink.tsx` (new) | `MagneticLink` (wraps react-router `Link`) and `MagneticAnchor` (wraps a plain `<a>`), both built on `useMagnetic()`. Same props as the components they replace (`to`/`href`, `className`, `children`) — a direct import swap at each call site, not a new usage pattern. |
+| `landing/hooks/useIsDesktop.ts` | **Moved** from `landing/hero/useIsDesktop.ts` — promoted to a shared landing hooks folder now that Nav's magnetic buttons need it too, not just Hero's sub-components. `hero/FloatingDashboardCard.tsx`, `hero/AmbientCanvas.tsx`, and their tests update their import path accordingly. Also gains a `pointer: coarse` check (see below) so it doubles as the "does this device have a real hover-capable pointer" gate, not just a viewport-width check. |
+| `landing/hooks/useMagnetic.ts` (new) | Pointer-relative spring transform (Framer Motion `useSpring`): `maxDistance: 8px`, `stiffness: 140`, `damping: 20`, `mass: 0.3` — a calm, restrained follow (Stripe/Linear-style), not an energetic cursor-chase. Reset on pointer leave. Disabled under `prefers-reduced-motion` and on non-desktop / coarse-pointer devices (reuses the moved `useIsDesktop`, which now also excludes `(pointer: coarse)` — a large tablet with no real mouse must not get magnetic tracking even if `useIsDesktop`'s width check alone would pass it). Mirrors `FloatingDashboardCard`'s own `use3D`-style gating. |
+| `landing/MagneticLink.tsx` (new) | `MagneticLink` (wraps react-router `Link`) and `MagneticAnchor` (wraps a plain `<a>`), both built on `useMagnetic()` via `motion(Link)`/`motion.create(Link)` — no extra wrapper DOM node, the rendered element is still a single `<a>`. Same props as the components they replace (`to`/`href`, `className`, `children`) — a direct import swap at each call site, not a new usage pattern. |
 | 6 CTA call sites | `Nav.tsx` ("Get started"), `Hero.tsx` (primary `Link` + secondary `<a href="#how">`), `Pricing.tsx` ("Start free"), `FinalCta.tsx` ("Start free"), `Landing.tsx` (mobile sticky "Import your first statement") — swap the import, nothing else changes. |
 
-**Why the `overHero` decision uses `boundingClientRect.top`, not a bare `isIntersecting` check:**
+**Why observing Hero directly (not a 1px sentinel at its trailing edge) makes `entry.isIntersecting` already correct:**
 Hero is taller than the viewport on real screens (confirmed in the shipped Hero's own screenshots
-— the health score/dashboard bottom requires scrolling to reach). That means at page load the
-sentinel (Hero's true bottom edge) starts off-screen, below the fold. A plain `entry.isIntersecting`
-read is `false` in that state — indistinguishable from "the user has already scrolled past Hero,"
-which is the opposite of the truth (Hero is the very first thing on screen) and would start Nav in
-glass mode at the top of the page. `IntersectionObserver` always fires once immediately on
-`.observe()` with the current geometry, so reading `entry.boundingClientRect.top > NAV_HEIGHT_PX`
-inside the callback (rather than trusting `isIntersecting`) gives the correct answer in every case:
-a large positive `top` (sentinel far below, Hero still fills the screen) and a `top` between 0 and
-`NAV_HEIGHT_PX` (Hero ending, still behind/at Nav) both correctly read as `overHero: true`; only
-once `top` drops below `NAV_HEIGHT_PX` (sentinel has scrolled up behind Nav) does it flip to
-`false`. The `rootMargin`/`threshold` configuration is still what makes the observer callback fire
-right at that crossing point — it's just not the value being branched on directly.
+— the health score/dashboard bottom requires scrolling to reach). A 1px sentinel placed at Hero's
+*bottom* edge starts off-screen below the fold at page load, so a naive `isIntersecting` read on
+that sentinel would be `false` at the top of the page — backwards. But `IntersectionObserver`
+computes intersection against the *entire observed target*, not a point, so observing the Hero
+wrapper itself sidesteps the problem entirely: at page load Hero fills (or exceeds) the viewport,
+so it's substantially intersecting and `isIntersecting` is correctly `true`; as the user scrolls,
+`isIntersecting` only flips to `false` once Hero's bottom edge has scrolled past the *effective*
+top of the viewport. The `rootMargin: '-${NAV_HEIGHT}px 0px 0px 0px'` is what makes "effective top"
+mean "just below the navbar" rather than the literal viewport top, so the crossing point still
+lines up exactly with Hero disappearing behind Nav — the same precision the sentinel approach was
+after, without needing a second element or any manual geometry math in the callback.
 
 **Scoping note:** Nav's "Log in" link and the mobile-menu section anchors are plain navigation,
 not CTAs — they do not get magnetic behavior. Scope is strictly the 6 `.m-btn`-styled buttons the
@@ -72,10 +71,16 @@ confirmed against the installed package during implementation (Task 1), not assu
 ## Fallbacks & accessibility
 
 - **`prefers-reduced-motion`:** `useMagnetic()` returns inert handlers (no transform, no spring)
-  — buttons render and behave exactly as plain `Link`/`<a>` elements.
-- **Mobile / non-desktop (no pointer):** same as above — magnetic tracking never activates
-  (reuses `useIsDesktop`, matching the existing hero-component pattern of skipping pointer-driven
-  effects where there's no meaningful pointer).
+  — buttons render and behave exactly as plain `Link`/`<a>` elements. Critically, only the
+  pointer-tracking *transform* is disabled: `className` is untouched either way, so `:hover`,
+  `:focus-visible`, and `:active` styles already defined on `.m-btn`/`.m-btn-primary` (background,
+  shadow, color changes) keep working exactly as they do today. Reduced motion removes the follow
+  effect, not the button's normal interactive feedback.
+- **Mobile / non-desktop / coarse pointer:** same as above — magnetic tracking never activates.
+  `useIsDesktop` gates on both a viewport-width check and `(pointer: coarse)`, so a large tablet
+  with a touchscreen but no real mouse doesn't get pointer-following behavior it can't sensibly
+  produce (matching the existing hero-component pattern of skipping pointer-driven effects where
+  there's no meaningful pointer).
 - **Nav crossfade:** CSS transition only, so it degrades gracefully under reduced-motion by
   default browser behavior (`prefers-reduced-motion` is respected automatically for
   transition-only visual changes; no extra JS gating needed since nothing here is a decorative
@@ -109,6 +114,12 @@ confirmed against the installed package during implementation (Task 1), not assu
   w-full`), not just that it renders and navigates. A wrapper that silently drops or reorders
   className handling would pass every other test here while visually breaking every CTA on the
   page.
+- `MagneticLink` introduces no extra DOM wrapper: assert the rendered anchor's parent is not a
+  `MagneticLink`-introduced `<div>` — e.g. render inside a marked container and assert
+  `getByRole('link').parentElement === container` (or an equivalent structural/snapshot check).
+  The whole point of building on `motion(Link)`/`motion.create(Link)` rather than a wrapping
+  component is that the DOM shape stays `<a>`, not `<div><a></a></div>`; a passing className test
+  alone wouldn't catch a regression back to a wrapper div.
 - `useMagnetic()` gating tests follow the same `vi.mock('framer-motion', ...)` /
   `mockMatchMedia` pattern already established for `FloatingDashboardCard`/`FloatingBadges` in
   the Hero sub-project (see that spec's Task 7 note on why `useReducedMotion` must be mocked
