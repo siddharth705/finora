@@ -43,16 +43,21 @@ public class AdminMerchantTemplateController {
     }
 
     public record MerchantTemplateDto(UUID id, String merchantDomain, String merchantName,
-                                       String receiptMarker, String amountPattern, String datePattern,
+                                       String receiptMarker, String nonReceiptMarker,
+                                       String amountPattern, String datePattern,
                                        boolean enabled, UUID createdByUserId, Instant createdAt,
                                        Instant updatedAt, boolean domainIsTrusted) {}
 
+    // nonReceiptMarker is intentionally not @NotBlank on any of the three requests below --
+    // it's an optional exclusion, not a required matching field like the other four.
     public record CreateTemplateRequest(@NotBlank String merchantDomain, @NotBlank String merchantName,
-                                         @NotBlank String receiptMarker, @NotBlank String amountPattern,
+                                         @NotBlank String receiptMarker, String nonReceiptMarker,
+                                         @NotBlank String amountPattern,
                                          @NotBlank String datePattern) {}
 
     public record UpdateTemplateRequest(@NotBlank String merchantName, @NotBlank String receiptMarker,
-                                         @NotBlank String amountPattern, @NotBlank String datePattern) {}
+                                         String nonReceiptMarker, @NotBlank String amountPattern,
+                                         @NotBlank String datePattern) {}
 
     // merchantDomain does not affect matching itself (TemplateEmailParser.parse never reads
     // message.authenticatedDomain()) -- it is still @NotBlank here because it flows through into
@@ -61,8 +66,8 @@ public class AdminMerchantTemplateController {
     // an empty domain field that would otherwise have parsed successfully surfaces as an
     // unhandled 500, not a clean validation error.
     public record TestTemplateRequest(@NotBlank String merchantDomain, @NotBlank String receiptMarker,
-                                       @NotBlank String amountPattern, @NotBlank String datePattern,
-                                       @NotBlank String sampleHtml) {}
+                                       String nonReceiptMarker, @NotBlank String amountPattern,
+                                       @NotBlank String datePattern, @NotBlank String sampleHtml) {}
 
     public record TestTemplateResult(String status, String reason, BigDecimal amount,
                                       LocalDate transactionDate, Double confidence,
@@ -78,7 +83,8 @@ public class AdminMerchantTemplateController {
     @PostMapping
     public ApiResponse<MerchantTemplateDto> create(@Valid @RequestBody CreateTemplateRequest request) {
         MerchantTemplate saved = service.create(currentUser.id(), request.merchantDomain(),
-                request.merchantName(), request.receiptMarker(), request.amountPattern(), request.datePattern());
+                request.merchantName(), request.receiptMarker(), request.nonReceiptMarker(),
+                request.amountPattern(), request.datePattern());
         return ApiResponse.ok(toDto(saved), "Template created, disabled pending a successful test");
     }
 
@@ -86,7 +92,8 @@ public class AdminMerchantTemplateController {
     public ApiResponse<MerchantTemplateDto> update(@PathVariable UUID id,
                                                     @Valid @RequestBody UpdateTemplateRequest request) {
         MerchantTemplate saved = service.update(currentUser.id(), id, request.merchantName(),
-                request.receiptMarker(), request.amountPattern(), request.datePattern());
+                request.receiptMarker(), request.nonReceiptMarker(), request.amountPattern(),
+                request.datePattern());
         return ApiResponse.ok(toDto(saved), saved.isEnabled()
                 ? "Template updated" : "Template updated and disabled pending re-test");
     }
@@ -110,7 +117,8 @@ public class AdminMerchantTemplateController {
     @PostMapping("/test")
     public ApiResponse<TestTemplateResult> test(@Valid @RequestBody TestTemplateRequest request) {
         MerchantTemplateTestRunner.TestOutcome outcome = testRunner.test(request.merchantDomain(),
-                request.receiptMarker(), request.amountPattern(), request.datePattern(), request.sampleHtml());
+                request.receiptMarker(), request.nonReceiptMarker(), request.amountPattern(),
+                request.datePattern(), request.sampleHtml());
         return ApiResponse.ok(new TestTemplateResult(
                 outcome.status().name(), outcome.reason(), outcome.amount(), outcome.transactionDate(),
                 outcome.confidence(),
@@ -119,8 +127,8 @@ public class AdminMerchantTemplateController {
 
     private MerchantTemplateDto toDto(MerchantTemplate t) {
         return new MerchantTemplateDto(t.getId(), t.getMerchantDomain(), t.getMerchantName(),
-                t.getReceiptMarker(), t.getAmountPattern(), t.getDatePattern(), t.isEnabled(),
-                t.getCreatedByUserId(), t.getCreatedAt(), t.getUpdatedAt(),
+                t.getReceiptMarker(), t.getNonReceiptMarker(), t.getAmountPattern(), t.getDatePattern(),
+                t.isEnabled(), t.getCreatedByUserId(), t.getCreatedAt(), t.getUpdatedAt(),
                 service.isDomainTrusted(t.getMerchantDomain()));
     }
 }

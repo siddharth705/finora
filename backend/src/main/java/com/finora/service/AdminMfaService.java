@@ -206,11 +206,11 @@ public class AdminMfaService {
      *  @param actingAdminId see {@link #confirm}'s own doc comment -- same convention, same
      *         always-equal-to-userId guarantee, same reason. */
     @Transactional
-    public void disable(UUID userId, String currentPassword, String googleIdToken, UUID actingAdminId) {
+    public void disable(UUID userId, String currentPassword, String googleIdToken, String appleIdToken, UUID actingAdminId) {
         requireFeatureEnabled();
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "User not found"));
-        if (!googleReauthVerifier.verify(user, currentPassword, googleIdToken)) {
+        if (!googleReauthVerifier.verify(user, currentPassword, googleIdToken, appleIdToken)) {
             throw new ApiException(HttpStatus.UNAUTHORIZED, "Current credential could not be verified.");
         }
 

@@ -92,7 +92,7 @@ class DataExportServiceIT extends AbstractIntegrationTest {
         // buildBundle runs its own @Transactional(readOnly = true) and returns -- its Hibernate
         // session is closed by the time this line completes, exactly like the controller's
         // transaction is closed by the time StreamingResponseBody's callback thread runs writeZip.
-        DataExportService.ExportBundle bundle = service.buildBundle(userId, PASSWORD, null);
+        DataExportService.ExportBundle bundle = service.buildBundle(userId, PASSWORD, null, null);
 
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         service.writeZip(userId, bundle, out);
@@ -122,7 +122,7 @@ class DataExportServiceIT extends AbstractIntegrationTest {
      */
     @Test
     void buildBundle_wrongPassword_stillPersistsTheAuditRow_despiteTheTransactionRollingBack() {
-        assertThrows(ApiException.class, () -> service.buildBundle(userId, "definitely-the-wrong-password", null));
+        assertThrows(ApiException.class, () -> service.buildBundle(userId, "definitely-the-wrong-password", null, null));
 
         List<AuditLog> logs = auditLogRepository.findByUserIdOrderByCreatedAtDesc(userId);
         assertThat(logs).anySatisfy(log -> assertThat(log.getAction()).isEqualTo("INVALID_CURRENT_PASSWORD"));
