@@ -10,6 +10,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -154,10 +155,16 @@ public class MerchantTemplateAdminService {
         String previousNonReceiptMarker = entry.getNonReceiptMarker();
         String previousAmountPattern = entry.getAmountPattern();
         String previousDatePattern = entry.getDatePattern();
-        boolean matchingFieldsChanged = !Objects.equals(previousReceiptMarker, receiptMarker)
-                || !Objects.equals(previousNonReceiptMarker, nonReceiptMarker)
-                || !Objects.equals(previousAmountPattern, amountPattern)
-                || !Objects.equals(previousDatePattern, datePattern);
+
+        // Built once and reused for both matchingFieldsChanged and the audit record below --
+        // "why did this auto-disable" should never require an admin to diff four before/after
+        // string pairs by hand to work out which one(s) actually moved.
+        List<String> changedFields = new ArrayList<>();
+        if (!Objects.equals(previousReceiptMarker, receiptMarker)) changedFields.add("receiptMarker");
+        if (!Objects.equals(previousNonReceiptMarker, nonReceiptMarker)) changedFields.add("nonReceiptMarker");
+        if (!Objects.equals(previousAmountPattern, amountPattern)) changedFields.add("amountPattern");
+        if (!Objects.equals(previousDatePattern, datePattern)) changedFields.add("datePattern");
+        boolean matchingFieldsChanged = !changedFields.isEmpty();
         boolean autoDisabled = matchingFieldsChanged && entry.isEnabled();
 
         entry.setMerchantName(merchantName.trim());
@@ -182,6 +189,7 @@ public class MerchantTemplateAdminService {
                 Map.ofEntries(
                         Map.entry("merchantDomain", saved.getMerchantDomain()),
                         Map.entry("matchingFieldsChanged", matchingFieldsChanged),
+                        Map.entry("changedFields", changedFields),
                         Map.entry("autoDisabled", autoDisabled),
                         Map.entry("previousReceiptMarker", previousReceiptMarker),
                         Map.entry("receiptMarker", receiptMarker),
