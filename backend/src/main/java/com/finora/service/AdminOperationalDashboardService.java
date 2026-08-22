@@ -132,7 +132,9 @@ public class AdminOperationalDashboardService {
                 transactionRepository.countByIsDuplicateOfIsNotNull());
 
         // Insights row -- inverse of activeUsersToday's own query, same window this class already
-        // uses for "today," just walked back INACTIVITY_WINDOW_DAYS instead of one.
+        // uses for "today," just walked back INACTIVITY_WINDOW_DAYS instead of one. See
+        // countWithNoAuditActionSince's own doc comment for why this also requires the account to
+        // predate the cutoff -- otherwise a signup from an hour ago counts as "inactive."
         Instant inactivityCutoff = LocalDate.now(zone).minusDays(INACTIVITY_WINDOW_DAYS).atStartOfDay(zone).toInstant();
         long inactiveUsersLast7Days = userRepository.countWithNoAuditActionSince(
                 "USER_LOGIN", inactivityCutoff, BootstrapService.BOOTSTRAP_IDENTIFIER);
