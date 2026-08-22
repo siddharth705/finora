@@ -98,13 +98,13 @@ export function InsightsScreen() {
                 <Text style={[styles.rowTitle, { color: c.ink }]} numberOfLines={1}>
                   {r.merchant}
                 </Text>
-                <Text style={[styles.rowMeta, { color: c.muted }]}>
+                <Text style={[styles.rowMeta, { color: c.mutedInk }]}>
                   {fmtCurrency(r.averageAmount)} · seen {r.occurrences}×
                 </Text>
               </View>
               <View style={styles.rowRight}>
                 <Text style={[styles.badge, { color: c.primary, backgroundColor: c.primaryLight }]}>{r.label}</Text>
-                <Text style={[styles.rowMeta, { color: c.muted }]}>next ~{fmtDate(r.nextEstimate) ?? r.nextEstimate}</Text>
+                <Text style={[styles.rowMeta, { color: c.mutedInk }]}>next ~{fmtDate(r.nextEstimate) ?? r.nextEstimate}</Text>
               </View>
             </View>
           ))
@@ -129,7 +129,7 @@ export function InsightsScreen() {
                 <Text style={[styles.rowTitle, { color: c.ink }]} numberOfLines={1}>
                   {m.category}
                 </Text>
-                <Text style={[styles.rowMeta, { color: c.muted }]}>
+                <Text style={[styles.rowMeta, { color: c.mutedInk }]}>
                   {fmtCurrency(m.current)} vs usual {fmtCurrency(m.priorAverage)}
                 </Text>
               </View>
