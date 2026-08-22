@@ -1234,12 +1234,29 @@ Expected: FAIL — current `Hero.tsx` doesn't render `heroScore`/`heroIntelligen
 
 - [ ] **Step 3: Rewrite Hero.tsx**
 
-Replace the full contents of `frontend/src/pages/landing/Hero.tsx`:
+**Critical discovery made implementing this step, verified in a real browser (not just jsdom):**
+the original draft below used a shared `container`/`item` Framer Motion `Variants` pair, with the
+outer `motion.div` setting `animate="show"` and every descendant `motion.div` relying on
+context-based variant propagation (no own `initial`/`animate`) to inherit that "show" state --
+the standard documented Framer Motion pattern for `staggerChildren`. Under this app's
+`React.StrictMode` (`main.tsx`), that propagation never completed: every descendant stayed
+permanently frozen at its `hidden` state (`opacity: 0`, confirmed via each element's `style`
+attribute in a real Chrome tab), even though `useReducedMotion()` correctly returned `false` and
+the outer container itself received no style overrides at all. The content was fully present in
+the DOM (confirmed via `get_page_text`/`CountUp` mid-animation) — it was invisible, not missing —
+which is why this needs calling out explicitly rather than trusting the component-level jsdom
+tests alone: none of the earlier per-component tests (Tasks 7-11) exercise this integration point.
+
+The fix: give every `motion.div` its own explicit `initial`/`animate`/`transition`, and replace
+`staggerChildren` with a fixed per-instance `delay` (`reveal(delay)` below) to recreate the same
+staggered sequencing without relying on propagation at all. Replace the full contents of
+`frontend/src/pages/landing/Hero.tsx` with this (not the originally-planned `container`/`item`
+version):
 
 ```typescript
 import { Link } from 'react-router-dom';
 import { ArrowRight, Check } from 'lucide-react';
-import { motion, useReducedMotion, type Variants } from 'framer-motion';
+import { motion, useReducedMotion } from 'framer-motion';
 import { hero } from './landing-config';
 import { AmbientCanvas } from './hero/AmbientCanvas';
 import { FloatingDashboardCard } from './hero/FloatingDashboardCard';
@@ -1247,21 +1264,22 @@ import { HealthScoreRing } from './hero/HealthScoreRing';
 import { IntelligenceScan } from './hero/IntelligenceScan';
 import { FloatingBadges } from './hero/FloatingBadges';
 
-const container: Variants = {
-  hidden: {},
-  show: { transition: { staggerChildren: 0.15, delayChildren: 0.1 } },
-};
-
-const item: Variants = {
-  hidden: { opacity: 0, y: 24 },
-  show: { opacity: 1, y: 0, transition: { duration: 0.6, ease: [0.16, 1, 0.3, 1] } },
-};
+const EASE = [0.16, 1, 0.3, 1] as const;
 
 /**
  * Cinematic reveal for the dark hero band. See
- * docs/superpowers/specs/2026-08-22-hero-cinematic-reveal-design.md -- Framer Motion orchestrates
- * the mount sequence declaratively via staggerChildren rather than a hand-timed setTimeout chain;
- * the ambient WebGL layer, the score ring and the intelligence-scan checklist are separate
+ * docs/superpowers/specs/2026-08-22-hero-cinematic-reveal-design.md -- the mount sequence
+ * ("background/particles -> content -> dashboard -> score/insights") is staggered via a fixed
+ * per-section `delay` on each motion.div's own `animate`, not via Framer Motion's
+ * staggerChildren/variant-propagation mechanism: that mechanism relies on child motion
+ * components inheriting their parent's `animate` label through React context, which -- verified
+ * against a real browser during implementation, not just jsdom -- got stuck permanently at each
+ * child's `initial` state under this app's React.StrictMode in main.tsx (children never reached
+ * "show"). Explicit per-instance `initial`/`animate`/`transition` sidesteps that failure mode
+ * entirely and is what every sub-component below (FloatingDashboardCard, FloatingBadges) already
+ * does for the same reason.
+ *
+ * The ambient WebGL layer, the score ring and the intelligence-scan checklist are separate
  * components reusing (not replacing) the existing Reveal/CountUp/useStagedReveal primitives. The
  * dashboard preview itself is always real DOM -- never rendered inside WebGL -- so it stays crisp,
  * accessible and never depends on animation state to be understood.
@@ -1278,6 +1296,16 @@ const item: Variants = {
 export function Hero() {
   const prefersReducedMotion = useReducedMotion();
 
+  function reveal(delay: number) {
+    return prefersReducedMotion
+      ? { initial: false as const, animate: { opacity: 1, y: 0 }, transition: { duration: 0 } }
+      : {
+          initial: { opacity: 0, y: 24 },
+          animate: { opacity: 1, y: 0 },
+          transition: { duration: 0.6, ease: EASE, delay },
+        };
+  }
+
   return (
     <section
       className="relative overflow-hidden"
@@ -1288,14 +1316,9 @@ export function Hero() {
     >
       <AmbientCanvas />
 
-      <motion.div
-        variants={prefersReducedMotion ? undefined : container}
-        initial={prefersReducedMotion ? false : 'hidden'}
-        animate={prefersReducedMotion ? undefined : 'show'}
-        className="relative z-10 max-w-6xl mx-auto px-5 sm:px-6 pt-28 pb-24 lg:pt-36 lg:pb-32"
-      >
+      <div className="relative z-10 max-w-6xl mx-auto px-5 sm:px-6 pt-28 pb-24 lg:pt-36 lg:pb-32">
         <div className="grid lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)] gap-14 items-center">
-          <motion.div variants={prefersReducedMotion ? undefined : item}>
+          <motion.div {...reveal(0)}>
             <h1 className="m-display mb-5" style={{ color: '#F8FAFC' }}>
               {hero.headline}
               <br />
@@ -1325,21 +1348,18 @@ export function Hero() {
               ))}
             </ul>
 
-            <motion.div
-              variants={prefersReducedMotion ? undefined : item}
-              className="mt-10 flex flex-wrap items-center gap-6"
-            >
+            <motion.div {...reveal(0.5)} className="mt-10 flex flex-wrap items-center gap-6">
               <HealthScoreRing />
               <IntelligenceScan />
             </motion.div>
           </motion.div>
 
-          <motion.div variants={prefersReducedMotion ? undefined : item} className="relative">
+          <motion.div {...reveal(0.25)} className="relative">
             <FloatingDashboardCard />
             <FloatingBadges />
           </motion.div>
         </div>
-      </motion.div>
+      </div>
     </section>
   );
 }
