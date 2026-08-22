@@ -132,6 +132,24 @@ class AdminMerchantTemplateEndpointIT extends AbstractIntegrationTest {
         }
     }
 
+    /** V104 corrects V103's dominos.co.in guess to a pattern verified against two real
+     *  "Order Successful" emails (see that migration's own comment for what the original guess got
+     *  wrong). Checked here so a future migration cannot silently regress the corrected values back
+     *  toward the old, unverified guess without a test noticing. Still disabled -- being
+     *  pattern-verified is not the same as being activated; see V104's own comment. */
+    @Test
+    void theDominosTemplateIsCorrectedByV104() {
+        assertThat(templates.findByMerchantDomain("dominos.co.in"))
+                .isPresent()
+                .get()
+                .satisfies(t -> {
+                    assertThat(t.getReceiptMarker()).isEqualTo("Order Confirmed");
+                    assertThat(t.getAmountPattern()).isEqualTo("Grand Total : Rs.{amount}");
+                    assertThat(t.getDatePattern()).isEqualTo("|{date}|");
+                    assertThat(t.isEnabled()).isFalse();
+                });
+    }
+
     @Test
     @DisplayName("create -> test -> activate happy path")
     void createTestActivateHappyPath() {
