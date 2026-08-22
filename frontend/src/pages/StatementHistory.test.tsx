@@ -453,3 +453,40 @@ describe('StatementHistory — recent imports', () => {
     await waitFor(() => expect(importJobsApi.recent).toHaveBeenCalledTimes(2));
   });
 });
+
+// Custom in-app confirmation (ConfirmDialog) rather than the browser's own confirm(), which
+// rendered as unstyled OS/browser chrome instead of looking like part of the product.
+describe('StatementHistory — delete confirmation', () => {
+  beforeEach(() => {
+    vi.mocked(statementImportsApi.listGroupedByAccount).mockReset().mockResolvedValue(groups);
+    vi.mocked(statementImportsApi.remove).mockReset().mockResolvedValue(undefined as never);
+    vi.mocked(importApi.listFailures).mockReset().mockResolvedValue([]);
+    vi.mocked(importJobsApi.recent).mockReset().mockResolvedValue([]);
+  });
+
+  it('shows a confirmation naming the file before deleting it', async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByTitle('Delete Statement Import'));
+
+    expect(await screen.findByText('Delete "protected-statement.pdf"?')).toBeInTheDocument();
+    expect(statementImportsApi.remove).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole('button', { name: 'Delete' }));
+
+    await waitFor(() => expect(statementImportsApi.remove).toHaveBeenCalledWith('stmt-1'));
+  });
+
+  it('does not delete when the confirmation is cancelled', async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByTitle('Delete Statement Import'));
+    await screen.findByText('Delete "protected-statement.pdf"?');
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    expect(statementImportsApi.remove).not.toHaveBeenCalled();
+    expect(screen.queryByText('Delete "protected-statement.pdf"?')).not.toBeInTheDocument();
+  });
+});

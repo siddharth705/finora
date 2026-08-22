@@ -19,31 +19,17 @@ import { cleanup, configure } from '@testing-library/react';
 // well before vitest kills the whole test with a far less informative one.
 configure({ asyncUtilTimeout: 5_000 });
 
-// jsdom does not implement window.confirm: it logs "Not implemented" and returns undefined, which
-// is falsy, so ANY confirm-guarded action is untestable by default -- the guard always reads as
-// "cancelled" and the action never runs. Defaulting to true makes the confirm dialog transparent
-// to tests that are exercising what happens AFTER the user agrees, which is what almost every
-// test of a destructive action is actually about.
+// jsdom does not implement window.prompt: it logs "Not implemented" and returns undefined, which
+// is neither the "Cancel" `null` a real browser returns nor a string -- code written for a real
+// prompt() call (e.g. `if (reason !== null) mutate(reason.trim())`) crashes on `.trim()` instead of
+// reading as cancelled. An empty string is the permissive default: it reads as "OK with no text
+// entered," so a test exercising what happens after the admin proceeds doesn't have to know this
+// dialog exists. A test asserting the Cancel path should override this explicitly with
+// `vi.mocked(window.prompt).mockReturnValueOnce(null)`.
 //
-// A test that wants to assert the guard itself exists should override this explicitly:
-//
-//   vi.mocked(window.confirm).mockReturnValueOnce(false);
-//
-// and then assert the mutation did NOT fire. Stated here because the default is deliberately
-// permissive, and a permissive default can hide a missing confirmation if nobody knows to look.
-beforeEach(() => {
-  vi.spyOn(window, 'confirm').mockReturnValue(true);
-});
-
-// Same problem as window.confirm above, for window.prompt: jsdom logs "Not implemented" and
-// returns undefined, which is neither the "Cancel" `null` a real browser returns nor a string --
-// code written for a real prompt() call (e.g. `if (reason !== null) mutate(reason.trim())`)
-// crashes on `.trim()` instead of reading as cancelled. An empty string is the permissive default,
-// prompt() (e.g. `if (reason !== null) mutate(reason.trim())`) crashes on `.trim()` instead of
-// reading as cancelled. An empty string is the permissive default, matching confirm's default
-// above: it reads as "OK with no text entered," so a test exercising what happens after the admin
-// proceeds doesn't have to know this dialog exists. A test asserting the Cancel path should
-// override this explicitly with `vi.mocked(window.prompt).mockReturnValueOnce(null)`.
+// window.confirm used to need the same treatment, until every confirm()-guarded action in this app
+// was converted to a custom ConfirmDialog (a real rendered component, not a browser API jsdom has
+// to fake) -- no stub needed for it anymore.
 beforeEach(() => {
   vi.spyOn(window, 'prompt').mockReturnValue('');
 });

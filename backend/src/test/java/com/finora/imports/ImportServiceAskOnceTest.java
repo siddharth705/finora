@@ -903,4 +903,38 @@ class ImportServiceAskOnceTest {
         assertThat(response.unparseableRows()).hasSize(1);
         assertThat(response.unparseableRows().get(0).raw()).containsEntry("Txn Amount", "2000.00");
     }
+
+    /**
+     * Bug 04 (docs/quality/bug-reports/BUG_REVIEW_REPORT.md): "A null/blank row.category() hits
+     * the same path against NOT NULL" as an oversized category name. Merge-conflict resolution
+     * note: this used to be asserted inside CategorizationServiceTest against
+     * resolveOrCreateCategory directly, back when that method itself defaulted null/blank to
+     * "Other". It no longer does -- resolveOrCreateCategory now throws on null/blank for every
+     * OTHER caller (Bug 16's self-review fix, see its own doc comment: a blank name reaching most
+     * callers is a genuinely malformed request, not a parser artifact). The "Other" degradation
+     * this bug actually needs moved to exactly the one call site the report identifies as
+     * reachable with unbounded, possibly-blank raw parser output -- here, in confirm() itself --
+     * so this is where the regression coverage belongs now too.
+     */
+    @Test
+    void confirm_fallsBackToOther_whenTheStatementsCategoryCellWasNullOrBlank() throws Exception {
+        var nullCategoryRow = new ConfirmedRow(LocalDate.of(2026, 7, 10), "UNKNOWN MERCHANT XYZ",
+                BigDecimal.valueOf(500), "EXPENSE", null, true, "default", null, false, null, null);
+
+        importService.confirm(userId, dummyFile(), requestWith(nullCategoryRow));
+
+        verify(categorizationService).resolveOrCreateCategory(eq(userId), eq("Other"));
+        verify(categorizationService, never()).resolveOrCreateCategory(eq(userId), isNull());
+    }
+
+    /** The blank-string half of the same fallback -- see the null-category test above. */
+    @Test
+    void confirm_fallsBackToOther_whenTheStatementsCategoryCellWasBlank() throws Exception {
+        var blankCategoryRow = new ConfirmedRow(LocalDate.of(2026, 7, 10), "UNKNOWN MERCHANT XYZ",
+                BigDecimal.valueOf(500), "EXPENSE", "   ", true, "default", null, false, null, null);
+
+        importService.confirm(userId, dummyFile(), requestWith(blankCategoryRow));
+
+        verify(categorizationService).resolveOrCreateCategory(eq(userId), eq("Other"));
+    }
 }

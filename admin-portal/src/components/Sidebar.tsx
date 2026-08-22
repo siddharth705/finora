@@ -1,10 +1,10 @@
 import { NavLink, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, Users, ShieldCheck, ScrollText, HeartPulse, LogOut, Landmark, Settings,
-  ListFilter, Store, Sparkles, GitMerge, BarChart3, Stethoscope, FileSearch, ListRestart , BadgeCheck, Fingerprint, Route,
-  CreditCard } from 'lucide-react';
+  ListFilter, Store, FileCode, Sparkles, GitMerge, BarChart3, Stethoscope, FileSearch, ListRestart , BadgeCheck, Fingerprint, Route,
+  CreditCard, Gift } from 'lucide-react';
 import { useAdminAuth } from '../context/AdminAuthContext';
-import logoMark from '../assets/logo-mark.png';
+import { BrandMark } from './BrandMark';
 
 // Every entry carries the same shape (including `end`, even when false) -- a mixed shape where
 // only some entries had an `end` key would make the destructuring in visibleLinks.map() below
@@ -15,6 +15,7 @@ const links = [
   { to: '/roles', label: 'Roles & Permissions', icon: ShieldCheck, end: false, permission: 'ROLE_MANAGE' },
   { to: '/banks', label: 'Banks', icon: Landmark, end: false, permission: 'BANK_MANAGE' },
   { to: '/merchants', label: 'Merchant Intelligence', icon: Store, end: false, permission: 'MERCHANT_MANAGE' },
+  { to: '/merchant-templates', label: 'Merchant Templates', icon: FileCode, end: false, permission: 'MERCHANT_MANAGE' },
   { to: '/rules', label: 'Global Rules', icon: ListFilter, end: false, permission: 'RULE_MANAGE' },
   { to: '/learning', label: 'Learning Engine', icon: Sparkles, end: false, permission: 'MERCHANT_MANAGE' },
   { to: '/merchant-review', label: 'Merchant Review', icon: BadgeCheck, end: false, permission: 'MERCHANT_REVIEW' },
@@ -22,6 +23,7 @@ const links = [
   { to: '/reconciliation', label: 'Reconciliation Monitor', icon: GitMerge, end: false, permission: 'RECONCILIATION_VIEW' },
   { to: '/analytics', label: 'Platform Analytics', icon: BarChart3, end: false, permission: 'PLATFORM_ANALYTICS_VIEW' },
   { to: '/subscriptions', label: 'Subscriptions', icon: CreditCard, end: false, permission: 'SUBSCRIPTION_MANAGEMENT_VIEW' },
+  { to: '/referrals', label: 'Referrals', icon: Gift, end: false, permission: 'REFERRAL_MANAGEMENT_VIEW' },
   { to: '/audit', label: 'Audit Log', icon: ScrollText, end: false, permission: 'AUDIT_VIEW' },
   { to: '/health', label: 'System Health', icon: HeartPulse, end: false, permission: 'PLATFORM_DIAGNOSTICS_VIEW' },
   { to: '/diagnostics', label: 'Platform Diagnostics', icon: Stethoscope, end: false, permission: 'PLATFORM_DIAGNOSTICS_VIEW' },
@@ -53,9 +55,7 @@ export function Sidebar() {
   return (
     <aside className="w-64 flex-shrink-0 bg-sidebar min-h-screen flex flex-col py-6 px-4">
       <div className="flex items-center gap-2.5 px-2 mb-1">
-        <div className="w-8 h-8 rounded-lg overflow-hidden flex-shrink-0">
-          <img src={logoMark} alt="" className="w-full h-full object-cover" />
-        </div>
+        <BrandMark size={32} invert className="rounded-lg flex-shrink-0" />
         <span className="text-white font-extrabold tracking-wide text-lg">FINORA</span>
       </div>
       <div className="px-2 mb-8">
@@ -72,7 +72,7 @@ export function Sidebar() {
             end={end}
             className={({ isActive }) =>
               `flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
-                isActive ? 'bg-primary text-white' : 'text-gray-400 hover:bg-sidebar-hover hover:text-gray-200'
+                isActive ? 'bg-primary text-on-primary' : 'text-gray-400 hover:bg-sidebar-hover hover:text-gray-200'
               }`
             }
           >
@@ -84,7 +84,7 @@ export function Sidebar() {
 
       <div className="pt-3 border-t border-white/10">
         <div className="flex items-center gap-2.5 px-2 pb-3">
-          <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center text-white text-xs font-semibold flex-shrink-0">
+          <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center text-on-primary text-xs font-semibold flex-shrink-0">
             {initials(fullName)}
           </div>
           <div className="min-w-0 flex-1">

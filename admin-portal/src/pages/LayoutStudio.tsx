@@ -418,7 +418,7 @@ function AnalysisUploadPanel({ onAnalysed }: { onAnalysed: (reference: string) =
           type="button"
           onClick={() => run.mutate()}
           disabled={!file || run.isPending}
-          className="inline-flex items-center gap-1.5 text-sm font-medium text-white bg-primary rounded-lg px-3.5 py-2 disabled:opacity-50"
+          className="inline-flex items-center gap-1.5 text-sm font-medium text-on-primary bg-primary rounded-lg px-3.5 py-2 disabled:opacity-50"
         >
           {run.isPending ? <RefreshCw size={14} className="animate-spin" /> : <Upload size={14} />}
           {run.isPending ? 'Analysing…' : 'Analyse'}

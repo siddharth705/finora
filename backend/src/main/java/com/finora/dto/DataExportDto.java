@@ -2,6 +2,7 @@ package com.finora.dto;
 
 import com.finora.entity.NetWorthSnapshot;
 import com.finora.entity.Merchant;
+import com.finora.goals.GoalContribution;
 import com.finora.integrations.google.GmailConnection;
 
 import java.math.BigDecimal;
@@ -71,6 +72,23 @@ public final class DataExportDto {
      * comment), which would misrepresent a soft-deleted account here.
      */
     public record AccountExportEntry(com.finora.accounts.AccountDto account, boolean deleted, Instant deletedAt) {}
+
+    /** goals.json entries -- pairs {@code GoalDto} with the deleted marker that reading via
+     *  {@code GoalRepository.findByUserIdIncludingDeleted} (to mirror the purge's own scope,
+     *  which includes soft-deleted goals) requires, the same treatment {@code AccountExportEntry}
+     *  already gives accounts. */
+    public record GoalExportEntry(com.finora.goals.GoalDto goal, boolean deleted, Instant deletedAt) {}
+
+    /** One {@code goal_contributions} row -- {@code goalId} is left as a raw FK, not resolved to
+     *  the goal's name, the same way transactions.json leaves {@code accountId} raw: the goal it
+     *  belongs to (name included) is already in goals.json, one file over. Sourced from the same
+     *  including-deleted goal IDs as goals.json, so a soft-deleted goal's contribution history is
+     *  still included here too, not silently dropped along with its goal. */
+    public record GoalContributionExportDto(UUID id, UUID goalId, BigDecimal amount, LocalDate contributedAt) {
+        public static GoalContributionExportDto from(GoalContribution c) {
+            return new GoalContributionExportDto(c.getId(), c.getGoalId(), c.getAmount(), c.getContributedAt());
+        }
+    }
 
     public record Manifest(
             Instant generatedAt, UUID userId, String email,

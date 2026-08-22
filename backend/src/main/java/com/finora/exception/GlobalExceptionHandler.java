@@ -12,6 +12,8 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.authentication.BadCredentialsException;
+import org.springframework.web.HttpMediaTypeNotSupportedException;
+import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -259,6 +261,36 @@ public class GlobalExceptionHandler {
             default -> "A date parameter is not in the expected format (use YYYY-MM-DD, or YYYY-MM for a month).";
         };
         return ResponseEntity.badRequest().body(ApiResponse.error(message, "INVALID_PARAMETER"));
+    }
+
+    /**
+     * Bug 09 (docs/quality/bug-reports/BUG_REVIEW_REPORT.md). The same catch-all shadowing
+     * {@link #handleBindingFailure} and {@link #handleUploadTooLarge} document for their own
+     * exceptions -- Spring's {@code DefaultHandlerExceptionResolver} already maps both of these
+     * correctly (405 / 415), and the {@code Exception} catch-all below shadowed that mapping.
+     * A wrong HTTP verb on an existing route ({@code GET /auth/login}) or a wrong
+     * {@code Content-Type} came back as a 500 {@code INTERNAL_ERROR}, logged as an unhandled
+     * exception -- routine scanner traffic and misconfigured clients polluting error-rate
+     * alerting with what is, from the server's point of view, entirely correct behaviour.
+     *
+     * <p>{@code ex.getMethod()} is the HTTP verb the caller sent, not customer data, so it is
+     * safe to echo -- unlike the raw exception text {@link #handleMalformedRequestBody} and
+     * {@link #handleDataIntegrityViolation} deliberately withhold.
+     */
+    @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
+    public ResponseEntity<ApiResponse<Void>> handleMethodNotSupported(HttpRequestMethodNotSupportedException ex) {
+        return ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED)
+                .body(ApiResponse.error(ex.getMethod() + " is not supported for this endpoint.",
+                        "METHOD_NOT_ALLOWED"));
+    }
+
+    /** The {@code Content-Type} counterpart to {@link #handleMethodNotSupported} -- see that
+     *  method's own doc comment for the shared fix (Bug 09). */
+    @ExceptionHandler(HttpMediaTypeNotSupportedException.class)
+    public ResponseEntity<ApiResponse<Void>> handleMediaTypeNotSupported(HttpMediaTypeNotSupportedException ex) {
+        return ResponseEntity.status(HttpStatus.UNSUPPORTED_MEDIA_TYPE)
+                .body(ApiResponse.error("That request's Content-Type is not supported for this endpoint.",
+                        "UNSUPPORTED_MEDIA_TYPE"));
     }
 
     /**

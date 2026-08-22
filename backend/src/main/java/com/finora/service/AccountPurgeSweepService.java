@@ -27,6 +27,8 @@ import com.finora.repository.PasswordChangeSessionRepository;
 import com.finora.repository.PasswordHistoryRepository;
 import com.finora.repository.PasswordResetTokenRepository;
 import com.finora.repository.PaymentRepository;
+import com.finora.repository.ReferralCodeRepository;
+import com.finora.repository.ReferralRepository;
 import com.finora.repository.RefreshTokenRepository;
 import com.finora.repository.RelationshipIdentifierRepository;
 import com.finora.repository.RelationshipRepository;
@@ -36,6 +38,7 @@ import com.finora.repository.SubscriptionRepository;
 import com.finora.repository.TransactionRepository;
 import com.finora.repository.UserRepository;
 import com.finora.repository.UserSettingsRepository;
+import com.finora.repository.WalletLedgerRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -141,6 +144,9 @@ public class AccountPurgeSweepService {
     private final GoalRepository goalRepository;
     private final SubscriptionRepository subscriptionRepository;
     private final PaymentRepository paymentRepository;
+    private final ReferralCodeRepository referralCodeRepository;
+    private final ReferralRepository referralRepository;
+    private final WalletLedgerRepository walletLedgerRepository;
     private final CategoryRuleRepository categoryRuleRepository;
     private final CategoryRepository categoryRepository;
     private final RelationshipRepository relationshipRepository;
@@ -177,6 +183,9 @@ public class AccountPurgeSweepService {
                                      GoalRepository goalRepository,
                                      SubscriptionRepository subscriptionRepository,
                                      PaymentRepository paymentRepository,
+                                     ReferralCodeRepository referralCodeRepository,
+                                     ReferralRepository referralRepository,
+                                     WalletLedgerRepository walletLedgerRepository,
                                      CategoryRuleRepository categoryRuleRepository,
                                      CategoryRepository categoryRepository,
                                      RelationshipRepository relationshipRepository,
@@ -212,6 +221,9 @@ public class AccountPurgeSweepService {
         this.goalRepository = goalRepository;
         this.subscriptionRepository = subscriptionRepository;
         this.paymentRepository = paymentRepository;
+        this.referralCodeRepository = referralCodeRepository;
+        this.referralRepository = referralRepository;
+        this.walletLedgerRepository = walletLedgerRepository;
         this.categoryRuleRepository = categoryRuleRepository;
         this.categoryRepository = categoryRepository;
         this.relationshipRepository = relationshipRepository;
@@ -341,6 +353,15 @@ public class AccountPurgeSweepService {
             // SubscriptionRepository.hardDeleteByUserId's own comment for why the two child tables
             // need no separate call here.
             subscriptionRepository.hardDeleteByUserId(userId);
+            // D-28 PR4-C: referral_codes/wallet_ledger have their own user_id column, deleted
+            // directly. referrals needs BOTH directions -- a purged user may appear as either
+            // referrer_user_id or referred_user_id, on two entirely different rows -- see
+            // ReferralRepository's own doc comments on why this does not try to preserve the OTHER
+            // party's half of either row.
+            referralCodeRepository.deleteByUserId(userId);
+            referralRepository.deleteByReferrerUserId(userId);
+            referralRepository.deleteByReferredUserId(userId);
+            walletLedgerRepository.deleteByUserId(userId);
 
             // Only ever matches this user's own scope=USER rows -- scope=GLOBAL rows always have
             // user_id IS NULL and are never touched.

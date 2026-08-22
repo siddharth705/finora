@@ -12,7 +12,7 @@ import { recentImportsRefetchIntervalMs, label as jobLabel } from '../lib/import
 import { navigateToReimport, navigateToRetryFailedImport } from '../lib/importNavState';
 import type { AccountStatementGroup, StatementSummary, Transaction } from '../types';
 import { formatDate } from '../utils/date';
-import { FinoraCard, EmptyState } from '../design-system';
+import { FinoraCard, EmptyState, ConfirmDialog } from '../design-system';
 
 // Reused from the same failure UX contract Import.tsx's live upload flow already draws on
 // (Premium Import Reliability v1, §6) -- a failure a user comes back to later reads the same way
@@ -56,6 +56,9 @@ export default function StatementHistory() {
   // "we haven't asked yet" from "you answered and the document rejected it".
   const [passwordPrompt, setPasswordPrompt] = useState<{ statement: StatementSummary; wrong: boolean } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Which statement's delete confirmation is showing, if any -- a custom in-app modal
+  // (ConfirmDialog) instead of the browser's own confirm(), which rendered as unstyled OS chrome.
+  const [confirmDelete, setConfirmDelete] = useState<StatementSummary | null>(null);
 
   const { data: groups, isLoading } = useQuery({
     queryKey: ['statement-imports'],
@@ -157,9 +160,6 @@ export default function StatementHistory() {
   }
 
   async function handleDelete(statement: StatementSummary) {
-    if (!confirm(`Delete "${statement.fileName}"? This removes only the ${statement.transactionsImported} transaction(s) it imported — nothing else.`)) {
-      return;
-    }
     setBusyId(statement.id);
     setError(null);
     try {
@@ -285,7 +285,7 @@ export default function StatementHistory() {
                         <ActionButton title="Download Original File" onClick={() => handleDownload(s)}>
                           <Download size={14} />
                         </ActionButton>
-                        <ActionButton title="Delete Statement Import" onClick={() => handleDelete(s)} busy={busyId === s.id} danger>
+                        <ActionButton title="Delete Statement Import" onClick={() => setConfirmDelete(s)} busy={busyId === s.id} danger>
                           <Trash2 size={14} />
                         </ActionButton>
                       </div>
@@ -299,6 +299,21 @@ export default function StatementHistory() {
       )}
 
       {viewing && <StatementDetailModal viewing={viewing} onClose={() => setViewing(null)} />}
+
+      {confirmDelete && (
+        <ConfirmDialog
+          title={`Delete "${confirmDelete.fileName}"?`}
+          message={`This removes only the ${confirmDelete.transactionsImported} transaction(s) it imported — nothing else.`}
+          confirmLabel="Delete"
+          danger
+          onConfirm={() => {
+            const statement = confirmDelete;
+            setConfirmDelete(null);
+            void handleDelete(statement);
+          }}
+          onCancel={() => setConfirmDelete(null)}
+        />
+      )}
 
       {passwordPrompt && (
         <ReimportPasswordModal

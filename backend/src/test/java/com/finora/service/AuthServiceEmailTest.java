@@ -60,6 +60,7 @@ class AuthServiceEmailTest {
                 mock(PasswordHistoryService.class), new IdentityLookup(userRepository),
                 mock(com.finora.config.RequestMetadata.class),
                 mock(com.finora.service.SubscriptionService.class),
+                mock(com.finora.service.ReferralService.class),
                 // SEC-07: same-thread executor -- runs the dispatched email/audit work
                 // synchronously so assertions against it don't race a real background thread.
                 Runnable::run,
@@ -106,6 +107,7 @@ class AuthServiceEmailTest {
                 mock(PasswordHistoryService.class), new IdentityLookup(userRepository),
                 mock(com.finora.config.RequestMetadata.class),
                 mock(com.finora.service.SubscriptionService.class),
+                mock(com.finora.service.ReferralService.class),
                 captured::set, // records the work instead of running it
                 mock(AdminMfaService.class)
         );

@@ -836,7 +836,17 @@ public class ImportService {
                 totalDebits = totalDebits.add(row.amount());
             }
 
-            Category category = categorizationService.resolveOrCreateCategory(userId, row.category());
+            // Bug 04: "Other" for a null/blank category cell, not a thrown validation error --
+            // this mirrors CategoryRules' own fallback for "nothing matched" (see its own doc
+            // comment), so an unparseable category cell degrades to the same bucket a
+            // low-confidence guess would, rather than failing the whole import.
+            // resolveOrCreateCategory itself throws on null/blank (see its own doc comment) for
+            // every OTHER caller, where a blank name is a genuinely malformed request rather than
+            // a parser artifact to paper over -- the degradation belongs here, at the one call
+            // site the bug report identifies as reachable with unbounded, possibly-blank raw
+            // parser output.
+            String rowCategory = (row.category() == null || row.category().isBlank()) ? "Other" : row.category();
+            Category category = categorizationService.resolveOrCreateCategory(userId, rowCategory);
             var decision = ruleLearningService.recordDecision(userId, row, category);
             boolean isUnresolvedGuess = decision.unresolvedGuess();
 

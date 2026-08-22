@@ -11,6 +11,15 @@ import java.util.UUID;
 public interface GoalRepository extends JpaRepository<Goal, UUID> {
     List<Goal> findByUserId(UUID userId);
 
+    // DataExportService.buildBundle. Native query on purpose: Goal carries
+    // @SQLRestriction("deleted_at IS NULL"), which Hibernate applies to every HQL/derived-query/
+    // Criteria lookup against this entity -- a plain JPQL @Query would still get filtered. Mirrors
+    // AccountRepository.findByUserIdIncludingDeleted exactly: this export's own scope doc mirrors
+    // AccountPurgeSweepService's purge scope, which purges soft-deleted goals too, so the export
+    // must still surface them, explicitly marked, rather than silently dropping them.
+    @Query(value = "SELECT * FROM goals WHERE user_id = :userId", nativeQuery = true)
+    List<Goal> findByUserIdIncludingDeleted(@Param("userId") UUID userId);
+
     /** AccountPurgeSweepService. Native, bypassing Hibernate's {@code @SQLDelete} entirely -- a
      *  derived/JPQL {@code deleteByUserId} on this entity would only soft-delete (set
      *  {@code deleted_at}), not purge, since {@code Goal extends BaseEntity}. Named

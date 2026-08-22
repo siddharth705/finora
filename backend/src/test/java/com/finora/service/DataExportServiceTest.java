@@ -17,7 +17,10 @@ import com.finora.entity.NetWorthSnapshot;
 import com.finora.entity.Transaction;
 import com.finora.entity.User;
 import com.finora.exception.ApiException;
-import com.finora.goals.GoalService;
+import com.finora.goals.Goal;
+import com.finora.goals.GoalContribution;
+import com.finora.goals.GoalContributionRepository;
+import com.finora.goals.GoalRepository;
 import com.finora.budgets.BudgetService;
 import com.finora.imports.ImportSessionService;
 import com.finora.integrations.google.GmailConnection;
@@ -77,7 +80,8 @@ class DataExportServiceTest {
     private AccountRepository accountRepository;
     private TransactionRepository transactionRepository;
     private BudgetService budgetService;
-    private GoalService goalService;
+    private GoalRepository goalRepository;
+    private GoalContributionRepository goalContributionRepository;
     private CategoryRepository categoryRepository;
     private CategoryRuleRepository categoryRuleRepository;
     private RelationshipService relationshipService;
@@ -104,7 +108,8 @@ class DataExportServiceTest {
         accountRepository = mock(AccountRepository.class);
         transactionRepository = mock(TransactionRepository.class);
         budgetService = mock(BudgetService.class);
-        goalService = mock(GoalService.class);
+        goalRepository = mock(GoalRepository.class);
+        goalContributionRepository = mock(GoalContributionRepository.class);
         categoryRepository = mock(CategoryRepository.class);
         categoryRuleRepository = mock(CategoryRuleRepository.class);
         relationshipService = mock(RelationshipService.class);
@@ -129,7 +134,8 @@ class DataExportServiceTest {
         when(transactionRepository.findByUserId(any())).thenReturn(List.of());
         when(transactionRepository.countByAccountForUser(any())).thenReturn(List.of());
         when(budgetService.listForUser(any())).thenReturn(List.of());
-        when(goalService.listForUser(any())).thenReturn(List.of());
+        when(goalRepository.findByUserIdIncludingDeleted(any())).thenReturn(List.of());
+        when(goalContributionRepository.findByGoalIdInOrderByContributedAtDesc(any())).thenReturn(List.of());
         when(categoryRepository.findByUserId(any())).thenReturn(List.of());
         when(categoryRuleRepository.findByUserId(any())).thenReturn(List.of());
         when(relationshipService.listForUser(any())).thenReturn(List.of());
@@ -150,7 +156,7 @@ class DataExportServiceTest {
 
         service = new DataExportService(userRepository,
                 new GoogleReauthVerifier(passwordEncoder, googleIdTokenVerifierService), accountRepository, transactionRepository,
-                budgetService, goalService, categoryRepository, categoryRuleRepository, relationshipService,
+                budgetService, goalRepository, goalContributionRepository, categoryRepository, categoryRuleRepository, relationshipService,
                 netWorthSnapshotRepository, merchantRepository, importJobRepository, importSessionRepository,
                 importSessionService, statementImportRepository, statementImportService, gmailConnectionRepository,
                 userSettingsService, workspaceSettingsService, bankManagementService, auditService, objectMapper);
@@ -178,7 +184,8 @@ class DataExportServiceTest {
                 .hasFieldOrPropertyWithValue("status", HttpStatus.BAD_REQUEST);
 
         verify(auditService).recordEvenOnRollback(eq(userId), eq("INVALID_CURRENT_PASSWORD"), eq("User"), eq(userId));
-        verifyNoInteractions(accountRepository, transactionRepository, budgetService, goalService, categoryRepository,
+        verifyNoInteractions(accountRepository, transactionRepository, budgetService, goalRepository,
+                goalContributionRepository, categoryRepository,
                 categoryRuleRepository, relationshipService, netWorthSnapshotRepository, merchantRepository,
                 importJobRepository, importSessionRepository, importSessionService, statementImportRepository,
                 statementImportService, gmailConnectionRepository, userSettingsService, workspaceSettingsService,
@@ -242,6 +249,115 @@ class DataExportServiceTest {
             assertThat(e.deleted()).isTrue();
             assertThat(e.deletedAt()).isEqualTo(deletedAt);
         });
+    }
+
+    /** Mirrors buildBundle_accounts_includesSoftDeletedAccountMarkedDeleted -- goals.json reads
+     *  via GoalRepository.findByUserIdIncludingDeleted, not GoalService.listForUser (which stays
+     *  filtered on purpose, since it's also the live Goals page's own data source): a soft-deleted
+     *  goal must still appear in the export, explicitly marked, rather than silently vanishing. */
+    @Test
+    void buildBundle_goals_includesSoftDeletedGoalMarkedDeleted() {
+        Goal active = new Goal();
+        ReflectionTestUtils.setField(active, "id", UUID.randomUUID());
+        active.setUserId(userId);
+        active.setName("Emergency Fund");
+        active.setTargetAmount(BigDecimal.valueOf(100000));
+        active.setCurrentAmount(BigDecimal.valueOf(20000));
+
+        Goal deleted = new Goal();
+        ReflectionTestUtils.setField(deleted, "id", UUID.randomUUID());
+        deleted.setUserId(userId);
+        deleted.setName("Old Vacation Fund");
+        deleted.setTargetAmount(BigDecimal.valueOf(50000));
+        deleted.setCurrentAmount(BigDecimal.ZERO);
+        Instant deletedAt = Instant.now();
+        deleted.setDeletedAt(deletedAt);
+
+        when(goalRepository.findByUserIdIncludingDeleted(userId)).thenReturn(List.of(active, deleted));
+
+        DataExportService.ExportBundle bundle = service.buildBundle(userId, "correct-password", null);
+
+        assertThat(bundle.goals()).hasSize(2);
+        assertThat(bundle.goals()).anySatisfy(e -> {
+            assertThat(e.goal().id()).isEqualTo(active.getId());
+            assertThat(e.deleted()).isFalse();
+            assertThat(e.deletedAt()).isNull();
+        });
+        assertThat(bundle.goals()).anySatisfy(e -> {
+            assertThat(e.goal().id()).isEqualTo(deleted.getId());
+            assertThat(e.deleted()).isTrue();
+            assertThat(e.deletedAt()).isEqualTo(deletedAt);
+        });
+    }
+
+    /** goal_contributions.json -- one batched findByGoalIdInOrderByContributedAtDesc call across
+     *  every one of this user's goals, not one query per goal. */
+    @Test
+    void buildBundle_goalContributions_batchFetchesAcrossAllUserGoals() {
+        Goal goalOne = new Goal();
+        UUID goalOneId = UUID.randomUUID();
+        ReflectionTestUtils.setField(goalOne, "id", goalOneId);
+        goalOne.setUserId(userId);
+        goalOne.setName("Emergency Fund");
+        goalOne.setTargetAmount(BigDecimal.valueOf(100000));
+        goalOne.setCurrentAmount(BigDecimal.valueOf(20000));
+
+        Goal goalTwo = new Goal();
+        UUID goalTwoId = UUID.randomUUID();
+        ReflectionTestUtils.setField(goalTwo, "id", goalTwoId);
+        goalTwo.setUserId(userId);
+        goalTwo.setName("Vacation");
+        goalTwo.setTargetAmount(BigDecimal.valueOf(50000));
+        goalTwo.setCurrentAmount(BigDecimal.ZERO);
+
+        when(goalRepository.findByUserIdIncludingDeleted(userId)).thenReturn(List.of(goalOne, goalTwo));
+
+        GoalContribution contribution = new GoalContribution();
+        UUID contributionId = UUID.randomUUID();
+        ReflectionTestUtils.setField(contribution, "id", contributionId);
+        contribution.setGoalId(goalOneId);
+        contribution.setAmount(BigDecimal.valueOf(5000));
+        contribution.setContributedAt(LocalDate.of(2026, 7, 15));
+        when(goalContributionRepository.findByGoalIdInOrderByContributedAtDesc(List.of(goalOneId, goalTwoId)))
+                .thenReturn(List.of(contribution));
+
+        DataExportService.ExportBundle bundle = service.buildBundle(userId, "correct-password", null);
+
+        assertThat(bundle.goalContributions()).hasSize(1);
+        var dto = bundle.goalContributions().get(0);
+        assertThat(dto.id()).isEqualTo(contributionId);
+        assertThat(dto.goalId()).isEqualTo(goalOneId);
+        assertThat(dto.amount()).isEqualByComparingTo(BigDecimal.valueOf(5000));
+        assertThat(dto.contributedAt()).isEqualTo(LocalDate.of(2026, 7, 15));
+    }
+
+    /** A soft-deleted goal's own contribution history must still export -- the goal IDs fed into
+     *  the batched contribution lookup come from the including-deleted list, not a filtered one. */
+    @Test
+    void buildBundle_goalContributions_includesHistoryForASoftDeletedGoal() {
+        Goal deletedGoal = new Goal();
+        UUID deletedGoalId = UUID.randomUUID();
+        ReflectionTestUtils.setField(deletedGoal, "id", deletedGoalId);
+        deletedGoal.setUserId(userId);
+        deletedGoal.setName("Closed Goal");
+        deletedGoal.setTargetAmount(BigDecimal.valueOf(10000));
+        deletedGoal.setCurrentAmount(BigDecimal.valueOf(3000));
+        deletedGoal.setDeletedAt(Instant.now());
+
+        when(goalRepository.findByUserIdIncludingDeleted(userId)).thenReturn(List.of(deletedGoal));
+
+        GoalContribution contribution = new GoalContribution();
+        ReflectionTestUtils.setField(contribution, "id", UUID.randomUUID());
+        contribution.setGoalId(deletedGoalId);
+        contribution.setAmount(BigDecimal.valueOf(3000));
+        contribution.setContributedAt(LocalDate.of(2026, 5, 1));
+        when(goalContributionRepository.findByGoalIdInOrderByContributedAtDesc(List.of(deletedGoalId)))
+                .thenReturn(List.of(contribution));
+
+        DataExportService.ExportBundle bundle = service.buildBundle(userId, "correct-password", null);
+
+        assertThat(bundle.goalContributions()).hasSize(1);
+        assertThat(bundle.goalContributions().get(0).goalId()).isEqualTo(deletedGoalId);
     }
 
     /** Finding 3: ImportSessionService.readStagedRows() throws for anything but a SINGLE_ACCOUNT
@@ -616,7 +732,7 @@ class DataExportServiceTest {
 
         List<String> includedNames = new ArrayList<>();
         manifest.get("included").forEach(n -> includedNames.add(n.get("name").asText()));
-        assertThat(includedNames).contains("accounts.json", "transactions.json", "statements/");
+        assertThat(includedNames).contains("accounts.json", "transactions.json", "statements/", "goal_contributions.json");
         // manifest.json/README.txt describe the archive itself, not one more table in it.
         assertThat(includedNames).doesNotContain("manifest.json", "README.txt");
 

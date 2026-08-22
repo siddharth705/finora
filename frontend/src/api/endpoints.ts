@@ -52,8 +52,11 @@ export interface AuthResponseDto {
 }
 
 export const authApi = {
-  register: (email: string, password: string, fullName: string, phoneNumber: string) =>
-    api.post<AuthResponseDto>('/auth/register', { email, password, fullName, phoneNumber }),
+  // referralCode: D-28 PR4-C. Optional -- Register.tsx passes it only when the page was reached
+  // via a referral link's `?ref=` param. Omitted (undefined) for the overwhelming majority of
+  // registrations, same as the backend's own RegisterRequest.referralCode.
+  register: (email: string, password: string, fullName: string, phoneNumber: string, referralCode?: string) =>
+    api.post<AuthResponseDto>('/auth/register', { email, password, fullName, phoneNumber, referralCode }),
   // `identifier` accepts either an email address or a registered mobile number -- see
   // AuthService.resolveEmailForLogin on the backend, which resolves either down to the
   // account's real email before authenticating.
@@ -888,4 +891,23 @@ export interface BillingHistoryEntry {
 
 export const billingApi = {
   history: () => api.get<BillingHistoryEntry[]>('/billing/history').then((r) => r.data),
+};
+
+// D-28 PR4-C. The referral program (proposal §4) -- mirrors backend ReferralDtos exactly.
+export interface MyReferralEntry {
+  referralId: string;
+  referredUserFullName: string | null;
+  status: string;
+  reward: number | null;
+  createdAt: string;
+}
+
+export interface MyReferralsDto {
+  referrals: MyReferralEntry[];
+  walletBalance: number;
+}
+
+export const referralsApi = {
+  myCode: () => api.get<{ code: string }>('/referrals/my-code').then((r) => r.data),
+  mine: () => api.get<MyReferralsDto>('/referrals/mine').then((r) => r.data),
 };
