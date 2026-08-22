@@ -1232,9 +1232,10 @@ const item: Variants = {
  * hero looks, not what it says. See landing-config.ts's own note on the claim-review discipline
  * that applies to every sentence here.
  *
- * The bottom-edge gradient fades this section's dark background into white before Problem.tsx
- * starts -- Landing.tsx's own <Transition> band after Hero is a no-op (WHITE to WHITE) because of
- * it; the fade is owned here, not split across two files.
+ * The fade from this section's dark background into white belongs to Landing.tsx's <Transition>
+ * band immediately after <Hero />, like every other section boundary on this page -- Hero does
+ * NOT own its own exit fade. See Task 13's note on why that's a deliberate correction from an
+ * earlier draft of this plan, not an oversight.
  */
 export function Hero() {
   const prefersReducedMotion = useReducedMotion();
@@ -1248,12 +1249,6 @@ export function Hero() {
       }}
     >
       <AmbientCanvas />
-
-      <div
-        aria-hidden="true"
-        className="absolute inset-x-0 bottom-0 h-40 pointer-events-none"
-        style={{ background: 'linear-gradient(180deg, transparent 0%, #FFFFFF 100%)', zIndex: 0 }}
-      />
 
       <motion.div
         variants={prefersReducedMotion ? undefined : container}
@@ -1339,7 +1334,9 @@ git commit -m "feat(landing): rewrite Hero as a cinematic Framer Motion reveal"
 
 **Interfaces:** none — this task only touches composition wiring and a documentation comment; no new exports.
 
-This task has no isolated unit test of its own: the fade behavior it depends on (Hero's own bottom-edge gradient) is Hero's responsibility and was already verified structurally in Task 12. What this task changes is only checked by re-running the existing suite (Step 2) and by visual verification (Step 3), consistent with how `Transition`/CSS-comment changes are checked elsewhere in this file (there's no dedicated test for `<Transition>` bands today either).
+This task has no isolated unit test of its own: `<Transition>` is a pure presentational gradient band with no logic branches of its own (see `primitives.tsx`), and there's no dedicated test for any of its 14 other uses on this page either. What this task changes is checked by re-running the existing suite (Step 2) and by visual verification (Step 3).
+
+**Design note — transition ownership stays centralized in `<Transition>`, not Hero:** an earlier draft of this plan had `Hero.tsx` render its own bottom-edge fade div and reduced this band to a `WHITE`-to-`WHITE` no-op. That split ownership across two files for one visual seam and broke the pattern every other section boundary on this page already follows — Landing.tsx's own comment calls the `<Transition>` bands "why this reads as one page rather than fourteen." The fix is simpler than the original draft: `<Transition>` already renders a CSS gradient (`from`/`to`), so pointing `from` at Hero's own terminal background color does the identical visual fade without Hero needing to own any of it.
 
 - [ ] **Step 1: Update the Transition band after Hero**
 
@@ -1355,10 +1352,10 @@ to:
 
 ```tsx
         <Hero />
-        {/* Hero's own bottom-edge gradient (see Hero.tsx) already fades from its dark background
-            to white -- this band is a deliberate no-op, kept only so the running order above
-            reads as "every section is followed by a Transition" without an unexplained gap. */}
-        <Transition from={WHITE} to={WHITE} height={0} />
+        {/* Hero's dark radial-gradient background bottoms out at #05070C (see Hero.tsx) -- this
+            bridges that into white, the same way every other section boundary on this page does.
+            Hero does not own any of its own exit fade; this band is the single place that does. */}
+        <Transition from="#05070C" to={WHITE} height={80} />
 ```
 
 - [ ] **Step 2: Update the index.css dark-band comment**
