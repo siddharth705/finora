@@ -83,6 +83,30 @@ class MerchantTemplateAdminServiceTest {
                 eq("MerchantTemplate"), any(), any());
     }
 
+    /** Regression coverage: create() originally only normalised the domain (lower-case, strip a
+     *  trailing dot) without validating its shape at all -- a wildcard, an email address, or a
+     *  full URL would have saved silently, producing a template that could never match any real
+     *  authenticated domain with nothing telling the admin why. Reuses
+     *  TrustedSenderDomain.requireValid, the same rejection TrustedSenderDomainService.add already
+     *  applies to the sibling registry. */
+    @Test
+    @DisplayName("a malformed domain (wildcard, email address, or URL) is rejected, not silently saved")
+    void create_rejectsAMalformedDomainRatherThanSavingItSilently() {
+        assertThatThrownBy(() -> service.create(adminId, "*.swiggy.com", "Swiggy",
+                "marker", "{amount}", "{date}"))
+                .isInstanceOf(ApiException.class);
+        assertThatThrownBy(() -> service.create(adminId, "receipts@swiggy.com", "Swiggy", // synthetic-ok
+                "marker", "{amount}", "{date}"))
+                .isInstanceOf(ApiException.class);
+        assertThatThrownBy(() -> service.create(adminId, "https://swiggy.com/receipts", "Swiggy",
+                "marker", "{amount}", "{date}"))
+                .isInstanceOf(ApiException.class);
+        assertThatThrownBy(() -> service.create(adminId, "not a domain", "Swiggy",
+                "marker", "{amount}", "{date}"))
+                .isInstanceOf(ApiException.class);
+        verify(templates, never()).save(any());
+    }
+
     @Test
     @DisplayName("a malformed amount pattern (missing the {amount} placeholder) is rejected at save time")
     void create_rejectsAPatternThatWouldNeverCompile() {

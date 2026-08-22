@@ -110,9 +110,16 @@ public class MerchantTemplateAdminService {
         entry.setCreatedByUserId(actingAdminId);
         MerchantTemplate saved = templates.save(entry);
 
+        // Captures the actual pattern values, not just domain/name -- this class's own doc comment
+        // is explicit that a bad pattern mis-stages a wrong amount into a real user's ledger, and
+        // "who decided this and when" only answers the incident-review question if it also
+        // answers "decided WHAT" -- the current row is visible via GET, but there is no separate
+        // history table, so the audit trail is the only place a since-edited value survives.
         auditService.record(actingAdminId, "GMAIL_MERCHANT_TEMPLATE_CREATED",
                 "MerchantTemplate", saved.getId(),
-                Map.of("merchantDomain", domain, "merchantName", saved.getMerchantName()));
+                Map.of("merchantDomain", domain, "merchantName", saved.getMerchantName(),
+                        "receiptMarker", receiptMarker, "amountPattern", amountPattern,
+                        "datePattern", datePattern));
         log.info("Merchant template for {} created by admin {}, disabled pending test.", domain, actingAdminId);
         return saved;
     }
@@ -138,9 +145,12 @@ public class MerchantTemplateAdminService {
         requireNonBlank(datePattern, "A date pattern is required.");
 
         MerchantTemplate entry = get(id);
-        boolean matchingFieldsChanged = !Objects.equals(entry.getReceiptMarker(), receiptMarker)
-                || !Objects.equals(entry.getAmountPattern(), amountPattern)
-                || !Objects.equals(entry.getDatePattern(), datePattern);
+        String previousReceiptMarker = entry.getReceiptMarker();
+        String previousAmountPattern = entry.getAmountPattern();
+        String previousDatePattern = entry.getDatePattern();
+        boolean matchingFieldsChanged = !Objects.equals(previousReceiptMarker, receiptMarker)
+                || !Objects.equals(previousAmountPattern, amountPattern)
+                || !Objects.equals(previousDatePattern, datePattern);
         boolean autoDisabled = matchingFieldsChanged && entry.isEnabled();
 
         entry.setMerchantName(merchantName.trim());
@@ -153,11 +163,21 @@ public class MerchantTemplateAdminService {
         }
         MerchantTemplate saved = templates.save(entry);
 
+        // Both the previous and new pattern values, not just whether something changed -- same
+        // reasoning as create()'s own audit call: reconstructing "what did this say before the
+        // edit that caused three hours of wrong amounts" needs to be possible from this entry
+        // alone, since there is no separate version-history table.
         auditService.record(actingAdminId, "GMAIL_MERCHANT_TEMPLATE_UPDATED",
                 "MerchantTemplate", saved.getId(),
                 Map.of("merchantDomain", saved.getMerchantDomain(),
                         "matchingFieldsChanged", matchingFieldsChanged,
-                        "autoDisabled", autoDisabled));
+                        "autoDisabled", autoDisabled,
+                        "previousReceiptMarker", previousReceiptMarker,
+                        "receiptMarker", receiptMarker,
+                        "previousAmountPattern", previousAmountPattern,
+                        "amountPattern", amountPattern,
+                        "previousDatePattern", previousDatePattern,
+                        "datePattern", datePattern));
         if (autoDisabled) {
             log.info("Merchant template for {} edited by admin {}; auto-disabled pending re-test "
                     + "(matching fields changed on a previously active template).",
@@ -226,13 +246,19 @@ public class MerchantTemplateAdminService {
         }
     }
 
+    /** Reuses {@link TrustedSenderDomain#requireValid} rather than a second, weaker
+     *  implementation -- this table matches {@code TrustedSenderDomain.domain} by value (routing
+     *  comment on {@code MerchantTemplate.merchantDomain}), so the two must accept and normalize
+     *  identically or a typo'd wildcard/URL/email could be saved here with no error at all,
+     *  silently dead (never matching any real authenticated domain) with nothing telling the
+     *  admin why -- the same shape rejection {@code TrustedSenderDomainService.add} already
+     *  applies to the sibling registry. */
     private String requireValidDomain(String rawDomain) {
-        requireNonBlank(rawDomain, "A domain is required.");
-        // Reuses TrustedSenderDomain's own canonicalisation rather than a second implementation --
-        // this table matches TrustedSenderDomain.domain by value (routing comment on
-        // MerchantTemplate.merchantDomain), so the two must normalize identically or a template
-        // could silently fail to line up with the trust registry's own casing/trailing-dot rules.
-        return TrustedSenderDomain.normalize(rawDomain);
+        try {
+            return TrustedSenderDomain.requireValid(rawDomain);
+        } catch (IllegalArgumentException e) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, e.getMessage());
+        }
     }
 
     private void requireNonBlank(String value, String message) {
