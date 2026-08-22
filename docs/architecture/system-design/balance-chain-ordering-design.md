@@ -353,6 +353,63 @@ design already applied to a different shared component.
    is implemented, per the recommended sequence: doc → sweep → update design against observed
    frequency → implement.
 
+### 7.1 Sweep results
+
+Run against all 25 real PDF documents in the corpus (29 sections; the corpus's one CSV file was not
+covered by this pass — flagged, not silently skipped). No amount, date, or narration value is
+reproduced here, per this project's standing discipline — only structural counts and filenames
+(bank/product labels, not customer data).
+
+| Question | Result |
+|---|---|
+| Q1 — sections with ≥1 same-day multi-transaction group | 18 / 29 |
+| Q2 — of those groups, a closed numeric loop | 30 / 371 groups (~8%) |
+| Q3 — sections with a stated opening balance | 16 / 29 (13 have none) |
+| Q4 — groups that would hit `BALANCE_ORDER_AMBIGUOUS` under this design | **0** |
+| Q5 — closed loops wider than a single reversing pair | **21 / 30 (~70%)** |
+
+Two additional numbers, needed to separate "this shape exists in the data" from "this is a live bug
+today": of the 30 closed loops, only **18** are cases where today's existing chain-walk would already
+need its `max`/`min` fallback (the other 12 loops have no `balanceAfter` on every row, so today's code
+never reaches the ambiguous branch on them at all) — and of those 18, only **2** sit on a section's
+actual boundary date, the only days `first()`/`last()` are ever called on in production today. The
+other 16 are same-day loops in the *middle* of a statement, invisible to today's bug (nothing calls
+`BalanceChainUtil` on a non-boundary day) but directly relevant to this design's own day-by-day walk,
+since an unresolved middle day would otherwise break the anchor chain for every later day.
+
+**What this changes about the design, and what it confirms:**
+
+- **The anchor-propagation model, as decided, resolves every real closed loop in the corpus.** Q4's
+  zero confirms that in every real case, either the section has a stated opening balance to anchor
+  from, or the loop isn't on day 1 — so the chain the resolver walks always has a source. Decision 2
+  is not just theoretically sound, it is sufficient for 100% of the real evidence available.
+- **A second real, currently-live instance was found, independent of the ICICI document that
+  originally surfaced this**: one other real document has a closed loop sitting directly on its own
+  statement's boundary date, meaning its printed closing balance is wrong today for the identical
+  reason, right now, in production. This was not previously known and confirms the defect is not a
+  one-document anomaly.
+- **Q5 changes the priority of the "wider than a pair" case.** §6 category 4 treated multi-transaction
+  loops (3+, not just a simple reversing pair) as an edge case to cover in regression testing. The
+  sweep shows it is not an edge case — it is the **majority shape** (70% of real closed loops involve
+  more than two transactions, several corpus documents show clusters as wide as six same-day
+  transactions netting to zero). Any implementation that only special-cases the 2-transaction reversal
+  and treats wider loops as a rare follow-up would be solving the minority of the real problem.
+  `BalanceSequenceResolution`'s ordering logic must handle an arbitrary-size same-day loop from the
+  first implementation, not as a later generalization.
+- **Q3's 13/29 (45%) sections with no stated opening balance is a real, load-bearing gap**, larger
+  than assumed when the design was written. It happens not to bite today (Q4 is zero specifically
+  because none of those 13 sections also has a day-1 closed loop) — but that is a fact about this
+  corpus, not a property the design can rely on for a future document. The "no anchor for day 1"
+  path (§4.1, falling through to the internal chain-walk, then to `BALANCE_ORDER_AMBIGUOUS` if even
+  that fails) is not a rare corner case to deprioritize; a real implementation should expect to reach
+  it.
+- **One real corpus document has 8 separate same-day loop clusters in a single section, several 3-,
+  5-, and 6-transaction wide** — a naturally-occurring source for the "loops wider than one pair"
+  regression fixture (§6 category 4), likely preferable to a hand-synthesized one once the Synthetic
+  Fixture Policy's real-corpus-first preference is applied, the same way `HeaderReconstructionEngineTest`
+  and the header-reconstruction regression corpus already favor real traces over invented ones where
+  a real example exists.
+
 ## 8. Non-goals
 
 - **2E.3 (narration correctness) and 2E.4 (CBI opening-balance claim).** Unrelated; 2E.3 is already
