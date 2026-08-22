@@ -25,6 +25,7 @@ export function mockAdminAuthState(overrides: Partial<AdminAuthState> = {}): Adm
     roles: [],
     loading: false,
     login: vi.fn(),
+    completeMfaChallenge: vi.fn(),
     completePhoneVerification: vi.fn(),
     logout: vi.fn(),
     hasPermission: () => false,

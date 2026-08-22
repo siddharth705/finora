@@ -28,7 +28,7 @@ function renderVerifyPhone() {
   vi.mocked(useAdminAuth).mockReturnValue({
     token: 'tok', email: 'admin@example.com', fullName: 'Admin', phoneVerified: false,
     permissions: [], roles: [], loading: false,
-    login: vi.fn(), completePhoneVerification: vi.fn(), logout: vi.fn(), hasPermission: vi.fn(),
+    login: vi.fn(), completeMfaChallenge: vi.fn(), completePhoneVerification: vi.fn(), logout: vi.fn(), hasPermission: vi.fn(),
   });
   return render(
     <MemoryRouter>
@@ -39,7 +39,7 @@ function renderVerifyPhone() {
 
 describe('VerifyPhone (admin portal)', () => {
   beforeEach(() => {
-    vi.mocked(userApi.get).mockReset().mockResolvedValue({ phoneNumber: '+919876543705' });
+    vi.mocked(userApi.get).mockReset().mockResolvedValue({ phoneNumber: '+919876543705', signInMethod: 'PASSWORD' }); // synthetic-ok
     vi.mocked(sendPhoneVerificationCode).mockReset().mockResolvedValue(FAKE_CONFIRMATION);
     vi.mocked(confirmPhoneVerificationCode).mockReset().mockResolvedValue('fake-firebase-id-token');
     vi.mocked(phoneApi.verify).mockReset().mockResolvedValue({ message: 'Phone number verified.' });
@@ -71,7 +71,7 @@ describe('VerifyPhone (admin portal)', () => {
     vi.mocked(useAdminAuth).mockReturnValue({
       token: 'tok', email: 'admin@example.com', fullName: 'Admin', phoneVerified: false,
       permissions: [], roles: [], loading: false,
-      login: vi.fn(), completePhoneVerification, logout: vi.fn(), hasPermission: vi.fn(),
+      login: vi.fn(), completeMfaChallenge: vi.fn(), completePhoneVerification, logout: vi.fn(), hasPermission: vi.fn(),
     });
     render(
       <MemoryRouter>
