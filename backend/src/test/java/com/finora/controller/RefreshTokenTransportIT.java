@@ -259,4 +259,38 @@ class RefreshTokenTransportIT extends AbstractIntegrationTest {
                         .content(body(rawToken)))
                 .andExpect(status().isUnauthorized());
     }
+
+    /**
+     * Bug 27. refresh() used to call rotate() -- which revokes the presented token and persists a
+     * new one, joining this method's transaction rather than opening its own -- BEFORE checking
+     * whether the account is suspended. Since the method is {@code noRollbackFor = ApiException},
+     * throwing the suspension error afterward still committed that rotation: a real, valid,
+     * persisted-but-never-handed-out token got "spent" on every rejected attempt, and the token the
+     * suspended user actually presented was left revoked even though their request never succeeded.
+     *
+     * <p>Asserted from both directions: the request must still be rejected, AND the presented token
+     * must still work once the suspension is lifted -- which only holds if rotate() never ran.
+     */
+    @Test
+    void refreshDoesNotConsumeTheTokenWhenTheAccountIsSuspended() throws Exception {
+        User user = userRepository.findById(userId).orElseThrow();
+        user.setStatus(User.STATUS_SUSPENDED);
+        userRepository.save(user);
+
+        mockMvc.perform(post("/api/v1/auth/refresh")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body(rawToken)))
+                .andExpect(status().isForbidden());
+
+        user.setStatus(User.STATUS_ACTIVE);
+        userRepository.save(user);
+
+        // Still the original, un-rotated token -- if rotate() had already run before the
+        // suspension check, this would fail as an already-used token instead.
+        mockMvc.perform(post("/api/v1/auth/refresh")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body(rawToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.token").isNotEmpty());
+    }
 }
