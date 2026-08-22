@@ -6,7 +6,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import Settings from './Settings';
 import { useAdminAuth } from '../context/AdminAuthContext';
 import { mockAdminAuthState } from '../test/mockAdminAuth';
-import { platformSettingsApi, adminFeatureFlagsApi } from '../api/endpoints';
+import { platformSettingsApi, adminFeatureFlagsApi, adminMfaApi, userApi } from '../api/endpoints';
 
 // AdminLayout now renders ThemeToggle (dark-mode support), which calls useTheme() --
 // same reason adminSearchApi is stubbed below for GlobalSearch: a real ThemeProvider isn't
@@ -18,9 +18,15 @@ vi.mock('../context/ThemeContext', () => ({
 vi.mock('../context/AdminAuthContext', () => ({
   useAdminAuth: vi.fn(),
 }));
+// MfaSection ("My security") now renders unconditionally on this page, outside the
+// SYSTEM_SETTINGS gate below (see Settings.tsx's own comment) -- adminMfaApi/userApi need a stub
+// here for the same reason adminFeatureFlagsApi does, or every render (including the
+// access-denied test) throws before any assertion runs.
 vi.mock('../api/endpoints', () => ({
   platformSettingsApi: { get: vi.fn(), update: vi.fn() },
   adminFeatureFlagsApi: { list: vi.fn(), update: vi.fn() },
+  adminMfaApi: { status: vi.fn(), enroll: vi.fn(), confirm: vi.fn(), disable: vi.fn() },
+  userApi: { get: vi.fn() },
 }));
 
 const notifySuccess = vi.fn();
@@ -67,6 +73,8 @@ describe('Settings', () => {
     vi.mocked(platformSettingsApi.update).mockReset();
     vi.mocked(adminFeatureFlagsApi.list).mockReset().mockResolvedValue([RECURRING_FLAG]);
     vi.mocked(adminFeatureFlagsApi.update).mockReset();
+    vi.mocked(adminMfaApi.status).mockReset().mockResolvedValue({ enabled: false });
+    vi.mocked(userApi.get).mockReset().mockResolvedValue({ phoneNumber: '+919876543705', signInMethod: 'PASSWORD' }); // synthetic-ok
     notifySuccess.mockReset();
     notifyError.mockReset();
   });

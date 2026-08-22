@@ -64,18 +64,41 @@ export const authApi = {
     api.post<{ phoneNumber: string }>('/auth/reset-password/phone', { token }).then((r) => r.data),
   resetPassword: (token: string, firebaseIdToken: string, newPassword: string) =>
     api.post<{ message: string }>('/auth/reset-password', { token, firebaseIdToken, newPassword }).then((r) => r.data),
+  // Second step of a login that came back AUTH_MFA_REQUIRED (Admin MFA UI, SEC-03) -- the
+  // challenge token travels in that error's `details.mfaChallengeToken` (see client.ts's
+  // interceptor). Same response shape as login() itself; AdminAuthContext.completeMfaChallenge()
+  // is what applies it, exactly like completePhoneVerification() finishes login() for the
+  // phone-verification branch.
+  verifyMfa: (challengeToken: string, code: string) =>
+    api.post<{ token: string; refreshToken: string; email: string; fullName: string; phoneVerified: boolean }>(
+      '/auth/mfa/verify', { challengeToken, code }).then((r) => r.data),
 };
 
 export const meApi = {
   access: () => api.get<MeAccessDto>('/users/me/access').then((r) => r.data),
 };
 
-// The current admin's own settings -- only phoneNumber is used here (VerifyPhone.tsx needs the
-// real number to hand to Firebase's signInWithPhoneNumber()), same /users/me endpoint the user
-// app (frontend/) calls for the same reason. Not gated behind any admin permission -- it's just
-// "my own account," same as meApi.access() above.
+// The current admin's own settings -- same /users/me endpoint the user app (frontend/) calls for
+// the same reason, not gated behind any admin permission (it's just "my own account," same as
+// meApi.access() above). signInMethod added alongside phoneNumber (Admin MFA UI, SEC-03): the
+// backend's UserSettingsDto has always carried it, this just widens the type this app reads it
+// as -- see frontend/src/api/endpoints.ts's UserSettings for the full shape this is a subset of.
+// GoogleReauthPrompt needs it to decide whether disabling MFA asks for a password or a fresh
+// Google credential.
 export const userApi = {
-  get: () => api.get<{ phoneNumber: string }>('/users/me').then((r) => r.data),
+  get: () => api.get<{ phoneNumber: string; signInMethod: 'PASSWORD' | 'GOOGLE' }>('/users/me').then((r) => r.data),
+};
+
+// SEC-03: self-service TOTP MFA for the signed-in admin's own account -- see AdminMfaController's
+// own doc comment on why this is gated on PORTAL_ADMIN alone rather than a specific permission
+// (managing your own second factor isn't an action against another admin's data). Off entirely
+// (every call 404s with AUTH_MFA_NOT_AVAILABLE) until app.admin-mfa.enabled=true server-side.
+export const adminMfaApi = {
+  status: () => api.get<{ enabled: boolean }>('/admin-mfa/status').then((r) => r.data),
+  enroll: () => api.post<{ secret: string; provisioningUri: string }>('/admin-mfa/enroll').then((r) => r.data),
+  confirm: (code: string) => api.post<{ recoveryCodes: string[] }>('/admin-mfa/confirm', { code }).then((r) => r.data),
+  disable: (currentPassword: string | null, googleIdToken: string | null) =>
+    api.post<void>('/admin-mfa/disable', { currentPassword, googleIdToken }).then((r) => r.data),
 };
 
 // Just one endpoint now -- there's no backend-triggered "send" step (Firebase's own client SDK

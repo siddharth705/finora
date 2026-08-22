@@ -1,14 +1,20 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import Login from './Login';
-import { useAdminAuth } from '../context/AdminAuthContext';
+import { useAdminAuth, AdminAccessError } from '../context/AdminAuthContext';
 import { mockAdminAuthState } from '../test/mockAdminAuth';
 import { setupApi } from '../api/endpoints';
+import { AUTH_MFA_REQUIRED } from '../api/errorCodes';
 
-vi.mock('../context/AdminAuthContext', () => ({
-  useAdminAuth: vi.fn(),
-}));
+// Real AdminAccessError kept (not replaced), not just useAdminAuth mocked -- Login.tsx does
+// `err instanceof AdminAccessError` in its login() catch block to decide whether to start the
+// MFA-challenge step; a mocked-away class would make that check always false.
+vi.mock('../context/AdminAuthContext', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../context/AdminAuthContext')>();
+  return { ...actual, useAdminAuth: vi.fn() };
+});
 vi.mock('../api/endpoints', () => ({
   setupApi: { status: vi.fn() },
 }));
@@ -94,5 +100,90 @@ describe('Login', () => {
 
     await waitFor(() => expect(screen.getByRole('button', { name: 'Sign in' })).toBeInTheDocument());
     expect(screen.queryByText(/please sign in using your new password/i)).not.toBeInTheDocument();
+  });
+
+  // Admin MFA UI (SEC-03): login() rejecting with AUTH_MFA_REQUIRED means the password was
+  // correct and this is a second step to start, not a failure to display.
+  describe('two-factor authentication', () => {
+    async function submitCredentials(user: ReturnType<typeof userEvent.setup>) {
+      await user.type(screen.getByLabelText('Email or phone'), 'admin@finora.test');
+      await user.type(screen.getByLabelText('Password'), 'correct-horse-battery-staple');
+      await user.click(screen.getByRole('button', { name: 'Sign in' }));
+    }
+
+    it('starts the code-entry step when login() comes back AUTH_MFA_REQUIRED', async () => {
+      const user = userEvent.setup();
+      vi.mocked(setupApi.status).mockResolvedValue({ setupRequired: false, installationKeyAvailable: true });
+      const login = vi.fn().mockRejectedValue(
+        new AdminAccessError('MFA required.', AUTH_MFA_REQUIRED, { mfaChallengeToken: 'chal-123' }));
+      vi.mocked(useAdminAuth).mockReturnValue(mockAdminAuthState({ token: null, login }));
+
+      renderLogin();
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Sign in' })).toBeInTheDocument());
+      await submitCredentials(user);
+
+      expect(await screen.findByText('Two-factor authentication')).toBeInTheDocument();
+      expect(screen.queryByLabelText('Password')).not.toBeInTheDocument();
+    });
+
+    it('signs in once the code is verified', async () => {
+      const user = userEvent.setup();
+      vi.mocked(setupApi.status).mockResolvedValue({ setupRequired: false, installationKeyAvailable: true });
+      const login = vi.fn().mockRejectedValue(
+        new AdminAccessError('MFA required.', AUTH_MFA_REQUIRED, { mfaChallengeToken: 'chal-123' }));
+      const completeMfaChallenge = vi.fn().mockResolvedValue(true);
+      vi.mocked(useAdminAuth).mockReturnValue(mockAdminAuthState({ token: null, login, completeMfaChallenge }));
+
+      renderLogin();
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Sign in' })).toBeInTheDocument());
+      await submitCredentials(user);
+      await screen.findByText('Two-factor authentication');
+
+      await user.type(screen.getByLabelText('Code'), '123456');
+      await user.click(screen.getByRole('button', { name: 'Verify' }));
+
+      expect(completeMfaChallenge).toHaveBeenCalledWith('chal-123', '123456');
+      await waitFor(() => expect(screen.getByText('Dashboard page')).toBeInTheDocument());
+    });
+
+    it('shows an error and lets the admin retry on a wrong code', async () => {
+      const user = userEvent.setup();
+      vi.mocked(setupApi.status).mockResolvedValue({ setupRequired: false, installationKeyAvailable: true });
+      const login = vi.fn().mockRejectedValue(
+        new AdminAccessError('MFA required.', AUTH_MFA_REQUIRED, { mfaChallengeToken: 'chal-123' }));
+      const completeMfaChallenge = vi.fn().mockRejectedValue(
+        new AdminAccessError("That code didn't work. Check your authenticator app and try again."));
+      vi.mocked(useAdminAuth).mockReturnValue(mockAdminAuthState({ token: null, login, completeMfaChallenge }));
+
+      renderLogin();
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Sign in' })).toBeInTheDocument());
+      await submitCredentials(user);
+      await screen.findByText('Two-factor authentication');
+
+      await user.type(screen.getByLabelText('Code'), '000000');
+      await user.click(screen.getByRole('button', { name: 'Verify' }));
+
+      expect(await screen.findByText(/that code didn't work/i)).toBeInTheDocument();
+      // Still on the code-entry step, not bounced back to a failure-only message.
+      expect(screen.getByLabelText('Code')).toBeInTheDocument();
+    });
+
+    it('returns to the sign-in form when "Back to sign in" is clicked', async () => {
+      const user = userEvent.setup();
+      vi.mocked(setupApi.status).mockResolvedValue({ setupRequired: false, installationKeyAvailable: true });
+      const login = vi.fn().mockRejectedValue(
+        new AdminAccessError('MFA required.', AUTH_MFA_REQUIRED, { mfaChallengeToken: 'chal-123' }));
+      vi.mocked(useAdminAuth).mockReturnValue(mockAdminAuthState({ token: null, login }));
+
+      renderLogin();
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Sign in' })).toBeInTheDocument());
+      await submitCredentials(user);
+      await screen.findByText('Two-factor authentication');
+
+      await user.click(screen.getByRole('button', { name: 'Back to sign in' }));
+
+      expect(screen.getByLabelText('Password')).toBeInTheDocument();
+      expect(screen.queryByText('Two-factor authentication')).not.toBeInTheDocument();
+    });
   });
 });
