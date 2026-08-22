@@ -412,6 +412,10 @@ export interface MerchantTemplateDto {
   merchantDomain: string;
   merchantName: string;
   receiptMarker: string;
+  /** Optional. Pipe-separated literal phrases that mean a message is NOT a receipt for this
+   *  template (a refund, return, exchange, or cancellation notice), checked before receiptMarker
+   *  -- see MerchantTemplate.matchesNonReceiptMarker's own doc comment. */
+  nonReceiptMarker: string | null;
   amountPattern: string;
   datePattern: string;
   enabled: boolean;
@@ -425,6 +429,7 @@ export interface CreateMerchantTemplateRequest {
   merchantDomain: string;
   merchantName: string;
   receiptMarker: string;
+  nonReceiptMarker: string;
   amountPattern: string;
   datePattern: string;
 }
@@ -434,6 +439,7 @@ export interface CreateMerchantTemplateRequest {
 export interface UpdateMerchantTemplateRequest {
   merchantName: string;
   receiptMarker: string;
+  nonReceiptMarker: string;
   amountPattern: string;
   datePattern: string;
 }
@@ -444,6 +450,7 @@ export interface UpdateMerchantTemplateRequest {
 export interface TestMerchantTemplateRequest {
   merchantDomain: string;
   receiptMarker: string;
+  nonReceiptMarker: string;
   amountPattern: string;
   datePattern: string;
   sampleHtml: string;
