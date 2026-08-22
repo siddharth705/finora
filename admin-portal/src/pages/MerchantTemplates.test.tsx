@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -7,6 +7,7 @@ import MerchantTemplates from './MerchantTemplates';
 import { useAdminAuth } from '../context/AdminAuthContext';
 import { mockAdminAuthState } from '../test/mockAdminAuth';
 import { adminMerchantTemplatesApi } from '../api/endpoints';
+import type { TestMerchantTemplateResult } from '../types';
 
 vi.mock('../context/AdminAuthContext', () => ({
   useAdminAuth: vi.fn(),
@@ -227,5 +228,51 @@ describe('MerchantTemplates', () => {
 
     await waitFor(() => expect(adminMerchantTemplatesApi.activate).toHaveBeenCalledWith('tmpl-1'));
     await waitFor(() => expect(notifySuccess).toHaveBeenCalledWith('Template activated.'));
+  });
+
+  /** Regression coverage for a real bug: TestTemplatePanel originally read
+   *  receiptMarker/amountPattern/datePattern from component props inside its onSuccess callback,
+   *  not from what was actually sent when the test request was made. Editing a field while a test
+   *  is still in flight would then attribute the pass to whatever is CURRENTLY typed when the
+   *  response arrives, not to what was actually tested -- silently enabling Activate for an
+   *  untested value. The fix threads the tested values through as the mutation's own variables,
+   *  which TanStack Query passes to onSuccess as a fixed argument, immune to later renders. */
+  it('does not enable Activate if the receipt marker changes while a test is still in flight', async () => {
+    mockAuth(['MERCHANT_MANAGE']);
+    const disabled = { ...EXISTING_TEMPLATE, enabled: false };
+    vi.mocked(adminMerchantTemplatesApi.list).mockResolvedValue([disabled]);
+    let resolveTest: ((result: TestMerchantTemplateResult) => void) | undefined;
+    vi.mocked(adminMerchantTemplatesApi.test).mockImplementationOnce(
+      () => new Promise((resolve) => { resolveTest = resolve; })
+    );
+    const user = userEvent.setup();
+
+    renderPage();
+    await user.click(await screen.findByTitle('Edit / test'));
+    await user.type(
+      screen.getByPlaceholderText("Paste the sample email's HTML (or plain text) here"),
+      'Trip Fare Total: Rs. 255.00 Trip Date: August 12, 2026'
+    );
+    // Tests against the marker as it stands right now ("Trip Fare", from EXISTING_TEMPLATE) --
+    // the request is in flight and NOT yet resolved.
+    await user.click(screen.getByText('Test template'));
+
+    // The admin edits the marker before the response comes back -- the exact race the bug
+    // depended on. The marker input has no accessible label of its own in this form; it's
+    // identified by its current value instead.
+    const markerInput = screen.getByDisplayValue('Trip Fare');
+    await user.clear(markerInput);
+    await user.type(markerInput, 'Changed Marker');
+
+    // NOW the test call resolves, reporting PARSED -- but against "Trip Fare", not the
+    // currently-typed "Changed Marker".
+    await act(async () => resolveTest?.({
+      status: 'PARSED', reason: null, amount: 255, transactionDate: '2026-08-12',
+      confidence: 0.9, violations: [],
+    }));
+
+    // The bug: this used to pass, because onSuccess read the (by-then-changed) marker straight
+    // out of props instead of the mutation's own variables.
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Activate' })).toBeDisabled());
   });
 });

@@ -39,11 +39,21 @@ function TestTemplatePanel({
 }: TestedFields & { merchantDomain: string; onResult: (result: TestMerchantTemplateResult, testedFor: TestedFields) => void }) {
   const [sampleHtml, setSampleHtml] = useState('');
 
+  // mutationFn takes the tested values as its argument (captured in the onClick handler below,
+  // at the moment "Test template" is actually clicked) rather than closing over the
+  // receiptMarker/amountPattern/datePattern props directly. That distinction matters: if the
+  // admin edits a field while the request is still in flight, a closure over the live props would
+  // read whatever is CURRENTLY in the form when the response arrives, not what was actually sent
+  // -- silently attributing a pass to an untested value and defeating the one thing this panel
+  // exists to guarantee. onSuccess's second argument is TanStack Query's own `variables` -- the
+  // exact object passed to mutate() -- which stays fixed regardless of later renders, unlike a
+  // value read from props inside the callback.
   const testMutation = useMutation({
-    mutationFn: () => adminMerchantTemplatesApi.test({
-      merchantDomain, receiptMarker, amountPattern, datePattern, sampleHtml,
+    mutationFn: (vars: TestedFields & { merchantDomain: string; sampleHtml: string }) =>
+      adminMerchantTemplatesApi.test(vars),
+    onSuccess: (result, vars) => onResult(result, {
+      receiptMarker: vars.receiptMarker, amountPattern: vars.amountPattern, datePattern: vars.datePattern,
     }),
-    onSuccess: (result) => onResult(result, { receiptMarker, amountPattern, datePattern }),
   });
 
   // merchantDomain is required here too, even though it doesn't affect matching itself -- the
@@ -71,7 +81,7 @@ function TestTemplatePanel({
         <button
           type="button"
           disabled={!canTest || testMutation.isPending}
-          onClick={() => testMutation.mutate()}
+          onClick={() => testMutation.mutate({ merchantDomain, receiptMarker, amountPattern, datePattern, sampleHtml })}
           className="text-xs font-semibold text-primary bg-card border border-border hover:bg-white rounded-lg px-3 py-1.5 disabled:opacity-50"
         >
           {testMutation.isPending ? 'Testing…' : 'Test template'}

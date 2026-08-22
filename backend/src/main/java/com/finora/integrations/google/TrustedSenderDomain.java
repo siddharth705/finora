@@ -4,6 +4,7 @@ import jakarta.persistence.*;
 
 import java.time.Instant;
 import java.util.UUID;
+import java.util.regex.Pattern;
 
 /**
  * One domain Finora is willing to read financial detail from — Phase C3, design proposal §12.2.
@@ -74,6 +75,43 @@ public class TrustedSenderDomain {
         }
         return trimmed;
     }
+
+    /**
+     * Rejects anything that is not a plausible bare domain.
+     *
+     * <p>Originally lived only in {@code TrustedSenderDomainService.requireValidDomain} -- moved
+     * here, unchanged, so {@code MerchantTemplateAdminService.create} could reuse the identical
+     * rule rather than accepting a weaker check of its own. Both callers take an admin-entered
+     * domain string; a wildcard, a URL, or an email address should be refused identically by
+     * either one, not more strictly in one place than the other. Not decoration even for a table
+     * that (unlike this one) is not itself the trust boundary: a malformed value here would
+     * silently never match anything real, and an admin deserves to be told why at the moment they
+     * typed it rather than discover it later as a template that mysteriously never fires.
+     *
+     * @throws IllegalArgumentException if {@code rawDomain} is null/blank, carries a scheme, a
+     *         path, a wildcard, an {@code @}, or whitespace, or otherwise does not match a
+     *         plausible domain shape
+     */
+    public static String requireValid(String rawDomain) {
+        if (rawDomain == null || rawDomain.isBlank()) {
+            throw new IllegalArgumentException("A domain is required.");
+        }
+        String domain = normalize(rawDomain);
+        if (domain.contains("*") || domain.contains("/") || domain.contains("@") || domain.contains(" ")) {
+            throw new IllegalArgumentException(
+                    "Enter a bare domain such as amazon.in -- wildcards, addresses and URLs are not "
+                            + "accepted, because matching is exact by design.");
+        }
+        if (!PLAUSIBLE_DOMAIN.matcher(domain).matches() || domain.length() > 253) {
+            throw new IllegalArgumentException(
+                    "That does not look like a domain. Enter a bare domain such as amazon.in.");
+        }
+        return domain;
+    }
+
+    /** See {@link #requireValid}'s own doc comment for why this is not a looser check. */
+    private static final Pattern PLAUSIBLE_DOMAIN =
+            Pattern.compile("^[a-z0-9]([a-z0-9\\-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9\\-]*[a-z0-9])?)+$");
 
     public boolean isActive() { return status == Status.ACTIVE; }
 
