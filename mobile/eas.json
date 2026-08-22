@@ -17,6 +17,15 @@
         "buildType": "apk"
       }
     },
+    "dev": {
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_API_BASE_URL": "https://dev-api.finoratech.info"
+      }
+    },
     "production": {
       "autoIncrement": true
     }
