@@ -1445,14 +1445,16 @@ describe('Import — continuing an unfinished import', () => {
       .mockResolvedValueOnce([unfinishedSession()])
       .mockResolvedValueOnce([]);
     vi.mocked(importApi.discardSession).mockReset().mockResolvedValue(undefined as never);
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
     const user = userEvent.setup();
     renderImport();
 
     await screen.findByText('hdfc-july.pdf');
     await user.click(screen.getByTitle('Discard Unfinished Import'));
+    // Custom in-app confirmation (ConfirmDialog), not the browser's own confirm() -- see this
+    // page's own doc comment on confirmDiscardId for why.
+    expect(await screen.findByText('Discard this unfinished import?')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Discard' }));
 
-    expect(confirmSpy).toHaveBeenCalled();
     expect(importApi.discardSession).toHaveBeenCalledWith('sess-1');
     await waitFor(() => expect(screen.queryByText('hdfc-july.pdf')).not.toBeInTheDocument());
   });
@@ -1460,15 +1462,17 @@ describe('Import — continuing an unfinished import', () => {
   it('does not discard without confirmation', async () => {
     vi.mocked(importApi.listSessions).mockReset().mockResolvedValue([unfinishedSession()]);
     vi.mocked(importApi.discardSession).mockReset();
-    vi.spyOn(window, 'confirm').mockReturnValue(false);
     const user = userEvent.setup();
     renderImport();
 
     await screen.findByText('hdfc-july.pdf');
     await user.click(screen.getByTitle('Discard Unfinished Import'));
+    await screen.findByText('Discard this unfinished import?');
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
 
     expect(importApi.discardSession).not.toHaveBeenCalled();
     expect(screen.getByText('hdfc-july.pdf')).toBeInTheDocument();
+    expect(screen.queryByText('Discard this unfinished import?')).not.toBeInTheDocument();
   });
 
   /**
@@ -1490,7 +1494,6 @@ describe('Import — continuing an unfinished import', () => {
     vi.mocked(importApi.stageCsv).mockReset().mockRejectedValue({
       response: { data: { errorCode: NO_HEADER_DETECTED, message: 'server-only wording' } },
     });
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
     const user = userEvent.setup();
     renderImport();
 
@@ -1499,6 +1502,8 @@ describe('Import — continuing an unfinished import', () => {
     await screen.findByText(IMPORT_FAILURE_MESSAGES[NO_HEADER_DETECTED]);
 
     await user.click(screen.getByTitle('Discard Unfinished Import'));
+    await screen.findByText('Discard this unfinished import?');
+    await user.click(screen.getByRole('button', { name: 'Discard' }));
 
     await waitFor(() =>
       expect(screen.queryByText(IMPORT_FAILURE_MESSAGES[NO_HEADER_DETECTED])).not.toBeInTheDocument()

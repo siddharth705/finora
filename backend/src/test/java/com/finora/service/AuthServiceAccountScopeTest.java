@@ -87,7 +87,7 @@ class AuthServiceAccountScopeTest {
         when(userRepository.existsByEmailIgnoreCaseAndAccountScope(anyString(), anyString())).thenReturn(true);
 
         assertThatThrownBy(() -> authService.register(new RegisterRequest(
-                "siddharth@example.com", "Password123", "Sample Customer", "+919876500001")))
+                "siddharth@example.com", "Password123", "Sample Customer", "+919876500001", null)))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("already exists");
 
@@ -161,6 +161,7 @@ class AuthServiceAccountScopeTest {
                 new IdentityLookup(userRepository),
                 mock(com.finora.config.RequestMetadata.class),
                 mock(com.finora.service.SubscriptionService.class),
+                mock(com.finora.service.ReferralService.class),
                 // SEC-07: same-thread executor -- runs the dispatched email/audit work
                 // synchronously so assertions against it don't race a real background thread.
                 Runnable::run,

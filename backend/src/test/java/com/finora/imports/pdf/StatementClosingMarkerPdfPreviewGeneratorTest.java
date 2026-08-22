@@ -22,6 +22,13 @@ import static org.mockito.Mockito.when;
  * genuine wrapped description uses) folded it straight into the last real transaction's
  * description, and the combined row imported as one low-confidence transaction instead of the
  * boilerplate being discarded.
+ *
+ * <p>Phase 2C widened this to the whole {@link PdfTableLocator#TRAILING_CONTENT_TRIGGERS} family --
+ * two more real, bank-specific closing markers (Kotak's own "Total Purchase & Other Charges" table
+ * total, ICICI's own all-caps "MOST IMPORTANT TERMS AND CONDITIONS" section heading), sharing the
+ * same one-way suppression mechanism the Axis marker established. See
+ * docs/architecture/system-design/transaction-boundary-phase2a-investigation.md for the real-corpus
+ * evidence behind all three.
  */
 class StatementClosingMarkerPdfPreviewGeneratorTest {
 
@@ -76,5 +83,61 @@ class StatementClosingMarkerPdfPreviewGeneratorTest {
                         "UPI/SAMPLE VENDOR PRIVATE LT/SAMPLEA.PAYU@AXISB",
                         "UPI/SAMPLEB ENTERPRISES/PAYCO.S111111@PTY/90000")
                 .noneMatch(d -> d.contains("Illustrative Purchase Example"));
+    }
+
+    /**
+     * Phase 2C. Same shape as {@link #generate_doesNotStageARowShapedLikeATransaction_whenItFollowsTheClosingMarker}
+     * for Kotak's own closing marker ("Total Purchase & Other Charges") instead of Axis's. See
+     * docs/architecture/system-design/transaction-boundary-phase2a-investigation.md.
+     */
+    @Test
+    void generate_doesNotStageARowShapedLikeATransaction_whenItFollowsTheTotalRowMarker() throws Exception {
+        StagingResponse response = realGenerator().generate(UUID.randomUUID(), "kotak_statement.pdf",
+                PdfFixtureBuilder.buildTransactionTableTotalMarkerWithTrailingLookalikeSample());
+
+        assertThat(response.rows()).hasSize(2);
+        assertThat(response.rows()).extracting(r -> r.description())
+                .containsExactly("SAMPLE RETAIL STORE", "UPI-SAMPLE0001234567-SAMPLEVENDOR") // synthetic-ok
+                .noneMatch(d -> d.contains("Illustrative Fee Example"));
+    }
+
+    /**
+     * Phase 2C. Same shape again, for ICICI's own closing marker (the all-caps MITC section
+     * heading) instead of Axis's or Kotak's. See
+     * docs/architecture/system-design/transaction-boundary-phase2a-investigation.md.
+     */
+    @Test
+    void generate_doesNotStageARowShapedLikeATransaction_whenItFollowsTheMitcHeading() throws Exception {
+        StagingResponse response = realGenerator().generate(UUID.randomUUID(), "icici_statement.pdf",
+                PdfFixtureBuilder.buildMitcSectionMarkerWithTrailingLookalikeSample());
+
+        assertThat(response.rows()).hasSize(2);
+        assertThat(response.rows()).extracting(r -> r.description())
+                .containsExactly("SAMPLE ONLINE SERVICE IN", "SAMPLE SUBSCRIPTION APP IN")
+                .noneMatch(d -> d.contains("Illustrative Interest Example"));
+    }
+
+    /**
+     * Phase 2C, negative case. {@link PdfTableLocator#MITC_SECTION_MARKER} is deliberately
+     * case-sensitive -- real AU and SBI statements both mention the same concept in ordinary
+     * mixed-case prose while their own real transactions are still ongoing. A real transaction
+     * printed after a mixed-case mention like this one must still be staged; if this ever regresses
+     * to a case-insensitive match, this is the test that catches it before it silently truncates a
+     * real AU-shaped or SBI-shaped statement.
+     *
+     * <p>The mixed-case line itself is a dateless row immediately after the first transaction, so
+     * it merges into that transaction's description via the ordinary trailing-continuation
+     * mechanism -- expected, unrelated to this test's actual point, and not asserted against here.
+     * What matters is that the SECOND real transaction, after the mixed-case mention, survives at
+     * all: if MITC_SECTION_MARKER regressed to a case-insensitive match, this document would close
+     * right there and this row would vanish along with everything real that might follow it.
+     */
+    @Test
+    void generate_stillStagesARealTransaction_afterAMixedCaseMitcMention() throws Exception {
+        StagingResponse response = realGenerator().generate(UUID.randomUUID(), "example_statement.pdf",
+                PdfFixtureBuilder.buildMixedCaseMitcMentionDoesNotCloseSample());
+
+        assertThat(response.rows()).hasSize(2);
+        assertThat(response.rows().get(1).description()).isEqualTo("SAMPLE SUBSCRIPTION APP IN");
     }
 }

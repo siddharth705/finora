@@ -97,6 +97,21 @@ export interface ActivationFunnelDto {
 
 /** D-28 PR4-A. Mirrors backend BillingDtos.SubscriptionSummaryDto exactly -- one row per user's
  *  current subscription, joined with their plan and account details for the admin list. */
+/** D-28 PR4-C. Mirrors backend ReferralDtos.AdminReferralSummaryDto exactly -- one row per
+ *  referral, both parties identified for abuse review. */
+export interface AdminReferralSummaryDto {
+  referralId: string;
+  referrerUserId: string;
+  referrerEmail: string | null;
+  referrerFullName: string | null;
+  referredUserId: string;
+  referredEmail: string | null;
+  referredFullName: string | null;
+  status: string;
+  reward: number | null;
+  createdAt: string;
+}
+
 export interface SubscriptionSummaryDto {
   subscriptionId: string;
   userId: string;
@@ -372,6 +387,64 @@ export interface GmailMerchantParserStatDto {
   noParserYet: number;
   successRate: number | null;
   lastSeen: string | null;
+}
+
+// --- Gmail merchant templates (MerchantTemplateAdminService / AdminMerchantTemplateController) ---
+//
+// Not the trust boundary -- that's TrustedSenderDomain (gmail_trusted_sender_domains). A template
+// for a domain that isn't trusted is simply unreachable; domainIsTrusted below is purely
+// informational, so the UI can warn about that rather than an admin wondering why a
+// correctly-tested template produces nothing in production.
+
+export interface MerchantTemplateDto {
+  id: string;
+  merchantDomain: string;
+  merchantName: string;
+  receiptMarker: string;
+  amountPattern: string;
+  datePattern: string;
+  enabled: boolean;
+  createdByUserId: string | null;
+  createdAt: string;
+  updatedAt: string;
+  domainIsTrusted: boolean;
+}
+
+export interface CreateMerchantTemplateRequest {
+  merchantDomain: string;
+  merchantName: string;
+  receiptMarker: string;
+  amountPattern: string;
+  datePattern: string;
+}
+
+/** Domain is deliberately not included -- it is immutable after creation, same reasoning as
+ *  TrustedSenderDomain's own rename-only-the-label design. */
+export interface UpdateMerchantTemplateRequest {
+  merchantName: string;
+  receiptMarker: string;
+  amountPattern: string;
+  datePattern: string;
+}
+
+/** Dry-run against a pasted sample email -- never creates or persists a template. See
+ *  AdminMerchantTemplateController's /test endpoint doc comment. merchantDomain is carried
+ *  through into the result for display only; it does not affect matching. */
+export interface TestMerchantTemplateRequest {
+  merchantDomain: string;
+  receiptMarker: string;
+  amountPattern: string;
+  datePattern: string;
+  sampleHtml: string;
+}
+
+export interface TestMerchantTemplateResult {
+  status: 'PARSED' | 'NOT_A_RECEIPT' | 'MALFORMED';
+  reason: string | null;
+  amount: number | null;
+  transactionDate: string | null;
+  confidence: number | null;
+  violations: { field: string; reason: string }[];
 }
 
 export interface MerchantDistributionEntry {

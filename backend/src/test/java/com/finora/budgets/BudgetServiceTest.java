@@ -173,7 +173,7 @@ class BudgetServiceTest {
     @Test
     void upsert_updatesTheExistingRow_ratherThanInsertingASecondBudgetForTheSameCategory() {
         Category dining = category("Dining");
-        when(categoryRepository.findByUserIdAndName(userId, "Dining")).thenReturn(Optional.of(dining));
+        when(categoryRepository.findByUserIdAndNameIgnoreCaseOrderByIdAsc(userId, "Dining")).thenReturn(List.of(dining));
 
         Budget existing = budget(dining.getId(), new BigDecimal("3000.00"));
         when(budgetRepository.findByUserIdAndCategoryId(userId, dining.getId())).thenReturn(Optional.of(existing));
@@ -197,7 +197,7 @@ class BudgetServiceTest {
     @Test
     void upsert_reportsTheRealSpendThisMonth_notHardcodedZero() {
         Category dining = category("Dining");
-        when(categoryRepository.findByUserIdAndName(userId, "Dining")).thenReturn(Optional.of(dining));
+        when(categoryRepository.findByUserIdAndNameIgnoreCaseOrderByIdAsc(userId, "Dining")).thenReturn(List.of(dining));
         when(budgetRepository.findByUserIdAndCategoryId(userId, dining.getId())).thenReturn(Optional.empty());
         when(budgetRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
@@ -217,12 +217,32 @@ class BudgetServiceTest {
     @Test
     void upsert_reportsZeroSpend_whenNothingWasSpentThisMonth() {
         Category dining = category("Dining");
-        when(categoryRepository.findByUserIdAndName(userId, "Dining")).thenReturn(Optional.of(dining));
+        when(categoryRepository.findByUserIdAndNameIgnoreCaseOrderByIdAsc(userId, "Dining")).thenReturn(List.of(dining));
         when(budgetRepository.findByUserIdAndCategoryId(userId, dining.getId())).thenReturn(Optional.empty());
         when(budgetRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
         BudgetDto result = budgetService.upsert(userId, new BudgetDto.UpsertRequest("Dining", new BigDecimal("5000.00")));
 
         assertThat(result.spentThisMonth()).isEqualByComparingTo(BigDecimal.ZERO);
+    }
+
+    /**
+     * Bug 16. Budgeting "dining" must attach to an existing "Dining" category rather than
+     * creating a sibling that would leave the existing budget attached to the wrong one of the
+     * two rows.
+     */
+    @Test
+    void upsert_matchesAnExistingCategoryCaseInsensitively() {
+        Category dining = category("Dining");
+        when(categoryRepository.findByUserIdAndNameIgnoreCaseOrderByIdAsc(userId, "dining")).thenReturn(List.of(dining));
+
+        Budget existing = budget(dining.getId(), new BigDecimal("3000.00"));
+        when(budgetRepository.findByUserIdAndCategoryId(userId, dining.getId())).thenReturn(Optional.of(existing));
+        when(budgetRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        budgetService.upsert(userId, new BudgetDto.UpsertRequest("dining", new BigDecimal("6000.00")));
+
+        verify(categoryRepository, never()).save(any());
+        assertThat(existing.getMonthlyLimit()).isEqualByComparingTo("6000.00");
     }
 }

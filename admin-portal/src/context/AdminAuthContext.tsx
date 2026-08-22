@@ -43,6 +43,11 @@ export const ADMIN_PORTAL_PERMISSIONS = [
   // listed: nothing in the frontend gates on it directly (the page always renders the dropdown;
   // the backend alone rejects an unauthorized change), so it isn't a portal-entry permission.
   'SUBSCRIPTION_MANAGEMENT_VIEW',
+  // Referrals page (D-28 PR4-C) -- same reasoning as SUBSCRIPTION_MANAGEMENT_VIEW immediately
+  // above: REFERRAL_MANAGEMENT_MANAGE (crediting a reward) is deliberately NOT listed, since the
+  // frontend always renders the "Credit Reward" button and only the backend rejects an
+  // unauthorized attempt.
+  'REFERRAL_MANAGEMENT_VIEW',
 ];
 
 export interface AdminAuthState {

@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { Navigate, useLocation, useNavigate, Link } from 'react-router-dom';
 import { useAdminAuth } from '../context/AdminAuthContext';
-import logoMark from '../assets/logo-mark.png';
+import { BrandMark } from '../components/BrandMark';
 import { setupApi } from '../api/endpoints';
 import { ADMIN_SESSION_ENDED_REASON_KEY } from '../api/client';
 import { safeStorage } from '../lib/safeStorage';
@@ -97,9 +97,7 @@ export default function Login() {
     <div className="min-h-screen bg-bg flex items-center justify-center p-4">
       <div className="w-full max-w-sm">
         <div className="flex items-center gap-2.5 justify-center mb-8">
-          <div className="w-9 h-9 rounded-lg overflow-hidden flex-shrink-0">
-            <img src={logoMark} alt="" className="w-full h-full object-cover" />
-          </div>
+          <BrandMark size={36} variant="auto" className="rounded-lg flex-shrink-0" />
           <span className="font-extrabold tracking-wide text-xl text-ink">FINORA ADMIN</span>
         </div>
 
@@ -147,7 +145,7 @@ export default function Login() {
           <button
             type="submit"
             disabled={submitting}
-            className="w-full bg-primary hover:bg-primary-dark text-white font-semibold rounded-lg py-2.5 text-sm disabled:opacity-50"
+            className="w-full bg-primary hover:bg-primary-dark text-on-primary font-semibold rounded-lg py-2.5 text-sm disabled:opacity-50"
           >
             {submitting ? 'Signing in…' : 'Sign in'}
           </button>

@@ -1,0 +1,18 @@
+diff --git a/node_modules/expo-screen-capture/ios/ScreenCaptureModule.swift b/node_modules/expo-screen-capture/ios/ScreenCaptureModule.swift
+index 870ba58..5feddff 100644
+--- a/node_modules/expo-screen-capture/ios/ScreenCaptureModule.swift
++++ b/node_modules/expo-screen-capture/ios/ScreenCaptureModule.swift
+@@ -11,7 +11,12 @@ public final class ScreenCaptureModule: Module {
+   private var blurEffectView: AnimatedBlurEffectView?
+   private var blurIntensity: CGFloat = 0.5
+   private var keyWindow: UIWindow? {
+-    return SceneGeometry.keyWindow()
++    // Patched: upstream 57.0.2 calls ExpoModulesCore.SceneGeometry.keyWindow(), a helper that
++    // does not exist in expo-modules-core 57.0.8 (the newest 57.x release) -- a real upstream
++    // version-skew bug, not a Finora-side issue. Falls back to the same UIApplication.shared
++    // .keyWindow lookup ExpoModulesCore's own Utilities.currentViewController() still uses.
++    // See patches/expo-screen-capture+57.0.2.patch.
++    return UIApplication.shared.keyWindow
+   }
+ 
+   public func definition() -> ModuleDefinition {

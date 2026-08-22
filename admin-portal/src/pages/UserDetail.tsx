@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { AdminLayout } from '../components/AdminLayout';
 import { RequirePermission } from '../components/ProtectedRoute';
+import { ConfirmDialog } from '../components/ConfirmDialog';
 import { useAdminAuth } from '../context/AdminAuthContext';
 import { adminAuditApi, adminRolesApi, adminUsersApi } from '../api/endpoints';
 import { STATUS_LABELS, promptReactivationReason } from './Users';
@@ -37,6 +38,8 @@ function UserDetailContent({ id }: { id: string }) {
   const queryClient = useQueryClient();
   const [selectedRole, setSelectedRole] = useState('');
   const [editingProfile, setEditingProfile] = useState(false);
+  const [confirmSuspend, setConfirmSuspend] = useState(false);
+  const [confirmRevokeRole, setConfirmRevokeRole] = useState<string | null>(null);
 
   const { data: user, isLoading } = useQuery({
     queryKey: ['admin-user', id],
@@ -119,11 +122,7 @@ function UserDetailContent({ id }: { id: string }) {
               <button
                 type="button"
                 disabled={suspendMutation.isPending}
-                onClick={() => {
-                  if (confirm(`Suspend ${user.fullName}? They will be signed out and unable to log in until reactivated.`)) {
-                    suspendMutation.mutate();
-                  }
-                }}
+                onClick={() => setConfirmSuspend(true)}
                 className="inline-flex items-center gap-1.5 text-sm font-medium text-danger border border-danger/30 hover:bg-danger-bg rounded-lg px-3.5 py-2"
               >
                 <ShieldBan size={15} /> Suspend account
@@ -206,12 +205,13 @@ function UserDetailContent({ id }: { id: string }) {
                   // it meant AuthorizationService kept granting that role's whole permission set
                   // through the legacy path and the revoke silently did nothing. It really takes
                   // effect, so it is worth confirming.
-                  onClick={() => {
-                    if (confirm(`Revoke the ${name} role from this user? They lose its permissions immediately.`)) {
-                      revokeRoleMutation.mutate(name);
-                    }
-                  }}
-                  className="w-4 h-4 rounded-full bg-border hover:bg-danger hover:text-white text-[10px] flex items-center justify-center"
+                  //
+                  // Bug fix, caught by self-review: this button was never disabled while its own
+                  // mutation was in flight, unlike every other confirm-guarded action on this page
+                  // -- a fast double-click could fire revokeRoleMutation twice for the same role.
+                  disabled={revokeRoleMutation.isPending}
+                  onClick={() => setConfirmRevokeRole(name)}
+                  className="w-4 h-4 rounded-full bg-border hover:bg-danger hover:text-white text-[10px] flex items-center justify-center disabled:opacity-40"
                 >
                   ×
                 </button>
@@ -235,7 +235,7 @@ function UserDetailContent({ id }: { id: string }) {
                 type="button"
                 disabled={!selectedRole || assignRoleMutation.isPending}
                 onClick={() => assignRoleMutation.mutate(selectedRole)}
-                className="bg-primary hover:bg-primary-dark text-white text-sm font-semibold rounded-lg px-3.5 py-2 disabled:opacity-50"
+                className="bg-primary hover:bg-primary-dark text-on-primary text-sm font-semibold rounded-lg px-3.5 py-2 disabled:opacity-50"
               >
                 Grant
               </button>
@@ -257,6 +257,32 @@ function UserDetailContent({ id }: { id: string }) {
             ))}
           </div>
         </div>
+      )}
+
+      {confirmSuspend && (
+        <ConfirmDialog
+          title={`Suspend ${user.fullName}?`}
+          message="They will be signed out and unable to log in until reactivated."
+          confirmLabel="Suspend"
+          danger
+          onConfirm={() => { setConfirmSuspend(false); suspendMutation.mutate(); }}
+          onCancel={() => setConfirmSuspend(false)}
+        />
+      )}
+
+      {confirmRevokeRole && (
+        <ConfirmDialog
+          title={`Revoke the ${confirmRevokeRole} role from this user?`}
+          message="They lose its permissions immediately."
+          confirmLabel="Revoke"
+          danger
+          onConfirm={() => {
+            const name = confirmRevokeRole;
+            setConfirmRevokeRole(null);
+            revokeRoleMutation.mutate(name);
+          }}
+          onCancel={() => setConfirmRevokeRole(null)}
+        />
       )}
     </div>
   );

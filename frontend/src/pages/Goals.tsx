@@ -3,7 +3,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { Target } from 'lucide-react';
 import { goalsApi } from '../api/endpoints';
 import type { Goal } from '../types';
-import { FinoraCard, EmptyState } from '../design-system';
+import { FinoraCard, EmptyState, ConfirmDialog } from '../design-system';
 
 function fmt(n: number) {
   // Negative amounts (e.g. a month where spend exceeded income) must render as "-₹500",
@@ -19,6 +19,7 @@ export default function Goals() {
   const [deadline, setDeadline] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [confirmRemoveId, setConfirmRemoveId] = useState<string | null>(null);
   const queryClient = useQueryClient();
 
   function load() {
@@ -71,7 +72,6 @@ export default function Goals() {
   }
 
   async function remove(id: string) {
-    if (!confirm('Delete this goal?')) return;
     try {
       await goalsApi.remove(id);
       load();
@@ -121,7 +121,7 @@ export default function Goals() {
                   <span>{pct.toFixed(0)}% complete{g.targetDate ? ` · target ${g.targetDate}` : ''}</span>
                   <span className="flex gap-2">
                     <button onClick={() => contribute(g.id)} className="border rounded px-2 py-1 uppercase">Add Contribution</button>
-                    <button onClick={() => remove(g.id)} className="border border-danger text-danger rounded px-2 py-1 uppercase">Delete</button>
+                    <button onClick={() => setConfirmRemoveId(g.id)} className="border border-danger text-danger rounded px-2 py-1 uppercase">Delete</button>
                   </span>
                 </div>
               </FinoraCard>
@@ -129,6 +129,21 @@ export default function Goals() {
           })
         )}
       </div>
+
+      {confirmRemoveId && (
+        <ConfirmDialog
+          title="Delete this goal?"
+          message="This can't be undone."
+          confirmLabel="Delete"
+          danger
+          onConfirm={() => {
+            const id = confirmRemoveId;
+            setConfirmRemoveId(null);
+            void remove(id);
+          }}
+          onCancel={() => setConfirmRemoveId(null)}
+        />
+      )}
     </div>
   );
 }

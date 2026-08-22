@@ -23,6 +23,7 @@ const UserDetail = lazy(() => import('./pages/UserDetail'));
 const Roles = lazy(() => import('./pages/Roles'));
 const Banks = lazy(() => import('./pages/Banks'));
 const MerchantIntelligence = lazy(() => import('./pages/MerchantIntelligence'));
+const MerchantTemplates = lazy(() => import('./pages/MerchantTemplates'));
 const GlobalRules = lazy(() => import('./pages/GlobalRules'));
 const LearningEngine = lazy(() => import('./pages/LearningEngine'));
 const LearningQueue = lazy(() => import('./pages/LearningQueue'));
@@ -30,6 +31,7 @@ const MerchantReview = lazy(() => import('./pages/MerchantReview'));
 const ReconciliationMonitor = lazy(() => import('./pages/ReconciliationMonitor'));
 const PlatformAnalytics = lazy(() => import('./pages/PlatformAnalytics'));
 const Subscriptions = lazy(() => import('./pages/Subscriptions'));
+const Referrals = lazy(() => import('./pages/Referrals'));
 const AuditLog = lazy(() => import('./pages/AuditLog'));
 const SystemHealth = lazy(() => import('./pages/SystemHealth'));
 const Diagnostics = lazy(() => import('./pages/Diagnostics'));
@@ -78,6 +80,7 @@ export default function App() {
               <Route path="/roles" element={<ProtectedRoute><Roles /></ProtectedRoute>} />
               <Route path="/banks" element={<ProtectedRoute><Banks /></ProtectedRoute>} />
               <Route path="/merchants" element={<ProtectedRoute><MerchantIntelligence /></ProtectedRoute>} />
+              <Route path="/merchant-templates" element={<ProtectedRoute><MerchantTemplates /></ProtectedRoute>} />
               <Route path="/rules" element={<ProtectedRoute><GlobalRules /></ProtectedRoute>} />
               <Route path="/learning" element={<ProtectedRoute><LearningEngine /></ProtectedRoute>} />
               <Route path="/merchant-review" element={<ProtectedRoute><MerchantReview /></ProtectedRoute>} />
@@ -85,6 +88,7 @@ export default function App() {
               <Route path="/reconciliation" element={<ProtectedRoute><ReconciliationMonitor /></ProtectedRoute>} />
               <Route path="/analytics" element={<ProtectedRoute><PlatformAnalytics /></ProtectedRoute>} />
               <Route path="/subscriptions" element={<ProtectedRoute><Subscriptions /></ProtectedRoute>} />
+              <Route path="/referrals" element={<ProtectedRoute><Referrals /></ProtectedRoute>} />
               <Route path="/audit" element={<ProtectedRoute><AuditLog /></ProtectedRoute>} />
               <Route path="/health" element={<ProtectedRoute><SystemHealth /></ProtectedRoute>} />
               <Route path="/diagnostics" element={<ProtectedRoute><Diagnostics /></ProtectedRoute>} />
