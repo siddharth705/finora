@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from 'react';
 import { ArrowRight } from 'lucide-react';
 import { Nav } from './landing/Nav';
 import { MagneticLink } from './landing/MagneticLink';
@@ -64,7 +65,30 @@ const WHITE = '#FFFFFF';
 const ALT = '#F8FAFC';
 const DEEP = '#0B1220';
 
+// Nav.tsx's own h-16 (64px) header height -- the rootMargin below shrinks the observer's
+// effective viewport by exactly this much, so overHero flips the moment Hero's bottom edge
+// scrolls up behind the navbar, not the literal top of the viewport.
+const NAV_HEIGHT_PX = 64;
+
 export default function Landing() {
+  const heroRef = useRef<HTMLDivElement | null>(null);
+  // Hero fills (or exceeds) the viewport at page load -- see the global chrome design spec's note
+  // on why observing the Hero element itself (rather than a 1px sentinel at its trailing edge)
+  // makes isIntersecting already correct without extra boundingClientRect math -- so `true` is
+  // the honest initial value before the observer's first callback fires.
+  const [overHero, setOverHero] = useState(true);
+
+  useEffect(() => {
+    const node = heroRef.current;
+    if (!node) return;
+    const observer = new IntersectionObserver(
+      ([entry]) => setOverHero(entry.isIntersecting),
+      { rootMargin: `-${NAV_HEIGHT_PX}px 0px 0px 0px`, threshold: 0 }
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+
   return (
     <div className="marketing">
       {/* Keyboard/screen-reader users otherwise have to tab through the entire nav (5 anchors +
@@ -76,10 +100,12 @@ export default function Landing() {
       >
         Skip to content
       </a>
-      <Nav />
+      <Nav overHero={overHero} />
 
       <main id="main-content">
-        <Hero />
+        <div ref={heroRef}>
+          <Hero />
+        </div>
         {/* Hero's dark radial-gradient background bottoms out at #05070C (see Hero.tsx) -- this
             bridges that into white, the same way every other section boundary on this page does.
             Hero does not own any of its own exit fade; this band is the single place that does. */}
