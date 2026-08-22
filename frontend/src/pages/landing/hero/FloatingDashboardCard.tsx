@@ -1,7 +1,7 @@
 import { useEffect, useRef, type PointerEvent } from 'react';
 import { motion, useReducedMotion, useSpring } from 'framer-motion';
 import { DashboardMock } from '../DashboardMock';
-import { useIsDesktop } from './useIsDesktop';
+import { useIsDesktop } from '../hooks/useIsDesktop';
 
 const TILT_RANGE = 10; // degrees of live mouse-driven tilt in either direction
 const REST_ROTATE_X = 8; // initial entrance tilt, per the hero design spec
