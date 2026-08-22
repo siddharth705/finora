@@ -70,9 +70,11 @@ public class AdminDtos {
      * comment for why this pipeline has no real FAILED signal to report today. health/alerts
      * both come from AdminHealthRegistryService -- exactly one source of truth for "is something
      * wrong," not two that could disagree. inactiveUsersLast7Days is the inverse of
-     * activeUsersToday's own query -- a user with no USER_LOGIN audit row in the last 7 days, or
-     * none ever -- an Insights & Alerts figure, not a daily-reset tile, so it has no previousDay
-     * sibling.
+     * activeUsersToday's own query -- a user who predates the 7-day window with no USER_LOGIN
+     * audit row in it, or none ever (see UserRepository.countWithNoAuditActionSince's own doc
+     * comment for why "predates the window" matters -- without it, a signup from an hour ago
+     * would count as inactive) -- an Insights & Alerts figure, not a daily-reset tile, so it has
+     * no previousDay sibling.
      */
     public record OperationalDashboardDto(
             long totalUsers,
