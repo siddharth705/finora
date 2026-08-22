@@ -1,7 +1,7 @@
 import { NavLink, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, Users, ShieldCheck, ScrollText, HeartPulse, LogOut, Landmark, Settings,
-  ListFilter, Store, Sparkles, GitMerge, BarChart3, Stethoscope, FileSearch, ListRestart , BadgeCheck, Fingerprint, Route,
+  ListFilter, Store, FileCode, Sparkles, GitMerge, BarChart3, Stethoscope, FileSearch, ListRestart , BadgeCheck, Fingerprint, Route,
   CreditCard } from 'lucide-react';
 import { useAdminAuth } from '../context/AdminAuthContext';
 import { BrandMark } from './BrandMark';
@@ -15,6 +15,7 @@ const links = [
   { to: '/roles', label: 'Roles & Permissions', icon: ShieldCheck, end: false, permission: 'ROLE_MANAGE' },
   { to: '/banks', label: 'Banks', icon: Landmark, end: false, permission: 'BANK_MANAGE' },
   { to: '/merchants', label: 'Merchant Intelligence', icon: Store, end: false, permission: 'MERCHANT_MANAGE' },
+  { to: '/merchant-templates', label: 'Merchant Templates', icon: FileCode, end: false, permission: 'MERCHANT_MANAGE' },
   { to: '/rules', label: 'Global Rules', icon: ListFilter, end: false, permission: 'RULE_MANAGE' },
   { to: '/learning', label: 'Learning Engine', icon: Sparkles, end: false, permission: 'MERCHANT_MANAGE' },
   { to: '/merchant-review', label: 'Merchant Review', icon: BadgeCheck, end: false, permission: 'MERCHANT_REVIEW' },

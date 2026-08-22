@@ -2,16 +2,17 @@ import { api, rawApi, type ApiEnvelope } from './client';
 import type {
 
   AccountDto, ActivationFunnelDto, AdminUpdateUserRequest, AuditLogDto, BankDto, CategoryConfidencePoint,
-  CreateAccountRequest, CreateBankRequest, CreateRelationshipRequest,
+  CreateAccountRequest, CreateBankRequest, CreateMerchantTemplateRequest, CreateRelationshipRequest,
   CreateRuleRequest, CreateUserRequest, FeatureFlagDto, GmailMerchantParserStatDto, LearningGrowthPoint, LearningPlatformStatsDto, LearningSummaryDto,
   LearningTimelineEntry,
-  MeAccessDto, MerchantDto, MerchantMergeRequest, MerchantStatDto,
+  MeAccessDto, MerchantDto, MerchantMergeRequest, MerchantStatDto, MerchantTemplateDto,
   MerchantUpdateRequest, OperationalDashboardDto, PagedResponse, PermissionDto, PlatformAnalyticsDto,
   PlatformDiagnosticsDto, PlatformSettingsDto, PlatformStatsDto, ReconciliationStatsDto, RecentImportDto,
   RelationshipDto, RelationshipMergeRequest, RoleDto, RuleDto,
   SearchResultDto, SubscriptionSummaryDto, SystemHealthDto,
-  TestRuleRequest, TestRuleResult, TopCategoryPoint, TopMerchantPoint, TransactionDto, TrendPoint,
-  UpdateBankRequest, UpdateFeatureFlagRequest,
+  TestMerchantTemplateRequest, TestMerchantTemplateResult, TestRuleRequest, TestRuleResult,
+  TopCategoryPoint, TopMerchantPoint, TransactionDto, TrendPoint,
+  UpdateBankRequest, UpdateFeatureFlagRequest, UpdateMerchantTemplateRequest,
   UpdatePlatformSettingsRequest, UpdateRelationshipRequest,
   UpdateRuleRequest, UserDetailDto, UserSummaryDto, WorkspaceSummaryDto,
   StatementAnalysisDto,
@@ -313,6 +314,27 @@ export const adminMerchantsApi = {
     api.get<GmailMerchantParserStatDto[]>('/admin/merchants/gmail-parser-stats', {
       params: { since: since.toISOString() },
     }).then((r) => r.data),
+};
+
+/** Admin CRUD + a test sandbox for Gmail merchant templates -- lets an admin add or fix a
+ *  declarative receipt parser without a backend deploy. Gated MERCHANT_MANAGE, same as
+ *  adminMerchantsApi above -- not SYSTEM_SETTINGS -- see AdminMerchantTemplateController's own
+ *  class doc for why. New templates come back disabled; activate is a separate call, always
+ *  taken only after a successful test (see MerchantTemplates.tsx's own TestTemplatePanel). */
+export const adminMerchantTemplatesApi = {
+  list: () => api.get<MerchantTemplateDto[]>('/admin/merchant-templates').then((r) => r.data),
+  create: (request: CreateMerchantTemplateRequest) =>
+    api.post<MerchantTemplateDto>('/admin/merchant-templates', request).then((r) => r.data),
+  update: (id: string, request: UpdateMerchantTemplateRequest) =>
+    api.put<MerchantTemplateDto>(`/admin/merchant-templates/${id}`, request).then((r) => r.data),
+  activate: (id: string) =>
+    api.post<MerchantTemplateDto>(`/admin/merchant-templates/${id}/activate`).then((r) => r.data),
+  deactivate: (id: string) =>
+    api.post<MerchantTemplateDto>(`/admin/merchant-templates/${id}/deactivate`).then((r) => r.data),
+  // Dry-run against a pasted sample email -- never creates or persists a template. See
+  // AdminMerchantTemplateController's /test endpoint doc comment.
+  test: (request: TestMerchantTemplateRequest) =>
+    api.post<TestMerchantTemplateResult>('/admin/merchant-templates/test', request).then((r) => r.data),
 };
 
 /** Admin, support-assisted merchant management for a specific user -- AdminUserMerchantController

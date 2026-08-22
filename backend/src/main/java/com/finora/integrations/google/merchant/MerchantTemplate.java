@@ -90,6 +90,11 @@ public class MerchantTemplate {
     @Column(nullable = false)
     private boolean enabled = true;
 
+    /** Null for the V85/V86 migration-seeded rows (Uber, Zomato), which predate any admin actor --
+     *  same posture {@code TrustedSenderDomain.addedByUserId} already has for its own seeds. */
+    @Column(name = "created_by_user_id")
+    private UUID createdByUserId;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt = Instant.now();
 
@@ -150,17 +155,24 @@ public class MerchantTemplate {
 
     public UUID getId() { return id; }
     public String getMerchantDomain() { return merchantDomain; }
-    public void setMerchantDomain(String merchantDomain) { this.merchantDomain = merchantDomain; }
+    public void setMerchantDomain(String merchantDomain) { this.merchantDomain = merchantDomain; touch(); }
     public String getMerchantName() { return merchantName; }
-    public void setMerchantName(String merchantName) { this.merchantName = merchantName; }
+    public void setMerchantName(String merchantName) { this.merchantName = merchantName; touch(); }
     public String getReceiptMarker() { return receiptMarker; }
-    public void setReceiptMarker(String receiptMarker) { this.receiptMarker = receiptMarker; }
+    public void setReceiptMarker(String receiptMarker) { this.receiptMarker = receiptMarker; touch(); }
     public String getAmountPattern() { return amountPattern; }
-    public void setAmountPattern(String amountPattern) { this.amountPattern = amountPattern; }
+    public void setAmountPattern(String amountPattern) { this.amountPattern = amountPattern; touch(); }
     public String getDatePattern() { return datePattern; }
-    public void setDatePattern(String datePattern) { this.datePattern = datePattern; }
+    public void setDatePattern(String datePattern) { this.datePattern = datePattern; touch(); }
     public boolean isEnabled() { return enabled; }
-    public void setEnabled(boolean enabled) { this.enabled = enabled; }
+    public void setEnabled(boolean enabled) { this.enabled = enabled; touch(); }
+    public UUID getCreatedByUserId() { return createdByUserId; }
+    public void setCreatedByUserId(UUID createdByUserId) { this.createdByUserId = createdByUserId; }
     public Instant getCreatedAt() { return createdAt; }
     public Instant getUpdatedAt() { return updatedAt; }
+
+    /** Manual rather than a JPA {@code @PreUpdate}, matching {@code TrustedSenderDomain}'s own
+     *  pattern exactly -- this table had no admin mutation path before this feature, so
+     *  {@code updatedAt} was previously only ever set once, at construction. */
+    private void touch() { this.updatedAt = Instant.now(); }
 }
