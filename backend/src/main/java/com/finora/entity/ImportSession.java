@@ -139,7 +139,7 @@ public class ImportSession implements com.finora.imports.storage.StoredStatement
 
     /** Null for CSV/PDF and for a Gmail session predating this column (unchanged, imperfect
      *  fallback behaviour); the authenticated domain a Gmail receipt actually came from, set only
-     *  by {@code GmailStagingBridge}. See V106's migration comment for why this exists separately
+     *  by {@code GmailStagingBridge}. See V108's migration comment for why this exists separately
      *  from the staged row's own description, which can now be a counterparty name instead of the
      *  domain -- {@code GmailReviewService} needs the real domain for its review-queue reasoning
      *  regardless of what the description shows. */

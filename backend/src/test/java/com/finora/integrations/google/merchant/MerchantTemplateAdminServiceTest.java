@@ -151,7 +151,7 @@ class MerchantTemplateAdminServiceTest {
                 trustedSenders);
 
         assertThatThrownBy(() -> serviceWithPhonePe.create(adminId, "phonepe.com", "PhonePe",
-                "Payment Successful", "Amount Paid: Rs. {amount}", "Date: {date}"))
+                "Payment Successful", null, "Amount Paid: Rs. {amount}", "Date: {date}"))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("already handled");
         verify(templates, never()).save(any());

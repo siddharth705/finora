@@ -158,7 +158,7 @@ public class ImportSessionService {
      * DocumentContext)}, plus records where this session came from (C5-B) --
      * {@link ImportSession#SOURCE_GMAIL} or null, per {@link ImportSession#getSource()}'s own doc
      * comment -- and, independently, the authenticated domain a Gmail receipt actually came from
-     * (C5 follow-up, see V106's migration comment for why this is separate from the staged row's
+     * (C5 follow-up, see V108's migration comment for why this is separate from the staged row's
      * own description). The only caller with non-null values for either is {@code
      * GmailStagingBridge}; every CSV/PDF caller keeps going through one of the two overloads above
      * and both stay null for them, unchanged from before these parameters existed.

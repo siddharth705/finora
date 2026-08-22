@@ -110,7 +110,7 @@ class GmailReviewServiceTest {
     /** Regression coverage for a code-review finding: descriptionFor prefers a counterparty over
      *  the domain (PhonePe/CRED), which broke the coincidence that StagedRow.description always
      *  WAS the authenticated domain. merchantDomain and reasoning must use the real domain
-     *  (ImportSession.sourceDomain, V106), not the counterparty-bearing description -- otherwise
+     *  (ImportSession.sourceDomain, V108), not the counterparty-bearing description -- otherwise
      *  the reasoning sentence would claim a payee's email was "verified", which is false; only
      *  the domain was ever authenticated. */
     @Test
@@ -136,7 +136,7 @@ class GmailReviewServiceTest {
                         + "Category isn't auto-detected yet, so it defaults to \"Other\" — check it below.");
     }
 
-    /** A session staged before V106 (or any CSV/PDF session, though toItem never sees one) has a
+    /** A session staged before V108 (or any CSV/PDF session, though toItem never sees one) has a
      *  null sourceDomain -- must fall back to the description, the same imperfect-but-unchanged
      *  behavior every session had before this column existed, rather than NPE or show "null". */
     @Test

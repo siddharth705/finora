@@ -181,7 +181,7 @@ public class GmailReviewService {
      * {@code merchantDomain} doubled as {@code GmailStagingBridge}'s staged description, so reading
      * one field for both purposes was a coincidence, not a contract. A counterparty-aware receipt
      * (PhonePe, CRED) broke that coincidence: the description is now correctly the payee/bank,
-     * while {@link ImportSession#getSourceDomain()} (V106) carries the authenticated domain
+     * while {@link ImportSession#getSourceDomain()} (V108) carries the authenticated domain
      * separately. {@code merchant} stays derived from the description -- that's the human-friendly
      * "who" a user wants to see, and for every merchant with no counterparty it's still the domain,
      * so {@link #displayNameFor} maps it exactly as before. {@code merchantDomain} and the
