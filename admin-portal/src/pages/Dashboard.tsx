@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { AdminLayout } from '../components/AdminLayout';
 import { StatCard } from '../components/StatCard';
+import { RecentImportsPanel } from '../components/RecentImportsPanel';
 import { useAdminAuth } from '../context/AdminAuthContext';
 import { adminDashboardApi, adminStatsApi, adminSystemApi } from '../api/endpoints';
 import type { AlertDto, ProviderStatusDto, NeedsAttentionDto, ActivationFunnelDto } from '../types';
@@ -336,16 +337,21 @@ function DashboardContent() {
           />
         </div>
 
-        {activationFunnel && (
-          <div className="mb-8">
-            <h2 className="text-sm font-semibold text-muted uppercase tracking-wide mb-3">Activation funnel</h2>
-            <ActivationFunnelSection data={activationFunnel} />
-          </div>
-        )}
       </div>
 
+      {/* Activation funnel + System status side by side -- both are "how is the platform doing
+          overall" snapshots, same visual weight, same row. */}
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
         <div className="lg:col-span-3">
+          {activationFunnel && (
+            <>
+              <h2 className="text-sm font-semibold text-muted uppercase tracking-wide mb-3">Activation funnel</h2>
+              <ActivationFunnelSection data={activationFunnel} />
+            </>
+          )}
+        </div>
+
+        <div className="lg:col-span-2">
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-sm font-semibold text-muted uppercase tracking-wide">System status</h2>
             <Link to="/health" className="text-xs text-primary font-medium">View infrastructure details →</Link>
@@ -354,6 +360,14 @@ function DashboardContent() {
             {isLoading && <p className="text-sm text-muted px-4 py-4">Loading…</p>}
             {data?.health.providers.map((p) => <ProviderRow key={p.name} provider={p} />)}
           </div>
+        </div>
+      </div>
+
+      {/* Recent imports + lifetime totals/quick actions -- day-to-day activity next to the two
+          things an admin most often wants to jump into from here. */}
+      <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
+        <div className="lg:col-span-3">
+          <RecentImportsPanel limit={5} viewAllTo="/health" />
         </div>
 
         <div className="lg:col-span-2 space-y-6">
