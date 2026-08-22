@@ -3,6 +3,7 @@ package com.finora.service;
 import com.finora.config.RequestMetadata;
 import com.finora.entity.User;
 import com.finora.exception.ApiException;
+import com.finora.integrations.apple.login.AppleIdTokenVerifierService;
 import com.finora.integrations.google.login.GoogleIdTokenVerifierService;
 import com.finora.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -32,6 +33,7 @@ class UserAccountLifecycleServiceTest {
     private UserRepository userRepository;
     private PasswordEncoder passwordEncoder;
     private GoogleIdTokenVerifierService googleIdTokenVerifierService;
+    private AppleIdTokenVerifierService appleIdTokenVerifierService;
     private RefreshTokenService refreshTokenService;
     private AuditService auditService;
     private EmailProvider emailProvider;
@@ -47,6 +49,7 @@ class UserAccountLifecycleServiceTest {
         userRepository = mock(UserRepository.class);
         passwordEncoder = mock(PasswordEncoder.class);
         googleIdTokenVerifierService = mock(GoogleIdTokenVerifierService.class);
+        appleIdTokenVerifierService = mock(AppleIdTokenVerifierService.class);
         refreshTokenService = mock(RefreshTokenService.class);
         auditService = mock(AuditService.class);
         emailProvider = mock(EmailProvider.class);
@@ -74,8 +77,8 @@ class UserAccountLifecycleServiceTest {
             return null;
         }).when(transactionTemplate).executeWithoutResult(any());
         service = new UserAccountLifecycleService(userRepository,
-                new GoogleReauthVerifier(passwordEncoder, googleIdTokenVerifierService), refreshTokenService,
-                auditService, emailProvider, requestMetadata, passwordChangeService,
+                new GoogleReauthVerifier(passwordEncoder, googleIdTokenVerifierService, appleIdTokenVerifierService),
+                refreshTokenService, auditService, emailProvider, requestMetadata, passwordChangeService,
                 accountPurgeSweepService, transactionTemplate);
     }
 
@@ -95,7 +98,7 @@ class UserAccountLifecycleServiceTest {
         when(userRepository.findById(userId)).thenReturn(Optional.of(u));
         when(passwordEncoder.matches("correct", "hashed")).thenReturn(true);
 
-        service.deactivate(userId, "correct", null, "TAKING_A_BREAK", "Back in a bit");
+        service.deactivate(userId, "correct", null, null, "TAKING_A_BREAK", "Back in a bit");
 
         assertThat(u.getStatus()).isEqualTo(User.STATUS_DEACTIVATED);
         assertThat(u.getDeactivationReason()).isEqualTo("TAKING_A_BREAK");
@@ -113,7 +116,7 @@ class UserAccountLifecycleServiceTest {
         when(userRepository.findById(userId)).thenReturn(Optional.of(u));
         when(passwordEncoder.matches("correct", "hashed")).thenReturn(true);
 
-        service.deactivate(userId, "correct", null, "OTHER", "   ");
+        service.deactivate(userId, "correct", null, null, "OTHER", "   ");
 
         assertThat(u.getDeactivationNote()).isNull();
     }
@@ -124,7 +127,7 @@ class UserAccountLifecycleServiceTest {
         when(userRepository.findById(userId)).thenReturn(Optional.of(u));
 
         try {
-            service.deactivate(userId, "correct", null, "NOT_A_REAL_REASON", null);
+            service.deactivate(userId, "correct", null, null, "NOT_A_REAL_REASON", null);
         } catch (ApiException e) {
             assertThat(u.getStatus()).isEqualTo(User.STATUS_ACTIVE);
             // Rejected on the reason alone, before ever checking the password.
@@ -143,7 +146,23 @@ class UserAccountLifecycleServiceTest {
         when(googleIdTokenVerifierService.verify("fresh-google-token"))
                 .thenReturn(new com.finora.integrations.google.login.GoogleIdentity(u.getEmail(), "Jane"));
 
-        service.deactivate(userId, null, "fresh-google-token", "TAKING_A_BREAK", null);
+        service.deactivate(userId, null, "fresh-google-token", null, "TAKING_A_BREAK", null);
+
+        assertThat(u.getStatus()).isEqualTo(User.STATUS_DEACTIVATED);
+        verify(passwordEncoder, never()).matches(any(), any());
+    }
+
+    // D-26 gap closed: an Apple-only account used to fall through to the password branch here
+    // and fail forever -- mirrors the Google test immediately above.
+    @Test
+    void deactivate_onAnAppleAccount_verifiesAFreshAppleTokenInsteadOfAPassword() {
+        User u = user(User.SCOPE_USER);
+        u.setSignInMethod(User.SIGN_IN_METHOD_APPLE);
+        when(userRepository.findById(userId)).thenReturn(Optional.of(u));
+        when(appleIdTokenVerifierService.verify("fresh-apple-token"))
+                .thenReturn(new com.finora.integrations.apple.login.AppleIdentity(u.getEmail(), "apple-subject"));
+
+        service.deactivate(userId, null, null, "fresh-apple-token", "TAKING_A_BREAK", null);
 
         assertThat(u.getStatus()).isEqualTo(User.STATUS_DEACTIVATED);
         verify(passwordEncoder, never()).matches(any(), any());
@@ -156,7 +175,7 @@ class UserAccountLifecycleServiceTest {
         when(passwordEncoder.matches("wrong", "hashed")).thenReturn(false);
 
         try {
-            service.deactivate(userId, "wrong", null, "OTHER", null);
+            service.deactivate(userId, "wrong", null, null, "OTHER", null);
         } catch (ApiException e) {
             assertThat(e.getMessage()).isEqualTo("Current password is incorrect.");
             assertThat(u.getStatus()).isEqualTo(User.STATUS_ACTIVE);
@@ -175,7 +194,7 @@ class UserAccountLifecycleServiceTest {
         when(userRepository.findById(userId)).thenReturn(Optional.of(u));
 
         try {
-            service.deactivate(userId, "whatever", null, "OTHER", null);
+            service.deactivate(userId, "whatever", null, null, "OTHER", null);
         } catch (ApiException e) {
             assertThat(u.getStatus()).isEqualTo(User.STATUS_ACTIVE);
             // Rejected on scope alone, before ever checking the password.
@@ -199,7 +218,7 @@ class UserAccountLifecycleServiceTest {
         when(userRepository.findById(userId)).thenReturn(Optional.of(u));
 
         try {
-            service.deactivate(userId, "correct", null, "OTHER", null);
+            service.deactivate(userId, "correct", null, null, "OTHER", null);
         } catch (ApiException e) {
             assertThat(e.getMessage()).contains("scheduled for deletion");
             assertThat(u.getStatus()).isEqualTo(User.STATUS_PENDING_DELETION);
@@ -217,7 +236,7 @@ class UserAccountLifecycleServiceTest {
         when(userRepository.findById(userId)).thenReturn(Optional.of(u));
 
         try {
-            service.deactivate(userId, "correct", null, "OTHER", null);
+            service.deactivate(userId, "correct", null, null, "OTHER", null);
         } catch (ApiException e) {
             assertThat(e.getMessage()).contains("scheduled for deletion");
             verify(passwordEncoder, never()).matches(any(), any());

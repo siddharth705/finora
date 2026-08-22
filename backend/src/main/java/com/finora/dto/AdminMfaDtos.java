@@ -23,5 +23,5 @@ public class AdminMfaDtos {
      *  actually look at these before dismissing this response, not to let them be re-fetched. */
     public record ConfirmResponse(List<String> recoveryCodes) {}
 
-    public record DisableRequest(String currentPassword, String googleIdToken) {}
+    public record DisableRequest(String currentPassword, String googleIdToken, String appleIdToken) {}
 }
