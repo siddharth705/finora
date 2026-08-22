@@ -1,0 +1,27 @@
+name: Sync dev branch
+
+# Dev environment matrix (admin-portal/frontend/mobile Dev tier, alongside the backend's existing
+# Railway Dev environment). `dev` is a persistent branch that Cloudflare Pages binds
+# dev-app.finoratech.info/dev-admin.finoratech.info to (as a branch-alias custom domain, not a
+# second Pages project) -- it exists purely to always reflect main's latest commit, not to carry
+# any history of its own. Fast-forward only, never a merge or a force-push: a genuine divergence
+# (someone committed directly to `dev`, which nothing in this workflow should ever cause) fails
+# this workflow loudly instead of silently discarding whatever was there.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  fast-forward:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Fast-forward dev to main
+        run: git push origin HEAD:refs/heads/dev
