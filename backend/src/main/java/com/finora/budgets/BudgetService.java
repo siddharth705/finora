@@ -133,7 +133,28 @@ public class BudgetService {
         // feed with no way to answer "who/when changed this budget."
         auditService.record(userId, "BUDGET_UPSERTED", "Budget", saved.getId(),
                 Map.of("category", category.getName(), "monthlyLimit", req.monthlyLimit()));
-        return new BudgetDto(saved.getId(), category.getId(), category.getName(), saved.getMonthlyLimit(), BigDecimal.ZERO);
+        // Bug 35 (docs/quality/bug-reports/BUG_REVIEW_REPORT.md). This hardcoded BigDecimal.ZERO
+        // regardless of what the category had actually accrued this month -- listForUser computes
+        // the real figure, this didn't. A client that updates local state from the mutation
+        // response (the standard optimistic-update pattern) showed 0% progress on a category
+        // that was already over budget, until an unrelated refetch corrected it -- most visibly on
+        // editing an EXISTING budget's limit, the common case.
+        BigDecimal spent = spentThisMonth(userId, category.getId());
+        return new BudgetDto(saved.getId(), category.getId(), category.getName(), saved.getMonthlyLimit(), spent);
+    }
+
+    /** Same query/filter shape as {@link #listForUser}'s spendByCategory map, scoped to one
+     *  category -- upsert() only ever needs one, and building the full per-category map here
+     *  would be strictly more work for no benefit. */
+    private BigDecimal spentThisMonth(UUID userId, UUID categoryId) {
+        YearMonth thisMonth = YearMonth.now(safeZoneId(userId));
+        LocalDate from = thisMonth.atDay(1);
+        LocalDate to = thisMonth.atEndOfMonth();
+        return transactionRepository.findByUserIdAndTxnDateBetween(userId, from, to).stream()
+                .filter(t -> t.getTxnType() == Transaction.Type.EXPENSE && !t.isTransfer() && t.getIsDuplicateOf() == null
+                        && categoryId.equals(t.getCategoryId()))
+                .map(Transaction::getAmount)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
     }
 
     /** Delegates to {@link com.finora.util.UserZone} -- one of four hand-copied implementations,
