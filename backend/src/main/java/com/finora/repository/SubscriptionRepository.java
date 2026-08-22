@@ -22,6 +22,16 @@ public interface SubscriptionRepository extends JpaRepository<Subscription, UUID
 
     List<Subscription> findByUserIdOrderByCreatedAtDesc(UUID userId);
 
+    /** DataExportService.buildBundle -- native, bypassing {@code @SQLRestriction} the same way
+     *  AccountRepository.findByUserIdIncludingDeleted does: a soft-deleted subscription must
+     *  still appear in the export, not silently vanish, the same "purge scope exactly" rule this
+     *  class already applies to accounts (see AccountExportEntry's own deleted/deletedAt marker).
+     *  Nothing soft-deletes a Subscription today -- every current write is a plain save() -- but
+     *  the entity itself supports it ({@code @SQLDelete}), so this reads the true purge scope
+     *  rather than assuming the filtered finder above is equivalent to it. */
+    @Query(value = "SELECT * FROM subscriptions WHERE user_id = :userId ORDER BY created_at DESC", nativeQuery = true)
+    List<Subscription> findByUserIdIncludingDeletedOrderByCreatedAtDesc(@Param("userId") UUID userId);
+
     @Query("SELECT COUNT(s) FROM Subscription s WHERE s.planId = :planId AND s.status IN ('ACTIVE', 'TRIAL')")
     long countActiveByPlanId(@Param("planId") UUID planId);
 
