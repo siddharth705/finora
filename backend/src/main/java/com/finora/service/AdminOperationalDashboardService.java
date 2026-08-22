@@ -4,6 +4,7 @@ import com.finora.dto.AdminDtos.OperationalDashboardDto;
 import com.finora.dto.AdminDtos.NeedsAttentionDto;
 import com.finora.dto.AdminDtos.PreviousDayDto;
 import com.finora.dto.AdminDtos.ActivationFunnelDto;
+import com.finora.dto.AdminDtos.ActivityTrendPointDto;
 import com.finora.dto.AuditLogDto;
 import com.finora.dto.HealthDtos.AlertDto;
 import com.finora.dto.HealthDtos.PlatformHealthDto;
@@ -25,6 +26,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneId;
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -42,6 +44,8 @@ public class AdminOperationalDashboardService {
     private static final Logger log = LoggerFactory.getLogger(AdminOperationalDashboardService.class);
 
     private static final int RECENT_ACTIVITY_LIMIT = 8;
+    private static final int INACTIVITY_WINDOW_DAYS = 7;
+    private static final int ACTIVITY_TREND_DAYS = 7;
 
     private final UserRepository userRepository;
     private final TransactionRepository transactionRepository;
@@ -127,6 +131,12 @@ public class AdminOperationalDashboardService {
                 transactionRepository.countByNeedsCategoryReviewTrue(),
                 transactionRepository.countByIsDuplicateOfIsNotNull());
 
+        // Insights row -- inverse of activeUsersToday's own query, same window this class already
+        // uses for "today," just walked back INACTIVITY_WINDOW_DAYS instead of one.
+        Instant inactivityCutoff = LocalDate.now(zone).minusDays(INACTIVITY_WINDOW_DAYS).atStartOfDay(zone).toInstant();
+        long inactiveUsersLast7Days = userRepository.countWithNoAuditActionSince(
+                "USER_LOGIN", inactivityCutoff, BootstrapService.BOOTSTRAP_IDENTIFIER);
+
         List<AuditLogDto> recentActivity = auditLogRepository
                 .findAllByOrderByCreatedAtDesc(PageRequest.of(0, RECENT_ACTIVITY_LIMIT, Sort.unsorted()))
                 .getContent().stream()
@@ -135,7 +145,8 @@ public class AdminOperationalDashboardService {
                 .toList();
 
         return new OperationalDashboardDto(totalUsers, activeUsersToday, transactionsToday, importsToday,
-                importsWithSkippedRowsToday, previousDay, needsAttention, health, alerts, recentActivity);
+                importsWithSkippedRowsToday, inactiveUsersLast7Days, previousDay, needsAttention, health, alerts,
+                recentActivity);
     }
 
     /** D-27 PR3-D. See {@link ActivationFunnelDto}'s own class doc for exactly what "reached" and
@@ -150,6 +161,40 @@ public class AdminOperationalDashboardService {
                 statementImportRepository.countDistinctUsersEverActivated(),
                 budgetRepository.countDistinctUsersEverActivated(),
                 goalRepository.countDistinctUsersEverActivated());
+    }
+
+    /**
+     * Platform Activity chart: signups/imports/transactions for each of the last
+     * {@value #ACTIVITY_TREND_DAYS} calendar days in the platform reporting zone, oldest first,
+     * today included.
+     *
+     * Each day is its own bounded [start, nextDayStart) window, queried directly with the same
+     * Between-style repository calls {@link #overview()} already uses for "yesterday" -- not one
+     * bulk fetch bucketed in Java the way AdminLearningStatsService.trend() buckets by month.
+     * That fetch-then-bucket shape exists there to walk a data-driven range and fill gaps between
+     * whatever months actually have rows; this range is always exactly 7 fixed, known days, so
+     * there is no gap-filling to get right or wrong -- the loop below always emits all 7 points
+     * regardless of whether a given day had any activity.
+     */
+    @Transactional(readOnly = true)
+    public List<ActivityTrendPointDto> activityTrend() {
+        ZoneId zone = platformReportingZone();
+        LocalDate today = LocalDate.now(zone);
+
+        List<ActivityTrendPointDto> points = new ArrayList<>(ACTIVITY_TREND_DAYS);
+        for (int daysAgo = ACTIVITY_TREND_DAYS - 1; daysAgo >= 0; daysAgo--) {
+            LocalDate day = today.minusDays(daysAgo);
+            Instant dayStart = day.atStartOfDay(zone).toInstant();
+            Instant dayEnd = day.plusDays(1).atStartOfDay(zone).toInstant();
+
+            points.add(new ActivityTrendPointDto(
+                    day,
+                    userRepository.countByEmailNotAndCreatedAtBetween(
+                            BootstrapService.BOOTSTRAP_IDENTIFIER, dayStart, dayEnd),
+                    statementImportRepository.countByImportedAtBetween(dayStart, dayEnd),
+                    transactionRepository.countByCreatedAtBetween(dayStart, dayEnd)));
+        }
+        return points;
     }
 
     /** Every non-UP provider becomes exactly one alert -- deliberately not a separate alerting

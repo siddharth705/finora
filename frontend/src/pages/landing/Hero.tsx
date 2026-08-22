@@ -92,21 +92,21 @@ export function Hero() {
             </ul>
           </motion.div>
 
-          {/* Health score + intelligence scan live under the dashboard, not the text column --
-              they're a claim ABOUT the product in the image above them, so they read as
-              disconnected filler when stacked under the CTA/checklist instead. */}
-          <div>
-            <motion.div {...reveal(0.25)} className="relative">
-              <FloatingDashboardCard />
-              <FloatingBadges />
-            </motion.div>
-
-            <motion.div {...reveal(0.5)} className="mt-10 flex flex-wrap items-center gap-6">
-              <HealthScoreRing />
-              <IntelligenceScan />
-            </motion.div>
-          </div>
+          <motion.div {...reveal(0.25)} className="relative">
+            <FloatingDashboardCard />
+            <FloatingBadges />
+          </motion.div>
         </div>
+
+        {/* Health score + intelligence scan get their own full-width row after the two-column
+            grid, not squeezed into the dashboard's column -- they're a claim ABOUT the product
+            shown above, and read as disconnected filler crammed under one side of it. Still part
+            of this same dark section (not a new <Transition>-bounded band): the claim belongs to
+            Hero's story, just after the visual it's describing rather than boxed inside it. */}
+        <motion.div {...reveal(0.5)} className="mt-14 flex flex-wrap items-center justify-center gap-6">
+          <HealthScoreRing />
+          <IntelligenceScan />
+        </motion.div>
       </div>
     </section>
   );

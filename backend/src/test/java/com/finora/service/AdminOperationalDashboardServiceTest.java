@@ -1,6 +1,7 @@
 package com.finora.service;
 
 import com.finora.dto.AdminDtos.ActivationFunnelDto;
+import com.finora.dto.AdminDtos.ActivityTrendPointDto;
 import com.finora.dto.AdminDtos.OperationalDashboardDto;
 import com.finora.dto.HealthDtos.PlatformHealthDto;
 import com.finora.dto.HealthDtos.ProviderStatusDto;
@@ -13,17 +14,24 @@ import com.finora.repository.TransactionRepository;
 import com.finora.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /** Mocked-repository unit test, same pattern as WorkspaceDashboardServiceTest. Proves the
@@ -65,6 +73,8 @@ class AdminOperationalDashboardServiceTest {
         when(budgetRepository.countDistinctUsersEverActivated()).thenReturn(0L);
         when(goalRepository.countDistinctUsersEverActivated()).thenReturn(0L);
         when(userRepository.countByLockedUntilAfter(any())).thenReturn(0L);
+        when(userRepository.countByEmailNotAndCreatedAtBetween(any(), any(), any())).thenReturn(0L);
+        when(userRepository.countWithNoAuditActionSince(any(), any(), any())).thenReturn(0L);
         when(transactionRepository.countByNeedsCategoryReviewTrue()).thenReturn(0L);
         when(transactionRepository.countByIsDuplicateOfIsNotNull()).thenReturn(0L);
         when(auditLogRepository.findAllByOrderByCreatedAtDesc(any(Pageable.class))).thenReturn(Page.empty());
@@ -107,6 +117,17 @@ class AdminOperationalDashboardServiceTest {
         assertThat(dto.previousDay().imports()).isEqualTo(9L);
         assertThat(dto.previousDay().importsWithSkippedRows()).isEqualTo(2L);
         assertThat(dto.activeUsersToday()).isEqualTo(99L);
+    }
+
+    @Test
+    void overview_populatesInactiveUsersLast7Days_fromTheInverseOfActiveUsersQuery() {
+        when(healthRegistryService.platformHealth()).thenReturn(new PlatformHealthDto("UP", List.of()));
+        when(userRepository.countWithNoAuditActionSince(eq("USER_LOGIN"), any(), eq("BOOTSTRAP_ADMIN")))
+                .thenReturn(17L);
+
+        OperationalDashboardDto dto = service.overview();
+
+        assertThat(dto.inactiveUsersLast7Days()).isEqualTo(17L);
     }
 
     @Test
@@ -184,5 +205,65 @@ class AdminOperationalDashboardServiceTest {
 
         assertThat(service.activationFunnel().signedUp()).isEqualTo(42L);
         assertThat(service.overview().totalUsers()).isEqualTo(42L);
+    }
+
+    @Test
+    void activityTrend_returnsSevenPointsOldestFirst_endingToday() {
+        List<ActivityTrendPointDto> points = service.activityTrend();
+
+        assertThat(points).hasSize(7);
+        LocalDate today = LocalDate.now(ZoneId.of("Asia/Kolkata"));
+        assertThat(points.get(6).date()).isEqualTo(today);
+        for (int i = 0; i < 6; i++) {
+            assertThat(points.get(i).date()).isEqualTo(points.get(i + 1).date().minusDays(1));
+        }
+    }
+
+    @Test
+    void activityTrend_populatesEachPointFromTheThreeBetweenQueries() {
+        when(userRepository.countByEmailNotAndCreatedAtBetween(any(), any(), any())).thenReturn(2L);
+        when(statementImportRepository.countByImportedAtBetween(any(), any())).thenReturn(1L);
+        when(transactionRepository.countByCreatedAtBetween(any(), any())).thenReturn(9L);
+
+        List<ActivityTrendPointDto> points = service.activityTrend();
+
+        assertThat(points).allSatisfy(p -> {
+            assertThat(p.signups()).isEqualTo(2L);
+            assertThat(p.imports()).isEqualTo(1L);
+            assertThat(p.transactions()).isEqualTo(9L);
+        });
+    }
+
+    @Test
+    void activityTrend_excludesBootstrapAdminByEmail_notByItsResettableRoleColumn() {
+        // Deliberately email, not role: SetupService.completeSetup()'s revokeRole() resets the
+        // bootstrap account's legacy role column to USER once setup finishes, so a role-based
+        // filter (the countByRoleNot("BOOTSTRAP_ADMIN") totalUsers/activationFunnel both use)
+        // silently stops excluding it forever from that point on -- confirmed via manual browser
+        // verification against a freshly-bootstrapped local stack, not by inspection alone.
+        service.activityTrend();
+
+        verify(userRepository, times(7)).countByEmailNotAndCreatedAtBetween(eq("BOOTSTRAP_ADMIN"), any(), any());
+    }
+
+    @Test
+    void activityTrend_queriesEachDayAsItsOwnContiguousNonOverlappingWindow() {
+        ArgumentCaptor<Instant> startCaptor = ArgumentCaptor.forClass(Instant.class);
+        ArgumentCaptor<Instant> endCaptor = ArgumentCaptor.forClass(Instant.class);
+
+        service.activityTrend();
+
+        verify(transactionRepository, times(7)).countByCreatedAtBetween(startCaptor.capture(), endCaptor.capture());
+        List<Instant> starts = startCaptor.getAllValues();
+        List<Instant> ends = endCaptor.getAllValues();
+
+        for (int i = 0; i < 7; i++) {
+            assertThat(ends.get(i)).isAfter(starts.get(i));
+        }
+        // Day i's end is exactly day i+1's start -- back-to-back calendar days, no gap and no
+        // double-counted instant between them.
+        for (int i = 0; i < 6; i++) {
+            assertThat(ends.get(i)).isEqualTo(starts.get(i + 1));
+        }
     }
 }
