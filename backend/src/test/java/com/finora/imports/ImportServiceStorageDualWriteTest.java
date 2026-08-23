@@ -145,7 +145,8 @@ class ImportServiceStorageDualWriteTest {
         // Optional.empty() storage -- store() returns Optional.empty(), same as production with
         // app.statement-storage.provider unset. This branch MUST NOT change: it is every existing
         // deployment today, since no provider is configured in production yet.
-        ImportService importService = importServiceWith(new StatementContentService(Optional.empty(), "", ""));
+        ImportService importService = importServiceWith(
+                new StatementContentService(Optional.empty(), mock(com.finora.security.crypto.EncryptionService.class), "", ""));
         var request = new ConfirmRequest(null, List.of(confirmedRow()), accountId, null, null, null,
                 null);
         byte[] fileBytes = "irrelevant".getBytes();
@@ -168,7 +169,7 @@ class ImportServiceStorageDualWriteTest {
         StatementContentService storageBacked = mock(StatementContentService.class);
         ContentAddress address = new ContentAddress("a".repeat(64), "statements/aa/aa/" + "a".repeat(64) + ".bin");
         when(storageBacked.store(any(), any())).thenReturn(Optional.of(new StatementContentService.StoredContent(
-                address, 100, 50, com.finora.imports.storage.CompressionType.GZIP, "text/csv")));
+                address, 100, 50, com.finora.imports.storage.CompressionType.GZIP, "text/csv", "v1")));
         ImportService importService = importServiceWith(storageBacked);
         var request = new ConfirmRequest(null, List.of(confirmedRow()), accountId, null, null, null,
                 null);
@@ -192,7 +193,7 @@ class ImportServiceStorageDualWriteTest {
         StatementContentService storageBacked = mock(StatementContentService.class);
         ContentAddress address = new ContentAddress("b".repeat(64), "statements/bb/bb/" + "b".repeat(64) + ".bin");
         when(storageBacked.store(any(), any())).thenReturn(Optional.of(new StatementContentService.StoredContent(
-                address, 100, 50, com.finora.imports.storage.CompressionType.GZIP, "application/pdf")));
+                address, 100, 50, com.finora.imports.storage.CompressionType.GZIP, "application/pdf", "v1")));
         byte[] fileBytes = "the-whole-composite-pdf".getBytes();
         when(storageBacked.read(any())).thenReturn(fileBytes);
         ImportService importService = importServiceWith(storageBacked);

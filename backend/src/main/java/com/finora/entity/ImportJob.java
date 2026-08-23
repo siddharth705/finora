@@ -181,14 +181,30 @@ public class ImportJob implements com.finora.imports.storage.StoredStatement {
     @Column(name = "source_format", nullable = false)
     private String sourceFormat;
 
+    /** The key {@link com.finora.security.crypto.EncryptionService} encrypted {@link #objectKey}'s
+     *  bytes under (V107) -- null for a job accepted before encryption shipped, in which case
+     *  {@link com.finora.imports.storage.StatementContentService#read} does not attempt to
+     *  decrypt. See {@link com.finora.imports.storage.StoredStatement#getEncryptionKeyId()}. */
+    @Column(name = "encryption_key_id")
+    private String encryptionKeyId;
+
     protected ImportJob() {}
 
+    /** Unencrypted, for callers (tests, and any future no-storage-configured path) that have no
+     *  key id to record. Delegates to the encrypted-aware constructor with a null key id, the same
+     *  "null means not encrypted" contract {@link #getEncryptionKeyId()} documents. */
     public ImportJob(UUID userId, String fileName, String contentHash, String objectKey, String sourceFormat) {
+        this(userId, fileName, contentHash, objectKey, sourceFormat, null);
+    }
+
+    public ImportJob(UUID userId, String fileName, String contentHash, String objectKey, String sourceFormat,
+                      String encryptionKeyId) {
         this.userId = userId;
         this.fileName = fileName;
         this.contentHash = contentHash;
         this.objectKey = objectKey;
         this.sourceFormat = sourceFormat;
+        this.encryptionKeyId = encryptionKeyId;
     }
 
     // ------------------------------------------------------------------ transitions
@@ -462,6 +478,7 @@ public class ImportJob implements com.finora.imports.storage.StoredStatement {
     public UUID getUserId() { return userId; }
     public String getContentHash() { return contentHash; }
     public String getObjectKey() { return objectKey; }
+    @Override public String getEncryptionKeyId() { return encryptionKeyId; }
     public String getFileName() { return fileName; }
     public String getSourceFormat() { return sourceFormat; }
     public Status getStatus() { return status; }
