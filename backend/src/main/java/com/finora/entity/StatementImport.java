@@ -149,6 +149,13 @@ public class StatementImport extends BaseEntity implements com.finora.imports.st
     @Column(name = "original_mime_type", length = 100)
     private String originalMimeType;
 
+    /** The key {@link com.finora.security.crypto.EncryptionService} encrypted {@link #objectKey}'s
+     *  bytes under (V107) -- null for a legacy row or one written before encryption shipped, in
+     *  which case {@link com.finora.imports.storage.StatementContentService#read} does not attempt
+     *  to decrypt. See {@link com.finora.imports.storage.StoredStatement#getEncryptionKeyId()}. */
+    @Column(name = "encryption_key_id", length = 50)
+    private String encryptionKeyId;
+
     /**
      * The async job that produced this import, or null for the synchronous path.
      *
@@ -194,6 +201,8 @@ public class StatementImport extends BaseEntity implements com.finora.imports.st
     public void setCompressionType(com.finora.imports.storage.CompressionType compressionType) { this.compressionType = compressionType; }
     public String getOriginalMimeType() { return originalMimeType; }
     public void setOriginalMimeType(String originalMimeType) { this.originalMimeType = originalMimeType; }
+    @Override public String getEncryptionKeyId() { return encryptionKeyId; }
+    public void setEncryptionKeyId(String encryptionKeyId) { this.encryptionKeyId = encryptionKeyId; }
 
     public UUID getImportJobId() { return importJobId; }
     public void setImportJobId(UUID importJobId) { this.importJobId = importJobId; }

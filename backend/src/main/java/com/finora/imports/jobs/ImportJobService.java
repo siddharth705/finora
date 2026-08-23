@@ -6,6 +6,8 @@ import com.finora.imports.StatementUpload;
 import com.finora.imports.storage.ContentAddress;
 import com.finora.imports.storage.StatementStorage;
 import com.finora.repository.ImportJobRepository;
+import com.finora.security.crypto.EncryptingStream;
+import com.finora.security.crypto.EncryptionService;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -15,7 +17,11 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
+import java.security.DigestInputStream;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -66,6 +72,7 @@ public class ImportJobService {
     private final Optional<StatementStorage> storage;
     private final ImportJobWorker worker;
     private final org.springframework.transaction.support.TransactionTemplate transactionTemplate;
+    private final EncryptionService encryptionService;
 
     @org.springframework.beans.factory.annotation.Value("${app.import.queue.enabled:false}")
     private boolean queueEnabled;
@@ -75,13 +82,15 @@ public class ImportJobService {
                              ImportJobStageRepository stageRepository,
                              Optional<StatementStorage> storage,
                              ImportJobWorker worker,
-                             org.springframework.transaction.support.TransactionTemplate transactionTemplate) {
+                             org.springframework.transaction.support.TransactionTemplate transactionTemplate,
+                             EncryptionService encryptionService) {
         this.jobStore = jobStore;
         this.repository = repository;
         this.stageRepository = stageRepository;
         this.storage = storage;
         this.worker = worker;
         this.transactionTemplate = transactionTemplate;
+        this.encryptionService = encryptionService;
     }
 
     /**
@@ -158,7 +167,29 @@ public class ImportJobService {
         // instead: StatementStorage.store(InputStream, long) spools through a fixed-size buffer
         // regardless of file size, so a burst of concurrent uploads costs buffer-sized memory
         // each, not file-sized.
-        ContentAddress address = active.store(file.getInputStream(), file.getSize());
+        //
+        // Security review (V107): encrypted the same way StatementContentService.store encrypts
+        // the synchronous path, but streaming rather than in memory, for the same BH-018 reason
+        // buffering the whole upload here would undo. content_hash must still identify the
+        // ORIGINAL bytes (BH-019's dedup and StatementImport/ImportSession both key off it), which
+        // is why the digest is taken on the PLAINTEXT side of the encrypting stream, not on what
+        // active.store() itself hashes for its key layout (the ciphertext) -- the exact
+        // hash-before-transform split StatementContentService.store's own "Compression" doc
+        // section documents, done here via streams instead of an in-memory array.
+        MessageDigest originalDigest;
+        try {
+            originalDigest = MessageDigest.getInstance("SHA-256");
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 unavailable", e);
+        }
+        DigestInputStream digested = new DigestInputStream(file.getInputStream(), originalDigest);
+        EncryptingStream encrypting = encryptionService.encryptStream(digested, file.getSize());
+        ContentAddress stored = active.store(encrypting.stream(), encrypting.length());
+        // Safe only once active.store() has returned: that method reads its input stream to EOF
+        // (ContentAddress.copyAndAddress's transferTo), which is what guarantees every original
+        // byte has already passed through digested by this point.
+        String originalHash = HexFormat.of().formatHex(originalDigest.digest());
+        ContentAddress address = new ContentAddress(originalHash, stored.key());
 
         // Step 3, and everything that touches the database is inside it.
         //
@@ -174,11 +205,11 @@ public class ImportJobService {
         // which is the guarantee ImportJobStore.enqueue's own comment depends on, and it is
         // unchanged.
         return transactionTemplate.execute(status ->
-                enqueueStoredUpload(userId, file.getOriginalFilename(), address, sourceFormat));
+                enqueueStoredUpload(userId, file.getOriginalFilename(), address, sourceFormat, encrypting.keyId()));
     }
 
     private ImportJob enqueueStoredUpload(UUID userId, String fileName, ContentAddress address,
-                                          StatementUpload.Format sourceFormat) {
+                                          StatementUpload.Format sourceFormat, String encryptionKeyId) {
         // BH-019. The same document submitted twice used to become two jobs and two staged
         // sessions, and confirming both imported the statement twice. A double-clicked upload
         // button and a client retrying a request whose 202 was lost both produce exactly that.
@@ -203,7 +234,7 @@ public class ImportJobService {
         }
 
         ImportJob job = jobStore.enqueue(
-                userId, fileName, address.hash(), address.key(), sourceFormat);
+                userId, fileName, address.hash(), address.key(), sourceFormat, encryptionKeyId);
 
         // AFTER commit, deliberately. Nudging before it would let a worker claim a job whose
         // transaction has not committed -- it would read the row as absent and the nudge would be

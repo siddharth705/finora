@@ -212,7 +212,11 @@ class WrappedHeaderOnAScoringLinePdfTableLocatorTest {
         expected.put("hsbc-savings-ledger-validation", new int[]{1, 2});
         // icici, kotak, sbi: post P-002 Fix 2 (commit pending) -- see HeaderProseRejectionTest.
         expected.put("icici-credit-card-statement", new int[]{1, 6});
-        expected.put("icici-savings-ledger-validation", new int[]{1, 2});
+        // {1, 2} before Phase 2E.5's leading-narration fix -- the narration-only line right under the
+        // header now attaches to its transaction instead of being swallowed as false-header prose. All
+        // 11 real transactions verified via BALANCE_CHAIN/STATEMENT_TOTALS with zero discrepancies; row
+        // 12 is the pre-existing flushPendingLeading page-2 glossary content, not new behavior.
+        expected.put("icici-savings-ledger-validation", new int[]{1, 12});
         expected.put("kotak-credit-card-ledger-validation", new int[]{0, 0});
         expected.put("kotak-savings-ledger-validation", new int[]{1, 2});
         expected.put("pnb-savings-ledger-validation", new int[]{1, 62});

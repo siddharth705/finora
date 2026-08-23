@@ -408,6 +408,14 @@ app:
     data-export:
       max: ${RATE_LIMIT_DATA_EXPORT_MAX:5}
       window-seconds: ${RATE_LIMIT_DATA_EXPORT_WINDOW_SECONDS:86400}
+    # Own ceiling, not shared with password-change/deactivate above: the real per-call cost here
+    # is AccountPurgeSweepService's full synchronous purge across every user table (deletion is
+    # instant, not a delayed sweep -- see UserAccountLifecycleService.requestDeletion), larger than
+    # a single bcrypt comparison. 5/hour leaves room for a user re-confirming after reading the
+    # irreversible-action warning without being a meaningful abuse budget.
+    delete-account:
+      max: ${RATE_LIMIT_DELETE_ACCOUNT_MAX:5}
+      window-seconds: ${RATE_LIMIT_DELETE_ACCOUNT_WINDOW_SECONDS:3600}
     # SEC-03 (docs/quality/bug-reports/2026-08-19-security-review-findings.md). Same ceiling class
     # as reset-password/reactivate above: an unguessable, short-TTL, single-use challenge token
     # already gates reaching this endpoint, so this bounds a token holder retrying in a loop, not

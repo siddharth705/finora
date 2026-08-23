@@ -174,6 +174,11 @@ public class ImportSession implements com.finora.imports.storage.StoredStatement
     @Override public com.finora.imports.storage.CompressionType getCompressionType() {
         return com.finora.imports.storage.CompressionType.NONE;
     }
+    // Always null, same reasoning: a session's objectKey is always null (see its own doc comment),
+    // so there is never anything to decrypt and no encryption_key_id column of its own to persist.
+    @Override public String getEncryptionKeyId() {
+        return null;
+    }
     public String getStagedRowsJson() { return stagedRowsJson; }
     public void setStagedRowsJson(String stagedRowsJson) { this.stagedRowsJson = stagedRowsJson; }
     public String getDetectedAccountJson() { return detectedAccountJson; }

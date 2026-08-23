@@ -112,6 +112,26 @@ class AuthServiceLoginTest {
     }
 
     /**
+     * Bug fix: resolveEmailForLogin's email branch returned the identifier completely unchanged
+     * -- unlike IdentityLookup.byEmail, which already trims -- so an email pasted with stray
+     * leading/trailing whitespace (a real, ordinary way to end up with one) silently failed to
+     * resolve to the account it plainly names, indistinguishable from a genuinely unregistered
+     * address. Mirrors login_withEmailIdentifier_authenticatesDirectlyWithoutPhoneLookup exactly,
+     * with padding added around the identifier.
+     */
+    @Test
+    void login_withWhitespacePaddedEmailIdentifier_stillResolvesToTheAccount() {
+        User u = user("jane@example.com", "+919876500001");
+        when(userRepository.findByEmailIgnoreCaseAndAccountScope("jane@example.com", "USER")).thenReturn(Optional.of(u));
+        stubSuccessfulAuthentication();
+
+        authService.login(new LoginRequest("  jane@example.com  ", "Password123", "USER"));
+
+        verify(authenticationManager).authenticate(argThat(token ->
+                u.getId().toString().equals(token.getPrincipal())));
+    }
+
+    /**
      * The masked phone is populated here regardless of verification state, since VerifyPhone.tsx
      * needs it to display which number a code will go to once it calls Firebase Phone
      * Authentication directly right after.

@@ -44,4 +44,15 @@ public interface StoredStatement {
      * {@link CompressionType#NONE} unconditionally rather than persisting a column nothing reads.
      */
     CompressionType getCompressionType();
+
+    /**
+     * The {@code EncryptionService}/{@code KeyProvider} key id the addressed object's bytes were
+     * encrypted under, or null. Null means one of two things, both meaning "do not decrypt": a
+     * legacy row ({@link #getObjectKey()} null), or an addressed row written before encryption
+     * shipped (V107) -- exactly the same either-or {@link #getCompressionType()} already handles
+     * for compression, and decided the same way: explicit per-row metadata, not a guess from the
+     * bytes. Implementations that never address an object at all may return null unconditionally,
+     * same as {@link #getCompressionType()}'s equivalent carve-out.
+     */
+    String getEncryptionKeyId();
 }
