@@ -1,0 +1,63 @@
+package com.finora.service;
+
+import com.finora.entity.Merchant;
+import com.finora.entity.Transaction;
+import com.finora.repository.MerchantRepository;
+import com.finora.repository.TransactionRepository;
+import org.springframework.stereotype.Service;
+
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+
+/**
+ * Groups a user's already-persisted needs-review transactions by merchant, so the Ledger can offer
+ * "5 Swiggy transactions found" instead of 5 separate one-by-one corrections. Reuses the existing
+ * needs-review query and re-groups in Java rather than a GROUP BY query, the same choice
+ * AdminPlatformAnalyticsService already made for the identical reason: Transaction has no JPA
+ * association to Merchant, only a plain UUID column, so there's no JPQL join path to the name.
+ *
+ * <p>Groups of exactly one transaction are deliberately excluded — those stay in the existing
+ * AskOnceCard one-by-one flow (see docs/proposals/transaction-intelligence-engine-phase0-audit.md),
+ * so nothing changes for a user with no repeat-merchant backlog.
+ */
+@Service
+public class TransactionGroupingService {
+
+    private static final int MIN_GROUP_SIZE = 2;
+
+    private final TransactionRepository transactionRepository;
+    private final MerchantRepository merchantRepository;
+
+    public TransactionGroupingService(TransactionRepository transactionRepository,
+                                       MerchantRepository merchantRepository) {
+        this.transactionRepository = transactionRepository;
+        this.merchantRepository = merchantRepository;
+    }
+
+    public record MerchantGroup(UUID merchantId, String merchantName, List<UUID> transactionIds) {}
+
+    public List<MerchantGroup> groupNeedsReviewByMerchant(UUID userId) {
+        List<Transaction> candidates =
+                transactionRepository.findByUserIdAndNeedsCategoryReviewTrueOrderByTxnDateDesc(userId);
+
+        Map<UUID, List<UUID>> idsByMerchant = new LinkedHashMap<>();
+        for (Transaction t : candidates) {
+            if (t.getMerchantId() == null) continue;
+            idsByMerchant.computeIfAbsent(t.getMerchantId(), k -> new ArrayList<>()).add(t.getId());
+        }
+
+        List<MerchantGroup> groups = new ArrayList<>();
+        for (var entry : idsByMerchant.entrySet()) {
+            if (entry.getValue().size() < MIN_GROUP_SIZE) continue;
+            Merchant merchant = merchantRepository.findByIdAndUserId(entry.getKey(), userId).orElse(null);
+            if (merchant == null) continue;
+            groups.add(new MerchantGroup(entry.getKey(), merchant.getCanonicalName(), entry.getValue()));
+        }
+
+        groups.sort((a, b) -> b.transactionIds().size() - a.transactionIds().size());
+        return groups;
+    }
+}
