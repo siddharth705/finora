@@ -108,7 +108,7 @@ about what the old project *contains* is inference, and only Railway can confirm
 
 | Question | How to answer | Why it matters |
 |---|---|---|
-| Is the Cloudflare R2 token scoped to one bucket, or account-wide? | R2 → Manage API Tokens → check the token's permissions and bucket scope | `R2_ACCESS_KEY_ID`/`R2_SECRET_ACCESS_KEY` are the only credentials here that can reach *stored customer statements*. An account-scoped token turns a backend compromise into every bucket. |
+| Is the Cloudflare R2 token scoped to one bucket, or account-wide? | R2 → Manage API Tokens → check the token's permissions and bucket scope | `R2_ACCESS_KEY_ID`/`R2_SECRET_ACCESS_KEY` are the credentials that can reach *stored customer statement objects*. Since V107 those objects are AES-256-GCM encrypted (`StatementContentService`/`EncryptionService`), so this token alone yields ciphertext, not readable statements — `FINORA_ENCRYPTION_KEY` is the credential that also matters now. An account-scoped R2 token still turns a backend compromise into every bucket, which remains worth closing on its own. |
 | What roles does the Firebase service account hold? | GCP IAM → find the service account → review roles | The backend only needs to *verify* ID tokens. If it holds Firebase Admin or Editor, it can also mint tokens, read Firestore and change project config. |
 | How old is the Firebase key, and has it ever been rotated? | GCP IAM → Keys tab → creation date | A service-account JSON key does not expire. Age is the only signal, and one that has never rotated is one nobody has practised rotating. |
 | Is the Resend key send-only? | Resend → API Keys → check permission | A full-access key can also read the sending domain's configuration and mail logs. |

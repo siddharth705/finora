@@ -1,10 +1,14 @@
 package com.finora.imports.storage;
 
+import com.finora.security.crypto.EncryptionService;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
 
 /**
  * Phase 1 must be inert: introducing this layer cannot change how the application behaves today.
@@ -19,6 +23,17 @@ class StatementStorageWiringTest {
     private final ApplicationContextRunner context = new ApplicationContextRunner()
             .withConfiguration(AutoConfigurations.of())
             .withUserConfiguration(FilesystemStatementStorage.class, R2StatementStorage.class);
+
+    /** {@code StatementContentService} now requires an {@code EncryptionService} bean -- these
+     *  tests are only about which {@code StatementStorage} bean gets activated, so a mock (never
+     *  invoked, since none of them actually call store()/read()) is enough. */
+    @Configuration
+    static class EncryptionTestConfig {
+        @Bean
+        EncryptionService encryptionService() {
+            return mock(EncryptionService.class);
+        }
+    }
 
     private static final String[] R2_CREDENTIALS = {
             "app.statement-storage.r2.account-id=test-account",
@@ -118,7 +133,7 @@ class StatementStorageWiringTest {
     @Test
     void aProviderNameThatMatchesNothingFailsStartup_ratherThanSilentlyMeaningDisabled() {
         new ApplicationContextRunner()
-                .withUserConfiguration(FilesystemStatementStorage.class, StatementContentService.class)
+                .withUserConfiguration(FilesystemStatementStorage.class, StatementContentService.class, EncryptionTestConfig.class)
                 .withPropertyValues("app.statement-storage.provider=r2")
                 .run(ctx -> assertThat(ctx)
                         .hasFailed()
@@ -133,11 +148,11 @@ class StatementStorageWiringTest {
     @Test
     void unsetAndRecognisedProvidersBothStartCleanly() {
         new ApplicationContextRunner()
-                .withUserConfiguration(FilesystemStatementStorage.class, StatementContentService.class)
+                .withUserConfiguration(FilesystemStatementStorage.class, StatementContentService.class, EncryptionTestConfig.class)
                 .run(ctx -> assertThat(ctx).hasNotFailed().hasSingleBean(StatementContentService.class));
 
         new ApplicationContextRunner()
-                .withUserConfiguration(FilesystemStatementStorage.class, StatementContentService.class)
+                .withUserConfiguration(FilesystemStatementStorage.class, StatementContentService.class, EncryptionTestConfig.class)
                 .withPropertyValues(
                         "app.statement-storage.provider=filesystem",
                         "app.statement-storage.filesystem.root=${java.io.tmpdir}/finora-wiring-test")
