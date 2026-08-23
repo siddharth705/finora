@@ -18,13 +18,10 @@ const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
  * field replaces having to pick "Login" vs "Register" up front -- POST /auth/identify (see
  * AuthService.identify) resolves it to what should happen next, and this page routes there:
  *
- * - PASSWORD -- an existing password account. Sent to /login with the identifier prefilled and
- *   the password field shown as normal.
- * - GOOGLE / APPLE -- an existing OAuth account. Sent to /login with the identifier prefilled,
- *   but Login.tsx hides the password field and the "forgot password" link for this visit (see its
- *   own doc comment) -- §2.4's "move the OAuth-user rejection earlier" recommendation, since the
- *   backend already refuses a password login for these accounts, this just stops the dead-end
- *   form from ever being shown.
+ * - EXISTS -- an account exists for this identifier (any sign-in method). Sent to /login with
+ *   the identifier prefilled; the password field and Google button are always shown together
+ *   there, same as a direct visit -- see Phase 7's amendment below for why this no longer
+ *   branches on which method the account actually uses.
  * - CONTINUE -- no account behind this identifier (or at least, nothing this endpoint will
  *   confirm -- see AuthService.identify's own doc comment on why status isn't surfaced here).
  *   Sent to /register with whichever of its two fields (email or mobile number) the identifier
@@ -34,6 +31,14 @@ const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
  * them, it doesn't replace or gate them. Landing-page CTA wiring (whether "Sign in" / "Get
  * started" should route through here instead of straight to /login /register) is left for a
  * separate decision, not part of this slice.
+ *
+ * Phase 7 amendment (resolved 2026-08-23): nextAction used to be PASSWORD/GOOGLE/APPLE/CONTINUE,
+ * and this page forwarded the method to Login.tsx so it could hide the password field for a
+ * known OAuth account (§2.4's "move the OAuth-user rejection earlier"). Collapsed to EXISTS/
+ * CONTINUE to stop /auth/identify revealing which sign-in method an existing account uses --
+ * closing that half of the enumeration leak cost this page its per-method routing, which is the
+ * accepted tradeoff (see IdentifyResponse's own doc comment on the backend for the full
+ * reasoning). The backend's own signInMethod refusal at actual login time is unaffected.
  */
 export default function AuthEntry() {
   const { loginWithGoogle } = useAuth();
@@ -57,7 +62,7 @@ export default function AuthEntry() {
         const isEmail = EMAIL_PATTERN.test(trimmed);
         void navigate('/register', { state: isEmail ? { email: trimmed } : { phoneNumber: trimmed } });
       } else {
-        void navigate('/login', { state: { identifier: trimmed, method: nextAction } });
+        void navigate('/login', { state: { identifier: trimmed } });
       }
     } catch (err: any) {
       setError(err.response?.data?.message ?? 'Something went wrong. Please try again.');
