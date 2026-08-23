@@ -5,6 +5,7 @@ import com.finora.entity.CategoryRule;
 import com.finora.entity.Merchant;
 import com.finora.entity.MerchantCategoryLearning;
 import com.finora.entity.Transaction;
+import com.finora.dto.WorkspaceSettingsDto;
 import com.finora.repository.CategoryRepository;
 import com.finora.repository.MerchantCategoryLearningRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -33,6 +34,7 @@ class CategorizationServiceTest {
     private MerchantCategoryLearningRepository learningRepository;
     private CategoryRepository categoryRepository;
     private RuleEngineService ruleEngineService;
+    private WorkspaceSettingsService workspaceSettingsService;
     private CategorizationService categorizationService;
     private final UUID userId = UUID.randomUUID();
 
@@ -51,10 +53,11 @@ class CategorizationServiceTest {
         // methods, so every test here (none of which are about the rule engine itself -- see
         // RuleEngineServiceTest) falls straight through to the learned/keyword logic being tested.
         ruleEngineService = mock(RuleEngineService.class);
+        workspaceSettingsService = mock(WorkspaceSettingsService.class);
         categorizationService = new CategorizationService(
                 merchantNormalizationEngine, merchantLearningService, learningEventPublisher,
                 learningRepository,
-                new ConfidenceEngine(), categoryRepository, ruleEngineService); // ConfidenceEngine is pure logic — real instance is fine
+                new ConfidenceEngine(), categoryRepository, ruleEngineService, workspaceSettingsService); // ConfidenceEngine is pure logic — real instance is fine
     }
 
     private Merchant merchantWithId(UUID id) {
@@ -117,6 +120,84 @@ class CategorizationServiceTest {
     }
 
     @Test
+    void suggest_userRuleMatch_reportsInitialRuleConfidence() {
+        UUID merchantId = UUID.randomUUID();
+        UUID ruleId = UUID.randomUUID();
+        CategoryRule rule = new CategoryRule();
+        ReflectionTestUtils.setField(rule, "id", ruleId);
+        rule.setActionValue("Dining");
+        rule.setScope(CategoryRule.Scope.USER);
+
+        when(merchantNormalizationEngine.resolve(eq(userId), anyString())).thenReturn(merchantWithId(merchantId));
+        when(ruleEngineService.evaluateCategoryRule(eq(userId), anyString(), any(), anyString(), any()))
+                .thenReturn(Optional.of(new RuleEngineService.RuleMatch(rule)));
+
+        var suggestion = categorizationService.suggest(userId, "AMAZON PAY");
+
+        assertThat(suggestion.confidence()).isEqualTo(ConfidenceEngine.INITIAL_RULE_CONFIDENCE);
+    }
+
+    @Test
+    void suggest_learnedPattern_reportsRealConfidencePercentage_notJustHighestCount() {
+        // Amazon-shaped distribution: 3 Shopping confirmations, 1 Electronics -- a genuine 75%,
+        // not the flat 70 a rule match gets and not the highest-count category's raw count.
+        UUID merchantId = UUID.randomUUID();
+        UUID shoppingId = UUID.randomUUID();
+        UUID electronicsId = UUID.randomUUID();
+
+        MerchantCategoryLearning shopping = new MerchantCategoryLearning();
+        shopping.setMerchantId(merchantId);
+        shopping.setUserId(userId);
+        shopping.setCategoryId(shoppingId);
+        shopping.setConfirmationCount(3);
+        MerchantCategoryLearning electronics = new MerchantCategoryLearning();
+        electronics.setMerchantId(merchantId);
+        electronics.setUserId(userId);
+        electronics.setCategoryId(electronicsId);
+        electronics.setConfirmationCount(1);
+
+        Category shoppingCategory = new Category();
+        shoppingCategory.setUserId(userId);
+        shoppingCategory.setName("Shopping");
+
+        when(merchantNormalizationEngine.resolve(eq(userId), anyString())).thenReturn(merchantWithId(merchantId));
+        when(learningRepository.findByUserIdAndMerchantId(userId, merchantId))
+                .thenReturn(List.of(shopping, electronics));
+        when(categoryRepository.findById(shoppingId)).thenReturn(Optional.of(shoppingCategory));
+
+        var suggestion = categorizationService.suggest(userId, "AMAZON PAY");
+
+        assertThat(suggestion.category()).isEqualTo("Shopping");
+        assertThat(suggestion.confidence()).isEqualTo(75); // round(3 * 100.0 / 4)
+    }
+
+    @Test
+    void suggest_keywordFallbackMatch_reportsInitialRuleConfidence() {
+        UUID merchantId = UUID.randomUUID();
+        when(merchantNormalizationEngine.resolve(eq(userId), anyString())).thenReturn(merchantWithId(merchantId));
+        when(learningRepository.findByUserIdAndMerchantId(userId, merchantId)).thenReturn(List.of());
+
+        // "SWIGGY" hits the static keyword table's Dining rule -- see
+        // suggest_fallsBackToRuleEngine_whenMerchantHasNoLearnedDistribution above for the same setup.
+        var suggestion = categorizationService.suggest(userId, "SWIGGY*ORDR9182 BLR");
+
+        assertThat(suggestion.source()).isEqualTo("rule");
+        assertThat(suggestion.confidence()).isEqualTo(ConfidenceEngine.INITIAL_RULE_CONFIDENCE);
+    }
+
+    @Test
+    void suggest_defaultFallback_reportsInitialDefaultConfidence() {
+        UUID merchantId = UUID.randomUUID();
+        when(merchantNormalizationEngine.resolve(eq(userId), anyString())).thenReturn(merchantWithId(merchantId));
+        when(learningRepository.findByUserIdAndMerchantId(userId, merchantId)).thenReturn(List.of());
+
+        var suggestion = categorizationService.suggest(userId, "SOME COMPLETELY UNKNOWN VENDOR");
+
+        assertThat(suggestion.source()).isEqualTo("default");
+        assertThat(suggestion.confidence()).isEqualTo(ConfidenceEngine.INITIAL_DEFAULT_CONFIDENCE);
+    }
+
+    @Test
     void learn_resolvesMerchantAndDelegatesToMerchantLearningService() {
         UUID merchantId = UUID.randomUUID();
         UUID categoryId = UUID.randomUUID();
@@ -128,6 +209,48 @@ class CategorizationServiceTest {
         // The synchronous path must not ALSO queue -- a single interactive action that both applied
         // the learning and left an event behind would confirm the merchant twice.
         verifyNoInteractions(learningEventPublisher);
+    }
+
+    // --- Auto-apply confidence threshold --------------------------------------------------------
+
+    @Test
+    void needsCategoryReview_flagsADefaultSuggestion_whenConfidenceIsBelowTheUsersThreshold() {
+        when(workspaceSettingsService.get(userId))
+                .thenReturn(new WorkspaceSettingsDto(90, null));
+
+        boolean result = categorizationService.needsCategoryReview(userId, true, ConfidenceEngine.INITIAL_DEFAULT_CONFIDENCE);
+
+        assertThat(result).isTrue(); // 20 < 90
+    }
+
+    @Test
+    void needsCategoryReview_clearsTheFlag_whenConfidenceMeetsALowerUserThreshold() {
+        when(workspaceSettingsService.get(userId))
+                .thenReturn(new WorkspaceSettingsDto(10, null));
+
+        boolean result = categorizationService.needsCategoryReview(userId, true, ConfidenceEngine.INITIAL_DEFAULT_CONFIDENCE);
+
+        assertThat(result).isFalse(); // 20 >= 10 -- a permissive threshold clears the default-source flag
+    }
+
+    @Test
+    void needsCategoryReview_isFalse_wheneverTheSourceWasNotADefaultGuess() {
+        // A rule/learned match is never flagged for review regardless of confidence or threshold --
+        // this mirrors the exact pre-existing behaviour (source.equals("default")) this method replaces.
+        boolean result = categorizationService.needsCategoryReview(userId, false, 20);
+
+        assertThat(result).isFalse();
+        verifyNoInteractions(workspaceSettingsService);
+    }
+
+    @Test
+    void needsCategoryReview_staysTrue_whenConfidenceIsNull() {
+        // A caller with no confidence to report (shouldn't happen post-Task-1, but must fail safe)
+        // keeps the pre-existing "always flag a default guess" behaviour rather than silently clearing it.
+        boolean result = categorizationService.needsCategoryReview(userId, true, null);
+
+        assertThat(result).isTrue();
+        verifyNoInteractions(workspaceSettingsService);
     }
 
     // --- WI1A: the batch counterpart ------------------------------------------------------------

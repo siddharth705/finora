@@ -46,31 +46,34 @@ public class TransactionExplanationService {
     public TransactionExplanationDto explain(UUID userId, UUID transactionId) {
         Transaction t = OwnershipGuard.requireOwned(
                 transactionRepository.findById(transactionId), Transaction::getUserId, userId, "Transaction");
+        Integer confidence = t.getDecisionConfidence();
 
         return switch (t.getDecisionSource()) {
             case MANUAL -> new TransactionExplanationDto(
-                    "MANUAL", "You set this category yourself.", List.of());
+                    "MANUAL", "You set this category yourself.", List.of(), confidence);
             case USER_RULE -> ruleExplanation(t, "USER_RULE",
-                    "Matched a rule you created.");
+                    "Matched a rule you created.", confidence);
             case GLOBAL_RULE -> ruleExplanation(t, "GLOBAL_RULE",
-                    "Matched one of Finora's built-in rules.");
+                    "Matched one of Finora's built-in rules.", confidence);
             case LEARNED_PATTERN -> new TransactionExplanationDto(
                     "LEARNED_PATTERN",
                     "Categorized based on how you've categorized " + merchantPhrase(t) + " before.",
-                    List.of("Every time you confirm or correct a category, Finora remembers it for that merchant."));
+                    List.of("Every time you confirm or correct a category, Finora remembers it for that merchant."),
+                    confidence);
             case KEYWORD_MATCH -> new TransactionExplanationDto(
                     "KEYWORD_MATCH",
                     "Matched a keyword Finora recognizes in the description.",
-                    List.of());
+                    List.of(), confidence);
             case FILE_PROVIDED -> new TransactionExplanationDto(
                     "FILE_PROVIDED",
                     "The imported file specified this category directly.",
-                    List.of());
-            case MERCHANT_DEFAULT -> defaultExplanation(t);
+                    List.of(), confidence);
+            case MERCHANT_DEFAULT -> defaultExplanation(t, confidence);
         };
     }
 
-    private TransactionExplanationDto ruleExplanation(Transaction t, String source, String fallbackSummary) {
+    private TransactionExplanationDto ruleExplanation(Transaction t, String source, String fallbackSummary,
+                                                        Integer confidence) {
         CategoryRule rule = t.getDecisionRuleId() == null
                 ? null : categoryRuleRepository.findById(t.getDecisionRuleId()).orElse(null);
         // A rule can be edited or deleted after it matched -- the transaction it already
@@ -79,19 +82,20 @@ public class TransactionExplanationService {
         // error when the id no longer resolves to today's rule set.
         if (rule == null) {
             return new TransactionExplanationDto(source, fallbackSummary,
-                    List.of("The specific rule is no longer available (it may have been edited or removed since)."));
+                    List.of("The specific rule is no longer available (it may have been edited or removed since)."),
+                    confidence);
         }
         String condition = fieldLabel(rule.getField()) + " " + operatorLabel(rule.getOperator())
                 + " " + comparisonValueLabel(rule);
         String summary = fallbackSummary + " " + condition + " → " + rule.getActionValue() + ".";
         return new TransactionExplanationDto(source, summary,
-                List.of("Rule condition: " + condition, "Assigns category: " + rule.getActionValue()));
+                List.of("Rule condition: " + condition, "Assigns category: " + rule.getActionValue()), confidence);
     }
 
     // Same fact as GmailReviewService.reasoningFor's "isn't auto-detected yet" caveat (independently
     // worded on purpose -- this is the after-the-fact ledger explanation, not the pre-approval
     // review queue). If C6.3 ships category detection, update both.
-    private TransactionExplanationDto defaultExplanation(Transaction t) {
+    private TransactionExplanationDto defaultExplanation(Transaction t, Integer confidence) {
         String categoryName = t.getCategoryId() == null ? "this category"
                 : categoryRepository.findById(t.getCategoryId()).map(Category::getName).orElse("this category");
         if (t.getSource() == Transaction.Source.GMAIL_IMPORT) {
@@ -99,11 +103,11 @@ public class TransactionExplanationService {
                     "Imported from a Gmail receipt (" + merchantPhrase(t)
                             + "). Finora doesn't auto-detect a category for this merchant yet, so it defaulted to \""
                             + categoryName + "\".",
-                    List.of("No rule, learned pattern, or keyword matched this transaction."));
+                    List.of("No rule, learned pattern, or keyword matched this transaction."), confidence);
         }
         return new TransactionExplanationDto("MERCHANT_DEFAULT",
                 "No rule, learned pattern, or keyword matched, so this defaulted to \"" + categoryName + "\".",
-                List.of());
+                List.of(), confidence);
     }
 
     private String merchantPhrase(Transaction t) {

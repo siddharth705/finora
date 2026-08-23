@@ -191,6 +191,11 @@ export interface StagedRow {
   merchant: string | null;
   // 1.0 when `merchant` was resolved, null otherwise. Not a rich confidence score in this phase.
   merchantConfidence: number | null;
+  // The category decision's confidence percentage (0-100), from the backend's
+  // CategorizationService.Suggestion#confidence(). Null when categorySource is 'file' (a fact
+  // from the source document, not a guess). Distinct from `confidence` above (Gmail-receipt
+  // extraction reliability) and `merchantConfidence` (merchant-identity resolution).
+  categoryConfidence: number | null;
 }
 
 export interface MerchantGroup {

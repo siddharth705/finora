@@ -323,6 +323,9 @@ function ExplanationModal({ transaction, onClose }: { transaction: Transaction; 
           ) : (
             <div className="space-y-2">
               <p className="text-ink text-sm">{explanation.summary}</p>
+              {explanation.confidence != null && (
+                <p className="text-xs text-muted">{explanation.confidence}% confidence</p>
+              )}
               {explanation.evidence.length > 0 && (
                 <ul className="list-disc list-inside space-y-1">
                   {explanation.evidence.map((line, i) => (
