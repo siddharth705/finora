@@ -395,8 +395,17 @@ public class ImportDto {
     public record SectionConfirm(
             @NotNull(message = "rows is required") List<@Valid ConfirmedRow> rows,
             UUID existingAccountId, @Valid NewAccountRequest newAccount,
-            BigDecimal statementOpeningBalance, BigDecimal statementClosingBalance
-    ) {}
+            BigDecimal statementOpeningBalance, BigDecimal statementClosingBalance,
+            // Same round-trip, and same bug fix, as ConfirmRequest's own two trailing fields --
+            // see that record's doc comment.
+            LocalDate statementPeriodStart, LocalDate statementPeriodEnd
+    ) {
+        /** Pre-existing arity -- see ConfirmRequest's own legacy constructor for why. */
+        public SectionConfirm(List<ConfirmedRow> rows, UUID existingAccountId, NewAccountRequest newAccount,
+                               BigDecimal statementOpeningBalance, BigDecimal statementClosingBalance) {
+            this(rows, existingAccountId, newAccount, statementOpeningBalance, statementClosingBalance, null, null);
+        }
+    }
 
     /** Confirms every section of a multi-account PDF staging session together -- see
      *  ImportService.confirmMultiSection(), which loops calling the existing single-account
@@ -508,8 +517,28 @@ public class ImportDto {
             @NotNull(message = "rows is required") List<@Valid ConfirmedRow> rows,
             UUID existingAccountId, @Valid NewAccountRequest newAccount,
             BigDecimal statementOpeningBalance, BigDecimal statementClosingBalance,
-            String password
-    ) {}
+            String password,
+            // Echoed back from DetectedAccountInfo.statementPeriodStart/End, same round-trip as the
+            // opening/closing balance fields above. Bug fix: without these, persistSection had no
+            // way to know the printed statement period PdfPreviewGenerator/StatementValidator had
+            // already computed at staging time -- it silently re-derived the period from
+            // minDate/maxDate of the confirmed rows alone, which is only ever a lower bound on the
+            // statement's true period whenever a cycle has no activity near its own boundary dates.
+            // Null (from an older client, or a format/path with nothing printed to echo) falls back
+            // to that same minDate/maxDate derivation exactly as before -- see persistSection.
+            LocalDate statementPeriodStart, LocalDate statementPeriodEnd
+    ) {
+        /** Pre-existing arity. Kept so the many call sites that construct a request with no printed
+         *  statement period to echo -- reimport's internal re-scoping, tests, Gmail's receipt-derived
+         *  confirms -- stay unchanged; both new fields default to null, which persistSection already
+         *  treats as "fall back to the confirmed rows' own date range". */
+        public ConfirmRequest(UUID sessionId, List<ConfirmedRow> rows, UUID existingAccountId,
+                               NewAccountRequest newAccount, BigDecimal statementOpeningBalance,
+                               BigDecimal statementClosingBalance, String password) {
+            this(sessionId, rows, existingAccountId, newAccount, statementOpeningBalance,
+                    statementClosingBalance, password, null, null);
+        }
+    }
 
     /**
      * @param detectedProduct      the FinancialProductType the review screen is confirming, echoed
