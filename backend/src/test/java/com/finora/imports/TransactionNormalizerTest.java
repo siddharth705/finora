@@ -205,6 +205,40 @@ class TransactionNormalizerTest {
     }
 
     @Test
+    void normalize_readsDirectionFromTheRupeeArtifactColumn_onARealSbiCreditCardStatement() {
+        // Verified against a real SBI credit-card statement. PDFBox's extraction renders that
+        // document's "Amount (₹)" sub-column literally as "( ` )" -- the same font-substitution
+        // quirk CsvParser.parseNumeric's own "Rupee-as-C" comment describes, here landing on a
+        // column HEADER instead of a value -- and every transaction row's Credit/Debit marker (a
+        // bare "C" or "D", per the statement's own printed legend "C=Credit ; D=Debit") lands in
+        // that exact column. Six genuine credits (three "PAYMENT RECEIVED..." rows among them) on
+        // that real document were staged as EXPENSE before this fix, because normalizeHeaderCell
+        // strips a trailing parenthetical unconditionally -- "( ` )" collapses to the EMPTY
+        // string, the same key every genuinely blank/spacer column also produces, which is why
+        // this can't simply be added to TYPE_HINTS (a blank-header hint would match every
+        // unrelated spacer column in the corpus).
+        Map<String, String> credit = rowOf(
+                "Date", "12 Jul 26",
+                "Transaction Details", "PAYMENT RECEIVED 000000000DKT54ZH1PKPIID",
+                "Amount", "53,000.00",
+                "( ` )", "C");
+
+        StagedRow result = normalizer.normalize(userId, credit);
+
+        assertThat(result).isNotNull();
+        assertThat(result.type()).isEqualTo("INCOME");
+        assertThat(result.amount()).isEqualByComparingTo("53000.00");
+
+        Map<String, String> debit = rowOf(
+                "Date", "11 Jul 26",
+                "Transaction Details", "UPI-VMPL DEL 24",
+                "Amount", "390.00",
+                "( ` )", "D");
+
+        assertThat(normalizer.normalize(userId, debit).type()).isEqualTo("EXPENSE");
+    }
+
+    @Test
     void normalize_stillRecognizesTheLiteralWordIncomeInATypeColumn() {
         // Pre-existing behavior (some exports use a Type column with values like "Income"/
         // "Expense" rather than Dr/Cr) -- the new Dr/Cr check must not replace this, only add to it.

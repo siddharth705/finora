@@ -465,6 +465,64 @@ class ImportServiceAskOnceTest {
     }
 
     @Test
+    void confirm_prefersRequestSuppliedStatementPeriod_overTheConfirmedRowsDateRange() throws Exception {
+        // A printed "Statement Period" can be wider than the rows a user actually has
+        // transactions for (e.g. no activity in the first few days of the cycle) --
+        // PdfPreviewGenerator/StatementValidator already compute and surface this correctly at
+        // staging time (see their own buildDetectedAccountInfo), but until now ConfirmRequest had
+        // nowhere to carry it back, so persistSection silently re-derived the period from
+        // minDate/maxDate of the confirmed rows alone, discarding the printed period the user was
+        // shown on the review screen.
+        var row1 = new ConfirmedRow(LocalDate.of(2026, 7, 10), "SWIGGY*ORDR9182 BLR",
+                BigDecimal.valueOf(486), "EXPENSE", "Dining", true, "rule", null, false, null, null);
+        var row2 = new ConfirmedRow(LocalDate.of(2026, 7, 12), "ZOMATO ORDER",
+                BigDecimal.valueOf(300), "EXPENSE", "Dining", true, "rule", null, false, null, null);
+        var request = new ConfirmRequest(null, List.of(row1, row2), accountId, null, null, null, null,
+                LocalDate.of(2026, 7, 1), LocalDate.of(2026, 7, 31));
+
+        importService.confirm(userId, dummyFile(), request);
+
+        ArgumentCaptor<StatementImport> captor = ArgumentCaptor.forClass(StatementImport.class);
+        verify(statementImportRepository).save(captor.capture());
+        assertThat(captor.getValue().getStatementPeriodStart()).isEqualTo(LocalDate.of(2026, 7, 1));
+        assertThat(captor.getValue().getStatementPeriodEnd()).isEqualTo(LocalDate.of(2026, 7, 31));
+    }
+
+    @Test
+    void confirm_reportsTheRequestSuppliedStatementPeriod_onTheImmediateSummaryResponse() throws Exception {
+        // Same fix as above, but for the response the user actually sees first -- the "Statement
+        // period: ..." line on the post-confirm summary screen (Import.tsx) reads
+        // ConfirmResponse.statementPeriodStart/End directly, not the persisted StatementImport row.
+        var row1 = new ConfirmedRow(LocalDate.of(2026, 7, 10), "SWIGGY*ORDR9182 BLR",
+                BigDecimal.valueOf(486), "EXPENSE", "Dining", true, "rule", null, false, null, null);
+        var row2 = new ConfirmedRow(LocalDate.of(2026, 7, 12), "ZOMATO ORDER",
+                BigDecimal.valueOf(300), "EXPENSE", "Dining", true, "rule", null, false, null, null);
+        var request = new ConfirmRequest(null, List.of(row1, row2), accountId, null, null, null, null,
+                LocalDate.of(2026, 7, 1), LocalDate.of(2026, 7, 31));
+
+        var response = importService.confirm(userId, dummyFile(), request);
+
+        assertThat(response.statementPeriodStart()).isEqualTo(LocalDate.of(2026, 7, 1));
+        assertThat(response.statementPeriodEnd()).isEqualTo(LocalDate.of(2026, 7, 31));
+    }
+
+    @Test
+    void confirm_fallsBackToTheConfirmedRowsDateRange_whenTheRequestCarriesNoStatementPeriod() throws Exception {
+        var row1 = new ConfirmedRow(LocalDate.of(2026, 7, 10), "SWIGGY*ORDR9182 BLR",
+                BigDecimal.valueOf(486), "EXPENSE", "Dining", true, "rule", null, false, null, null);
+        var row2 = new ConfirmedRow(LocalDate.of(2026, 7, 12), "ZOMATO ORDER",
+                BigDecimal.valueOf(300), "EXPENSE", "Dining", true, "rule", null, false, null, null);
+        var request = new ConfirmRequest(null, List.of(row1, row2), accountId, null, null, null, null);
+
+        importService.confirm(userId, dummyFile(), request);
+
+        ArgumentCaptor<StatementImport> captor = ArgumentCaptor.forClass(StatementImport.class);
+        verify(statementImportRepository).save(captor.capture());
+        assertThat(captor.getValue().getStatementPeriodStart()).isEqualTo(LocalDate.of(2026, 7, 10));
+        assertThat(captor.getValue().getStatementPeriodEnd()).isEqualTo(LocalDate.of(2026, 7, 12));
+    }
+
+    @Test
     void confirm_appliesSideEffectRules_andReflectsTheOverriddenCategoryInTheTallyAndTheSavedTransaction() throws Exception {
         // A matching MARK_INVESTMENT rule overrides whatever category was staged for this row --
         // CategorizationService.applySideEffectRules returns the new Category, and confirm() must

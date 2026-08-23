@@ -4,10 +4,12 @@
 decisions) — decision 5 (Phase 2 sequencing) is now resolved, the other 5
 are not. Implementation: Phase 1 is done, Phase 2's audit-hardening slice
 is done, Phase 3's backend slice (`/auth/identify`, PR #327) is merged —
-its frontend entry-page UX is not started. Phases 3.5/4/5 have not begun.
-Committed via a worktree per `CLAUDE.md` (primary checkout is a shared
-read-only-for-writes checkout). This is a roadmap — each phase ships as
-its own ticket/PR, never as one combined PR.
+its frontend entry-page UX is not started. Phase 3.5's audit is done (no
+gap in its own checklist; a bonus phone-change session-revocation gap
+found and fixed). Phases 4/5 have not begun. Committed via a worktree per
+`CLAUDE.md` (primary checkout is a shared read-only-for-writes checkout).
+This is a roadmap — each phase ships as its own ticket/PR, never as one
+combined PR.
 
 **Phase 1 (Apple step-up verification) is already done** — PR #290 merged
 before this document's audit ran, and the audit missed it; corrected here.
@@ -321,7 +323,7 @@ Same session-table pattern as `phone_change_sessions`
 work (§1.5 confirmed nothing exists today), but it's low-novelty — copy the
 phone-change architecture, don't invent a new one.
 
-### 2.7a Session invalidation audit (add as a checklist item, not a new phase)
+### 2.7a Session invalidation audit (add as a checklist item, not a new phase) — ✅ AUDITED 2026-08-23
 For every authentication-lifecycle action — password reset, password
 change, delete account, deactivate account — confirm: are all refresh
 tokens revoked, and are active sessions invalidated? Deactivate already does
@@ -331,6 +333,24 @@ done — inconsistency here (e.g. a stale session surviving a password reset)
 is a real vulnerability class, not a hypothetical. Standing rule going
 forward: **authentication lifecycle actions must invalidate sessions
 consistently** — treat any new sensitive action against this checklist too.
+
+**Audit result: all 4 already correct, no gap.** Password reset and delete
+account both call `RefreshTokenService.revokeAllForUser` unconditionally.
+Deactivate does the same (the reference pattern above). Password change
+revokes all *other* sessions (`revokeAllOtherSessionsForUser`, current
+device spared) via a client-supplied `signOutOtherDevices` flag — opt-in
+at the API level, but both the web and mobile clients already default that
+toggle to `true`, so in practice a user has to actively choose not to
+revoke. No backend change needed for the 4 items this checklist names.
+
+**One gap found outside the checklist, closed anyway:** phone-number
+change (`PhoneChangeService.complete`) had no session revocation at all —
+not even opt-in. Worse than password change, since this flow authorizes
+itself purely by proving control of the number being moved *to* (no
+"re-verify current credential" step the way password-change's `start()`
+has one), a lower bar than a password change to begin with. Fixed by
+adding the same `revokeAllOtherSessionsForUser` call, unconditional (no
+UI toggle exists here), current device spared.
 
 ### 2.8 OTP-login as a first-class method — scope check
 Your brief lists Phone OTP as a *login* method equal to password/Google/
@@ -447,10 +467,15 @@ match.
   phase-ordering rationale above (observability before surface area) was
   agreed after the backend endpoint already existed.
 
-**Phase 3.5 — Session invalidation audit** (checklist item inside Phase 3,
-not a separate ticket)
+**Phase 3.5 — Session invalidation audit — ✅ DONE, audited + fixed 2026-08-23**
 - Verify refresh-token revocation / session invalidation is consistent
   across password-reset, password-change, deactivate, delete (§2.7a)
+- Result: all 4 already correct in production, no fix needed for the
+  checklist itself
+- Bonus fix found and closed in the same pass: `PhoneChangeService.complete`
+  had no session revocation at all — now revokes every other session on a
+  successful phone-number change, current device spared, same pattern
+  password-change already uses (§2.7a for the full writeup)
 
 **Phase 4 — P2 feature: Change email**
 `feat(account): add email change flow`

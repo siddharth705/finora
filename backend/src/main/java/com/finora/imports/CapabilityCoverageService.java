@@ -167,7 +167,16 @@ public class CapabilityCoverageService {
             // "Transaction Details" one line above "Date | Amount ( ` )", the row that gets accepted
             // on its own. See PdfTableLocator.reconstructHeader and
             // docs/architecture/system-design/header-reconstruction-design.md.
-            "HEADER_RECONSTRUCTED");
+            "HEADER_RECONSTRUCTED",
+            // A legal/legend block (abbreviation key, late-payment-charges prose) printed at the
+            // bottom of EVERY page, not once at the document's true end -- unlike
+            // TRANSACTION_TABLE_CLOSED/MITC_SECTION_CLOSED's own markers. Found on the same real SBI
+            // Credit Card statement HEADER_RECONSTRUCTED above is evidenced from: with no boundary
+            // recognized for it, the block glued onto the last real transaction above each page
+            // break via the ordinary trailing-continuation merge. Resets at the next header
+            // (repeated or new), unlike the permanent TRAILING_CONTENT_TRIGGERS family -- see
+            // PdfTableLocator.pageLegendBlockActive's own doc comment.
+            "PAGE_LEGEND_BLOCK_SUPPRESSED");
 
     /**
      * @param importsAnalysed    how many imports these counts are drawn from -- a coverage figure
