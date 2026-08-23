@@ -64,17 +64,20 @@ export const authApi = {
     api.post<AuthResponseDto>('/auth/login', { identifier, password, scope: PORTAL_SCOPE }),
   // Identifier-first entry step (auth/security review §2.2) -- resolves an email or mobile
   // number to what the frontend should show next, without a raw exists boolean. See
-  // AuthService.identify on the backend: nextAction is 'PASSWORD' | 'GOOGLE' | 'APPLE' for an
-  // existing account, or 'CONTINUE' when there isn't one yet.
+  // AuthService.identify on the backend: nextAction is 'EXISTS' for an existing account
+  // (Phase 7, resolved 2026-08-23: no longer distinguishes which sign-in method it uses), or
+  // 'CONTINUE' when there isn't one yet.
   identify: (identifier: string) =>
     api.post<{ nextAction: string }>('/auth/identify', { identifier }).then((r) => r.data),
   forgotPassword: (email: string) =>
     api.post<{ message: string; devResetLink: string | null }>('/auth/forgot-password', { email, scope: PORTAL_SCOPE }).then((r) => r.data),
-  // Reveals the account's real phone number for a valid, unused reset link -- needed to call
-  // Firebase Phone Authentication directly (Firebase's own client SDK sends the OTP; this
-  // backend never does). token is the same raw reset-link token from forgotPassword.
-  resolveResetPasswordPhone: (token: string) =>
-    api.post<{ phoneNumber: string }>('/auth/reset-password/phone', { token }).then((r) => r.data),
+  // BH-015 fix: confirms a user-typed phone number against the account tied to a valid, unused
+  // reset link -- never reveals the account's real number. On success, this page hands the SAME
+  // number the user just typed to Firebase Phone Authentication directly (Firebase's own client
+  // SDK sends the OTP; this backend never does). token is the same raw reset-link token from
+  // forgotPassword.
+  verifyResetPasswordPhone: (token: string, phoneNumber: string) =>
+    api.post<{ message: string }>('/auth/reset-password/phone', { token, phoneNumber }).then((r) => r.data),
   // firebaseIdToken is the second factor -- proof of phone access via Firebase Phone
   // Authentication, verified server-side (see AuthService.resetPassword on the backend).
   resetPassword: (token: string, firebaseIdToken: string, newPassword: string) =>
@@ -209,6 +212,9 @@ export interface TransactionExplanation {
   decisionSource: string;
   summary: string;
   evidence: string[];
+  // 0-100, or absent -- see TransactionExplanationDto's own doc comment for which decision
+  // sources populate this (never MANUAL/FILE_PROVIDED).
+  confidence?: number;
 }
 
 export const transactionsApi = {
@@ -241,6 +247,7 @@ export interface ConfirmedRowPayload {
   include: boolean;
   categorySource: string;
   ruleId: string | null;
+  categoryConfidence: number | null;
   /** What the engine guessed. */
   likelyDuplicate: boolean;
   /**

@@ -1,3 +1,4 @@
+import type { NavigatorScreenParams } from '@react-navigation/native';
 import type { ReimportResult } from '../types';
 
 /**
@@ -9,11 +10,15 @@ export type AuthStackParamList = {
   // Login/Register -- both stay directly reachable on their own for the "No account? Register" /
   // "Sign in" footer links, which intentionally skip AuthEntry rather than round-trip through it.
   AuthEntry: undefined;
-  // identifier/method: set only when arriving via AuthEntry's POST /auth/identify result --
-  // prefills the field and, for a GOOGLE/APPLE account, hides the password form (see
-  // LoginScreen's own doc comment). message: the pre-existing one-time confirmation banner
-  // (e.g. after a password reset), unrelated to AuthEntry.
-  Login: { message?: string; identifier?: string; method?: string } | undefined;
+  // identifier: set only when arriving via AuthEntry's POST /auth/identify result -- prefills
+  // the field. message: the pre-existing one-time confirmation banner (e.g. after a password
+  // reset), unrelated to AuthEntry.
+  //
+  // Phase 7 (resolved 2026-08-23): this used to also carry `method` (PASSWORD/GOOGLE/APPLE) so
+  // LoginScreen could hide the password form for a known OAuth account -- removed along with
+  // nextAction no longer revealing which method an account uses (see AuthEntryScreen's own doc
+  // comment).
+  Login: { message?: string; identifier?: string } | undefined;
   // email/phoneNumber: set only when AuthEntry's identify() call returns nextAction CONTINUE --
   // prefills whichever of Register's two fields the identifier looked like.
   Register: { email?: string; phoneNumber?: string } | undefined;
@@ -35,6 +40,10 @@ export type MoreStackParamList = {
   Investments: undefined;
   Profile: undefined;
   Settings: undefined;
+  // Phase 4: reached via the deep link EmailChangeService emails to the new address
+  // (finora://email-change-verify?sessionId=...&token=...), registered in RootNavigator's
+  // `linking` config -- see VerifyEmailChangeScreen's own doc comment.
+  VerifyEmailChange: { sessionId?: string; token?: string } | undefined;
 };
 
 /**
@@ -81,5 +90,9 @@ export type AppTabParamList = {
   // Params only ever set when arriving from "Re-import" on the Statement History screen; a normal
   // tap on the Import tab carries none and the screen starts at its upload step as always.
   Import: { reimport: ReimportParams } | undefined;
-  More: undefined;
+  // NavigatorScreenParams (not plain `undefined`, though nothing pushes a param onto it directly
+  // today) is what tells React Navigation's linking types that this tab hosts a nested navigator
+  // with MoreStackParamList's own routes -- RootNavigator's `linking` config needs this to type
+  // its VerifyEmailChange deep-link path against the nested stack, not just this tab itself.
+  More: NavigatorScreenParams<MoreStackParamList> | undefined;
 };

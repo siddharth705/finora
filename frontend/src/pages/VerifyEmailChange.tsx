@@ -75,6 +75,23 @@ export default function VerifyEmailChange() {
           <span className="font-extrabold tracking-wide text-ink">FINORA</span>
         </div>
 
+        {/* Mobile has no way to intercept this page's own https:// URL directly (no hosted
+            apple-app-site-association/assetlinks.json for a true universal/app link -- see
+            mobile/src/navigation/RootNavigator.tsx's own doc comment on that), so anyone reading
+            the confirmation email on their phone needs an explicit way in. finora:// is the custom
+            scheme RootNavigator's `linking` config registers for exactly this sessionId/token
+            path. Shown whenever both are present, independent of this page's own verify/complete
+            state -- someone reading this email on a phone likely wants to jump straight to the
+            app rather than wait for (or even trigger) this browser tab's own attempt. */}
+        {sessionId && token && (
+          <a
+            href={`finora://email-change-verify?sessionId=${encodeURIComponent(sessionId)}&token=${encodeURIComponent(token)}`}
+            className="block text-xs text-primary font-medium mb-4"
+          >
+            Open in the Finora app
+          </a>
+        )}
+
         {loading ? (
           <p className="text-sm text-muted">Confirming your new email…</p>
         ) : newEmail ? (

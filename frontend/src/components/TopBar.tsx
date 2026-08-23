@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Search, Bell, HelpCircle, Sun, Moon, Monitor, Check,
-  Settings as SettingsIcon, Keyboard, LogOut, Mail, X, BellOff, Plus,
+  Keyboard, Mail, X, BellOff, Plus,
 } from 'lucide-react';
 import { useTheme, type ThemeSetting } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
@@ -35,12 +35,6 @@ function loadReadSet(email: string | null): Set<string> {
   }
 }
 
-function initials(name: string | null) {
-  if (!name) return '?';
-  const parts = name.trim().split(/\s+/);
-  return ((parts[0]?.[0] ?? '') + (parts[1]?.[0] ?? '')).toUpperCase();
-}
-
 const THEME_OPTIONS: { value: ThemeSetting; label: string; icon: typeof Sun }[] = [
   { value: 'light', label: 'Light', icon: Sun },
   { value: 'dark', label: 'Dark', icon: Moon },
@@ -52,7 +46,7 @@ type OpenMenu = 'theme' | 'notifications' | 'help' | null;
 export function TopBar() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { fullName, email, logout } = useAuth();
+  const { email } = useAuth();
   const { theme, resolvedTheme, setTheme } = useTheme();
 
   const [openMenu, setOpenMenu] = useState<OpenMenu>(null);
@@ -94,12 +88,6 @@ export function TopBar() {
     if (!q) return;
     setOpenMenu(null);
     void navigate(`/app/transactions?q=${encodeURIComponent(q)}`);
-  }
-
-  function handleLogout() {
-    setOpenMenu(null);
-    logout();
-    void navigate('/login');
   }
 
   // Ctrl/Cmd+K focuses search from anywhere in the app; Escape closes whatever's open — both
@@ -231,37 +219,19 @@ export function TopBar() {
           )}
         </div>
 
-        {/* Profile / Help */}
+        {/* Help -- account actions (profile, settings, billing, log out) live in the Sidebar's
+            own account menu; this is help-only so the two don't duplicate each other. */}
         <div className="relative">
           <button
             type="button"
             onClick={() => toggleMenu('help')}
-            title="Profile & help"
+            title="Help"
             className="w-10 h-10 rounded-full bg-card border border-border shadow-card flex items-center justify-center text-muted hover:text-ink"
           >
             <HelpCircle size={17} />
           </button>
           {openMenu === 'help' && (
             <Dropdown onClose={() => setOpenMenu(null)} width="w-64">
-              <div className="flex items-center gap-2.5 px-3.5 py-3 border-b border-border">
-                <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center text-on-primary text-xs font-semibold flex-shrink-0">
-                  {initials(fullName)}
-                </div>
-                <div className="min-w-0">
-                  <p className="text-sm font-medium text-ink truncate">{fullName ?? 'Account'}</p>
-                  <p className="text-xs text-muted truncate">{email}</p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  setOpenMenu(null);
-                  void navigate('/app/settings');
-                }}
-                className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-sm text-ink hover:bg-bg"
-              >
-                <SettingsIcon size={15} className="text-muted" /> Settings
-              </button>
               <button
                 type="button"
                 onClick={() => {
@@ -279,14 +249,6 @@ export function TopBar() {
               >
                 <Mail size={15} className="text-muted" /> Send feedback
               </a>
-              <div className="border-t border-border" />
-              <button
-                type="button"
-                onClick={handleLogout}
-                className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-sm text-danger hover:bg-danger-bg"
-              >
-                <LogOut size={15} /> Log out
-              </button>
             </Dropdown>
           )}
         </div>

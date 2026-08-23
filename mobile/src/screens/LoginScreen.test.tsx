@@ -168,13 +168,16 @@ describe('LoginScreen reactivation', () => {
   });
 });
 
-// Phase 3B: AuthEntryScreen sends the identifier it already resolved, plus the account's sign-in
-// method, via route params -- so this screen doesn't ask the user to retype the identifier, and
-// doesn't show a password field/forgot-password link for an account that has no password to
-// check it against (the backend already refuses this; this just stops the dead-end form from
-// being shown at all -- see the doc comment on LoginScreen).
-describe('LoginScreen prefill and OAuth hint from AuthEntry', () => {
-  function renderWithParams(params: { identifier?: string; method?: string }) {
+// Phase 3B: AuthEntryScreen sends the identifier it already resolved via route params -- so this
+// screen doesn't ask the user to retype it.
+//
+// Phase 7 (resolved 2026-08-23): this used to also carry the account's sign-in method and hide
+// the password field/forgot-password link for a known GOOGLE/APPLE account. That branching --
+// and its tests -- were removed along with nextAction no longer revealing which method an
+// account uses; the password field and Google/Apple buttons are always shown together now,
+// matching a direct visit to this screen.
+describe('LoginScreen prefill from AuthEntry', () => {
+  function renderWithParams(params: { identifier?: string }) {
     const navigation = { navigate: mockNavigate } as unknown as Props['navigation'];
     const route = { key: 'Login', name: 'Login', params } as Props['route'];
     return render(
@@ -189,37 +192,12 @@ describe('LoginScreen prefill and OAuth hint from AuthEntry', () => {
   });
 
   it('prefills the identifier field when arriving with route params from AuthEntry', () => {
-    renderWithParams({ identifier: 'jane@example.com', method: 'PASSWORD' });
+    renderWithParams({ identifier: 'jane@example.com' });
 
     expect(screen.getByLabelText('Email or mobile number').props.value).toBe('jane@example.com');
   });
 
-  it('hides the password field and forgot-password link, and shows a Google hint, when method is GOOGLE', () => {
-    renderWithParams({ identifier: 'jane@example.com', method: 'GOOGLE' });
-
-    expect(screen.queryByLabelText('Password')).toBeNull();
-    expect(screen.queryByText('Forgot password?')).toBeNull();
-    expect(screen.getByText('This account signs in with Google. Continue below to sign in.')).toBeTruthy();
-  });
-
-  it('hides the password field and shows an Apple hint, when method is APPLE', () => {
-    renderWithParams({ identifier: 'jane@example.com', method: 'APPLE' });
-
-    expect(screen.queryByLabelText('Password')).toBeNull();
-    expect(screen.getByText('This account signs in with Apple. Continue below to sign in.')).toBeTruthy();
-  });
-
-  it('brings back the password form as soon as the prefilled identifier is edited, since the OAuth hint no longer applies to a different account', () => {
-    renderWithParams({ identifier: 'jane@example.com', method: 'GOOGLE' });
-
-    fireEvent.changeText(screen.getByLabelText('Email or mobile number'), 'bob@example.com');
-
-    expect(screen.queryByText('This account signs in with Google. Continue below to sign in.')).toBeNull();
-    expect(screen.getByLabelText('Password')).toBeTruthy();
-    expect(screen.getByText('Forgot password?')).toBeTruthy();
-  });
-
-  it('shows the ordinary password form with no hint on a direct visit with no route params', () => {
+  it('shows the ordinary password form and Google/Apple buttons on a direct visit with no route params', () => {
     const navigation = { navigate: mockNavigate } as unknown as Props['navigation'];
     const route = { key: 'Login', name: 'Login', params: undefined } as Props['route'];
     render(
@@ -230,6 +208,5 @@ describe('LoginScreen prefill and OAuth hint from AuthEntry', () => {
 
     expect(screen.getByLabelText('Password')).toBeTruthy();
     expect(screen.getByText('Forgot password?')).toBeTruthy();
-    expect(screen.queryByText(/this account signs in with/i)).toBeNull();
   });
 });

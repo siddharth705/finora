@@ -105,9 +105,9 @@ public class AuthController {
     }
 
     @PostMapping("/reset-password/phone")
-    public ResponseEntity<ApiResponse<ResolveResetPasswordPhoneResponse>> resolveResetPasswordPhone(
-            @Valid @RequestBody ResolveResetPasswordPhoneRequest request) {
-        return ResponseEntity.ok(ApiResponse.ok(authService.resolveResetPasswordPhone(request)));
+    public ResponseEntity<ApiResponse<VerifyResetPasswordPhoneResponse>> verifyResetPasswordPhone(
+            @Valid @RequestBody VerifyResetPasswordPhoneRequest request) {
+        return ResponseEntity.ok(ApiResponse.ok(authService.verifyResetPasswordPhone(request)));
     }
 
     @PostMapping("/reset-password")

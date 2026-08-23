@@ -73,14 +73,22 @@ public class AuthDtos {
     public record IdentifyRequest(@NotBlank String identifier) {}
 
     /**
-     * @param nextAction what the client should present next: {@code "PASSWORD"}, {@code "GOOGLE"},
-     *        or {@code "APPLE"} for an existing account (mirrors
-     *        {@link com.finora.entity.User#getSignInMethod()} exactly), or {@code "CONTINUE"} for
-     *        an identifier with no account -- deliberately not a boolean {@code exists} field, to
-     *        avoid handing back a directly machine-readable existence oracle. This narrows rather
-     *        than eliminates enumeration risk (the four distinct values are themselves
-     *        distinguishable); the rate limit on this endpoint (see RateLimitFilter) is the other
-     *        half of that mitigation, not a substitute for it.
+     * @param nextAction what the client should present next: {@code "EXISTS"} for an identifier
+     *        with an account (regardless of which sign-in method it uses), or {@code "CONTINUE"}
+     *        for one with no account -- deliberately not a boolean {@code exists} field, to avoid
+     *        handing back a directly machine-readable existence oracle.
+     *
+     *        <p>Phase 7 hardening (auth/security review, resolved 2026-08-23): this used to be
+     *        {@code "PASSWORD"}/{@code "GOOGLE"}/{@code "APPLE"}/{@code "CONTINUE"}, mirroring
+     *        {@link com.finora.entity.User#getSignInMethod()} for an existing account -- letting a
+     *        caller learn not just THAT an account exists but WHICH method it uses. Collapsed to
+     *        two values: the client can no longer distinguish a password account from a Google or
+     *        Apple one before ever attempting to sign in, closing that half of the leak. It still
+     *        narrows rather than eliminates enumeration risk (EXISTS vs CONTINUE is itself a
+     *        signal); the rate limit on this endpoint (see RateLimitFilter) is the other half of
+     *        that mitigation, not a substitute for it. The backend's own {@code signInMethod}
+     *        refusal at actual login time is unaffected either way -- this only changes what the
+     *        pre-login identify step is willing to say.
      */
     public record IdentifyResponse(String nextAction) {}
 
@@ -167,17 +175,21 @@ public class AuthDtos {
     public record ResetPasswordResponse(String message) {}
 
     /**
-     * Reveals the account's real phone number for a valid, unused reset link -- the frontend
-     * needs it to call Firebase Phone Authentication directly (Firebase's own client SDK sends
-     * the OTP; this backend never does). token here is the SAME raw reset-link token from
-     * forgot-password, used to resolve which account without requiring a JWT (the person is, by
-     * definition, not logged in at this point). Gated on the exact same reset-token validity
-     * check resetPassword() itself uses -- see AuthService.resolveResetPasswordPhone()'s own doc
-     * comment for why that's enough to prevent this from being an arbitrary phone-number lookup.
+     * BH-015 fix. Used to reveal the account's real phone number for a valid, unused reset link
+     * -- inverted so the USER supplies the number instead: the frontend needs SOME phone number
+     * to call Firebase Phone Authentication directly (Firebase's own client SDK sends the OTP;
+     * this backend never does), and this endpoint confirms whether the one the user just typed
+     * belongs to the account BEFORE the client is allowed to hand it to Firebase, rather than the
+     * backend handing the real number back to whoever holds a valid link. token here is the SAME
+     * raw reset-link token from forgot-password, used to resolve which account without requiring
+     * a JWT (the person is, by definition, not logged in at this point). Gated on the exact same
+     * reset-token validity check resetPassword() itself uses -- see
+     * AuthService.verifyResetPasswordPhone()'s own doc comment for why that's enough to prevent
+     * this from becoming an arbitrary phone-number-guessing oracle.
      */
-    public record ResolveResetPasswordPhoneRequest(@NotBlank String token) {}
+    public record VerifyResetPasswordPhoneRequest(@NotBlank String token, @NotBlank String phoneNumber) {}
 
-    public record ResolveResetPasswordPhoneResponse(String phoneNumber) {}
+    public record VerifyResetPasswordPhoneResponse(String message) {}
 
     public record RefreshRequest(String refreshToken) {}
 
