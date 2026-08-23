@@ -132,7 +132,7 @@ class AdminMerchantTemplateEndpointIT extends AbstractIntegrationTest {
         }
     }
 
-    /** V107 removed phonepe.com/paytm.com/cred.club from this table entirely -- the declarative
+    /** V109 removed phonepe.com/paytm.com/cred.club from this table entirely -- the declarative
      *  template model cannot represent a counterparty distinct from the domain, so these three now
      *  have no merchant_templates row at all (PhonePeEmailParser/CredEmailParser cover two of them
      *  as hand-written, config-gated parsers instead; paytm.com is intentionally unparsed). Their
@@ -142,7 +142,7 @@ class AdminMerchantTemplateEndpointIT extends AbstractIntegrationTest {
     void theP2PDomainsHaveNoTemplateRow() {
         for (String domain : new String[]{"phonepe.com", "paytm.com", "cred.club"}) {
             assertThat(templates.findByMerchantDomain(domain))
-                    .as("%s should have been removed by V107", domain)
+                    .as("%s should have been removed by V109", domain)
                     .isEmpty();
         }
     }
