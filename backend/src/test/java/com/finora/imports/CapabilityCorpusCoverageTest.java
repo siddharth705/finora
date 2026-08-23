@@ -205,6 +205,11 @@ class CapabilityCorpusCoverageTest {
                 "no trace, and none is planned -- same reasoning as BLANK_COLUMN_NAME_QUALIFIED, "
                         + "same real document. Covered instead by HeaderColumnRecoveryTest's fully "
                         + "hand-synthesized fixtures.");
+        DECLARED_WITHOUT_A_TRACE.put("PAGE_LEGEND_BLOCK_SUPPRESSED",
+                "no trace -- the real SBI Credit Card.PDF this is evidenced from has no committed "
+                        + "trace in this corpus yet (see HEADER_RECONSTRUCTED's own history for the "
+                        + "same document). Covered instead by PageLegendBlockSuppressionTest's fully "
+                        + "hand-synthesized fixture, same as RECOVERED_MISSING_SERIAL_NUMBER_COLUMN above.");
         // HEADER_RECONSTRUCTED was DECLARED_WITHOUT_A_TRACE through Phase 2E.2, when
         // reconstructHeader was deliberately scoped to exactly one orphaned single-cell fragment
         // and the real ICICI savings statement's genuine three-cell second tier couldn't be composed

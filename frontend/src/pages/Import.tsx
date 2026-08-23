@@ -558,6 +558,8 @@ export default function Import() {
             existingAccountId,
             statementOpeningBalance: detectedAccount?.openingBalance ?? null,
             statementClosingBalance: detectedAccount?.closingBalance ?? null,
+            statementPeriodStart: detectedAccount?.statementPeriodStart ?? null,
+            statementPeriodEnd: detectedAccount?.statementPeriodEnd ?? null,
             password: reimportState.password,
           })
         : await importApi.confirm({
@@ -567,6 +569,8 @@ export default function Import() {
             newAccount,
             statementOpeningBalance: detectedAccount?.openingBalance ?? null,
             statementClosingBalance: detectedAccount?.closingBalance ?? null,
+            statementPeriodStart: detectedAccount?.statementPeriodStart ?? null,
+            statementPeriodEnd: detectedAccount?.statementPeriodEnd ?? null,
           });
       setSummary(result);
       setStep('summary');
@@ -607,6 +611,8 @@ export default function Import() {
           newAccount,
           statementOpeningBalance: s.detectedAccount.openingBalance ?? null,
           statementClosingBalance: s.detectedAccount.closingBalance ?? null,
+          statementPeriodStart: s.detectedAccount.statementPeriodStart ?? null,
+          statementPeriodEnd: s.detectedAccount.statementPeriodEnd ?? null,
         };
       });
 

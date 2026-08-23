@@ -182,13 +182,21 @@ class HeaderProseRejectionTest {
         // caption still becomes a header column, but (as before either fix) no row's data ever
         // buckets near its anchor, so it never appears as a key -- an existing, unrelated
         // characteristic of this document's header shape, not something either fix changed.
+        // "( ` )" and "Amount" no longer coalesce as of the fix verified against a real (unredacted)
+        // SBI credit-card statement: that literal column is this bank's Credit/Debit marker, not a
+        // decorative currency suffix -- coalesced away, a real row's marker value had nowhere to
+        // bucket into and glued onto the amount instead ("25.00 D"), which fails
+        // CsvParser.parseNumeric outright. See PdfTableLocator.RUPEE_ARTIFACT_MARKER_COLUMN's own
+        // doc comment. This redacted trace's own placeholder marker value ("X") now lands in that
+        // column on its own, same as the amount and the marker are two real, separate cells here too.
         PdfTableLocator.LocatedSection lastSection = after.sections().get(2);
         assertThat(lastSection.rows()).hasSize(2);
         assertThat(lastSection.rows().get(0))
                 .as("first row of the section the rejected prose sits after -- must be the genuine "
                         + "transaction-block row, not a bucketed fragment of the rejected paragraph")
                 .containsEntry("Date", "99 Xxx 99 UPI-XXXXXX")
-                .containsEntry("Amount ( ` )", "25.00 X");
+                .containsEntry("Amount", "25.00")
+                .containsEntry("( ` )", "X");
         assertThat(lastSection.rows().get(1).values())
                 .as("second row: still the real (unparsed) transaction dump, not the rejected prose")
                 .anySatisfy(v -> assertThat(v).contains("UPI-XXXXXX"));

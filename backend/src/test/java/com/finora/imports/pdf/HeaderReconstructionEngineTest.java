@@ -75,11 +75,109 @@ class HeaderReconstructionEngineTest {
                 .isEmpty();
     }
 
+    /**
+     * The real shape found on SBI Credit Card.PDF's page-2 repeat of this same header: identical to
+     * {@link #sbiShapedPartitionedHeader_recoversDescriptionColumnFromTheLineAbove} above, except
+     * the real document also prints a "for Statement Period: ..." caption on the accepted header's
+     * own physical row -- 2.36pt below its "( ` )" sub-label there, well within groupIntoRows'
+     * chain-based clustering tolerance (the same caption sits comfortably far from the header on
+     * this document's FIRST page instead, a genuine per-page rendering variance, which is why the
+     * first page never hits this).
+     *
+     * <p>Bug found investigating this shape: {@code reconstructHeader}'s own conflict-detection
+     * computes "established anchors" from headerRow AS GIVEN -- including this caption, which is not
+     * a real column and is filtered out later, by buildHeaderColumns' own containsEmbeddedDateRange
+     * check, but too late to help here. "Transaction Details" (x=180) sits only ~20pt from the
+     * caption's own x (~160) -- comfortably within HEADER_WRAP_MAX_COLUMN_JOIN (40pt) -- so the
+     * caption's mere presence among the established anchors makes reconstructHeader treat "Transaction
+     * Details" as if it would RENAME the caption rather than fill a genuinely empty column, and
+     * decline the whole reconstruction. Every one of the section's real transactions then buckets
+     * into just Date and Amount, with its description lost -- confirmed against the real document:
+     * SBI Credit Card.PDF's second cardholder section drops all 29 of its rows this way.
+     */
+    @Test
+    void sbiShapedPartitionedHeader_recoversDescriptionColumn_evenWithAnOrphanedCaptionOnTheAcceptedRow() {
+        List<PositionedText> positioned = new ArrayList<>();
+        positioned.add(run("Transaction Details", 180f, 90f, 100f));
+        positioned.add(run("Date", 40f, 30f, 108f));
+        positioned.add(run("Amount", 380f, 45f, 108f));
+        positioned.add(run("( Rs )", 428f, 30f, 109f));
+        // The orphaned caption -- present on the accepted header's own row, close enough in x to
+        // "Transaction Details" to trip reconstructHeader's conflict gate if not excluded first.
+        positioned.add(run("for Statement Period: 01 Aug 26 to 31 Aug 26", 160f, 140f, 111f));
+        positioned.addAll(dataRow("01 Aug 26", "SAMPLE ONLINE STORE PURCHASE", "1,250.00", 120f));
+        positioned.addAll(dataRow("03 Aug 26", "SAMPLE UTILITY BILL PAYMENT", "980.50", 128f));
+        positioned.addAll(dataRow("05 Aug 26", "SAMPLE GROCERY STORE PURCHASE", "540.00", 136f));
+        positioned.addAll(dataRow("07 Aug 26", "SAMPLE SUBSCRIPTION RENEWAL", "299.00", 144f));
+
+        DocumentContext ctx = new DocumentContext("PDF", "test");
+        PdfTableLocator.LocatedDocument doc = new PdfTableLocator().locateAll(positioned, ctx);
+
+        assertThat(doc.sections()).hasSize(1);
+        List<Map<String, String>> rows = doc.sections().get(0).rows();
+        assertThat(rows).hasSize(4);
+        assertThat(rows.get(0)).containsEntry("Date", "01 Aug 26");
+        assertThat(rows.get(0)).containsEntry("Transaction Details", "SAMPLE ONLINE STORE PURCHASE");
+        assertThat(rows.get(0)).containsEntry("Amount ( Rs )", "1,250.00");
+        assertThat(rows.get(3)).containsEntry("Transaction Details", "SAMPLE SUBSCRIPTION RENEWAL");
+
+        assertThat(ctx.capabilities().stream().map(c -> c.capability()))
+                .contains("HEADER_RECONSTRUCTED");
+    }
+
     private static List<PositionedText> dataRow(String date, String description, String amount, float y) {
         List<PositionedText> row = new ArrayList<>();
         row.add(run(date, 40f, 45f, y));
         row.add(run(description, 180f, description.length() * 5.0f, y));
         row.add(run(amount, 400f, 40f, y));
+        return row;
+    }
+
+    /**
+     * The real shape found on SBI Credit Card.PDF: the header's currency-symbol sub-label extracts
+     * as the literal font-artifact string "( ` )" (see TransactionNormalizer's
+     * RUPEE_ARTIFACT_TYPE_COLUMN, which relies on this exact column surviving as its OWN header
+     * name), and every real transaction row carries a bare Credit/Debit marker ("C"/"D") in that
+     * same column. "( ` )" sits immediately after "Amount" in the header's own row, close enough
+     * (well inside HEADER_RUN_JOIN_MAX_GAP) that coalesceHeaderRuns would ordinarily fold the two
+     * into one "Amount ( ` )" column -- correct, and desired, for an ordinary currency-unit suffix
+     * like "(Rs.)" or "(INR)" that carries no data of its own (see the other test above, which
+     * relies on exactly that merge for "( Rs )"). This literal artifact string is different: it is
+     * evidenced, from this same real document, to carry real per-row data. Left coalesced, a
+     * genuine transaction's marker value has nowhere of its own to bucket into and gets glued onto
+     * the amount value instead ("25.00 D"), which fails CsvParser.parseNumeric outright -- exactly
+     * the "every row silently vanishes" failure this test proves is fixed, on top of the
+     * Description-column recovery the other SBI-shaped test above already covers.
+     */
+    @Test
+    void sbiShapedPartitionedHeader_keepsTheRupeeArtifactColumnSeparateFromAmount() {
+        List<PositionedText> positioned = new ArrayList<>();
+        positioned.add(run("Transaction Details", 180f, 90f, 100f));
+        positioned.add(run("Date", 40f, 30f, 108f));
+        positioned.add(run("Amount", 380f, 45f, 108f));
+        positioned.add(run("( ` )", 428f, 30f, 109f));
+        positioned.addAll(markedDataRow("01 Aug 26", "SAMPLE ONLINE STORE PURCHASE", "1,250.00", "D", 120f));
+        positioned.addAll(markedDataRow("03 Aug 26", "SAMPLE UTILITY BILL PAYMENT", "980.50", "D", 128f));
+        positioned.addAll(markedDataRow("05 Aug 26", "SAMPLE GROCERY STORE PURCHASE", "540.00", "D", 136f));
+        positioned.addAll(markedDataRow("07 Aug 26", "PAYMENT RECEIVED SAMPLE REF", "5,000.00", "C", 144f));
+
+        DocumentContext ctx = new DocumentContext("PDF", "test");
+        PdfTableLocator.LocatedDocument doc = new PdfTableLocator().locateAll(positioned, ctx);
+
+        assertThat(doc.sections()).hasSize(1);
+        List<Map<String, String>> rows = doc.sections().get(0).rows();
+        assertThat(rows).hasSize(4);
+        assertThat(rows.get(0)).containsEntry("Transaction Details", "SAMPLE ONLINE STORE PURCHASE");
+        assertThat(rows.get(0)).containsEntry("Amount", "1,250.00");
+        assertThat(rows.get(0)).containsEntry("( ` )", "D");
+        assertThat(rows.get(3)).containsEntry("Amount", "5,000.00");
+        assertThat(rows.get(3)).containsEntry("( ` )", "C");
+    }
+
+    private static List<PositionedText> markedDataRow(
+            String date, String description, String amount, String marker, float y) {
+        List<PositionedText> row = new ArrayList<>(dataRow(date, description, amount, y));
+        row.add(run(marker, 430f, 15f, y));
         return row;
     }
 
