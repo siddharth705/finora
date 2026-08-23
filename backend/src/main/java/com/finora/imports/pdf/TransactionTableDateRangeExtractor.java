@@ -37,12 +37,18 @@ public final class TransactionTableDateRangeExtractor {
     private static final Pattern TRANSACTION_DETAILS_RANGE = Pattern.compile(
             "(?i)transaction\\s+details\\s+from\\s+(\\S+)\\s+to\\s+(\\S+)");
 
+    // Bug fix: only formats a \S+-captured token can ever satisfy -- group(1)/group(2) above stop at
+    // the first whitespace character by construction, so a space-separated shape like "16 Feb, 2026"
+    // can never be captured whole (the group would end at "16"). PdfMetadataExtractor.DATE_FORMATS
+    // carries "d MMM, yyyy"/"d MMM yyyy" because ITS matches come from whitespace-tolerant helpers
+    // (firstMatchAfter/DATE_LIKE); copying those two entries here was dead code that could never
+    // actually match through this class's own regex, silently masking that no real document using
+    // that phrasing has ever been evidenced through this specific trigger sentence -- the one real
+    // document this extractor is evidenced from (Kotak) hyphenates its dates.
     private static final DateTimeFormatter[] DATE_FORMATS = {
             DateTimeFormatter.ofPattern("dd-MM-yyyy"),
             DateTimeFormatter.ofPattern("dd/MM/yyyy"),
             DateTimeFormatter.ofPattern("d-MMM-yyyy", Locale.ENGLISH),
-            DateTimeFormatter.ofPattern("d MMM, yyyy", Locale.ENGLISH),
-            DateTimeFormatter.ofPattern("d MMM yyyy", Locale.ENGLISH),
     };
 
     public record PrintedDateRange(LocalDate start, LocalDate end) {

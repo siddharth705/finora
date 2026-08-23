@@ -205,14 +205,23 @@ public class PdfPreviewGenerator {
         // reads a section's transaction rows anyway, so handing every section the same document-
         // level reading is correct, not a simplification that loses anything.
         CreditCardSummaryEvidence printedCreditCardSummary = CreditCardSummaryExtractor.extract(positioned, ctx);
-        // Read the same way, for the same reason: a statement that states its transaction date
-        // range inside the table's own repeated header row (rather than any pre-table "Statement
-        // Period" field) never reaches PdfMetadataExtractor's auxiliaryText at all -- see
-        // TransactionTableDateRangeExtractor's own doc comment. Document-level like
-        // printedCreditCardSummary above, for the same reason: the header row it reads repeats
-        // identically across every section of the same document.
+        // Read the same way, for a NARROWER reason than printedCreditCardSummary above: a statement
+        // that states its transaction date range inside the table's own repeated header row (rather
+        // than any pre-table "Statement Period" field) never reaches PdfMetadataExtractor's
+        // auxiliaryText at all -- see TransactionTableDateRangeExtractor's own doc comment. Unlike a
+        // credit-card billing panel, this extractor is not restricted to credit-card documents, and
+        // "a real credit-card statement is effectively always one account" does not transfer to it --
+        // PdfTableLocator's own SECTION_MARKER/composite-deposit-schedule evidence proves genuine
+        // multi-account documents with independently-dated sections exist in this corpus. Trusted
+        // document-wide only when the document IS effectively one section (matches printedSummary's
+        // own "which section does this belong to" caution below, just resolved eagerly instead of via
+        // attributePrintedSummary, since a first/only match is unambiguous when there is only one
+        // section to receive it) -- withheld otherwise rather than risking the first section's own
+        // printed range being copied onto every other section in a composite statement.
         TransactionTableDateRangeExtractor.PrintedDateRange printedDateRange =
-                TransactionTableDateRangeExtractor.extract(positioned, ctx);
+                doc.sections().size() <= 1
+                        ? TransactionTableDateRangeExtractor.extract(positioned, ctx)
+                        : TransactionTableDateRangeExtractor.PrintedDateRange.NONE;
 
         if (doc.sections().isEmpty()) {
             // "Never lose information" (see the engineering principles doc) applies at the
