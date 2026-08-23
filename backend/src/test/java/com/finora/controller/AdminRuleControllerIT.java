@@ -217,4 +217,33 @@ class AdminRuleControllerIT extends AbstractIntegrationTest {
 
         assertThat(updateResponse.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
     }
+
+    /** Defense-in-depth fix: UpdateRequest.field/operator/actionType carried zero Bean Validation
+     *  and the controller had no @Valid, the same invisible-to-FG-028 shape as the real
+     *  AdminMerchantReviewController.merge NPE. category_rules.field is VARCHAR(20) -- an oversized
+     *  value must fail cleanly at the API boundary. */
+    @Test
+    void updatingARule_withAnOversizedField_isRejectedAsValidationError() throws Exception {
+        User admin = createUser("ADMIN");
+        HttpHeaders headers = bearerFor(admin);
+
+        ResponseEntity<String> createResponse = restTemplate.exchange(
+                "/api/v1/admin/rules", HttpMethod.POST,
+                new HttpEntity<>("""
+                        {"field":"DESCRIPTION","operator":"CONTAINS","comparisonValue":"gym",
+                         "actionType":"MARK_SUBSCRIPTION"}
+                        """, headers),
+                String.class);
+        String ruleId = mapper.readTree(createResponse.getBody()).get("data").get("id").asText();
+
+        String tooLong = "\"" + "X".repeat(21) + "\"";
+        ResponseEntity<String> updateResponse = restTemplate.exchange(
+                "/api/v1/admin/rules/" + ruleId, HttpMethod.PUT,
+                new HttpEntity<>("{\"field\":" + tooLong + "}", headers), String.class);
+
+        assertThat(updateResponse.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        JsonNode body = mapper.readTree(updateResponse.getBody());
+        assertThat(body.get("errorCode").asText()).isEqualTo("VALIDATION_ERROR");
+        assertThat(body.get("message").asText()).contains("field");
+    }
 }
