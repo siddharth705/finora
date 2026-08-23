@@ -2,10 +2,8 @@ import { forwardRef } from 'react';
 import { FileText, Sheet } from 'lucide-react';
 
 /**
- * Beat 1 of the ImportSection scroll story: statements scattered, not yet processed. Purely
- * presentational -- no scroll/GSAP knowledge. useImportScrollTimeline (see that file) queries
- * this component's internals via the forwarded root ref and each element's data-target
- * attribute, and tweens them directly; this file never imports gsap.
+ * Beat 1 of the ImportSection reveal sequence: statements scattered, not yet processed. Purely
+ * presentational -- swapped in and out whole by ImportRevealSequence, not internally animated.
  */
 export const DocumentStack = forwardRef<HTMLDivElement>(function DocumentStack(_props, ref) {
   return (
