@@ -129,6 +129,61 @@ class HeaderReconstructionEngineTest {
                 .contains("HEADER_RECONSTRUCTED");
     }
 
+    /**
+     * Regression guard for a real bug found in self-review while building buildHeaderColumns'
+     * containsEmbeddedDateRange guard (Phase 2E.5, HSBC row-formation fix): buildHeaderColumns can
+     * run TWICE for the same physical header row -- once on the row as originally accepted, and
+     * again on {@code reconstructHeader}'s candidate when the first attempt is judged weak enough
+     * to trigger reconstruction. reconstructHeader's own candidate always starts from every
+     * non-blank fragment of the ORIGINAL header row verbatim, so an orphaned caption sitting on
+     * that row (chain-based clustering can now fold one onto it, the same mechanism
+     * OrphanedHeaderRowCaptionTest exercises) gets re-scanned by containsEmbeddedDateRange on the
+     * second call too -- and without a fix, appended to the section's auxiliary text a second time.
+     * Same header shape as multiCellPartitionedTierImmediatelyAbove_recoversAllFourColumns above
+     * (proven to trigger a successful reconstruction), with an orphaned caption added onto the
+     * accepted line's own physical row.
+     */
+    @Test
+    void orphanedCaptionOnAReconstructedHeadersOwnRow_isNotDuplicatedIntoAuxiliaryText() {
+        List<PositionedText> positioned = new ArrayList<>();
+        positioned.add(run("Particulars", 150f, 80f, 192f));
+        positioned.add(run("Debit", 280f, 40f, 192f));
+        positioned.add(run("Credit", 350f, 40f, 192f));
+        positioned.add(run("Balance", 420f, 50f, 192f));
+        positioned.add(run("Date", 40f, 30f, 200f));
+        positioned.add(run("Type", 500f, 50f, 200f));
+        // The orphaned caption: 1.5pt below the accepted line, well within groupIntoRows'
+        // chain-based ROW_Y_TOLERANCE, so it folds onto the SAME physical row as Date/Type above --
+        // exactly the shape OrphanedHeaderRowCaptionTest reproduces, just now also feeding a header
+        // that goes on to trigger reconstruction. x=600 deliberately clear of every tier-above
+        // anchor (150/280/350/420) by more than HEADER_WRAP_MAX_COLUMN_JOIN (40pt) -- reconstructHeader's
+        // own candidate starts from every non-blank cell of this row verbatim (unfiltered by
+        // buildHeaderColumns' containsEmbeddedDateRange, which only runs inside buildHeaderColumns
+        // itself), so a caption placed too close to one of those anchors would make reconstructHeader
+        // decline the tier above as a false rename-conflict -- a fixture-placement pitfall, not the
+        // duplication bug this test targets.
+        positioned.add(run("for Statement Period: 01 Jun 26 to 30 Jun 26", 600f, 220f, 201.5f));
+        positioned.addAll(iobRow("01 Aug 26", "SAMPLE ONLINE PURCHASE", "500.00", "", "9,500.00", "UPI", 212f));
+        positioned.addAll(iobRow("03 Aug 26", "SAMPLE SALARY CREDIT", "", "10,000.00", "19,500.00", "NEFT", 220f));
+        positioned.addAll(iobRow("05 Aug 26", "SAMPLE UTILITY PAYMENT", "1,200.00", "", "18,300.00", "UPI", 228f));
+        positioned.addAll(iobRow("07 Aug 26", "SAMPLE RENT PAYMENT", "6,000.00", "", "12,300.00", "UPI", 236f));
+
+        DocumentContext ctx = new DocumentContext("PDF", "test");
+        PdfTableLocator.LocatedDocument doc = new PdfTableLocator().locateAll(positioned, ctx);
+
+        assertThat(doc.sections()).hasSize(1);
+        PdfTableLocator.LocatedSection section = doc.sections().get(0);
+        assertThat(ctx.capabilities().stream().map(c -> c.capability()))
+                .as("reconstruction still succeeds -- this is a duplication check, not a regression "
+                        + "of the reconstruction itself")
+                .contains("HEADER_RECONSTRUCTED");
+        assertThat(section.auxiliaryText())
+                .as("the orphaned caption's text appears exactly once, not once per buildHeaderColumns "
+                        + "call")
+                .filteredOn(line -> line.contains("for Statement Period: 01 Jun 26 to 30 Jun 26"))
+                .hasSize(1);
+    }
+
     private static List<PositionedText> iobRow(String date, String particulars, String debit,
             String credit, String balance, String refNo, float y) {
         List<PositionedText> row = new ArrayList<>();

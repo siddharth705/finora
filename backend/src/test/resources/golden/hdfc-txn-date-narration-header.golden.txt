@@ -4,7 +4,7 @@ sections: 1
 [section 0]
   columns: [Txn Date, Narration, Withdrawals, Deposits, Closing Balance]
   rows: 5
-  auxLines: 45
+  auxLines: 43
   accountNumberMasked: ••••9999
   accountHolderName: Xxxxx Xxxxxxxxxx
   ifscCode: HDFC0XXXXXX
