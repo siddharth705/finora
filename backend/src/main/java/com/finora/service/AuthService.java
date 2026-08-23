@@ -460,6 +460,8 @@ public class AuthService {
             passwordEncoder.matches(request.password(), timingParityHash);
             log.info("Refused login for locked account {} -- responding as invalid credentials (BH-014)",
                     user.getId());
+            auditService.record(user.getId(), "LOGIN_FAILED", "User", user.getId(),
+                    requestMetadata.addTo(new java.util.HashMap<>(Map.of("reason", "locked"))));
             throw new ApiException(ErrorCode.AUTH_INVALID_CREDENTIALS, "Invalid credentials");
         }
         // An EXPIRED lockout clears the counter that produced it. Serving the lockout is the
@@ -493,6 +495,8 @@ public class AuthService {
             // lockout and return the same generic message, not leak which failure mode occurred.
             if (user != null) {
                 registerFailedLogin(user);
+                auditService.record(user.getId(), "LOGIN_FAILED", "User", user.getId(),
+                        requestMetadata.addTo(new java.util.HashMap<>(Map.of("reason", "bad_credentials"))));
             }
             throw new ApiException(ErrorCode.AUTH_INVALID_CREDENTIALS, "Invalid credentials");
         }
@@ -556,7 +560,8 @@ public class AuthService {
                     ErrorCode.AUTH_MFA_REQUIRED.defaultMessage(), Map.of("mfaChallengeToken", challengeToken));
         }
 
-        auditService.record(user.getId(), "USER_LOGIN", "User", user.getId());
+        auditService.record(user.getId(), "USER_LOGIN", "User", user.getId(),
+                requestMetadata.addTo(new java.util.HashMap<>()));
         return issueSessionTokens(user);
     }
 
@@ -581,7 +586,8 @@ public class AuthService {
         UUID userId = adminMfaService.verifyChallenge(challengeToken, code);
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "User not found"));
-        auditService.record(user.getId(), "USER_LOGIN", "User", user.getId(), Map.of("mfa", true));
+        auditService.record(user.getId(), "USER_LOGIN", "User", user.getId(),
+                requestMetadata.addTo(new java.util.HashMap<>(Map.of("mfa", true))));
         return issueSessionTokens(user);
     }
 
@@ -783,7 +789,7 @@ public class AuthService {
         }
 
         auditService.record(user.getId(), isNewAccount ? provider.registeredAuditAction : provider.loginAuditAction,
-                "User", user.getId());
+                "User", user.getId(), requestMetadata.addTo(new java.util.HashMap<>()));
 
         var issued = refreshTokenService.issue(user.getId());
         String accessToken = jwtService.generateToken(user.getId(), user.getEmail(), issued.sessionId(),
@@ -1037,7 +1043,8 @@ public class AuthService {
                     "success", result.success()));
         });
 
-        auditService.record(user.getId(), "USER_LOGIN", "User", user.getId());
+        auditService.record(user.getId(), "USER_LOGIN", "User", user.getId(),
+                requestMetadata.addTo(new java.util.HashMap<>()));
         var issued = refreshTokenService.issue(user.getId());
         String accessToken = jwtService.generateToken(user.getId(), user.getEmail(), issued.sessionId(),
                 user.getAccountScope());
