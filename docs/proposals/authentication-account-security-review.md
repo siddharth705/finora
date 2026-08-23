@@ -512,6 +512,11 @@ match.
   `VerifyEmailChange` confirmation page. Mobile settings entry not started.
 - Tests mirroring `PhoneChangeServiceTest`/`PhoneChangeServiceIT`
 - Not blocking — useful but lower priority than Phases 1–3
+- **Frontend follow-up bug (2026-08-23)**: wiring up the verify page found
+  that `start()`'s emailed link only carried the token, not the sessionId
+  `VerifyRequest` also needs — fixed with a regression test, before this
+  was ever live in production (caught in the same session as the
+  frontend work, one PR after the backend slice merged).
 - **Amendment (2026-08-23)**: implemented ahead of the remaining 5 open
   decisions being resolved, same situation Phase 3's backend slice was in
   (see its own amendment above). Checked each one against this specific

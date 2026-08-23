@@ -116,7 +116,12 @@ public class EmailChangeService {
 
         auditService.record(userId, "EMAIL_CHANGE_STARTED", "User", userId);
 
-        String verifyLink = emailProperties.resolveBaseUrl(null) + "/email-change-verify?token=" + rawToken;
+        // Bug fix: verify() needs BOTH sessionId and token (VerifyRequest's shape) -- a link
+        // carrying only the token cannot actually be completed by whatever page consumes it.
+        // Base64 URL-safe encoding (no padding) already produces query-string-safe characters for
+        // rawToken; session.getId() is a UUID, equally safe unescaped.
+        String verifyLink = emailProperties.resolveBaseUrl(null) + "/email-change-verify?sessionId="
+                + session.getId() + "&token=" + rawToken;
         AfterCommit.run("email change verification email", () -> {
             EmailResult result = emailProvider.sendEmailChangeVerificationEmail(newEmail, verifyLink);
             auditService.record(userId, "EMAIL_SENT", "User", userId, Map.of(
