@@ -1,11 +1,11 @@
 # Finora Authentication & Account Security — Review & Design
 
-Status: approved with edits (2026-08-23). Target path:
-`docs/proposals/authentication-account-security-review.md`, committed via a
+Status: approved with edits (2026-08-23), amended same day. Committed via a
 worktree per `CLAUDE.md` (primary checkout is a shared read-only-for-writes
-checkout). Implementation is NOT started from this document — it is a
-roadmap. Each phase below ships as its own ticket/PR once Phase 0's open
-decisions are resolved.
+checkout). This is a roadmap — each phase ships as its own ticket/PR.
+**Phase 1 (Apple step-up verification) is already done** — PR #290 merged
+before this document's audit ran, and the audit missed it; corrected here.
+Phase 0's remaining open decisions still gate Phases 2–4.
 
 ---
 
@@ -94,11 +94,16 @@ Firebase), `email_verification_tokens`, `password_reset_tokens`,
   get a **freshly re-verified Google ID token** checked against the
   account's email at that moment. Used by password-change, deactivate, and
   data-export.
-- **Documented, named gap**: no Apple equivalent. An `APPLE` account falls
-  into the password branch and fails gracefully (ordinary "incorrect
-  password" response, not a crash) — but an Apple user literally cannot
-  pass step-up verification today. This is the single highest-value,
-  lowest-risk fix in this whole review.
+- **UPDATE (2026-08-23): the Apple gap is fixed.** PR #290 (`b2b80aee`,
+  merged 2026-08-22 21:42, already on `origin/main`) added an
+  `isAppleAccount()` branch to `GoogleReauthVerifier`, mirroring the Google
+  one, and wired it through all five call sites (change-password,
+  deactivate, delete, data-export, admin MFA-removal), plus a new
+  rate limiter for `/account/delete` that was previously uncovered. Test
+  coverage for the Apple branch exists in `GoogleReauthVerifierTest`. The
+  original audit that produced this document missed this — it had already
+  landed before the audit ran but wasn't picked up by the search. No
+  Apple-step-up work remains; **Phase 1 in §3 is done, not planned.**
 - **Deactivate** requires `GoogleReauthVerifier` + a mandatory reason;
   reversible; revokes refresh tokens; sends confirmation email.
 - **Delete account** does not take a raw password — it requires an
@@ -156,11 +161,11 @@ in production and already correct in their design intent. The actual gaps
 are narrow and specific:
 
 1. No unified `/auth` entry page (register is a separate conscious step).
-2. No `POST /auth/identify` endpoint.
-3. No Apple equivalent of `GoogleReauthVerifier` — Apple users cannot
-   complete step-up today.
+2. No `POST /auth/identify`-style endpoint.
+3. ~~No Apple equivalent of `GoogleReauthVerifier`~~ — **fixed by PR #290,
+   already on main; see §1.4 update.**
 4. No change-email feature.
-5. Step-up is wired individually into 3 call sites rather than a declarative,
+5. Step-up is wired individually into 5 call sites rather than a declarative,
    reusable primitive new sensitive actions can opt into.
 6. Audit logs lack IP/UA columns; no per-attempt login-failure logging.
 7. BH-015 (reset-flow phone number exposure) still open.
@@ -253,27 +258,25 @@ Backend already refuses this correctly for non-password accounts via
 form (password users) or "This account uses Google Sign-In — no password to
 change" with no dead-end form (OAuth users). No backend change required.
 
-### 2.6 Deactivate / Delete — fix the Apple gap now, generalize later
-Deliberately split into two phases that must not land in the same change,
-because refactoring security-critical verification code and changing its
-behavior in the same PR raises the risk of both:
+### 2.6 Deactivate / Delete — Apple gap closed, generalization still pending
+**Update (2026-08-23): the narrow fix already shipped.** PR #290 added the
+Apple-equivalent branch to `GoogleReauthVerifier` (behavior-only, no
+rename), closing the real broken user path across all five call sites. What
+remains is only the later, structural piece, and the original reasoning for
+sequencing it after the fix (not bundling refactor with behavior change in
+one PR) still applies now that the fix is independently verified in
+production:
 
-1. **Phase 2A — immediate, narrow fix, behavior-only**: add an
-   Apple-equivalent branch to `GoogleReauthVerifier` using Apple's existing
-   `AppleIdTokenVerifierService`, the same way Google's path works. No
-   renaming, no structural change — just close the real broken user path
-   (an Apple-only user cannot deactivate or delete their account today,
-   since step-up always fails for them).
-2. **Phase 2B — later, structural-only refactor**: once 2A has shipped and
-   soaked, rename/extract `GoogleReauthVerifier` → something like
-   `StepUpVerifier.verifyIdentity(user, credential)` that branches over all
-   three methods plus wraps the existing `PasswordChangeSession`
-   OTP-second-factor pattern behind one call, so a *new* sensitive action
-   (e.g. change-email below) can declare "requires step-up" without
-   re-deriving the branching logic. This directly answers your §11
-   architecture ask (`verifyPassword()` → `verifyIdentity()`) using what's
-   already built — but only after the urgent fix is independently verified
-   in production.
+- **Later, structural-only refactor**: rename/extract
+  `GoogleReauthVerifier` → something like
+  `StepUpVerifier.verifyIdentity(user, credential)` that branches over all
+  three methods plus wraps the existing `PasswordChangeSession`
+  OTP-second-factor pattern behind one call, so a *new* sensitive action
+  (e.g. change-email below) can declare "requires step-up" without
+  re-deriving the branching logic. This directly answers your §11
+  architecture ask (`verifyPassword()` → `verifyIdentity()`) using what's
+  already built. Deferred to Phase 5 (§3) — no urgency now that the bug
+  itself is fixed.
 
 Delete-account's retention/irreversibility question (currently instant and
 irreversible once the OTP-verified session is consumed) is **explicitly
@@ -327,18 +330,18 @@ Each phase below is its own ticket/PR — this document is a roadmap, not a
 single implementation task. Do not turn it into one giant PR.
 
 **Phase 0 — Documentation + decisions**
-- Resolve the 5 open decisions at the end of this document
-- Confirm `/identify` response shape after security review (§2.2)
+- Resolve the 4 remaining open decisions at the end of this document
+- Confirm `/identify`/`nextAction` response shape after security review (§2.2)
 - No code changes in this phase
 
-**Phase 1 — P0 fix: Apple step-up verification**
-`fix(auth): support Apple step-up verification`
-- Add Apple branch to `GoogleReauthVerifier` (behavior-only, no rename —
-  see §2.6 2A)
-- Tests: Apple step-up success/failure, existing Google/password step-up
-  tests stay green
-- Ship independently, ahead of everything else — this is a real broken
-  user path today, not a UX improvement
+**Phase 1 — P0 fix: Apple step-up verification — ✅ DONE, shipped 2026-08-22**
+`fix(auth): support Apple reauthentication for sensitive account actions`
+(PR #290, `b2b80aee`, already on `origin/main`)
+- Apple branch added to `GoogleReauthVerifier`, wired through all 5 call
+  sites (change-password, deactivate, delete, data-export, admin
+  MFA-removal); new rate limiter added for `/account/delete`
+- Tests: `GoogleReauthVerifierTest` covers Apple success/failure
+- No further action needed for this phase
 
 **Phase 2 — P1 UX: Unified authentication entry flow**
 `feat(auth): unified authentication entry flow`
@@ -381,7 +384,7 @@ not a separate ticket)
 
 **Phase 5 — Deferred: future providers**
 Truecaller, Passkeys, standalone phone-OTP login, and the
-`StepUpVerifier` structural refactor (§2.6 2B) all live here. None of these
+`StepUpVerifier` structural refactor (§2.6) all live here. None of these
 are scheduled — they're documented as extension points. `sign_in_method`
 and the existing step-up call sites are designed to accept this later
 without a rewrite, but nothing here is greenlit. The auth-provider table is
@@ -404,13 +407,13 @@ proves the team's bar for this kind of endpoint.
 1. `nextAction` endpoint (§2.2) — confirmed direction after security review,
    or want something stricter still (e.g. always-generic response + a
    separate "check your messages" step)?
-2. BH-015 fix — invert the reset-password phone flow in Phase 1/2, or defer
-   to Phase 5?
+2. BH-015 fix — invert the reset-password phone flow as part of Phase 2, or
+   defer to Phase 5?
 3. **Account deletion retention policy** — separate decision from this
    document, not an auth-mechanism question. Needs legal/compliance/support
    input: keep instant/irreversible, or add a delay + recovery window? Track
-   as its own ticket, not folded into Phase 1's Apple fix or Phase 2's entry
-   flow.
+   as its own ticket, not folded into Phase 2's entry flow or any other
+   phase here.
 4. Is standalone phone-OTP login (§2.8) actually wanted, given per-login SMS
    cost — or is current "OTP as verification step" model sufficient?
    (Deferred to Phase 5 either way, but worth confirming intent early.)
