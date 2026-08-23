@@ -5,8 +5,18 @@ import type { ReimportResult } from '../types';
  * navigators (which import the screens -- a cycle).
  */
 export type AuthStackParamList = {
-  Login: { message?: string } | undefined;
-  Register: undefined;
+  // Phase 3B: the unified identifier-first entry screen (mirrors web's AuthEntry.tsx). Fronts
+  // Login/Register -- both stay directly reachable on their own for the "No account? Register" /
+  // "Sign in" footer links, which intentionally skip AuthEntry rather than round-trip through it.
+  AuthEntry: undefined;
+  // identifier/method: set only when arriving via AuthEntry's POST /auth/identify result --
+  // prefills the field and, for a GOOGLE/APPLE account, hides the password form (see
+  // LoginScreen's own doc comment). message: the pre-existing one-time confirmation banner
+  // (e.g. after a password reset), unrelated to AuthEntry.
+  Login: { message?: string; identifier?: string; method?: string } | undefined;
+  // email/phoneNumber: set only when AuthEntry's identify() call returns nextAction CONTINUE --
+  // prefills whichever of Register's two fields the identifier looked like.
+  Register: { email?: string; phoneNumber?: string } | undefined;
   ForgotPassword: undefined;
 };
 

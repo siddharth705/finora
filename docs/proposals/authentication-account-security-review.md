@@ -4,8 +4,8 @@
 decisions) — decision 5 (Phase 2 sequencing) is now resolved, the other 5
 are not. Implementation: Phase 1 is done, Phase 2's audit-hardening slice
 is done, Phase 3's backend slice (`/auth/identify`, PR #327) is merged, and
-its 3A (web) frontend entry-page UX is now also merged — 3B (mobile) not
-started. Phase 3.5's audit is done (no gap in its own checklist; a bonus
+both its 3A (web) and 3B (mobile) entry-flow UX are now merged. Phase 3.5's
+audit is done (no gap in its own checklist; a bonus
 phone-change session-revocation gap found and fixed). Phase 4's backend
 and web frontend are both merged — mobile settings entry not started.
 Phase 5 has not begun. Committed via a
@@ -489,8 +489,33 @@ match.
   short-circuiting submission entirely while that hint is shown.
   BH-015 (§2.4 item 2, unmasked-phone exposure on password reset) is
   explicitly NOT addressed by this slice -- still open, tracked below.
-- **3B (mobile)**: not started, per the sequencing above (after 3A is
-  verified in production).
+- **3B (mobile) — ✅ DONE, shipped 2026-08-23**: `AuthEntryScreen.tsx`,
+  registered as the Auth stack's default screen -- same single-identifier
+  field, same `POST /auth/identify` call (added to `authApi`/the
+  no-auth-header allowlist), routing to `Login`/`Register` with the
+  identifier or email/phone prefilled via route params (React Navigation's
+  counterpart to web's router `location.state`). `Login`/`Register` stay
+  directly reachable via their own footer links. Unlike web, mobile's
+  native `AppleSignInButton` actually works, so the `APPLE` hint keeps the
+  social row visible (only the password form/link are hidden) rather than
+  hiding it the way web had to.
+  Self-review bug found and fixed before this ever reached a PR: making
+  `AuthEntryScreen` the Auth stack's first screen would have silently
+  changed what a forced sign-out (session expiry) or explicit logout lands
+  on -- `AuthContext.clearLocalState`'s own comment already documented
+  "clearing the token lands on Login" as the intended behavior, which a
+  plain first-screen-wins default would have broken by sending an
+  already-authenticated-then-signed-out user back through the identify
+  step. Fixed with a small `useAuthStackInitialRoute` hook (unit-tested
+  directly, no navigation-container integration test needed) that starts
+  on `AuthEntry` for a session that's never been signed in, but switches to
+  `Login` once a previously-signed-in session is cleared -- passed to the
+  stack navigator's `initialRouteName`.
+  Also built in from day one (learned from web's own post-merge fix):
+  Login's OAuth hint is derived from whether the identifier still matches
+  what AuthEntry resolved it for, not captured once at mount, so editing
+  the field brings the password form back immediately instead of leaving a
+  dead end.
 
 **Phase 3.5 — Session invalidation audit — ✅ DONE, audited + fixed 2026-08-23**
 - Verify refresh-token revocation / session invalidation is consistent
