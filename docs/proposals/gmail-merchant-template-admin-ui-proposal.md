@@ -134,3 +134,109 @@ the pipeline only — coverage expansion is separate follow-up work now that thi
 - Manual: create a template for a new domain → test against a real sample → confirm amount/date →
   confirm Activate is disabled until a test succeeds → activate → confirm it shows correctly.
 - Confirmed the parser-collision guard: creating a template for `amazon.in` is rejected (409).
+
+## 2026-08-22 update — P2P/payment-relay counterparty parsing (design approved, not yet implemented)
+
+**Why:** verifying `phonepe.com`'s V103 template row against real Gmail data (read-only,
+snippet-level, via Claude's Gmail connector) surfaced two problems. First, the guessed pattern
+strings don't match — real PhonePe mail uses `Txn. status : Successful` as its marker and
+`Paid to <name> ₹<amount>` for the amount, not the `'Payment Successful'` / `'Amount Paid: Rs.
+{amount}'` guess V103 seeded. Second, and structurally bigger: PhonePe is a payment-relay app, not
+a merchant in the sense every existing parser assumes — the real counterparty (who the money went
+to) is embedded in the email body, not identifiable from the sender domain. Fixing only the
+pattern strings would still label every parsed transaction as coming from "PhonePe" itself, a
+wrong-merchant-attribution bug, not just a wrong-pattern one. `paytm.com`/`cred.club` got the same
+guessed shape in V103 and were flagged for the same check.
+
+**A pasted second-opinion proposal** suggested generalizing this into a much larger contract
+redesign — rename `merchantDomain`→`sourceDomain`, add a `ReceiptSourceType` enum, rename
+`MerchantEmailParser`→`FinancialEmailParser`, per-field confidence, a new `ExtractionStatus` with
+partial-success states, and percentage-based rollout. Evaluated and declined: most of it
+re-litigates decisions this codebase already made deliberately and documents in its own code —
+`ParsedReceipt`'s class doc is explicit that confidence "exists to be displayed, never to gate
+automatic creation," and nothing downstream auto-applies a receipt without human review regardless
+of confidence, so field-level confidence and a partial-success status have no consumer. The
+speculative taxonomy (`ReceiptSourceType`) turned out to be actively wrong once real data came in
+(see below — CRED isn't "PAYMENT_AGGREGATOR" shaped at all), which is the risk of deciding a
+taxonomy ahead of evidence rather than after it. One idea is worth recording as considered-and-
+deferred: letting the declarative `merchant_templates` model capture a `counterpartyPattern` too,
+so simple counterparty-in-body cases wouldn't need a hand-written parser. Not worth building for
+1–2 merchants; revisit if templating counterparty extraction is ever needed at real scale.
+
+**Real Gmail verification (2026-08-22), same connector, read-only, snippet-level only:**
+
+- **`phonepe.com` — fully confirmed, 5 consistent real instances spanning 2019–2024.** Marker,
+  counterparty+amount capture, and the date line (unlabeled, abbreviated-month format like "Dec 6,
+  2024") are all now real-shape-verified. `ReceiptDateFormats` doesn't parse that abbreviated-month
+  format yet (it has full-month `MMMM d, yyyy` but not `MMM d, yyyy`) — one line added there.
+  Counterparty values seen include both individuals and small local businesses, confirming it's
+  genuinely free text, not a closed set worth constraining.
+- **`cred.club` — real shape found, and it is *not* a P2P transfer.** CRED's actual transactional
+  email is a credit-card-bill-payment confirmation: bank name + masked card, an amount, a payment
+  date — 3 consistent real instances across different banks. Its "counterparty" is a bounded string
+  like `<Bank Name> •••• <last4>`, not an arbitrary name — structurally distinct from PhonePe, which
+  is exactly why the pasted proposal's premature `ReceiptSourceType` taxonomy (which assumed CRED
+  was "PAYMENT_AGGREGATOR"-shaped like PhonePe) would have been wrong. Most real `cred.club` mail in
+  this inbox is two other recurring, receipt-adjacent shapes where no money has moved yet — a "bill
+  generated" notice and a "payment due" reminder — both must resolve to `NOT_A_RECEIPT`; real
+  examples of both exist to build fixtures from.
+- **`paytm.com` — no evidence a per-transaction receipt email exists at all.** 30 real threads
+  reviewed across broad queries (payment/successful/UPI/debited/wallet, plus `paytmbank.com`) turned
+  up only marketing, gift-card fulfillment, monthly UPI/wallet statements (PDF attachment, not
+  per-transaction), wallet-inactive nags, and Paytm's own direct bookings (movie/train tickets —
+  which fit the *original* domain-is-merchant model fine). No "paid to X, successful" shape
+  anywhere. Building a parser against zero evidence would repeat V103's original mistake in code
+  instead of SQL — flagged explicitly to the project owner, who chose to keep a scaffold-only
+  `PaytmEmailParser` anyway as a deliberate hedge in case such mail surfaces later for some user;
+  every path fails closed and it stays config-gated off, so the cost of being wrong about it
+  existing is zero.
+
+**Design:**
+
+1. **`ParsedReceipt` gets one new nullable field, `counterpartyName`.** Additive to the record —
+   every existing parser (`AmazonEmailParser`, `MyntraEmailParser`, `OlaEmailParser`,
+   `BookingEmailParser`, `TemplateEmailParser`) passes `null`, meaning "no counterparty distinct
+   from the merchant," exactly what they mean today. No parallel `ParsedP2PReceipt` type — matches
+   `GmailStagingBridge`'s own "reuse, not a parallel system" principle, and keeps
+   `GmailReceiptExtractionService`'s single-dispatch loop and `ParsedReceiptValidator` unchanged.
+
+2. **`PhonePeEmailParser` and `CredEmailParser`**, structured like `AmazonEmailParser`, both fully
+   built against their real, verified shapes above — including CRED's two `NOT_A_RECEIPT` guard
+   fixtures so a bill notice or due reminder is never mistaken for a completed payment.
+   **`PaytmEmailParser`** is scaffolded the same way structurally but with no real pattern behind
+   it — every case reports `MALFORMED`/not-yet-implemented, an explicit, deliberate exception to
+   this codebase's usual "don't build ahead of evidence" discipline, made knowingly by the project
+   owner rather than by guessing a shape.
+
+3. **A rollout-safety gap this introduces, and its fix.** Unlike `merchant_templates`
+   (`enabled=false` is a real per-row kill switch `TemplateEmailParser.canParse` checks), a
+   hand-written parser has no equivalent — `canParse` is normally just a domain string match, live
+   for every user the moment it deploys. Each of the three new parsers instead gates on a config
+   property (`app.gmail-parsers.<merchant>.enabled`, default `false`, same pattern as
+   `app.admin-mfa.enabled`), so merging the code doesn't make it live even though PhonePe and CRED
+   are already real-shape-verified — activation stays a deliberate, separate flip, mirroring the
+   admin Merchant Templates test-then-activate discipline without building a parallel admin surface.
+
+4. **`GmailStagingBridge.descriptionFor`/`fileNameFor`** prefer `counterpartyName` when present
+   (falls back to `merchantDomain` otherwise) — today they echo the raw domain string
+   (`"phonepe.com"`) as the transaction description, which is wrong regardless of the
+   attribution issue. `GmailReconciliationMatcher` keeps matching on `merchantDomain` — bank-line
+   reconciliation isn't counterparty-aware for any merchant today, and extending that is out of
+   scope here.
+
+5. **A new migration deletes the 3 now-dead `merchant_templates` rows** for `phonepe.com`,
+   `paytm.com`, `cred.club` seeded by V103 (V103 itself is never edited, per this repo's
+   migration-history rule). `gmail_trusted_sender_domains` rows for all three stay untouched —
+   domain trust is still correct, only the declarative-template model is wrong for them. This is
+   hygiene, not the only safety net: `MerchantTemplateAdminService`'s existing hand-written-parser
+   collision guard (409 on create) already blocks recreating a template for a domain a Java parser
+   claims, once these parsers exist — but today, before they ship, nothing stops an admin from
+   "fixing" `phonepe.com`'s pattern strings and activating the wrong model, so removing the rows
+   closes that window rather than relying on it staying unnoticed.
+
+**Scope of the implementation PR:** the `ParsedReceipt` contract change (mergeable immediately,
+zero behavior change for existing parsers), `PhonePeEmailParser` and `CredEmailParser` fully built
+against confirmed real shapes (config-gated off), `PaytmEmailParser` scaffolded-only per the
+project owner's explicit call (config-gated off), the `ReceiptDateFormats` addition, the
+staging-bridge description fix, and the cleanup migration. Flipping any of the three config
+properties on in production is deliberately a separate, later step — not part of this PR.
