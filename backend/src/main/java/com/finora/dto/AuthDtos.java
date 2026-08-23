@@ -167,17 +167,21 @@ public class AuthDtos {
     public record ResetPasswordResponse(String message) {}
 
     /**
-     * Reveals the account's real phone number for a valid, unused reset link -- the frontend
-     * needs it to call Firebase Phone Authentication directly (Firebase's own client SDK sends
-     * the OTP; this backend never does). token here is the SAME raw reset-link token from
-     * forgot-password, used to resolve which account without requiring a JWT (the person is, by
-     * definition, not logged in at this point). Gated on the exact same reset-token validity
-     * check resetPassword() itself uses -- see AuthService.resolveResetPasswordPhone()'s own doc
-     * comment for why that's enough to prevent this from being an arbitrary phone-number lookup.
+     * BH-015 fix. Used to reveal the account's real phone number for a valid, unused reset link
+     * -- inverted so the USER supplies the number instead: the frontend needs SOME phone number
+     * to call Firebase Phone Authentication directly (Firebase's own client SDK sends the OTP;
+     * this backend never does), and this endpoint confirms whether the one the user just typed
+     * belongs to the account BEFORE the client is allowed to hand it to Firebase, rather than the
+     * backend handing the real number back to whoever holds a valid link. token here is the SAME
+     * raw reset-link token from forgot-password, used to resolve which account without requiring
+     * a JWT (the person is, by definition, not logged in at this point). Gated on the exact same
+     * reset-token validity check resetPassword() itself uses -- see
+     * AuthService.verifyResetPasswordPhone()'s own doc comment for why that's enough to prevent
+     * this from becoming an arbitrary phone-number-guessing oracle.
      */
-    public record ResolveResetPasswordPhoneRequest(@NotBlank String token) {}
+    public record VerifyResetPasswordPhoneRequest(@NotBlank String token, @NotBlank String phoneNumber) {}
 
-    public record ResolveResetPasswordPhoneResponse(String phoneNumber) {}
+    public record VerifyResetPasswordPhoneResponse(String message) {}
 
     public record RefreshRequest(String refreshToken) {}
 
