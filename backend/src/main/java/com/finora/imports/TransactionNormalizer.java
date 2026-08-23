@@ -3,7 +3,9 @@ package com.finora.imports;
 import com.finora.dto.ImportDto.StagedRow;
 import com.finora.entity.CategoryRule;
 import com.finora.service.CategorizationService;
+import com.finora.service.MerchantNormalizationEngine;
 import com.finora.service.RuleEngineService;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
@@ -28,6 +30,7 @@ public class TransactionNormalizer {
     private final CategorizationService categorizationService;
     private final DuplicateDetector duplicateDetector;
     private final RuleEngineService ruleEngineService;
+    private final MerchantNormalizationEngine merchantNormalizationEngine;
 
     // Single source of truth for every column name this class recognizes -- shared by normalize(),
     // explainFailure(), and recognizedColumnNames() so the three can never drift out of sync (they
@@ -152,11 +155,24 @@ public class TransactionNormalizer {
     // an ordinary transaction row's running balance AFTER that transaction, not its amount.
     private static final String[] BALANCE_HINTS = {"balance", "running balance", "closing balance"};
 
+    @Autowired
     public TransactionNormalizer(CategorizationService categorizationService, DuplicateDetector duplicateDetector,
-                                  RuleEngineService ruleEngineService) {
+                                  RuleEngineService ruleEngineService,
+                                  MerchantNormalizationEngine merchantNormalizationEngine) {
         this.categorizationService = categorizationService;
         this.duplicateDetector = duplicateDetector;
         this.ruleEngineService = ruleEngineService;
+        this.merchantNormalizationEngine = merchantNormalizationEngine;
+    }
+
+    /**
+     * Pre-Phase-A shape, kept so the ~40 existing tests constructing this directly don't need to
+     * change. Merchant resolution is additive: a normalizer built this way simply never populates
+     * StagedRow.merchant/merchantConfidence, which is correct for every caller that doesn't pass one.
+     */
+    public TransactionNormalizer(CategorizationService categorizationService, DuplicateDetector duplicateDetector,
+                                  RuleEngineService ruleEngineService) {
+        this(categorizationService, duplicateDetector, ruleEngineService, null);
     }
 
     /**
@@ -369,6 +385,17 @@ public class TransactionNormalizer {
     }
 
     /**
+     * A merchant index for one staging pass -- see {@link MerchantIndex}'s own doc comment for why
+     * this is needed at all (staging has no transaction for {@code MerchantNormalizationEngine}'s
+     * own per-transaction memo to live in). Null when this normalizer was built via the pre-Phase-A
+     * 3-arg constructor, matching that constructor's "merchant resolution is simply skipped"
+     * contract.
+     */
+    public MerchantIndex merchantIndexFor(UUID userId) {
+        return merchantNormalizationEngine == null ? null : merchantNormalizationEngine.indexFor(userId);
+    }
+
+    /**
      * Same again, against a {@link DuplicateIndex} the caller built once for the whole statement.
      *
      * <p>The duplicate check was the last per-row query in this method after b7aab9d removed the
@@ -378,6 +405,22 @@ public class TransactionNormalizer {
      */
     public StagedRow normalize(UUID userId, Map<String, String> row, DocumentContext ctx,
                                 List<CategoryRule> rules, DuplicateIndex duplicateIndex) {
+        return normalize(userId, row, ctx, rules, duplicateIndex, null);
+    }
+
+    /**
+     * Same again, against a {@link MerchantIndex} the caller built once for the whole statement via
+     * {@link #merchantIndexFor} -- both staging loops (PreviewGenerator, PdfPreviewGenerator) call
+     * this overload. A null {@code merchantIndex} falls back to a live, un-indexed
+     * {@code MerchantNormalizationEngine.resolveReadOnly(userId, description)} call per row when a
+     * {@code MerchantNormalizationEngine} is wired but no index was hoisted -- correct for a caller
+     * invoking this a handful of times (e.g. a diagnostic), wrong for a real per-row staging loop,
+     * which is why both staging loops always pass one. {@code merchantNormalizationEngine == null}
+     * (the pre-Phase-A 3-arg constructor) skips merchant resolution entirely, as before.
+     */
+    public StagedRow normalize(UUID userId, Map<String, String> row, DocumentContext ctx,
+                                List<CategoryRule> rules, DuplicateIndex duplicateIndex,
+                                MerchantIndex merchantIndex) {
         String dateRaw = CsvParser.firstNonBlank(row, DATE_HINTS);
         String amountRaw = firstNonZeroAmount(row, AMOUNT_HINTS);
         // Falls back so a genuinely zero-amount row still normalizes exactly as before -- the
@@ -484,7 +527,15 @@ public class TransactionNormalizer {
             // separate path), and staging is a preview the user may abandon. suggest() would
             // create a merchant and an alias for every distinct description in a file that is
             // never imported, which is Bug 36. Same matching, same order, no writes.
-            var suggestion = categorizationService.suggestReadOnly(rules, userId, description, amount, null);
+            //
+            // merchantIndex passed through so CategorizationService's own merchant resolution
+            // (needed for rule-context matching and the learned-category lookup) also costs zero
+            // queries -- without this, that call still did its own live, un-indexed
+            // resolveReadOnly(userId, description) per row even after this class's OWN merchant
+            // resolution below was indexed, which is why ImportQueryCountIT stayed at 2.00
+            // queries/row rather than dropping toward zero.
+            var suggestion = categorizationService.suggestReadOnly(rules, userId, description, amount, null,
+                    merchantIndex);
             suggestedCategory = suggestion.category();
             source = suggestion.source();
             ruleId = suggestion.ruleId();
@@ -560,7 +611,20 @@ public class TransactionNormalizer {
                     : RowKind.BALANCE_MARKER;
         }
 
+        String merchant = null;
+        Double merchantConfidence = null;
+        if (merchantNormalizationEngine != null) {
+            var resolved = merchantIndex != null
+                    ? merchantNormalizationEngine.resolveReadOnly(userId, description, merchantIndex)
+                    : merchantNormalizationEngine.resolveReadOnly(userId, description);
+            if (resolved.isPresent()) {
+                merchant = resolved.get().getCanonicalName();
+                merchantConfidence = 1.0;
+            }
+        }
+
         return new StagedRow(date, description, amount, type, suggestedCategory, source, ruleId,
-                likelyDuplicate, referenceNumber, balanceAfter, duplicateMatch, kind);
+                likelyDuplicate, referenceNumber, balanceAfter, duplicateMatch, kind, null, merchant,
+                merchantConfidence);
     }
 }
