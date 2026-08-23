@@ -26,10 +26,12 @@ const STAGES = [
   { caption: 'Next import', merchant: 'Amazon', tag: 'Shopping', tone: 'done' as const, confirmedLine: 'Pattern confirmed' },
 ];
 
+// No 'learn' entry: the only stage with tone 'learn' has tag: null, so it always renders via the
+// hardcoded TAG_STYLE.edit fallback below, never `TAG_STYLE[s.tone]` -- a 'learn' key here would
+// be unreachable dead code.
 const TAG_STYLE: Record<string, { background: string; color: string }> = {
   unknown: { background: 'rgb(148 163 184 / .18)', color: '#CBD5E1' },
   edit: { background: 'rgb(244 241 236 / .16)', color: '#F4F1EC' },
-  learn: { background: 'rgb(244 241 236 / .16)', color: '#F4F1EC' },
   done: { background: 'rgb(22 163 74 / .18)', color: '#4ADE80' },
 };
 
