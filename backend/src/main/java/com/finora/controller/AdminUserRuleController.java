@@ -47,7 +47,7 @@ public class AdminUserRuleController {
 
     @PutMapping("/{id}")
     public ApiResponse<RuleDto> update(@PathVariable UUID userId, @PathVariable UUID id,
-                                        @RequestBody RuleDto.UpdateRequest request) {
+                                        @Valid @RequestBody RuleDto.UpdateRequest request) {
         return ApiResponse.ok(ruleService.update(userId, id, request, currentUser.id()), "Rule updated");
     }
 

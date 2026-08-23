@@ -55,6 +55,20 @@ public class AuthController {
     }
 
     /**
+     * Identifier-first entry step (auth/security review §2.2,
+     * docs/proposals/authentication-account-security-review.md) -- fronts login()/register()
+     * without replacing them: the client calls this first with just an email or phone, and shows
+     * the right next step (password field, "Continue with Google", "Continue with Apple", or
+     * signup) based on {@code nextAction}. Rate-limited more tightly than login() itself (see
+     * RateLimitFilter) since it is unauthenticated and, unlike login, costs nothing per call to
+     * probe.
+     */
+    @PostMapping("/identify")
+    public ResponseEntity<ApiResponse<IdentifyResponse>> identify(@Valid @RequestBody IdentifyRequest request) {
+        return ResponseEntity.ok(ApiResponse.ok(authService.identify(request), "Identified"));
+    }
+
+    /**
      * SEC-03 (docs/quality/bug-reports/2026-08-19-security-review-findings.md). Second step of
      * the flow login() starts by throwing AUTH_MFA_REQUIRED (challenge token in its details map)
      * -- same AuthResponse shape and refresh-cookie handling as login()/reactivate() themselves,
