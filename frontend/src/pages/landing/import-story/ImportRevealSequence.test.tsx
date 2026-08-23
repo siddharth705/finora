@@ -19,20 +19,22 @@ describe('ImportRevealSequence', () => {
     vi.clearAllMocks();
   });
 
-  it('shows the opening beat (DocumentStack) before the observer ever fires -- the safe default', () => {
+  it('shows the statement at rest, with no ledger card yet, before the observer ever fires', () => {
     // Regression test: an earlier version defaulted step 0 to the FINISHED panel, so a real
     // visitor's actual sequence was finished -> documents -> processing -> finished, which reads
     // as "nothing is animating" because the default state already IS the end state. The default
-    // must be the opening beat, so there's something to visibly progress from.
+    // must be the opening beat (the statement, no ledger card yet), so there's something to
+    // visibly progress from.
     vi.mocked(useReducedMotion).mockReturnValue(false);
     render(<ImportRevealSequence />);
-    expect(screen.getByText('PDF')).toBeInTheDocument();
+    expect(screen.getByText('Bank statement')).toBeInTheDocument();
     expect(screen.queryByText('Insights ready')).not.toBeInTheDocument();
   });
 
-  it('shows the final state immediately under prefers-reduced-motion, with no staged reveal', () => {
+  it('shows the settled statement with the ledger card overlapping it under prefers-reduced-motion', () => {
     vi.mocked(useReducedMotion).mockReturnValue(true);
     render(<ImportRevealSequence />);
+    expect(screen.getByText('Bank statement')).toBeInTheDocument();
     expect(screen.getByText('Insights ready')).toBeInTheDocument();
   });
 });

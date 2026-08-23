@@ -1,5 +1,7 @@
 package com.finora.dto;
 
+import jakarta.validation.constraints.NotNull;
+
 import java.time.Instant;
 import java.util.UUID;
 
@@ -30,4 +32,11 @@ public record MerchantReviewDto(
         String lifecycleStatus,
         long transactionCount,
         Instant createdAt
-) {}
+) {
+
+    /** Backs POST .../merge. Security fix: the controller used to read this straight off an
+     *  unvalidated {@code Map<String, UUID>} body -- an empty {@code {}} body reached
+     *  {@code MerchantService.merge}'s {@code survivingMerchantId.equals(mergeFromMerchantId)}
+     *  with a null survivingMerchantId and threw an unhandled NPE (500) instead of a clean 400. */
+    public record MergeRequest(@NotNull(message = "survivingMerchantId is required") UUID survivingMerchantId) {}
+}

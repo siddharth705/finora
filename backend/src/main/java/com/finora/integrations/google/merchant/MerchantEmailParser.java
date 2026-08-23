@@ -34,6 +34,22 @@ public interface MerchantEmailParser {
     boolean canParse(String authenticatedDomain);
 
     /**
+     * Whether this parser is the one responsible for a domain, independent of whether it is
+     * currently allowed to run. Every parser with no runtime enable/disable gate simply IS its own
+     * {@link #canParse} answer, which is what the default here gives for free. A config-gated
+     * parser (one whose {@code canParse} also checks a feature flag — see {@code
+     * PhonePeEmailParser}'s own class doc for why that gate exists) must override this to answer
+     * unconditionally: admin tooling that guards against two parsing mechanisms competing for the
+     * same domain (see {@code MerchantTemplateAdminService.rejectIfClaimedByAnotherParser}) needs
+     * to know a domain is spoken for even while its parser is deliberately turned off, or an admin
+     * could create and activate a {@code merchant_templates} row for a domain a disabled
+     * hand-written parser will claim the moment it's switched on.
+     */
+    default boolean claimsDomain(String authenticatedDomain) {
+        return canParse(authenticatedDomain);
+    }
+
+    /**
      * Extracts a receipt from one message this parser has already claimed via {@link #canParse}.
      *
      * <p>Never throws for ordinary "this isn't parseable" reasons — a marketing email or a template

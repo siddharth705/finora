@@ -73,7 +73,7 @@ class GmailReceiptExtractionServiceTest {
                 .thenReturn(List.of(message));
         when(gmail.getMessageBody(TOKEN, "m1"))
                 .thenReturn(new GmailApiClient.MessageBody("<p>Order Total: Rs. 500.00</p>", null));
-        ParsedReceipt receipt = new ParsedReceipt("m1", "amazon.in",
+        ParsedReceipt receipt = new ParsedReceipt("m1", "amazon.in", null,
                 Money.of(new BigDecimal("500.00")), LocalDate.of(2026, 8, 10), 0.9);
         when(parser.parse(any())).thenReturn(ParserResult.parsed(receipt));
 
@@ -131,7 +131,7 @@ class GmailReceiptExtractionServiceTest {
         when(gmail.getMessageBody(TOKEN, "m1"))
                 .thenReturn(new GmailApiClient.MessageBody("<p>Order Total: Rs. 0.00</p>", null));
         // Zero amount: extractable, but implausible -- ParsedReceiptValidator's own job.
-        ParsedReceipt zeroReceipt = new ParsedReceipt("m1", "amazon.in", Money.ZERO,
+        ParsedReceipt zeroReceipt = new ParsedReceipt("m1", "amazon.in", null, Money.ZERO,
                 LocalDate.of(2026, 8, 10), 0.9);
         when(parser.parse(any())).thenReturn(ParserResult.parsed(zeroReceipt));
 
@@ -193,7 +193,7 @@ class GmailReceiptExtractionServiceTest {
         when(gmail.getMessageBody(TOKEN, "m2"))
                 .thenReturn(new GmailApiClient.MessageBody("<p>Order Total: Rs. 500.00</p>", null));
         when(parser.parse(any())).thenReturn(ParserResult.parsed(new ParsedReceipt(
-                "m2", "amazon.in", Money.of(new BigDecimal("500.00")), LocalDate.of(2026, 8, 10), 0.9)));
+                "m2", "amazon.in", null, Money.of(new BigDecimal("500.00")), LocalDate.of(2026, 8, 10), 0.9)));
 
         GmailReceiptExtractionService.ExtractionResult result = service.extractFor(connection, 50);
 

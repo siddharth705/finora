@@ -19,6 +19,7 @@ import org.springframework.http.*;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.util.Map;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -259,6 +260,56 @@ class AdminMerchantReviewControllerIT extends AbstractIntegrationTest {
         String body = mapper.readTree(response.getBody()).get("data").toString();
         assertThat(body).contains(ownersApproved.getId().toString());
         assertThat(body).doesNotContain(strangersApproved.getId().toString());
+    }
+
+    // --- merge ----------------------------------------------------------------------------------
+
+    /**
+     * Security fix: the controller used to read {@code survivingMerchantId} straight off an
+     * unvalidated {@code Map<String, UUID>} body. An empty {@code {}} body reached
+     * {@code MerchantService.merge}'s {@code survivingMerchantId.equals(mergeFromMerchantId)} with
+     * a null survivingMerchantId and threw an unhandled NPE (500) instead of a clean 400.
+     */
+    @Test
+    void merge_missingSurvivingMerchantId_isRejectedAsValidationErrorNotA500() throws Exception {
+        User admin = createUser("ADMIN");
+        User owner = createUser("USER");
+        Merchant guess = temporaryMerchant(owner, "NO TARGET " + UUID.randomUUID());
+
+        ResponseEntity<String> response = restTemplate.exchange(
+                "/api/v1/admin/merchant-review/users/" + owner.getId() + "/merchants/" + guess.getId() + "/merge",
+                HttpMethod.POST, new HttpEntity<>(Map.of(), bearerFor(admin)), String.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        JsonNode body = mapper.readTree(response.getBody());
+        assertThat(body.get("errorCode").asText()).isEqualTo("VALIDATION_ERROR");
+        assertThat(body.get("message").asText()).contains("survivingMerchantId");
+        // Nothing was touched -- the guess is exactly as it was before the request.
+        assertThat(merchantRepository.findById(guess.getId())).isPresent();
+    }
+
+    /** The happy path this endpoint exists for: folding the review-queue guess into a merchant the
+     *  user already has, chosen from merge-candidates. */
+    @Test
+    void merge_foldsTheGuessIntoTheChosenSurvivingMerchant() throws Exception {
+        User admin = createUser("ADMIN");
+        User owner = createUser("USER");
+        Merchant guess = temporaryMerchant(owner, "SWIGGY GUESS " + UUID.randomUUID());
+        Merchant surviving = new Merchant();
+        surviving.setUserId(owner.getId());
+        surviving.setCanonicalName("SWIGGY " + UUID.randomUUID());
+        surviving.setLifecycleStatus(Merchant.Lifecycle.APPROVED);
+        surviving = merchantRepository.save(surviving);
+
+        ResponseEntity<String> response = restTemplate.exchange(
+                "/api/v1/admin/merchant-review/users/" + owner.getId() + "/merchants/" + guess.getId() + "/merge",
+                HttpMethod.POST,
+                new HttpEntity<>(Map.of("survivingMerchantId", surviving.getId()), bearerFor(admin)), String.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(merchantRepository.findById(guess.getId())).isEmpty();
+        assertThat(merchantRepository.findById(surviving.getId()).orElseThrow().getLifecycleStatus())
+                .isEqualTo(Merchant.Lifecycle.APPROVED);
     }
 
     // --- the dangerous one --------------------------------------------------------------------

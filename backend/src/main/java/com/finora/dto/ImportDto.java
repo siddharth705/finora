@@ -3,6 +3,10 @@ package com.finora.dto;
 import com.finora.accounts.AccountDto;
 import com.finora.imports.ImportReliabilityStatus;
 import com.finora.imports.RowKind;
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Size;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -380,16 +384,34 @@ public class ImportDto {
 
     /** One account's worth of reviewed rows within a {@link MultiAccountConfirmRequest} --
      *  structurally identical to {@link ConfirmRequest} minus the sessionId (shared once at the
-     *  top level, not repeated per section). */
+     *  top level, not repeated per section).
+     *
+     *  Security fix: {@code rows} had no Bean Validation, and neither controller method that
+     *  binds a {@code MultiAccountConfirmRequest} applied {@code @Valid} -- a null {@code rows}
+     *  list threw a raw NullPointerException (unhandled 500) at
+     *  {@code ImportService.confirmMultiSection}'s {@code sectionConfirm.rows().size()}, instead
+     *  of a clean 400. {@code @Valid} on the field cascades into {@code ConfirmedRow}/
+     *  {@code NewAccountRequest}'s own new constraints below. */
     public record SectionConfirm(
-            List<ConfirmedRow> rows, UUID existingAccountId, NewAccountRequest newAccount,
+            @NotNull(message = "rows is required") List<@Valid ConfirmedRow> rows,
+            UUID existingAccountId, @Valid NewAccountRequest newAccount,
             BigDecimal statementOpeningBalance, BigDecimal statementClosingBalance
     ) {}
 
     /** Confirms every section of a multi-account PDF staging session together -- see
      *  ImportService.confirmMultiSection(), which loops calling the existing single-account
-     *  confirm() once per section rather than duplicating that logic here. */
-    public record MultiAccountConfirmRequest(UUID sessionId, List<SectionConfirm> sections) {}
+     *  confirm() once per section rather than duplicating that logic here.
+     *
+     *  Security fix: same NPE-to-500 gap as {@link SectionConfirm#rows}, one level up -- a null
+     *  {@code sections} list threw at {@code confirmMultiSection}'s
+     *  {@code request.sections().size()} comparison against the staged sections. {@code sessionId}
+     *  keeps the message {@code confirmMultiSection}'s own manual null-check already used, so a
+     *  client sees the identical 400 either way -- it now just fires at the HTTP boundary instead
+     *  of one line into the service. */
+    public record MultiAccountConfirmRequest(
+            @NotNull(message = "sessionId is required") UUID sessionId,
+            @NotNull(message = "sections is required") List<@Valid SectionConfirm> sections
+    ) {}
 
     public record MultiAccountConfirmResponse(List<ConfirmResponse> perAccount) {}
 
@@ -468,10 +490,23 @@ public class ImportDto {
      *   no password to begin with, or already unlocked the document during staging and never touch
      *   the raw bytes again at confirm time. Null for a client that doesn't send it, which is every
      *   caller except a reimport of a protected PDF.
+     *
+     * <p>Security fix: {@code rows} had no Bean Validation, and none of the three controller
+     * methods that bind a {@code ConfirmRequest} (csv/confirm, reimport/confirm, and
+     * confirmMultiSection's internal per-section reuse) applied {@code @Valid} -- a null
+     * {@code rows} list threw a raw NullPointerException (unhandled 500) at
+     * {@code ConfirmedRowIntegrity.requireSameRows}'s {@code confirmed.size()}, instead of a clean
+     * 400. {@code sessionId} is deliberately NOT annotated here despite being required for
+     * csv/confirm: {@code confirmReimport} legitimately never sends one (there is no staging
+     * session to resume when replaying an already-stored file), and {@code confirmMultiSection}
+     * constructs this record internally with a null sessionId per section -- a shared DTO can only
+     * be annotated for what is true in EVERY context that binds it, so the existing per-caller
+     * manual checks ({@code confirmSession}/{@code confirmMultiSection}) stay as the real guard.
      */
     public record ConfirmRequest(
             UUID sessionId,
-            List<ConfirmedRow> rows, UUID existingAccountId, NewAccountRequest newAccount,
+            @NotNull(message = "rows is required") List<@Valid ConfirmedRow> rows,
+            UUID existingAccountId, @Valid NewAccountRequest newAccount,
             BigDecimal statementOpeningBalance, BigDecimal statementClosingBalance,
             String password
     ) {}
@@ -485,11 +520,22 @@ public class ImportDto {
      *                             when it reaches the client -- no unmasked number ever leaves the
      *                             server, so a client cannot forge one into a different product's
      *                             identity without already knowing that product's full number.
+     *
+     * <p>Security fix: this record had zero Bean Validation, and none of the three controller
+     * methods that can reach it (via {@code ConfirmRequest}/{@code SectionConfirm}) applied
+     * {@code @Valid} -- a blank {@code name} threw a raw {@code DataIntegrityViolationException}
+     * against {@code accounts.name}'s {@code NOT NULL VARCHAR(120)} constraint (a misleading 409
+     * "conflicts with a record" instead of a clean 400), and every other free-text field here had
+     * the same "let the DB reject it" gap against its own column width. Same bounds and the same
+     * {@code accountType}-is-hand-validated-elsewhere reasoning as {@link AccountDto.CreateRequest},
+     * which this record's fields are eventually copied into (see {@code ImportService.confirm}).
      */
     public record NewAccountRequest(
-            String name, String accountType, BigDecimal openingBalance, BigDecimal creditLimit, LocalDate dueDate,
-            String accountHolderName, String accountNumberMasked, String bankId,
-            String branchName, String ifscCode,
+            @NotBlank @Size(max = 120) String name, String accountType,
+            BigDecimal openingBalance, BigDecimal creditLimit, LocalDate dueDate,
+            @Size(max = 255) String accountHolderName, @Size(max = 64) String accountNumberMasked,
+            @Size(max = 32) String bankId,
+            @Size(max = 120) String branchName, @Size(max = 11) String ifscCode,
             String detectedProduct, String productIdentityHash,
             // Echoed back unchanged from DetectedAccountInfo, same round-trip as detectedProduct
             // above -- these are server-detected values the review screen displays read-only, not
@@ -515,6 +561,19 @@ public class ImportDto {
      *        all. The only decision that needs carrying is the one that changes what happens to a
      *        row that IS imported. Defaults to false for a client that does not send it (the mobile
      *        app, which has no duplicate review screen), which is exactly the old behaviour.
+     *
+     *        <p>Security fix: {@code referenceNumber} had no length bound, and none of the three
+     *        controller methods that bind a row through {@code ConfirmRequest}/
+     *        {@code SectionConfirm} applied {@code @Valid} to reach it. An oversized value was
+     *        written straight to {@code transactions.reference_number VARCHAR(64)}, producing a
+     *        misleading 409 "conflicts with a record" from {@code DataIntegrityViolationException}
+     *        instead of a clean 400. {@code date}/{@code description}/{@code amount}/{@code type}
+     *        are deliberately NOT annotated here: {@code ConfirmedRowIntegrity.requireSameRows}
+     *        already cross-checks all four against the server's own staged rows byte-for-byte, so a
+     *        client cannot forge them to a value the parser never produced, and {@code category}
+     *        is deliberately left free-text with no constraint -- {@code CategorizationService}
+     *        already defaults a null/blank value to {@code "Other"} and truncates before insert,
+     *        so rejecting it here would reject input that downstream already handles correctly.
      */
     public record ConfirmedRow(
             LocalDate date, String description, BigDecimal amount, String type,
@@ -522,7 +581,7 @@ public class ImportDto {
             String categorySource,   // "learned" | "rule" | "user_rule" | "global_rule" | "default" | "file" — carried from staging
             UUID ruleId,             // carried from staging — see StagedRow.ruleId
             boolean likelyDuplicate, // carried from staging, so the summary can report it honestly
-            String referenceNumber,  // carried from staging — see StagedRow.referenceNumber
+            @Size(max = 64) String referenceNumber,  // carried from staging — see StagedRow.referenceNumber
             BigDecimal balanceAfter, // carried from staging — see StagedRow.balanceAfter
             boolean confirmedNotDuplicate
     ) {
