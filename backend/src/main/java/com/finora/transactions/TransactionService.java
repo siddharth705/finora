@@ -236,13 +236,17 @@ public class TransactionService {
         } else {
             // No explicit category given — ask the engine. A "default" (no rule/learned match)
             // suggestion isn't a real decision, so file it under Other but flag it for the
-            // "Ask Once" review queue instead of silently learning a non-decision.
+            // "Ask Once" review queue instead of silently learning a non-decision -- unless the
+            // user's own auto-apply confidence threshold says otherwise; see
+            // CategorizationService.needsCategoryReview's own doc comment.
             var suggestion = categorizationService.suggest(userId, req.description(), req.amount(), null);
             t.setMerchantId(suggestion.merchantId()); // already resolved as part of suggest() — no need to resolve twice
             category = categorizationService.resolveOrCreateCategory(userId, suggestion.category());
-            t.setNeedsCategoryReview(suggestion.source().equals("default"));
+            t.setNeedsCategoryReview(categorizationService.needsCategoryReview(
+                    userId, suggestion.source().equals("default"), suggestion.confidence()));
             t.setDecisionSource(suggestion.decisionSource());
             t.setDecisionRuleId(suggestion.ruleId());
+            t.setDecisionConfidence(suggestion.confidence());
             // create() is always a real write (unlike CsvImportService, there's no staging/
             // preview step in between) -- safe to record the match right here.
             categorizationService.recordRuleMatch(suggestion.ruleId());
@@ -412,6 +416,7 @@ public class TransactionService {
             t.setNeedsCategoryReview(false); // an explicit edit always resolves the review flag, even choosing "Other" on purpose
             t.setDecisionSource(Transaction.DecisionSource.MANUAL);
             t.setDecisionRuleId(null);
+            t.setDecisionConfidence(null);
             categorizationService.learn(userId, t.getDescription(), category.getId());
         }
 
@@ -444,6 +449,7 @@ public class TransactionService {
         t.setCategoryManuallySet(true);
         t.setDecisionSource(Transaction.DecisionSource.MANUAL);
         t.setDecisionRuleId(null);
+        t.setDecisionConfidence(null);
         categorizationService.learn(userId, t.getDescription(), category.getId());
         Transaction saved = transactionRepository.save(t);
         auditService.record(userId, "TRANSACTION_CATEGORY_UPDATED", "Transaction", txnId,
@@ -552,6 +558,7 @@ public class TransactionService {
         t.setCategoryManuallySet(true);
         t.setDecisionSource(Transaction.DecisionSource.MANUAL);
         t.setDecisionRuleId(null);
+        t.setDecisionConfidence(null);
         categorizationService.learn(userId, t.getDescription(), category.getId());
         Transaction saved = transactionRepository.save(t);
         auditService.record(userId, "TRANSACTION_CATEGORY_UPDATED", "Transaction", txnId,
@@ -696,6 +703,7 @@ public class TransactionService {
             t.setCategoryManuallySet(true);
             t.setDecisionSource(Transaction.DecisionSource.MANUAL);
             t.setDecisionRuleId(null);
+            t.setDecisionConfidence(null);
             categorizationService.queueLearning(userId, t.getDescription(), category.getId());
             transactionRepository.save(t);
         }

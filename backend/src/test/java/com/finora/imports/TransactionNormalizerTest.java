@@ -33,10 +33,11 @@ class TransactionNormalizerTest {
 
     private final UUID userId = UUID.randomUUID();
     private TransactionNormalizer normalizer;
+    private CategorizationService categorizationService;
 
     @BeforeEach
     void setUp() {
-        CategorizationService categorizationService = mock(CategorizationService.class);
+        categorizationService = mock(CategorizationService.class);
         when(categorizationService.suggestReadOnly(any(), any(), any(), any()))
                 .thenReturn(new CategorizationService.Suggestion("Other", "default", null, null, null));
         // Staging calls the rule-set overload (rules hoisted out of the per-row loop);
@@ -57,6 +58,21 @@ class TransactionNormalizerTest {
             row.put(headerThenValuePairs[i], headerThenValuePairs[i + 1]);
         }
         return row;
+    }
+
+    // --- Category confidence ---
+
+    @Test
+    void normalize_populatesCategoryConfidence_fromTheSuggestion() {
+        when(categorizationService.suggestReadOnly(any(), any(), any(), any(), any(), any()))
+                .thenReturn(new CategorizationService.Suggestion("Dining", "rule", null,
+                        com.finora.entity.Transaction.DecisionSource.KEYWORD_MATCH, null, 70));
+
+        Map<String, String> row = rowOf(
+                "Date", "10/07/2026", "Description", "SWIGGY ORDER", "Amount", "486.00", "Type", "DR");
+        StagedRow result = normalizer.normalize(userId, row);
+
+        assertThat(result.categoryConfidence()).isEqualTo(70);
     }
 
     // --- Description column recognition ---

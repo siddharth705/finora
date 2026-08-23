@@ -209,6 +209,9 @@ export interface TransactionExplanation {
   decisionSource: string;
   summary: string;
   evidence: string[];
+  // 0-100, or absent -- see TransactionExplanationDto's own doc comment for which decision
+  // sources populate this (never MANUAL/FILE_PROVIDED).
+  confidence?: number;
 }
 
 export const transactionsApi = {
@@ -241,6 +244,7 @@ export interface ConfirmedRowPayload {
   include: boolean;
   categorySource: string;
   ruleId: string | null;
+  categoryConfidence: number | null;
   /** What the engine guessed. */
   likelyDuplicate: boolean;
   /**
