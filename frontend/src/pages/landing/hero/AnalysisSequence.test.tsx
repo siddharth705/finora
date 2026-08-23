@@ -12,7 +12,7 @@ describe('AnalysisSequence', () => {
     restore = undefined;
   });
 
-  it('keeps the ring at 0 before the checklist has finished (no real IntersectionObserver firing)', () => {
+  it('keeps the ring at 0 before the checklist has made any progress (no real IntersectionObserver firing)', () => {
     // jsdom's IntersectionObserver is a defined no-op (see src/test/setup.ts) -- it never fires,
     // so useStagedReveal's step counter never advances past 0 here, the same as a real visitor
     // whose scroll hasn't yet carried this section into view. The ring must reflect that, not
