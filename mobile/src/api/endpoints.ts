@@ -52,8 +52,11 @@ export const authApi = {
     api.post<AuthResponseDto>('/auth/reactivate', { token }),
   forgotPassword: (email: string) =>
     api.post<{ message: string; devResetLink: string | null }>('/auth/forgot-password', { email }).then((r) => r.data),
-  resolveResetPasswordPhone: (token: string) =>
-    api.post<{ phoneNumber: string }>('/auth/reset-password/phone', { token }).then((r) => r.data),
+  // BH-015 fix. Not called from any screen yet -- password-reset completion is web-only on
+  // mobile today (see ForgotPasswordScreen's own doc comment) -- kept here, signature-matched to
+  // the backend contract, for whenever an in-app completion screen is built.
+  verifyResetPasswordPhone: (token: string, phoneNumber: string) =>
+    api.post<{ message: string }>('/auth/reset-password/phone', { token, phoneNumber }).then((r) => r.data),
   resetPassword: (token: string, firebaseIdToken: string, newPassword: string) =>
     api.post<{ message: string }>('/auth/reset-password', { token, firebaseIdToken, newPassword }).then((r) => r.data),
   // Uses the bare rawApi instance (not `api`) so a failing/expiring access token can't interfere
