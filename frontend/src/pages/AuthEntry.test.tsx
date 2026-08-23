@@ -13,12 +13,11 @@ vi.mock('../api/endpoints', () => ({
 
 function LoginStub() {
   const location = useLocation();
-  const state = location.state as { identifier?: string; method?: string } | null;
+  const state = location.state as { identifier?: string } | null;
   return (
     <div>
       <p>Login page</p>
       <p>identifier={state?.identifier ?? 'none'}</p>
-      <p>method={state?.method ?? 'none'}</p>
     </div>
   );
 }
@@ -64,8 +63,8 @@ describe('AuthEntry', () => {
     expect(authApi.identify).not.toHaveBeenCalled();
   });
 
-  it('routes to /login with the identifier and method prefilled when nextAction is PASSWORD', async () => {
-    vi.mocked(authApi.identify).mockResolvedValue({ nextAction: 'PASSWORD' });
+  it('routes to /login with the identifier prefilled when nextAction is EXISTS', async () => {
+    vi.mocked(authApi.identify).mockResolvedValue({ nextAction: 'EXISTS' });
     renderAuthEntry();
     const user = userEvent.setup();
 
@@ -75,29 +74,6 @@ describe('AuthEntry', () => {
     await waitFor(() => expect(screen.getByText('Login page')).toBeInTheDocument());
     expect(authApi.identify).toHaveBeenCalledWith('jane@example.com');
     expect(screen.getByText('identifier=jane@example.com')).toBeInTheDocument();
-    expect(screen.getByText('method=PASSWORD')).toBeInTheDocument();
-  });
-
-  it('routes to /login with method GOOGLE when nextAction is GOOGLE', async () => {
-    vi.mocked(authApi.identify).mockResolvedValue({ nextAction: 'GOOGLE' });
-    renderAuthEntry();
-    const user = userEvent.setup();
-
-    await user.type(screen.getByLabelText(/email or mobile number/i), 'jane@example.com');
-    await user.click(screen.getByRole('button', { name: /continue/i }));
-
-    await waitFor(() => expect(screen.getByText('method=GOOGLE')).toBeInTheDocument());
-  });
-
-  it('routes to /login with method APPLE when nextAction is APPLE', async () => {
-    vi.mocked(authApi.identify).mockResolvedValue({ nextAction: 'APPLE' });
-    renderAuthEntry();
-    const user = userEvent.setup();
-
-    await user.type(screen.getByLabelText(/email or mobile number/i), 'jane@example.com');
-    await user.click(screen.getByRole('button', { name: /continue/i }));
-
-    await waitFor(() => expect(screen.getByText('method=APPLE')).toBeInTheDocument());
   });
 
   it('routes to /register with the email prefilled when nextAction is CONTINUE and the identifier looks like an email', async () => {

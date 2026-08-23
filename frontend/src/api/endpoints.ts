@@ -64,8 +64,9 @@ export const authApi = {
     api.post<AuthResponseDto>('/auth/login', { identifier, password, scope: PORTAL_SCOPE }),
   // Identifier-first entry step (auth/security review §2.2) -- resolves an email or mobile
   // number to what the frontend should show next, without a raw exists boolean. See
-  // AuthService.identify on the backend: nextAction is 'PASSWORD' | 'GOOGLE' | 'APPLE' for an
-  // existing account, or 'CONTINUE' when there isn't one yet.
+  // AuthService.identify on the backend: nextAction is 'EXISTS' for an existing account
+  // (Phase 7, resolved 2026-08-23: no longer distinguishes which sign-in method it uses), or
+  // 'CONTINUE' when there isn't one yet.
   identify: (identifier: string) =>
     api.post<{ nextAction: string }>('/auth/identify', { identifier }).then((r) => r.data),
   forgotPassword: (email: string) =>

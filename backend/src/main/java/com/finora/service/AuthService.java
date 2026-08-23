@@ -387,14 +387,18 @@ public class AuthService {
      * deliberately has no scope parameter.
      *
      * <p>Locked/suspended/deactivated status is intentionally not surfaced here: this endpoint
-     * answers "what credential does this identifier's account use", not "is this account usable
-     * right now" -- the latter is login()'s job, and folding it in here would only grow the
-     * surface an anonymous caller can probe pre-authentication.
+     * answers "does an account exist for this identifier", not "is this account usable right
+     * now" -- the latter is login()'s job, and folding it in here would only grow the surface an
+     * anonymous caller can probe pre-authentication.
+     *
+     * <p>Phase 7 hardening (resolved 2026-08-23): used to return the account's real
+     * {@code signInMethod} value (PASSWORD/GOOGLE/APPLE) for an existing account -- see
+     * {@link IdentifyResponse}'s own doc comment for why that's now collapsed to a single EXISTS.
      */
     public IdentifyResponse identify(IdentifyRequest request) {
         String email = resolveEmailForLogin(request.identifier(), User.SCOPE_USER);
         return findUserByEmailIgnoreCaseSafely(email, User.SCOPE_USER)
-                .map(user -> new IdentifyResponse(user.getSignInMethod()))
+                .map(user -> new IdentifyResponse("EXISTS"))
                 .orElseGet(() -> new IdentifyResponse("CONTINUE"));
     }
 

@@ -31,8 +31,8 @@ export const authApi = {
     api.post<AuthResponseDto>('/auth/login', { identifier, password }),
   // Identifier-first entry step (Phase 3B) -- resolves an email or mobile number to what the
   // client should show next, without a raw exists boolean. See frontend/src/api/endpoints.ts's
-  // own copy: nextAction is 'PASSWORD' | 'GOOGLE' | 'APPLE' for an existing account, or
-  // 'CONTINUE' when there isn't one yet.
+  // own copy: nextAction is 'EXISTS' for an existing account (Phase 7, resolved 2026-08-23: no
+  // longer distinguishes which sign-in method it uses), or 'CONTINUE' when there isn't one yet.
   identify: (identifier: string) =>
     api.post<{ nextAction: string }>('/auth/identify', { identifier }).then((r) => r.data),
   // D-23 Phase 2. idToken is the raw credential from @react-native-google-signin/google-signin --

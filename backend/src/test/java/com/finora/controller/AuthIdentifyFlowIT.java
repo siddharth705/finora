@@ -52,14 +52,14 @@ class AuthIdentifyFlowIT extends AbstractIntegrationTest {
     }
 
     @Test
-    void identify_forRegisteredEmail_returnsPassword() throws Exception {
+    void identify_forRegisteredEmail_returnsExists() throws Exception {
         User user = registeredPasswordUser();
 
         ResponseEntity<String> response = identify(user.getEmail());
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
         JsonNode json = mapper.readTree(response.getBody());
-        assertThat(json.get("data").get("nextAction").asText()).isEqualTo("PASSWORD");
+        assertThat(json.get("data").get("nextAction").asText()).isEqualTo("EXISTS");
     }
 
     @Test
