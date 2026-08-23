@@ -140,11 +140,11 @@ test.describe('@smoke — the product works end to end', () => {
   test('8. signing out takes the session with it', async ({ userPage, allowConsoleErrors }) => {
     allowConsoleErrors('requests start failing once the session is gone, which is the point');
 
-    // "Log out" lives inside the TopBar profile dropdown (TopBar.tsx), closed by default --
+    // "Log out" lives inside the Sidebar's account menu (Sidebar.tsx), closed by default --
     // open it before the button is clickable. Under SEC-01 the access token is an in-memory
     // module variable and the refresh token is an HttpOnly cookie, so an `evaluate` fallback
     // that only clears localStorage/sessionStorage wouldn't actually end the session.
-    await userPage.getByRole('button', { name: 'Profile & help' }).click();
+    await userPage.getByRole('button', { name: 'Account menu' }).click();
     await userPage.getByRole('button', { name: /log ?out|sign ?out/i }).first().click();
 
     await userPage.goto('/app', { waitUntil: 'commit' }).catch(() => {});
