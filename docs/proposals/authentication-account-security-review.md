@@ -3,11 +3,12 @@
 **Status: Approved.** Next: Phase 0's remaining open decisions (§Open
 decisions) — decision 5 (Phase 2 sequencing) is now resolved, the other 5
 are not. Implementation: Phase 1 is done, Phase 2's audit-hardening slice
-is done, Phase 3's backend slice (`/auth/identify`, PR #327) is merged —
-its frontend entry-page UX is not started. Phase 3.5's audit is done (no
-gap in its own checklist; a bonus phone-change session-revocation gap
-found and fixed). Phase 4's backend and web frontend are both done —
-mobile settings entry not started. Phase 5 has not begun. Committed via a
+is done, Phase 3's backend slice (`/auth/identify`, PR #327) is merged, and
+its 3A (web) frontend entry-page UX is now also merged — 3B (mobile) not
+started. Phase 3.5's audit is done (no gap in its own checklist; a bonus
+phone-change session-revocation gap found and fixed). Phase 4's backend
+and web frontend are both merged — mobile settings entry not started.
+Phase 5 has not begun. Committed via a
 worktree per `CLAUDE.md` (primary checkout is a shared read-only-for-writes
 checkout). This is a roadmap — each phase ships as its own ticket/PR,
 never as one combined PR.
@@ -465,10 +466,31 @@ match.
 - **Amendment (2026-08-23)**: backend for 3A (`POST /auth/identify`,
   returning `nextAction`, plus a dedicated rate limiter) was implemented
   and tested (unit + integration) in worktree `auth-identify-endpoint`
-  before this reordering was requested. Frontend entry page work has not
-  started. Noted here rather than silently resequenced, since the
-  phase-ordering rationale above (observability before surface area) was
-  agreed after the backend endpoint already existed.
+  before this reordering was requested. Noted here rather than silently
+  resequenced, since the phase-ordering rationale above (observability
+  before surface area) was agreed after the backend endpoint already
+  existed.
+- **3A (web) — ✅ DONE, shipped 2026-08-23**: `AuthEntry.tsx` at `/auth` --
+  single identifier field, `POST /auth/identify`, then routes to `/login`
+  (prefilled, and per `nextAction` hides the password field/forgot-password
+  link for a `GOOGLE`/`APPLE` account -- §2.4's "move the OAuth-user
+  rejection earlier") or `/register` (prefilled into whichever of its email
+  or mobile-number fields the identifier looked like) for `CONTINUE`.
+  `/login` and `/register` stay fully live on their own, exactly as scoped.
+  Landing-page CTA wiring (whether "Sign in"/"Get started" should route
+  through `/auth` instead of straight to `/login`/`/register`) is left as
+  its own decision, not folded into this slice -- changing those is a
+  conversion-funnel/marketing call, not an auth-mechanism one.
+  Self-review bug found and fixed in the same pass: hiding the password
+  field/submit button for a `GOOGLE`/`APPLE` account left the identifier
+  input as the form's only field, so the browser's implicit-submission-on-
+  Enter behavior still fired `handleSubmit` and showed "Enter your
+  password." even though no password field existed to fill in -- fixed by
+  short-circuiting submission entirely while that hint is shown.
+  BH-015 (§2.4 item 2, unmasked-phone exposure on password reset) is
+  explicitly NOT addressed by this slice -- still open, tracked below.
+- **3B (mobile)**: not started, per the sequencing above (after 3A is
+  verified in production).
 
 **Phase 3.5 — Session invalidation audit — ✅ DONE, audited + fixed 2026-08-23**
 - Verify refresh-token revocation / session invalidation is consistent
@@ -480,15 +502,14 @@ match.
   successful phone-number change, current device spared, same pattern
   password-change already uses (§2.7a for the full writeup)
 
-**Phase 4 — P2 feature: Change email — backend + web frontend done 2026-08-23, mobile not started**
+**Phase 4 — P2 feature: Change email — ✅ DONE (backend + web frontend), mobile not started**
 `feat(account): add email change flow`
 - `email_change_sessions` table + `EmailChangeService` mirroring
   `PhoneChangeService`
 - `POST /users/me/email-change/{start,verify,complete}`, gated by existing
   step-up (`GoogleReauthVerifier`, not yet `StepUpVerifier`)
-- Frontend/mobile settings entry — web done (`ChangeEmailModal` in
-  Profile.tsx + `VerifyEmailChange` page for the emailed link); mobile
-  not started
+- Web frontend done (PR #357): `ChangeEmailModal` (Profile settings) +
+  `VerifyEmailChange` confirmation page. Mobile settings entry not started.
 - Tests mirroring `PhoneChangeServiceTest`/`PhoneChangeServiceIT`
 - Not blocking — useful but lower priority than Phases 1–3
 - **Frontend follow-up bug (2026-08-23)**: wiring up the verify page found
