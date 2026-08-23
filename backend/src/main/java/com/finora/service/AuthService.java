@@ -374,6 +374,25 @@ public class AuthService {
     }
 
     /**
+     * Identifier-first entry step (auth/security review §2.2). Reuses resolveEmailForLogin and
+     * findUserByEmailIgnoreCaseSafely so the account this resolves to can never diverge from the
+     * one login() would actually authenticate against. Always resolves within
+     * {@link User#SCOPE_USER} -- see {@link IdentifyRequest}'s doc comment for why this
+     * deliberately has no scope parameter.
+     *
+     * <p>Locked/suspended/deactivated status is intentionally not surfaced here: this endpoint
+     * answers "what credential does this identifier's account use", not "is this account usable
+     * right now" -- the latter is login()'s job, and folding it in here would only grow the
+     * surface an anonymous caller can probe pre-authentication.
+     */
+    public IdentifyResponse identify(IdentifyRequest request) {
+        String email = resolveEmailForLogin(request.identifier(), User.SCOPE_USER);
+        return findUserByEmailIgnoreCaseSafely(email, User.SCOPE_USER)
+                .map(user -> new IdentifyResponse(user.getSignInMethod()))
+                .orElseGet(() -> new IdentifyResponse("CONTINUE"));
+    }
+
+    /**
      * Which portal's account this request is authenticating against.
      *
      * Since V52 an email and a phone number identify a user only within a scope, so login has to
