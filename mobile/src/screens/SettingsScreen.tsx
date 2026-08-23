@@ -8,6 +8,7 @@ import { Button } from '../components/Button';
 import { OptionPickerModal } from '../components/OptionPickerModal';
 import { TextField } from '../components/TextField';
 import { AppLockSection } from './settings/AppLockSection';
+import { ChangeEmailSheet } from './settings/ChangeEmailSheet';
 import { ChangePasswordSheet } from './settings/ChangePasswordSheet';
 import { DeviceSessionsSection } from './settings/DeviceSessionsSection';
 import { analyticsApi, userApi, workspaceApi } from '../api/endpoints';
@@ -81,6 +82,7 @@ export function SettingsScreen() {
   const [intelError, setIntelError] = useState<string | null>(null);
 
   const [changePasswordOpen, setChangePasswordOpen] = useState(false);
+  const [changeEmailOpen, setChangeEmailOpen] = useState(false);
 
   const [userQ, workspaceQ, statsQ] = useQueries({
     queries: [
@@ -245,6 +247,16 @@ export function SettingsScreen() {
       <SectionCard title="Security" subtitle="Your password, verification and active sessions">
         <View style={[styles.row, { borderBottomColor: c.border }]}>
           <View style={styles.rowMain}>
+            <Text style={[styles.rowTitle, { color: c.ink }]}>Email</Text>
+            <Text style={[styles.rowMeta, { color: c.mutedInk }]}>{user.email}</Text>
+          </View>
+        </View>
+        <View style={styles.changePassword}>
+          <Button label="Change Email" onPress={() => setChangeEmailOpen(true)} />
+        </View>
+
+        <View style={[styles.row, { borderBottomColor: c.border }]}>
+          <View style={styles.rowMain}>
             <Text style={[styles.rowTitle, { color: c.ink }]}>Password</Text>
             <Text style={[styles.rowMeta, { color: c.mutedInk }]}>
               {passwordChanged ? `Last changed ${passwordChanged}` : 'Never changed'}
@@ -376,6 +388,8 @@ export function SettingsScreen() {
           }}
         />
       ) : null}
+
+      {changeEmailOpen ? <ChangeEmailSheet onClose={() => setChangeEmailOpen(false)} /> : null}
     </ScrollView>
   );
 }

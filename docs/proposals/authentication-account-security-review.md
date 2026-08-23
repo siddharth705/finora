@@ -6,9 +6,8 @@ are not. Implementation: Phase 1 is done, Phase 2's audit-hardening slice
 is done, Phase 3's backend slice (`/auth/identify`, PR #327) is merged, and
 both its 3A (web) and 3B (mobile) entry-flow UX are now merged. Phase 3.5's
 audit is done (no gap in its own checklist; a bonus
-phone-change session-revocation gap found and fixed). Phase 4's backend
-and web frontend are both merged — mobile settings entry not started.
-Phase 5 has not begun. Committed via a
+phone-change session-revocation gap found and fixed). Phase 4 is fully
+merged (backend, web, mobile). Phase 5 has not begun. Committed via a
 worktree per `CLAUDE.md` (primary checkout is a shared read-only-for-writes
 checkout). This is a roadmap — each phase ships as its own ticket/PR,
 never as one combined PR.
@@ -527,14 +526,14 @@ match.
   successful phone-number change, current device spared, same pattern
   password-change already uses (§2.7a for the full writeup)
 
-**Phase 4 — P2 feature: Change email — ✅ DONE (backend + web frontend), mobile not started**
+**Phase 4 — P2 feature: Change email — ✅ DONE (backend, web, mobile)**
 `feat(account): add email change flow`
 - `email_change_sessions` table + `EmailChangeService` mirroring
   `PhoneChangeService`
 - `POST /users/me/email-change/{start,verify,complete}`, gated by existing
   step-up (`GoogleReauthVerifier`, not yet `StepUpVerifier`)
 - Web frontend done (PR #357): `ChangeEmailModal` (Profile settings) +
-  `VerifyEmailChange` confirmation page. Mobile settings entry not started.
+  `VerifyEmailChange` confirmation page.
 - Tests mirroring `PhoneChangeServiceTest`/`PhoneChangeServiceIT`
 - Not blocking — useful but lower priority than Phases 1–3
 - **Frontend follow-up bug (2026-08-23)**: wiring up the verify page found
@@ -542,6 +541,27 @@ match.
   `VerifyRequest` also needs — fixed with a regression test, before this
   was ever live in production (caught in the same session as the
   frontend work, one PR after the backend slice merged).
+- **Mobile — ✅ DONE, shipped 2026-08-23**: `ChangeEmailSheet` (Settings'
+  Security section, next to Change Password) + `VerifyEmailChangeScreen`,
+  reached via a new `finora://email-change-verify?sessionId=...&token=...`
+  deep link registered in `RootNavigator`'s `linking` config -- Phase 4
+  mobile's first deep-link consumer, since mobile had none at all before
+  this (no `expo-linking` usage, no `NavigationContainer.linking`).
+  Password-only step-up (no `signInMethod` branch): no mobile settings
+  flow, including `ChangePasswordSheet`, has a Google-reauth step-up path
+  yet, so this doesn't add a first one speculatively -- add the `GOOGLE`
+  branch once that groundwork exists for step-up generally.
+  Deliberately a custom scheme, not a true universal/app link: iOS
+  Associated Domains + a hosted `apple-app-site-association`, and Android
+  App Links + a hosted `assetlinks.json` signed with the release keystore's
+  fingerprint, both need real Apple Developer/Play Console access this
+  environment doesn't have, and neither is something a code change alone
+  can stand up or verify. The web confirmation page keeps emailing the
+  same `https://` link it always did (works from any device/client
+  unchanged) and separately offers an "Open in the Finora app" link using
+  the custom scheme, for anyone reading that email on their phone.
+  Revisit true universal links once the native hosting/signing pieces
+  exist -- tracked here, not silently scoped out.
 - **Amendment (2026-08-23)**: implemented ahead of the remaining 5 open
   decisions being resolved, same situation Phase 3's backend slice was in
   (see its own amendment above). Checked each one against this specific
