@@ -575,14 +575,18 @@ public class ImportDto {
             // already computed at staging time -- it silently re-derived the period from
             // minDate/maxDate of the confirmed rows alone, which is only ever a lower bound on the
             // statement's true period whenever a cycle has no activity near its own boundary dates.
-            // Null (from an older client, or a format/path with nothing printed to echo) falls back
-            // to that same minDate/maxDate derivation exactly as before -- see persistSection.
+            // Bug fix: this used to fall back further, to that same minDate/maxDate derivation, when
+            // null (an older client, or a format/path with nothing printed to echo) -- persistSection
+            // no longer does that; a null here is stored as null, genuinely meaning "no period was
+            // ever printed" rather than a guess reconstructed from the confirmed rows. See
+            // persistSection's own comment.
             LocalDate statementPeriodStart, LocalDate statementPeriodEnd
     ) {
         /** Pre-existing arity. Kept so the many call sites that construct a request with no printed
          *  statement period to echo -- reimport's internal re-scoping, tests, Gmail's receipt-derived
-         *  confirms -- stay unchanged; both new fields default to null, which persistSection already
-         *  treats as "fall back to the confirmed rows' own date range". */
+         *  confirms -- stay unchanged; both new fields default to null, which persistSection stores
+         *  as null, genuinely meaning "no period was ever printed" rather than a guess reconstructed
+         *  from the confirmed rows' own date range. */
         public ConfirmRequest(UUID sessionId, List<ConfirmedRow> rows, UUID existingAccountId,
                                NewAccountRequest newAccount, BigDecimal statementOpeningBalance,
                                BigDecimal statementClosingBalance, String password) {
