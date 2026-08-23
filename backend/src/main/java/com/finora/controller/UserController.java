@@ -125,8 +125,9 @@ public class UserController {
 
     @PostMapping("/phone-change/complete")
     public ApiResponse<com.finora.dto.PhoneChangeDtos.CompleteResponse> completePhoneChange(
-            @Valid @RequestBody com.finora.dto.PhoneChangeDtos.CompleteRequest request) {
-        return ApiResponse.ok(phoneChangeService.complete(currentUser.id(), request));
+            @Valid @RequestBody com.finora.dto.PhoneChangeDtos.CompleteRequest request, HttpServletRequest httpRequest) {
+        UUID currentSessionId = (UUID) httpRequest.getAttribute(JwtAuthFilter.SESSION_ID_ATTRIBUTE);
+        return ApiResponse.ok(phoneChangeService.complete(currentUser.id(), request, currentSessionId));
     }
 
     /**
