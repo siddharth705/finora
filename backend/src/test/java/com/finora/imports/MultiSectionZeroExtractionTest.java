@@ -113,8 +113,14 @@ class MultiSectionZeroExtractionTest {
                             // "Never lose information": every line of the document, prose included,
                             // is still recovered and offered for review -- a bigger number than
                             // before Fix 2, because the whole document is now one section instead of
-                            // eight, and every one of its lines counts as recovered text.
-                            .contains("213 line(s) of text were recovered");
+                            // eight, and every one of its lines counts as recovered text. 213 (Fix 2)
+                            // -> 195 under Phase 2E.5's HSBC row-formation fix: groupIntoRows' now
+                            // chain-based clustering (header-reconstruction-design.md §9.4) correctly
+                            // merges physical lines this document's own native-PDF layout had been
+                            // over-split into two, the same benign line-count reduction confirmed
+                            // against hdfc-composite-deposit-schedules and hdfc-txn-date-narration-
+                            // header in GoldenOutputSnapshotTest -- content merges, nothing is lost.
+                            .contains("195 line(s) of text were recovered");
                 });
     }
 
