@@ -371,12 +371,13 @@ public class RateLimitFilter extends OncePerRequestFilter {
                 new LimitedEndpoint(PARSER.parse("/api/v1/auth/reset-password"), resetPasswordLimiter),
                 // BH-015. This class's comment above dismissed /auth/reset-password/phone as
                 // "cheap, no-real-cost" and left it unlimited -- reasoning about COST, on an
-                // endpoint whose problem is DISCLOSURE. It returns the account's full phone number
-                // to any holder of a valid reset token, and until the flow is inverted so the user
-                // supplies the number instead (see AuthService.resolveResetPasswordPhone, where
-                // masking is shown not to work), the ceiling on how often a token holder may ask
-                // is the only control there is. Shares resetPasswordLimiter because the two are
-                // steps of one flow and one bucket is the honest way to bound it.
+                // endpoint whose problem was DISCLOSURE. It used to return the account's full
+                // phone number to any holder of a valid reset token; now inverted (see
+                // AuthService.verifyResetPasswordPhone) so the user supplies a candidate number
+                // and the endpoint only confirms a match -- still a phone-number-guessing oracle,
+                // so this limiter remains the bound on how many guesses a token holder gets.
+                // Shares resetPasswordLimiter because the two are steps of one flow and one
+                // bucket is the honest way to bound it.
                 new LimitedEndpoint(PARSER.parse("/api/v1/auth/reset-password/phone"), resetPasswordLimiter),
                 // Shares resetPasswordLimiter for the same reason reset-password/phone does: an
                 // unguessable, single-use, short-TTL token gates the real cost here (issuing real
