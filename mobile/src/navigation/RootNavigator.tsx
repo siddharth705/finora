@@ -1,6 +1,7 @@
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
 import { NavigationContainer, DefaultTheme, DarkTheme } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import { AuthEntryScreen } from '../screens/AuthEntryScreen';
 import { LoginScreen } from '../screens/LoginScreen';
 import { RegisterScreen } from '../screens/RegisterScreen';
 import { ForgotPasswordScreen } from '../screens/ForgotPasswordScreen';
@@ -8,6 +9,7 @@ import { VerifyPhoneScreen } from '../screens/VerifyPhoneScreen';
 import { AppTabs } from './AppTabs';
 import { useAuth } from '../context/AuthContext';
 import { useTheme, useThemeSetting } from '../theme';
+import { useAuthStackInitialRoute } from './useAuthStackInitialRoute';
 import type { AuthStackParamList } from './types';
 
 const AuthStack = createNativeStackNavigator<AuthStackParamList>();
@@ -26,6 +28,7 @@ const AppStack = createNativeStackNavigator();
  */
 export function RootNavigator() {
   const { bootstrapping, token, phoneVerified } = useAuth();
+  const authInitialRoute = useAuthStackInitialRoute(token);
   const c = useTheme();
   const { resolved } = useThemeSetting();
 
@@ -64,7 +67,13 @@ export function RootNavigator() {
   return (
     <NavigationContainer theme={navTheme}>
       {token === null ? (
-        <AuthStack.Navigator screenOptions={{ headerShown: false }}>
+        // initialRouteName -- not just AuthEntry listed first -- because which screen this stack
+        // should open on differs by how it got here: a cold, never-signed-in launch starts on
+        // AuthEntry (Phase 3B fronts Login/Register the same way web's /auth does, without
+        // removing direct access to either); a sign-out from a previously-authenticated session
+        // starts on Login directly, per useAuthStackInitialRoute's own doc comment.
+        <AuthStack.Navigator screenOptions={{ headerShown: false }} initialRouteName={authInitialRoute}>
+          <AuthStack.Screen name="AuthEntry" component={AuthEntryScreen} />
           <AuthStack.Screen name="Login" component={LoginScreen} />
           <AuthStack.Screen name="Register" component={RegisterScreen} />
           <AuthStack.Screen name="ForgotPassword" component={ForgotPasswordScreen} />

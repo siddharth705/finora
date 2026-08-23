@@ -3,7 +3,7 @@ import { downloadBlob } from '../lib/download';
 import type {
 
   Account, AccountStatementGroup, BankInfo, Budget, DashboardSummary, DetectedAccountInfo, FinancialJourney, Goal,
-  ImportSummary, ReimportResult, StagedAccountSection, StagedRow, StatementSummary, Transaction,
+  ImportSummary, MerchantGroup, ReimportResult, StagedAccountSection, StagedRow, StatementSummary, Transaction,
   WorkspaceSettings, UnparseableRow, VerificationReport,
 } from '../types';
 
@@ -62,6 +62,12 @@ export const authApi = {
   // account's real email before authenticating.
   login: (identifier: string, password: string) =>
     api.post<AuthResponseDto>('/auth/login', { identifier, password, scope: PORTAL_SCOPE }),
+  // Identifier-first entry step (auth/security review §2.2) -- resolves an email or mobile
+  // number to what the frontend should show next, without a raw exists boolean. See
+  // AuthService.identify on the backend: nextAction is 'PASSWORD' | 'GOOGLE' | 'APPLE' for an
+  // existing account, or 'CONTINUE' when there isn't one yet.
+  identify: (identifier: string) =>
+    api.post<{ nextAction: string }>('/auth/identify', { identifier }).then((r) => r.data),
   forgotPassword: (email: string) =>
     api.post<{ message: string; devResetLink: string | null }>('/auth/forgot-password', { email, scope: PORTAL_SCOPE }).then((r) => r.data),
   // Reveals the account's real phone number for a valid, unused reset link -- needed to call
@@ -209,6 +215,8 @@ export const transactionsApi = {
   search: (filters: TransactionFilters) =>
     api.get<PagedResponse<Transaction>>('/transactions', { params: filters }).then((r) => r.data),
   needsReview: () => api.get<Transaction[]>('/transactions/needs-review').then((r) => r.data),
+  groupsNeedsReview: () =>
+    api.get<MerchantGroup[]>('/transactions/groups/needs-review').then((r) => r.data),
   explanation: (id: string) =>
     api.get<TransactionExplanation>(`/transactions/${id}/explanation`).then((r) => r.data),
   create: (body: CreateTransactionPayload) => api.post<Transaction>('/transactions', body).then((r) => r.data),
@@ -732,6 +740,30 @@ export const phoneChangeApi = {
   complete: (sessionId: string) =>
     api.post<{ message: string; phoneNumber: string }>(
       '/users/me/phone-change/complete', { sessionId }
+    ).then((r) => r.data),
+};
+
+// The step-up-gated Change Email flow -- see EmailChangeService on the backend for the full
+// start -> verify -> complete state machine. Unlike phoneChangeApi, DOES have a "prove you still
+// are who you say you are" first step (currentPassword/googleIdToken/appleIdToken, same shape as
+// passwordChangeApi.start): email is the account's password-reset delivery channel, so
+// authorizing a change to it on phone-change's lower bar would be worse, not better. Unlike
+// verifyOtp above, verify here proves control of the new address via a link the backend emailed
+// to it (see VerifyEmailChange.tsx) rather than an in-app Firebase OTP -- appleIdToken is always
+// null from this web client (Apple Sign-In has no web frontend counterpart here, see
+// GoogleReauthPrompt's own doc comment).
+export const emailChangeApi = {
+  start: (currentPassword: string | null, googleIdToken: string | null, appleIdToken: string | null, newEmail: string) =>
+    api.post<{ sessionId: string; devVerifyLink: string | null }>(
+      '/users/me/email-change/start', { currentPassword, googleIdToken, appleIdToken, newEmail }
+    ).then((r) => r.data),
+  verify: (sessionId: string, token: string) =>
+    api.post<{ message: string }>(
+      '/users/me/email-change/verify', { sessionId, token }
+    ).then((r) => r.data),
+  complete: (sessionId: string) =>
+    api.post<{ message: string; email: string }>(
+      '/users/me/email-change/complete', { sessionId }
     ).then((r) => r.data),
 };
 

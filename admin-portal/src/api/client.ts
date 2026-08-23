@@ -76,7 +76,7 @@ export interface ApiEnvelope<T> {
 // mobile) to agree on this list entry-for-entry, treating it as a declared policy rather than a
 // per-app usage log. See frontend/src/api/client.ts's own copy of this comment for the real bug
 // this check exists to prevent.
-const AUTH_ENDPOINTS_NO_TOKEN = ['/auth/login', '/auth/register', '/auth/refresh', '/auth/forgot-password', '/auth/reset-password', '/auth/reactivate', '/auth/google', '/auth/apple'];
+const AUTH_ENDPOINTS_NO_TOKEN = ['/auth/login', '/auth/register', '/auth/refresh', '/auth/forgot-password', '/auth/reset-password', '/auth/reactivate', '/auth/google', '/auth/apple', '/auth/identify'];
 
 api.interceptors.request.use((config) => {
   const isAuthEndpoint = AUTH_ENDPOINTS_NO_TOKEN.some((path) => config.url?.includes(path));

@@ -3,22 +3,26 @@
 **Status: Approved.** Next: Phase 0's remaining open decisions (§Open
 decisions) — decision 5 (Phase 2 sequencing) is now resolved, the other 5
 are not. Implementation: Phase 1 is done, Phase 2's audit-hardening slice
-is done, Phase 3's backend slice (`/auth/identify`, PR #327) is merged —
-its frontend entry-page UX is not started. Phase 3.5's audit is done (no
-gap in its own checklist; a bonus phone-change session-revocation gap
-found and fixed). Phases 4/5 have not begun. Committed via a worktree per
-`CLAUDE.md` (primary checkout is a shared read-only-for-writes checkout).
-This is a roadmap — each phase ships as its own ticket/PR, never as one
-combined PR.
+is done, Phase 3's backend slice (`/auth/identify`, PR #327) is merged, and
+both its 3A (web) and 3B (mobile) entry-flow UX are now merged. Phase 3.5's
+audit is done (no gap in its own checklist; a bonus
+phone-change session-revocation gap found and fixed). Phase 4's backend
+and web frontend are both merged — mobile settings entry not started.
+Phase 5 has not begun. Committed via a
+worktree per `CLAUDE.md` (primary checkout is a shared read-only-for-writes
+checkout). This is a roadmap — each phase ships as its own ticket/PR,
+never as one combined PR.
 
 **Phase 1 (Apple step-up verification) is already done** — PR #290 merged
 before this document's audit ran, and the audit missed it; corrected here.
 Phase ordering was revised 2026-08-23 (audit/observability now precedes the
 unified entry UX — see §3's note). Phase 2's audit-hardening slice shipped
 2026-08-23, sequenced with `user-security-center-proposal.md` per open
-decision 5 below (resolved: coordinate, not independent). Phase 0's other
-5 open decisions still gate Phase 4, and partly gate Phase 3 (see its
-amendment).
+decision 5 below (resolved: coordinate, not independent). Phase 4's
+backend slice also shipped 2026-08-23, ahead of the remaining 5 open
+decisions being resolved — see its own amendment for why none of them
+actually constrain it. Phase 0's other 5 open decisions still partly gate
+Phase 3 (see its amendment).
 
 ---
 
@@ -462,10 +466,56 @@ match.
 - **Amendment (2026-08-23)**: backend for 3A (`POST /auth/identify`,
   returning `nextAction`, plus a dedicated rate limiter) was implemented
   and tested (unit + integration) in worktree `auth-identify-endpoint`
-  before this reordering was requested. Frontend entry page work has not
-  started. Noted here rather than silently resequenced, since the
-  phase-ordering rationale above (observability before surface area) was
-  agreed after the backend endpoint already existed.
+  before this reordering was requested. Noted here rather than silently
+  resequenced, since the phase-ordering rationale above (observability
+  before surface area) was agreed after the backend endpoint already
+  existed.
+- **3A (web) — ✅ DONE, shipped 2026-08-23**: `AuthEntry.tsx` at `/auth` --
+  single identifier field, `POST /auth/identify`, then routes to `/login`
+  (prefilled, and per `nextAction` hides the password field/forgot-password
+  link for a `GOOGLE`/`APPLE` account -- §2.4's "move the OAuth-user
+  rejection earlier") or `/register` (prefilled into whichever of its email
+  or mobile-number fields the identifier looked like) for `CONTINUE`.
+  `/login` and `/register` stay fully live on their own, exactly as scoped.
+  Landing-page CTA wiring (whether "Sign in"/"Get started" should route
+  through `/auth` instead of straight to `/login`/`/register`) is left as
+  its own decision, not folded into this slice -- changing those is a
+  conversion-funnel/marketing call, not an auth-mechanism one.
+  Self-review bug found and fixed in the same pass: hiding the password
+  field/submit button for a `GOOGLE`/`APPLE` account left the identifier
+  input as the form's only field, so the browser's implicit-submission-on-
+  Enter behavior still fired `handleSubmit` and showed "Enter your
+  password." even though no password field existed to fill in -- fixed by
+  short-circuiting submission entirely while that hint is shown.
+  BH-015 (§2.4 item 2, unmasked-phone exposure on password reset) is
+  explicitly NOT addressed by this slice -- still open, tracked below.
+- **3B (mobile) — ✅ DONE, shipped 2026-08-23**: `AuthEntryScreen.tsx`,
+  registered as the Auth stack's default screen -- same single-identifier
+  field, same `POST /auth/identify` call (added to `authApi`/the
+  no-auth-header allowlist), routing to `Login`/`Register` with the
+  identifier or email/phone prefilled via route params (React Navigation's
+  counterpart to web's router `location.state`). `Login`/`Register` stay
+  directly reachable via their own footer links. Unlike web, mobile's
+  native `AppleSignInButton` actually works, so the `APPLE` hint keeps the
+  social row visible (only the password form/link are hidden) rather than
+  hiding it the way web had to.
+  Self-review bug found and fixed before this ever reached a PR: making
+  `AuthEntryScreen` the Auth stack's first screen would have silently
+  changed what a forced sign-out (session expiry) or explicit logout lands
+  on -- `AuthContext.clearLocalState`'s own comment already documented
+  "clearing the token lands on Login" as the intended behavior, which a
+  plain first-screen-wins default would have broken by sending an
+  already-authenticated-then-signed-out user back through the identify
+  step. Fixed with a small `useAuthStackInitialRoute` hook (unit-tested
+  directly, no navigation-container integration test needed) that starts
+  on `AuthEntry` for a session that's never been signed in, but switches to
+  `Login` once a previously-signed-in session is cleared -- passed to the
+  stack navigator's `initialRouteName`.
+  Also built in from day one (learned from web's own post-merge fix):
+  Login's OAuth hint is derived from whether the identifier still matches
+  what AuthEntry resolved it for, not captured once at mount, so editing
+  the field brings the password form back immediately instead of leaving a
+  dead end.
 
 **Phase 3.5 — Session invalidation audit — ✅ DONE, audited + fixed 2026-08-23**
 - Verify refresh-token revocation / session invalidation is consistent
@@ -477,15 +527,33 @@ match.
   successful phone-number change, current device spared, same pattern
   password-change already uses (§2.7a for the full writeup)
 
-**Phase 4 — P2 feature: Change email**
+**Phase 4 — P2 feature: Change email — ✅ DONE (backend + web frontend), mobile not started**
 `feat(account): add email change flow`
 - `email_change_sessions` table + `EmailChangeService` mirroring
   `PhoneChangeService`
 - `POST /users/me/email-change/{start,verify,complete}`, gated by existing
   step-up (`GoogleReauthVerifier`, not yet `StepUpVerifier`)
-- Frontend/mobile settings entry
+- Web frontend done (PR #357): `ChangeEmailModal` (Profile settings) +
+  `VerifyEmailChange` confirmation page. Mobile settings entry not started.
 - Tests mirroring `PhoneChangeServiceTest`/`PhoneChangeServiceIT`
 - Not blocking — useful but lower priority than Phases 1–3
+- **Frontend follow-up bug (2026-08-23)**: wiring up the verify page found
+  that `start()`'s emailed link only carried the token, not the sessionId
+  `VerifyRequest` also needs — fixed with a regression test, before this
+  was ever live in production (caught in the same session as the
+  frontend work, one PR after the backend slice merged).
+- **Amendment (2026-08-23)**: implemented ahead of the remaining 5 open
+  decisions being resolved, same situation Phase 3's backend slice was in
+  (see its own amendment above). Checked each one against this specific
+  slice rather than treating the header note's blanket "gates Phase 4" as
+  automatically applying: none of the 5 (`nextAction` shape, BH-015,
+  deletion retention, phone-OTP login, account linking) constrain how
+  email-change itself works — it's additive, doesn't touch identify/login,
+  and doesn't introduce multi-method-per-account state. Session revocation
+  on complete() is unconditional (no `signOutOtherDevices`-style toggle,
+  since no frontend exists yet to carry one) -- the Phase 3.5 audit's
+  established default for a flow with no UI toggle, applied here from day
+  one rather than needing its own follow-up fix.
 
 **Phase 5 — Deferred: future providers, account linking, recovery**
 Truecaller, Passkeys, standalone phone-OTP login, the `StepUpVerifier`

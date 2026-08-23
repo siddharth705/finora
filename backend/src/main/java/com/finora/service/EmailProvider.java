@@ -26,6 +26,10 @@ public interface EmailProvider {
      *  not-yet-verified account (see AuthService.loginWithGoogle) -- the same link either way,
      *  since verifying is the same action regardless of which flow asked for it. */
     EmailResult sendEmailVerificationEmail(String toEmail, String verifyLink);
+    /** Phase 4 (change email). Sent to the NEW address the account is moving to, never the old
+     *  one -- proving control of that address is the entire point of this link, the same role
+     *  sendEmailVerificationEmail plays at registration. */
+    EmailResult sendEmailChangeVerificationEmail(String toEmail, String verifyLink);
     EmailResult sendPasswordChangedEmail(String toEmail);
     /** device/ip are the best-effort RequestMetadata labels for the request that made the
      *  deactivation call -- null-safe, since this is a security notification whose value degrades

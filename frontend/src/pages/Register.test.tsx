@@ -11,7 +11,7 @@ vi.mock('../context/AuthContext', () => ({
 
 const registerMock = vi.fn();
 
-function renderRegister(initialEntries: string[] = ['/register']) {
+function renderRegister(initialEntries: string[] = ['/register'], state?: { email?: string; phoneNumber?: string }) {
   vi.mocked(useAuth).mockReturnValue({
     token: null,
     bootstrapping: false,
@@ -26,7 +26,7 @@ function renderRegister(initialEntries: string[] = ['/register']) {
     logout: vi.fn(),
   });
   return render(
-    <MemoryRouter initialEntries={initialEntries}>
+    <MemoryRouter initialEntries={state ? [{ pathname: initialEntries[0], state }] : initialEntries}>
       <Register />
     </MemoryRouter>
   );
@@ -129,6 +129,30 @@ describe('Register — mobile number field', () => {
     await user.tab(); // blur
 
     expect(await screen.findByText(/Enter a valid 10-digit mobile number/i)).toBeInTheDocument();
+  });
+});
+
+// Phase 3 (§2.2): AuthEntry.tsx sends whichever field the identifier looked like once it
+// learns nextAction is CONTINUE (no existing account) -- prefilled here so the user doesn't
+// have to retype what they already entered on the entry page.
+describe('Register — prefill from AuthEntry', () => {
+  it('prefills the email field when arriving with an email in router state', () => {
+    renderRegister(['/register'], { email: 'jane@example.com' });
+
+    expect(screen.getByPlaceholderText('you@example.com')).toHaveValue('jane@example.com');
+  });
+
+  it('prefills the mobile number field, stripped to its local 10 digits, when arriving with a phone number in router state', () => {
+    renderRegister(['/register'], { phoneNumber: '+919876543210' /* synthetic-ok: same fake number used elsewhere in this file */ });
+
+    expect(screen.getByPlaceholderText('XXXXXXXXXX')).toHaveValue('9876543210' /* synthetic-ok: same fake number used elsewhere in this file */);
+  });
+
+  it('leaves both fields empty on an ordinary direct visit with no router state', () => {
+    renderRegister();
+
+    expect(screen.getByPlaceholderText('you@example.com')).toHaveValue('');
+    expect(screen.getByPlaceholderText('XXXXXXXXXX')).toHaveValue('');
   });
 });
 
