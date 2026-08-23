@@ -6,6 +6,7 @@ import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -1015,7 +1016,19 @@ public class PdfTableLocator {
                 // resolved to Amount, skipping over Transaction Details entirely, and the whole
                 // description merged into the amount cell -- silently defeating every real amount on
                 // the statement.
-                buildHeaderColumns(row, headerNames, headerAnchors, headerEnds, rows, rowIndex, ctx);
+                // orphanedHeaderRowText is captured into a LOCAL list here, not pendingAuxiliary
+                // directly -- buildHeaderColumns can run a second time just below, on
+                // reconstructHeader's candidate, which always starts from every non-blank fragment
+                // of THIS SAME row verbatim (see reconstructHeader's own doc comment). Without a
+                // local list, an orphaned caption sitting on the header's own physical row would be
+                // scanned by containsEmbeddedDateRange twice and appended to auxiliaryText twice --
+                // a real duplicate-text bug found in self-review, not yet backed by a real corpus
+                // trace (none in the current committed corpus combines an embedded-date-range
+                // caption with a header that also independently triggers reconstruction), but
+                // reproduced directly via HeaderReconstructionEngineTest.
+                // orphanedCaptionOnAReconstructedHeadersOwnRow_isNotDuplicatedIntoAuxiliaryText.
+                List<String> orphanedHeaderRowText = new ArrayList<>();
+                buildHeaderColumns(row, headerNames, headerAnchors, headerEnds, rows, rowIndex, ctx, orphanedHeaderRowText);
                 // Header Quality Gate + Reconstruction Engine (Phase 2E.2 prototype) -- runs AFTER
                 // the recovery pipeline just above, evaluating what it actually produced, never
                 // before it. recoverMissingDescriptionColumn already tries to solve exactly this
@@ -1038,10 +1051,12 @@ public class PdfTableLocator {
                         headerNames = new ArrayList<>();
                         headerAnchors = new ArrayList<>();
                         headerEnds = new ArrayList<>();
-                        buildHeaderColumns(reconstructed, headerNames, headerAnchors, headerEnds, rows, rowIndex, ctx);
+                        orphanedHeaderRowText = new ArrayList<>();
+                        buildHeaderColumns(reconstructed, headerNames, headerAnchors, headerEnds, rows, rowIndex, ctx, orphanedHeaderRowText);
                         if (ctx != null) ctx.record("HEADER_RECONSTRUCTED");
                     }
                 }
+                pendingAuxiliary.addAll(orphanedHeaderRowText);
                 if (ctx != null) ctx.recordHeaders(headerNames);
                 currentHeaderSignature = signature;
                 currentRows = new ArrayList<>();
@@ -1885,6 +1900,15 @@ public class PdfTableLocator {
         });
 
 
+        // Chain-based clustering: currentRowY tracks the MOST RECENTLY ADDED member's y, not the
+        // row's first member -- confirmed necessary against real HSBC DB.pdf (OCR) evidence, see
+        // header-reconstruction-design.md §9.4. A fixed first-member anchor has no way to accumulate
+        // a chain of small, individually-tolerable gaps: OCR's per-word y-jitter across HSBC's one
+        // printed header line totals more than ROW_Y_TOLERANCE end to end even though every
+        // individual consecutive gap stays under it, so an anchor-based comparison split one visual
+        // line into two physical rows before header logic ever ran. Comparing each run to the
+        // previous one instead tolerates that same accumulated drift, since no single step ever
+        // exceeds the tolerance.
         List<List<PositionedText>> rows = new ArrayList<>();
         List<PositionedText> current = new ArrayList<>();
         Float currentRowY = null;
@@ -1895,10 +1919,10 @@ public class PdfTableLocator {
             if (!sameRow) {
                 if (!current.isEmpty()) rows.add(current);
                 current = new ArrayList<>();
-                currentRowY = t.y();
                 currentPage = t.pageIndex();
             }
             current.add(t);
+            currentRowY = t.y();
         }
         if (!current.isEmpty()) rows.add(current);
         return rows;
@@ -2330,11 +2354,39 @@ public class PdfTableLocator {
      *  exactly once per row it is actually given, so nothing about their own behavior changes. */
     private void buildHeaderColumns(List<PositionedText> row, List<String> headerNames, List<Float> headerAnchors,
                                      List<Float> headerEnds, List<List<PositionedText>> rows, int rowIndex,
-                                     DocumentContext ctx) {
+                                     DocumentContext ctx, List<String> orphanedHeaderRowText) {
         List<PositionedText> coalesced = new ArrayList<>(coalesceHeaderRuns(stripEmbeddedDateRange(row)));
         coalesced.sort(Comparator.comparing(PositionedText::x));
         for (PositionedText t : coalesced) {
-            headerNames.add(t.text().trim());
+            String text = t.text().trim();
+            // Phase 2E.5's HSBC row-formation fix (groupIntoRows' chain-based clustering, see
+            // header-reconstruction-design.md §9.4) can now correctly fold a nearby caption line
+            // onto an accepted header's own physical row -- confirmed live on a real SBI credit
+            // card statement, where "for Statement Period: 99 Xxx 99 to 99 Xxx 99" sits 2.36pt
+            // below the header's own "( ` )" sub-label, well within ROW_Y_TOLERANCE measured
+            // chain-wise, even though it is a genuinely different printed line, not a real column
+            // name. Every cell on the header's physical row otherwise becomes a column name
+            // unconditionally, so without this check that caption became a phantom column no real
+            // transaction data was ever near enough to populate -- and since headerNames are never
+            // exposed in LocatedSection's own returned data, its real text vanished from the
+            // document entirely: not a row, not auxiliary text, nothing.
+            //
+            // Deliberately narrow: containsEmbeddedDateRange, not a blanket vocabulary check.
+            // Tried filtering on "matches no HEADER_HINTS/DATE_HINTS word at all" first -- it also
+            // excluded Axis's genuine, merely-uncatalogued "XXXXXXXX XXXXXXXX" column and (worse)
+            // SBI's/ICICI's own blank-shaped currency-unit cell ("(Rs.)") that
+            // resolveBlankColumnNames exists specifically to qualify into a real column further
+            // down this same pipeline -- filtering before that recovery step got its chance broke
+            // Axis down to 25 of its normal 108 staged rows. A cell embedding a literal "<date> to
+            // <date>" range, by contrast, is never a real column name in this corpus (verified
+            // against two independent real documents: this SBI caption and the already-established
+            // Kotak case stripEmbeddedDateRange above exists for) and never something
+            // resolveBlankColumnNames-style qualification would want to keep.
+            if (containsEmbeddedDateRange(text)) {
+                orphanedHeaderRowText.add(text);
+                continue;
+            }
+            headerNames.add(text);
             headerAnchors.add(t.x());
             headerEnds.add(t.endX());
         }
@@ -3038,6 +3090,50 @@ public class PdfTableLocator {
             }
         }
         return row;
+    }
+
+    /** True when {@code text} embeds a literal "&lt;date&gt; to &lt;date&gt;" range within a
+     *  SINGLE fused text run -- the shape {@link #stripEmbeddedDateRange} already handles when the
+     *  same range arrives as four SEPARATE runs (a real Kotak credit-card statement's "from
+     *  16-Feb-2026 to 15-Mar-2026"), generalized here for when PDFBox emits the whole phrase as one
+     *  continuous run instead (a real SBI credit-card statement's "for Statement Period: 99 Xxx 99
+     *  to 99 Xxx 99"). Scans for the literal word "to", then tries windows of 1-3 tokens
+     *  immediately before and after it for a parseable date -- 1-3 tokens because a real date can
+     *  print as one hyphenated token ("16-Feb-2026") or as three separate ones ("99 Xxx 99").
+     *  Deliberately narrow, matching only this one real shape found so far: a genuine column name
+     *  is never itself a literal date range, so this never touches a real header cell -- see
+     *  buildHeaderColumns' own comment on this call site for why a broader "matches no known
+     *  vocabulary" version was tried and rejected (it excluded Axis's genuine, merely-uncatalogued
+     *  column and SBI/ICICI's own blank currency-unit cell that a later recovery step needs intact). */
+    private boolean containsEmbeddedDateRange(String text) {
+        String[] tokens = text.split("\\s+");
+        for (int i = 0; i < tokens.length; i++) {
+            if (!tokens[i].equalsIgnoreCase("to")) continue;
+            if (dateEndingAt(tokens, i - 1) && dateStartingAt(tokens, i + 1)) return true;
+        }
+        return false;
+    }
+
+    private boolean dateEndingAt(String[] tokens, int end) {
+        for (int width = 1; width <= 3; width++) {
+            int start = end - width + 1;
+            if (start < 0) break;
+            if (CsvParser.parseDate(String.join(" ", Arrays.asList(tokens).subList(start, end + 1))) != null) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean dateStartingAt(String[] tokens, int start) {
+        for (int width = 1; width <= 3; width++) {
+            int end = start + width; // exclusive
+            if (end > tokens.length) break;
+            if (CsvParser.parseDate(String.join(" ", Arrays.asList(tokens).subList(start, end))) != null) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private boolean isWord(PositionedText t, String word) {
