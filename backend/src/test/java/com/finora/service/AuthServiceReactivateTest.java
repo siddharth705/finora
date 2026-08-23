@@ -106,7 +106,7 @@ class AuthServiceReactivateTest {
         assertThat(u.getStatus()).isEqualTo(User.STATUS_ACTIVE);
         assertThat(response.refreshToken()).isEqualTo("new-refresh-token");
         verify(auditService).record(eq(userId), eq("ACCOUNT_REACTIVATED"), eq("User"), eq(userId), any());
-        verify(auditService).record(userId, "USER_LOGIN", "User", userId);
+        verify(auditService).record(eq(userId), eq("USER_LOGIN"), eq("User"), eq(userId), any());
     }
 
     @Test
