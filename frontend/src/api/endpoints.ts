@@ -70,11 +70,13 @@ export const authApi = {
     api.post<{ nextAction: string }>('/auth/identify', { identifier }).then((r) => r.data),
   forgotPassword: (email: string) =>
     api.post<{ message: string; devResetLink: string | null }>('/auth/forgot-password', { email, scope: PORTAL_SCOPE }).then((r) => r.data),
-  // Reveals the account's real phone number for a valid, unused reset link -- needed to call
-  // Firebase Phone Authentication directly (Firebase's own client SDK sends the OTP; this
-  // backend never does). token is the same raw reset-link token from forgotPassword.
-  resolveResetPasswordPhone: (token: string) =>
-    api.post<{ phoneNumber: string }>('/auth/reset-password/phone', { token }).then((r) => r.data),
+  // BH-015 fix: confirms a user-typed phone number against the account tied to a valid, unused
+  // reset link -- never reveals the account's real number. On success, this page hands the SAME
+  // number the user just typed to Firebase Phone Authentication directly (Firebase's own client
+  // SDK sends the OTP; this backend never does). token is the same raw reset-link token from
+  // forgotPassword.
+  verifyResetPasswordPhone: (token: string, phoneNumber: string) =>
+    api.post<{ message: string }>('/auth/reset-password/phone', { token, phoneNumber }).then((r) => r.data),
   // firebaseIdToken is the second factor -- proof of phone access via Firebase Phone
   // Authentication, verified server-side (see AuthService.resetPassword on the backend).
   resetPassword: (token: string, firebaseIdToken: string, newPassword: string) =>

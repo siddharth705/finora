@@ -1,9 +1,10 @@
 # Finora Authentication & Account Security — Review & Design
 
-**Status: Approved.** Next: Phase 6 (BH-015 fix) and Phase 7 (`/auth/identify`
-enumeration hardening) — both resolved-to-build 2026-08-23, neither started;
-Phase 7's exact wire shape still needs to be designed before implementation.
-Of Phase 0's 6 open decisions, only #3 (account deletion retention — needs
+**Status: Approved.** Next: Phase 7 (`/auth/identify` enumeration hardening)
+— design confirmed 2026-08-23 (option b: collapse PASSWORD/GOOGLE/APPLE
+into a single EXISTS value), not started. Phase 6 (BH-015 fix) shipped
+2026-08-23. Of Phase 0's 6 open decisions, only #3 (account deletion
+retention — needs
 legal/compliance input, tracked as its own ticket, not this doc's to close)
 remains genuinely open; the other 5 are resolved. Implementation: Phase 1 is
 done, Phase 2's audit-hardening slice is done, Phase 3's backend slice
@@ -594,31 +595,50 @@ match.
   established default for a flow with no UI toggle, applied here from day
   one rather than needing its own follow-up fix.
 
-**Phase 6 — BH-015 fix: invert the reset-password phone flow**
+**Phase 6 — BH-015 fix: invert the reset-password phone flow — ✅ DONE, shipped 2026-08-23**
 `fix(auth): stop revealing the account's real phone number on password reset`
-- **Resolved 2026-08-23: fix now**, not deferred to Phase 5. Not started.
-- Problem (§1.3): `POST /auth/reset-password/phone` currently takes just
-  the reset-link token and returns the account's REAL, unmasked phone
-  number — needed because Firebase Phone Auth's client SDK sends the OTP
+- Problem (§1.3): `POST /auth/reset-password/phone` used to take just the
+  reset-link token and return the account's REAL, unmasked phone number
+  — needed because Firebase Phone Auth's client SDK sends the OTP
   directly, so the number has to reach the browser/app. Anyone holding a
-  valid reset-link token (e.g. an intercepted/forwarded email) learns the
-  account's phone number even if the reset never completes.
-- Direction: invert who supplies the number. The user types their own
-  phone number; the backend verifies it matches the account tied to the
-  token BEFORE the client is allowed to call Firebase, and returns only a
-  yes/no (or a generic "if this matches, we'll send a code" message, not
-  the number itself) — mirroring `/auth/identify`'s own "don't hand back
-  a raw boolean" posture and its rate-limit treatment, since this becomes
-  a new phone-number-guessing oracle otherwise (a much smaller one than
-  today's guaranteed reveal, but still worth rate-limiting tightly).
-- Touches: a new/modified backend endpoint (replaces
-  `resolveResetPasswordPhone`'s reveal-the-number behavior), a phone-number
-  input field added to `ResetPassword.tsx`, `frontend/src/pages/...` and
-  the mobile equivalent (currently phone-reset display-only), plus a
-  dedicated rate limiter. Backend, web, mobile -- each its own PR, per
-  this doc's own rule.
-- Not started — exact endpoint shape/wire contract still to be designed
-  before implementation, same as any other phase here.
+  valid reset-link token (e.g. an intercepted/forwarded email) learned
+  the account's phone number even if the reset never completed.
+- Shipped direction: same URL (`POST /auth/reset-password/phone`, kept
+  as-is rather than renamed, so the existing rate-limiter path entry and
+  its guard tests didn't need touching), inverted contract. Request now
+  carries `{token, phoneNumber}` — the user's own typed number, not
+  server-revealed. Response is `{message}` on a match; a mismatch throws
+  a generic 400 (`"That doesn't match the phone number on this
+  account."`), never revealing what the real number is. Backend reuses
+  `phoneNumbersMatch()` — the exact digit-only comparison `resetPassword()`
+  already applies to the Firebase-verified number — so the pre-check and
+  the real gate can never disagree about what counts as a match. Still a
+  phone-number-guessing oracle in principle (confirms/denies one guessed
+  number at a time), but bounded by the same precondition as before
+  (already holding a valid, unguessable, single-use, time-limited reset
+  token) and the same rate limiter (10 req / 10 min, shared with
+  `resetPassword`) — a materially smaller exposure than the guaranteed
+  full reveal this replaces.
+- `ResetPassword.tsx` (web) gained a new first step: a phone-number input
+  (10-digit + fixed `+91` prefix, same pattern as `Register.tsx`'s own
+  field) that must be confirmed via the new endpoint before the OTP step
+  (auto-fetch/auto-send on mount is gone) — the confirmed number is what
+  gets handed to Firebase, never anything the backend returned. Self-
+  review catch before this reached a PR: an earlier draft rendered the
+  Firebase reCAPTCHA anchor div separately inside each of the two step
+  branches, which would have unmounted/remounted it across the
+  phone→OTP transition — a real race against `RecaptchaVerifier`'s
+  synchronous construction against that DOM node. Fixed by hoisting the
+  anchor to render once, outside the step conditional, with a regression
+  test asserting exactly one anchor exists in the DOM across the
+  transition.
+  Mobile needed no UI change — password-reset completion has been
+  web-only on mobile since Phase 3B (`ForgotPasswordScreen`'s own doc
+  comment); its two now-unused `authApi` wrapper functions were
+  signature-matched to the new contract for whenever an in-app
+  completion screen is built, not left to drift.
+- No `frontend/src/pages/ResetPassword.test.tsx` existed before this —
+  net-new coverage (9 tests), not a migration of existing tests.
 
 **Phase 7 — `/auth/identify` enumeration hardening**
 `feat(auth): reduce what /auth/identify's response reveals`
