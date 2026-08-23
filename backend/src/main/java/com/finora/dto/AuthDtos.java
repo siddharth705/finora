@@ -73,14 +73,22 @@ public class AuthDtos {
     public record IdentifyRequest(@NotBlank String identifier) {}
 
     /**
-     * @param nextAction what the client should present next: {@code "PASSWORD"}, {@code "GOOGLE"},
-     *        or {@code "APPLE"} for an existing account (mirrors
-     *        {@link com.finora.entity.User#getSignInMethod()} exactly), or {@code "CONTINUE"} for
-     *        an identifier with no account -- deliberately not a boolean {@code exists} field, to
-     *        avoid handing back a directly machine-readable existence oracle. This narrows rather
-     *        than eliminates enumeration risk (the four distinct values are themselves
-     *        distinguishable); the rate limit on this endpoint (see RateLimitFilter) is the other
-     *        half of that mitigation, not a substitute for it.
+     * @param nextAction what the client should present next: {@code "EXISTS"} for an identifier
+     *        with an account (regardless of which sign-in method it uses), or {@code "CONTINUE"}
+     *        for one with no account -- deliberately not a boolean {@code exists} field, to avoid
+     *        handing back a directly machine-readable existence oracle.
+     *
+     *        <p>Phase 7 hardening (auth/security review, resolved 2026-08-23): this used to be
+     *        {@code "PASSWORD"}/{@code "GOOGLE"}/{@code "APPLE"}/{@code "CONTINUE"}, mirroring
+     *        {@link com.finora.entity.User#getSignInMethod()} for an existing account -- letting a
+     *        caller learn not just THAT an account exists but WHICH method it uses. Collapsed to
+     *        two values: the client can no longer distinguish a password account from a Google or
+     *        Apple one before ever attempting to sign in, closing that half of the leak. It still
+     *        narrows rather than eliminates enumeration risk (EXISTS vs CONTINUE is itself a
+     *        signal); the rate limit on this endpoint (see RateLimitFilter) is the other half of
+     *        that mitigation, not a substitute for it. The backend's own {@code signInMethod}
+     *        refusal at actual login time is unaffected either way -- this only changes what the
+     *        pre-login identify step is willing to say.
      */
     public record IdentifyResponse(String nextAction) {}
 
