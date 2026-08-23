@@ -17,10 +17,22 @@ type Props = NativeStackScreenProps<AuthStackParamList, 'Login'>;
 export function LoginScreen({ navigation, route }: Props) {
   const c = useTheme();
   const { login, reactivate, loginWithGoogle, loginWithApple } = useAuth();
-  const [identifier, setIdentifier] = useState('');
+  // Phase 3B: AuthEntryScreen already resolved this identifier to an account and its sign-in
+  // method via POST /auth/identify -- prefill it here instead of asking the user to retype it.
+  // route.params is stable for this screen instance (nothing here calls navigation.setParams),
+  // so it can be read directly rather than captured once like web's Login.tsx has to (there,
+  // location.state has to be snapshotted at mount since the same component instance persists
+  // across browser history entries).
+  const [identifier, setIdentifier] = useState(route.params?.identifier ?? '');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  // The OAuth hint only makes sense for the exact identifier AuthEntry resolved it for -- if the
+  // user edits the field (e.g. they arrived here for the wrong account), the hidden password
+  // form must come back rather than staying hidden for whatever new identifier they type. (Web's
+  // Login.tsx shipped without this and had to fix it after a self-review found the password form
+  // and Sign in button stayed hidden forever once edited -- built in here from the start.)
+  const oauthMethod = identifier === route.params?.identifier ? route.params?.method : undefined;
 
   // Set once login() reports AUTH_ACCOUNT_DEACTIVATED -- the password already checked out (see
   // AuthService.login()'s deactivated branch), so the rest of the form is replaced by a single
@@ -189,26 +201,41 @@ export function LoginScreen({ navigation, route }: Props) {
         returnKeyType="next"
       />
 
-      <TextField
-        label="Password"
-        value={password}
-        onChangeText={setPassword}
-        secure
-        autoCapitalize="none"
-        autoComplete="current-password"
-        returnKeyType="go"
-        onSubmitEditing={handleSubmit}
-      />
+      {/* Phase 3B: once AuthEntry has already told us this identifier belongs to an OAuth
+          account, don't show a password field the backend would refuse anyway -- this is UX,
+          the server-side signInMethod refusal stays the real guarantee. */}
+      {oauthMethod === 'GOOGLE' || oauthMethod === 'APPLE' ? (
+        <View style={[styles.notice, { backgroundColor: c.primaryLight, marginTop: 0, marginBottom: spacing.md }]}>
+          <Text style={[styles.noticeText, { color: c.ink }]}>
+            {oauthMethod === 'GOOGLE'
+              ? 'This account signs in with Google. Continue below to sign in.'
+              : 'This account signs in with Apple. Continue below to sign in.'}
+          </Text>
+        </View>
+      ) : (
+        <>
+          <TextField
+            label="Password"
+            value={password}
+            onChangeText={setPassword}
+            secure
+            autoCapitalize="none"
+            autoComplete="current-password"
+            returnKeyType="go"
+            onSubmitEditing={handleSubmit}
+          />
 
-      <View style={styles.forgotRow}>
-        <Button
-          label="Forgot password?"
-          variant="link"
-          onPress={() => navigation.navigate('ForgotPassword')}
-        />
-      </View>
+          <View style={styles.forgotRow}>
+            <Button
+              label="Forgot password?"
+              variant="link"
+              onPress={() => navigation.navigate('ForgotPassword')}
+            />
+          </View>
 
-      <Button label="Sign in" onPress={handleSubmit} loading={loading} />
+          <Button label="Sign in" onPress={handleSubmit} loading={loading} />
+        </>
+      )}
 
       {showSocialSignIn ? (
         <>
