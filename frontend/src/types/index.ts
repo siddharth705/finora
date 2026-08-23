@@ -193,6 +193,12 @@ export interface StagedRow {
   merchantConfidence: number | null;
 }
 
+export interface MerchantGroup {
+  merchantId: string;
+  merchantName: string;
+  transactionIds: string[];
+}
+
 // Best-effort fields pulled from the statement itself. Every field is nullable and genuinely
 // IS null when the file didn't carry enough signal — none of these are guessed to fill gaps.
 // suggestedName is the detected bank's official name (or a clean generic fallback) -- never a
