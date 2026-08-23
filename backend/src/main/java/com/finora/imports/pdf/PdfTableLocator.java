@@ -266,7 +266,26 @@ public class PdfTableLocator {
     // own patterns above follow -- narrow to the one real sentence rather than broadened to a
     // generic "legend" or "disclaimer" heading a genuine transaction narration could plausibly echo.
     private static final Pattern PAGE_LEGEND_BLOCK_START = Pattern.compile(
-            "(?i)transactions\\s+highlighted\\s+in\\s+grey\\s+color");
+            "(?i)transactions\\s+highlighted\\s+in\\s+grey\\s+color"
+                    // A real Kotak Mahindra Bank credit-card statement opens a per-page
+                    // payment-methods legend with this sentence, printed at the bottom of page 1
+                    // and set beside a second, side-by-side "What you must know!" box. A
+                    // page-boundary block, not the document's true end (real transactions resume
+                    // on page 2), so this belongs here rather than among TRAILING_CONTENT_TRIGGERS'
+                    // permanently-closing markers. Without it, the whole block -- fragmented across
+                    // several narration-only physical rows by the two-column layout -- glued onto
+                    // whichever real transaction row on either side of the page break sat closest,
+                    // confirmed via CorpusProbe against the real document.
+                    + "|pay\\s+your\\s+credit\\s+card\\s+bills\\s+using\\s+the\\s+following"
+                    // Three real HDFC savings-account statements (independently uploaded) open a
+                    // per-page footer with this exact sentence -- "*Closing balance includes funds
+                    // earmarked for hold and uncleared funds", followed by an address-correctness
+                    // disclaimer and the bank's GSTIN/registered-office boilerplate, at the bottom
+                    // of every page. Same page-boundary shape as the two triggers above: without
+                    // it, this block glued onto the last real transaction above each page break --
+                    // confirmed via CorpusGarbageSweep against all three real documents, which share
+                    // the identical layout (same bank, same export format).
+                    + "|closing\\s+balance\\s+includes\\s+funds\\s+earmarked");
 
     // ILLUSTRATIVE_BLOCK_SUPPRESSED. A real AU Small Finance Bank credit-card statement carries a
     // fee/interest-calculation appendix -- "Illustration for calculating Interest & Late Payment
@@ -307,6 +326,27 @@ public class PdfTableLocator {
     private static final Pattern TRANSACTION_TABLE_TOTAL_MARKER = Pattern.compile(
             "(?i)total\\s+purchase\\s*&\\s*other\\s+charges");
 
+    // TRANSACTION_CATEGORY_HEADER_SUPPRESSED. A real Kotak Mahindra Bank credit-card statement
+    // groups its own ledger into sub-categories mid-table -- "Payments and Other Credits", then a
+    // card-identity aside ("Primary Card Transactions- <masked card>"), then "Retail Purchases and
+    // Cash Transactions" -- each a bare heading line with no date and no amount of its own, printed
+    // between two real transaction rows (never before the header, and never at the document's true
+    // end, so neither PAGE_LEGEND_BLOCK_START's per-page reset nor TRAILING_CONTENT_TRIGGERS'
+    // permanent one is the right shape). Without recognizing these, the ordinary leading/trailing
+    // narration merge -- which has no notion of "this dateless line is a category divider, not
+    // prose" -- swept one onto the transaction printed before it and the other onto the transaction
+    // printed after it, by nothing more than which row it happened to sit closer to. Confirmed via
+    // CorpusProbe against the real document: one category header ended up prepended to the first
+    // purchase row's own narration, and another appended to an unrelated payment row's.
+    //
+    // Anchored to the whole line (never a mid-sentence match) and narrow to these three real
+    // observed phrases, same "evidence before capability" discipline as every other trigger in this
+    // class -- a genuine transaction narration never consists of nothing but one of these phrases.
+    private static final Pattern CREDIT_CARD_CATEGORY_HEADER = Pattern.compile(
+            "(?i)^\\s*(?:payments\\s+and\\s+other\\s+credits"
+                    + "|primary\\s+card\\s+transactions\\b.*"
+                    + "|retail\\s+purchases\\s+and\\s+cash\\s+transactions)\\s*$");
+
     // MITC_SECTION_CLOSED. A real ICICI Bank credit-card statement prints "MOST IMPORTANT TERMS AND
     // CONDITIONS (MITC)" as an all-caps section heading immediately after the last real transaction
     // and its rewards summary, opening a multi-page legal/T&C appendix. Same failure shape as
@@ -326,18 +366,96 @@ public class PdfTableLocator {
     private static final Pattern MITC_SECTION_MARKER = Pattern.compile(
             "MOST IMPORTANT TERMS AND CONDITIONS");
 
+    // ACCOUNT_DISCREPANCY_DISCLAIMER_CLOSED. Two real, independently-uploaded savings-account
+    // statements (a Central Bank of India export and a PNB ONE export) each open their document's
+    // true closing disclaimer block with a regulatory-boilerplate sentence about notifying the bank
+    // of a discrepancy -- CBI's "Unless a constituent notifies the Bank immediately of any
+    // discrepancy...", PNB's "Unless constituent notifies the bank immediately of any
+    // discrepancy...". Same failure shape as every other TRAILING_CONTENT_TRIGGERS entry: this
+    // sentence sits BEFORE either document's own true end-of-statement marker (CBI's literal "END
+    // OF STATEMENT", PNB's own bulleted disclaimer list has no such marker at all), so it had
+    // already been swept into the last real transaction's trailing narration by the time any
+    // existing trigger got a chance to fire. Matched on the invariant core across both real
+    // documents' minor wording differences ("a constituent"/"constituent", "Bank"/"bank") rather
+    // than either one verbatim -- both are the same regulatory-mandated disclosure, not two
+    // coincidentally similar sentences.
+    private static final Pattern ACCOUNT_DISCREPANCY_DISCLAIMER_MARKER = Pattern.compile(
+            "(?i)constituent\\s+notifies\\s+the\\s+bank\\s+immediately\\s+of\\s+any\\s+discrepancy");
+
+    // STATEMENT_SUMMARY_BLOCK_CLOSED. Three real, independently-uploaded savings-account statements
+    // (an HDFC single-page export, an SBI export, and a much longer 38-page HDFC export) each close
+    // with a "Statement Summary :" block -- opening/closing balance, debit/credit counts and
+    // totals, then a security disclaimer -- printed directly after the last real transaction, with
+    // no other recognized closing marker anywhere in any of the three. Same failure shape as every
+    // other TRAILING_CONTENT_TRIGGERS entry: without it, the block's own header row ("Opening
+    // Balance Dr Count Cr Count Debits Credits Closing Bal") and the security disclaimer that
+    // follows it both got swept into the last real transaction's trailing narration -- and on the
+    // 38-page document specifically, the summary grid's own VALUE row (its aggregate debit/credit
+    // totals, e.g. "368,759.09"/"374,644.91") was severe enough to also form an entire PHANTOM
+    // transaction of its own: a fabricated row with no real date, carrying those aggregate totals
+    // as if they were one more genuine debit and credit. See
+    // SplitHeaderRunsPdfTableLocatorTest's own updated counts for the exact before/after row this
+    // eliminated.
+    //
+    // Bug fix: bare "statement summary" (no trailing colon) collided with a real ICICI credit-card
+    // statement's own PRE-table payment-summary panel heading ("STATEMENT SUMMARY", immediately
+    // followed by "Total Amount due"/"Closing Balance" fields, verified alone on its own physical
+    // row near the top of the document) -- an entirely different, legitimate use of the same two
+    // words, and matching it discarded the ICICI document's whole transaction table as if the
+    // panel heading were the document's true end. Both real evidencing documents happen to punctuate
+    // their own heading with a colon right after "Summary" ("STATEMENT SUMMARY :-", "Statement
+    // Summary : 01-07-2026 To..."); ICICI's does not. Requiring it is what tells apart "this IS the
+    // closing recap" from "this MENTIONS a summary," the same discipline MITC_SECTION_MARKER's own
+    // case-sensitivity requirement already applies for an analogous real collision.
+    private static final Pattern STATEMENT_SUMMARY_BLOCK_MARKER = Pattern.compile(
+            "(?i)statement\\s+summary\\s*:");
+
+    // CHEQUE_PAYABLE_FOOTER_CLOSED. A real Axis Bank credit-card statement's own true end opens
+    // with "Your cheque should be payable to Axis Bank Card No.<masked>...", immediately followed
+    // by a "Dear Customer, pay your Axis Bank Credit Card bill..." ECS-registration sentence and an
+    // "IMPORTANT MESSAGE" legal/GST disclaimer block -- confirmed single-occurrence (`grep`), never
+    // repeated per page, so this is the document's true end, not a page legend. Without it, the
+    // whole block was swept into the last real transaction's trailing narration.
+    private static final Pattern CHEQUE_PAYABLE_FOOTER_MARKER = Pattern.compile(
+            "(?i)cheque\\s+should\\s+be\\s+payable\\s+to");
+
+    // NEUCOINS_FOOTNOTE_CLOSED. A real HDFC "Tata Neu Plus" credit-card statement's own transaction
+    // table ends with a "Note:" footnote explaining how its "Base NeuCoins" rewards column is
+    // calculated -- confirmed single-occurrence (`grep`), directly beneath the last real
+    // transaction, before a page break and the MITC/fees appendix. Without it, the whole footnote
+    // was swept into the last real transaction's trailing narration.
+    private static final Pattern NEUCOINS_FOOTNOTE_MARKER = Pattern.compile(
+            "(?i)base\\s+neucoins.{0,20}are\\s+calculated\\s+as");
+
+    // SAVINGS_AND_BENEFITS_SECTION_CLOSED. A real SBI credit-card statement (the same document
+    // HEADER_RECONSTRUCTED/PAGE_LEGEND_BLOCK_SUPPRESSED are evidenced from) closes its supplementary
+    // cardholder section's transaction table with a "SAVINGS AND BENEFITS SECTION" heading,
+    // introducing a Cash Back / Petrol Surcharge Waiver / Reward Points recap grid -- confirmed
+    // single-occurrence in this section (`grep`), directly beneath the last real transaction.
+    // Without it, the grid's own header/value rows were swept into that transaction's trailing
+    // narration.
+    private static final Pattern SAVINGS_AND_BENEFITS_SECTION_MARKER = Pattern.compile(
+            "(?i)savings\\s+and\\s+benefits\\s+section");
+
     /** One row-shaped trigger the trailing-content suppression gate checks for, paired with the
      *  capability name to record when it fires -- see {@link #trailingContentTriggerCapability}. */
     private record TrailingContentTrigger(Pattern pattern, String capability) {}
 
     // Checked in this order, first match wins -- order has no behavioral significance among these
-    // four (each is evidenced from a different real document and none has been found to overlap
+    // entries (each is evidenced from a different real document and none has been found to overlap
     // with another's territory), but a stable order keeps a diff of this list reviewable.
     private static final List<TrailingContentTrigger> TRAILING_CONTENT_TRIGGERS = List.of(
             new TrailingContentTrigger(ILLUSTRATIVE_EXAMPLE_MARKER, "ILLUSTRATIVE_BLOCK_SUPPRESSED"),
             new TrailingContentTrigger(STATEMENT_CLOSING_MARKER, "TRANSACTION_TABLE_CLOSED"),
             new TrailingContentTrigger(TRANSACTION_TABLE_TOTAL_MARKER, "TRANSACTION_TABLE_TOTAL_CLOSED"),
-            new TrailingContentTrigger(MITC_SECTION_MARKER, "MITC_SECTION_CLOSED"));
+            new TrailingContentTrigger(MITC_SECTION_MARKER, "MITC_SECTION_CLOSED"),
+            new TrailingContentTrigger(ACCOUNT_DISCREPANCY_DISCLAIMER_MARKER,
+                    "ACCOUNT_DISCREPANCY_DISCLAIMER_CLOSED"),
+            new TrailingContentTrigger(STATEMENT_SUMMARY_BLOCK_MARKER, "STATEMENT_SUMMARY_BLOCK_CLOSED"),
+            new TrailingContentTrigger(CHEQUE_PAYABLE_FOOTER_MARKER, "CHEQUE_PAYABLE_FOOTER_CLOSED"),
+            new TrailingContentTrigger(NEUCOINS_FOOTNOTE_MARKER, "NEUCOINS_FOOTNOTE_CLOSED"),
+            new TrailingContentTrigger(SAVINGS_AND_BENEFITS_SECTION_MARKER,
+                    "SAVINGS_AND_BENEFITS_SECTION_CLOSED"));
 
     /** The capability name of the first {@link #TRAILING_CONTENT_TRIGGERS} entry matching {@code
      *  rowLine}, or null if none match. A dedicated method (rather than the boolean-chain shape
@@ -368,6 +486,11 @@ public class PdfTableLocator {
             case "TRANSACTION_TABLE_CLOSED" -> ctx.record("TRANSACTION_TABLE_CLOSED");
             case "TRANSACTION_TABLE_TOTAL_CLOSED" -> ctx.record("TRANSACTION_TABLE_TOTAL_CLOSED");
             case "MITC_SECTION_CLOSED" -> ctx.record("MITC_SECTION_CLOSED");
+            case "ACCOUNT_DISCREPANCY_DISCLAIMER_CLOSED" -> ctx.record("ACCOUNT_DISCREPANCY_DISCLAIMER_CLOSED");
+            case "STATEMENT_SUMMARY_BLOCK_CLOSED" -> ctx.record("STATEMENT_SUMMARY_BLOCK_CLOSED");
+            case "CHEQUE_PAYABLE_FOOTER_CLOSED" -> ctx.record("CHEQUE_PAYABLE_FOOTER_CLOSED");
+            case "NEUCOINS_FOOTNOTE_CLOSED" -> ctx.record("NEUCOINS_FOOTNOTE_CLOSED");
+            case "SAVINGS_AND_BENEFITS_SECTION_CLOSED" -> ctx.record("SAVINGS_AND_BENEFITS_SECTION_CLOSED");
             default -> throw new IllegalStateException(
                     "Unknown trailing-content trigger capability: " + capability);
         }
@@ -1169,6 +1292,14 @@ public class PdfTableLocator {
                 // loose page-footer shape would otherwise vanish with zero trace at all.
                 recordIfTransactionShaped(row, "PAGE_FOOTER_OR_CLOSING_MARKER", pendingDroppedCandidates);
                 continue; // a page-number line or closing marker is never a transaction or a continuation of one
+            } else if (CREDIT_CARD_CATEGORY_HEADER.matcher(rowLine).find()) {
+                // See CREDIT_CARD_CATEGORY_HEADER's own doc comment. Dropped outright, not merged
+                // either direction and not buffered as leading/trailing narration -- a category
+                // divider describes the table, not one transaction in it, so no single row is the
+                // right place for it to land.
+                if (ctx != null) ctx.record("TRANSACTION_CATEGORY_HEADER_SUPPRESSED");
+                recordIfTransactionShaped(row, "TRANSACTION_CATEGORY_HEADER_SUPPRESSED", pendingDroppedCandidates);
+                continue;
             } else {
                 Map<String, String> bucketed = bucketRow(row, headerNames, headerAnchors, headerEnds, ctx);
                 if (bucketed.isEmpty()) {
@@ -1305,6 +1436,7 @@ public class PdfTableLocator {
                         // real exists to trail from.
                         && (continuesTheBlock(row, lastRowY, blockPitch, blockSeparation,
                                     trailingCountSinceLastAnchor)
+                            || isChequeReferenceTrailer(rowLine)
                             || (trailingCountSinceLastAnchor < MAX_TRAILING_CONTINUATION_ROWS
                                 && (!isNarrationOnly(bucketed)
                                     || belongsToTheRowAbove(gapFromPreviousRow, gapToNextRow))))) {
@@ -1315,7 +1447,10 @@ public class PdfTableLocator {
                         blockPitch = row.get(0).y() - lastRowY;
                     }
                     mergeInto(currentRows.get(currentRows.size() - 1), bucketed, headerNames);
-                    if (ctx != null) ctx.record("WRAPPED_DESCRIPTION");
+                    if (ctx != null) {
+                        ctx.record("WRAPPED_DESCRIPTION");
+                        if (isChequeReferenceTrailer(rowLine)) ctx.record("CHEQUE_REFERENCE_TRAILER_RECOVERED");
+                    }
                     trailingCountSinceLastAnchor++;
                     lastRowPage = row.get(0).pageIndex();
                     lastRowY = row.get(0).y();
@@ -1480,6 +1615,32 @@ public class PdfTableLocator {
             if (value != null && CsvParser.parseNumeric(value.trim()) != null) return false;
         }
         return true;
+    }
+
+    // CHEQUE_REFERENCE_TRAILER_RECOVERED. A real Canara Bank statement (Manas Chaturvedi's own
+    // upload -- a different real document from the one MAX_TRAILING_CONTINUATION_ROWS was tuned
+    // against) wraps EVERY transaction's own narration across 4 dateless lines before its date
+    // row, then closes with up to THREE dateless lines after it: a reference-number continuation,
+    // a time-of-day line, and finally a bare "Chq: <the same reference>" line -- one more than
+    // MAX_TRAILING_CONTINUATION_ROWS admits. That third line was falling through to the
+    // leading-narration branch and attaching to the NEXT transaction instead: confirmed via
+    // CorpusGarbageSweep, every "Chq: <number>" trailer in this real document ended up prepended to
+    // the wrong transaction's description, its own reference number never matching what followed it.
+    //
+    // Raising MAX_TRAILING_CONTINUATION_ROWS itself was rejected for the same reason that constant's
+    // own doc comment already gives for Bandhan Bank: a DIFFERENT real Canara document needs the
+    // boundary at exactly 2, where its own third dateless row genuinely IS the next transaction's
+    // leading narration -- the two real documents are irreconcilable by count alone. This is a
+    // content-shape exception instead, not a wider cap: a bare "Chq: <digits>" line can only ever be
+    // a reference trailer for the transaction printed immediately above it -- a cheque or reference
+    // number describes a completed instrument, never introduces the next one -- so it is always safe
+    // to admit as one more trailing continuation regardless of the count already reached. Unlike
+    // continuesTheBlock's pitch-based extension, this needs no evidence the document "separates its
+    // blocks": the shape alone is the evidence.
+    private static final Pattern CHEQUE_REFERENCE_TRAILER = Pattern.compile("(?i)^\\s*chq[:.]?\\s*\\d+\\s*$");
+
+    private boolean isChequeReferenceTrailer(String rowLine) {
+        return CHEQUE_REFERENCE_TRAILER.matcher(rowLine).matches();
     }
 
     /** Vertical distance between two visual rows, or null when either is missing or they are on
@@ -4332,7 +4493,21 @@ public class PdfTableLocator {
         for (List<PositionedText> row : allRows) {
             String rowLine = lineOf(row);
             if (PAGE_FOOTER.matcher(rowLine).find()) continue;
-            if (STATEMENT_CLOSING_MARKER.matcher(rowLine).find()) break;
+            // Every TRAILING_CONTENT_TRIGGERS marker, not just STATEMENT_CLOSING_MARKER alone --
+            // this headerless path used to check only that one trigger, so a document that falls
+            // back to headerless inference (no recognized column vocabulary at all) got none of the
+            // other real-document-evidenced closing markers the header-based path already has.
+            // Confirmed on a real SBI savings statement (Sanjay SBI.pdf): its own "Statement
+            // Summary" balance-recap block, printed after the last real transaction, was swept into
+            // that transaction's own trailing narration here even after STATEMENT_SUMMARY_BLOCK_MARKER
+            // was added to TRAILING_CONTENT_TRIGGERS, because this loop never consulted that list.
+            // A permanent break, same as every trigger's meaning in the header-based path -- none of
+            // these markers is a per-page, resumable thing the way PAGE_FOOTER is.
+            String trailingTrigger = trailingContentTriggerCapability(rowLine);
+            if (trailingTrigger != null) {
+                recordTrailingContentTrigger(ctx, trailingTrigger);
+                break;
+            }
             if (isTransactionShapedRow(row)) {
                 if (rowLine.equals(previousTransactionLine)) {
                     recordIfTransactionShaped(row, "REPEATED_PHYSICAL_ROW_REMOVED", droppedTransactionCandidates);
