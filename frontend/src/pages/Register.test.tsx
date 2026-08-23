@@ -20,7 +20,7 @@ function renderRegister(initialEntries: string[] = ['/register'], state?: { emai
     phoneVerified: false,
     login: vi.fn(),
     reactivate: vi.fn(),
-    loginWithGoogle: vi.fn(),
+    loginWithGoogle: vi.fn(), loginWithApple: vi.fn(),
     register: registerMock,
     setPhoneVerified: vi.fn(),
     logout: vi.fn(),
