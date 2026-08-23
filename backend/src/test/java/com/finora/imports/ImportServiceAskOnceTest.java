@@ -525,7 +525,14 @@ class ImportServiceAskOnceTest {
     }
 
     @Test
-    void confirm_fallsBackToTheConfirmedRowsDateRange_whenTheRequestCarriesNoStatementPeriod() throws Exception {
+    void confirm_leavesTheStatementPeriodNull_whenTheRequestCarriesNoStatementPeriod() throws Exception {
+        // Bug fix: this used to fall back to the confirmed rows' own min/max date -- which is only
+        // ever a LOWER bound on the statement's true period whenever a cycle has no activity near
+        // its own printed boundary dates. Confirmed wrong against a real Kotak Mahindra Bank
+        // credit-card statement, whose own earliest/latest transactions fall inside its printed
+        // period rather than at its edges (see PdfPreviewGenerator.buildDetectedAccountInfo's own
+        // comment, which had and removed the identical fallback). No genuine period was ever printed
+        // here (the request carries none), so this stays null rather than guessing one from the rows.
         var row1 = new ConfirmedRow(LocalDate.of(2026, 7, 10), "SWIGGY*ORDR9182 BLR",
                 BigDecimal.valueOf(486), "EXPENSE", "Dining", true, "rule", null, false, null, null);
         var row2 = new ConfirmedRow(LocalDate.of(2026, 7, 12), "ZOMATO ORDER",
@@ -536,8 +543,8 @@ class ImportServiceAskOnceTest {
 
         ArgumentCaptor<StatementImport> captor = ArgumentCaptor.forClass(StatementImport.class);
         verify(statementImportRepository).save(captor.capture());
-        assertThat(captor.getValue().getStatementPeriodStart()).isEqualTo(LocalDate.of(2026, 7, 10));
-        assertThat(captor.getValue().getStatementPeriodEnd()).isEqualTo(LocalDate.of(2026, 7, 12));
+        assertThat(captor.getValue().getStatementPeriodStart()).isNull();
+        assertThat(captor.getValue().getStatementPeriodEnd()).isNull();
     }
 
     @Test

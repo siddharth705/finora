@@ -240,8 +240,11 @@ class MultiSectionZeroExtractionTest {
         // mechanism, does not parse as a transaction and is dropped at staging, same as before this
         // fix touched anything downstream of location.
         m.put("icici-savings-ledger-validation", 11);
+        m.put("kotak-credit-card-category-sections-and-page-footer", 21);
         m.put("pnb-savings-ledger-validation", 61);
         m.put("union-bank-savings-ledger-validation", 19);
+        m.put("cbi-account-discrepancy-disclaimer-trailer", 222);
+        m.put("pnb-one-account-discrepancy-disclaimer-trailer", 61);
         return m;
     }
 

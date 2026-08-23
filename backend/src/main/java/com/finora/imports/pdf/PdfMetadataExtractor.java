@@ -159,6 +159,11 @@ public class PdfMetadataExtractor {
             // (see GRID_DUE_DATE_LABEL's own doc comment for why it isn't a plain "Label: Value" line).
             DateTimeFormatter.ofPattern("d MMM, yyyy", Locale.ENGLISH),
             DateTimeFormatter.ofPattern("d MMM yyyy", Locale.ENGLISH),
+            // "16-Feb-2026" -- a real Kotak Mahindra Bank credit-card statement states every
+            // pre-table metadata date this way (see PAYMENT_DUE_DATE_SENTENCE's own doc comment for
+            // the due-date field this was added for). Distinct from the two "dd-MM-yyyy"/"dd/MM/yyyy"
+            // numeric-only formats above, which never match a month spelled as letters.
+            DateTimeFormatter.ofPattern("d-MMM-yyyy", Locale.ENGLISH),
     };
 
     // Some real statements (verified against an actual HDFC "Tata Neu Plus" credit card export)
@@ -180,6 +185,14 @@ public class PdfMetadataExtractor {
     // Statement Period range) -- findGridValue's own range-exclusion (see its doc comment) is what
     // keeps this from grabbing the period's start date instead of the real due date.
     private static final Pattern GRID_DUE_DATE_LABEL = Pattern.compile("(?i)\\bdue\\s+date\\b");
+    // PAYMENT_DUE_DATE_SENTENCE. A real Kotak Mahindra Bank credit-card statement never prints a
+    // "Due Date" label anywhere near its own due date at all -- its payment-summary panel only ever
+    // labels an AMOUNT ("Minimum Amount Due (MAD)", "Total Amount Due (TAD)"), never a date. The
+    // date itself is stated as a plain sentence in the address block instead: "Remember to pay by
+    // 02-Apr-2026". Neither PAYMENT_DUE_DATE's own "Label: Value" shape nor GRID_DUE_DATE_LABEL's
+    // "due date" phrase-search can ever match this real wording, so the field silently stayed null.
+    private static final Pattern PAYMENT_DUE_DATE_SENTENCE = Pattern.compile(
+            "(?i)remember\\s+to\\s+pay\\s+by\\s+(.+)$");
     private static final Pattern DATE_LIKE = Pattern.compile(
             "\\b\\d{1,2}[-/]\\d{1,2}[-/]\\d{2,4}\\b|\\b\\d{1,2}\\s+[A-Za-z]{3,9}\\.?,?\\s+\\d{4}\\b");
     // A date immediately preceded or followed by " - " is one half of an explicit range (e.g. a
@@ -393,6 +406,18 @@ public class PdfMetadataExtractor {
                 if (dueDate != null) {
                     LocalDate parsedDueDate = parseDate(dueDate);
                     if (parsedDueDate != null) { paymentDueDate = parsedDueDate; continue; }
+                }
+            }
+
+            if (paymentDueDate == null) {
+                Matcher dueDateSentence = PAYMENT_DUE_DATE_SENTENCE.matcher(line);
+                if (dueDateSentence.find()) {
+                    LocalDate parsedDueDate = parseDate(dueDateSentence.group(1).trim());
+                    if (parsedDueDate != null) {
+                        paymentDueDate = parsedDueDate;
+                        if (ctx != null) ctx.record("GRID_METADATA_FALLBACK");
+                        continue;
+                    }
                 }
             }
 
