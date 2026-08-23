@@ -67,6 +67,9 @@
     "testTimeout": 15000
   },
   "private": true,
+  "overrides": {
+    "uuid": "^11.1.1"
+  },
   "allowScripts": {
     "@firebase/util@1.15.2": true,
     "@sentry/cli@2.58.4": true,

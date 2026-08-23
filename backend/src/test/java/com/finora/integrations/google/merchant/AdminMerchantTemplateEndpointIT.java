@@ -123,12 +123,27 @@ class AdminMerchantTemplateEndpointIT extends AbstractIntegrationTest {
     @Test
     void theReadinessSeedTemplatesAreDisabledByDefault() {
         for (String domain : new String[]{"swiggy.com", "flipkart.com", "irctc.co.in",
-                                          "phonepe.com", "netflix.com", "airtel.in", "hdfcergo.com"}) {
+                                          "netflix.com", "airtel.in", "hdfcergo.com"}) {
             assertThat(templates.findByMerchantDomain(domain))
                     .as("%s should be seeded by V103, disabled pending a real test", domain)
                     .isPresent()
                     .get()
                     .matches(t -> !t.isEnabled(), "disabled");
+        }
+    }
+
+    /** V109 removed phonepe.com/paytm.com/cred.club from this table entirely -- the declarative
+     *  template model cannot represent a counterparty distinct from the domain, so these three now
+     *  have no merchant_templates row at all (PhonePeEmailParser/CredEmailParser cover two of them
+     *  as hand-written, config-gated parsers instead; paytm.com is intentionally unparsed). Their
+     *  gmail_trusted_sender_domains rows are untouched -- this checks only the template half. */
+    @Test
+    @DisplayName("phonepe/paytm/cred have no merchant_templates row -- the declarative model was wrong for them")
+    void theP2PDomainsHaveNoTemplateRow() {
+        for (String domain : new String[]{"phonepe.com", "paytm.com", "cred.club"}) {
+            assertThat(templates.findByMerchantDomain(domain))
+                    .as("%s should have been removed by V109", domain)
+                    .isEmpty();
         }
     }
 

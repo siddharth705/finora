@@ -614,6 +614,19 @@ app:
         # See GmailManualSyncService's own doc comment for why it's a separate value.
         manual-sync-cooldown-ms: ${GMAIL_MANUAL_SYNC_COOLDOWN_MS:60000}
 
+      # Hand-written P2P/payment-relay parsers (PhonePe, CRED, Paytm) -- unlike merchant_templates,
+      # a hand-written MerchantEmailParser.canParse has no per-row enabled column to gate it, so
+      # each one gates on its own property here instead, off by default. See PhonePeEmailParser's
+      # own class doc for why "verified against real data" is not the same thing as "safe to run
+      # unconditionally the moment this deploys".
+      parsers:
+        phonepe:
+          enabled: ${GMAIL_PARSER_PHONEPE_ENABLED:false}
+        cred:
+          enabled: ${GMAIL_PARSER_CRED_ENABLED:false}
+        paytm:
+          enabled: ${GMAIL_PARSER_PAYTM_ENABLED:false}
+
 # Reversible encryption at rest for third-party credentials Finora must read back -- OAuth refresh
 # tokens first (ADR-007). NOT for passwords or Finora's own session tokens, which are hashed via
 # TokenHasher; see com.finora.security.crypto's package doc for why the two are not interchangeable.

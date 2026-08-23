@@ -136,6 +136,17 @@ input, textarea, select {
   animation: gradientShift 6s ease infinite;
 }
 
+/* ImportSection's StatementCard -- a highlight band sweeping top-to-bottom over the statement
+   while it's mid-"processing" beat (see StatementCard.tsx). Only ever rendered while that beat is
+   the active one, so it doesn't need its own prefers-reduced-motion guard -- the parent
+   (ImportRevealSequence) already gates the whole scanning state behind that check. */
+@keyframes statement-scan {
+  0% { top: 0; opacity: 0; }
+  15% { opacity: 1; }
+  85% { opacity: 1; }
+  100% { top: calc(100% - 24px); opacity: 0; }
+}
+
 /* D-25 PR3-C. Dashboard's "Your Financial Journey" timeline -- each milestone row fades/slides
    in on mount, staggered via an inline animation-delay per row (FinancialJourney.tsx). Fires on
    mount rather than on scroll-into-view like .reveal above: this sits well within the first
