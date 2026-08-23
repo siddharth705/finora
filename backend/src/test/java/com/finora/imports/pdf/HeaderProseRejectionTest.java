@@ -166,17 +166,29 @@ class HeaderProseRejectionTest {
         // section's prose sits after -- is now index 2, not 3.
         assertThat(after.sections()).hasSize(3);
 
-        // The surviving section's own rows are untouched -- same two rows the un-patched
-        // locator produced for it, reproduced verbatim rather than re-measured, since this is
-        // exactly the check the investigation's own risk section demands ("content-equality of the
-        // largest section's first row before/after", generalised here to every row of the section
-        // the rejected prose would land in if it leaked backward).
+        // Row content here changed under Phase 2E.5's HSBC row-formation fix (groupIntoRows' now
+        // chain-based clustering, header-reconstruction-design.md §9.4): this section's own header
+        // line ("Date" | "Amount ( ` )" | its own "( ` )" sub-label) sits 2.36pt below a "for
+        // Statement Period: ... to ..." caption -- close enough that chain-based clustering
+        // correctly folds the caption onto the header's own physical row, where the pre-fix
+        // anchor-based comparison kept it separate. buildHeaderColumns' containsEmbeddedDateRange
+        // guard (added alongside the row-formation fix specifically to stop a caption like this
+        // becoming a phantom, permanently-empty header column -- see that method's own comment)
+        // does NOT catch it here: this trace's own dates are redacted to a non-parseable
+        // placeholder shape ("99 Xxx 99"), the same already-documented limitation
+        // header-reconstruction-design.md §9.2 found blocking reconstructHeader's OWN validation
+        // on this exact trace. containsEmbeddedDateRange is verified against a real, parseable date
+        // shape instead, in OrphanedHeaderRowCaptionTest. Net effect on this ONE redacted trace: the
+        // caption still becomes a header column, but (as before either fix) no row's data ever
+        // buckets near its anchor, so it never appears as a key -- an existing, unrelated
+        // characteristic of this document's header shape, not something either fix changed.
         PdfTableLocator.LocatedSection lastSection = after.sections().get(2);
         assertThat(lastSection.rows()).hasSize(2);
         assertThat(lastSection.rows().get(0))
                 .as("first row of the section the rejected prose sits after -- must be the genuine "
                         + "transaction-block row, not a bucketed fragment of the rejected paragraph")
-                .containsEntry("Date", "for Statement Period: 99 Xxx 99 to 99 Xxx 99");
+                .containsEntry("Date", "99 Xxx 99 UPI-XXXXXX")
+                .containsEntry("Amount ( ` )", "25.00 X");
         assertThat(lastSection.rows().get(1).values())
                 .as("second row: still the real (unparsed) transaction dump, not the rejected prose")
                 .anySatisfy(v -> assertThat(v).contains("UPI-XXXXXX"));
