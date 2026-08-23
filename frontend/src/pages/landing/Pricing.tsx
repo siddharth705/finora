@@ -68,7 +68,7 @@ export function Pricing() {
               </ul>
 
               {plan.availability === 'available' ? (
-                <MagneticLink to="/register" className="m-btn m-btn-primary w-full">Start free</MagneticLink>
+                <MagneticLink to="/auth" className="m-btn m-btn-primary w-full">Start free</MagneticLink>
               ) : (
                 // A statement, not a control. See the note at the top of this file.
                 <p className="text-center text-sm py-3" style={{ color: 'var(--m-ink-3)' }}>
