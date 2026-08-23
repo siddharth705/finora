@@ -6,8 +6,8 @@ are not. Implementation: Phase 1 is done, Phase 2's audit-hardening slice
 is done, Phase 3's backend slice (`/auth/identify`, PR #327) is merged —
 its frontend entry-page UX is not started. Phase 3.5's audit is done (no
 gap in its own checklist; a bonus phone-change session-revocation gap
-found and fixed). Phase 4's backend slice is done — frontend/mobile
-settings entry not started. Phase 5 has not begun. Committed via a
+found and fixed). Phase 4's backend and web frontend are both done —
+mobile settings entry not started. Phase 5 has not begun. Committed via a
 worktree per `CLAUDE.md` (primary checkout is a shared read-only-for-writes
 checkout). This is a roadmap — each phase ships as its own ticket/PR,
 never as one combined PR.
@@ -480,15 +480,22 @@ match.
   successful phone-number change, current device spared, same pattern
   password-change already uses (§2.7a for the full writeup)
 
-**Phase 4 — P2 feature: Change email — backend done 2026-08-23, frontend not started**
+**Phase 4 — P2 feature: Change email — backend + web frontend done 2026-08-23, mobile not started**
 `feat(account): add email change flow`
 - `email_change_sessions` table + `EmailChangeService` mirroring
   `PhoneChangeService`
 - `POST /users/me/email-change/{start,verify,complete}`, gated by existing
   step-up (`GoogleReauthVerifier`, not yet `StepUpVerifier`)
-- Frontend/mobile settings entry
+- Frontend/mobile settings entry — web done (`ChangeEmailModal` in
+  Profile.tsx + `VerifyEmailChange` page for the emailed link); mobile
+  not started
 - Tests mirroring `PhoneChangeServiceTest`/`PhoneChangeServiceIT`
 - Not blocking — useful but lower priority than Phases 1–3
+- **Frontend follow-up bug (2026-08-23)**: wiring up the verify page found
+  that `start()`'s emailed link only carried the token, not the sessionId
+  `VerifyRequest` also needs — fixed with a regression test, before this
+  was ever live in production (caught in the same session as the
+  frontend work, one PR after the backend slice merged).
 - **Amendment (2026-08-23)**: implemented ahead of the remaining 5 open
   decisions being resolved, same situation Phase 3's backend slice was in
   (see its own amendment above). Checked each one against this specific
