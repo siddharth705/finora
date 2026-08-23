@@ -70,6 +70,11 @@ class ImportServiceAskOnceTest {
         merchantRepository = mock(MerchantRepository.class);
         statementImportRepository = mock(StatementImportRepository.class);
         categorizationService = mock(CategorizationService.class);
+        // Preserves every existing test's expectation (needsCategoryReview mirrors the row's
+        // unresolved-guess flag alone) by default; tests specifically exercising the
+        // confidence-threshold behaviour override this per-test.
+        when(categorizationService.needsCategoryReview(any(), anyBoolean(), any()))
+                .thenAnswer(inv -> inv.getArgument(1));
         reconciliationService = mock(ReconciliationService.class);
         recurringService = mock(RecurringService.class);
         DuplicateDetector duplicateDetector = new DuplicateDetector(transactionRepository);
@@ -159,6 +164,19 @@ class ImportServiceAskOnceTest {
         ArgumentCaptor<List<Transaction>> captor = ArgumentCaptor.forClass(List.class);
         verify(transactionRepository).saveAll(captor.capture());
         assertThat(captor.getValue().get(0).isNeedsCategoryReview()).isTrue();
+    }
+
+    @Test
+    void confirm_persistsDecisionConfidence_fromTheConfirmedRowsCategoryConfidence() throws Exception {
+        var row = new ConfirmedRow(LocalDate.of(2026, 7, 10), "SWIGGY ORDER", BigDecimal.valueOf(486),
+                "EXPENSE", "Dining", true, "rule", null, false, null, null, false, 70);
+
+        importService.confirm(userId, dummyFile(), requestWith(row));
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<Transaction>> captor = ArgumentCaptor.forClass(List.class);
+        verify(transactionRepository).saveAll(captor.capture());
+        assertThat(captor.getValue().get(0).getDecisionConfidence()).isEqualTo(70);
     }
 
     @Test

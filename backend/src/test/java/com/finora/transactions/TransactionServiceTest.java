@@ -61,6 +61,11 @@ class TransactionServiceTest {
         categoryRepository = mock(CategoryRepository.class);
         accountRepository = mock(AccountRepository.class);
         categorizationService = mock(CategorizationService.class);
+        // Preserves every existing test's expectation (needsCategoryReview mirrors suggestion
+        // source alone) by default; tests that specifically exercise the confidence-threshold
+        // behaviour override this per-test.
+        when(categorizationService.needsCategoryReview(any(), anyBoolean(), any()))
+                .thenAnswer(inv -> inv.getArgument(1));
         reconciliationService = mock(ReconciliationService.class);
         recurringService = mock(RecurringService.class);
         // Only reached by search() when a keyword is supplied (bank-aware search) -- delegates to
@@ -301,6 +306,40 @@ class TransactionServiceTest {
         // teach the merchant map a non-decision, same bug class fixed in CsvImportService.
         verify(categorizationService, never()).learn(any(), any(), any());
         verify(transactionRepository).save(argThat(t -> t.isNeedsCategoryReview() && merchantId.equals(t.getMerchantId())));
+    }
+
+    @Test
+    void create_setsDecisionConfidence_fromTheSuggestion() {
+        var suggestion = new CategorizationService.Suggestion("Dining", "rule", UUID.randomUUID(),
+                Transaction.DecisionSource.KEYWORD_MATCH, null, 70);
+        when(categorizationService.suggest(eq(userId), anyString(), any(), any())).thenReturn(suggestion);
+        when(categorizationService.resolveOrCreateCategory(eq(userId), eq("Dining"))).thenReturn(dummyCategory);
+
+        var req = new TransactionDto.CreateRequest(UUID.randomUUID(), null, LocalDate.now(),
+                "Swiggy order", BigDecimal.valueOf(486), "EXPENSE", List.of());
+
+        transactionService.create(userId, req);
+
+        verify(transactionRepository).save(argThat(t -> Integer.valueOf(70).equals(t.getDecisionConfidence())));
+    }
+
+    @Test
+    void create_honorsCategorizationServicesNeedsCategoryReviewDecision_notJustSourceEqualsDefault() {
+        UUID merchantId = UUID.randomUUID();
+        var suggestion = new CategorizationService.Suggestion("Other", "default", merchantId,
+                Transaction.DecisionSource.MERCHANT_DEFAULT, null, 20);
+        when(categorizationService.suggest(eq(userId), anyString(), any(), any())).thenReturn(suggestion);
+        when(categorizationService.resolveOrCreateCategory(eq(userId), eq("Other"))).thenReturn(dummyCategory);
+        // Overrides the setUp() default: this user's threshold is permissive enough that a 20%
+        // default guess should NOT be flagged.
+        when(categorizationService.needsCategoryReview(userId, true, 20)).thenReturn(false);
+
+        var req = new TransactionDto.CreateRequest(UUID.randomUUID(), null, LocalDate.now(),
+                "Unknown merchant", BigDecimal.valueOf(50), "EXPENSE", List.of());
+
+        transactionService.create(userId, req);
+
+        verify(transactionRepository).save(argThat(t -> !t.isNeedsCategoryReview()));
     }
 
     @Test

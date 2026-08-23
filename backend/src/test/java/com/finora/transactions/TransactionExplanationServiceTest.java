@@ -190,6 +190,28 @@ class TransactionExplanationServiceTest {
     }
 
     @Test
+    void explain_includesTheDecisionConfidence_whenPresent() {
+        Transaction t = transaction(Transaction.DecisionSource.LEARNED_PATTERN, null, Transaction.Source.CSV_IMPORT);
+        t.setDecisionConfidence(82);
+        when(transactionRepository.findById(txnId)).thenReturn(Optional.of(t));
+
+        TransactionExplanationDto result = service.explain(userId, txnId);
+
+        assertThat(result.confidence()).isEqualTo(82);
+    }
+
+    @Test
+    void explain_omitsConfidence_forAManualDecision() {
+        Transaction t = transaction(Transaction.DecisionSource.MANUAL, null, Transaction.Source.MANUAL);
+        // decisionConfidence deliberately left null -- TransactionService never sets it for MANUAL.
+        when(transactionRepository.findById(txnId)).thenReturn(Optional.of(t));
+
+        TransactionExplanationDto result = service.explain(userId, txnId);
+
+        assertThat(result.confidence()).isNull();
+    }
+
+    @Test
     void someoneElsesTransactionIsRejected() {
         Transaction t = transaction(Transaction.DecisionSource.MANUAL, null, Transaction.Source.MANUAL);
         when(transactionRepository.findById(txnId)).thenReturn(Optional.of(t));
