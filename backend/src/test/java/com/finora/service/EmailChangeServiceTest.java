@@ -134,6 +134,22 @@ class EmailChangeServiceTest {
         assertThat(response.devVerifyLink()).isNotBlank().contains("token=");
     }
 
+    /** Bug fix (frontend implementation): the emailed/dev link only ever carried the token, but
+     *  verify() requires BOTH sessionId and token (VerifyRequest's shape) -- a link missing
+     *  sessionId cannot actually be completed by whatever page consumes it. Caught while wiring up
+     *  the frontend verify page, which needs to read both query params to call verify(). */
+    @Test
+    void start_theVerifyLinkCarriesBothSessionIdAndToken_sinceVerifyRequestNeedsBoth() {
+        when(userRepository.findById(userId)).thenReturn(Optional.of(existingUser()));
+        when(passwordEncoder.matches("CorrectPassword", "hashed-old-password")).thenReturn(true);
+        when(userRepository.existsByEmailIgnoreCaseAndAccountScope(eq("jane.new@example.com"), any())).thenReturn(false);
+        when(emailProvider.isConfigured()).thenReturn(false);
+
+        var response = service.start(userId, new StartRequest("CorrectPassword", null, null, "jane.new@example.com"));
+
+        assertThat(response.devVerifyLink()).contains("sessionId=" + response.sessionId()).contains("token=");
+    }
+
     @Test
     void start_withWrongCurrentPassword_rejectsAndRecordsAnAuditEvent() {
         when(userRepository.findById(userId)).thenReturn(Optional.of(existingUser()));
