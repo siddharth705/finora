@@ -12,6 +12,16 @@ import { emailChangeApi } from '../api/endpoints';
  * a second round trip from a still-open browser tab when landing here already proves the whole
  * point of both calls.
  *
+ * Bug fix (self-review): verify() requires the session to be exactly STARTED server-side, so
+ * revisiting this page (refresh, a double-click, opening the link a second time) after an
+ * earlier visit already advanced it past STARTED fails verify() with a generic "already
+ * completed" message -- even when the email change genuinely succeeded the first time. complete()
+ * is idempotent and authoritative about the real outcome either way, so a verify() failure falls
+ * back to it rather than giving up immediately: if the session really was already fully done,
+ * complete() returns the same success response it did the first time; if verify() failed for a
+ * real reason (bad/expired token), complete() fails too (the session never reached EMAIL_VERIFIED),
+ * and verify()'s own message is shown -- it's normally the more specific one.
+ *
  * Reached inside the authenticated app shell (ProtectedRoute), unlike VerifyEmail.tsx: both
  * backend endpoints require the caller to already be logged in as the account making the change
  * (see EmailChangeService's own doc comment on why this stays an authenticated flow, not a public
@@ -31,11 +41,28 @@ export default function VerifyEmailChange() {
       setLoading(false);
       return;
     }
-    emailChangeApi.verify(sessionId, token)
-      .then(() => emailChangeApi.complete(sessionId))
-      .then((res) => setNewEmail(res.email))
-      .catch((err: any) => setError(err.response?.data?.message ?? 'This confirmation link is invalid or has expired.'))
-      .finally(() => setLoading(false));
+
+    async function run(id: string, t: string) {
+      try {
+        await emailChangeApi.verify(id, t);
+      } catch (verifyErr: any) {
+        try {
+          const res = await emailChangeApi.complete(id);
+          setNewEmail(res.email);
+        } catch {
+          setError(verifyErr.response?.data?.message ?? 'This confirmation link is invalid or has expired.');
+        }
+        return;
+      }
+      try {
+        const res = await emailChangeApi.complete(id);
+        setNewEmail(res.email);
+      } catch (completeErr: any) {
+        setError(completeErr.response?.data?.message ?? 'This confirmation link is invalid or has expired.');
+      }
+    }
+
+    void run(sessionId, token).finally(() => setLoading(false));
   }, [sessionId, token]);
 
   return (

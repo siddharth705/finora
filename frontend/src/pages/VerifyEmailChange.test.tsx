@@ -44,16 +44,39 @@ describe('VerifyEmailChange', () => {
     expect(screen.getByRole('link', { name: 'Back to Profile' })).toHaveAttribute('href', '/app/profile');
   });
 
-  it('shows the backend error message and never calls complete() when verify() rejects', async () => {
+  it('shows verify()\'s own error message when both verify() and the complete() fallback fail (a genuinely wrong/expired token)', async () => {
     vi.mocked(emailChangeApi.verify).mockRejectedValue({
       response: { data: { message: 'This verification link is invalid.' } },
+    });
+    vi.mocked(emailChangeApi.complete).mockRejectedValue({
+      response: { data: { message: 'Confirm the link sent to your new email before completing this change.' } },
     });
 
     renderPage('session-1', 'wrong-token');
 
     await waitFor(() => expect(screen.getByText('Confirmation failed')).toBeInTheDocument());
+    // verify()'s own message is shown, not complete()'s -- it's the more specific one for a
+    // genuinely bad token; complete()'s generic "confirm the link first" would be confusing here.
     expect(screen.getByText('This verification link is invalid.')).toBeInTheDocument();
-    expect(emailChangeApi.complete).not.toHaveBeenCalled();
+  });
+
+  /** Bug fix (self-review): verify() requires the session to be exactly STARTED server-side --
+   *  revisiting this page (refresh, double-click, a second tab) after the first successful
+   *  visit already advanced it past STARTED, so verify() fails with a generic "already been
+   *  completed" message even though the email change genuinely succeeded. Falling back to
+   *  complete() -- idempotent, and authoritative about the real outcome -- turns that false
+   *  failure into the success message it actually should show. */
+  it('falls back to complete() when verify() fails because the session was already verified/completed on an earlier visit, and shows success', async () => {
+    vi.mocked(emailChangeApi.verify).mockRejectedValue({
+      response: { data: { message: 'This step has already been completed, or the session is no longer valid. Please start again.' } },
+    });
+    vi.mocked(emailChangeApi.complete).mockResolvedValue({ message: 'Your email address has been updated.', email: 'jane.new@example.com' });
+
+    renderPage('session-1', 'already-used-token');
+
+    await waitFor(() => expect(screen.getByText('Email updated')).toBeInTheDocument());
+    expect(emailChangeApi.complete).toHaveBeenCalledWith('session-1');
+    expect(screen.getByText(/jane\.new@example\.com/)).toBeInTheDocument();
   });
 
   it('shows an error immediately, with no API calls, when the link is missing sessionId or token', () => {
