@@ -69,6 +69,19 @@ public class CategorizationService {
     public record Suggestion(String category, String source, UUID merchantId,
                               Transaction.DecisionSource decisionSource, UUID ruleId) {}
 
+    /**
+     * The USER-then-GLOBAL rule set for one user, loaded once -- a thin passthrough to
+     * {@code RuleEngineService.ruleSet}, so a per-row confirm loop (see
+     * {@code ImportService.persistSection}) can hoist it without holding {@code RuleEngineService}
+     * directly. This class is already the categorization facade every import/transaction caller
+     * goes through (see this class's own doc comment); exposing this here keeps that true rather
+     * than leaking a second categorization-adjacent dependency into callers that only need one
+     * value out of it.
+     */
+    public List<CategoryRule> ruleSetFor(UUID userId) {
+        return ruleEngineService.ruleSet(userId);
+    }
+
     /** Rule engine (user rules, then global rules) > learned distribution (real evidence) >
      *  keyword rules > "Other". See docs/rule-engine-relationship-engine-eds.md §4. */
     public Suggestion suggest(UUID userId, String description) {
@@ -143,13 +156,40 @@ public class CategorizationService {
      * two results. The rule set must come from {@code RuleEngineService.ruleSet(userId)} so
      * USER-before-GLOBAL precedence is preserved.
      *
-     * <p>Only the rule lookup is hoisted. Merchant resolution and the learned-category
-     * distribution below still run per row -- they genuinely depend on the row's description, and
-     * batching them is a separate, larger change with its own design review.
+     * <p>Delegates to {@link #suggestReadOnly(List, UUID, String, BigDecimal, String,
+     * com.finora.imports.MerchantIndex)} with a null index -- correct for any caller that hasn't
+     * hoisted one (a handful of direct calls, diagnostics), wrong for a real per-row staging loop.
+     * {@code TransactionNormalizer.normalize} -- the only per-row caller -- always passes a real
+     * index instead; see that overload's own doc comment for why.
      */
     public Suggestion suggestReadOnly(List<CategoryRule> rules, UUID userId, String description,
                                        BigDecimal amount, String accountType) {
-        var merchant = merchantNormalizationEngine.resolveReadOnly(userId, description);
+        return suggestReadOnly(rules, userId, description, amount, accountType, null);
+    }
+
+    /**
+     * Same again, against a {@link com.finora.imports.MerchantIndex} the caller built once for the
+     * whole statement.
+     *
+     * <p>{@code TransactionNormalizer.normalize} already hoists a {@code MerchantIndex} for its own
+     * {@code StagedRow.merchant}/{@code merchantConfidence} resolution (Transaction Intelligence
+     * Phase A, Task 2) -- before this overload existed, this method still resolved the merchant
+     * itself via the live, un-indexed {@code resolveReadOnly(UUID, String)}, so every row paid a
+     * full merchant-table load for CATEGORIZATION purposes even after Task 2's index made the
+     * DISPLAY resolution free. That is the cost {@code ImportQueryCountIT} was still measuring at
+     * 2.00 queries/row after Task 2 landed: two independent, un-batched merchant resolutions per
+     * row instead of one. Passing the same index in here removes the second one.
+     *
+     * <p>A null {@code merchantIndex} falls back to the live lookup, matching
+     * {@link #suggestReadOnly(List, UUID, String, BigDecimal, String)}'s pre-existing behavior for
+     * any caller that hasn't hoisted one.
+     */
+    public Suggestion suggestReadOnly(List<CategoryRule> rules, UUID userId, String description,
+                                       BigDecimal amount, String accountType,
+                                       com.finora.imports.MerchantIndex merchantIndex) {
+        var merchant = merchantIndex != null
+                ? merchantNormalizationEngine.resolveReadOnly(userId, description, merchantIndex)
+                : merchantNormalizationEngine.resolveReadOnly(userId, description);
         String merchantName = merchant.map(Merchant::getCanonicalName).orElse(null);
         UUID merchantId = merchant.map(Merchant::getId).orElse(null);
 
@@ -304,9 +344,35 @@ public class CategorizationService {
      * its own pattern detection, which is the correct place for that one action type to live.
      */
     public Category applySideEffectRules(UUID userId, Transaction t) {
+        return applySideEffectRules(userId, t, null);
+    }
+
+    /**
+     * Same as {@link #applySideEffectRules(UUID, Transaction)}, against a rule set the caller
+     * already loaded once.
+     *
+     * <p>Exists for {@code ImportService.persistSection}'s per-confirmed-row loop, which used to
+     * call the loading overload once per row: {@code RuleEngineService.evaluateSideEffectRules
+     * (UUID, ...)} re-queries {@code category_rules} (2 statements) on every call, and a user's
+     * rules cannot change partway through confirming one import, so hoisting is equivalent by
+     * construction -- same reasoning, and the same bug, as {@code CategorizationService
+     * .suggestReadOnly}'s rule-set hoist on the staging side (see that method's own doc comment).
+     * {@code RuleEngineService.ruleSet}'s own doc comment records the identical shape of bug found
+     * and fixed in {@code RecurringService.detectForUser}; this was the last remaining un-hoisted
+     * call site of the same pattern.
+     *
+     * <p>A null {@code rules} falls back to the loading overload, which is what
+     * {@link #applySideEffectRules(UUID, Transaction)} passes -- correct for
+     * {@code TransactionService.create()}'s single-transaction call, wrong for a real per-row
+     * confirm loop.
+     */
+    public Category applySideEffectRules(UUID userId, Transaction t, List<CategoryRule> rules) {
         Merchant merchant = merchantNormalizationEngine.resolve(userId, t.getDescription());
-        List<RuleEngineService.RuleMatch> matches = ruleEngineService.evaluateSideEffectRules(
-                userId, t.getDescription(), t.getAmount(), merchant.getCanonicalName(), null);
+        List<RuleEngineService.RuleMatch> matches = rules != null
+                ? ruleEngineService.evaluateSideEffectRules(rules, t.getDescription(), t.getAmount(),
+                        merchant.getCanonicalName(), null)
+                : ruleEngineService.evaluateSideEffectRules(
+                        userId, t.getDescription(), t.getAmount(), merchant.getCanonicalName(), null);
 
         // Non-null only when a MARK_INVESTMENT rule actually changed the category -- callers
         // (TransactionService.create(), CsvImportService.confirm()) use this to keep their own

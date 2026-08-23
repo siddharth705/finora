@@ -1515,6 +1515,9 @@ function TransactionPreviewTable({
             <td className="p-1">{formatDateDDMMMYYYY(r.date)}</td>
             <td className="p-1">
               {r.description}
+              {r.merchant && (
+                <div className="text-[10px] text-muted">Detected: {r.merchant}</div>
+              )}
               {r.likelyDuplicate && <span className="text-danger text-[10px] uppercase ml-1">duplicate</span>}
               {r.categorySource === 'default' && (
                 <span className="text-[10px] uppercase ml-1" style={{ color: '#d97706' }}>low confidence</span>

@@ -98,6 +98,10 @@ public class PreviewGenerator {
         // Built once per statement for the same reason the rule set is: a user's existing
         // transactions cannot change partway through parsing one file.
         DuplicateIndex duplicateIndex = transactionNormalizer.duplicateIndexFor(userId);
+        // Same reasoning again, for merchant resolution (Transaction Intelligence Phase A): staging
+        // has no enclosing transaction, so MerchantNormalizationEngine.resolveReadOnly's own
+        // per-transaction memo cannot help here -- see MerchantIndex's own doc comment.
+        MerchantIndex merchantIndex = transactionNormalizer.merchantIndexFor(userId);
 
         for (int i = headerIdx + 1; i < allRows.size(); i++) {
             String[] cells = allRows.get(i);
@@ -105,7 +109,7 @@ public class PreviewGenerator {
 
             Map<String, String> row = csvParser.zipRow(headerRow, cells);
 
-            StagedRow parsed = transactionNormalizer.normalize(userId, row, ctx, rules, duplicateIndex);
+            StagedRow parsed = transactionNormalizer.normalize(userId, row, ctx, rules, duplicateIndex, merchantIndex);
             if (parsed != null) {
                 // RowKind.BALANCE_MARKER rows (see that enum's doc comment) are excluded from
                 // `staged` -- the same fix, and the same reasoning, as PdfPreviewGenerator's

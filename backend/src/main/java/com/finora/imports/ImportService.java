@@ -820,6 +820,12 @@ public class ImportService {
         int skipped = 0;
         Map<String, Integer> categoryTally = new LinkedHashMap<>();
         List<Transaction> toInsert = new ArrayList<>();
+        // Loaded once for the whole confirmed statement, not once per row. The per-row overload
+        // (CategorizationService.applySideEffectRules(UUID, Transaction)) re-queried category_rules
+        // twice for every confirmed row -- same pattern, same fix, as suggestReadOnly's rule-set
+        // hoist on the staging side (see that method's own doc comment); a user's rules cannot
+        // change partway through confirming one import, so hoisting is equivalent by construction.
+        List<com.finora.entity.CategoryRule> confirmRules = categorizationService.ruleSetFor(userId);
         // Merchant-learning confirmations this import earned, queued after savedImport below so
         // each one can be attributed to the statement it came from.
         List<PendingLearning> pendingLearning = new ArrayList<>();
@@ -898,7 +904,7 @@ public class ImportService {
             // CategorizationService.applySideEffectRules's doc comment. A MARK_INVESTMENT match
             // returns the new Category -- reassigning `category` keeps the tally below (and any
             // other use of `category` in this iteration) in sync with what actually got persisted.
-            Category sideEffectCategory = categorizationService.applySideEffectRules(userId, t);
+            Category sideEffectCategory = categorizationService.applySideEffectRules(userId, t, confirmRules);
             if (sideEffectCategory != null) {
                 category = sideEffectCategory;
                 // Bug fix: t.setCategoryId(category.getId()) above (before this override was

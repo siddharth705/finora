@@ -4,6 +4,7 @@ import { useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-quer
 import { Pencil, Trash2, X, ChevronLeft, ChevronRight, HelpCircle } from 'lucide-react';
 import { transactionsApi, categoriesApi, type TransactionFilters, type UpdateTransactionPayload, type TransactionExplanation } from '../api/endpoints';
 import { AskOnceCard } from '../components/AskOnceCard';
+import { MerchantGroupReviewCard } from '../components/MerchantGroupReviewCard';
 import { MerchantLogo } from '../components/MerchantLogo';
 import type { Transaction } from '../types';
 import { ConfirmDialog } from '../design-system';
@@ -110,7 +111,9 @@ export default function Ledger() {
     <div className="space-y-4">
       {/* Moved here from the Dashboard: transaction category review belongs with the
           transactions themselves, not mixed into an at-a-glance financial overview — see
-          AskOnceCard's own doc comment for what it does. */}
+          AskOnceCard's own doc comment for what it does. Groups (bigger wins) before
+          individual items. */}
+      <MerchantGroupReviewCard />
       <AskOnceCard />
 
       {error && <p className="text-danger text-sm">{error}</p>}

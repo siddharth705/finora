@@ -19,6 +19,13 @@ vi.mock('../api/endpoints', () => ({
   categoriesApi: { list: vi.fn() },
 }));
 
+// Real MerchantGroupReviewCard calls transactionsApi.groupsNeedsReview, which the mock above
+// doesn't define -- this file's tests are about the "Why this category?" panel, not the merchant-
+// group card, so it's stubbed to a static marker rather than pulled into the shared endpoints mock.
+vi.mock('../components/MerchantGroupReviewCard', () => ({
+  MerchantGroupReviewCard: () => <div data-testid="merchant-group-review-card" />,
+}));
+
 function txn(overrides: Partial<Transaction> = {}): Transaction {
   return {
     id: 'txn-1',
@@ -154,5 +161,20 @@ describe('Ledger — delete confirmation', () => {
 
     expect(transactionsApi.remove).not.toHaveBeenCalled();
     expect(screen.queryByText('Delete "AMAZON PAY"?')).not.toBeInTheDocument();
+  });
+});
+
+describe('Ledger — merchant group review card', () => {
+  beforeEach(() => {
+    vi.mocked(transactionsApi.search).mockReset().mockResolvedValue({
+      items: [], totalItems: 0, page: 0, size: 20, totalPages: 0,
+    } as never);
+    vi.mocked(transactionsApi.needsReview).mockReset().mockResolvedValue([]);
+    vi.mocked(categoriesApi.list).mockReset().mockResolvedValue([]);
+  });
+
+  it('renders the merchant group review card above the transaction list', async () => {
+    renderLedger();
+    expect(await screen.findByTestId('merchant-group-review-card')).toBeInTheDocument();
   });
 });
