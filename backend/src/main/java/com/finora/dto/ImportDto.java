@@ -98,8 +98,30 @@ public class ImportDto {
              * this phase — see docs/superpowers/plans/2026-08-23-transaction-intelligence-phase-a.md's
              * Global Constraints: a real confidence model is later work, not this one.
              */
-            Double merchantConfidence
+            Double merchantConfidence,
+            /**
+             * The category decision's confidence percentage (0-100), from
+             * {@link com.finora.service.CategorizationService.Suggestion#confidence()} -- NOT the
+             * same field as {@code confidence} above (that one is Gmail-receipt extraction
+             * reliability) or {@code merchantConfidence} (merchant-identity resolution). Null when
+             * the category came directly from the source file ({@code categorySource == "file"}),
+             * which is a fact, not a guess.
+             */
+            Integer categoryConfidence
     ) {
+        /** Pre-categoryConfidence arity (Transaction Intelligence Phase B). Kept so every existing
+         *  construction of this 15-component shape -- production and test -- keeps compiling
+         *  unchanged. Defaults categoryConfidence to null. */
+        public StagedRow(LocalDate date, String description, BigDecimal amount, String type,
+                          String suggestedCategory, String categorySource, UUID ruleId,
+                          boolean likelyDuplicate, String referenceNumber, BigDecimal balanceAfter,
+                          DuplicateMatch duplicateMatch, RowKind kind, Double confidence,
+                          String merchant, Double merchantConfidence) {
+            this(date, description, amount, type, suggestedCategory, categorySource, ruleId,
+                    likelyDuplicate, referenceNumber, balanceAfter, duplicateMatch, kind, confidence,
+                    merchant, merchantConfidence, null);
+        }
+
         /**
          * The shape every caller used before WI5 added {@code duplicateMatch}.
          *
@@ -118,7 +140,7 @@ public class ImportDto {
                           DuplicateMatch duplicateMatch) {
             this(date, description, amount, type, suggestedCategory, categorySource, ruleId,
                     likelyDuplicate, referenceNumber, balanceAfter, duplicateMatch, RowKind.TRANSACTION,
-                    null, null, null);
+                    null, null, null, null);
         }
 
         /** The shape every caller used before {@code confidence} was added (C5-B). Defaults null --
@@ -128,7 +150,7 @@ public class ImportDto {
                           boolean likelyDuplicate, String referenceNumber, BigDecimal balanceAfter,
                           DuplicateMatch duplicateMatch, RowKind kind) {
             this(date, description, amount, type, suggestedCategory, categorySource, ruleId,
-                    likelyDuplicate, referenceNumber, balanceAfter, duplicateMatch, kind, null, null, null);
+                    likelyDuplicate, referenceNumber, balanceAfter, duplicateMatch, kind, null, null, null, null);
         }
 
         /**
@@ -143,7 +165,7 @@ public class ImportDto {
                           boolean likelyDuplicate, String referenceNumber, BigDecimal balanceAfter,
                           DuplicateMatch duplicateMatch, RowKind kind, Double confidence) {
             this(date, description, amount, type, suggestedCategory, categorySource, ruleId,
-                    likelyDuplicate, referenceNumber, balanceAfter, duplicateMatch, kind, confidence, null, null);
+                    likelyDuplicate, referenceNumber, balanceAfter, duplicateMatch, kind, confidence, null, null, null);
         }
 
         /**
@@ -157,7 +179,7 @@ public class ImportDto {
                           String suggestedCategory, String categorySource, UUID ruleId,
                           boolean likelyDuplicate, String referenceNumber, BigDecimal balanceAfter) {
             this(date, description, amount, type, suggestedCategory, categorySource, ruleId,
-                    likelyDuplicate, referenceNumber, balanceAfter, null, RowKind.TRANSACTION, null, null, null);
+                    likelyDuplicate, referenceNumber, balanceAfter, null, RowKind.TRANSACTION, null, null, null, null);
         }
     }
 
@@ -641,8 +663,21 @@ public class ImportDto {
             boolean likelyDuplicate, // carried from staging, so the summary can report it honestly
             @Size(max = 64) String referenceNumber,  // carried from staging — see StagedRow.referenceNumber
             BigDecimal balanceAfter, // carried from staging — see StagedRow.balanceAfter
-            boolean confirmedNotDuplicate
+            boolean confirmedNotDuplicate,
+            /** Echoed from {@code StagedRow.categoryConfidence} unchanged by review -- see that
+             *  field's own doc comment. Lands on {@code Transaction.decisionConfidence} at confirm
+             *  time. */
+            Integer categoryConfidence
     ) {
+        /** Pre-categoryConfidence arity (Transaction Intelligence Phase B). */
+        public ConfirmedRow(LocalDate date, String description, BigDecimal amount, String type,
+                            String category, boolean include, String categorySource, UUID ruleId,
+                            boolean likelyDuplicate, String referenceNumber, BigDecimal balanceAfter,
+                            boolean confirmedNotDuplicate) {
+            this(date, description, amount, type, category, include, categorySource, ruleId,
+                    likelyDuplicate, referenceNumber, balanceAfter, confirmedNotDuplicate, null);
+        }
+
         /** Pre-WI5 arity. Kept so the many call sites that construct a row without a duplicate
          *  decision -- re-import, tests, the multi-account path -- stay unchanged rather than
          *  every one of them growing a literal `false` that says nothing. */
@@ -650,7 +685,7 @@ public class ImportDto {
                             String category, boolean include, String categorySource, UUID ruleId,
                             boolean likelyDuplicate, String referenceNumber, BigDecimal balanceAfter) {
             this(date, description, amount, type, category, include, categorySource, ruleId,
-                    likelyDuplicate, referenceNumber, balanceAfter, false);
+                    likelyDuplicate, referenceNumber, balanceAfter, false, null);
         }
     }
 

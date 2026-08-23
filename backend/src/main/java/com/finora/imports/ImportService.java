@@ -885,7 +885,7 @@ public class ImportService {
                     ? Transaction.Source.GMAIL_IMPORT : Transaction.Source.CSV_IMPORT);
             t.setReferenceNumber(row.referenceNumber());
             t.setBalanceAfter(row.balanceAfter());
-            t.setNeedsCategoryReview(isUnresolvedGuess);
+            t.setNeedsCategoryReview(categorizationService.needsCategoryReview(userId, isUnresolvedGuess, row.categoryConfidence()));
             // The user's answer on the duplicate review screen, recorded on the row itself so
             // reconciliation cannot later overrule it. Only meaningful when the engine actually
             // flagged the row -- a client asserting "not a duplicate" about a row nothing
@@ -900,6 +900,7 @@ public class ImportService {
             // staging/review contract, not introduced by this change).
             t.setDecisionSource(CategorizationService.decisionSourceFor(row.categorySource()));
             t.setDecisionRuleId(row.ruleId());
+            t.setDecisionConfidence(row.categoryConfidence());
             // MARK_TRANSFER/MARK_INVESTMENT/ADD_TAG rules -- see
             // CategorizationService.applySideEffectRules's doc comment. A MARK_INVESTMENT match
             // returns the new Category -- reassigning `category` keeps the tally below (and any

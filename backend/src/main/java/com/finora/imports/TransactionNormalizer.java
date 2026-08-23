@@ -515,6 +515,7 @@ public class TransactionNormalizer {
         String suggestedCategory;
         String source;
         UUID ruleId = null;
+        Integer categoryConfidence = null;
         if (fileCategory != null) {
             suggestedCategory = fileCategory;
             source = "file";
@@ -539,6 +540,7 @@ public class TransactionNormalizer {
             suggestedCategory = suggestion.category();
             source = suggestion.source();
             ruleId = suggestion.ruleId();
+            categoryConfidence = suggestion.confidence();
         }
 
         // findMatch, not isLikelyDuplicate: one query either way, but it carries the evidence the
@@ -625,6 +627,6 @@ public class TransactionNormalizer {
 
         return new StagedRow(date, description, amount, type, suggestedCategory, source, ruleId,
                 likelyDuplicate, referenceNumber, balanceAfter, duplicateMatch, kind, null, merchant,
-                merchantConfidence);
+                merchantConfidence, categoryConfidence);
     }
 }

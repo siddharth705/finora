@@ -241,6 +241,7 @@ export interface ConfirmedRowPayload {
   include: boolean;
   categorySource: string;
   ruleId: string | null;
+  categoryConfidence: number | null;
   /** What the engine guessed. */
   likelyDuplicate: boolean;
   /**
