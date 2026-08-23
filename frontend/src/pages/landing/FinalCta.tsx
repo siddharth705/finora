@@ -25,7 +25,7 @@ export function FinalCta() {
           </h2>
           <p className="text-lg mb-9" style={{ color: 'rgb(255 255 255 / .82)' }}>{finalCta.blurb}</p>
           <div className="flex justify-center">
-            <MagneticLink to="/register" className="m-btn w-full sm:w-auto bg-white text-[var(--m-brand-deep)] hover:bg-slate-50">
+            <MagneticLink to="/auth" className="m-btn w-full sm:w-auto bg-white text-[var(--m-brand-deep)] hover:bg-slate-50">
               {finalCta.primary} <ArrowRight size={16} />
             </MagneticLink>
           </div>
