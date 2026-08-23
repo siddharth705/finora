@@ -43,6 +43,7 @@ public class CategorizationService {
     private final ConfidenceEngine confidenceEngine;
     private final CategoryRepository categoryRepository;
     private final RuleEngineService ruleEngineService;
+    private final WorkspaceSettingsService workspaceSettingsService;
 
     public CategorizationService(MerchantNormalizationEngine merchantNormalizationEngine,
                                   MerchantLearningService merchantLearningService,
@@ -50,7 +51,8 @@ public class CategorizationService {
                                   MerchantCategoryLearningRepository learningRepository,
                                   ConfidenceEngine confidenceEngine,
                                   CategoryRepository categoryRepository,
-                                  RuleEngineService ruleEngineService) {
+                                  RuleEngineService ruleEngineService,
+                                  WorkspaceSettingsService workspaceSettingsService) {
         this.merchantNormalizationEngine = merchantNormalizationEngine;
         this.merchantLearningService = merchantLearningService;
         this.learningEventPublisher = learningEventPublisher;
@@ -58,6 +60,7 @@ public class CategorizationService {
         this.confidenceEngine = confidenceEngine;
         this.categoryRepository = categoryRepository;
         this.ruleEngineService = ruleEngineService;
+        this.workspaceSettingsService = workspaceSettingsService;
     }
 
     // source() keeps emitting the pre-existing string contract ("learned" | "rule" | "default" |
@@ -89,6 +92,36 @@ public class CategorizationService {
      */
     public List<CategoryRule> ruleSetFor(UUID userId) {
         return ruleEngineService.ruleSet(userId);
+    }
+
+    /**
+     * Whether a category decision still needs a human's attention.
+     *
+     * <p>Before this method existed, both write paths (TransactionService.create,
+     * ImportService.persistSection) flagged a transaction for review purely on suggestion SOURCE --
+     * {@code sourceIsDefault}, true only when nothing matched (rule, learning, or keyword) and the
+     * suggestion fell all the way to "Other". That is still the starting point: a non-default
+     * suggestion (a rule fired, a keyword matched, a learned pattern won) is never flagged here,
+     * unconditionally, matching that exact pre-existing behaviour.
+     *
+     * <p>What is new: a default guess is no longer flagged UNCONDITIONALLY. {@code confidence} (see
+     * {@link Suggestion#confidence()}) is checked against the user's own
+     * {@code WorkspaceSettings.autoApplyConfidenceThreshold} (default 90) via
+     * {@link ConfidenceEngine#meetsAutoApplyThreshold} -- a user who has told Finora they trust even
+     * low-confidence guesses (a low threshold) stops seeing every "Other" default in their review
+     * queue. This CLEARS the flag; it never skips the write path or auto-assigns a different category
+     * -- see docs/proposals/transaction-intelligence-engine-phase-b-audit.md's "Implementation
+     * proposal" step 3 for why that stronger behaviour is a separate, undecided product question.
+     *
+     * <p>A null confidence (should not happen for any caller built on {@link Suggestion} after
+     * Transaction Intelligence Phase B, but not assumed) fails safe to the pre-existing
+     * always-flag-a-default-guess behaviour, without reading the threshold at all.
+     */
+    public boolean needsCategoryReview(UUID userId, boolean sourceIsDefault, Integer confidence) {
+        if (!sourceIsDefault) return false;
+        if (confidence == null) return true;
+        int threshold = workspaceSettingsService.get(userId).autoApplyConfidenceThreshold();
+        return !confidenceEngine.meetsAutoApplyThreshold(confidence, threshold);
     }
 
     /** Rule engine (user rules, then global rules) > learned distribution (real evidence) >
