@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { ShieldCheck, ArrowRight } from 'lucide-react';
+import { ShieldCheck, ArrowRight, User } from 'lucide-react';
 import { BrandMark } from '../components/BrandMark';
 import { GoogleSignInButton } from '../components/GoogleSignInButton';
 import { AppleSignInButton } from '../components/AppleSignInButton';
@@ -132,22 +132,25 @@ export default function AuthEntry() {
             </Link>
           </div>
 
-          <h2 className="text-2xl font-bold text-ink mb-1">Sign in or create an account</h2>
+          <h2 className="text-2xl font-extrabold text-ink mb-1">Sign in or create an account</h2>
           <p className="text-sm text-muted mb-6">Enter your email or mobile number to continue</p>
 
           {error && <p className="text-danger text-sm mb-4">{error}</p>}
 
           <label htmlFor="auth-entry-identifier" className="block text-xs font-medium text-muted mb-1">Email or mobile number</label>
-          <input
-            id="auth-entry-identifier"
-            type="text"
-            required
-            autoComplete="username"
-            value={identifier}
-            onChange={(e) => setIdentifier(e.target.value)}
-            placeholder="you@example.com or +91XXXXXXXXXX"
-            className="w-full border border-border rounded-lg px-3 py-2.5 mb-6 text-sm bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-primary/30"
-          />
+          <div className="relative mb-6">
+            <User size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
+            <input
+              id="auth-entry-identifier"
+              type="text"
+              required
+              autoComplete="username"
+              value={identifier}
+              onChange={(e) => setIdentifier(e.target.value)}
+              placeholder="you@example.com or +91XXXXXXXXXX"
+              className="w-full border border-border rounded-lg pl-9 pr-3 py-2.5 text-sm bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-primary/30"
+            />
+          </div>
 
           <button
             type="submit"
@@ -160,7 +163,7 @@ export default function AuthEntry() {
 
           <div className="flex items-center gap-3 my-5">
             <div className="flex-1 h-px bg-border" />
-            <span className="text-xs text-muted">OR</span>
+            <span className="text-xs text-muted">or continue with</span>
             <div className="flex-1 h-px bg-border" />
           </div>
 
