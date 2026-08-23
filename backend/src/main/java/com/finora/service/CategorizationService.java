@@ -143,13 +143,40 @@ public class CategorizationService {
      * two results. The rule set must come from {@code RuleEngineService.ruleSet(userId)} so
      * USER-before-GLOBAL precedence is preserved.
      *
-     * <p>Only the rule lookup is hoisted. Merchant resolution and the learned-category
-     * distribution below still run per row -- they genuinely depend on the row's description, and
-     * batching them is a separate, larger change with its own design review.
+     * <p>Delegates to {@link #suggestReadOnly(List, UUID, String, BigDecimal, String,
+     * com.finora.imports.MerchantIndex)} with a null index -- correct for any caller that hasn't
+     * hoisted one (a handful of direct calls, diagnostics), wrong for a real per-row staging loop.
+     * {@code TransactionNormalizer.normalize} -- the only per-row caller -- always passes a real
+     * index instead; see that overload's own doc comment for why.
      */
     public Suggestion suggestReadOnly(List<CategoryRule> rules, UUID userId, String description,
                                        BigDecimal amount, String accountType) {
-        var merchant = merchantNormalizationEngine.resolveReadOnly(userId, description);
+        return suggestReadOnly(rules, userId, description, amount, accountType, null);
+    }
+
+    /**
+     * Same again, against a {@link com.finora.imports.MerchantIndex} the caller built once for the
+     * whole statement.
+     *
+     * <p>{@code TransactionNormalizer.normalize} already hoists a {@code MerchantIndex} for its own
+     * {@code StagedRow.merchant}/{@code merchantConfidence} resolution (Transaction Intelligence
+     * Phase A, Task 2) -- before this overload existed, this method still resolved the merchant
+     * itself via the live, un-indexed {@code resolveReadOnly(UUID, String)}, so every row paid a
+     * full merchant-table load for CATEGORIZATION purposes even after Task 2's index made the
+     * DISPLAY resolution free. That is the cost {@code ImportQueryCountIT} was still measuring at
+     * 2.00 queries/row after Task 2 landed: two independent, un-batched merchant resolutions per
+     * row instead of one. Passing the same index in here removes the second one.
+     *
+     * <p>A null {@code merchantIndex} falls back to the live lookup, matching
+     * {@link #suggestReadOnly(List, UUID, String, BigDecimal, String)}'s pre-existing behavior for
+     * any caller that hasn't hoisted one.
+     */
+    public Suggestion suggestReadOnly(List<CategoryRule> rules, UUID userId, String description,
+                                       BigDecimal amount, String accountType,
+                                       com.finora.imports.MerchantIndex merchantIndex) {
+        var merchant = merchantIndex != null
+                ? merchantNormalizationEngine.resolveReadOnly(userId, description, merchantIndex)
+                : merchantNormalizationEngine.resolveReadOnly(userId, description);
         String merchantName = merchant.map(Merchant::getCanonicalName).orElse(null);
         UUID merchantId = merchant.map(Merchant::getId).orElse(null);
 

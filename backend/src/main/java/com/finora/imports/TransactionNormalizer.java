@@ -527,7 +527,15 @@ public class TransactionNormalizer {
             // separate path), and staging is a preview the user may abandon. suggest() would
             // create a merchant and an alias for every distinct description in a file that is
             // never imported, which is Bug 36. Same matching, same order, no writes.
-            var suggestion = categorizationService.suggestReadOnly(rules, userId, description, amount, null);
+            //
+            // merchantIndex passed through so CategorizationService's own merchant resolution
+            // (needed for rule-context matching and the learned-category lookup) also costs zero
+            // queries -- without this, that call still did its own live, un-indexed
+            // resolveReadOnly(userId, description) per row even after this class's OWN merchant
+            // resolution below was indexed, which is why ImportQueryCountIT stayed at 2.00
+            // queries/row rather than dropping toward zero.
+            var suggestion = categorizationService.suggestReadOnly(rules, userId, description, amount, null,
+                    merchantIndex);
             suggestedCategory = suggestion.category();
             source = suggestion.source();
             ruleId = suggestion.ruleId();

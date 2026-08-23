@@ -45,9 +45,10 @@ import static org.assertj.core.api.Assertions.assertThat;
  * <h2>This is a ratchet, not a target</h2>
  *
  * <p>The ceiling below is set just above the current measured value. It exists to catch a
- * regression, not to declare the current number acceptable -- it is not. As the remaining
- * optimisations land (batch duplicate detection, batch merchant resolution) the ceiling should be
- * lowered to match, and lowering it is the point at which an improvement becomes permanent.
+ * regression, not to declare the current number acceptable. All three recommendations from the
+ * original profile -- batched {@code category_rules}, batched duplicate detection, batched
+ * merchant resolution -- have now landed, and the ceiling has been lowered each time to match;
+ * lowering it is the point at which an improvement becomes permanent.
  */
 class ImportQueryCountIT extends AbstractIntegrationTest {
 
@@ -58,30 +59,34 @@ class ImportQueryCountIT extends AbstractIntegrationTest {
     /**
      * Marginal statements allowed per imported row.
      *
-     * <p><b>Measured at 2.00.</b> The profile's original was ~6.3; b7aab9d removed the 2.00/row
+     * <p><b>Measured at 0.00.</b> The profile's original was ~6.3; b7aab9d removed the 2.00/row
      * {@code category_rules} lookups and {@link DuplicateIndex} removed the 1.00/row duplicate
-     * query. What remains is merchant resolution -- recommendation 3, still outstanding.
+     * query. Recommendation 3, merchant resolution, was the last one outstanding at 2.00/row --
+     * not from {@code TransactionNormalizer}'s own merchant lookup (that was ALREADY indexed, see
+     * {@link MerchantIndex}), but from {@code CategorizationService.suggestReadOnly} running its
+     * own separate, un-indexed {@code MerchantNormalizationEngine.resolveReadOnly(UUID, String)}
+     * call per row for rule-context matching -- a second, independent merchant resolution the
+     * first indexing pass missed entirely. Threading the same {@link MerchantIndex} into that call
+     * too (see {@code CategorizationService.suggestReadOnly(List, UUID, String, BigDecimal, String,
+     * MerchantIndex)}) removed it.
      *
-     * <p>2.5, not 3.0, and the half point matters. The cheapest regression available from here is
-     * duplicate detection returning to a query per row, worth +1.00; a ceiling of 3.0 would sit
-     * exactly ON that and let it through. This is the same trap an earlier revision of this file
-     * fell into at 5.0 against a 3.00 measurement, so the rule is now explicit: <b>the ceiling must
-     * be strictly below measured plus the smallest known regression</b>, not merely above the
-     * measurement.
-     *
-     * <p>Lower it again when recommendation 3 lands. Lowering it is the point at which an
-     * improvement stops being a number in a commit message and becomes something the build defends.
+     * <p>0.5, not 0.0, for the same reason the previous ceiling was set half a point below the
+     * cheapest known regression rather than exactly on the measurement: <b>the ceiling must be
+     * strictly below measured plus the smallest known regression</b>. The cheapest regression
+     * available from here is duplicate detection or merchant resolution returning to a query per
+     * row, either worth +1.00 on its own -- a ceiling of 1.0 would still let a single-row regression
+     * through undetected until it compounded with another. 0.5 catches either alone.
      */
-    private static final double MAX_MARGINAL_STATEMENTS_PER_ROW = 2.5;
+    private static final double MAX_MARGINAL_STATEMENTS_PER_ROW = 0.5;
 
     /**
      * Marginal JPQL/HQL query executions allowed per row.
      *
      * <p>Tracked alongside prepared statements because the two catch different regressions: a
      * repository method called in a loop moves this one, while a lazily-initialised association
-     * moves only the statement count. Measured at 2.00, same reasoning as above for the ceiling.
+     * moves only the statement count. Measured at 0.00, same reasoning as above for the ceiling.
      */
-    private static final double MAX_MARGINAL_QUERIES_PER_ROW = 2.5;
+    private static final double MAX_MARGINAL_QUERIES_PER_ROW = 0.5;
 
     private static final int SMALL = 40;
     private static final int LARGE = 80;

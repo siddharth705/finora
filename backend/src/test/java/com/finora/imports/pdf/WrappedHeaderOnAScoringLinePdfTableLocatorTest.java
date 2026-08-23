@@ -77,6 +77,8 @@ class WrappedHeaderOnAScoringLinePdfTableLocatorTest {
                 .thenReturn(new CategorizationService.Suggestion("Other", "default", null, null, null));
         when(categorization.suggestReadOnly(any(), any(), any(), any(), any()))
                 .thenReturn(new CategorizationService.Suggestion("Other", "default", null, null, null));
+        when(categorization.suggestReadOnly(any(), any(), any(), any(), any(), any()))
+                .thenReturn(new CategorizationService.Suggestion("Other", "default", null, null, null));
         TransactionRepository transactions = mock(TransactionRepository.class);
         when(transactions.findPotentialDuplicatesByUser(any(), any(), any(), any())).thenReturn(List.of());
         return new TransactionNormalizer(categorization, new DuplicateDetector(transactions),

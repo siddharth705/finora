@@ -38,6 +38,8 @@ class DepositAttributeExtractionPdfPreviewGeneratorTest {
         // stubbed alongside the loading one so either path returns a real suggestion.
         when(categorizationService.suggestReadOnly(any(), any(), any(), any(), any()))
                 .thenReturn(new CategorizationService.Suggestion("Other", "default", null, null, null));
+        when(categorizationService.suggestReadOnly(any(), any(), any(), any(), any(), any()))
+                .thenReturn(new CategorizationService.Suggestion("Other", "default", null, null, null));
         TransactionNormalizer normalizer = new TransactionNormalizer(categorizationService,
                 new DuplicateDetector(mock(TransactionRepository.class)),
                 com.finora.imports.TestRuleEngines.empty());
