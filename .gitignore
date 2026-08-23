@@ -226,6 +226,10 @@ scripts/load-test/results/*/k6-summary.json
 
 .claude/
 
+# Superpowers brainstorming visual-companion sessions (mockups shown in-browser during design
+# discussions) -- working scratch, not a deliverable.
+.superpowers/
+
 # ============================================================================================
 # Operating System
 # ============================================================================================
