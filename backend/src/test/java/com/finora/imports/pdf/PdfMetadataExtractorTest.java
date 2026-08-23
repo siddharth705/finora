@@ -483,6 +483,32 @@ class PdfMetadataExtractorTest {
         assertThat(metadata.paymentDueDate()).isEqualTo(java.time.LocalDate.of(2026, 9, 15));
     }
 
+    /** Real Kotak Mahindra Bank credit-card statement evidence: no "Due Date" label anywhere near
+     *  the due date at all, stated instead as a plain address-block sentence. See
+     *  PAYMENT_DUE_DATE_SENTENCE's own doc comment. */
+    @Test
+    void extract_recognizesPaymentDueDate_statedAsAPlainSentenceWithNoDueDateLabelAnywhere() {
+        var metadata = extractor.extract(List.of("Remember to pay by 02-Apr-2026"));
+
+        assertThat(metadata.paymentDueDate()).isEqualTo(java.time.LocalDate.of(2026, 4, 2));
+    }
+
+    /** Bug fix: PAYMENT_DUE_DATE_SENTENCE used to capture everything after "pay by" as one greedy
+     *  group and hand the whole thing to a parser that requires an exact full-string match -- any
+     *  trailing punctuation or words after the date silently failed every format, reproducing the
+     *  exact "field stayed null" bug this pattern exists to fix, just for a slightly different real
+     *  phrasing than the one evidenced trace happens to have. Two independent real-shaped trailers:
+     *  a bare period, and a following clause. */
+    @Test
+    void extract_recognizesPaymentDueDate_inASentenceWithTrailingPunctuationOrText() {
+        var withTrailingPeriod = extractor.extract(List.of("Remember to pay by 02-Apr-2026."));
+        var withTrailingClause =
+                extractor.extract(List.of("Remember to pay by 02-Apr-2026 to avoid late fees"));
+
+        assertThat(withTrailingPeriod.paymentDueDate()).isEqualTo(java.time.LocalDate.of(2026, 4, 2));
+        assertThat(withTrailingClause.paymentDueDate()).isEqualTo(java.time.LocalDate.of(2026, 4, 2));
+    }
+
     /** Negative case: a due-date mention with no date-shaped value anywhere nearby (an
      *  explanatory sentence, not a real field) must stay null rather than guessing. */
     @Test

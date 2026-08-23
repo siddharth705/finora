@@ -1289,13 +1289,25 @@ public class ImportService {
      * table in the schema to produce a boolean. It also dereferenced {@code si.getAccountId()}
      * without a null check, so a row with no account would have thrown mid-import. One aggregate
      * query answers it, and the database handles the nulls.
+     *
+     * <p>Bug fix: {@code findLatestPeriodEndForAccount} returning empty used to mean only "this is
+     * the account's only statement" -- safe to default to {@code true} (apply the balance; nothing
+     * to compare against). Now that a sibling statement can legitimately have a null {@code
+     * statementPeriodEnd} (see this class's {@code persistSection} comment), SQL {@code MAX()}
+     * silently drops that sibling from the aggregate, so empty ALSO means "other statements exist,
+     * but none states a period" -- a case where an undated sibling could still be the true most-recent
+     * one and we simply cannot tell. Defaulting to {@code true} there risked silently overwriting the
+     * account's balance with an older statement's, so it is disambiguated via a second, cheap
+     * COUNT query: only the genuinely-no-siblings case still defaults to {@code true}.
      */
     private boolean isMostRecentStatementForAccount(UUID userId, UUID accountId, LocalDate thisStatementEnd, UUID thisStatementId) {
         if (thisStatementEnd == null) return true; // nothing to compare against — apply rather than never updating
-        return statementImportRepository
-                .findLatestPeriodEndForAccount(userId, accountId, thisStatementId)
-                .map(latestOther -> !latestOther.isAfter(thisStatementEnd))
-                .orElse(true); // this is the account's only statement, or no other one states a period
+        Optional<LocalDate> latestOther =
+                statementImportRepository.findLatestPeriodEndForAccount(userId, accountId, thisStatementId);
+        if (latestOther.isPresent()) return !latestOther.get().isAfter(thisStatementEnd);
+        // No dated sibling found -- distinguish "no siblings at all" (safe to apply) from "siblings
+        // exist but none states a period" (unsafe to assume this one is newest).
+        return statementImportRepository.countOtherStatementsForAccount(userId, accountId, thisStatementId) == 0;
     }
 
     /** What the review screen says this product is, falling back to the coarse account type when a
