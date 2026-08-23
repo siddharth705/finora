@@ -86,4 +86,25 @@ describe('VerifyEmailChange', () => {
     expect(screen.getByText(/missing information/)).toBeInTheDocument();
     expect(emailChangeApi.verify).not.toHaveBeenCalled();
   });
+
+  /**
+   * Phase 4 mobile: mobile has no way to intercept this page's own https:// URL (no hosted
+   * apple-app-site-association/assetlinks.json for a true universal/app link -- see
+   * RootNavigator.tsx's own doc comment on the mobile side), so anyone reading the confirmation
+   * email on their phone needs an explicit way to jump into the app instead. finora:// is the
+   * custom scheme RootNavigator's `linking` config registers there.
+   */
+  it('offers a link to open the confirmation in the Finora app, carrying the same sessionId and token', () => {
+    renderPage('session-1', 'real-token');
+
+    expect(screen.getByRole('link', { name: /open in the finora app/i })).toHaveAttribute(
+      'href', 'finora://email-change-verify?sessionId=session-1&token=real-token'
+    );
+  });
+
+  it('omits the open-in-app link when the URL is missing sessionId or token, since there is nothing valid to hand the app', () => {
+    renderPage('session-1', null);
+
+    expect(screen.queryByRole('link', { name: /open in the finora app/i })).not.toBeInTheDocument();
+  });
 });

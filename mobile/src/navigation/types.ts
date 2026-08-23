@@ -1,3 +1,4 @@
+import type { NavigatorScreenParams } from '@react-navigation/native';
 import type { ReimportResult } from '../types';
 
 /**
@@ -35,6 +36,10 @@ export type MoreStackParamList = {
   Investments: undefined;
   Profile: undefined;
   Settings: undefined;
+  // Phase 4: reached via the deep link EmailChangeService emails to the new address
+  // (finora://email-change-verify?sessionId=...&token=...), registered in RootNavigator's
+  // `linking` config -- see VerifyEmailChangeScreen's own doc comment.
+  VerifyEmailChange: { sessionId?: string; token?: string } | undefined;
 };
 
 /**
@@ -81,5 +86,9 @@ export type AppTabParamList = {
   // Params only ever set when arriving from "Re-import" on the Statement History screen; a normal
   // tap on the Import tab carries none and the screen starts at its upload step as always.
   Import: { reimport: ReimportParams } | undefined;
-  More: undefined;
+  // NavigatorScreenParams (not plain `undefined`, though nothing pushes a param onto it directly
+  // today) is what tells React Navigation's linking types that this tab hosts a nested navigator
+  // with MoreStackParamList's own routes -- RootNavigator's `linking` config needs this to type
+  // its VerifyEmailChange deep-link path against the nested stack, not just this tab itself.
+  More: NavigatorScreenParams<MoreStackParamList> | undefined;
 };
