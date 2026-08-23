@@ -55,7 +55,7 @@ class StatementImportServiceSummaryTest {
         service = new StatementImportService(
                 statementImportRepository, accountRepository, mock(CategoryRepository.class),
                 transactionRepository, mock(ReconciliationService.class), mock(RecurringService.class),
-                mock(ImportService.class), mock(AuditService.class), bankManagementService, new com.finora.imports.storage.StatementContentService(java.util.Optional.empty(), "", ""));
+                mock(ImportService.class), mock(AuditService.class), bankManagementService, new com.finora.imports.storage.StatementContentService(java.util.Optional.empty(), mock(com.finora.security.crypto.EncryptionService.class), "", ""));
     }
 
     private StatementImport statement(UUID id, UUID accountId) {
