@@ -1242,6 +1242,36 @@ describe('Import — queued imports', () => {
     expect(screen.queryByTestId('statement-file-input')).not.toBeInTheDocument();
   });
 
+  /**
+   * Bug fix, caught by a user report: a queued job's poller reaches COMPLETED and calls
+   * getSession for the session it named -- but if that same session was already confirmed
+   * through another path in the meantime (e.g. a duplicate confirm, or the user resuming it
+   * from a second tab), the GET now 400s with IMPORT_SESSION_ALREADY_CONFIRMED. The bare catch
+   * here used to show "Your statement was imported, but the review could not be loaded. Open it
+   * from your unfinished imports" for every failure, including this one -- actively wrong twice
+   * over: nothing is unloaded (the import already succeeded and is confirmed), and confirmed
+   * sessions never appear in the unfinished-imports list, so the suggested next step is a dead
+   * end. resumeSession (a few lines below) already distinguishes this exact error by code; this
+   * mirrors that handling for the job-completion arrival path.
+   */
+  it('says the import was already reviewed, not a generic load failure, when a queued job\'s session was confirmed elsewhere first', async () => {
+    vi.mocked(importJobsApi.progress).mockResolvedValue(queuedJob({
+      status: 'COMPLETED', rowsTotal: 2, rowsProcessed: 2, importSessionId: 'session-already-confirmed',
+    }));
+    vi.mocked(importApi.getSession).mockRejectedValue({
+      response: { data: { errorCode: IMPORT_SESSION_ALREADY_CONFIRMED, message: 'This import has already been reviewed and confirmed.' } },
+    });
+    const user = userEvent.setup();
+    renderImport();
+    await waitFor(() => expect(importJobsApi.availability).toHaveBeenCalled());
+
+    await user.upload(screen.getByTestId('statement-file-input'), csvFile());
+
+    expect(await screen.findByText(/already been reviewed and confirmed/i)).toBeInTheDocument();
+    expect(screen.queryByText(/could not be loaded/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/unfinished imports/i)).not.toBeInTheDocument();
+  });
+
   it('stops an import the user changed their mind about', async () => {
     vi.mocked(importJobsApi.progress).mockResolvedValue(queuedJob({ status: 'PARSING' }));
     vi.mocked(importJobsApi.cancel).mockResolvedValue(queuedJob({ status: 'CANCELLED' }));

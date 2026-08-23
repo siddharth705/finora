@@ -371,8 +371,20 @@ export default function Import() {
       hydrateReviewFrom(session.staging);
       setJobId(null);
       setStep('review');
-    } catch {
+    } catch (e: any) {
       setJobId(null);
+      // Bug fix: the worker only stages, never confirms (ImportJobWorker's own doc comment says
+      // so) -- but by the time this poller's COMPLETED tick fires and this fetch runs, the same
+      // session can already have been confirmed through another path (a second tab resuming it,
+      // a duplicate confirm). getSession then 400s with this code, same as resumeSession below
+      // already handles -- mirrored here rather than shown as a generic, actively misleading
+      // failure: nothing is unloaded (the import already succeeded), and "open it from your
+      // unfinished imports" is a dead end since listResumableSessions never returns a confirmed
+      // session.
+      if (e.response?.data?.errorCode === IMPORT_SESSION_ALREADY_CONFIRMED) {
+        showError('This import has already been reviewed and confirmed -- check your Statement History for it.');
+        return;
+      }
       showError('Your statement was imported, but the review could not be loaded. Open it from your unfinished imports.');
     }
   }
