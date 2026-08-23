@@ -886,4 +886,67 @@ class TransactionNormalizerTest {
         assertThat(staged.kind()).isEqualTo(RowKind.TRANSACTION);
         assertThat(staged.amount()).isEqualByComparingTo("0.00");
     }
+
+    @Test
+    void normalize_populatesMerchantFields_whenMerchantNormalizationEngineResolvesAMatch() {
+        CategorizationService categorizationService = mock(CategorizationService.class);
+        when(categorizationService.suggestReadOnly(any(), any(), any(), any()))
+                .thenReturn(new CategorizationService.Suggestion("Food", "learned", null, null, null));
+        when(categorizationService.suggestReadOnly(any(), any(), any(), any(), any()))
+                .thenReturn(new CategorizationService.Suggestion("Food", "learned", null, null, null));
+        TransactionRepository transactionRepository = mock(TransactionRepository.class);
+        when(transactionRepository.findPotentialDuplicatesByUser(any(), any(), any(), any())).thenReturn(List.of());
+        DuplicateDetector duplicateDetector = new DuplicateDetector(transactionRepository);
+
+        com.finora.entity.Merchant swiggy = new com.finora.entity.Merchant();
+        swiggy.setCanonicalName("SWIGGY");
+        com.finora.service.MerchantNormalizationEngine merchantNormalizationEngine =
+                mock(com.finora.service.MerchantNormalizationEngine.class);
+        when(merchantNormalizationEngine.resolveReadOnly(any(), any())).thenReturn(java.util.Optional.of(swiggy));
+
+        TransactionNormalizer withMerchantResolution = new TransactionNormalizer(
+                categorizationService, duplicateDetector, TestRuleEngines.empty(), merchantNormalizationEngine);
+
+        StagedRow row = withMerchantResolution.normalize(userId,
+                rowOf("Date", "01-01-2026", "Description", "UPI-SWIGGY-12345", "Amount", "350", "Type", "Dr"));
+
+        assertThat(row.merchant()).isEqualTo("SWIGGY");
+        assertThat(row.merchantConfidence()).isEqualTo(1.0);
+    }
+
+    @Test
+    void normalize_leavesMerchantFieldsNull_whenNoMerchantNormalizationEngineIsWired() {
+        // The existing 3-arg constructor (every other test in this class uses it) must keep behaving
+        // exactly as before -- merchant resolution is additive, never required.
+        StagedRow row = normalizer.normalize(userId,
+                rowOf("Date", "01-01-2026", "Description", "UPI-SWIGGY-12345", "Amount", "350", "Type", "Dr"));
+
+        assertThat(row.merchant()).isNull();
+        assertThat(row.merchantConfidence()).isNull();
+    }
+
+    @Test
+    void normalize_leavesMerchantFieldsNull_whenEngineFindsNoExistingMerchant() {
+        CategorizationService categorizationService = mock(CategorizationService.class);
+        when(categorizationService.suggestReadOnly(any(), any(), any(), any()))
+                .thenReturn(new CategorizationService.Suggestion("Other", "default", null, null, null));
+        when(categorizationService.suggestReadOnly(any(), any(), any(), any(), any()))
+                .thenReturn(new CategorizationService.Suggestion("Other", "default", null, null, null));
+        TransactionRepository transactionRepository = mock(TransactionRepository.class);
+        when(transactionRepository.findPotentialDuplicatesByUser(any(), any(), any(), any())).thenReturn(List.of());
+        DuplicateDetector duplicateDetector = new DuplicateDetector(transactionRepository);
+
+        com.finora.service.MerchantNormalizationEngine merchantNormalizationEngine =
+                mock(com.finora.service.MerchantNormalizationEngine.class);
+        when(merchantNormalizationEngine.resolveReadOnly(any(), any())).thenReturn(java.util.Optional.empty());
+
+        TransactionNormalizer withMerchantResolution = new TransactionNormalizer(
+                categorizationService, duplicateDetector, TestRuleEngines.empty(), merchantNormalizationEngine);
+
+        StagedRow row = withMerchantResolution.normalize(userId,
+                rowOf("Date", "01-01-2026", "Description", "SOME BRAND NEW MERCHANT", "Amount", "350", "Type", "Dr"));
+
+        assertThat(row.merchant()).isNull();
+        assertThat(row.merchantConfidence()).isNull();
+    }
 }

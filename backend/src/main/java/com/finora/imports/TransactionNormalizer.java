@@ -3,7 +3,9 @@ package com.finora.imports;
 import com.finora.dto.ImportDto.StagedRow;
 import com.finora.entity.CategoryRule;
 import com.finora.service.CategorizationService;
+import com.finora.service.MerchantNormalizationEngine;
 import com.finora.service.RuleEngineService;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
@@ -28,6 +30,7 @@ public class TransactionNormalizer {
     private final CategorizationService categorizationService;
     private final DuplicateDetector duplicateDetector;
     private final RuleEngineService ruleEngineService;
+    private final MerchantNormalizationEngine merchantNormalizationEngine;
 
     // Single source of truth for every column name this class recognizes -- shared by normalize(),
     // explainFailure(), and recognizedColumnNames() so the three can never drift out of sync (they
@@ -152,11 +155,24 @@ public class TransactionNormalizer {
     // an ordinary transaction row's running balance AFTER that transaction, not its amount.
     private static final String[] BALANCE_HINTS = {"balance", "running balance", "closing balance"};
 
+    @Autowired
     public TransactionNormalizer(CategorizationService categorizationService, DuplicateDetector duplicateDetector,
-                                  RuleEngineService ruleEngineService) {
+                                  RuleEngineService ruleEngineService,
+                                  MerchantNormalizationEngine merchantNormalizationEngine) {
         this.categorizationService = categorizationService;
         this.duplicateDetector = duplicateDetector;
         this.ruleEngineService = ruleEngineService;
+        this.merchantNormalizationEngine = merchantNormalizationEngine;
+    }
+
+    /**
+     * Pre-Phase-A shape, kept so the ~40 existing tests constructing this directly don't need to
+     * change. Merchant resolution is additive: a normalizer built this way simply never populates
+     * StagedRow.merchant/merchantConfidence, which is correct for every caller that doesn't pass one.
+     */
+    public TransactionNormalizer(CategorizationService categorizationService, DuplicateDetector duplicateDetector,
+                                  RuleEngineService ruleEngineService) {
+        this(categorizationService, duplicateDetector, ruleEngineService, null);
     }
 
     /**
@@ -560,7 +576,18 @@ public class TransactionNormalizer {
                     : RowKind.BALANCE_MARKER;
         }
 
+        String merchant = null;
+        Double merchantConfidence = null;
+        if (merchantNormalizationEngine != null) {
+            var resolved = merchantNormalizationEngine.resolveReadOnly(userId, description);
+            if (resolved.isPresent()) {
+                merchant = resolved.get().getCanonicalName();
+                merchantConfidence = 1.0;
+            }
+        }
+
         return new StagedRow(date, description, amount, type, suggestedCategory, source, ruleId,
-                likelyDuplicate, referenceNumber, balanceAfter, duplicateMatch, kind);
+                likelyDuplicate, referenceNumber, balanceAfter, duplicateMatch, kind, null, merchant,
+                merchantConfidence);
     }
 }
