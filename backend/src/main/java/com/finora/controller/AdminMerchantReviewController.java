@@ -5,6 +5,7 @@ import com.finora.dto.MerchantReviewDto;
 import com.finora.dto.PagedResponse;
 import com.finora.security.CurrentUser;
 import com.finora.service.MerchantReviewService;
+import jakarta.validation.Valid;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
@@ -88,9 +89,9 @@ public class AdminMerchantReviewController {
      *  history before deleting — the four foreign keys a raw delete would cascade away. */
     @PostMapping("/users/{userId}/merchants/{merchantId}/merge")
     public ApiResponse<MerchantReviewDto> merge(@PathVariable UUID userId, @PathVariable UUID merchantId,
-                                                  @RequestBody Map<String, UUID> body) {
+                                                  @Valid @RequestBody MerchantReviewDto.MergeRequest body) {
         return ApiResponse.ok(
-                reviewService.merge(currentUser.id(), userId, body.get("survivingMerchantId"), merchantId),
+                reviewService.merge(currentUser.id(), userId, body.survivingMerchantId(), merchantId),
                 "Merged");
     }
 
