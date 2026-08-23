@@ -1,5 +1,5 @@
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
-import { NavigationContainer, DefaultTheme, DarkTheme, type LinkingOptions } from '@react-navigation/native';
+import { NavigationContainer, DefaultTheme, DarkTheme, useNavigationContainerRef } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { AuthEntryScreen } from '../screens/AuthEntryScreen';
 import { LoginScreen } from '../screens/LoginScreen';
@@ -10,6 +10,7 @@ import { AppTabs } from './AppTabs';
 import { useAuth } from '../context/AuthContext';
 import { useTheme, useThemeSetting } from '../theme';
 import { useAuthStackInitialRoute } from './useAuthStackInitialRoute';
+import { useEmailChangeDeepLink } from './useEmailChangeDeepLink';
 import type { AppTabParamList, AuthStackParamList } from './types';
 
 const AuthStack = createNativeStackNavigator<AuthStackParamList>();
@@ -30,21 +31,12 @@ const AppStack = createNativeStackNavigator();
  * "Open in the Finora app" link using this same custom scheme for anyone reading that email on
  * their phone. Revisit true universal links once the native hosting/signing pieces exist.
  *
- * Only the one path this phase needs is registered -- not a blanket linking setup for every screen
- * in the app.
+ * Actual routing for this one path is imperative (useEmailChangeDeepLink below), not React
+ * Navigation's own declarative `linking.config` -- see that hook's own doc comment for why: this
+ * screen only exists inside the AppTabs tree, but the link can arrive while any of RootNavigator's
+ * three mutually-exclusive trees is mounted, including while signed out.
  */
-const linking: LinkingOptions<AppTabParamList> = {
-  prefixes: ['finora://'],
-  config: {
-    screens: {
-      More: {
-        screens: {
-          VerifyEmailChange: 'email-change-verify',
-        },
-      },
-    },
-  },
-};
+const linkingPrefixes = ['finora://'];
 
 /**
  * The mobile counterpart of the web app's ProtectedRoute, expressed the way React Navigation
@@ -62,6 +54,11 @@ export function RootNavigator() {
   const authInitialRoute = useAuthStackInitialRoute(token);
   const c = useTheme();
   const { resolved } = useThemeSetting();
+  const navigationRef = useNavigationContainerRef<AppTabParamList>();
+  // "Ready" here means AppTabs is actually the mounted tree -- token alone isn't enough, since a
+  // signed-in-but-unverified account gets the single-screen VerifyPhone AppStack instead, which
+  // has no route to More.VerifyEmailChange either.
+  const { onNavigationReady } = useEmailChangeDeepLink(navigationRef, token !== null && phoneVerified);
 
   // Session restore reads SecureStore asynchronously (see AuthContext). Rendering anything
   // route-dependent before it resolves would show Login to an already-signed-in user for a frame.
@@ -96,7 +93,12 @@ export function RootNavigator() {
   };
 
   return (
-    <NavigationContainer theme={navTheme} linking={linking}>
+    <NavigationContainer
+      ref={navigationRef}
+      theme={navTheme}
+      linking={{ prefixes: linkingPrefixes }}
+      onReady={onNavigationReady}
+    >
       {token === null ? (
         // initialRouteName -- not just AuthEntry listed first -- because which screen this stack
         // should open on differs by how it got here: a cold, never-signed-in launch starts on
