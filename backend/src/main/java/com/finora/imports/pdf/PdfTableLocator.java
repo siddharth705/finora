@@ -260,6 +260,14 @@ public class PdfTableLocator {
     // exact literal string, since the surrounding asterisk padding is decorative and could vary.
     private static final Pattern STATEMENT_CLOSING_MARKER = Pattern.compile("(?i)end\\s+of\\s+statement");
 
+    // PAGE_LEGEND_BLOCK_SUPPRESSED's own opening line -- see pageLegendBlockActive's doc comment
+    // for the mechanism this seeds. Matched against this real SBI credit-card statement's exact
+    // observed phrasing, the same evidence-before-capability discipline TRAILING_CONTENT_TRIGGERS'
+    // own patterns above follow -- narrow to the one real sentence rather than broadened to a
+    // generic "legend" or "disclaimer" heading a genuine transaction narration could plausibly echo.
+    private static final Pattern PAGE_LEGEND_BLOCK_START = Pattern.compile(
+            "(?i)transactions\\s+highlighted\\s+in\\s+grey\\s+color");
+
     // ILLUSTRATIVE_BLOCK_SUPPRESSED. A real AU Small Finance Bank credit-card statement carries a
     // fee/interest-calculation appendix -- "Illustration for calculating Interest & Late Payment
     // Charges" -- containing THREE fictional worked-example tables, each introduced by "The
@@ -745,6 +753,22 @@ public class PdfTableLocator {
         // shared Phase 2A/2C investigation this whole family of triggers comes from.
         boolean trailingContentSuppressed = false;
 
+        // PAGE_LEGEND_BLOCK_SUPPRESSED. The resumption case trailingContentSuppressed's own comment
+        // above anticipated: a real SBI credit-card statement prints a legal/legend block ("Transactions
+        // highlighted in grey color...", the "C=Credit ; D=Debit..." abbreviation key, an "Important
+        // Messages" heading, then open-ended late-payment-charges prose) at the BOTTOM OF EVERY PAGE,
+        // not once at the true end of the table -- unlike TRAILING_CONTENT_TRIGGERS' own markers
+        // (MITC, "End of Statement", etc.), which really do mean nothing genuine follows for the rest
+        // of the document. Left unrecognized, each of this block's lines has no date and no
+        // structural meaning of its own, so the ordinary trailing-continuation merge glues the whole
+        // block onto the last real transaction above the page break -- confirmed on the real document:
+        // "UPI-VMPL DEL 24 390.00" gained the entire legend paragraph as if it were a wrapped
+        // description. Unlike trailingContentSuppressed, this resets the moment a genuine header is
+        // recognized again (repeated or new) -- see every reset site below -- so the real transactions
+        // that resume on the NEXT page are not silently discarded along with the boilerplate between
+        // them and the last one.
+        boolean pageLegendBlockActive = false;
+
         for (int rowIndex = 0; rowIndex < rows.size(); rowIndex++) {
             List<PositionedText> row = rows.get(rowIndex);
             String rowLine = lineOf(row);
@@ -855,6 +879,7 @@ public class PdfTableLocator {
                 pendingLeading = null;
                 pendingLeadingFromProximity = false;
                 leadingCount = 0;
+                pageLegendBlockActive = false;
                 pendingAuxiliary.add(rowLine);
                 continue;
             }
@@ -962,6 +987,29 @@ public class PdfTableLocator {
                         previousRowY = row.get(0).y();
                     }
                 }
+                // Bug fix, verified against a real SBI credit-card statement: a "for Statement
+                // Period: ..." caption prints on THIS page's repeat of the header's own physical row
+                // (a per-page rendering variance -- the same caption sits comfortably far from the
+                // header on the document's first page instead). Left in row, it corrupted two
+                // downstream steps that both need "only genuine column names" here, not just the one
+                // buildHeaderColumns already guards (see its own containsEmbeddedDateRange comment):
+                // headerSignature (just below) hashes the RAW cells, so this document's own repeated
+                // header stopped matching itself and opened a spurious new section
+                // (COMPOSITE_STATEMENT) on a single-account statement; and reconstructHeader's own
+                // conflict gate (HeaderReconstructionEngineTest's
+                // ...evenWithAnOrphanedCaptionOnTheAcceptedRow) treats every cell of headerRow AS
+                // GIVEN as an "established anchor" a fill-empty fragment must stay clear of -- with
+                // the caption still in there, the real "Transaction Details" fragment on the line
+                // above sat within HEADER_WRAP_MAX_COLUMN_JOIN of it and was wrongly declined as if
+                // it would rename the caption, losing the Description column (and with it every real
+                // row's narration) on all 29 of that section's transactions. Stripped here, once,
+                // before either consumer -- not inside buildHeaderColumns, which runs AFTER
+                // headerSignature and is called a second time on reconstructHeader's own candidate
+                // (seeing this row unfiltered there would also make buildHeaderColumns' own
+                // orphanedHeaderRowText double-count this same caption).
+                List<String> orphanedCaptions = new ArrayList<>();
+                row = stripStandaloneEmbeddedDateRangeCaptions(row, orphanedCaptions);
+                pendingAuxiliary.addAll(orphanedCaptions);
                 Set<String> signature = headerSignature(row);
                 // An unresolved ACCOUNT_IDENTITY_LINE mismatch overrides "same shape, keep
                 // appending" -- this is the actual B1 danger zone: two different accounts sharing
@@ -971,6 +1019,7 @@ public class PdfTableLocator {
                 boolean identityContradicts = currentRows != null && pendingIdentityMismatch;
                 if (currentRows != null && signature.equals(currentHeaderSignature) && !identityContradicts) {
                     if (ctx != null) ctx.record("REPEATED_HEADER");
+                    pageLegendBlockActive = false;
                     continue; // repeated header of the table already in progress -- not a data row
                 }
                 if (currentRows != null) {
@@ -1068,6 +1117,7 @@ public class PdfTableLocator {
                 pendingLeading = null;
                 pendingLeadingFromProximity = false;
                 leadingCount = 0;
+                pageLegendBlockActive = false;
                 continue;
             }
 
@@ -1093,6 +1143,25 @@ public class PdfTableLocator {
                 // BUCKET_EMPTY/PAGE_FOOTER_OR_CLOSING_MARKER/REPEATED_ACCOUNT_BANNER do not.
                 recordIfFinancialActivityCandidate(row, "PRE_HEADER_ACTIVITY_CANDIDATE", pendingDroppedCandidates);
                 pendingAuxiliary.add(rowLine);
+            } else if (pageLegendBlockActive) {
+                // Still inside the legend/disclaimer block -- see pageLegendBlockActive's own doc
+                // comment. Every line here is boilerplate until the next header resets the flag.
+                // Deliberately NOT added to pendingAuxiliary -- same choice PAGE_FOOTER makes just
+                // below, and for the same reason found here specifically: this exact legend line
+                // spells out "Monthly Installments"/"Total Amount Due" as abbreviation-key LABELS,
+                // not genuine statement fields, and ProductDiscovery reads auxiliaryText as if it
+                // were the latter -- surfaced by testing this fix against the real document, where
+                // routing the block there flipped the primary cardholder's own section from a
+                // confident CREDIT_CARD detection to UNKNOWN (INSTALLMENT_FIELD/EMI_FIELD/
+                // MINIMUM_DUE_FIELD all reading as CONTRADICTORY evidence against every candidate
+                // product, credit card included). recordIfTransactionShaped below is this content's
+                // own "never lose information" trace, same as PAGE_FOOTER_OR_CLOSING_MARKER's.
+                continue;
+            } else if (PAGE_LEGEND_BLOCK_START.matcher(rowLine).find()) {
+                pageLegendBlockActive = true;
+                if (ctx != null) ctx.record("PAGE_LEGEND_BLOCK_SUPPRESSED");
+                recordIfTransactionShaped(row, "PAGE_LEGEND_BLOCK_SUPPRESSED", pendingDroppedCandidates);
+                continue;
             } else if (PAGE_FOOTER.matcher(rowLine).find() || STATEMENT_CLOSING_MARKER.matcher(rowLine).find()) {
                 if (ctx != null) ctx.record("PAGE_BOUNDARY_ISOLATION");
                 // Row-accounting evidence: acknowledged, real risk (see this pattern's own doc
@@ -3140,6 +3209,28 @@ public class PdfTableLocator {
         return t.text().trim().equalsIgnoreCase(word);
     }
 
+    /** Removes any run in {@code row} whose OWN text alone already matches {@link
+     *  #containsEmbeddedDateRange} -- the removed text is appended to {@code orphanedCaptions}, in
+     *  row order. Called once, at header acceptance, before anything downstream treats {@code row}'s
+     *  cells as real column identity: see the call site's own comment for the two consumers
+     *  (headerSignature, reconstructHeader) this exists to protect, neither of which is the
+     *  buildHeaderColumns' own containsEmbeddedDateRange check further down this class -- that one
+     *  stays as a safety net for a caption that only becomes a fused single cell AFTER coalescing,
+     *  which this single-run check cannot see (this runs before coalescing). */
+    private List<PositionedText> stripStandaloneEmbeddedDateRangeCaptions(
+            List<PositionedText> row, List<String> orphanedCaptions) {
+        List<PositionedText> kept = new ArrayList<>();
+        for (PositionedText t : row) {
+            String text = t.text().trim();
+            if (containsEmbeddedDateRange(text)) {
+                orphanedCaptions.add(text);
+                continue;
+            }
+            kept.add(t);
+        }
+        return kept;
+    }
+
     private List<PositionedText> coalesceHeaderRuns(List<PositionedText> row) {
         List<PositionedText> cells = new ArrayList<>();
         for (PositionedText run : row) {
@@ -3158,6 +3249,25 @@ public class PdfTableLocator {
         return cells;
     }
 
+    // Bug fix, verified against a real SBI credit-card statement: this exact literal string is
+    // PDFBox's font-substitution rendering of a currency-symbol sub-label ("Amount (₹)" split into
+    // "Amount" + this cell) -- the same class of quirk as parseNumeric's own "Rupee-as-C" comment,
+    // here on a header cell rather than a value. On MOST layouts (and on this SAME document's own
+    // first page, purely by extraction-order coincidence) it never reaches joinsOntoHeaderCell at
+    // all. But it sits close enough to "Amount" that, whenever it does, coalescing would ordinarily
+    // fold it in -- correct and desired for an ordinary decorative currency suffix like "(Rs.)" or
+    // "(INR)", which carries no data of its own (see TransactionNormalizer.RUPEE_ARTIFACT_TYPE_COLUMN's
+    // own doc comment for the flip side of this same evidence). This one is different: every real
+    // transaction row on that document carries a bare Credit/Debit marker ("C"/"D") in this exact
+    // column, per the statement's own printed legend "C=Credit ; D=Debit". Coalesced away, that
+    // marker has nowhere of its own to bucket into and gets glued onto the amount value instead
+    // ("25.00 D"), which fails CsvParser.parseNumeric outright -- every one of that document's
+    // second-cardholder transactions silently vanished this way. Scoped to the single literal
+    // artifact string, not a general "any currency-symbol cell" rule -- see
+    // HeaderReconstructionEngineTest.sbiShapedPartitionedHeader_keepsTheRupeeArtifactColumnSeparateFromAmount
+    // for the other (legitimate-merge) shape this must not disturb.
+    private static final String RUPEE_ARTIFACT_MARKER_COLUMN = "( ` )";
+
     /** Whether {@code right} is the continuation of the same header cell {@code left} begins. */
     private boolean joinsOntoHeaderCell(PositionedText left, PositionedText right) {
         if (left.pageIndex() != right.pageIndex()) return false;
@@ -3165,6 +3275,7 @@ public class PdfTableLocator {
         float gap = right.x() - left.endX();
         // Negative means the runs overlap, which is not the one-space adjacency this looks for.
         if (gap < 0 || gap > HEADER_RUN_JOIN_MAX_GAP) return false;
+        if (RUPEE_ARTIFACT_MARKER_COLUMN.equals(right.text().trim())) return false;
         return !carriesAValue(left) && !carriesAValue(right);
     }
 

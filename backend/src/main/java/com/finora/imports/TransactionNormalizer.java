@@ -88,6 +88,17 @@ public class TransactionNormalizer {
     // this list as genuinely different strings. (The already-covered "Type (DR/CR)" spelling still
     // matches "type": there the parenthetical is what gets stripped.)
     private static final String[] TYPE_HINTS = {"type", "dr / cr", "dr/cr", "cr / dr", "cr/dr"};
+    // Bug fix, verified against a real SBI credit-card statement. PDFBox's extraction renders that
+    // document's "Amount (₹)" sub-column literally as "( ` )" -- the same font-substitution quirk
+    // CsvParser.parseNumeric's own "Rupee-as-C" comment describes, here landing on a column HEADER
+    // instead of a value -- and every transaction row's Credit/Debit marker (a bare "C" or "D", per
+    // the statement's own printed legend "C=Credit ; D=Debit") lands in that exact column. Cannot
+    // simply be added to TYPE_HINTS above: normalizeHeaderCell strips a trailing parenthetical
+    // unconditionally, so "( ` )" collapses to the EMPTY string -- the same key every genuinely
+    // blank/spacer column in the whole corpus also produces, so a blank-header hint there would
+    // match all of them, not just this one. Matched instead against the RAW, un-normalized header
+    // key (see its one use site below), scoped to this single literal artifact string.
+    private static final String RUPEE_ARTIFACT_TYPE_COLUMN = "( ` )";
     // "transaction id" is deliberately LAST -- lowest priority, only used when none of the real
     // description columns above have a value at all. Bug fix, verified against a real Union Bank
     // of India statement: its header row detects a "Remarks" column, but every actual data row's
@@ -383,6 +394,12 @@ public class TransactionNormalizer {
         BigDecimal amount = parsedAmount.abs();
 
         String typeRaw = CsvParser.firstNonBlank(row, TYPE_HINTS);
+        // Raw-key fallback for RUPEE_ARTIFACT_TYPE_COLUMN -- see that constant's own doc comment
+        // for why this can't go through the normalized-header-name path TYPE_HINTS above uses.
+        if (typeRaw == null) {
+            String artifactValue = row.get(RUPEE_ARTIFACT_TYPE_COLUMN);
+            if (artifactValue != null && !artifactValue.isBlank()) typeRaw = artifactValue;
+        }
         // A Debit/Credit-style statement has BOTH column headers present on every row (the map
         // built by CsvParser always has an entry per header regardless of whether that row's
         // value is blank), so what actually indicates income is a *non-blank* value in the
@@ -410,9 +427,12 @@ public class TransactionNormalizer {
         // consulted once every more specific column-based signal has already come up empty.
         boolean isIncome;
         String typeNormalized = typeRaw == null ? null : typeRaw.trim().toLowerCase();
-        if ("cr".equals(typeNormalized) || "credit".equals(typeNormalized)) {
+        // Bare "c"/"d" (RUPEE_ARTIFACT_TYPE_COLUMN's own shorthand, per the SBI statement's own
+        // printed legend "C=Credit ; D=Debit") alongside the existing "cr"/"dr" abbreviations --
+        // the same single-letter convention, one character shorter.
+        if ("cr".equals(typeNormalized) || "credit".equals(typeNormalized) || "c".equals(typeNormalized)) {
             isIncome = true;
-        } else if ("dr".equals(typeNormalized) || "debit".equals(typeNormalized)) {
+        } else if ("dr".equals(typeNormalized) || "debit".equals(typeNormalized) || "d".equals(typeNormalized)) {
             isIncome = false;
         } else if (typeRaw != null && typeRaw.toLowerCase().contains("income")) {
             isIncome = true;
