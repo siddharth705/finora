@@ -1,8 +1,15 @@
 package com.finora.imports.storage;
 
+import com.finora.security.crypto.CryptoProperties;
+import com.finora.security.crypto.EncryptedBytes;
+import com.finora.security.crypto.EncryptionService;
+import com.finora.security.crypto.EnvironmentKeyProvider;
 import org.junit.jupiter.api.Test;
 
 import java.nio.charset.StandardCharsets;
+import java.util.Base64;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -23,28 +30,54 @@ import static org.mockito.Mockito.when;
  * bytes to {@code StatementStorage}. Tests below use {@link GzipCompression} directly (same
  * package, package-private) to construct what a real provider would have received/returned, rather
  * than asserting on the service's internal compression call with an opaque byte[] matcher.
+ *
+ * <p>Security review (V107): {@link StatementContentService#store} now also encrypts, after
+ * compression. {@link #ENCRYPTION} is a real {@link EncryptionService} over a fixed in-memory key
+ * -- real AES-GCM, not a stub -- so tests that exercise store()/read() prove the actual round trip
+ * rather than asserting on a mocked transform.
  */
 class StatementContentServiceTest {
 
     private static final byte[] CONTENT = "%PDF-1.6 statement".getBytes(StandardCharsets.UTF_8);
     private static final String MIME_TYPE = "application/pdf";
+    private static final String TEST_KEY_ID = "v1";
+    private static final EncryptionService ENCRYPTION = testEncryptionService();
+    /** Never invoked: used only where storage is {@code Optional.empty()} or a row is legacy /
+     *  has a null encryption key id, both of which short-circuit before touching encryption. */
+    private static final EncryptionService UNUSED_ENCRYPTION = mock(EncryptionService.class);
+
+    /** Same {@code CryptoProperties}/{@code EnvironmentKeyProvider} idiom
+     *  {@code GmailConnectionServiceTest} already uses for a real (non-mocked) EncryptionService. */
+    private static EncryptionService testEncryptionService() {
+        CryptoProperties crypto = new CryptoProperties();
+        crypto.setActiveKeyId(TEST_KEY_ID);
+        Map<String, String> keys = new LinkedHashMap<>();
+        byte[] raw = new byte[32];
+        java.util.Arrays.fill(raw, (byte) 7);
+        keys.put(TEST_KEY_ID, Base64.getEncoder().encodeToString(raw));
+        crypto.setKeys(keys);
+        return new EncryptionService(new EnvironmentKeyProvider(crypto));
+    }
 
     /** A row in whichever of the two states a test needs. */
     private record Row(String getContentHash, String getObjectKey, byte[] getFileContent,
-                        CompressionType getCompressionType) implements StoredStatement {
+                        CompressionType getCompressionType, String getEncryptionKeyId) implements StoredStatement {
         static Row addressed(ContentAddress a, byte[] legacy) {
-            return new Row(a.hash(), a.key(), legacy, CompressionType.GZIP);
+            return new Row(a.hash(), a.key(), legacy, CompressionType.GZIP, null);
+        }
+        static Row addressedEncrypted(ContentAddress a, byte[] legacy, String encryptionKeyId) {
+            return new Row(a.hash(), a.key(), legacy, CompressionType.GZIP, encryptionKeyId);
         }
         static Row addressedUncompressed(ContentAddress a, byte[] legacy) {
-            return new Row(a.hash(), a.key(), legacy, CompressionType.NONE);
+            return new Row(a.hash(), a.key(), legacy, CompressionType.NONE, null);
         }
-        static Row legacy(byte[] bytes) { return new Row(null, null, bytes, CompressionType.NONE); }
+        static Row legacy(byte[] bytes) { return new Row(null, null, bytes, CompressionType.NONE, null); }
     }
 
     @Test
     void withNoProviderConfigured_storeIsANoOpAndReadsComeFromTheColumn() {
         // The default. Adding this layer must not change behaviour for anyone who has not opted in.
-        StatementContentService service = new StatementContentService(Optional.empty(), "", "");
+        StatementContentService service = new StatementContentService(Optional.empty(), UNUSED_ENCRYPTION, "", "");
 
         assertThat(service.store(CONTENT, MIME_TYPE)).isEmpty();
         assertThat(service.read(Row.legacy(CONTENT))).isEqualTo(CONTENT);
@@ -58,7 +91,7 @@ class StatementContentServiceTest {
      */
     @Test
     void aProviderNameThatResolvedToNoBeanIsRejected_notTreatedAsDisabled() {
-        assertThatThrownBy(() -> new StatementContentService(Optional.empty(), "r2", ""))
+        assertThatThrownBy(() -> new StatementContentService(Optional.empty(), UNUSED_ENCRYPTION, "r2", ""))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("matches no StatementStorage implementation");
     }
@@ -67,39 +100,49 @@ class StatementContentServiceTest {
     void anUnsetProviderIsStillAFirstClassChoice_andDoesNotThrow() {
         // Unset is the supported default and must keep behaving exactly as before -- the check
         // above must fire only on a value someone actually typed.
-        assertThat(new StatementContentService(Optional.empty(), "", "").store(CONTENT, MIME_TYPE)).isEmpty();
-        assertThat(new StatementContentService(Optional.empty(), null, "").store(CONTENT, MIME_TYPE)).isEmpty();
-        assertThat(new StatementContentService(Optional.empty(), "   ", "").store(CONTENT, MIME_TYPE)).isEmpty();
+        assertThat(new StatementContentService(Optional.empty(), UNUSED_ENCRYPTION, "", "").store(CONTENT, MIME_TYPE)).isEmpty();
+        assertThat(new StatementContentService(Optional.empty(), UNUSED_ENCRYPTION, null, "").store(CONTENT, MIME_TYPE)).isEmpty();
+        assertThat(new StatementContentService(Optional.empty(), UNUSED_ENCRYPTION, "   ", "").store(CONTENT, MIME_TYPE)).isEmpty();
     }
 
     /**
-     * The compression contract: content_hash identifies the ORIGINAL bytes (what a caller re-hashes
-     * to verify this is the document the bank issued), independent of what the storage layer's own
-     * address happens to be for the compressed representation actually written.
+     * The compression/encryption contract: content_hash identifies the ORIGINAL bytes (what a
+     * caller re-hashes to verify this is the document the bank issued), independent of what the
+     * storage layer's own address happens to be for the compressed-then-encrypted representation
+     * actually written.
      */
     @Test
-    void withAProviderConfigured_storeCompressesFirst_andReturnsTheOriginalHashWithSizesAndMimeType() {
+    void withAProviderConfigured_storeCompressesThenEncrypts_andReturnsTheOriginalHashWithSizesAndMimeType() {
         StatementStorage storage = mock(StatementStorage.class);
         byte[] compressed = GzipCompression.compress(CONTENT);
-        ContentAddress backendAddress = ContentAddress.forContent(compressed);
-        when(storage.store(any(byte[].class))).thenReturn(backendAddress);
+        org.mockito.ArgumentCaptor<byte[]> handedToStorage = org.mockito.ArgumentCaptor.forClass(byte[].class);
+        // The key layout address the storage layer would compute over whatever it is actually
+        // given (the encrypted bytes) -- its value does not matter to this test beyond being
+        // something store() must pass through unchanged as address().key().
+        ContentAddress backendAddress = new ContentAddress(ContentAddress.hashOf("irrelevant".getBytes()), "objects/irrelevant");
+        when(storage.store(handedToStorage.capture())).thenReturn(backendAddress);
 
         Optional<StatementContentService.StoredContent> result =
-                new StatementContentService(Optional.of(storage), "filesystem", "").store(CONTENT, MIME_TYPE);
+                new StatementContentService(Optional.of(storage), ENCRYPTION, "filesystem", "").store(CONTENT, MIME_TYPE);
 
         assertThat(result).isPresent();
         StatementContentService.StoredContent stored = result.get();
         assertThat(stored.address().hash())
-                .as("identity is the ORIGINAL bytes' hash, not the compressed bytes' hash")
+                .as("identity is the ORIGINAL bytes' hash, not the compressed or encrypted bytes' hash")
                 .isEqualTo(ContentAddress.hashOf(CONTENT));
         assertThat(stored.address().key()).isEqualTo(backendAddress.key());
         assertThat(stored.originalSize()).isEqualTo(CONTENT.length);
-        assertThat(stored.storedSize()).isEqualTo(compressed.length);
         assertThat(stored.compressionType()).isEqualTo(CompressionType.GZIP);
         assertThat(stored.mimeType()).isEqualTo(MIME_TYPE);
+        assertThat(stored.encryptionKeyId()).isEqualTo(TEST_KEY_ID);
 
-        // What was actually handed to the storage layer was the COMPRESSED bytes, not the original.
-        verify(storage).store(compressed);
+        // What was actually handed to the storage layer was neither the original nor merely the
+        // compressed bytes -- decrypting it under the key store() reported is what recovers the
+        // compressed bytes.
+        assertThat(handedToStorage.getValue()).isNotEqualTo(compressed);
+        assertThat(stored.storedSize()).isEqualTo(handedToStorage.getValue().length);
+        assertThat(ENCRYPTION.decryptBytes(new EncryptedBytes(stored.encryptionKeyId(), handedToStorage.getValue())))
+                .isEqualTo(compressed);
     }
 
     @Test
@@ -112,8 +155,22 @@ class StatementContentServiceTest {
         // copy, this assertion would still pass on content equality alone.
         Row row = Row.addressed(address, "stale database copy".getBytes(StandardCharsets.UTF_8));
 
-        assertThat(new StatementContentService(Optional.of(storage), "filesystem", "").read(row)).isEqualTo(CONTENT);
+        assertThat(new StatementContentService(Optional.of(storage), UNUSED_ENCRYPTION, "filesystem", "").read(row)).isEqualTo(CONTENT);
         verify(storage).retrieve(address);
+    }
+
+    /** The encryption/compression contract, end to end: a row whose bytes were genuinely written
+     *  by {@link EncryptionService#encryptBytes} is decrypted and decompressed on read. */
+    @Test
+    void anEncryptedAddressedRowIsDecryptedThenDecompressedOnRead() {
+        StatementStorage storage = mock(StatementStorage.class);
+        ContentAddress address = ContentAddress.forContent(CONTENT);
+        byte[] compressed = GzipCompression.compress(CONTENT);
+        EncryptedBytes encrypted = ENCRYPTION.encryptBytes(compressed);
+        when(storage.retrieve(address)).thenReturn(encrypted.data());
+        Row row = Row.addressedEncrypted(address, null, encrypted.keyId());
+
+        assertThat(new StatementContentService(Optional.of(storage), ENCRYPTION, "filesystem", "").read(row)).isEqualTo(CONTENT);
     }
 
     /** Backward compatibility: an object written before compression existed
@@ -125,7 +182,7 @@ class StatementContentServiceTest {
         when(storage.retrieve(address)).thenReturn(CONTENT);
         Row row = Row.addressedUncompressed(address, null);
 
-        assertThat(new StatementContentService(Optional.of(storage), "filesystem", "").read(row)).isEqualTo(CONTENT);
+        assertThat(new StatementContentService(Optional.of(storage), UNUSED_ENCRYPTION, "filesystem", "").read(row)).isEqualTo(CONTENT);
     }
 
     @Test
@@ -142,7 +199,7 @@ class StatementContentServiceTest {
         byte[] wrongButValidGzip = GzipCompression.compress("a different statement entirely".getBytes(StandardCharsets.UTF_8));
         when(storage.retrieve(address)).thenReturn(wrongButValidGzip);
 
-        assertThatThrownBy(() -> new StatementContentService(Optional.of(storage), "filesystem", "")
+        assertThatThrownBy(() -> new StatementContentService(Optional.of(storage), UNUSED_ENCRYPTION, "filesystem", "")
                 .read(Row.addressed(address, null)))
                 .isInstanceOf(StatementIntegrityException.class)
                 .hasMessageContaining("Integrity check failed")
@@ -157,7 +214,7 @@ class StatementContentServiceTest {
         StatementStorage storage = mock(StatementStorage.class);
         ContentAddress address = ContentAddress.forContent(CONTENT);
         when(storage.retrieve(address)).thenReturn(GzipCompression.compress("wrong".getBytes(StandardCharsets.UTF_8)));
-        StatementContentService service = new StatementContentService(Optional.of(storage), "filesystem", "");
+        StatementContentService service = new StatementContentService(Optional.of(storage), UNUSED_ENCRYPTION, "filesystem", "");
 
         assertThatThrownBy(() -> service.read(Row.addressed(address, null)))
                 .isInstanceOf(StatementIntegrityException.class)
@@ -170,7 +227,7 @@ class StatementContentServiceTest {
         // storage with a null address would fail every one of them.
         StatementStorage storage = mock(StatementStorage.class);
 
-        assertThat(new StatementContentService(Optional.of(storage), "filesystem", "").read(Row.legacy(CONTENT))).isEqualTo(CONTENT);
+        assertThat(new StatementContentService(Optional.of(storage), UNUSED_ENCRYPTION, "filesystem", "").read(Row.legacy(CONTENT))).isEqualTo(CONTENT);
         verify(storage, never()).retrieve(any());
     }
 
@@ -180,7 +237,7 @@ class StatementContentServiceTest {
         // the column during Phase 2, so this succeeds -- which is exactly what makes the rollback
         // safe, and why Phase 2 keeps writing the column.
         ContentAddress address = ContentAddress.forContent(CONTENT);
-        StatementContentService service = new StatementContentService(Optional.empty(), "", "");
+        StatementContentService service = new StatementContentService(Optional.empty(), UNUSED_ENCRYPTION, "", "");
 
         assertThat(service.read(Row.addressed(address, CONTENT))).isEqualTo(CONTENT);
     }
@@ -191,7 +248,7 @@ class StatementContentServiceTest {
         // surface downstream as a statement that parsed to zero rows, which reads as a bad file
         // rather than a broken deployment.
         ContentAddress address = ContentAddress.forContent(CONTENT);
-        StatementContentService service = new StatementContentService(Optional.empty(), "", "");
+        StatementContentService service = new StatementContentService(Optional.empty(), UNUSED_ENCRYPTION, "", "");
 
         assertThatThrownBy(() -> service.read(Row.addressed(address, null)))
                 .isInstanceOf(StatementStorageException.class)
@@ -200,7 +257,7 @@ class StatementContentServiceTest {
 
     @Test
     void aRowWithNeitherAddressNorBytesIsAnError() {
-        assertThatThrownBy(() -> new StatementContentService(Optional.empty(), "", "").read(Row.legacy(null)))
+        assertThatThrownBy(() -> new StatementContentService(Optional.empty(), UNUSED_ENCRYPTION, "", "").read(Row.legacy(null)))
                 .isInstanceOf(StatementStorageException.class)
                 .hasMessageContaining("neither stored content nor a content address");
     }
@@ -213,7 +270,7 @@ class StatementContentServiceTest {
         StatementStorage storage = mock(StatementStorage.class);
         when(storage.store(any(byte[].class))).thenThrow(new StatementStorageException("bucket unreachable"));
 
-        assertThatThrownBy(() -> new StatementContentService(Optional.of(storage), "filesystem", "").store(CONTENT, MIME_TYPE))
+        assertThatThrownBy(() -> new StatementContentService(Optional.of(storage), ENCRYPTION, "filesystem", "").store(CONTENT, MIME_TYPE))
                 .isInstanceOf(StatementStorageException.class);
     }
 
@@ -222,7 +279,7 @@ class StatementContentServiceTest {
         // STORAGE_PROVIDER is the name people reach for and nothing reads it. Set on its own it
         // produces the one failure no error surfaces: object storage stays off, every import
         // succeeds, health is green, and the bucket stays empty until somebody looks.
-        assertThatThrownBy(() -> new StatementContentService(Optional.empty(), "", "r2"))
+        assertThatThrownBy(() -> new StatementContentService(Optional.empty(), UNUSED_ENCRYPTION, "", "r2"))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("STATEMENT_STORAGE_PROVIDER");
     }
@@ -233,13 +290,13 @@ class StatementContentServiceTest {
         // about. Failing here would punish anyone who set the wrong name, read the error, added
         // the right one, and did not think to remove the first.
         StatementStorage storage = mock(StatementStorage.class);
-        assertThatCode(() -> new StatementContentService(Optional.of(storage), "filesystem", "r2"))
+        assertThatCode(() -> new StatementContentService(Optional.of(storage), UNUSED_ENCRYPTION, "filesystem", "r2"))
                 .doesNotThrowAnyException();
     }
 
     @Test
     void nothingIsRefusedWhenNeitherVariableIsSet() {
-        assertThatCode(() -> new StatementContentService(Optional.empty(), "", ""))
+        assertThatCode(() -> new StatementContentService(Optional.empty(), UNUSED_ENCRYPTION, "", ""))
                 .doesNotThrowAnyException();
     }
 }
