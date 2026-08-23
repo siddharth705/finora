@@ -14,6 +14,10 @@ public interface MerchantAliasRepository extends JpaRepository<MerchantAlias, UU
     Optional<MerchantAlias> findByUserIdAndNormalizedAlias(UUID userId, String normalizedAlias);
     List<MerchantAlias> findByMerchantId(UUID merchantId);
 
+    /** Bulk load for {@code MerchantNormalizationEngine.indexFor} -- one query per staging batch
+     *  instead of one {@code findByUserIdAndNormalizedAlias} per row. See {@code MerchantIndex}. */
+    List<MerchantAlias> findByUserId(UUID userId);
+
     /** AccountPurgeSweepService -- hard delete, no soft-delete concern on this entity. */
     void deleteByUserId(UUID userId);
 

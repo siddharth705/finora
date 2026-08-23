@@ -84,7 +84,21 @@ public class ImportDto {
              * rather than adding a second one — see {@code GmailStagingBridge} for the exact
              * threshold and why a Gmail row below it also gets {@code categorySource = "default"}.
              */
-            Double confidence
+            Double confidence,
+            /**
+             * The canonical merchant name {@link com.finora.service.MerchantNormalizationEngine#resolveReadOnly}
+             * found for this row's description, or null when no existing merchant matched. Read-only
+             * resolution — staging never creates a Merchant/MerchantAlias row (that still only happens at
+             * confirm time; see resolveReadOnly's own doc comment for why). Never guessed: a raw description
+             * that resolves to no existing merchant leaves this null, it does not fall back to the raw text.
+             */
+            String merchant,
+            /**
+             * 1.0 when {@code merchant} was resolved, null otherwise. Deliberately not a richer score in
+             * this phase — see docs/superpowers/plans/2026-08-23-transaction-intelligence-phase-a.md's
+             * Global Constraints: a real confidence model is later work, not this one.
+             */
+            Double merchantConfidence
     ) {
         /**
          * The shape every caller used before WI5 added {@code duplicateMatch}.
@@ -104,7 +118,7 @@ public class ImportDto {
                           DuplicateMatch duplicateMatch) {
             this(date, description, amount, type, suggestedCategory, categorySource, ruleId,
                     likelyDuplicate, referenceNumber, balanceAfter, duplicateMatch, RowKind.TRANSACTION,
-                    null);
+                    null, null, null);
         }
 
         /** The shape every caller used before {@code confidence} was added (C5-B). Defaults null --
@@ -114,7 +128,22 @@ public class ImportDto {
                           boolean likelyDuplicate, String referenceNumber, BigDecimal balanceAfter,
                           DuplicateMatch duplicateMatch, RowKind kind) {
             this(date, description, amount, type, suggestedCategory, categorySource, ruleId,
-                    likelyDuplicate, referenceNumber, balanceAfter, duplicateMatch, kind, null);
+                    likelyDuplicate, referenceNumber, balanceAfter, duplicateMatch, kind, null, null, null);
+        }
+
+        /**
+         * The shape every caller used before {@code merchant}/{@code merchantConfidence} were added
+         * (Transaction Intelligence Phase A). {@code GmailStagingBridge} and Gmail-review test fixtures
+         * construct a {@code StagedRow} directly with an explicit {@code confidence} but no merchant
+         * fields -- this keeps them compiling unchanged, defaulting both new fields to null, which is
+         * correct: staging-time merchant resolution never ran for these callers before this phase either.
+         */
+        public StagedRow(LocalDate date, String description, BigDecimal amount, String type,
+                          String suggestedCategory, String categorySource, UUID ruleId,
+                          boolean likelyDuplicate, String referenceNumber, BigDecimal balanceAfter,
+                          DuplicateMatch duplicateMatch, RowKind kind, Double confidence) {
+            this(date, description, amount, type, suggestedCategory, categorySource, ruleId,
+                    likelyDuplicate, referenceNumber, balanceAfter, duplicateMatch, kind, confidence, null, null);
         }
 
         /**
@@ -128,7 +157,7 @@ public class ImportDto {
                           String suggestedCategory, String categorySource, UUID ruleId,
                           boolean likelyDuplicate, String referenceNumber, BigDecimal balanceAfter) {
             this(date, description, amount, type, suggestedCategory, categorySource, ruleId,
-                    likelyDuplicate, referenceNumber, balanceAfter, null, RowKind.TRANSACTION);
+                    likelyDuplicate, referenceNumber, balanceAfter, null, RowKind.TRANSACTION, null, null, null);
         }
     }
 
