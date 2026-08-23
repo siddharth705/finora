@@ -1,19 +1,20 @@
-import { useStagedReveal } from '../primitives';
 import { heroIntelligence } from '../landing-config';
 
-/**
- * The "Analyzing your finances…" checklist. Built on the existing useStagedReveal primitive --
- * same jsdom/reduced-motion/no-IntersectionObserver fallback behavior as the rest of the page,
- * not reimplemented with Framer Motion.
- */
-export function IntelligenceScan() {
-  const { ref, step } = useStagedReveal(heroIntelligence.steps.length, 550);
+interface IntelligenceScanProps {
+  /**
+   * How many checklist items are revealed so far, owned by the caller (AnalysisSequence) rather
+   * than an internal useStagedReveal -- so HealthScoreRing can share the exact same counter and
+   * only draw its ring once this checklist finishes. Defaults to fully-revealed so the checklist
+   * still shows its real content immediately when rendered standalone (tests, or any future
+   * non-sequenced usage).
+   */
+  step?: number;
+}
 
+/** The "Analyzing your finances…" checklist. */
+export function IntelligenceScan({ step = heroIntelligence.steps.length }: IntelligenceScanProps) {
   return (
-    <div
-      ref={ref}
-      className="rounded-2xl border border-white/10 bg-white/5 backdrop-blur-md px-5 py-4 w-full max-w-xs"
-    >
+    <div className="rounded-2xl border border-white/10 bg-white/5 backdrop-blur-md px-5 py-4 w-full max-w-xs">
       <p className="text-xs font-medium text-white/70 mb-3">{heroIntelligence.heading}</p>
       <ul className="space-y-2">
         {heroIntelligence.steps.map((label, i) => {
