@@ -49,12 +49,22 @@ public class TransactionGroupingService {
             idsByMerchant.computeIfAbsent(t.getMerchantId(), k -> new ArrayList<>()).add(t.getId());
         }
 
+        // One query for every merchant name this user could possibly need here, rather than one
+        // per distinct merchant with a review backlog -- the same batch-then-look-up-in-memory
+        // pattern MerchantNormalizationEngine.indexFor uses for the identical reason. A dangling
+        // merchant id (its Merchant row is gone, e.g. discarded via MerchantReviewService) simply
+        // has no entry here, matching findByIdAndUserId's empty-Optional "skip it" behavior.
+        Map<UUID, String> nameById = new java.util.HashMap<>();
+        for (Merchant merchant : merchantRepository.findByUserId(userId)) {
+            nameById.put(merchant.getId(), merchant.getCanonicalName());
+        }
+
         List<MerchantGroup> groups = new ArrayList<>();
         for (var entry : idsByMerchant.entrySet()) {
             if (entry.getValue().size() < MIN_GROUP_SIZE) continue;
-            Merchant merchant = merchantRepository.findByIdAndUserId(entry.getKey(), userId).orElse(null);
-            if (merchant == null) continue;
-            groups.add(new MerchantGroup(entry.getKey(), merchant.getCanonicalName(), entry.getValue()));
+            String merchantName = nameById.get(entry.getKey());
+            if (merchantName == null) continue;
+            groups.add(new MerchantGroup(entry.getKey(), merchantName, entry.getValue()));
         }
 
         groups.sort((a, b) -> b.transactionIds().size() - a.transactionIds().size());

@@ -1,7 +1,11 @@
 package com.finora.imports;
 
 import com.finora.AbstractIntegrationTest;
+import com.finora.dto.ImportDto.ConfirmRequest;
+import com.finora.dto.ImportDto.ConfirmedRow;
+import com.finora.entity.Account;
 import com.finora.entity.User;
+import com.finora.repository.AccountRepository;
 import com.finora.repository.UserRepository;
 import jakarta.persistence.EntityManagerFactory;
 import org.hibernate.SessionFactory;
@@ -10,7 +14,11 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.mock.web.MockMultipartFile;
 
+import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
+import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -54,6 +62,7 @@ class ImportQueryCountIT extends AbstractIntegrationTest {
 
     @Autowired private ImportService importService;
     @Autowired private UserRepository userRepository;
+    @Autowired private AccountRepository accountRepository;
     @Autowired private EntityManagerFactory entityManagerFactory;
 
     /**
@@ -87,6 +96,24 @@ class ImportQueryCountIT extends AbstractIntegrationTest {
      * moves only the statement count. Measured at 0.00, same reasoning as above for the ceiling.
      */
     private static final double MAX_MARGINAL_QUERIES_PER_ROW = 0.5;
+
+    /**
+     * Marginal statements/queries allowed per CONFIRMED row -- {@link #confirmDatabaseWorkDoesNotScaleLinearlyWithStatementSize}'s
+     * ceiling, tracked separately from the staging ceilings above because confirm() does genuine
+     * per-row writes (the transaction insert itself, merchant/category resolution's own writes,
+     * merchant-learning event queueing) that staging never does, so it can never reach staging's
+     * near-zero floor.
+     *
+     * <p>Measured at 4.98 statements/row and 4.48 queries/row after hoisting
+     * {@code CategorizationService.ruleSetFor(userId)} out of the confirm loop (see
+     * {@link #confirmDatabaseWorkDoesNotScaleLinearlyWithStatementSize}'s own doc comment). The
+     * cheapest known regression from here is the same rule-set reload returning, worth +2.00 on
+     * each; same "strictly below measured plus smallest known regression" rule as
+     * {@link #MAX_MARGINAL_STATEMENTS_PER_ROW}, so the ceiling sits below measured+2.00 (6.98/6.48)
+     * with headroom above the measurement itself for run-to-run noise.
+     */
+    private static final double MAX_MARGINAL_CONFIRM_STATEMENTS_PER_ROW = 5.5;
+    private static final double MAX_MARGINAL_CONFIRM_QUERIES_PER_ROW = 5.0;
 
     private static final int SMALL = 40;
     private static final int LARGE = 80;
@@ -173,5 +200,80 @@ class ImportQueryCountIT extends AbstractIntegrationTest {
                 .as("JPQL executions are scaling per row beyond the ceiling -- a repository method "
                         + "is being called inside a row loop.")
                 .isLessThanOrEqualTo(MAX_MARGINAL_QUERIES_PER_ROW);
+    }
+
+    private Account account(UUID userId) {
+        Account account = new Account();
+        account.setUserId(userId);
+        account.setName("Query Count IT Account");
+        account.setAccountType(Account.Type.SAVINGS);
+        account.setBalance(BigDecimal.ZERO);
+        return accountRepository.save(account);
+    }
+
+    /** {@code rows} confirmed rows with {@code rows / 2} distinct descriptions, for the same
+     *  reason {@link #statement} uses distinct descriptions: an identical description on every row
+     *  would be answered from a cache and hide the per-row cost {@code applySideEffectRules} used
+     *  to have. */
+    private ConfirmRequest confirmRequestOf(UUID accountId, int rows) {
+        List<ConfirmedRow> confirmed = new ArrayList<>();
+        for (int i = 0; i < rows; i++) {
+            confirmed.add(new ConfirmedRow(LocalDate.of(2026, 7, (i % 28) + 1),
+                    "MERCHANT " + (i % Math.max(1, rows / 2)) + " STORE",
+                    new BigDecimal(100 + i), "EXPENSE", "Shopping", true, "rule", null, false, null, null));
+        }
+        return new ConfirmRequest(null, confirmed, accountId, null, null, null, null);
+    }
+
+    private Cost costToConfirm(int rows) {
+        User user = user();
+        Account account = account(user.getId());
+        Statistics stats = statistics();
+        stats.setStatisticsEnabled(true);
+        stats.clear();
+
+        importService.confirm(user.getId(), "statement.csv",
+                "dummy content".getBytes(StandardCharsets.UTF_8), confirmRequestOf(account.getId(), rows));
+
+        return new Cost(stats.getPrepareStatementCount(), stats.getQueryExecutionCount());
+    }
+
+    /**
+     * Confirm-time counterpart of {@link #databaseWorkDoesNotScaleLinearlyWithStatementSize}.
+     *
+     * <p>Regression test for the confirm-time sibling of the staging-time bug this file already
+     * guards: {@code ImportService.persistSection} called
+     * {@code CategorizationService.applySideEffectRules(UUID, Transaction)} -- the loading overload
+     * -- once per confirmed row, re-querying {@code category_rules} twice on every call. Fixed by
+     * hoisting {@code CategorizationService.ruleSetFor(userId)} once before the confirm loop and
+     * passing it to the new {@code applySideEffectRules(UUID, Transaction, List)} overload -- see
+     * that method's own doc comment.
+     */
+    @Test
+    void confirmDatabaseWorkDoesNotScaleLinearlyWithStatementSize() {
+        Cost small = costToConfirm(SMALL);
+        Cost large = costToConfirm(LARGE);
+
+        int extraRows = LARGE - SMALL;
+        double marginalStatements = (double) (large.statements() - small.statements()) / extraRows;
+        double marginalQueries = (double) (large.queries() - small.queries()) / extraRows;
+
+        System.out.printf("%n=== Confirm query cost ===%n"
+                        + "  %d rows : %d statements, %d queries%n"
+                        + "  %d rows : %d statements, %d queries%n"
+                        + "  marginal: %.2f statements/row%n"
+                        + "            %.2f queries/row%n%n",
+                SMALL, small.statements(), small.queries(),
+                LARGE, large.statements(), large.queries(),
+                marginalStatements, marginalQueries);
+
+        assertThat(marginalStatements)
+                .as("Confirm database work is scaling with statement size beyond the agreed ceiling "
+                        + "-- category_rules is very likely being reloaded per confirmed row again.")
+                .isLessThanOrEqualTo(MAX_MARGINAL_CONFIRM_STATEMENTS_PER_ROW);
+        assertThat(marginalQueries)
+                .as("Confirm JPQL executions are scaling per row beyond the ceiling -- a repository "
+                        + "method is being called inside the confirm row loop.")
+                .isLessThanOrEqualTo(MAX_MARGINAL_CONFIRM_QUERIES_PER_ROW);
     }
 }

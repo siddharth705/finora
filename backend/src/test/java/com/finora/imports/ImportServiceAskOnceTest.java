@@ -538,7 +538,8 @@ class ImportServiceAskOnceTest {
         ReflectionTestUtils.setField(investments, "id", UUID.randomUUID());
         investments.setUserId(userId);
         investments.setName("Investments");
-        when(categorizationService.applySideEffectRules(eq(userId), any(Transaction.class))).thenReturn(investments);
+        when(categorizationService.applySideEffectRules(eq(userId), any(Transaction.class), any()))
+                .thenReturn(investments);
 
         var row = new ConfirmedRow(LocalDate.of(2026, 7, 10), "SIP MUTUAL FUND DEDUCTION",
                 BigDecimal.valueOf(5000), "EXPENSE", "Shopping", true, "rule", null, false, null, null);

@@ -69,6 +69,19 @@ public class CategorizationService {
     public record Suggestion(String category, String source, UUID merchantId,
                               Transaction.DecisionSource decisionSource, UUID ruleId) {}
 
+    /**
+     * The USER-then-GLOBAL rule set for one user, loaded once -- a thin passthrough to
+     * {@code RuleEngineService.ruleSet}, so a per-row confirm loop (see
+     * {@code ImportService.persistSection}) can hoist it without holding {@code RuleEngineService}
+     * directly. This class is already the categorization facade every import/transaction caller
+     * goes through (see this class's own doc comment); exposing this here keeps that true rather
+     * than leaking a second categorization-adjacent dependency into callers that only need one
+     * value out of it.
+     */
+    public List<CategoryRule> ruleSetFor(UUID userId) {
+        return ruleEngineService.ruleSet(userId);
+    }
+
     /** Rule engine (user rules, then global rules) > learned distribution (real evidence) >
      *  keyword rules > "Other". See docs/rule-engine-relationship-engine-eds.md §4. */
     public Suggestion suggest(UUID userId, String description) {
@@ -331,9 +344,35 @@ public class CategorizationService {
      * its own pattern detection, which is the correct place for that one action type to live.
      */
     public Category applySideEffectRules(UUID userId, Transaction t) {
+        return applySideEffectRules(userId, t, null);
+    }
+
+    /**
+     * Same as {@link #applySideEffectRules(UUID, Transaction)}, against a rule set the caller
+     * already loaded once.
+     *
+     * <p>Exists for {@code ImportService.persistSection}'s per-confirmed-row loop, which used to
+     * call the loading overload once per row: {@code RuleEngineService.evaluateSideEffectRules
+     * (UUID, ...)} re-queries {@code category_rules} (2 statements) on every call, and a user's
+     * rules cannot change partway through confirming one import, so hoisting is equivalent by
+     * construction -- same reasoning, and the same bug, as {@code CategorizationService
+     * .suggestReadOnly}'s rule-set hoist on the staging side (see that method's own doc comment).
+     * {@code RuleEngineService.ruleSet}'s own doc comment records the identical shape of bug found
+     * and fixed in {@code RecurringService.detectForUser}; this was the last remaining un-hoisted
+     * call site of the same pattern.
+     *
+     * <p>A null {@code rules} falls back to the loading overload, which is what
+     * {@link #applySideEffectRules(UUID, Transaction)} passes -- correct for
+     * {@code TransactionService.create()}'s single-transaction call, wrong for a real per-row
+     * confirm loop.
+     */
+    public Category applySideEffectRules(UUID userId, Transaction t, List<CategoryRule> rules) {
         Merchant merchant = merchantNormalizationEngine.resolve(userId, t.getDescription());
-        List<RuleEngineService.RuleMatch> matches = ruleEngineService.evaluateSideEffectRules(
-                userId, t.getDescription(), t.getAmount(), merchant.getCanonicalName(), null);
+        List<RuleEngineService.RuleMatch> matches = rules != null
+                ? ruleEngineService.evaluateSideEffectRules(rules, t.getDescription(), t.getAmount(),
+                        merchant.getCanonicalName(), null)
+                : ruleEngineService.evaluateSideEffectRules(
+                        userId, t.getDescription(), t.getAmount(), merchant.getCanonicalName(), null);
 
         // Non-null only when a MARK_INVESTMENT rule actually changed the category -- callers
         // (TransactionService.create(), CsvImportService.confirm()) use this to keep their own
