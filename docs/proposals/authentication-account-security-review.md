@@ -629,20 +629,31 @@ match.
   has an account" (any non-`CONTINUE` value) from "it doesn't"
   (`CONTINUE`), and for an existing account, which method it uses.
   §2.2's own text already named this as a mitigation, not a fix.
-- Not designed yet: a concrete stricter shape needs to be chosen and
-  confirmed before implementation starts — e.g. (a) always return the
-  same generic response and require typing a password/trying OAuth
-  regardless of whether the account exists, closer to how many products
-  avoid a pre-auth identify step entirely; (b) keep the identify step but
-  drop the OAuth-vs-password distinction from the response, forcing the
-  client to always show all options; (c) something else. Each option has
-  a real UX cost (this is what Phase 3's whole "route straight to the
-  right form" design was built to avoid), so the tradeoff needs to be
-  weighed explicitly, not assumed, before touching code.
-- Touches: `AuthService.identify`/`IdentifyResponse` (backend), `AuthEntry`
-  + `Login` (web), `AuthEntryScreen` + `LoginScreen` (mobile) — all three
-  already shipped once for the current shape, so this is a revision, not
-  a fresh build.
+- **Design resolved 2026-08-23**: option (b) — keep the identify step's
+  exists-vs-doesn't-exist routing (Phase 3's Login-vs-Register win stays:
+  `PASSWORD`/`GOOGLE`/`APPLE` all collapse into a single `EXISTS` value,
+  `CONTINUE` stays as-is), but drop which method an existing account uses
+  from the response. `nextAction` becomes `"EXISTS" | "CONTINUE"` only.
+  `Login.tsx`/`LoginScreen`'s OAuth hint (hide the password field for a
+  known GOOGLE/APPLE account) goes away for a prefilled-from-AuthEntry
+  visit specifically — it always shows the password field AND the
+  Google/Apple buttons together for an `EXISTS` identifier, same as a
+  direct visit to `/login` today already does. §2.4's "move the
+  OAuth-user rejection earlier" UX win is given up deliberately as the
+  cost of closing this leak; the backend's own `signInMethod` refusal on
+  an actual password-login attempt remains the real, unaffected guarantee
+  either way.
+  Options (a) (fully generic, no identify step at all) and (c) were not
+  chosen — (a) would give up the CONTINUE-vs-EXISTS routing too, a bigger
+  UX regression than this decision called for.
+- Touches: `AuthService.identify`/`IdentifyResponse` (backend, `nextAction`
+  values narrow from 4 to 2), `AuthEntry` + `Login` (web, drop the
+  `method` field from the router-state payload and the OAuth-hint branch
+  entirely), `AuthEntryScreen` + `LoginScreen` (mobile, same). All three
+  already shipped once for the current 4-value shape, so this is a
+  revision, not a fresh build — existing tests asserting on `GOOGLE`/
+  `APPLE`/`PASSWORD` values and the OAuth-hint UI will need updating, not
+  just new tests added.
 
 **Phase 5 — Deferred: future providers, recovery**
 Truecaller, Passkeys, the `StepUpVerifier` structural refactor (§2.6), and
