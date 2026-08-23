@@ -603,7 +603,8 @@ public class ImportService {
                     null, // this section's ConfirmRequest doesn't carry its own sessionId -- the session is claimed once, above, for the whole multi-account request
                     sectionConfirm.rows(), sectionConfirm.existingAccountId(), sectionConfirm.newAccount(),
                     sectionConfirm.statementOpeningBalance(), sectionConfirm.statementClosingBalance(),
-                    null); // a multi-section PDF was already unlocked once to be staged; no password to carry here
+                    null, // a multi-section PDF was already unlocked once to be staged; no password to carry here
+                    sectionConfirm.statementPeriodStart(), sectionConfirm.statementPeriodEnd());
             persisted.add(persistSection(userId, session.getFileName(), statementContentService.read(session), perAccountRequest, i,
                     session.getLayoutMetadataJson(), session.getLayoutFingerprint(), session.getActivatedCapabilitiesJson(),
                 // A multi-section import is CSV/PDF only -- a Gmail receipt is never
@@ -819,6 +820,12 @@ public class ImportService {
         int skipped = 0;
         Map<String, Integer> categoryTally = new LinkedHashMap<>();
         List<Transaction> toInsert = new ArrayList<>();
+        // Loaded once for the whole confirmed statement, not once per row. The per-row overload
+        // (CategorizationService.applySideEffectRules(UUID, Transaction)) re-queried category_rules
+        // twice for every confirmed row -- same pattern, same fix, as suggestReadOnly's rule-set
+        // hoist on the staging side (see that method's own doc comment); a user's rules cannot
+        // change partway through confirming one import, so hoisting is equivalent by construction.
+        List<com.finora.entity.CategoryRule> confirmRules = categorizationService.ruleSetFor(userId);
         // Merchant-learning confirmations this import earned, queued after savedImport below so
         // each one can be attributed to the statement it came from.
         List<PendingLearning> pendingLearning = new ArrayList<>();
@@ -878,7 +885,7 @@ public class ImportService {
                     ? Transaction.Source.GMAIL_IMPORT : Transaction.Source.CSV_IMPORT);
             t.setReferenceNumber(row.referenceNumber());
             t.setBalanceAfter(row.balanceAfter());
-            t.setNeedsCategoryReview(isUnresolvedGuess);
+            t.setNeedsCategoryReview(categorizationService.needsCategoryReview(userId, isUnresolvedGuess, row.categoryConfidence()));
             // The user's answer on the duplicate review screen, recorded on the row itself so
             // reconciliation cannot later overrule it. Only meaningful when the engine actually
             // flagged the row -- a client asserting "not a duplicate" about a row nothing
@@ -893,11 +900,12 @@ public class ImportService {
             // staging/review contract, not introduced by this change).
             t.setDecisionSource(CategorizationService.decisionSourceFor(row.categorySource()));
             t.setDecisionRuleId(row.ruleId());
+            t.setDecisionConfidence(row.categoryConfidence());
             // MARK_TRANSFER/MARK_INVESTMENT/ADD_TAG rules -- see
             // CategorizationService.applySideEffectRules's doc comment. A MARK_INVESTMENT match
             // returns the new Category -- reassigning `category` keeps the tally below (and any
             // other use of `category` in this iteration) in sync with what actually got persisted.
-            Category sideEffectCategory = categorizationService.applySideEffectRules(userId, t);
+            Category sideEffectCategory = categorizationService.applySideEffectRules(userId, t, confirmRules);
             if (sideEffectCategory != null) {
                 category = sideEffectCategory;
                 // Bug fix: t.setCategoryId(category.getId()) above (before this override was
@@ -974,11 +982,21 @@ public class ImportService {
             statementImport.setStoredSize(stored.storedSize());
             statementImport.setCompressionType(stored.compressionType());
             statementImport.setOriginalMimeType(stored.mimeType());
+            statementImport.setEncryptionKeyId(stored.encryptionKeyId());
         } else {
             statementImport.setFileContent(fileContent);
         }
-        statementImport.setStatementPeriodStart(minDate);
-        statementImport.setStatementPeriodEnd(maxDate);
+        // Bug fix: this used to be minDate/maxDate unconditionally -- the confirmed rows' own date
+        // range, which is only ever a lower bound on the statement's true period whenever a cycle
+        // has no activity near its own printed boundary dates. PdfPreviewGenerator/StatementValidator
+        // already compute and surface the printed period at staging time (see their own
+        // buildDetectedAccountInfo), and ConfirmRequest now echoes it back -- same precedence as
+        // those two methods: prefer the printed period, fall back to the transaction range only when
+        // nothing was printed (or an older client didn't send it).
+        statementImport.setStatementPeriodStart(
+                request.statementPeriodStart() != null ? request.statementPeriodStart() : minDate);
+        statementImport.setStatementPeriodEnd(
+                request.statementPeriodEnd() != null ? request.statementPeriodEnd() : maxDate);
         statementImport.setOpeningBalance(request.statementOpeningBalance());
         statementImport.setClosingBalance(request.statementClosingBalance());
         statementImport.setTransactionsImported(toInsert.size());
@@ -1250,7 +1268,13 @@ public class ImportService {
                 section.categoryTally(), warnings,
                 accountSnapshot, section.totalCredits(), section.totalDebits(),
                 section.statementOpeningBalance(), section.statementClosingBalance(),
-                section.minDate(), section.maxDate(),
+                // The already-resolved value on the just-saved row, not section.minDate()/maxDate()
+                // -- this is the immediate post-confirm summary the "Statement period: ..." line
+                // (Import.tsx) reads, and it must agree with what Statement History shows later, or
+                // a printed period narrower/wider than the confirmed rows' own range would appear
+                // correct here and wrong there (or vice versa) depending purely on which screen the
+                // user happened to look at. See persistSection's own comment for the precedence.
+                section.savedImport().getStatementPeriodStart(), section.savedImport().getStatementPeriodEnd(),
                 System.currentTimeMillis() - section.startedAtMs(),
                 "CSV");
     }

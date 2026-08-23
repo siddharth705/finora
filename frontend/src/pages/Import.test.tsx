@@ -338,6 +338,57 @@ describe('Import — total amount due on the review screen', () => {
   });
 });
 
+describe('Import — detected merchant on the review screen', () => {
+  beforeEach(() => {
+    vi.mocked(categoriesApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(accountsApi.list).mockReset().mockResolvedValue([]);
+  });
+
+  it('shows the detected merchant name under the raw description', async () => {
+    vi.mocked(importApi.stagePdf).mockReset().mockResolvedValue({
+      sessionId: 'session-1', multiAccount: false, sections: null,
+      staging: {
+        rows: [{
+          date: '2026-07-10', description: 'UPI-SWIGGY-12345', amount: 350, type: 'EXPENSE',
+          suggestedCategory: 'Food', categorySource: 'learned', ruleId: null, likelyDuplicate: false,
+          referenceNumber: null, balanceAfter: null, duplicateMatch: null,
+          merchant: 'SWIGGY', merchantConfidence: 1.0,
+        }],
+        totalParsed: 1, flaggedDuplicates: 0, unparseableRows: [], detectedAccount,
+      },
+    } as never);
+    const user = userEvent.setup();
+    renderImport();
+
+    await pickAndUploadPdf(user);
+
+    expect(await screen.findByText('UPI-SWIGGY-12345')).toBeInTheDocument();
+    expect(screen.getByText('Detected: SWIGGY')).toBeInTheDocument();
+  });
+
+  it('shows nothing extra when no merchant was resolved', async () => {
+    vi.mocked(importApi.stagePdf).mockReset().mockResolvedValue({
+      sessionId: 'session-1', multiAccount: false, sections: null,
+      staging: {
+        rows: [{
+          date: '2026-07-10', description: 'SOME BRAND NEW SHOP', amount: 350, type: 'EXPENSE',
+          suggestedCategory: 'Other', categorySource: 'default', ruleId: null, likelyDuplicate: false,
+          referenceNumber: null, balanceAfter: null, duplicateMatch: null,
+          merchant: null, merchantConfidence: null,
+        }],
+        totalParsed: 1, flaggedDuplicates: 0, unparseableRows: [], detectedAccount,
+      },
+    } as never);
+    const user = userEvent.setup();
+    renderImport();
+
+    await pickAndUploadPdf(user);
+
+    expect(await screen.findByText('SOME BRAND NEW SHOP')).toBeInTheDocument();
+    expect(screen.queryByText(/^Detected:/)).not.toBeInTheDocument();
+  });
+});
+
 /**
  * Premium Import Reliability v1, Sprint 1 item 1: the failure UX contract. Finora's own curated
  * copy, not the server's `message`, is what a user reads for a code the contract owns -- see
@@ -1240,6 +1291,36 @@ describe('Import — queued imports', () => {
     await waitFor(() => expect(screen.queryByTestId('import-progress')).not.toBeInTheDocument());
     expect(screen.getByText(/detected a/i)).toBeInTheDocument();
     expect(screen.queryByTestId('statement-file-input')).not.toBeInTheDocument();
+  });
+
+  /**
+   * Bug fix, caught by a user report: a queued job's poller reaches COMPLETED and calls
+   * getSession for the session it named -- but if that same session was already confirmed
+   * through another path in the meantime (e.g. a duplicate confirm, or the user resuming it
+   * from a second tab), the GET now 400s with IMPORT_SESSION_ALREADY_CONFIRMED. The bare catch
+   * here used to show "Your statement was imported, but the review could not be loaded. Open it
+   * from your unfinished imports" for every failure, including this one -- actively wrong twice
+   * over: nothing is unloaded (the import already succeeded and is confirmed), and confirmed
+   * sessions never appear in the unfinished-imports list, so the suggested next step is a dead
+   * end. resumeSession (a few lines below) already distinguishes this exact error by code; this
+   * mirrors that handling for the job-completion arrival path.
+   */
+  it('says the import was already reviewed, not a generic load failure, when a queued job\'s session was confirmed elsewhere first', async () => {
+    vi.mocked(importJobsApi.progress).mockResolvedValue(queuedJob({
+      status: 'COMPLETED', rowsTotal: 2, rowsProcessed: 2, importSessionId: 'session-already-confirmed',
+    }));
+    vi.mocked(importApi.getSession).mockRejectedValue({
+      response: { data: { errorCode: IMPORT_SESSION_ALREADY_CONFIRMED, message: 'This import has already been reviewed and confirmed.' } },
+    });
+    const user = userEvent.setup();
+    renderImport();
+    await waitFor(() => expect(importJobsApi.availability).toHaveBeenCalled());
+
+    await user.upload(screen.getByTestId('statement-file-input'), csvFile());
+
+    expect(await screen.findByText(/already been reviewed and confirmed/i)).toBeInTheDocument();
+    expect(screen.queryByText(/could not be loaded/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/unfinished imports/i)).not.toBeInTheDocument();
   });
 
   it('stops an import the user changed their mind about', async () => {

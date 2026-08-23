@@ -36,6 +36,7 @@ class AuthServiceLoginTest {
     private PlatformSettingsService platformSettingsService;
     private com.finora.repository.AccountReactivationTokenRepository reactivationTokenRepository;
     private AuditService auditService;
+    private com.finora.config.RequestMetadata requestMetadata;
     private AuthService authService;
     private final UUID userId = UUID.randomUUID();
 
@@ -62,6 +63,11 @@ class AuthServiceLoginTest {
 
         reactivationTokenRepository = mock(com.finora.repository.AccountReactivationTokenRepository.class);
         auditService = mock(AuditService.class);
+        requestMetadata = mock(com.finora.config.RequestMetadata.class);
+        // Mirrors the real RequestMetadata.addTo's mutate-and-return contract -- without this,
+        // Mockito's unstubbed default returns null and every login-audit metadata map silently
+        // vanishes before reaching auditService.record(), even though production code built one.
+        when(requestMetadata.addTo(any())).thenAnswer(inv -> inv.getArgument(0));
         authService = new AuthService(
                 userRepository, mock(CategoryRepository.class), mock(PasswordResetTokenRepository.class),
                 reactivationTokenRepository,
@@ -70,7 +76,7 @@ class AuthServiceLoginTest {
                 auditService, refreshTokenService, mock(EmailProvider.class),
                 new EmailProperties(), mock(PhoneVerificationProvider.class), platformSettingsService,
                 mock(PasswordHistoryService.class), new IdentityLookup(userRepository),
-                mock(com.finora.config.RequestMetadata.class),
+                requestMetadata,
                 mock(com.finora.service.SubscriptionService.class),
                 mock(com.finora.service.ReferralService.class),
                 // SEC-07: same-thread executor -- runs the dispatched email/audit work
@@ -109,6 +115,26 @@ class AuthServiceLoginTest {
         verify(authenticationManager).authenticate(argThat(token ->
                 u.getId().toString().equals(token.getPrincipal())));
         verify(userRepository, never()).findByPhoneNumberAndAccountScope(anyString(), anyString());
+    }
+
+    /**
+     * Bug fix: resolveEmailForLogin's email branch returned the identifier completely unchanged
+     * -- unlike IdentityLookup.byEmail, which already trims -- so an email pasted with stray
+     * leading/trailing whitespace (a real, ordinary way to end up with one) silently failed to
+     * resolve to the account it plainly names, indistinguishable from a genuinely unregistered
+     * address. Mirrors login_withEmailIdentifier_authenticatesDirectlyWithoutPhoneLookup exactly,
+     * with padding added around the identifier.
+     */
+    @Test
+    void login_withWhitespacePaddedEmailIdentifier_stillResolvesToTheAccount() {
+        User u = user("jane@example.com", "+919876500001");
+        when(userRepository.findByEmailIgnoreCaseAndAccountScope("jane@example.com", "USER")).thenReturn(Optional.of(u));
+        stubSuccessfulAuthentication();
+
+        authService.login(new LoginRequest("  jane@example.com  ", "Password123", "USER"));
+
+        verify(authenticationManager).authenticate(argThat(token ->
+                u.getId().toString().equals(token.getPrincipal())));
     }
 
     /**
@@ -186,6 +212,47 @@ class AuthServiceLoginTest {
             return;
         }
         throw new AssertionError("Expected login() to throw for an unknown identifier");
+    }
+
+    /** Phase 2 (audit/observability hardening): a wrong password against a real account should
+     *  leave an auditable trail, the same way a successful login already does -- today only the
+     *  lockout counter moves, with no queryable event backing it. */
+    @Test
+    void login_withBadPassword_forKnownAccount_recordsLoginFailedAudit() {
+        User u = user("jane@example.com", "+919876500001");
+        when(userRepository.findByEmailIgnoreCaseAndAccountScope("jane@example.com", "USER")).thenReturn(Optional.of(u));
+        when(authenticationManager.authenticate(any())).thenThrow(new BadCredentialsException("Bad credentials"));
+
+        try {
+            authService.login(new LoginRequest("jane@example.com", "wrong", "USER"));
+        } catch (Exception ignored) { /* expected */ }
+
+        verify(auditService).record(eq(userId), eq("LOGIN_FAILED"), eq("User"), eq(userId), any());
+    }
+
+    /**
+     * Timing-oracle fix (self-review finding, acted on 2026-08-23): an identifier that matches no
+     * account still has no user id to attach a lockout counter to (registerFailedLogin stays
+     * null-user-guarded, unchanged), but skipping the LOGIN_FAILED audit write entirely made this
+     * branch measurably cheaper than the known-user branches just above it -- one fewer DB
+     * round-trip, on an endpoint whose entire BH-014 design goal is that a locked/wrong-password/
+     * unknown-identifier response must cost the same. Writing a userId-less LOGIN_FAILED row (the
+     * entity supports it -- AuditLog.userId has no NOT NULL constraint, same as the BANK_CREATED
+     * null-entityId precedent) closes that gap and is a genuine side benefit for admins watching
+     * the global audit feed for a credential-stuffing scan, not just parity theater.
+     */
+    @Test
+    void login_withUnknownIdentifier_stillRecordsLoginFailedAudit_forTimingParityWithKnownAccounts() {
+        when(userRepository.findByEmailIgnoreCaseAndAccountScope("nobody@example.com", "USER")).thenReturn(Optional.empty());
+        when(authenticationManager.authenticate(any())).thenThrow(new BadCredentialsException("Bad credentials"));
+
+        try {
+            authService.login(new LoginRequest("nobody@example.com", "whatever", "USER"));
+        } catch (Exception ignored) { /* expected */ }
+
+        var captor = org.mockito.ArgumentCaptor.forClass(java.util.Map.class);
+        verify(auditService).record(isNull(), eq("LOGIN_FAILED"), eq("User"), isNull(), captor.capture());
+        assertThat(captor.getValue()).containsEntry("reason", "unknown_identifier");
     }
 
     /**
@@ -468,6 +535,25 @@ class AuthServiceLoginTest {
         } catch (Exception ignored) { /* expected */ }
         assertThat(u.getLockedUntil()).isNotNull();
         assertThat(u.getLockedUntil()).isAfter(java.time.Instant.now().plusSeconds(29 * 60));
+    }
+
+    /** A locked account being retried is also a failed login attempt from the audit trail's
+     *  point of view (BH-014 makes it answer identically to a wrong password), and should be
+     *  distinguishable from a plain bad-credentials failure once someone is actually looking at
+     *  the trail -- hence the "reason" tag, which never reaches the caller. */
+    @Test
+    void login_forLockedAccount_recordsLoginFailedAuditWithLockedReason() {
+        User u = user("locked@example.com", "+919876500088"); // synthetic-ok: same fake sequential pattern as every other number in this file
+        u.setLockedUntil(java.time.Instant.now().plusSeconds(600));
+        when(userRepository.findByEmailIgnoreCaseAndAccountScope("locked@example.com", "USER")).thenReturn(Optional.of(u));
+
+        try {
+            authService.login(new LoginRequest("locked@example.com", "whatever", "USER"));
+        } catch (Exception ignored) { /* expected */ }
+
+        var captor = org.mockito.ArgumentCaptor.forClass(java.util.Map.class);
+        verify(auditService).record(eq(u.getId()), eq("LOGIN_FAILED"), eq("User"), eq(u.getId()), captor.capture());
+        assertThat(captor.getValue()).containsEntry("reason", "locked");
     }
 
     /**

@@ -334,6 +334,8 @@ app:
     password-change-session-expiry-minutes: ${PASSWORD_CHANGE_SESSION_EXPIRY_MINUTES:15}
     # Same property, same reasoning, for the Change Phone Number flow (PhoneChangeSession).
     phone-change-session-expiry-minutes: ${PHONE_CHANGE_SESSION_EXPIRY_MINUTES:15}
+    # Same property, same reasoning, for the Change Email flow (EmailChangeSession).
+    email-change-session-expiry-minutes: ${EMAIL_CHANGE_SESSION_EXPIRY_MINUTES:15}
     # Bug 14 (docs/quality/bug-reports/BUG_REVIEW_REPORT.md). Same shape as
     # app.import.session-cleanup below -- RefreshTokenService.scheduledCleanup, keyed on
     # refresh_tokens.expiresAt. Hourly by default: refresh tokens live far longer than import
@@ -384,6 +386,9 @@ app:
     forgot-password:
       max: ${RATE_LIMIT_FORGOT_PASSWORD_MAX:5}
       window-seconds: ${RATE_LIMIT_FORGOT_PASSWORD_WINDOW_SECONDS:300}
+    identify:
+      max: ${RATE_LIMIT_IDENTIFY_MAX:10}
+      window-seconds: ${RATE_LIMIT_IDENTIFY_WINDOW_SECONDS:300}
     import-stage:
       max: ${RATE_LIMIT_IMPORT_STAGE_MAX:10}
       window-seconds: ${RATE_LIMIT_IMPORT_STAGE_WINDOW_SECONDS:600}
@@ -396,6 +401,11 @@ app:
     phone-change:
       max: ${RATE_LIMIT_PHONE_CHANGE_MAX:15}
       window-seconds: ${RATE_LIMIT_PHONE_CHANGE_WINDOW_SECONDS:600}
+    # Change Email. Same ceiling as password-change, and the same reason: start() here does a
+    # real GoogleReauthVerifier check (bcrypt, or a fresh Google/Apple token) on every call.
+    email-change:
+      max: ${RATE_LIMIT_EMAIL_CHANGE_MAX:15}
+      window-seconds: ${RATE_LIMIT_EMAIL_CHANGE_WINDOW_SECONDS:600}
     reset-password:
       max: ${RATE_LIMIT_RESET_PASSWORD_MAX:10}
       window-seconds: ${RATE_LIMIT_RESET_PASSWORD_WINDOW_SECONDS:600}
@@ -408,6 +418,14 @@ app:
     data-export:
       max: ${RATE_LIMIT_DATA_EXPORT_MAX:5}
       window-seconds: ${RATE_LIMIT_DATA_EXPORT_WINDOW_SECONDS:86400}
+    # Own ceiling, not shared with password-change/deactivate above: the real per-call cost here
+    # is AccountPurgeSweepService's full synchronous purge across every user table (deletion is
+    # instant, not a delayed sweep -- see UserAccountLifecycleService.requestDeletion), larger than
+    # a single bcrypt comparison. 5/hour leaves room for a user re-confirming after reading the
+    # irreversible-action warning without being a meaningful abuse budget.
+    delete-account:
+      max: ${RATE_LIMIT_DELETE_ACCOUNT_MAX:5}
+      window-seconds: ${RATE_LIMIT_DELETE_ACCOUNT_WINDOW_SECONDS:3600}
     # SEC-03 (docs/quality/bug-reports/2026-08-19-security-review-findings.md). Same ceiling class
     # as reset-password/reactivate above: an unguessable, short-TTL, single-use challenge token
     # already gates reaching this endpoint, so this bounds a token holder retrying in a loop, not
@@ -602,6 +620,19 @@ app:
         # gates a single user re-clicking a button, not the whole tick's cost across every mailbox.
         # See GmailManualSyncService's own doc comment for why it's a separate value.
         manual-sync-cooldown-ms: ${GMAIL_MANUAL_SYNC_COOLDOWN_MS:60000}
+
+      # Hand-written P2P/payment-relay parsers (PhonePe, CRED, Paytm) -- unlike merchant_templates,
+      # a hand-written MerchantEmailParser.canParse has no per-row enabled column to gate it, so
+      # each one gates on its own property here instead, off by default. See PhonePeEmailParser's
+      # own class doc for why "verified against real data" is not the same thing as "safe to run
+      # unconditionally the moment this deploys".
+      parsers:
+        phonepe:
+          enabled: ${GMAIL_PARSER_PHONEPE_ENABLED:false}
+        cred:
+          enabled: ${GMAIL_PARSER_CRED_ENABLED:false}
+        paytm:
+          enabled: ${GMAIL_PARSER_PAYTM_ENABLED:false}
 
 # Reversible encryption at rest for third-party credentials Finora must read back -- OAuth refresh
 # tokens first (ADR-007). NOT for passwords or Finora's own session tokens, which are hashed via

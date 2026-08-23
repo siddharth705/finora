@@ -47,10 +47,22 @@ public class MerchantEmailSanitizer {
             .and(Sanitizers.TABLES)
             .and(Sanitizers.FORMATTING);
 
-    /** Collapses runs of whitespace left behind once tags are stripped, so "Total<td>₹1,299</td>"
-     *  reads as "Total ₹1,299" rather than "Total₹1,299" or a wall of blank lines. */
+    /**
+     * Collapses runs of whitespace left behind once tags are stripped, so "Total&lt;td&gt;₹1,299"
+     * reads as "Total ₹1,299" rather than "Total₹1,299" or a wall of blank lines.
+     *
+     * <p>Also collapses U+00A0 (non-breaking space) into the same run: real HTML email templates
+     * commonly use {@code &nbsp;} for layout spacing, and the sanitizer decodes that entity to a
+     * literal U+00A0 character. Neither Java's {@code \s} regex class nor a literal {@code " "} in
+     * a parser's own pattern matches U+00A0, so an un-normalized nbsp would silently downgrade an
+     * otherwise-well-formed receipt to MALFORMED — verified against the real sanitizer dependency
+     * during a code review of the first two parsers whose text this feeds. Normalizing it once,
+     * here, means every parser in this package sees a plain ASCII space between words regardless of
+     * which one the source template used, rather than each parser's own regex needing to account
+     * for both forms.
+     */
     private static final Pattern TAG = Pattern.compile("<[^>]+>");
-    private static final Pattern WHITESPACE_RUN = Pattern.compile("[ \\t\\x0B\\f\\r]+");
+    private static final Pattern WHITESPACE_RUN = Pattern.compile("[ \\t\\x0B\\f\\r\\u00A0]+");
     private static final Pattern BLANK_LINE_RUN = Pattern.compile("\\n{2,}");
 
     /**

@@ -3,6 +3,10 @@ package com.finora.dto;
 import com.finora.accounts.AccountDto;
 import com.finora.imports.ImportReliabilityStatus;
 import com.finora.imports.RowKind;
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Size;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -80,8 +84,44 @@ public class ImportDto {
              * rather than adding a second one — see {@code GmailStagingBridge} for the exact
              * threshold and why a Gmail row below it also gets {@code categorySource = "default"}.
              */
-            Double confidence
+            Double confidence,
+            /**
+             * The canonical merchant name {@link com.finora.service.MerchantNormalizationEngine#resolveReadOnly}
+             * found for this row's description, or null when no existing merchant matched. Read-only
+             * resolution — staging never creates a Merchant/MerchantAlias row (that still only happens at
+             * confirm time; see resolveReadOnly's own doc comment for why). Never guessed: a raw description
+             * that resolves to no existing merchant leaves this null, it does not fall back to the raw text.
+             */
+            String merchant,
+            /**
+             * 1.0 when {@code merchant} was resolved, null otherwise. Deliberately not a richer score in
+             * this phase — see docs/superpowers/plans/2026-08-23-transaction-intelligence-phase-a.md's
+             * Global Constraints: a real confidence model is later work, not this one.
+             */
+            Double merchantConfidence,
+            /**
+             * The category decision's confidence percentage (0-100), from
+             * {@link com.finora.service.CategorizationService.Suggestion#confidence()} -- NOT the
+             * same field as {@code confidence} above (that one is Gmail-receipt extraction
+             * reliability) or {@code merchantConfidence} (merchant-identity resolution). Null when
+             * the category came directly from the source file ({@code categorySource == "file"}),
+             * which is a fact, not a guess.
+             */
+            Integer categoryConfidence
     ) {
+        /** Pre-categoryConfidence arity (Transaction Intelligence Phase B). Kept so every existing
+         *  construction of this 15-component shape -- production and test -- keeps compiling
+         *  unchanged. Defaults categoryConfidence to null. */
+        public StagedRow(LocalDate date, String description, BigDecimal amount, String type,
+                          String suggestedCategory, String categorySource, UUID ruleId,
+                          boolean likelyDuplicate, String referenceNumber, BigDecimal balanceAfter,
+                          DuplicateMatch duplicateMatch, RowKind kind, Double confidence,
+                          String merchant, Double merchantConfidence) {
+            this(date, description, amount, type, suggestedCategory, categorySource, ruleId,
+                    likelyDuplicate, referenceNumber, balanceAfter, duplicateMatch, kind, confidence,
+                    merchant, merchantConfidence, null);
+        }
+
         /**
          * The shape every caller used before WI5 added {@code duplicateMatch}.
          *
@@ -100,7 +140,7 @@ public class ImportDto {
                           DuplicateMatch duplicateMatch) {
             this(date, description, amount, type, suggestedCategory, categorySource, ruleId,
                     likelyDuplicate, referenceNumber, balanceAfter, duplicateMatch, RowKind.TRANSACTION,
-                    null);
+                    null, null, null, null);
         }
 
         /** The shape every caller used before {@code confidence} was added (C5-B). Defaults null --
@@ -110,7 +150,22 @@ public class ImportDto {
                           boolean likelyDuplicate, String referenceNumber, BigDecimal balanceAfter,
                           DuplicateMatch duplicateMatch, RowKind kind) {
             this(date, description, amount, type, suggestedCategory, categorySource, ruleId,
-                    likelyDuplicate, referenceNumber, balanceAfter, duplicateMatch, kind, null);
+                    likelyDuplicate, referenceNumber, balanceAfter, duplicateMatch, kind, null, null, null, null);
+        }
+
+        /**
+         * The shape every caller used before {@code merchant}/{@code merchantConfidence} were added
+         * (Transaction Intelligence Phase A). {@code GmailStagingBridge} and Gmail-review test fixtures
+         * construct a {@code StagedRow} directly with an explicit {@code confidence} but no merchant
+         * fields -- this keeps them compiling unchanged, defaulting both new fields to null, which is
+         * correct: staging-time merchant resolution never ran for these callers before this phase either.
+         */
+        public StagedRow(LocalDate date, String description, BigDecimal amount, String type,
+                          String suggestedCategory, String categorySource, UUID ruleId,
+                          boolean likelyDuplicate, String referenceNumber, BigDecimal balanceAfter,
+                          DuplicateMatch duplicateMatch, RowKind kind, Double confidence) {
+            this(date, description, amount, type, suggestedCategory, categorySource, ruleId,
+                    likelyDuplicate, referenceNumber, balanceAfter, duplicateMatch, kind, confidence, null, null, null);
         }
 
         /**
@@ -124,7 +179,7 @@ public class ImportDto {
                           String suggestedCategory, String categorySource, UUID ruleId,
                           boolean likelyDuplicate, String referenceNumber, BigDecimal balanceAfter) {
             this(date, description, amount, type, suggestedCategory, categorySource, ruleId,
-                    likelyDuplicate, referenceNumber, balanceAfter, null, RowKind.TRANSACTION);
+                    likelyDuplicate, referenceNumber, balanceAfter, null, RowKind.TRANSACTION, null, null, null, null);
         }
     }
 
@@ -380,16 +435,43 @@ public class ImportDto {
 
     /** One account's worth of reviewed rows within a {@link MultiAccountConfirmRequest} --
      *  structurally identical to {@link ConfirmRequest} minus the sessionId (shared once at the
-     *  top level, not repeated per section). */
+     *  top level, not repeated per section).
+     *
+     *  Security fix: {@code rows} had no Bean Validation, and neither controller method that
+     *  binds a {@code MultiAccountConfirmRequest} applied {@code @Valid} -- a null {@code rows}
+     *  list threw a raw NullPointerException (unhandled 500) at
+     *  {@code ImportService.confirmMultiSection}'s {@code sectionConfirm.rows().size()}, instead
+     *  of a clean 400. {@code @Valid} on the field cascades into {@code ConfirmedRow}/
+     *  {@code NewAccountRequest}'s own new constraints below. */
     public record SectionConfirm(
-            List<ConfirmedRow> rows, UUID existingAccountId, NewAccountRequest newAccount,
-            BigDecimal statementOpeningBalance, BigDecimal statementClosingBalance
-    ) {}
+            @NotNull(message = "rows is required") List<@Valid ConfirmedRow> rows,
+            UUID existingAccountId, @Valid NewAccountRequest newAccount,
+            BigDecimal statementOpeningBalance, BigDecimal statementClosingBalance,
+            // Same round-trip, and same bug fix, as ConfirmRequest's own two trailing fields --
+            // see that record's doc comment.
+            LocalDate statementPeriodStart, LocalDate statementPeriodEnd
+    ) {
+        /** Pre-existing arity -- see ConfirmRequest's own legacy constructor for why. */
+        public SectionConfirm(List<ConfirmedRow> rows, UUID existingAccountId, NewAccountRequest newAccount,
+                               BigDecimal statementOpeningBalance, BigDecimal statementClosingBalance) {
+            this(rows, existingAccountId, newAccount, statementOpeningBalance, statementClosingBalance, null, null);
+        }
+    }
 
     /** Confirms every section of a multi-account PDF staging session together -- see
      *  ImportService.confirmMultiSection(), which loops calling the existing single-account
-     *  confirm() once per section rather than duplicating that logic here. */
-    public record MultiAccountConfirmRequest(UUID sessionId, List<SectionConfirm> sections) {}
+     *  confirm() once per section rather than duplicating that logic here.
+     *
+     *  Security fix: same NPE-to-500 gap as {@link SectionConfirm#rows}, one level up -- a null
+     *  {@code sections} list threw at {@code confirmMultiSection}'s
+     *  {@code request.sections().size()} comparison against the staged sections. {@code sessionId}
+     *  keeps the message {@code confirmMultiSection}'s own manual null-check already used, so a
+     *  client sees the identical 400 either way -- it now just fires at the HTTP boundary instead
+     *  of one line into the service. */
+    public record MultiAccountConfirmRequest(
+            @NotNull(message = "sessionId is required") UUID sessionId,
+            @NotNull(message = "sections is required") List<@Valid SectionConfirm> sections
+    ) {}
 
     public record MultiAccountConfirmResponse(List<ConfirmResponse> perAccount) {}
 
@@ -468,13 +550,46 @@ public class ImportDto {
      *   no password to begin with, or already unlocked the document during staging and never touch
      *   the raw bytes again at confirm time. Null for a client that doesn't send it, which is every
      *   caller except a reimport of a protected PDF.
+     *
+     * <p>Security fix: {@code rows} had no Bean Validation, and none of the three controller
+     * methods that bind a {@code ConfirmRequest} (csv/confirm, reimport/confirm, and
+     * confirmMultiSection's internal per-section reuse) applied {@code @Valid} -- a null
+     * {@code rows} list threw a raw NullPointerException (unhandled 500) at
+     * {@code ConfirmedRowIntegrity.requireSameRows}'s {@code confirmed.size()}, instead of a clean
+     * 400. {@code sessionId} is deliberately NOT annotated here despite being required for
+     * csv/confirm: {@code confirmReimport} legitimately never sends one (there is no staging
+     * session to resume when replaying an already-stored file), and {@code confirmMultiSection}
+     * constructs this record internally with a null sessionId per section -- a shared DTO can only
+     * be annotated for what is true in EVERY context that binds it, so the existing per-caller
+     * manual checks ({@code confirmSession}/{@code confirmMultiSection}) stay as the real guard.
      */
     public record ConfirmRequest(
             UUID sessionId,
-            List<ConfirmedRow> rows, UUID existingAccountId, NewAccountRequest newAccount,
+            @NotNull(message = "rows is required") List<@Valid ConfirmedRow> rows,
+            UUID existingAccountId, @Valid NewAccountRequest newAccount,
             BigDecimal statementOpeningBalance, BigDecimal statementClosingBalance,
-            String password
-    ) {}
+            String password,
+            // Echoed back from DetectedAccountInfo.statementPeriodStart/End, same round-trip as the
+            // opening/closing balance fields above. Bug fix: without these, persistSection had no
+            // way to know the printed statement period PdfPreviewGenerator/StatementValidator had
+            // already computed at staging time -- it silently re-derived the period from
+            // minDate/maxDate of the confirmed rows alone, which is only ever a lower bound on the
+            // statement's true period whenever a cycle has no activity near its own boundary dates.
+            // Null (from an older client, or a format/path with nothing printed to echo) falls back
+            // to that same minDate/maxDate derivation exactly as before -- see persistSection.
+            LocalDate statementPeriodStart, LocalDate statementPeriodEnd
+    ) {
+        /** Pre-existing arity. Kept so the many call sites that construct a request with no printed
+         *  statement period to echo -- reimport's internal re-scoping, tests, Gmail's receipt-derived
+         *  confirms -- stay unchanged; both new fields default to null, which persistSection already
+         *  treats as "fall back to the confirmed rows' own date range". */
+        public ConfirmRequest(UUID sessionId, List<ConfirmedRow> rows, UUID existingAccountId,
+                               NewAccountRequest newAccount, BigDecimal statementOpeningBalance,
+                               BigDecimal statementClosingBalance, String password) {
+            this(sessionId, rows, existingAccountId, newAccount, statementOpeningBalance,
+                    statementClosingBalance, password, null, null);
+        }
+    }
 
     /**
      * @param detectedProduct      the FinancialProductType the review screen is confirming, echoed
@@ -485,11 +600,22 @@ public class ImportDto {
      *                             when it reaches the client -- no unmasked number ever leaves the
      *                             server, so a client cannot forge one into a different product's
      *                             identity without already knowing that product's full number.
+     *
+     * <p>Security fix: this record had zero Bean Validation, and none of the three controller
+     * methods that can reach it (via {@code ConfirmRequest}/{@code SectionConfirm}) applied
+     * {@code @Valid} -- a blank {@code name} threw a raw {@code DataIntegrityViolationException}
+     * against {@code accounts.name}'s {@code NOT NULL VARCHAR(120)} constraint (a misleading 409
+     * "conflicts with a record" instead of a clean 400), and every other free-text field here had
+     * the same "let the DB reject it" gap against its own column width. Same bounds and the same
+     * {@code accountType}-is-hand-validated-elsewhere reasoning as {@link AccountDto.CreateRequest},
+     * which this record's fields are eventually copied into (see {@code ImportService.confirm}).
      */
     public record NewAccountRequest(
-            String name, String accountType, BigDecimal openingBalance, BigDecimal creditLimit, LocalDate dueDate,
-            String accountHolderName, String accountNumberMasked, String bankId,
-            String branchName, String ifscCode,
+            @NotBlank @Size(max = 120) String name, String accountType,
+            BigDecimal openingBalance, BigDecimal creditLimit, LocalDate dueDate,
+            @Size(max = 255) String accountHolderName, @Size(max = 64) String accountNumberMasked,
+            @Size(max = 32) String bankId,
+            @Size(max = 120) String branchName, @Size(max = 11) String ifscCode,
             String detectedProduct, String productIdentityHash,
             // Echoed back unchanged from DetectedAccountInfo, same round-trip as detectedProduct
             // above -- these are server-detected values the review screen displays read-only, not
@@ -515,6 +641,19 @@ public class ImportDto {
      *        all. The only decision that needs carrying is the one that changes what happens to a
      *        row that IS imported. Defaults to false for a client that does not send it (the mobile
      *        app, which has no duplicate review screen), which is exactly the old behaviour.
+     *
+     *        <p>Security fix: {@code referenceNumber} had no length bound, and none of the three
+     *        controller methods that bind a row through {@code ConfirmRequest}/
+     *        {@code SectionConfirm} applied {@code @Valid} to reach it. An oversized value was
+     *        written straight to {@code transactions.reference_number VARCHAR(64)}, producing a
+     *        misleading 409 "conflicts with a record" from {@code DataIntegrityViolationException}
+     *        instead of a clean 400. {@code date}/{@code description}/{@code amount}/{@code type}
+     *        are deliberately NOT annotated here: {@code ConfirmedRowIntegrity.requireSameRows}
+     *        already cross-checks all four against the server's own staged rows byte-for-byte, so a
+     *        client cannot forge them to a value the parser never produced, and {@code category}
+     *        is deliberately left free-text with no constraint -- {@code CategorizationService}
+     *        already defaults a null/blank value to {@code "Other"} and truncates before insert,
+     *        so rejecting it here would reject input that downstream already handles correctly.
      */
     public record ConfirmedRow(
             LocalDate date, String description, BigDecimal amount, String type,
@@ -522,10 +661,23 @@ public class ImportDto {
             String categorySource,   // "learned" | "rule" | "user_rule" | "global_rule" | "default" | "file" — carried from staging
             UUID ruleId,             // carried from staging — see StagedRow.ruleId
             boolean likelyDuplicate, // carried from staging, so the summary can report it honestly
-            String referenceNumber,  // carried from staging — see StagedRow.referenceNumber
+            @Size(max = 64) String referenceNumber,  // carried from staging — see StagedRow.referenceNumber
             BigDecimal balanceAfter, // carried from staging — see StagedRow.balanceAfter
-            boolean confirmedNotDuplicate
+            boolean confirmedNotDuplicate,
+            /** Echoed from {@code StagedRow.categoryConfidence} unchanged by review -- see that
+             *  field's own doc comment. Lands on {@code Transaction.decisionConfidence} at confirm
+             *  time. */
+            Integer categoryConfidence
     ) {
+        /** Pre-categoryConfidence arity (Transaction Intelligence Phase B). */
+        public ConfirmedRow(LocalDate date, String description, BigDecimal amount, String type,
+                            String category, boolean include, String categorySource, UUID ruleId,
+                            boolean likelyDuplicate, String referenceNumber, BigDecimal balanceAfter,
+                            boolean confirmedNotDuplicate) {
+            this(date, description, amount, type, category, include, categorySource, ruleId,
+                    likelyDuplicate, referenceNumber, balanceAfter, confirmedNotDuplicate, null);
+        }
+
         /** Pre-WI5 arity. Kept so the many call sites that construct a row without a duplicate
          *  decision -- re-import, tests, the multi-account path -- stay unchanged rather than
          *  every one of them growing a literal `false` that says nothing. */
@@ -533,7 +685,7 @@ public class ImportDto {
                             String category, boolean include, String categorySource, UUID ruleId,
                             boolean likelyDuplicate, String referenceNumber, BigDecimal balanceAfter) {
             this(date, description, amount, type, category, include, categorySource, ruleId,
-                    likelyDuplicate, referenceNumber, balanceAfter, false);
+                    likelyDuplicate, referenceNumber, balanceAfter, false, null);
         }
     }
 

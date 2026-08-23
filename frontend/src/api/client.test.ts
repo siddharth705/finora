@@ -76,6 +76,22 @@ describe('isAuthEndpoint matching', () => {
     requestFulfilledHandler()(config);
     expect(config.headers.Authorization).toBeUndefined();
   });
+
+  /**
+   * Phase 3A/3B self-review finding (caught by scripts/check-client-auth-policy.py, not by this
+   * suite -- AuthEntry.tsx's own PR shipped without a regression test here): /auth/identify was
+   * missing from AUTH_ENDPOINTS_NO_TOKEN, the exact D-23/D-26 bug class the comment above this
+   * list describes for /auth/google -- a stale leftover access token from an earlier, already-
+   * ended session would get attached to this unauthenticated, pre-login call. See the response-
+   * interceptor test below for why that's not just an unnecessary header: it risks a 401
+   * mis-triggering the refresh-then-clear-session path for someone who was just typing their
+   * identifier on the entry screen.
+   */
+  it('withholds the token from /auth/identify, same as every other unauthenticated auth endpoint', () => {
+    const config: any = { url: '/auth/identify', headers: {} };
+    requestFulfilledHandler()(config);
+    expect(config.headers.Authorization).toBeUndefined();
+  });
 });
 
 describe('api response interceptor', () => {
@@ -141,6 +157,27 @@ describe('api response interceptor', () => {
     expect(refreshMock).not.toHaveBeenCalled();
     // Still signed out (nothing to keep), but crucially NOT cleared-and-redirected: the stale token
     // survives untouched, which is the observable proof clearSessionAndRedirect() never ran.
+    expect(getAccessToken()).toBe('a-stale-access-token-from-a-previous-session');
+    expect(localStorage.getItem('finora_session_ended_reason')).toBeNull();
+  });
+
+  /**
+   * Phase 3A/3B self-review finding, response-interceptor half: with /auth/identify missing from
+   * AUTH_ENDPOINTS_NO_TOKEN, a stale leftover access token attached to this call (see the request-
+   * interceptor test above) could 401, and this branch would have treated that exactly like a real
+   * session expiry -- attempting a refresh with whatever refresh token/cookie happens to be lying
+   * around, and clearing/redirecting on failure. Someone who simply visited AuthEntry with an old,
+   * already-ended session's leftover token in storage should never trigger that.
+   */
+  it('leaves a failed identify() call alone instead of treating it as an expired session', async () => {
+    setAccessToken('a-stale-access-token-from-a-previous-session');
+
+    await rejectedHandler()({
+      response: { status: 401, data: { message: 'Unauthorized', errorCode: null } },
+      config: { url: '/auth/identify', _retried: false, headers: {} },
+    }).catch(() => { /* the caller's own .catch is what renders the inline error */ });
+
+    expect(refreshMock).not.toHaveBeenCalled();
     expect(getAccessToken()).toBe('a-stale-access-token-from-a-previous-session');
     expect(localStorage.getItem('finora_session_ended_reason')).toBeNull();
   });

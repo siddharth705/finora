@@ -150,6 +150,7 @@ export function toConfirmedRows(
     // backend derives decisionSource from categorySource alone, but the specific rule link only
     // survives if the staged ruleId is echoed back here, same as categorySource already was.
     ruleId: r.ruleId,
+    categoryConfidence: r.categoryConfidence,
     likelyDuplicate: r.likelyDuplicate,
     referenceNumber: r.referenceNumber,
     balanceAfter: r.balanceAfter,

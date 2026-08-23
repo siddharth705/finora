@@ -364,13 +364,38 @@ public class AuthService {
      */
     private String resolveEmailForLogin(String identifier, String scope) {
         if (identifier.contains("@")) {
-            return identifier;
+            // Bug fix: this used to return the identifier completely unchanged, unlike
+            // IdentityLookup.byEmail (a separate, newer entry point) which already trims. An
+            // email pasted with stray leading/trailing whitespace -- an ordinary way to end up
+            // with one -- silently failed to resolve, indistinguishable from an unregistered
+            // address. Trimming can only add matches, never remove one, so this is safe for
+            // every existing caller.
+            return identifier.trim();
         }
         // Delegates the stored-format variants to IdentityLookup, so the normalisation used when a
         // number is WRITTEN and the variants tried when one is READ cannot drift apart.
         return identityLookup.byPhoneNumber(identifier, scope)
                 .map(User::getEmail)
                 .orElse(identifier);
+    }
+
+    /**
+     * Identifier-first entry step (auth/security review §2.2). Reuses resolveEmailForLogin and
+     * findUserByEmailIgnoreCaseSafely so the account this resolves to can never diverge from the
+     * one login() would actually authenticate against. Always resolves within
+     * {@link User#SCOPE_USER} -- see {@link IdentifyRequest}'s doc comment for why this
+     * deliberately has no scope parameter.
+     *
+     * <p>Locked/suspended/deactivated status is intentionally not surfaced here: this endpoint
+     * answers "what credential does this identifier's account use", not "is this account usable
+     * right now" -- the latter is login()'s job, and folding it in here would only grow the
+     * surface an anonymous caller can probe pre-authentication.
+     */
+    public IdentifyResponse identify(IdentifyRequest request) {
+        String email = resolveEmailForLogin(request.identifier(), User.SCOPE_USER);
+        return findUserByEmailIgnoreCaseSafely(email, User.SCOPE_USER)
+                .map(user -> new IdentifyResponse(user.getSignInMethod()))
+                .orElseGet(() -> new IdentifyResponse("CONTINUE"));
     }
 
     /**
@@ -454,6 +479,8 @@ public class AuthService {
             passwordEncoder.matches(request.password(), timingParityHash);
             log.info("Refused login for locked account {} -- responding as invalid credentials (BH-014)",
                     user.getId());
+            auditService.record(user.getId(), "LOGIN_FAILED", "User", user.getId(),
+                    requestMetadata.addTo(new java.util.HashMap<>(Map.of("reason", "locked"))));
             throw new ApiException(ErrorCode.AUTH_INVALID_CREDENTIALS, "Invalid credentials");
         }
         // An EXPIRED lockout clears the counter that produced it. Serving the lockout is the
@@ -488,6 +515,19 @@ public class AuthService {
             if (user != null) {
                 registerFailedLogin(user);
             }
+            // Timing-oracle fix, self-review 2026-08-23: this write happens for a null user too
+            // (unlike registerFailedLogin just above, which has nothing to attach a lockout
+            // counter to). Skipping it for an unknown identifier made this branch measurably
+            // cheaper than the known-user one -- one fewer DB round-trip on an endpoint whose
+            // whole BH-014 design goal is that locked/wrong-password/unknown-identifier must cost
+            // the same. AuditLog.userId has no NOT NULL constraint (same precedent as
+            // BANK_CREATED's null entityId), so a userId-less row is a supported shape, not a
+            // workaround -- and it's a genuine side benefit for admins watching the global audit
+            // feed for a credential-stuffing scan, not just parity theater.
+            auditService.record(user != null ? user.getId() : null, "LOGIN_FAILED", "User",
+                    user != null ? user.getId() : null,
+                    requestMetadata.addTo(new java.util.HashMap<>(
+                            Map.of("reason", user != null ? "bad_credentials" : "unknown_identifier"))));
             throw new ApiException(ErrorCode.AUTH_INVALID_CREDENTIALS, "Invalid credentials");
         }
 
@@ -550,7 +590,8 @@ public class AuthService {
                     ErrorCode.AUTH_MFA_REQUIRED.defaultMessage(), Map.of("mfaChallengeToken", challengeToken));
         }
 
-        auditService.record(user.getId(), "USER_LOGIN", "User", user.getId());
+        auditService.record(user.getId(), "USER_LOGIN", "User", user.getId(),
+                requestMetadata.addTo(new java.util.HashMap<>()));
         return issueSessionTokens(user);
     }
 
@@ -575,7 +616,8 @@ public class AuthService {
         UUID userId = adminMfaService.verifyChallenge(challengeToken, code);
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "User not found"));
-        auditService.record(user.getId(), "USER_LOGIN", "User", user.getId(), Map.of("mfa", true));
+        auditService.record(user.getId(), "USER_LOGIN", "User", user.getId(),
+                requestMetadata.addTo(new java.util.HashMap<>(Map.of("mfa", true))));
         return issueSessionTokens(user);
     }
 
@@ -777,7 +819,7 @@ public class AuthService {
         }
 
         auditService.record(user.getId(), isNewAccount ? provider.registeredAuditAction : provider.loginAuditAction,
-                "User", user.getId());
+                "User", user.getId(), requestMetadata.addTo(new java.util.HashMap<>()));
 
         var issued = refreshTokenService.issue(user.getId());
         String accessToken = jwtService.generateToken(user.getId(), user.getEmail(), issued.sessionId(),
@@ -1031,7 +1073,8 @@ public class AuthService {
                     "success", result.success()));
         });
 
-        auditService.record(user.getId(), "USER_LOGIN", "User", user.getId());
+        auditService.record(user.getId(), "USER_LOGIN", "User", user.getId(),
+                requestMetadata.addTo(new java.util.HashMap<>()));
         var issued = refreshTokenService.issue(user.getId());
         String accessToken = jwtService.generateToken(user.getId(), user.getEmail(), issued.sessionId(),
                 user.getAccountScope());
@@ -1219,16 +1262,28 @@ public class AuthService {
     }
 
     /**
-     * Reveals the account's real phone number for a valid, unused reset link (see
-     * ResolveResetPasswordPhoneRequest's own doc comment for why the frontend needs it and why
-     * this reset-token gate is enough to make that safe). Validates the token exactly like
-     * resetPassword() does, but deliberately does NOT consume/mark it here -- that only happens
-     * once the whole reset actually completes in resetPassword() below, so a user who looks up
-     * the phone number but never finishes the flow can still use the same reset link again later
-     * within its normal expiry window.
+     * BH-015 fix. Confirms a user-typed phone number against the account tied to a valid, unused
+     * reset link -- never reveals the account's real number itself (see
+     * VerifyResetPasswordPhoneRequest's own doc comment for the inverted flow this replaces).
+     * Validates the token exactly like resetPassword() does, but deliberately does NOT
+     * consume/mark it here -- that only happens once the whole reset actually completes in
+     * resetPassword() below, so a user who verifies but never finishes the flow can still use the
+     * same reset link again later within its normal expiry window.
+     *
+     * <p>Reuses phoneNumbersMatch() -- the exact digit-only comparison resetPassword() already
+     * applies to the Firebase-verified number below -- so this pre-check can't be stricter or
+     * looser than the real gate that follows it.
+     *
+     * <p>This does still function as a phone-number-guessing oracle: a caller holding a valid
+     * reset token can learn whether a GUESSED number belongs to the account, one guess at a time.
+     * That is a materially smaller exposure than the guaranteed full reveal this replaces --
+     * guessing all ~10^10 possible 10-digit numbers is infeasible, and the same rate limiter that
+     * already covers this endpoint (10 requests / 10 minutes, shared with resetPassword itself)
+     * bounds it further. The precondition of already holding a valid, unguessable, single-use,
+     * time-limited reset token (proof of email access) is unchanged from before.
      */
     @Transactional(readOnly = true)
-    public ResolveResetPasswordPhoneResponse resolveResetPasswordPhone(ResolveResetPasswordPhoneRequest request) {
+    public VerifyResetPasswordPhoneResponse verifyResetPasswordPhone(VerifyResetPasswordPhoneRequest request) {
         PasswordResetToken prt = validateResetToken(request.token());
         User user = userRepository.findById(prt.getUserId())
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "User not found"));
@@ -1264,31 +1319,15 @@ public class AuthService {
                             + "Go back and choose \"Sign in with " + reauthProviderLabel + "\" instead."
                     : "This account has no phone number on file. Contact an administrator for help resetting your password.");
         }
-        // BH-015, KNOWN AND DELIBERATELY STILL OPEN. This returns the account's phone number in
-        // full to anyone holding a valid reset link, where register() and login() -- both of which
-        // authenticate the caller far more strongly than a link from an inbox -- return
-        // PhoneMasking.mask(). The weakest gate in the product hands back the most.
-        //
-        // <p><b>Masking here does not work, and was tried.</b> All three clients pass this value
-        // straight to Firebase to SEND the code -- see ResetPassword.tsx, which calls
-        // {@code sendPhoneVerificationCode(res.phoneNumber, ...)} with it. Returning "+•••••••705"
-        // makes every password reset fail at the send. The number is not being disclosed
-        // decoratively; the client-side Firebase architecture needs it to do the thing this
-        // endpoint exists for.
-        //
-        // <p>Closing it properly means inverting the flow: the USER types their number, the client
-        // sends the OTP to what they typed, and resetPassword() rejects the reset unless the
-        // Firebase-verified number matches the account -- a check it ALREADY performs, so the
-        // server-side half is done. What is missing is the UI change across three clients and the
-        // decision to make people type their number. That is a product change, not a bug fix, and
-        // doing half of it silently is how a reset flow breaks in production.
-        //
-        // <p>Until then the exposure is bounded by the reset token: unguessable, single-use,
-        // 30-minute TTL, invalidated by any newer link, and now rate-limited (this endpoint was
-        // outside every limiter, so a token holder could hammer it). What an attacker who has
-        // already compromised the mailbox gains is the account's second factor -- the input to a
-        // SIM swap -- handed over before completing the reset.
-        return new ResolveResetPasswordPhoneResponse(user.getPhoneNumber());
+        // BH-015 FIXED (2026-08-23): the account's real phone number is no longer returned here.
+        // The user typed a candidate number in `request.phoneNumber()`; this only confirms it
+        // matches, reusing the same phoneNumbersMatch() comparison resetPassword() applies to the
+        // Firebase-verified number below, so the two checks can never disagree about what counts
+        // as a match.
+        if (!phoneNumbersMatch(request.phoneNumber(), user.getPhoneNumber())) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "That doesn't match the phone number on this account.");
+        }
+        return new VerifyResetPasswordPhoneResponse("Phone number confirmed.");
     }
 
     @Transactional
@@ -1366,7 +1405,7 @@ public class AuthService {
         return new ResetPasswordResponse("Password updated — you can now sign in with your new password.");
     }
 
-    /** Shared by resolveResetPasswordPhone() and resetPassword() -- both need the exact same
+    /** Shared by verifyResetPasswordPhone() and resetPassword() -- both need the exact same
      *  "is this reset link still good" checks, and drifting between two separate copies of this
      *  logic is exactly how one of them ends up silently more/less strict than the other. */
     private PasswordResetToken validateResetToken(String rawToken) {

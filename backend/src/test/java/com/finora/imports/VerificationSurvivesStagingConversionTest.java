@@ -99,6 +99,8 @@ class VerificationSurvivesStagingConversionTest {
                 .thenReturn(new CategorizationService.Suggestion("Uncategorized", "default", null, null, null));
         when(categorizationService.suggestReadOnly(any(), any(), any(), any(), any()))
                 .thenReturn(new CategorizationService.Suggestion("Uncategorized", "default", null, null, null));
+        when(categorizationService.suggestReadOnly(any(), any(), any(), any(), any(), any()))
+                .thenReturn(new CategorizationService.Suggestion("Uncategorized", "default", null, null, null));
         ReconciliationService reconciliationService = mock(ReconciliationService.class);
         RecurringService recurringService = mock(RecurringService.class);
         importSessionService = mock(ImportSessionService.class);
@@ -121,7 +123,7 @@ class VerificationSurvivesStagingConversionTest {
                 merchantRepository, statementImportRepository, categorizationService, reconciliationService,
                 recurringService, previewGenerator, duplicateDetector, ruleLearningService, importSessionService,
                 pdfPreviewGenerator, new com.finora.imports.product.ProductIdentityResolver(accountRepository),
-                new com.finora.imports.storage.StatementContentService(java.util.Optional.empty(), "", ""),
+                new com.finora.imports.storage.StatementContentService(java.util.Optional.empty(), mock(com.finora.security.crypto.EncryptionService.class), "", ""),
                 mock(StatementAnalysisRecorder.class), verificationRecorder,
                 mock(com.finora.service.MerchantLearningEventPublisher.class), mock(LayoutRegistryService.class),
                 mock(com.finora.imports.evidence.ClosingBalanceEvidenceShadowObserver.class));

@@ -205,30 +205,20 @@ class CapabilityCorpusCoverageTest {
                 "no trace, and none is planned -- same reasoning as BLANK_COLUMN_NAME_QUALIFIED, "
                         + "same real document. Covered instead by HeaderColumnRecoveryTest's fully "
                         + "hand-synthesized fixtures.");
-        DECLARED_WITHOUT_A_TRACE.put("HEADER_RECONSTRUCTED",
-                "no trace, deliberately -- motivated by a real SBI Credit Card statement's "
-                        + "supplementary-cardholder section (Phase 2E.1/2E.2), whose header prints one "
-                        + "column alone on the physical line above the row that gets accepted on its "
-                        + "own. Real-corpus verified directly against the committed "
-                        + "sbi-credit-card-statement.trace during development, and does not fire on it, "
-                        + "for two independent reasons found while widening this gate. First: this "
-                        + "engine is deliberately scoped to exactly ONE orphaned single-cell fragment "
-                        + "(PdfTableLocator.reconstructHeader's nonBlankCount(above) != 1 guard) -- a "
-                        + "real ICICI savings statement in the same corpus has a genuine THREE-cell "
-                        + "second tier one line above ITS accepted header, and composing all three in "
-                        + "unresolved recovered some real transactions but left the statement's own "
-                        + "aggregate balance-total check failing, a partial result this phase is not "
-                        + "scoped to ship (the general, multi-tier composition case is explicitly "
-                        + "deferred, design doc §8). Second, independently: even within scope, this "
-                        + "engine's row-compatibility validation (does the candidate's date column "
-                        + "bucket cleanly, with no two raw values colliding into one cell, across the "
-                        + "section's real rows) correctly refuses to prefer a reconstruction it cannot "
-                        + "verify improves anything, and the SBI trace's own redacted dates are not "
-                        + "parseable at all -- the same refusal a genuinely bad candidate would get, "
-                        + "which is the point: the engine cannot and must not tell those two cases "
-                        + "apart from evidence alone. Covered instead by HeaderReconstructionEngineTest's "
-                        + "fully hand-synthesized fixtures, which reproduce the single-fragment shape "
-                        + "with realistic, parseable dates.");
+        DECLARED_WITHOUT_A_TRACE.put("PAGE_LEGEND_BLOCK_SUPPRESSED",
+                "no trace -- the real SBI Credit Card.PDF this is evidenced from has no committed "
+                        + "trace in this corpus yet (see HEADER_RECONSTRUCTED's own history for the "
+                        + "same document). Covered instead by PageLegendBlockSuppressionTest's fully "
+                        + "hand-synthesized fixture, same as RECOVERED_MISSING_SERIAL_NUMBER_COLUMN above.");
+        // HEADER_RECONSTRUCTED was DECLARED_WITHOUT_A_TRACE through Phase 2E.2, when
+        // reconstructHeader was deliberately scoped to exactly one orphaned single-cell fragment
+        // and the real ICICI savings statement's genuine three-cell second tier couldn't be composed
+        // without breaking its balance-total check. Phase 2E.5 generalized reconstructHeader to a
+        // multi-tier backward-composition walk, and icici-savings-ledger-validation now exercises it
+        // for real: composing that three-cell tier recovers the leading transaction correctly, with
+        // the balance chain and statement totals both verified. Entry deleted per this test's own
+        // ratchet -- see SplitHeaderRunsPdfTableLocatorTest and
+        // WrappedHeaderOnAScoringLinePdfTableLocatorTest for the row-count evidence.
     }
 
     /**

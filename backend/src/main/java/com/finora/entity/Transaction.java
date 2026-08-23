@@ -147,6 +147,14 @@ public class Transaction extends BaseEntity {
     @Column(name = "decision_rule_id")
     private UUID decisionRuleId;
 
+    // The confidence percentage (0-100, same scale as MerchantCategoryLearning.confidence and
+    // UserSettings.autoApplyConfidenceThreshold) behind this decision -- see
+    // CategorizationService.Suggestion#confidence's own doc comment for how each DecisionSource
+    // computes it. Null for MANUAL and FILE_PROVIDED (an explicit choice, not a guess) and for
+    // every transaction that predates Transaction Intelligence Phase B.
+    @Column(name = "decision_confidence")
+    private Integer decisionConfidence;
+
     // Only set when reconciliationStatus is REFUND -- points back at the original EXPENSE
     // transaction this INCOME transaction reverses. See ReconciliationService's refund pass.
     @Column(name = "refund_of_transaction_id")
@@ -235,6 +243,8 @@ public class Transaction extends BaseEntity {
     public void setDecisionSource(DecisionSource decisionSource) { this.decisionSource = decisionSource; }
     public UUID getDecisionRuleId() { return decisionRuleId; }
     public void setDecisionRuleId(UUID decisionRuleId) { this.decisionRuleId = decisionRuleId; }
+    public Integer getDecisionConfidence() { return decisionConfidence; }
+    public void setDecisionConfidence(Integer decisionConfidence) { this.decisionConfidence = decisionConfidence; }
     public UUID getRefundOfTransactionId() { return refundOfTransactionId; }
     public void setRefundOfTransactionId(UUID refundOfTransactionId) { this.refundOfTransactionId = refundOfTransactionId; }
 

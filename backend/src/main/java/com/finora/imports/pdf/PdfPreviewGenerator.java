@@ -1,6 +1,7 @@
 package com.finora.imports.pdf;
 
 import com.finora.imports.DuplicateIndex;
+import com.finora.imports.MerchantIndex;
 import com.finora.accounts.AccountDto;
 import com.finora.dto.ImportDto.DetectedAccountInfo;
 import com.finora.dto.ImportDto.StagedAccountSection;
@@ -344,8 +345,11 @@ public class PdfPreviewGenerator {
         // Built once per statement for the same reason the rule set is: a user's existing
         // transactions cannot change partway through parsing one file.
         DuplicateIndex duplicateIndex = transactionNormalizer.duplicateIndexFor(userId);
+        // Same reasoning again, for merchant resolution (Transaction Intelligence Phase A) -- see
+        // PreviewGenerator's identical hoist and MerchantIndex's own doc comment.
+        MerchantIndex merchantIndex = transactionNormalizer.merchantIndexFor(userId);
         for (Map<String, String> row : section.rows()) {
-            StagedRow parsed = transactionNormalizer.normalize(userId, row, ctx, rules, duplicateIndex);
+            StagedRow parsed = transactionNormalizer.normalize(userId, row, ctx, rules, duplicateIndex, merchantIndex);
             if (parsed == null) {
                 unparseable.add(new UnparseableRow(row, transactionNormalizer.explainFailure(row)));
                 continue;

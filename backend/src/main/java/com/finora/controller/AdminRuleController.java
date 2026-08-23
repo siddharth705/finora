@@ -48,7 +48,7 @@ public class AdminRuleController {
     }
 
     @PutMapping("/{id}")
-    public ApiResponse<RuleDto> update(@PathVariable UUID id, @RequestBody RuleDto.UpdateRequest request) {
+    public ApiResponse<RuleDto> update(@PathVariable UUID id, @Valid @RequestBody RuleDto.UpdateRequest request) {
         return ApiResponse.ok(ruleService.updateGlobal(currentUser.id(), id, request), "Global rule updated");
     }
 

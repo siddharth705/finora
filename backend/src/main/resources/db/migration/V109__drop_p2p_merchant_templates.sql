@@ -1,0 +1,21 @@
+-- V103 seeded phonepe.com/paytm.com/cred.club as declarative merchant_templates rows (guessed
+-- patterns, enabled=false) alongside 47 legitimate single-shape merchants. Real Gmail
+-- verification (2026-08-22, see docs/proposals/gmail-merchant-template-admin-ui-proposal.md's
+-- dated update) found the guessed patterns wrong AND, more fundamentally, that the declarative
+-- template model itself does not fit these three domains: TemplateEmailParser.canParse/parse
+-- assumes the sender domain IS the merchant, but PhonePe/Paytm/CRED are payment-relay or
+-- bill-payment notifications where the real counterparty is embedded in the body (or, for
+-- paytm.com, no per-transaction receipt email was found to exist at all). PhonePeEmailParser and
+-- CredEmailParser (hand-written, config-gated) now cover the first two; paytm.com is intentionally
+-- left with no verified parser.
+--
+-- Deleting these 3 rows rather than leaving them disabled: MerchantTemplateAdminService's
+-- hand-written-parser collision guard (409 on create) only protects a domain a Java parser
+-- already claims -- it does not retroactively guard rows seeded before that parser existed. An
+-- admin working the V103 readiness-seed backlog through the Merchant Templates admin UI could
+-- otherwise "fix" phonepe.com's pattern strings and activate it, silently reproducing the exact
+-- wrong-merchant-attribution bug this migration exists to prevent. gmail_trusted_sender_domains
+-- rows for all three are untouched -- domain trust is still correct, only the declarative-template
+-- model was wrong for them.
+DELETE FROM merchant_templates
+WHERE merchant_domain IN ('phonepe.com', 'paytm.com', 'cred.club');

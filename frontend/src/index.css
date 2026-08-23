@@ -136,6 +136,17 @@ input, textarea, select {
   animation: gradientShift 6s ease infinite;
 }
 
+/* ImportSection's StatementCard -- a highlight band sweeping top-to-bottom over the statement
+   while it's mid-"processing" beat (see StatementCard.tsx). Only ever rendered while that beat is
+   the active one, so it doesn't need its own prefers-reduced-motion guard -- the parent
+   (ImportRevealSequence) already gates the whole scanning state behind that check. */
+@keyframes statement-scan {
+  0% { top: 0; opacity: 0; }
+  15% { opacity: 1; }
+  85% { opacity: 1; }
+  100% { top: calc(100% - 24px); opacity: 0; }
+}
+
 /* D-25 PR3-C. Dashboard's "Your Financial Journey" timeline -- each milestone row fades/slides
    in on mount, staggered via an inline animation-delay per row (FinancialJourney.tsx). Fires on
    mount rather than on scroll-into-view like .reveal above: this sits well within the first
@@ -172,9 +183,13 @@ input, textarea, select {
    radii and shadows, and Manrope display type. Changing a --color-* above and a --m-* here
    independently is how the two drift apart again; when you change a brand value, change both.
 
-   Light-only, on purpose. The page is art-directed around two deliberate dark bands; if the whole
-   page could also go dark, those bands stop reading as intentional. The app's own light/dark
-   toggle is untouched -- this scope simply doesn't participate.
+   Light-only, on purpose. The page is art-directed around three deliberate dark surfaces --
+   Hero (the opening cinematic reveal), LearningSection and Trust -- bracketed by a brand-colored
+   final CTA; if the whole page could also go dark, none of those would read as intentional
+   anymore. The principle is "dark surfaces are intentional and limited," not "exactly two" --
+   Hero was added as a third in the 2026-08-22 cinematic reveal (see
+   docs/superpowers/specs/2026-08-22-hero-cinematic-reveal-design.md) and the count changed on
+   purpose. The app's own light/dark toggle is untouched -- this scope simply doesn't participate.
 
    Values come from the V3 brief's palette. Headings use Manrope, body stays Inter. */
 .marketing {

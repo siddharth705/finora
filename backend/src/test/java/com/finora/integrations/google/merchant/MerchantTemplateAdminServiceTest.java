@@ -6,9 +6,11 @@ import com.finora.service.AuditService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -41,6 +43,7 @@ class MerchantTemplateAdminServiceTest {
         auditService = mock(AuditService.class);
         amazonParser = mock(MerchantEmailParser.class);
         when(amazonParser.canParse(anyString())).thenReturn(false);
+        when(amazonParser.claimsDomain(anyString())).thenReturn(false);
         // A real TemplateEmailParser instance (not a mock) so rejectIfClaimedByAnotherParser's own
         // "except TemplateEmailParser itself" exclusion is exercised against the real type, not a
         // mock that happens to answer canParse() a particular way.
@@ -70,7 +73,7 @@ class MerchantTemplateAdminServiceTest {
     @Test
     void create_savesDisabledByDefaultRegardlessOfCallerAndAuditsWhoCreatedIt() {
         MerchantTemplate saved = service.create(adminId, "  SWIGGY.COM.  ", "Swiggy",
-                "Order Summary", "Grand Total: Rs. {amount}", "Order Date: {date}");
+                "Order Summary", null, "Grand Total: Rs. {amount}", "Order Date: {date}");
 
         assertThat(saved.getMerchantDomain())
                 .as("normalised the same way TrustedSenderDomain.normalize would")
@@ -93,16 +96,16 @@ class MerchantTemplateAdminServiceTest {
     @DisplayName("a malformed domain (wildcard, email address, or URL) is rejected, not silently saved")
     void create_rejectsAMalformedDomainRatherThanSavingItSilently() {
         assertThatThrownBy(() -> service.create(adminId, "*.swiggy.com", "Swiggy",
-                "marker", "{amount}", "{date}"))
+                "marker", null, "{amount}", "{date}"))
                 .isInstanceOf(ApiException.class);
         assertThatThrownBy(() -> service.create(adminId, "receipts@swiggy.com", "Swiggy", // synthetic-ok
-                "marker", "{amount}", "{date}"))
+                "marker", null, "{amount}", "{date}"))
                 .isInstanceOf(ApiException.class);
         assertThatThrownBy(() -> service.create(adminId, "https://swiggy.com/receipts", "Swiggy",
-                "marker", "{amount}", "{date}"))
+                "marker", null, "{amount}", "{date}"))
                 .isInstanceOf(ApiException.class);
         assertThatThrownBy(() -> service.create(adminId, "not a domain", "Swiggy",
-                "marker", "{amount}", "{date}"))
+                "marker", null, "{amount}", "{date}"))
                 .isInstanceOf(ApiException.class);
         verify(templates, never()).save(any());
     }
@@ -111,7 +114,7 @@ class MerchantTemplateAdminServiceTest {
     @DisplayName("a malformed amount pattern (missing the {amount} placeholder) is rejected at save time")
     void create_rejectsAPatternThatWouldNeverCompile() {
         assertThatThrownBy(() -> service.create(adminId, "swiggy.com", "Swiggy",
-                "Order Summary", "Grand Total: no placeholder here", "Order Date: {date}"))
+                "Order Summary", null, "Grand Total: no placeholder here", "Order Date: {date}"))
                 .isInstanceOf(ApiException.class);
         verify(templates, never()).save(any());
     }
@@ -119,10 +122,38 @@ class MerchantTemplateAdminServiceTest {
     @Test
     @DisplayName("creating a template for a domain a hand-written parser already claims is refused")
     void create_refusesADomainAlreadyHandledByAHandWrittenParser() {
-        when(amazonParser.canParse("amazon.in")).thenReturn(true);
+        when(amazonParser.claimsDomain("amazon.in")).thenReturn(true);
 
         assertThatThrownBy(() -> service.create(adminId, "amazon.in", "Amazon",
-                "Order #", "Total: Rs. {amount}", "Date: {date}"))
+                "Order #", null, "Total: Rs. {amount}", "Date: {date}"))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("already handled");
+        verify(templates, never()).save(any());
+    }
+
+    /** Regression coverage for a real gap found in code review: the guard above must consult
+     *  {@code claimsDomain}, not {@code canParse}. A config-gated hand-written parser (PhonePe,
+     *  CRED, Paytm) answers {@code canParse} {@code false} while its feature flag is off -- which
+     *  is the default in every environment -- so guarding on {@code canParse} would let an admin
+     *  create and activate a template for a domain one of those parsers owns but simply hasn't been
+     *  switched on for yet, reproducing the exact wrong-attribution bug those parsers exist to fix.
+     *  Uses a real {@link PhonePeEmailParser} (not a mock) with its {@code enabled} flag left at
+     *  its production default (false), so this proves the actual class, not a stubbed stand-in. */
+    @Test
+    @DisplayName("a domain a disabled config-gated parser owns is still refused, not just an enabled one")
+    void create_refusesADomainOwnedByADisabledConfigGatedParser() {
+        PhonePeEmailParser disabledPhonePeParser = new PhonePeEmailParser();
+        assertThat(disabledPhonePeParser.canParse("phonepe.com"))
+                .as("sanity check: this parser is disabled, matching every real environment's default")
+                .isFalse();
+        TrustedSenderDomainRepository trustedSenders = mock(TrustedSenderDomainRepository.class);
+        when(trustedSenders.findByDomain(anyString())).thenReturn(Optional.empty());
+        MerchantTemplateAdminService serviceWithPhonePe = new MerchantTemplateAdminService(
+                templates, auditService, List.of(disabledPhonePeParser, templateParser),
+                trustedSenders);
+
+        assertThatThrownBy(() -> serviceWithPhonePe.create(adminId, "phonepe.com", "PhonePe",
+                "Payment Successful", null, "Amount Paid: Rs. {amount}", "Date: {date}"))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("already handled");
         verify(templates, never()).save(any());
@@ -135,7 +166,7 @@ class MerchantTemplateAdminServiceTest {
         when(templates.findByMerchantDomain("zomato.com")).thenReturn(Optional.of(disabled));
 
         assertThatThrownBy(() -> service.create(adminId, "zomato.com", "Zomato",
-                "Order Summary", "Grand Total: Rs. {amount}", "Order Date: {date}"))
+                "Order Summary", null, "Grand Total: Rs. {amount}", "Order Date: {date}"))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("already exists");
         verify(templates, never()).save(any());
@@ -143,10 +174,20 @@ class MerchantTemplateAdminServiceTest {
 
     @Test
     void create_refusesBlankFields() {
-        assertThatThrownBy(() -> service.create(adminId, "", "Swiggy", "marker", "{amount}", "{date}"))
+        assertThatThrownBy(() -> service.create(adminId, "", "Swiggy", "marker", null, "{amount}", "{date}"))
                 .isInstanceOf(ApiException.class);
-        assertThatThrownBy(() -> service.create(adminId, "swiggy.com", "  ", "marker", "{amount}", "{date}"))
+        assertThatThrownBy(() -> service.create(adminId, "swiggy.com", "  ", "marker", null, "{amount}", "{date}"))
                 .isInstanceOf(ApiException.class);
+    }
+
+    @Test
+    @DisplayName("a template can be created with an exclusion marker, carried through untouched")
+    void create_carriesTheNonReceiptMarkerThrough() {
+        MerchantTemplate saved = service.create(adminId, "swiggy.com", "Swiggy",
+                "Order Summary", "Refund Processed|Order Cancelled",
+                "Grand Total: Rs. {amount}", "Order Date: {date}");
+
+        assertThat(saved.getNonReceiptMarker()).isEqualTo("Refund Processed|Order Cancelled");
     }
 
     @Test
@@ -155,14 +196,53 @@ class MerchantTemplateAdminServiceTest {
         MerchantTemplate entry = existing("uber.com", true);
 
         MerchantTemplate result = service.update(adminId, entry.getId(), "Uber",
-                "Trip Total", "Total: Rs. {amount}", "Date: {date}");
+                "Trip Total", null, "Total: Rs. {amount}", "Date: {date}");
 
         assertThat(result.isEnabled())
                 .as("an untested fix must not go live just because it was typed into an edit form")
                 .isFalse();
+        ArgumentCaptor<Map<String, Object>> metadata = ArgumentCaptor.forClass(Map.class);
         verify(auditService).record(eq(adminId), eq("GMAIL_MERCHANT_TEMPLATE_UPDATED"),
-                eq("MerchantTemplate"), eq(entry.getId()),
-                argThat(m -> Boolean.TRUE.equals(m.get("autoDisabled"))));
+                eq("MerchantTemplate"), eq(entry.getId()), metadata.capture());
+        assertThat(metadata.getValue().get("autoDisabled")).isEqualTo(true);
+        assertThat(metadata.getValue().get("changedFields"))
+                .as("only receiptMarker actually changed -- amount/date/nonReceiptMarker did not")
+                .isEqualTo(List.of("receiptMarker"));
+    }
+
+    @Test
+    @DisplayName("adding an exclusion marker to an active template auto-disables it pending re-test")
+    void update_autoDisablesAnActiveTemplateWhenTheNonReceiptMarkerChanges() {
+        MerchantTemplate entry = existing("uber.com", true);
+
+        MerchantTemplate result = service.update(adminId, entry.getId(), entry.getMerchantName(),
+                entry.getReceiptMarker(), "Trip Cancelled", entry.getAmountPattern(), entry.getDatePattern());
+
+        assertThat(result.isEnabled())
+                .as("changing which emails a live template excludes is a matching-field change too")
+                .isFalse();
+        assertThat(result.getNonReceiptMarker()).isEqualTo("Trip Cancelled");
+        ArgumentCaptor<Map<String, Object>> metadata = ArgumentCaptor.forClass(Map.class);
+        verify(auditService).record(eq(adminId), eq("GMAIL_MERCHANT_TEMPLATE_UPDATED"),
+                eq("MerchantTemplate"), eq(entry.getId()), metadata.capture());
+        assertThat(metadata.getValue().get("autoDisabled")).isEqualTo(true);
+        assertThat(metadata.getValue().get("changedFields")).isEqualTo(List.of("nonReceiptMarker"));
+    }
+
+    @Test
+    @DisplayName("editing only the merchant name reports no changed matching fields")
+    void update_relabellingAloneReportsNoChangedFields() {
+        MerchantTemplate entry = existing("uber.com", true);
+
+        service.update(adminId, entry.getId(), "Uber India",
+                entry.getReceiptMarker(), entry.getNonReceiptMarker(), entry.getAmountPattern(),
+                entry.getDatePattern());
+
+        ArgumentCaptor<Map<String, Object>> metadata = ArgumentCaptor.forClass(Map.class);
+        verify(auditService).record(eq(adminId), eq("GMAIL_MERCHANT_TEMPLATE_UPDATED"),
+                eq("MerchantTemplate"), eq(entry.getId()), metadata.capture());
+        assertThat(metadata.getValue().get("autoDisabled")).isEqualTo(false);
+        assertThat(metadata.getValue().get("changedFields")).isEqualTo(List.of());
     }
 
     @Test
@@ -171,7 +251,8 @@ class MerchantTemplateAdminServiceTest {
         MerchantTemplate entry = existing("uber.com", true);
 
         MerchantTemplate result = service.update(adminId, entry.getId(), "Uber India",
-                entry.getReceiptMarker(), entry.getAmountPattern(), entry.getDatePattern());
+                entry.getReceiptMarker(), entry.getNonReceiptMarker(), entry.getAmountPattern(),
+                entry.getDatePattern());
 
         assertThat(result.isEnabled()).isTrue();
         assertThat(result.getMerchantName()).isEqualTo("Uber India");
@@ -182,7 +263,8 @@ class MerchantTemplateAdminServiceTest {
         MerchantTemplate entry = existing("uber.com", true);
 
         service.update(adminId, entry.getId(), "Uber",
-                entry.getReceiptMarker(), entry.getAmountPattern(), entry.getDatePattern());
+                entry.getReceiptMarker(), entry.getNonReceiptMarker(), entry.getAmountPattern(),
+                entry.getDatePattern());
 
         assertThat(entry.getMerchantDomain())
                 .as("no setter for the domain is exposed on update -- it can only be set at creation")
@@ -194,7 +276,7 @@ class MerchantTemplateAdminServiceTest {
         MerchantTemplate entry = existing("uber.com", false);
 
         assertThatThrownBy(() -> service.update(adminId, entry.getId(), "Uber",
-                "Trip Total", "no placeholder here", "Date: {date}"))
+                "Trip Total", null, "no placeholder here", "Date: {date}"))
                 .isInstanceOf(ApiException.class);
     }
 

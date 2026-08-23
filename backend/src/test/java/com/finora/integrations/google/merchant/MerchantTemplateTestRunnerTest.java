@@ -36,7 +36,7 @@ class MerchantTemplateTestRunnerTest {
         String html = load("trip-receipt-1.html");
 
         MerchantTemplateTestRunner.TestOutcome outcome = runner.test(
-                "uber.com", "Trip Fare", "Total: Rs. {amount}", "Trip Date: {date}", html);
+                "uber.com", "Trip Fare", null, "Total: Rs. {amount}", "Trip Date: {date}", html);
 
         assertThat(outcome.status()).isEqualTo(ParserResult.Status.PARSED);
         assertThat(outcome.amount())
@@ -53,10 +53,23 @@ class MerchantTemplateTestRunnerTest {
         String html = load("marketing-email.html");
 
         MerchantTemplateTestRunner.TestOutcome outcome = runner.test(
-                "uber.com", "Trip Fare", "Total: Rs. {amount}", "Trip Date: {date}", html);
+                "uber.com", "Trip Fare", null, "Total: Rs. {amount}", "Trip Date: {date}", html);
 
         assertThat(outcome.status()).isEqualTo(ParserResult.Status.NOT_A_RECEIPT);
         assertThat(outcome.reason()).isNotBlank();
+        assertThat(outcome.amount()).isNull();
+    }
+
+    @Test
+    @DisplayName("a non-receipt marker set in the sandbox correctly excludes an otherwise-valid receipt")
+    void nonReceiptMarkerExcludesAnOtherwiseValidReceiptInTheSandbox() {
+        String html = load("trip-receipt-1.html");
+
+        MerchantTemplateTestRunner.TestOutcome outcome = runner.test(
+                "uber.com", "Trip Fare", "Trip Fare", "Total: Rs. {amount}", "Trip Date: {date}", html);
+
+        assertThat(outcome.status()).isEqualTo(ParserResult.Status.NOT_A_RECEIPT);
+        assertThat(outcome.reason()).contains("non-receipt marker");
         assertThat(outcome.amount()).isNull();
     }
 
@@ -66,7 +79,7 @@ class MerchantTemplateTestRunnerTest {
         String html = load("trip-receipt-1.html");
 
         MerchantTemplateTestRunner.TestOutcome outcome = runner.test(
-                "uber.com", "Trip Fare", "Grand Total: Rs. {amount}", "Trip Date: {date}", html);
+                "uber.com", "Trip Fare", null, "Grand Total: Rs. {amount}", "Trip Date: {date}", html);
 
         assertThat(outcome.status()).isEqualTo(ParserResult.Status.MALFORMED);
         assertThat(outcome.reason()).isNotBlank();
@@ -81,7 +94,7 @@ class MerchantTemplateTestRunnerTest {
         String html = load("trip-receipt-1.html");
 
         MerchantTemplateTestRunner.TestOutcome outcome = runner.test(
-                "uber.com", "Trip Fare", "Total: Rs. no placeholder here", "Trip Date: {date}", html);
+                "uber.com", "Trip Fare", null, "Total: Rs. no placeholder here", "Trip Date: {date}", html);
 
         assertThat(outcome.status()).isEqualTo(ParserResult.Status.MALFORMED);
         assertThat(outcome.reason()).contains("misconfigured");
@@ -96,7 +109,7 @@ class MerchantTemplateTestRunnerTest {
         String html = "<html><body>Trip Fare<br>Total: Rs. 99999999.00<br>Trip Date: August 12, 2026</body></html>";
 
         MerchantTemplateTestRunner.TestOutcome outcome = runner.test(
-                "uber.com", "Trip Fare", "Total: Rs. {amount}", "Trip Date: {date}", html);
+                "uber.com", "Trip Fare", null, "Total: Rs. {amount}", "Trip Date: {date}", html);
 
         assertThat(outcome.status()).isEqualTo(ParserResult.Status.PARSED);
         assertThat(outcome.violations())

@@ -72,6 +72,11 @@ public class TemplateEmailParser implements MerchantEmailParser {
     ParserResult parse(SanitizedGmailMessage message, MerchantTemplate template) {
         String text = message.plainText();
 
+        if (template.matchesNonReceiptMarker(text)) {
+            return ParserResult.notAReceipt("matched non-receipt marker \""
+                    + template.getNonReceiptMarker() + "\"");
+        }
+
         if (!template.matchesReceiptMarker(text)) {
             return ParserResult.notAReceipt("receipt marker \"" + template.getReceiptMarker()
                     + "\" not found");
@@ -117,6 +122,6 @@ public class TemplateEmailParser implements MerchantEmailParser {
         }
 
         return ParserResult.parsed(new ParsedReceipt(
-                message.gmailMessageId(), template.getMerchantDomain(), amount, date, FIXED_CONFIDENCE));
+                message.gmailMessageId(), template.getMerchantDomain(), null, amount, date, FIXED_CONFIDENCE));
     }
 }

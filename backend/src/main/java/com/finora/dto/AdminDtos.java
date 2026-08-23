@@ -2,6 +2,7 @@ package com.finora.dto;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -68,7 +69,12 @@ public class AdminDtos {
      * "failed imports" -- see StatementImportRepository.countWithSkippedRowsAfter()'s doc
      * comment for why this pipeline has no real FAILED signal to report today. health/alerts
      * both come from AdminHealthRegistryService -- exactly one source of truth for "is something
-     * wrong," not two that could disagree.
+     * wrong," not two that could disagree. inactiveUsersLast7Days is the inverse of
+     * activeUsersToday's own query -- a user who predates the 7-day window with no USER_LOGIN
+     * audit row in it, or none ever (see UserRepository.countWithNoAuditActionSince's own doc
+     * comment for why "predates the window" matters -- without it, a signup from an hour ago
+     * would count as inactive) -- an Insights & Alerts figure, not a daily-reset tile, so it has
+     * no previousDay sibling.
      */
     public record OperationalDashboardDto(
             long totalUsers,
@@ -76,6 +82,7 @@ public class AdminDtos {
             long transactionsToday,
             long importsToday,
             long importsWithSkippedRowsToday,
+            long inactiveUsersLast7Days,
             PreviousDayDto previousDay,
             NeedsAttentionDto needsAttention,
             HealthDtos.PlatformHealthDto health,
@@ -138,6 +145,20 @@ public class AdminDtos {
             long firstImport,
             long firstBudget,
             long firstGoal
+    ) {}
+
+    /**
+     * One calendar day of the Platform Activity chart -- see
+     * AdminOperationalDashboardService.activityTrend()'s own doc comment for how the 7-day window
+     * is built and why each day is queried as its own bounded window rather than bucketed from one
+     * bulk fetch. date is a calendar day in the platform reporting zone, not an Instant -- there is
+     * no time-of-day component to a daily point.
+     */
+    public record ActivityTrendPointDto(
+            LocalDate date,
+            long signups,
+            long imports,
+            long transactions
     ) {}
 
     /**
