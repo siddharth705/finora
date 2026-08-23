@@ -334,6 +334,8 @@ app:
     password-change-session-expiry-minutes: ${PASSWORD_CHANGE_SESSION_EXPIRY_MINUTES:15}
     # Same property, same reasoning, for the Change Phone Number flow (PhoneChangeSession).
     phone-change-session-expiry-minutes: ${PHONE_CHANGE_SESSION_EXPIRY_MINUTES:15}
+    # Same property, same reasoning, for the Change Email flow (EmailChangeSession).
+    email-change-session-expiry-minutes: ${EMAIL_CHANGE_SESSION_EXPIRY_MINUTES:15}
     # Bug 14 (docs/quality/bug-reports/BUG_REVIEW_REPORT.md). Same shape as
     # app.import.session-cleanup below -- RefreshTokenService.scheduledCleanup, keyed on
     # refresh_tokens.expiresAt. Hourly by default: refresh tokens live far longer than import
@@ -399,6 +401,11 @@ app:
     phone-change:
       max: ${RATE_LIMIT_PHONE_CHANGE_MAX:15}
       window-seconds: ${RATE_LIMIT_PHONE_CHANGE_WINDOW_SECONDS:600}
+    # Change Email. Same ceiling as password-change, and the same reason: start() here does a
+    # real GoogleReauthVerifier check (bcrypt, or a fresh Google/Apple token) on every call.
+    email-change:
+      max: ${RATE_LIMIT_EMAIL_CHANGE_MAX:15}
+      window-seconds: ${RATE_LIMIT_EMAIL_CHANGE_WINDOW_SECONDS:600}
     reset-password:
       max: ${RATE_LIMIT_RESET_PASSWORD_MAX:10}
       window-seconds: ${RATE_LIMIT_RESET_PASSWORD_WINDOW_SECONDS:600}

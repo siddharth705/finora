@@ -6,19 +6,22 @@ are not. Implementation: Phase 1 is done, Phase 2's audit-hardening slice
 is done, Phase 3's backend slice (`/auth/identify`, PR #327) is merged —
 its frontend entry-page UX is not started. Phase 3.5's audit is done (no
 gap in its own checklist; a bonus phone-change session-revocation gap
-found and fixed). Phases 4/5 have not begun. Committed via a worktree per
-`CLAUDE.md` (primary checkout is a shared read-only-for-writes checkout).
-This is a roadmap — each phase ships as its own ticket/PR, never as one
-combined PR.
+found and fixed). Phase 4's backend slice is done — frontend/mobile
+settings entry not started. Phase 5 has not begun. Committed via a
+worktree per `CLAUDE.md` (primary checkout is a shared read-only-for-writes
+checkout). This is a roadmap — each phase ships as its own ticket/PR,
+never as one combined PR.
 
 **Phase 1 (Apple step-up verification) is already done** — PR #290 merged
 before this document's audit ran, and the audit missed it; corrected here.
 Phase ordering was revised 2026-08-23 (audit/observability now precedes the
 unified entry UX — see §3's note). Phase 2's audit-hardening slice shipped
 2026-08-23, sequenced with `user-security-center-proposal.md` per open
-decision 5 below (resolved: coordinate, not independent). Phase 0's other
-5 open decisions still gate Phase 4, and partly gate Phase 3 (see its
-amendment).
+decision 5 below (resolved: coordinate, not independent). Phase 4's
+backend slice also shipped 2026-08-23, ahead of the remaining 5 open
+decisions being resolved — see its own amendment for why none of them
+actually constrain it. Phase 0's other 5 open decisions still partly gate
+Phase 3 (see its amendment).
 
 ---
 
@@ -477,7 +480,7 @@ match.
   successful phone-number change, current device spared, same pattern
   password-change already uses (§2.7a for the full writeup)
 
-**Phase 4 — P2 feature: Change email**
+**Phase 4 — P2 feature: Change email — backend done 2026-08-23, frontend not started**
 `feat(account): add email change flow`
 - `email_change_sessions` table + `EmailChangeService` mirroring
   `PhoneChangeService`
@@ -486,6 +489,18 @@ match.
 - Frontend/mobile settings entry
 - Tests mirroring `PhoneChangeServiceTest`/`PhoneChangeServiceIT`
 - Not blocking — useful but lower priority than Phases 1–3
+- **Amendment (2026-08-23)**: implemented ahead of the remaining 5 open
+  decisions being resolved, same situation Phase 3's backend slice was in
+  (see its own amendment above). Checked each one against this specific
+  slice rather than treating the header note's blanket "gates Phase 4" as
+  automatically applying: none of the 5 (`nextAction` shape, BH-015,
+  deletion retention, phone-OTP login, account linking) constrain how
+  email-change itself works — it's additive, doesn't touch identify/login,
+  and doesn't introduce multi-method-per-account state. Session revocation
+  on complete() is unconditional (no `signOutOtherDevices`-style toggle,
+  since no frontend exists yet to carry one) -- the Phase 3.5 audit's
+  established default for a flow with no UI toggle, applied here from day
+  one rather than needing its own follow-up fix.
 
 **Phase 5 — Deferred: future providers, account linking, recovery**
 Truecaller, Passkeys, standalone phone-OTP login, the `StepUpVerifier`
