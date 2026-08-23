@@ -23,5 +23,10 @@ import java.util.List;
 public record TransactionExplanationDto(
         String decisionSource,
         String summary,
-        List<String> evidence
+        List<String> evidence,
+        /** 0-100, or null -- {@link com.finora.entity.Transaction#getDecisionConfidence()} read
+         *  straight through, same "surfacing, not a new intelligence layer" contract as every
+         *  other field on this record. Null for MANUAL/FILE_PROVIDED (see that field's own doc
+         *  comment) and for any transaction that predates Transaction Intelligence Phase B. */
+        Integer confidence
 ) {}

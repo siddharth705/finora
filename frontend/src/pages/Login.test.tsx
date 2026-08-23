@@ -30,7 +30,7 @@ function VerifyPhoneStub() {
   );
 }
 
-function renderLogin(state?: { message?: string }) {
+function renderLogin(state?: { message?: string; identifier?: string }) {
   return render(
     <MemoryRouter initialEntries={[{ pathname: '/login', state }]}>
       <AuthProvider>
@@ -55,6 +55,29 @@ describe('Login — post-redirect confirmation banner', () => {
     renderLogin();
 
     expect(screen.queryByText(/please sign in using your new password/i)).not.toBeInTheDocument();
+  });
+});
+
+// Phase 3 (§2.2): AuthEntry.tsx sends the identifier it already resolved via router state, so
+// this screen doesn't ask the user to retype it.
+//
+// Phase 7 (resolved 2026-08-23): this used to also carry the account's sign-in method and hide
+// the password field/forgot-password link for a known GOOGLE/APPLE account (§2.4's "move the
+// OAuth-user rejection earlier"). That branching -- and its tests -- were removed along with
+// nextAction no longer revealing which method an account uses; the password field and Google
+// button are always shown together now, matching a direct visit to this page.
+describe('Login — prefill from AuthEntry', () => {
+  it('prefills the identifier field when arriving with router state from AuthEntry', () => {
+    renderLogin({ identifier: 'jane@example.com' });
+
+    expect(screen.getByLabelText(/email or mobile number/i)).toHaveValue('jane@example.com');
+  });
+
+  it('shows the ordinary password form and Google button on a direct visit with no router state', () => {
+    renderLogin();
+
+    expect(screen.getByLabelText(/^password$/i)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /forgot password/i })).toBeInTheDocument();
   });
 });
 

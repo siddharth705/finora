@@ -29,7 +29,21 @@ export default function Login() {
   const { login, loginWithGoogle } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
-  const [identifier, setIdentifier] = useState('');
+  // Phase 3 (§2.2): AuthEntry.tsx already resolved this identifier to an existing account via
+  // POST /auth/identify -- prefill it here instead of asking the user to retype it. Read once at
+  // mount (not reactively, same reasoning as `banner` below: router state shouldn't resurface on
+  // an unrelated later render of this same route).
+  //
+  // Phase 7 (resolved 2026-08-23): this used to also carry `method` (PASSWORD/GOOGLE/APPLE) and
+  // hide the password field for a known OAuth account -- removed along with nextAction no longer
+  // revealing which method an account uses (see AuthEntry.tsx and IdentifyResponse's own doc
+  // comments). The password field and Google button are always shown together now, same as a
+  // direct visit to this page; the backend's own signInMethod refusal at actual login time is
+  // unaffected either way.
+  const [prefill] = useState<{ identifier?: string } | null>(
+    () => location.state as { identifier?: string } | null,
+  );
+  const [identifier, setIdentifier] = useState(prefill?.identifier ?? '');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);

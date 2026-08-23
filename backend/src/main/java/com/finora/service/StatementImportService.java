@@ -271,7 +271,8 @@ public class StatementImportService {
 
         var scoped = new com.finora.dto.ImportDto.ConfirmRequest(
                 null, request.rows(), original.getAccountId(), null,
-                request.statementOpeningBalance(), request.statementClosingBalance(), null);
+                request.statementOpeningBalance(), request.statementClosingBalance(), null,
+                request.statementPeriodStart(), request.statementPeriodEnd());
         return importService.confirm(userId, original.getFileName(), content, scoped);
     }
 

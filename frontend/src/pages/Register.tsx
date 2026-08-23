@@ -1,5 +1,5 @@
 import { useMemo, useState, type FormEvent } from 'react';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ShieldCheck, UploadCloud, TrendingUp, PiggyBank, Target, LineChart,
   User, Mail, CheckCircle2, ArrowRight, Wallet, PieChart as PieChartIcon, BarChart3,
@@ -67,14 +67,28 @@ const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 export default function Register() {
   const { register, loginWithGoogle } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   // D-28 PR4-C: captured once at mount, not re-read on every render -- a referral link's `?ref=`
   // is only ever meaningful for the signup this page load represents, never something that
   // should change if the URL is edited after the fact.
   const [searchParams] = useSearchParams();
   const referralCode = searchParams.get('ref') ?? undefined;
+  // Phase 3 (§2.2): AuthEntry.tsx already learned (via POST /auth/identify) that this identifier
+  // has no account yet, and knew which of these two fields it looked like -- prefilled here,
+  // same "read router state once at mount" pattern as the referral code above, so the user
+  // doesn't have to retype what they already entered on the entry page. A phone number is run
+  // through the same sanitizer the field's own paste handler uses, since AuthEntry hands over
+  // the full identifier (e.g. "+919876500011" -- synthetic-ok: fake sequential example number,
+  // same pattern as every other placeholder number in this file), not the local-only 10 digits
+  // this field stores.
+  const [prefill] = useState<{ email?: string; phoneNumber?: string } | null>(
+    () => location.state as { email?: string; phoneNumber?: string } | null,
+  );
   const [fullName, setFullName] = useState('');
-  const [email, setEmail] = useState('');
-  const [phoneNumber, setPhoneNumber] = useState('');
+  const [email, setEmail] = useState(prefill?.email ?? '');
+  const [phoneNumber, setPhoneNumber] = useState(
+    prefill?.phoneNumber ? sanitizePastedPhoneNumber(prefill.phoneNumber) : '',
+  );
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [agreedToTerms, setAgreedToTerms] = useState(false);

@@ -371,8 +371,20 @@ export default function Import() {
       hydrateReviewFrom(session.staging);
       setJobId(null);
       setStep('review');
-    } catch {
+    } catch (e: any) {
       setJobId(null);
+      // Bug fix: the worker only stages, never confirms (ImportJobWorker's own doc comment says
+      // so) -- but by the time this poller's COMPLETED tick fires and this fetch runs, the same
+      // session can already have been confirmed through another path (a second tab resuming it,
+      // a duplicate confirm). getSession then 400s with this code, same as resumeSession below
+      // already handles -- mirrored here rather than shown as a generic, actively misleading
+      // failure: nothing is unloaded (the import already succeeded), and "open it from your
+      // unfinished imports" is a dead end since listResumableSessions never returns a confirmed
+      // session.
+      if (e.response?.data?.errorCode === IMPORT_SESSION_ALREADY_CONFIRMED) {
+        showError('This import has already been reviewed and confirmed -- check your Statement History for it.');
+        return;
+      }
       showError('Your statement was imported, but the review could not be loaded. Open it from your unfinished imports.');
     }
   }
@@ -558,6 +570,8 @@ export default function Import() {
             existingAccountId,
             statementOpeningBalance: detectedAccount?.openingBalance ?? null,
             statementClosingBalance: detectedAccount?.closingBalance ?? null,
+            statementPeriodStart: detectedAccount?.statementPeriodStart ?? null,
+            statementPeriodEnd: detectedAccount?.statementPeriodEnd ?? null,
             password: reimportState.password,
           })
         : await importApi.confirm({
@@ -567,6 +581,8 @@ export default function Import() {
             newAccount,
             statementOpeningBalance: detectedAccount?.openingBalance ?? null,
             statementClosingBalance: detectedAccount?.closingBalance ?? null,
+            statementPeriodStart: detectedAccount?.statementPeriodStart ?? null,
+            statementPeriodEnd: detectedAccount?.statementPeriodEnd ?? null,
           });
       setSummary(result);
       setStep('summary');
@@ -607,6 +623,8 @@ export default function Import() {
           newAccount,
           statementOpeningBalance: s.detectedAccount.openingBalance ?? null,
           statementClosingBalance: s.detectedAccount.closingBalance ?? null,
+          statementPeriodStart: s.detectedAccount.statementPeriodStart ?? null,
+          statementPeriodEnd: s.detectedAccount.statementPeriodEnd ?? null,
         };
       });
 
@@ -1509,6 +1527,9 @@ function TransactionPreviewTable({
             <td className="p-1">{formatDateDDMMMYYYY(r.date)}</td>
             <td className="p-1">
               {r.description}
+              {r.merchant && (
+                <div className="text-[10px] text-muted">Detected: {r.merchant}</div>
+              )}
               {r.likelyDuplicate && <span className="text-danger text-[10px] uppercase ml-1">duplicate</span>}
               {r.categorySource === 'default' && (
                 <span className="text-[10px] uppercase ml-1" style={{ color: '#d97706' }}>low confidence</span>

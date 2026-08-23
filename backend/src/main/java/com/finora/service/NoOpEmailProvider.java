@@ -42,6 +42,16 @@ public class NoOpEmailProvider implements EmailProvider, SilentProductionFallbac
     }
 
     @Override
+    public EmailResult sendEmailChangeVerificationEmail(String toEmail, String verifyLink) {
+        // EmailChangeService returns this link directly in StartResponse.devVerifyLink when this
+        // provider is active (see that DTO's own doc comment) -- same reasoning as
+        // sendPasswordResetEmail: it's already reachable through the documented dev path, so
+        // logging it too would just be a second, unnecessary place it could leak from.
+        log.info("No email provider configured — would have sent an email-change verification link to {}", toEmail);
+        return EmailResult.failure(ProviderType.RESEND, "No email provider configured");
+    }
+
+    @Override
     public EmailResult sendWelcomeEmail(String toEmail, String fullName) {
         log.info("No email provider configured — would have sent a welcome email to {}", toEmail);
         return EmailResult.failure(ProviderType.RESEND, "No email provider configured");

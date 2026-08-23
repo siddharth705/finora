@@ -32,8 +32,10 @@ class PhoneChangeServiceTest {
     private PhoneChangeSessionRepository sessionRepository;
     private PhoneVerificationProvider phoneVerificationProvider;
     private AuditService auditService;
+    private RefreshTokenService refreshTokenService;
     private PhoneChangeService service;
     private final UUID userId = UUID.randomUUID();
+    private final UUID thisDevicesSession = UUID.randomUUID();
 
     @BeforeEach
     void setUp() {
@@ -41,6 +43,7 @@ class PhoneChangeServiceTest {
         sessionRepository = mock(PhoneChangeSessionRepository.class);
         phoneVerificationProvider = mock(PhoneVerificationProvider.class);
         auditService = mock(AuditService.class);
+        refreshTokenService = mock(RefreshTokenService.class);
 
         // Mirrors real JPA behavior: a save() assigns the generated id the first time a
         // never-persisted (id == null) entity is saved.
@@ -53,7 +56,8 @@ class PhoneChangeServiceTest {
         });
         when(userRepository.save(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
 
-        service = new PhoneChangeService(userRepository, sessionRepository, phoneVerificationProvider, auditService);
+        service = new PhoneChangeService(userRepository, sessionRepository, phoneVerificationProvider,
+                auditService, refreshTokenService);
     }
 
     private User existingUser() {
@@ -310,7 +314,7 @@ class PhoneChangeServiceTest {
         User user = existingUser();
         when(userRepository.findById(userId)).thenReturn(Optional.of(user));
 
-        var response = service.complete(userId, new CompleteRequest(session.getId().toString()));
+        var response = service.complete(userId, new CompleteRequest(session.getId().toString()), thisDevicesSession);
 
         assertThat(user.getPhoneNumber()).isEqualTo("+919999999999");
         assertThat(user.isPhoneVerified()).isTrue();
@@ -320,12 +324,45 @@ class PhoneChangeServiceTest {
         verify(auditService).record(eq(userId), eq("PHONE_NUMBER_CHANGED"), eq("User"), eq(userId), any());
     }
 
+    /**
+     * Phase 3.5 (session invalidation audit, docs/proposals/authentication-account-security-
+     * review.md §2.7a) -- self-review finding: this flow proves control of the number the account
+     * is MOVING TO, with no "re-verify current credential" step the way PasswordChangeService.
+     * start() has one (see this class's own doc comment). That's a lower bar than a password
+     * change to begin with, which makes it worse, not better, that it left every existing session
+     * -- including one an attacker already holds -- untouched. Unconditional, not opt-in, unlike
+     * PasswordChangeService's signOutOtherDevices: there is no UI flag here to make it optional,
+     * and the current device is spared the same way password-change spares it.
+     */
+    @Test
+    void complete_afterOtpVerified_revokesEveryOtherSession_sparingOnlyThisDevice() {
+        PhoneChangeSession session = sessionWith(PhoneChangeSession.Status.OTP_VERIFIED, Instant.now().plusSeconds(600));
+        when(sessionRepository.findByIdAndUserId(session.getId(), userId)).thenReturn(Optional.of(session));
+        when(userRepository.findById(userId)).thenReturn(Optional.of(existingUser()));
+
+        service.complete(userId, new CompleteRequest(session.getId().toString()), thisDevicesSession);
+
+        verify(refreshTokenService).revokeAllOtherSessionsForUser(userId, thisDevicesSession);
+    }
+
+    /** Mirrors complete_onASessionAlreadyCompleted_returnsTheOriginalOutcomeInsteadOfRepeatingTheSideEffects
+     *  -- a retried idempotent completion must not revoke sessions a second time either. */
+    @Test
+    void complete_onASessionAlreadyCompleted_doesNotRevokeSessionsAgain() {
+        PhoneChangeSession session = sessionWith(PhoneChangeSession.Status.COMPLETED, Instant.now().plusSeconds(600));
+        when(sessionRepository.findByIdAndUserId(session.getId(), userId)).thenReturn(Optional.of(session));
+
+        service.complete(userId, new CompleteRequest(session.getId().toString()), thisDevicesSession);
+
+        verify(refreshTokenService, never()).revokeAllOtherSessionsForUser(any(), any());
+    }
+
     @Test
     void complete_beforeOtpHasBeenVerified_rejectsRegardlessOfWhatTheRequestClaims() {
         PhoneChangeSession session = sessionWith(PhoneChangeSession.Status.STARTED, Instant.now().plusSeconds(600));
         when(sessionRepository.findByIdAndUserId(session.getId(), userId)).thenReturn(Optional.of(session));
 
-        assertThatThrownBy(() -> service.complete(userId, new CompleteRequest(session.getId().toString())))
+        assertThatThrownBy(() -> service.complete(userId, new CompleteRequest(session.getId().toString()), thisDevicesSession))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("Verify the code");
 
@@ -340,7 +377,7 @@ class PhoneChangeServiceTest {
         PhoneChangeSession session = sessionWith(PhoneChangeSession.Status.COMPLETED, Instant.now().plusSeconds(600));
         when(sessionRepository.findByIdAndUserId(session.getId(), userId)).thenReturn(Optional.of(session));
 
-        var response = service.complete(userId, new CompleteRequest(session.getId().toString()));
+        var response = service.complete(userId, new CompleteRequest(session.getId().toString()), thisDevicesSession);
 
         assertThat(response.phoneNumber()).isEqualTo("+919999999999");
         verify(userRepository, never()).findById(any());
@@ -356,7 +393,7 @@ class PhoneChangeServiceTest {
         user.setStatus(User.STATUS_SUSPENDED);
         when(userRepository.findById(userId)).thenReturn(Optional.of(user));
 
-        assertThatThrownBy(() -> service.complete(userId, new CompleteRequest(session.getId().toString())))
+        assertThatThrownBy(() -> service.complete(userId, new CompleteRequest(session.getId().toString()), thisDevicesSession))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("suspended");
 
@@ -369,7 +406,7 @@ class PhoneChangeServiceTest {
         PhoneChangeSession session = sessionWith(PhoneChangeSession.Status.OTP_VERIFIED, Instant.now().minusSeconds(60));
         when(sessionRepository.findByIdAndUserId(session.getId(), userId)).thenReturn(Optional.of(session));
 
-        assertThatThrownBy(() -> service.complete(userId, new CompleteRequest(session.getId().toString())))
+        assertThatThrownBy(() -> service.complete(userId, new CompleteRequest(session.getId().toString()), thisDevicesSession))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("expired");
 

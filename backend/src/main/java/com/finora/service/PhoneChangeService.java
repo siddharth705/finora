@@ -49,13 +49,16 @@ public class PhoneChangeService {
     private final PhoneChangeSessionRepository sessionRepository;
     private final PhoneVerificationProvider phoneVerificationProvider;
     private final AuditService auditService;
+    private final RefreshTokenService refreshTokenService;
 
     public PhoneChangeService(UserRepository userRepository, PhoneChangeSessionRepository sessionRepository,
-                               PhoneVerificationProvider phoneVerificationProvider, AuditService auditService) {
+                               PhoneVerificationProvider phoneVerificationProvider, AuditService auditService,
+                               RefreshTokenService refreshTokenService) {
         this.userRepository = userRepository;
         this.sessionRepository = sessionRepository;
         this.phoneVerificationProvider = phoneVerificationProvider;
         this.auditService = auditService;
+        this.refreshTokenService = refreshTokenService;
     }
 
     /** Step 1: validate the requested number and open a session. Rejects a number identical to the
@@ -153,7 +156,7 @@ public class PhoneChangeService {
      *  user action, or a second (redundant but harmless) write. Same pattern as
      *  PasswordChangeService.complete(). */
     @Transactional(noRollbackFor = ApiException.class)
-    public CompleteResponse complete(UUID userId, CompleteRequest request) {
+    public CompleteResponse complete(UUID userId, CompleteRequest request, UUID currentSessionId) {
         PhoneChangeSession session = resolveSession(userId, request.sessionId());
 
         if (session.getStatus() == PhoneChangeSession.Status.COMPLETED) {
@@ -180,6 +183,13 @@ public class PhoneChangeService {
         session.setStatus(PhoneChangeSession.Status.COMPLETED);
         session.setCompletedAt(now);
         sessionRepository.save(session);
+
+        // Phase 3.5 (session invalidation audit) -- unconditional, unlike PasswordChangeService's
+        // opt-in signOutOtherDevices: this flow proves control of the number the account is
+        // MOVING TO with no "re-verify current credential" step first (see this class's own doc
+        // comment), a lower bar than a password change, so leaving every other session alive by
+        // default would be worse here, not better. Current device spared, same as password change.
+        refreshTokenService.revokeAllOtherSessionsForUser(userId, currentSessionId);
 
         auditService.record(userId, "PHONE_NUMBER_CHANGED", "User", userId, Map.of("method", "firebase"));
 
