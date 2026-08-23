@@ -4,11 +4,10 @@
 decisions) — decision 5 (Phase 2 sequencing) is now resolved, the other 5
 are not. Implementation: Phase 1 is done, Phase 2's audit-hardening slice
 is done, Phase 3's backend slice (`/auth/identify`, PR #327) is merged, and
-its 3A (web) frontend entry-page UX is now also merged — 3B (mobile) not
-started. Phase 3.5's audit is done (no gap in its own checklist; a bonus
-phone-change session-revocation gap found and fixed). Phase 4's backend
-and web frontend are both merged — mobile settings entry not started.
-Phase 5 has not begun. Committed via a
+both its 3A (web) and 3B (mobile) entry-flow UX are now merged. Phase 3.5's
+audit is done (no gap in its own checklist; a bonus
+phone-change session-revocation gap found and fixed). Phase 4 is fully
+merged (backend, web, mobile). Phase 5 has not begun. Committed via a
 worktree per `CLAUDE.md` (primary checkout is a shared read-only-for-writes
 checkout). This is a roadmap — each phase ships as its own ticket/PR,
 never as one combined PR.
@@ -489,8 +488,33 @@ match.
   short-circuiting submission entirely while that hint is shown.
   BH-015 (§2.4 item 2, unmasked-phone exposure on password reset) is
   explicitly NOT addressed by this slice -- still open, tracked below.
-- **3B (mobile)**: not started, per the sequencing above (after 3A is
-  verified in production).
+- **3B (mobile) — ✅ DONE, shipped 2026-08-23**: `AuthEntryScreen.tsx`,
+  registered as the Auth stack's default screen -- same single-identifier
+  field, same `POST /auth/identify` call (added to `authApi`/the
+  no-auth-header allowlist), routing to `Login`/`Register` with the
+  identifier or email/phone prefilled via route params (React Navigation's
+  counterpart to web's router `location.state`). `Login`/`Register` stay
+  directly reachable via their own footer links. Unlike web, mobile's
+  native `AppleSignInButton` actually works, so the `APPLE` hint keeps the
+  social row visible (only the password form/link are hidden) rather than
+  hiding it the way web had to.
+  Self-review bug found and fixed before this ever reached a PR: making
+  `AuthEntryScreen` the Auth stack's first screen would have silently
+  changed what a forced sign-out (session expiry) or explicit logout lands
+  on -- `AuthContext.clearLocalState`'s own comment already documented
+  "clearing the token lands on Login" as the intended behavior, which a
+  plain first-screen-wins default would have broken by sending an
+  already-authenticated-then-signed-out user back through the identify
+  step. Fixed with a small `useAuthStackInitialRoute` hook (unit-tested
+  directly, no navigation-container integration test needed) that starts
+  on `AuthEntry` for a session that's never been signed in, but switches to
+  `Login` once a previously-signed-in session is cleared -- passed to the
+  stack navigator's `initialRouteName`.
+  Also built in from day one (learned from web's own post-merge fix):
+  Login's OAuth hint is derived from whether the identifier still matches
+  what AuthEntry resolved it for, not captured once at mount, so editing
+  the field brings the password form back immediately instead of leaving a
+  dead end.
 
 **Phase 3.5 — Session invalidation audit — ✅ DONE, audited + fixed 2026-08-23**
 - Verify refresh-token revocation / session invalidation is consistent
@@ -502,14 +526,14 @@ match.
   successful phone-number change, current device spared, same pattern
   password-change already uses (§2.7a for the full writeup)
 
-**Phase 4 — P2 feature: Change email — ✅ DONE (backend + web frontend), mobile not started**
+**Phase 4 — P2 feature: Change email — ✅ DONE (backend, web, mobile)**
 `feat(account): add email change flow`
 - `email_change_sessions` table + `EmailChangeService` mirroring
   `PhoneChangeService`
 - `POST /users/me/email-change/{start,verify,complete}`, gated by existing
   step-up (`GoogleReauthVerifier`, not yet `StepUpVerifier`)
 - Web frontend done (PR #357): `ChangeEmailModal` (Profile settings) +
-  `VerifyEmailChange` confirmation page. Mobile settings entry not started.
+  `VerifyEmailChange` confirmation page.
 - Tests mirroring `PhoneChangeServiceTest`/`PhoneChangeServiceIT`
 - Not blocking — useful but lower priority than Phases 1–3
 - **Frontend follow-up bug (2026-08-23)**: wiring up the verify page found
@@ -517,6 +541,41 @@ match.
   `VerifyRequest` also needs — fixed with a regression test, before this
   was ever live in production (caught in the same session as the
   frontend work, one PR after the backend slice merged).
+- **Mobile — ✅ DONE, shipped 2026-08-23**: `ChangeEmailSheet` (Settings'
+  Security section, next to Change Password) + `VerifyEmailChangeScreen`,
+  reached via a new `finora://email-change-verify?sessionId=...&token=...`
+  deep link -- Phase 4 mobile's first deep-link consumer, since mobile had
+  none at all before this (no `expo-linking` usage, no
+  `NavigationContainer.linking`).
+  Password-only step-up (no `signInMethod` branch): no mobile settings
+  flow, including `ChangePasswordSheet`, has a Google-reauth step-up path
+  yet, so this doesn't add a first one speculatively -- add the `GOOGLE`
+  branch once that groundwork exists for step-up generally.
+  Deliberately a custom scheme, not a true universal/app link: iOS
+  Associated Domains + a hosted `apple-app-site-association`, and Android
+  App Links + a hosted `assetlinks.json` signed with the release keystore's
+  fingerprint, both need real Apple Developer/Play Console access this
+  environment doesn't have, and neither is something a code change alone
+  can stand up or verify. The web confirmation page keeps emailing the
+  same `https://` link it always did (works from any device/client
+  unchanged) and separately offers an "Open in the Finora app" link using
+  the custom scheme, for anyone reading that email on their phone.
+  Revisit true universal links once the native hosting/signing pieces
+  exist -- tracked here, not silently scoped out.
+  **Self-review fix (2026-08-23, follow-up PR after this shipped)**:
+  `RootNavigator` mounts one of three mutually-exclusive navigator trees
+  depending on auth state (signed-out `AuthStack`, a bare
+  phone-unverified `AppStack`, or `AppTabs`), but the deep link's target
+  screen only exists inside `AppTabs`. Registering the path in React
+  Navigation's own declarative `linking.config` (as originally shipped)
+  meant a signed-out or phone-unverified tap silently dropped the link --
+  no error, `sessionId`/`token` just gone, no retry path short of
+  reopening the email. Replaced with `useEmailChangeDeepLink`, an
+  imperative, auth-state-aware hook (unit-tested directly, no
+  `NavigationContainer` integration test needed) that listens for the raw
+  URL independently of whichever tree is mounted, stashes it if the app
+  isn't ready, and replays it via a `navigationRef` the moment sign-in and
+  phone verification complete.
 - **Amendment (2026-08-23)**: implemented ahead of the remaining 5 open
   decisions being resolved, same situation Phase 3's backend slice was in
   (see its own amendment above). Checked each one against this specific

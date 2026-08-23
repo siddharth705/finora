@@ -29,6 +29,12 @@ export const authApi = {
     api.post<AuthResponseDto>('/auth/register', { email, password, fullName, phoneNumber }),
   login: (identifier: string, password: string) =>
     api.post<AuthResponseDto>('/auth/login', { identifier, password }),
+  // Identifier-first entry step (Phase 3B) -- resolves an email or mobile number to what the
+  // client should show next, without a raw exists boolean. See frontend/src/api/endpoints.ts's
+  // own copy: nextAction is 'PASSWORD' | 'GOOGLE' | 'APPLE' for an existing account, or
+  // 'CONTINUE' when there isn't one yet.
+  identify: (identifier: string) =>
+    api.post<{ nextAction: string }>('/auth/identify', { identifier }).then((r) => r.data),
   // D-23 Phase 2. idToken is the raw credential from @react-native-google-signin/google-signin --
   // verified server-side (GoogleIdTokenVerifierService), never trusted client-side. Same endpoint
   // web's GoogleSignInButton already calls; see frontend/src/api/endpoints.ts's own copy.
@@ -466,6 +472,21 @@ export const passwordChangeApi = {
     api.post<{ message: string; otherDevicesSignedOut: boolean }>(
       '/users/me/password-change/complete', { sessionId, newPassword, signOutOtherDevices, currentRefreshToken }
     ).then((r) => r.data),
+};
+
+// Phase 4 (docs/proposals/authentication-account-security-review.md). Ported from
+// frontend/src/api/endpoints.ts's identical emailChangeApi -- see ChangeEmailModal.tsx's own doc
+// comment for why start() is the only call this app's "form" step needs: verify()/complete() run
+// from the emailed link (VerifyEmailChangeScreen), not from anything typed in-app.
+export const emailChangeApi = {
+  start: (currentPassword: string | null, googleIdToken: string | null, appleIdToken: string | null, newEmail: string) =>
+    api.post<{ sessionId: string; devVerifyLink: string | null }>(
+      '/users/me/email-change/start', { currentPassword, googleIdToken, appleIdToken, newEmail }
+    ).then((r) => r.data),
+  verify: (sessionId: string, token: string) =>
+    api.post<{ message: string }>('/users/me/email-change/verify', { sessionId, token }).then((r) => r.data),
+  complete: (sessionId: string) =>
+    api.post<{ message: string; email: string }>('/users/me/email-change/complete', { sessionId }).then((r) => r.data),
 };
 
 export interface ImportStatistics {
