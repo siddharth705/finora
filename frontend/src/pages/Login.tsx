@@ -39,6 +39,10 @@ export default function Login() {
   const [identifier, setIdentifier] = useState(prefill?.identifier ?? '');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
+  // The OAuth hint only makes sense for the exact identifier AuthEntry resolved it for -- if the
+  // user edits the field (e.g. they arrived here for the wrong account), the hidden password
+  // form must come back rather than staying hidden for whatever new identifier they type.
+  const oauthMethod = identifier === prefill?.identifier ? prefill?.method : undefined;
   const [loading, setLoading] = useState(false);
   // Set once login() reports AUTH_ACCOUNT_DEACTIVATED -- the password already checked out (see
   // AuthService.login()'s deactivated branch), so the rest of the form is replaced by a single
@@ -110,7 +114,7 @@ export default function Login() {
     // branch below), but the identifier input alone still triggers the browser's implicit
     // form submission on Enter -- swallow it instead of asking for a password that was never
     // shown.
-    if (prefill?.method === 'GOOGLE' || prefill?.method === 'APPLE') return;
+    if (oauthMethod === 'GOOGLE' || oauthMethod === 'APPLE') return;
     setError(null);
     if (!identifierValid) { setError('Enter your email or mobile number.'); return; }
     if (password.length === 0) { setError('Enter your password.'); return; }
@@ -239,9 +243,9 @@ export default function Login() {
           {/* §2.4: once /auth/identify has already told us this identifier belongs to an
               OAuth account, don't show a password field that the backend would refuse anyway --
               this is UX, the server-side refusal (signInMethod check) stays the real guarantee. */}
-          {prefill?.method === 'GOOGLE' || prefill?.method === 'APPLE' ? (
+          {oauthMethod === 'GOOGLE' || oauthMethod === 'APPLE' ? (
             <p className="text-sm text-ink bg-primary-light rounded-lg px-3 py-2.5 mb-6">
-              {prefill.method === 'GOOGLE'
+              {oauthMethod === 'GOOGLE'
                 ? 'This account signs in with Google. Continue below to sign in.'
                 : 'This account signs in with Apple, which isn’t available in the web app yet — please use the Finora mobile app instead.'}
             </p>
@@ -271,7 +275,7 @@ export default function Login() {
             </>
           )}
 
-          {prefill?.method !== 'APPLE' && (
+          {oauthMethod !== 'APPLE' && (
           <>
           <div className="flex items-center gap-3 my-5">
             <div className="flex-1 h-px bg-border" />

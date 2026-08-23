@@ -89,6 +89,17 @@ describe('AuthEntry', () => {
     await waitFor(() => expect(screen.getByText('method=GOOGLE')).toBeInTheDocument());
   });
 
+  it('routes to /login with method APPLE when nextAction is APPLE', async () => {
+    vi.mocked(authApi.identify).mockResolvedValue({ nextAction: 'APPLE' });
+    renderAuthEntry();
+    const user = userEvent.setup();
+
+    await user.type(screen.getByLabelText(/email or mobile number/i), 'jane@example.com');
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+
+    await waitFor(() => expect(screen.getByText('method=APPLE')).toBeInTheDocument());
+  });
+
   it('routes to /register with the email prefilled when nextAction is CONTINUE and the identifier looks like an email', async () => {
     vi.mocked(authApi.identify).mockResolvedValue({ nextAction: 'CONTINUE' });
     renderAuthEntry();

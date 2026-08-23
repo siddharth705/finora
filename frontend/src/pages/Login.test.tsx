@@ -85,6 +85,17 @@ describe('Login — prefill and OAuth hint from AuthEntry', () => {
     expect(screen.getByText(/this account signs in with apple/i)).toBeInTheDocument();
   });
 
+  it('brings back the password form as soon as the prefilled identifier is edited, since the OAuth hint no longer applies to a different account', async () => {
+    renderLogin({ identifier: 'jane@example.com', method: 'GOOGLE' });
+    const user = userEvent.setup();
+
+    await user.type(screen.getByLabelText(/email or mobile number/i), 'x');
+
+    expect(screen.queryByText(/this account signs in with google/i)).not.toBeInTheDocument();
+    expect(screen.getByLabelText(/^password$/i)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /forgot password/i })).toBeInTheDocument();
+  });
+
   it('does not ask for a password when the identifier field is submitted via Enter while the Google hint is shown', async () => {
     renderLogin({ identifier: 'jane@example.com', method: 'GOOGLE' });
     const user = userEvent.setup();
