@@ -1,11 +1,17 @@
 # Finora Authentication & Account Security — Review & Design
 
-Status: approved with edits (2026-08-23), amended same day. Committed via a
-worktree per `CLAUDE.md` (primary checkout is a shared read-only-for-writes
-checkout). This is a roadmap — each phase ships as its own ticket/PR.
+**Status: Approved.** Next: Phase 0 decisions (§Open decisions).
+Implementation: not started as a program — Phase 1 is done, Phase 3's
+backend slice is in flight (see its amendment note), nothing else has
+begun. Committed via a worktree per `CLAUDE.md` (primary checkout is a
+shared read-only-for-writes checkout). This is a roadmap — each phase ships
+as its own ticket/PR, never as one combined PR.
+
 **Phase 1 (Apple step-up verification) is already done** — PR #290 merged
 before this document's audit ran, and the audit missed it; corrected here.
-Phase 0's remaining open decisions still gate Phases 2–4.
+Phase ordering was revised 2026-08-23 (audit/observability now precedes the
+unified entry UX — see §3's note); Phase 0's remaining open decisions still
+gate Phases 2 and 4, and partly gate Phase 3 (see its amendment).
 
 ---
 
@@ -26,7 +32,7 @@ but already has the right shape:
 |---|---|
 | `email` | not null, unique only within `(LOWER(email), account_scope)` |
 | `account_scope` | `USER` \| `ADMIN` — lets one person hold both under one email |
-| `password_hash` | **never null** — OAuth accounts get a random 256-bit value nobody knows |
+| `password_hash` | `password_hash` is currently required by the schema. OAuth accounts receive an unusable random 256-bit value because the existing schema predates provider-only authentication — a compatibility workaround, not a deliberate permanent design. Long-term, this constraint may be revisited if authentication methods become more flexible (see the new account-linking decision, §Open decisions). |
 | `sign_in_method` | `PASSWORD` \| `GOOGLE` \| `APPLE` — this *is* the identity/method split you're asking for |
 | `phone_number`, `phone_verified` | phone gates login readiness |
 | `email_verified` | gates OAuth auto-link into an existing password account, not login itself |
@@ -83,7 +89,7 @@ Firebase), `email_verification_tokens`, `password_reset_tokens`,
   holding a valid reset-link token, because the current 3-client Firebase
   architecture needs the real number client-side to send the OTP. Fixing
   this cleanly means inverting the flow (user types their own number) — a
-  product change, not a bug fix. Worth deciding whether Phase 2 below should
+  product change, not a bug fix. Worth deciding whether Phase 3 (§3) should
   close it.
 
 ### 1.4 Sensitive actions
@@ -306,7 +312,7 @@ For every authentication-lifecycle action — password reset, password
 change, delete account, deactivate account — confirm: are all refresh
 tokens revoked, and are active sessions invalidated? Deactivate already does
 this (revokes all refresh tokens). Verify the same holds for
-password-reset, password-change, and delete before Phase 2 is called
+password-reset, password-change, and delete before Phase 3 is called
 done — inconsistency here (e.g. a stale session surviving a password reset)
 is a real vulnerability class, not a hypothetical. Standing rule going
 forward: **authentication lifecycle actions must invalidate sessions
@@ -322,6 +328,21 @@ OTP" every time you log in) versus its current role as a verification step.
 That's a real product decision with cost (SMS spend per login) — flag it
 back to you rather than assuming yes.
 
+### 2.9 Account recovery — future consideration, not scoped here
+None of Phases 1–4 answer: what happens when a user loses access to
+*every* method their account has? E.g. an Apple-only user who loses that
+Apple ID, changes their phone number (breaking any SMS-based reset step),
+and can no longer read the email on file. Today there is no path back for
+that user beyond manual support intervention against the raw database — a
+gap that gets worse, not better, once §2.7's change-email and any future
+account linking (see the new open decision below) exist, since those add
+more state that could itself be lost. Not scoped for implementation in
+this document; recommend
+tracking as its own future proposal once Phases 1–4 are further along,
+covering options like verified-identity re-checks, support-assisted
+recovery with an audit trail, recovery codes issued at signup, or trusted
+devices. Deferred to Phase 5 (§3).
+
 ---
 
 ## 3. Implementation Plan
@@ -329,8 +350,18 @@ back to you rather than assuming yes.
 Each phase below is its own ticket/PR — this document is a roadmap, not a
 single implementation task. Do not turn it into one giant PR.
 
+Reordered 2026-08-23 per review feedback: audit/observability hardening now
+precedes the unified entry UX, on the reasoning that a fintech app should
+not increase authentication surface area before improving visibility into
+it. **Note on sequencing in practice**: backend work on the unified-entry
+`nextAction` endpoint (now Phase 3) was already started in this repo before
+this reorder was requested — see the amendment note at the end of this
+section. The phase numbers below reflect the intended priority order for
+anything not yet started; already-in-flight work is not being unwound to
+match.
+
 **Phase 0 — Documentation + decisions**
-- Resolve the 4 remaining open decisions at the end of this document
+- Resolve the 5 remaining open decisions at the end of this document
 - Confirm `/identify`/`nextAction` response shape after security review (§2.2)
 - No code changes in this phase
 
@@ -342,35 +373,12 @@ single implementation task. Do not turn it into one giant PR.
   MFA-removal); new rate limiter added for `/account/delete`
 - Tests: `GoogleReauthVerifierTest` covers Apple success/failure
 - No further action needed for this phase
+- Success metric: Apple-only users completing a sensitive action
+  (deactivate/delete/data-export/password-change) without a failed
+  reauthentication attempt, tracked from zero (previously impossible) to
+  parity with Google/password users
 
-**Phase 2 — P1 UX: Unified authentication entry flow**
-`feat(auth): unified authentication entry flow`
-- Split into sub-phases by platform risk, not shipped together:
-  - **2A — Web**: entry page + backend `nextAction` endpoint (§2.2),
-    `/login`/`/register` stay live underneath
-  - **2B — Mobile**: mobile already has native Google/Apple/Firebase-phone
-    screens in production — higher blast radius, sequence after web is
-    verified in production, not in parallel
-- Rate limit the new endpoint (tighter than login's)
-- Tests: next-action response for each `sign_in_method`, non-existent
-  identifier, enumeration/rate-limit test mirroring `LoginExistenceOracleIT`
-
-**Phase 2.5 — Session invalidation audit** (checklist item inside Phase 2,
-not a separate ticket)
-- Verify refresh-token revocation / session invalidation is consistent
-  across password-reset, password-change, deactivate, delete (§2.7a)
-
-**Phase 3 — P2 feature: Change email**
-`feat(account): add email change flow`
-- `email_change_sessions` table + `EmailChangeService` mirroring
-  `PhoneChangeService`
-- `POST /users/me/email-change/{start,verify,complete}`, gated by existing
-  step-up (`GoogleReauthVerifier`, not yet `StepUpVerifier`)
-- Frontend/mobile settings entry
-- Tests mirroring `PhoneChangeServiceTest`/`PhoneChangeServiceIT`
-- Not blocking — useful but lower priority than Phases 1–2
-
-**Phase 4 — P1 security: Audit/observability hardening**
+**Phase 2 — P1 security: Audit/observability hardening**
 `security(auth): improve authentication audit logging`
 - Add IP/user-agent columns to `audit_logs` (or at minimum standardize
   `RequestMetadata` capture into `metadata` across all auth actions, not
@@ -381,14 +389,57 @@ not a separate ticket)
   since they touch the same table (a decision, not a merge — see open
   decisions)
 - Fintech-app requirement, treat as P1 not a nice-to-have
+- Success metrics: security-event audit coverage % (proportion of
+  login/password-change/deactivate/delete events carrying IP+UA, target
+  100%); suspicious-login detections surfaced per week once coverage
+  supports it
 
-**Phase 5 — Deferred: future providers**
-Truecaller, Passkeys, standalone phone-OTP login, and the
-`StepUpVerifier` structural refactor (§2.6) all live here. None of these
-are scheduled — they're documented as extension points. `sign_in_method`
-and the existing step-up call sites are designed to accept this later
-without a rewrite, but nothing here is greenlit. The auth-provider table is
-explicitly deferred alongside these, not planned.
+**Phase 3 — P1 UX: Unified authentication entry flow**
+`feat(auth): unified authentication entry flow`
+- Split into sub-phases by platform risk, not shipped together:
+  - **3A — Web**: entry page + backend `nextAction` endpoint (§2.2),
+    `/login`/`/register` stay live underneath
+  - **3B — Mobile**: mobile already has native Google/Apple/Firebase-phone
+    screens in production — higher blast radius, sequence after web is
+    verified in production, not in parallel
+- Rate limit the new endpoint (tighter than login's)
+- Tests: next-action response for each `sign_in_method`, non-existent
+  identifier, enumeration/rate-limit test mirroring `LoginExistenceOracleIT`
+- Success metrics: registration completion %, login completion %, OAuth
+  abandonment rate, and password-reset attempts initiated by an OAuth user
+  right after login (a proxy for how often the old flow was confusing them
+  about which method their account uses)
+- **Amendment (2026-08-23)**: backend for 3A (`POST /auth/identify`,
+  returning `nextAction`, plus a dedicated rate limiter) was implemented
+  and tested (unit + integration) in worktree `auth-identify-endpoint`
+  before this reordering was requested. Frontend entry page work has not
+  started. Noted here rather than silently resequenced, since the
+  phase-ordering rationale above (observability before surface area) was
+  agreed after the backend endpoint already existed.
+
+**Phase 3.5 — Session invalidation audit** (checklist item inside Phase 3,
+not a separate ticket)
+- Verify refresh-token revocation / session invalidation is consistent
+  across password-reset, password-change, deactivate, delete (§2.7a)
+
+**Phase 4 — P2 feature: Change email**
+`feat(account): add email change flow`
+- `email_change_sessions` table + `EmailChangeService` mirroring
+  `PhoneChangeService`
+- `POST /users/me/email-change/{start,verify,complete}`, gated by existing
+  step-up (`GoogleReauthVerifier`, not yet `StepUpVerifier`)
+- Frontend/mobile settings entry
+- Tests mirroring `PhoneChangeServiceTest`/`PhoneChangeServiceIT`
+- Not blocking — useful but lower priority than Phases 1–3
+
+**Phase 5 — Deferred: future providers, account linking, recovery**
+Truecaller, Passkeys, standalone phone-OTP login, the `StepUpVerifier`
+structural refactor (§2.6), account-linking policy, and account-recovery
+design (§2.9, §Open decisions) all live here. None of these are scheduled —
+they're documented as extension points. `sign_in_method` and the existing
+step-up call sites are designed to accept this later without a rewrite, but
+nothing here is greenlit. The auth-provider table is explicitly deferred
+alongside these, not planned.
 
 ---
 
@@ -406,16 +457,31 @@ proves the team's bar for this kind of endpoint.
 ## Open decisions for you (not mine to make unilaterally)
 1. `nextAction` endpoint (§2.2) — confirmed direction after security review,
    or want something stricter still (e.g. always-generic response + a
-   separate "check your messages" step)?
-2. BH-015 fix — invert the reset-password phone flow as part of Phase 2, or
+   separate "check your messages" step)? Note the Phase 3 amendment above:
+   the backend endpoint is already implemented against the shape in §2.2 —
+   a stricter answer here would mean revising already-written code, not
+   just the design.
+2. BH-015 fix — invert the reset-password phone flow as part of Phase 3, or
    defer to Phase 5?
 3. **Account deletion retention policy** — separate decision from this
    document, not an auth-mechanism question. Needs legal/compliance/support
    input: keep instant/irreversible, or add a delay + recovery window? Track
-   as its own ticket, not folded into Phase 2's entry flow or any other
+   as its own ticket, not folded into Phase 3's entry flow or any other
    phase here.
 4. Is standalone phone-OTP login (§2.8) actually wanted, given per-login SMS
    cost — or is current "OTP as verification step" model sufficient?
    (Deferred to Phase 5 either way, but worth confirming intent early.)
-5. Sequencing Phase 4 with `user-security-center-proposal.md` — same PR
-   window or independent?
+5. Sequencing Phase 2 (audit logging) with `user-security-center-proposal.md`
+   — same PR window or independent?
+6. **Account linking policy** — should Finora eventually let one account
+   hold multiple authentication methods (e.g. an existing password user
+   connects Google, or connects both Google and Apple), or should the
+   product enforce one account = one method, as it does today? Not urgent,
+   but affects `/auth/identify`'s behavior when an identifier matches an
+   account by a different method than the one being attempted, profile
+   settings, and the account-recovery design in §2.9 — worth deciding
+   before any of those are built further, even though no code depends on
+   the answer yet. `sign_in_method` as a single flat column (§1.1, §2.1)
+   assumes one method per account; allowing linking would be the actual
+   trigger for introducing `UserAuthentication`, not multi-account-per-email
+   alone. Deferred to Phase 5.
