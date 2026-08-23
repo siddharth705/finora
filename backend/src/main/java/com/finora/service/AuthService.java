@@ -364,7 +364,13 @@ public class AuthService {
      */
     private String resolveEmailForLogin(String identifier, String scope) {
         if (identifier.contains("@")) {
-            return identifier;
+            // Bug fix: this used to return the identifier completely unchanged, unlike
+            // IdentityLookup.byEmail (a separate, newer entry point) which already trims. An
+            // email pasted with stray leading/trailing whitespace -- an ordinary way to end up
+            // with one -- silently failed to resolve, indistinguishable from an unregistered
+            // address. Trimming can only add matches, never remove one, so this is safe for
+            // every existing caller.
+            return identifier.trim();
         }
         // Delegates the stored-format variants to IdentityLookup, so the normalisation used when a
         // number is WRITTEN and the variants tried when one is READ cannot drift apart.
