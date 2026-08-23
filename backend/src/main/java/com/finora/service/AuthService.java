@@ -495,9 +495,20 @@ public class AuthService {
             // lockout and return the same generic message, not leak which failure mode occurred.
             if (user != null) {
                 registerFailedLogin(user);
-                auditService.record(user.getId(), "LOGIN_FAILED", "User", user.getId(),
-                        requestMetadata.addTo(new java.util.HashMap<>(Map.of("reason", "bad_credentials"))));
             }
+            // Timing-oracle fix, self-review 2026-08-23: this write happens for a null user too
+            // (unlike registerFailedLogin just above, which has nothing to attach a lockout
+            // counter to). Skipping it for an unknown identifier made this branch measurably
+            // cheaper than the known-user one -- one fewer DB round-trip on an endpoint whose
+            // whole BH-014 design goal is that locked/wrong-password/unknown-identifier must cost
+            // the same. AuditLog.userId has no NOT NULL constraint (same precedent as
+            // BANK_CREATED's null entityId), so a userId-less row is a supported shape, not a
+            // workaround -- and it's a genuine side benefit for admins watching the global audit
+            // feed for a credential-stuffing scan, not just parity theater.
+            auditService.record(user != null ? user.getId() : null, "LOGIN_FAILED", "User",
+                    user != null ? user.getId() : null,
+                    requestMetadata.addTo(new java.util.HashMap<>(
+                            Map.of("reason", user != null ? "bad_credentials" : "unknown_identifier"))));
             throw new ApiException(ErrorCode.AUTH_INVALID_CREDENTIALS, "Invalid credentials");
         }
 

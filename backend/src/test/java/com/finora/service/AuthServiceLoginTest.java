@@ -230,11 +230,19 @@ class AuthServiceLoginTest {
         verify(auditService).record(eq(userId), eq("LOGIN_FAILED"), eq("User"), eq(userId), any());
     }
 
-    /** Symmetric with registerFailedLogin's own null-user guard just above it in login() -- an
-     *  identifier that matches no account has no user id to audit against, so no LOGIN_FAILED
-     *  event should be written (mirrors why the lockout counter is untouched here too). */
+    /**
+     * Timing-oracle fix (self-review finding, acted on 2026-08-23): an identifier that matches no
+     * account still has no user id to attach a lockout counter to (registerFailedLogin stays
+     * null-user-guarded, unchanged), but skipping the LOGIN_FAILED audit write entirely made this
+     * branch measurably cheaper than the known-user branches just above it -- one fewer DB
+     * round-trip, on an endpoint whose entire BH-014 design goal is that a locked/wrong-password/
+     * unknown-identifier response must cost the same. Writing a userId-less LOGIN_FAILED row (the
+     * entity supports it -- AuditLog.userId has no NOT NULL constraint, same as the BANK_CREATED
+     * null-entityId precedent) closes that gap and is a genuine side benefit for admins watching
+     * the global audit feed for a credential-stuffing scan, not just parity theater.
+     */
     @Test
-    void login_withUnknownIdentifier_doesNotRecordLoginFailedAudit() {
+    void login_withUnknownIdentifier_stillRecordsLoginFailedAudit_forTimingParityWithKnownAccounts() {
         when(userRepository.findByEmailIgnoreCaseAndAccountScope("nobody@example.com", "USER")).thenReturn(Optional.empty());
         when(authenticationManager.authenticate(any())).thenThrow(new BadCredentialsException("Bad credentials"));
 
@@ -242,7 +250,9 @@ class AuthServiceLoginTest {
             authService.login(new LoginRequest("nobody@example.com", "whatever", "USER"));
         } catch (Exception ignored) { /* expected */ }
 
-        verify(auditService, never()).record(any(), eq("LOGIN_FAILED"), any(), any(), any());
+        var captor = org.mockito.ArgumentCaptor.forClass(java.util.Map.class);
+        verify(auditService).record(isNull(), eq("LOGIN_FAILED"), eq("User"), isNull(), captor.capture());
+        assertThat(captor.getValue()).containsEntry("reason", "unknown_identifier");
     }
 
     /**
