@@ -29,7 +29,14 @@ export default function Login() {
   const { login, loginWithGoogle } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
-  const [identifier, setIdentifier] = useState('');
+  // Phase 3 (§2.2): AuthEntry.tsx already resolved this identifier to an account and its
+  // sign-in method via POST /auth/identify -- prefill it here instead of asking the user to
+  // retype it, and read the method once at mount (not reactively, same reasoning as `banner`
+  // below: router state shouldn't resurface on an unrelated later render of this same route).
+  const [prefill] = useState<{ identifier?: string; method?: string } | null>(
+    () => location.state as { identifier?: string; method?: string } | null,
+  );
+  const [identifier, setIdentifier] = useState(prefill?.identifier ?? '');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -99,6 +106,11 @@ export default function Login() {
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
+    // Nothing to submit in this state: no password field is rendered (see the OAuth-hint
+    // branch below), but the identifier input alone still triggers the browser's implicit
+    // form submission on Enter -- swallow it instead of asking for a password that was never
+    // shown.
+    if (prefill?.method === 'GOOGLE' || prefill?.method === 'APPLE') return;
     setError(null);
     if (!identifierValid) { setError('Enter your email or mobile number.'); return; }
     if (password.length === 0) { setError('Enter your password.'); return; }
@@ -224,28 +236,43 @@ export default function Login() {
             className="w-full border border-border rounded-lg px-3 py-2.5 mb-4 text-sm bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-primary/30"
           />
 
-          <label htmlFor="login-password" className="block text-xs font-medium text-muted mb-1">Password</label>
-          <PasswordInput
-            id="login-password"
-            value={password}
-            onChange={setPassword}
-            required
-            autoComplete="current-password"
-            className="w-full border border-border rounded-lg px-3 py-2.5 pr-10 mb-2 text-sm bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-primary/30"
-          />
-          <p className="text-right mb-6">
-            <Link to="/forgot-password" className="text-xs text-primary font-medium">Forgot password?</Link>
-          </p>
+          {/* §2.4: once /auth/identify has already told us this identifier belongs to an
+              OAuth account, don't show a password field that the backend would refuse anyway --
+              this is UX, the server-side refusal (signInMethod check) stays the real guarantee. */}
+          {prefill?.method === 'GOOGLE' || prefill?.method === 'APPLE' ? (
+            <p className="text-sm text-ink bg-primary-light rounded-lg px-3 py-2.5 mb-6">
+              {prefill.method === 'GOOGLE'
+                ? 'This account signs in with Google. Continue below to sign in.'
+                : 'This account signs in with Apple, which isn’t available in the web app yet — please use the Finora mobile app instead.'}
+            </p>
+          ) : (
+            <>
+              <label htmlFor="login-password" className="block text-xs font-medium text-muted mb-1">Password</label>
+              <PasswordInput
+                id="login-password"
+                value={password}
+                onChange={setPassword}
+                required
+                autoComplete="current-password"
+                className="w-full border border-border rounded-lg px-3 py-2.5 pr-10 mb-2 text-sm bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-primary/30"
+              />
+              <p className="text-right mb-6">
+                <Link to="/forgot-password" className="text-xs text-primary font-medium">Forgot password?</Link>
+              </p>
 
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full bg-primary hover:bg-primary-dark text-on-primary rounded-lg py-2.5 text-sm font-semibold flex items-center justify-center gap-1.5 disabled:opacity-50"
-          >
-            {loading ? 'Signing in…' : 'Sign in'}
-            {!loading && <ArrowRight size={15} />}
-          </button>
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full bg-primary hover:bg-primary-dark text-on-primary rounded-lg py-2.5 text-sm font-semibold flex items-center justify-center gap-1.5 disabled:opacity-50"
+              >
+                {loading ? 'Signing in…' : 'Sign in'}
+                {!loading && <ArrowRight size={15} />}
+              </button>
+            </>
+          )}
 
+          {prefill?.method !== 'APPLE' && (
+          <>
           <div className="flex items-center gap-3 my-5">
             <div className="flex-1 h-px bg-border" />
             <span className="text-xs text-muted">OR</span>
@@ -253,6 +280,8 @@ export default function Login() {
           </div>
 
           <GoogleSignInButton text="signin_with" onCredential={handleGoogleCredential} onError={setError} />
+          </>
+          )}
 
           <div className="flex items-start gap-2.5 bg-primary-light rounded-lg p-3 mt-6">
             <ShieldCheck size={16} className="text-primary flex-shrink-0 mt-0.5" />

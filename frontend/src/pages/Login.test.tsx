@@ -30,7 +30,7 @@ function VerifyPhoneStub() {
   );
 }
 
-function renderLogin(state?: { message?: string }) {
+function renderLogin(state?: { message?: string; identifier?: string; method?: string }) {
   return render(
     <MemoryRouter initialEntries={[{ pathname: '/login', state }]}>
       <AuthProvider>
@@ -55,6 +55,52 @@ describe('Login — post-redirect confirmation banner', () => {
     renderLogin();
 
     expect(screen.queryByText(/please sign in using your new password/i)).not.toBeInTheDocument();
+  });
+});
+
+// Phase 3 (§2.2/§2.4): AuthEntry.tsx sends the identifier it already resolved, plus the
+// account's sign-in method, via router state -- so this screen doesn't ask the user to retype
+// the identifier, and doesn't show a password field/forgot-password link for an account that has
+// no password to check it against (the backend already refuses this; this just stops the
+// dead-end form from being shown at all -- see the doc comment on Login.tsx).
+describe('Login — prefill and OAuth hint from AuthEntry', () => {
+  it('prefills the identifier field when arriving with router state from AuthEntry', () => {
+    renderLogin({ identifier: 'jane@example.com', method: 'PASSWORD' });
+
+    expect(screen.getByLabelText(/email or mobile number/i)).toHaveValue('jane@example.com');
+  });
+
+  it('hides the password field and forgot-password link, and shows a Google hint, when method is GOOGLE', () => {
+    renderLogin({ identifier: 'jane@example.com', method: 'GOOGLE' });
+
+    expect(screen.queryByLabelText(/^password$/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /forgot password/i })).not.toBeInTheDocument();
+    expect(screen.getByText(/this account signs in with google/i)).toBeInTheDocument();
+  });
+
+  it('hides the password field and shows an Apple hint, when method is APPLE', () => {
+    renderLogin({ identifier: 'jane@example.com', method: 'APPLE' });
+
+    expect(screen.queryByLabelText(/^password$/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/this account signs in with apple/i)).toBeInTheDocument();
+  });
+
+  it('does not ask for a password when the identifier field is submitted via Enter while the Google hint is shown', async () => {
+    renderLogin({ identifier: 'jane@example.com', method: 'GOOGLE' });
+    const user = userEvent.setup();
+
+    await user.type(screen.getByLabelText(/email or mobile number/i), '{Enter}');
+
+    expect(screen.queryByText(/enter your password/i)).not.toBeInTheDocument();
+    expect(authApi.login).not.toHaveBeenCalled();
+  });
+
+  it('shows the ordinary password form with no hint on a direct visit with no router state', () => {
+    renderLogin();
+
+    expect(screen.getByLabelText(/^password$/i)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /forgot password/i })).toBeInTheDocument();
+    expect(screen.queryByText(/this account signs in with/i)).not.toBeInTheDocument();
   });
 });
 

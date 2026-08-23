@@ -62,6 +62,12 @@ export const authApi = {
   // account's real email before authenticating.
   login: (identifier: string, password: string) =>
     api.post<AuthResponseDto>('/auth/login', { identifier, password, scope: PORTAL_SCOPE }),
+  // Identifier-first entry step (auth/security review §2.2) -- resolves an email or mobile
+  // number to what the frontend should show next, without a raw exists boolean. See
+  // AuthService.identify on the backend: nextAction is 'PASSWORD' | 'GOOGLE' | 'APPLE' for an
+  // existing account, or 'CONTINUE' when there isn't one yet.
+  identify: (identifier: string) =>
+    api.post<{ nextAction: string }>('/auth/identify', { identifier }).then((r) => r.data),
   forgotPassword: (email: string) =>
     api.post<{ message: string; devResetLink: string | null }>('/auth/forgot-password', { email, scope: PORTAL_SCOPE }).then((r) => r.data),
   // Reveals the account's real phone number for a valid, unused reset link -- needed to call
