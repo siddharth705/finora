@@ -1,16 +1,21 @@
 # Finora Authentication & Account Security — Review & Design
 
-**Status: Approved.** Next: Phase 0's remaining open decisions (§Open
-decisions) — decision 5 (Phase 2 sequencing) is now resolved, the other 5
-are not. Implementation: Phase 1 is done, Phase 2's audit-hardening slice
-is done, Phase 3's backend slice (`/auth/identify`, PR #327) is merged, and
-both its 3A (web) and 3B (mobile) entry-flow UX are now merged. Phase 3.5's
-audit is done (no gap in its own checklist; a bonus
-phone-change session-revocation gap found and fixed). Phase 4 is fully
-merged (backend, web, mobile). Phase 5 has not begun. Committed via a
-worktree per `CLAUDE.md` (primary checkout is a shared read-only-for-writes
-checkout). This is a roadmap — each phase ships as its own ticket/PR,
-never as one combined PR.
+**Status: Approved.** Next: Phase 6 (BH-015 fix) and Phase 7 (`/auth/identify`
+enumeration hardening) — both resolved-to-build 2026-08-23, neither started;
+Phase 7's exact wire shape still needs to be designed before implementation.
+Of Phase 0's 6 open decisions, only #3 (account deletion retention — needs
+legal/compliance input, tracked as its own ticket, not this doc's to close)
+remains genuinely open; the other 5 are resolved. Implementation: Phase 1 is
+done, Phase 2's audit-hardening slice is done, Phase 3's backend slice
+(`/auth/identify`, PR #327) is merged, and both its 3A (web) and 3B (mobile)
+entry-flow UX are now merged (Phase 7 will revise this). Phase 3.5's audit
+is done (no gap in its own checklist; a bonus phone-change
+session-revocation gap found and fixed). Phase 4 is fully merged (backend,
+web, mobile). Phase 5 (deferred, unscheduled) is narrower than before —
+standalone phone-OTP login and account-linking policy are now closed, not
+parked there. Committed via a worktree per `CLAUDE.md` (primary checkout is
+a shared read-only-for-writes checkout). This is a roadmap — each phase
+ships as its own ticket/PR, never as one combined PR.
 
 **Phase 1 (Apple step-up verification) is already done** — PR #290 merged
 before this document's audit ran, and the audit missed it; corrected here.
@@ -589,14 +594,76 @@ match.
   established default for a flow with no UI toggle, applied here from day
   one rather than needing its own follow-up fix.
 
-**Phase 5 — Deferred: future providers, account linking, recovery**
-Truecaller, Passkeys, standalone phone-OTP login, the `StepUpVerifier`
-structural refactor (§2.6), account-linking policy, and account-recovery
-design (§2.9, §Open decisions) all live here. None of these are scheduled —
-they're documented as extension points. `sign_in_method` and the existing
-step-up call sites are designed to accept this later without a rewrite, but
-nothing here is greenlit. The auth-provider table is explicitly deferred
-alongside these, not planned.
+**Phase 6 — BH-015 fix: invert the reset-password phone flow**
+`fix(auth): stop revealing the account's real phone number on password reset`
+- **Resolved 2026-08-23: fix now**, not deferred to Phase 5. Not started.
+- Problem (§1.3): `POST /auth/reset-password/phone` currently takes just
+  the reset-link token and returns the account's REAL, unmasked phone
+  number — needed because Firebase Phone Auth's client SDK sends the OTP
+  directly, so the number has to reach the browser/app. Anyone holding a
+  valid reset-link token (e.g. an intercepted/forwarded email) learns the
+  account's phone number even if the reset never completes.
+- Direction: invert who supplies the number. The user types their own
+  phone number; the backend verifies it matches the account tied to the
+  token BEFORE the client is allowed to call Firebase, and returns only a
+  yes/no (or a generic "if this matches, we'll send a code" message, not
+  the number itself) — mirroring `/auth/identify`'s own "don't hand back
+  a raw boolean" posture and its rate-limit treatment, since this becomes
+  a new phone-number-guessing oracle otherwise (a much smaller one than
+  today's guaranteed reveal, but still worth rate-limiting tightly).
+- Touches: a new/modified backend endpoint (replaces
+  `resolveResetPasswordPhone`'s reveal-the-number behavior), a phone-number
+  input field added to `ResetPassword.tsx`, `frontend/src/pages/...` and
+  the mobile equivalent (currently phone-reset display-only), plus a
+  dedicated rate limiter. Backend, web, mobile -- each its own PR, per
+  this doc's own rule.
+- Not started — exact endpoint shape/wire contract still to be designed
+  before implementation, same as any other phase here.
+
+**Phase 7 — `/auth/identify` enumeration hardening**
+`feat(auth): reduce what /auth/identify's response reveals`
+- **Resolved 2026-08-23: revisit toward stricter**, reopening Phase 3's
+  already-shipped backend + both frontends. Not started.
+- Problem: the shipped `{"nextAction": "PASSWORD" | "GOOGLE" | "APPLE" |
+  "CONTINUE"}` response still lets a caller distinguish "this identifier
+  has an account" (any non-`CONTINUE` value) from "it doesn't"
+  (`CONTINUE`), and for an existing account, which method it uses.
+  §2.2's own text already named this as a mitigation, not a fix.
+- **Design resolved 2026-08-23**: option (b) — keep the identify step's
+  exists-vs-doesn't-exist routing (Phase 3's Login-vs-Register win stays:
+  `PASSWORD`/`GOOGLE`/`APPLE` all collapse into a single `EXISTS` value,
+  `CONTINUE` stays as-is), but drop which method an existing account uses
+  from the response. `nextAction` becomes `"EXISTS" | "CONTINUE"` only.
+  `Login.tsx`/`LoginScreen`'s OAuth hint (hide the password field for a
+  known GOOGLE/APPLE account) goes away for a prefilled-from-AuthEntry
+  visit specifically — it always shows the password field AND the
+  Google/Apple buttons together for an `EXISTS` identifier, same as a
+  direct visit to `/login` today already does. §2.4's "move the
+  OAuth-user rejection earlier" UX win is given up deliberately as the
+  cost of closing this leak; the backend's own `signInMethod` refusal on
+  an actual password-login attempt remains the real, unaffected guarantee
+  either way.
+  Options (a) (fully generic, no identify step at all) and (c) were not
+  chosen — (a) would give up the CONTINUE-vs-EXISTS routing too, a bigger
+  UX regression than this decision called for.
+- Touches: `AuthService.identify`/`IdentifyResponse` (backend, `nextAction`
+  values narrow from 4 to 2), `AuthEntry` + `Login` (web, drop the
+  `method` field from the router-state payload and the OAuth-hint branch
+  entirely), `AuthEntryScreen` + `LoginScreen` (mobile, same). All three
+  already shipped once for the current 4-value shape, so this is a
+  revision, not a fresh build — existing tests asserting on `GOOGLE`/
+  `APPLE`/`PASSWORD` values and the OAuth-hint UI will need updating, not
+  just new tests added.
+
+**Phase 5 — Deferred: future providers, recovery**
+Truecaller, Passkeys, the `StepUpVerifier` structural refactor (§2.6), and
+account-recovery design (§2.9) live here. None of these are scheduled —
+they're documented as extension points. Standalone phone-OTP login and
+account-linking policy, previously also parked here, are both **closed**
+(§Open decisions 4 and 6, resolved 2026-08-23: not wanted / one method per
+account) — removed from this list rather than left looking open. The
+auth-provider table is explicitly deferred alongside what's left here, not
+planned.
 
 ---
 
@@ -612,37 +679,38 @@ proves the team's bar for this kind of endpoint.
 ---
 
 ## Open decisions for you (not mine to make unilaterally)
-1. `nextAction` endpoint (§2.2) — confirmed direction after security review,
-   or want something stricter still (e.g. always-generic response + a
-   separate "check your messages" step)? Note the Phase 3 amendment above:
-   the backend endpoint is already implemented against the shape in §2.2 —
-   a stricter answer here would mean revising already-written code, not
-   just the design.
-2. BH-015 fix — invert the reset-password phone flow as part of Phase 3, or
-   defer to Phase 5?
+1. ~~`nextAction` endpoint (§2.2) — confirmed direction after security
+   review, or want something stricter still?~~ — **resolved 2026-08-23:
+   revisit toward stricter.** The shipped shape (`{"nextAction": "PASSWORD"
+   | "GOOGLE" | "APPLE" | "CONTINUE"}`) still lets a determined caller
+   distinguish "account exists" from "account doesn't" by response
+   content. Concrete redesign options (and which one to build) tracked as
+   its own phase — see §3's note below; this reopens already-shipped
+   Phase 3 code, not just the design.
+2. ~~BH-015 fix — invert the reset-password phone flow as part of Phase 3,
+   or defer to Phase 5?~~ — **resolved 2026-08-23: fix it now**, as its
+   own phase (not folded into Phase 3's entry flow, which already
+   shipped). Scope tracked in §3's note below.
 3. **Account deletion retention policy** — separate decision from this
    document, not an auth-mechanism question. Needs legal/compliance/support
    input: keep instant/irreversible, or add a delay + recovery window? Track
    as its own ticket, not folded into Phase 3's entry flow or any other
    phase here.
-4. Is standalone phone-OTP login (§2.8) actually wanted, given per-login SMS
-   cost — or is current "OTP as verification step" model sufficient?
-   (Deferred to Phase 5 either way, but worth confirming intent early.)
+4. ~~Is standalone phone-OTP login (§2.8) actually wanted, given per-login
+   SMS cost — or is current "OTP as verification step" model
+   sufficient?~~ — **resolved 2026-08-23: not wanted.** Current
+   verification-step model stays; standalone phone-OTP login is closed,
+   not deferred-and-open.
 5. ~~Sequencing Phase 2 (audit logging) with
    `user-security-center-proposal.md` — same PR window or independent?~~ —
    **resolved 2026-08-23: coordinate.** Phase 2 shipped using that
    proposal's own recommended design (§3.1 option (a): metadata, not a
    schema change), and its login-history endpoint was pulled forward into
    the same change rather than left for a separate pass.
-6. **Account linking policy** — should Finora eventually let one account
-   hold multiple authentication methods (e.g. an existing password user
-   connects Google, or connects both Google and Apple), or should the
-   product enforce one account = one method, as it does today? Not urgent,
-   but affects `/auth/identify`'s behavior when an identifier matches an
-   account by a different method than the one being attempted, profile
-   settings, and the account-recovery design in §2.9 — worth deciding
-   before any of those are built further, even though no code depends on
-   the answer yet. `sign_in_method` as a single flat column (§1.1, §2.1)
-   assumes one method per account; allowing linking would be the actual
-   trigger for introducing `UserAuthentication`, not multi-account-per-email
-   alone. Deferred to Phase 5.
+6. ~~**Account linking policy** — should Finora eventually let one account
+   hold multiple authentication methods, or enforce one account = one
+   method, as it does today?~~ — **resolved 2026-08-23: one method per
+   account, current model stays.** `UserAuthentication` (§1.1) is not
+   needed; `sign_in_method` as a single flat column remains correct.
+   Account-recovery design (§2.9) and any future `/auth/identify`
+   cross-method-match handling should assume this.
