@@ -479,6 +479,8 @@ public class AuthService {
             passwordEncoder.matches(request.password(), timingParityHash);
             log.info("Refused login for locked account {} -- responding as invalid credentials (BH-014)",
                     user.getId());
+            auditService.record(user.getId(), "LOGIN_FAILED", "User", user.getId(),
+                    requestMetadata.addTo(new java.util.HashMap<>(Map.of("reason", "locked"))));
             throw new ApiException(ErrorCode.AUTH_INVALID_CREDENTIALS, "Invalid credentials");
         }
         // An EXPIRED lockout clears the counter that produced it. Serving the lockout is the
@@ -513,6 +515,19 @@ public class AuthService {
             if (user != null) {
                 registerFailedLogin(user);
             }
+            // Timing-oracle fix, self-review 2026-08-23: this write happens for a null user too
+            // (unlike registerFailedLogin just above, which has nothing to attach a lockout
+            // counter to). Skipping it for an unknown identifier made this branch measurably
+            // cheaper than the known-user one -- one fewer DB round-trip on an endpoint whose
+            // whole BH-014 design goal is that locked/wrong-password/unknown-identifier must cost
+            // the same. AuditLog.userId has no NOT NULL constraint (same precedent as
+            // BANK_CREATED's null entityId), so a userId-less row is a supported shape, not a
+            // workaround -- and it's a genuine side benefit for admins watching the global audit
+            // feed for a credential-stuffing scan, not just parity theater.
+            auditService.record(user != null ? user.getId() : null, "LOGIN_FAILED", "User",
+                    user != null ? user.getId() : null,
+                    requestMetadata.addTo(new java.util.HashMap<>(
+                            Map.of("reason", user != null ? "bad_credentials" : "unknown_identifier"))));
             throw new ApiException(ErrorCode.AUTH_INVALID_CREDENTIALS, "Invalid credentials");
         }
 
@@ -575,7 +590,8 @@ public class AuthService {
                     ErrorCode.AUTH_MFA_REQUIRED.defaultMessage(), Map.of("mfaChallengeToken", challengeToken));
         }
 
-        auditService.record(user.getId(), "USER_LOGIN", "User", user.getId());
+        auditService.record(user.getId(), "USER_LOGIN", "User", user.getId(),
+                requestMetadata.addTo(new java.util.HashMap<>()));
         return issueSessionTokens(user);
     }
 
@@ -600,7 +616,8 @@ public class AuthService {
         UUID userId = adminMfaService.verifyChallenge(challengeToken, code);
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "User not found"));
-        auditService.record(user.getId(), "USER_LOGIN", "User", user.getId(), Map.of("mfa", true));
+        auditService.record(user.getId(), "USER_LOGIN", "User", user.getId(),
+                requestMetadata.addTo(new java.util.HashMap<>(Map.of("mfa", true))));
         return issueSessionTokens(user);
     }
 
@@ -802,7 +819,7 @@ public class AuthService {
         }
 
         auditService.record(user.getId(), isNewAccount ? provider.registeredAuditAction : provider.loginAuditAction,
-                "User", user.getId());
+                "User", user.getId(), requestMetadata.addTo(new java.util.HashMap<>()));
 
         var issued = refreshTokenService.issue(user.getId());
         String accessToken = jwtService.generateToken(user.getId(), user.getEmail(), issued.sessionId(),
@@ -1056,7 +1073,8 @@ public class AuthService {
                     "success", result.success()));
         });
 
-        auditService.record(user.getId(), "USER_LOGIN", "User", user.getId());
+        auditService.record(user.getId(), "USER_LOGIN", "User", user.getId(),
+                requestMetadata.addTo(new java.util.HashMap<>()));
         var issued = refreshTokenService.issue(user.getId());
         String accessToken = jwtService.generateToken(user.getId(), user.getEmail(), issued.sessionId(),
                 user.getAccountScope());

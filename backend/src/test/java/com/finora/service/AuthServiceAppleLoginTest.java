@@ -132,7 +132,7 @@ class AuthServiceAppleLoginTest {
         assertThat(captor.getValue().isEmailVerified()).isTrue();
 
         verify(categoryRepository).saveAll(any());
-        verify(auditService).record(eq(userId), eq("USER_REGISTERED_APPLE"), eq("User"), eq(userId));
+        verify(auditService).record(eq(userId), eq("USER_REGISTERED_APPLE"), eq("User"), eq(userId), any());
     }
 
     @Test
@@ -187,7 +187,7 @@ class AuthServiceAppleLoginTest {
         assertThat(response.email()).isEqualTo("jane@example.com");
         assertThat(response.maskedPhone()).isEqualTo("+•••••••••001");
         verify(userRepository, never()).save(any(User.class));
-        verify(auditService).record(eq(userId), eq("USER_LOGIN_APPLE"), eq("User"), eq(userId));
+        verify(auditService).record(eq(userId), eq("USER_LOGIN_APPLE"), eq("User"), eq(userId), any());
     }
 
     @Test
@@ -209,7 +209,7 @@ class AuthServiceAppleLoginTest {
         verify(emailProvider).sendEmailVerificationEmail(eq("jane@example.com"), anyString());
         verify(auditService).record(eq(userId), eq("EMAIL_SENT"), eq("User"), eq(userId), any());
         verify(refreshTokenService, never()).issue(any());
-        verify(auditService, never()).record(any(), eq("USER_LOGIN_APPLE"), any(), any());
+        verify(auditService, never()).record(any(), eq("USER_LOGIN_APPLE"), any(), any(), any());
     }
 
     @Test
