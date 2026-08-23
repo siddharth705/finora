@@ -19,4 +19,23 @@ describe('HealthScoreRing', () => {
       screen.getByRole('img', { name: `Financial health score ${heroScore.value} out of 100` })
     ).toBeInTheDocument();
   });
+
+  it('shows 0, not the final score, while drawn=false', () => {
+    // Regression test: the ring and its number must NOT show the final value before the caller
+    // (AnalysisSequence) says the sequence it's gated behind has actually finished -- otherwise
+    // "84" reads as arriving for no reason rather than as the conclusion of that sequence.
+    render(<HealthScoreRing drawn={false} />);
+    expect(screen.getByText('0')).toBeInTheDocument();
+    expect(screen.queryByText(String(heroScore.value))).not.toBeInTheDocument();
+    // The accessible label is unconditional -- a screen reader isn't watching a scroll-triggered
+    // draw animation, so it should hear the real score immediately either way.
+    expect(
+      screen.getByRole('img', { name: `Financial health score ${heroScore.value} out of 100` })
+    ).toBeInTheDocument();
+  });
+
+  it('shows the final score once drawn=true', () => {
+    render(<HealthScoreRing drawn={true} />);
+    expect(screen.getByText(String(heroScore.value))).toBeInTheDocument();
+  });
 });
