@@ -384,6 +384,9 @@ app:
     forgot-password:
       max: ${RATE_LIMIT_FORGOT_PASSWORD_MAX:5}
       window-seconds: ${RATE_LIMIT_FORGOT_PASSWORD_WINDOW_SECONDS:300}
+    identify:
+      max: ${RATE_LIMIT_IDENTIFY_MAX:10}
+      window-seconds: ${RATE_LIMIT_IDENTIFY_WINDOW_SECONDS:300}
     import-stage:
       max: ${RATE_LIMIT_IMPORT_STAGE_MAX:10}
       window-seconds: ${RATE_LIMIT_IMPORT_STAGE_WINDOW_SECONDS:600}
