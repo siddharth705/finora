@@ -63,22 +63,14 @@ ACCEPTED = [
     # The reasoning is not lost if it comes back: it is in this file's history, and the finding
     # that npm's suggested remediation (downgrade to 7.11.0) would reintroduce the open redirect
     # fixed in 1ea5d13 is the part worth re-reading before anyone acts on that advice again.
-    Accepted(
-        ghsa="GHSA-w5hq-g745-h8pq",
-        apps={"mobile"},
-        summary="uuid: missing buffer bounds check in v3/v5/v6 when buf is provided",
-        why=(
-            "Reached only as expo -> @expo/cli -> xcode -> uuid. That is the build and CLI\n"
-            "      toolchain; it runs on a developer machine and on the EAS builder, never on a\n"
-            "      user's device. It shows up in a production audit only because @expo/cli is a\n"
-            "      transitive dependency of the `expo` package, which is itself a production\n"
-            "      dependency -- a packaging artefact, not a statement about what ships.\n"
-            "      An npm override was considered and rejected: forcing a transitive version inside\n"
-            "      the Expo toolchain risks breaking `expo export`, which CI depends on, to fix\n"
-            "      something that never executes on a device."
-        ),
-        revisit="When Expo ships a toolchain release that resolves it upstream.",
-    ),
+    #
+    # GHSA-w5hq-g745-h8pq (uuid: missing buffer bounds check in v3/v5/v6 when buf is provided) was
+    # here for mobile, with the reasoning that an npm override forcing a transitive uuid version
+    # inside the Expo toolchain (reached via expo -> @expo/cli -> xcode -> uuid) risked breaking
+    # `expo export`. Removed 2026-08-23: added an `"overrides": {"uuid": "^11.1.1"}` entry to
+    # mobile/package.json and confirmed `npx expo export --platform android` still succeeds against
+    # it, so the predicted risk does not materialize.
+    #
     # The two image-size entries below are one finding in two parsers of the same package, reached
     # by the same single path, so they are recorded together and should be removed together.
     #

@@ -974,6 +974,7 @@ public class ImportService {
             statementImport.setStoredSize(stored.storedSize());
             statementImport.setCompressionType(stored.compressionType());
             statementImport.setOriginalMimeType(stored.mimeType());
+            statementImport.setEncryptionKeyId(stored.encryptionKeyId());
         } else {
             statementImport.setFileContent(fileContent);
         }

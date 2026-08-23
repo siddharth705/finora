@@ -10,6 +10,7 @@ import com.finora.dto.StatementImportDto.Summary;
 import com.finora.transactions.TransactionDto;
 import com.finora.security.CurrentUser;
 import com.finora.service.StatementImportService;
+import jakarta.validation.Valid;
 import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -77,7 +78,7 @@ public class StatementImportController {
     // Plain JSON, unlike /import/csv/confirm — the file is already stored server-side from the
     // original import, so there's nothing to re-upload here.
     @PostMapping("/{id}/reimport/confirm")
-    public ApiResponse<ConfirmResponse> confirmReimport(@PathVariable UUID id, @RequestBody ConfirmRequest request) throws java.io.IOException {
+    public ApiResponse<ConfirmResponse> confirmReimport(@PathVariable UUID id, @Valid @RequestBody ConfirmRequest request) throws java.io.IOException {
         return ApiResponse.ok(statementImportService.confirmReimport(currentUser.id(), id, request), "Import complete");
     }
 
