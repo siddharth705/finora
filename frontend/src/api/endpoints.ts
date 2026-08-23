@@ -735,6 +735,30 @@ export const phoneChangeApi = {
     ).then((r) => r.data),
 };
 
+// The step-up-gated Change Email flow -- see EmailChangeService on the backend for the full
+// start -> verify -> complete state machine. Unlike phoneChangeApi, DOES have a "prove you still
+// are who you say you are" first step (currentPassword/googleIdToken/appleIdToken, same shape as
+// passwordChangeApi.start): email is the account's password-reset delivery channel, so
+// authorizing a change to it on phone-change's lower bar would be worse, not better. Unlike
+// verifyOtp above, verify here proves control of the new address via a link the backend emailed
+// to it (see VerifyEmailChange.tsx) rather than an in-app Firebase OTP -- appleIdToken is always
+// null from this web client (Apple Sign-In has no web frontend counterpart here, see
+// GoogleReauthPrompt's own doc comment).
+export const emailChangeApi = {
+  start: (currentPassword: string | null, googleIdToken: string | null, appleIdToken: string | null, newEmail: string) =>
+    api.post<{ sessionId: string; devVerifyLink: string | null }>(
+      '/users/me/email-change/start', { currentPassword, googleIdToken, appleIdToken, newEmail }
+    ).then((r) => r.data),
+  verify: (sessionId: string, token: string) =>
+    api.post<{ message: string }>(
+      '/users/me/email-change/verify', { sessionId, token }
+    ).then((r) => r.data),
+  complete: (sessionId: string) =>
+    api.post<{ message: string; email: string }>(
+      '/users/me/email-change/complete', { sessionId }
+    ).then((r) => r.data),
+};
+
 // The self-service account lifecycle -- see UserAccountLifecycleService on the backend for
 // deactivate (today) and delete-request/purge (Phase B, to follow).
 export const accountLifecycleApi = {
