@@ -94,6 +94,30 @@ public interface StatementImportRepository extends JpaRepository<StatementImport
                                                                  @Param("accountId") UUID accountId,
                                                                  @Param("excludingId") UUID excludingId);
 
+    /**
+     * How many OTHER statements exist for this account, ignoring one row (same exclusion as {@link
+     * #findLatestPeriodEndForAccount}).
+     *
+     * <p>Bug fix: SQL {@code MAX()} silently ignores NULL rows, so once a statement can legitimately
+     * have a null {@code statementPeriodEnd} (an import whose PDF never printed a period, now that
+     * the transaction-range guess that used to guarantee a value has been removed -- see {@code
+     * ImportService.persistSection}'s own comment), {@code findLatestPeriodEndForAccount} returning
+     * empty stopped meaning only "this is the account's only statement" -- it now also means "other
+     * statements exist, but none of them states a period," which is a DIFFERENT, unsafe case to treat
+     * the same way. This lets {@code isMostRecentStatementForAccount} tell the two apart instead of
+     * defaulting to "most recent" (and authorizing a closing-balance overwrite) whenever an undated
+     * sibling is silently invisible to the aggregate.
+     */
+    @Query("""
+           SELECT COUNT(si) FROM StatementImport si
+            WHERE si.userId = :userId
+              AND si.accountId = :accountId
+              AND si.id <> :excludingId
+           """)
+    long countOtherStatementsForAccount(@Param("userId") UUID userId,
+                                         @Param("accountId") UUID accountId,
+                                         @Param("excludingId") UUID excludingId);
+
     /** {@code WorkspaceDashboardService.summarize}'s "N statements imported" tile only ever called
      *  {@code .size()} on the entity-returning finder's full result -- a database COUNT is
      *  strictly better than fetching (and projecting) any columns at all for that, {@code

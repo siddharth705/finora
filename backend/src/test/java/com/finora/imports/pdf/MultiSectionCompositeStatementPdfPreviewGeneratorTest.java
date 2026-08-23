@@ -85,4 +85,30 @@ class MultiSectionCompositeStatementPdfPreviewGeneratorTest {
         assertThat(creditCard.rows().get(0).type()).isEqualTo("EXPENSE");
         assertThat(creditCard.rows().get(0).amount()).isEqualByComparingTo("1817.02");
     }
+
+    /**
+     * Bug fix: {@code TransactionTableDateRangeExtractor} is read once, document-wide -- correct for
+     * a credit-card billing panel (a real card statement is effectively always one account), but this
+     * extractor isn't restricted to credit-card documents. Applying its single, document-wide match to
+     * EVERY section unconditionally would stamp the savings section's own printed range onto the
+     * unrelated credit-card section too. Neither section here has any OTHER printed period, so the
+     * honest answer for both is null, not the savings section's 05-Jul-to-10-Jul range copied onto
+     * the credit-card section that never printed anything of the kind.
+     */
+    @Test
+    void generateSections_doesNotCopyOneSectionsPrintedTableHeaderRangeOntoAnUnrelatedSection()
+            throws Exception {
+        byte[] bytes = PdfFixtureBuilder.buildMultiSectionCompositeStatementWithTableHeaderDateRangeSample();
+        List<StagedAccountSection> sections =
+                realGenerator().generateSections(UUID.randomUUID(), "composite_statement.pdf", bytes);
+
+        assertThat(sections).hasSize(2);
+        StagedAccountSection creditCard = sections.get(1);
+        assertThat(creditCard.detectedAccount().suggestedAccountType()).isEqualTo("CREDIT_CARD");
+        assertThat(creditCard.detectedAccount().statementPeriodStart())
+                .as("the credit-card section printed no period of its own -- it must not silently "
+                        + "inherit the savings section's")
+                .isNull();
+        assertThat(creditCard.detectedAccount().statementPeriodEnd()).isNull();
+    }
 }

@@ -628,8 +628,13 @@ class ImportServiceAskOnceTest {
     }
 
     /**
-     * Statement Import v2: opening/closing balance and statement period should be derivable
-     * whenever the file has a running-balance column, without needing the user to type anything.
+     * Statement Import v2: opening/closing balance should be derivable whenever the file has a
+     * running-balance column, without needing the user to type anything.
+     *
+     * <p>Bug fix: this test used to also assert the statement PERIOD was derived from the same two
+     * transaction dates -- exactly the "transaction range as a guessed period" fallback removed from
+     * StatementValidator.buildDetectedAccountInfo (see that method's own comment). This CSV prints no
+     * period anywhere, so the correct, honest answer is null, not the two transaction dates.
      */
     @Test
     void parseAndStage_derivesOpeningAndClosingBalance_fromARunningBalanceColumn() throws Exception {
@@ -649,8 +654,8 @@ class ImportServiceAskOnceTest {
 
         assertThat(response.detectedAccount().openingBalance()).isEqualByComparingTo("10000.00");
         assertThat(response.detectedAccount().closingBalance()).isEqualByComparingTo("11514.00");
-        assertThat(response.detectedAccount().statementPeriodStart()).isEqualTo(LocalDate.of(2026, 7, 10));
-        assertThat(response.detectedAccount().statementPeriodEnd()).isEqualTo(LocalDate.of(2026, 7, 12));
+        assertThat(response.detectedAccount().statementPeriodStart()).isNull();
+        assertThat(response.detectedAccount().statementPeriodEnd()).isNull();
     }
 
     @Test
