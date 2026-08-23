@@ -107,6 +107,52 @@ class GmailReviewServiceTest {
                         + "Category isn't auto-detected yet, so it defaults to \"Other\" — check it below.");
     }
 
+    /** Regression coverage for a code-review finding: descriptionFor prefers a counterparty over
+     *  the domain (PhonePe/CRED), which broke the coincidence that StagedRow.description always
+     *  WAS the authenticated domain. merchantDomain and reasoning must use the real domain
+     *  (ImportSession.sourceDomain, V108), not the counterparty-bearing description -- otherwise
+     *  the reasoning sentence would claim a payee's email was "verified", which is false; only
+     *  the domain was ever authenticated. */
+    @Test
+    @DisplayName("a counterparty-bearing receipt uses the real domain for merchantDomain and reasoning")
+    void counterpartyReceiptUsesRealDomainNotDescription() {
+        ImportSession session = mock(ImportSession.class);
+        when(session.getId()).thenReturn(sessionId);
+        when(session.getSource()).thenReturn(ImportSession.SOURCE_GMAIL);
+        when(session.getSourceDomain()).thenReturn("phonepe.com");
+        when(session.getCreatedAt()).thenReturn(Instant.now());
+        when(importSessionRepository.findByUserIdAndSourceAndStatusOrderByCreatedAtDesc(
+                userId, ImportSession.SOURCE_GMAIL, ImportSession.STATUS_STAGED))
+                .thenReturn(List.of(session));
+        when(importSessionService.readStagedRows(session))
+                .thenReturn(List.of(stagedRow("Sunrise General Store")));
+
+        GmailReviewItemDto item = reviewService.listPending(userId).get(0);
+
+        assertThat(item.merchant()).isEqualTo("Sunrise General Store");
+        assertThat(item.merchantDomain()).isEqualTo("phonepe.com");
+        assertThat(item.reasoning())
+                .isEqualTo("Amount and date read from a verified PhonePe email. "
+                        + "Category isn't auto-detected yet, so it defaults to \"Other\" — check it below.");
+    }
+
+    /** A session staged before V108 (or any CSV/PDF session, though toItem never sees one) has a
+     *  null sourceDomain -- must fall back to the description, the same imperfect-but-unchanged
+     *  behavior every session had before this column existed, rather than NPE or show "null". */
+    @Test
+    @DisplayName("a session with no sourceDomain (pre-migration) falls back to the description")
+    void missingSourceDomainFallsBackToDescription() {
+        ImportSession session = gmailSession();
+        when(importSessionRepository.findByUserIdAndSourceAndStatusOrderByCreatedAtDesc(
+                userId, ImportSession.SOURCE_GMAIL, ImportSession.STATUS_STAGED))
+                .thenReturn(List.of(session));
+        when(importSessionService.readStagedRows(session)).thenReturn(List.of(stagedRow("amazon.in")));
+
+        GmailReviewItemDto item = reviewService.listPending(userId).get(0);
+
+        assertThat(item.merchantDomain()).isEqualTo("amazon.in");
+    }
+
     @Test
     @DisplayName("a domain with no known display name falls back to the domain itself")
     void unknownDomainFallsBackToItself() {

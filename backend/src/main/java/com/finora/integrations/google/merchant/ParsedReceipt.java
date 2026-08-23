@@ -21,6 +21,12 @@ import java.time.LocalDate;
  *                            gmail_processed_messages} row it originated from both key on.
  * @param merchantDomain      the authenticated domain the receipt came from (e.g. {@code
  *                            amazon.in}), not a display name a template happened to use.
+ * @param counterpartyName    who the receipt says the money actually went to, when that is
+ *                            knowable and distinct from {@link #merchantDomain} — e.g. a PhonePe
+ *                            P2P payee, or CRED's "{@code <Bank> •••• <last4>}". Null for every
+ *                            merchant where the domain already IS the counterparty; every parser
+ *                            except a payment-relay one passes null, meaning exactly what it means
+ *                            today: no counterparty distinct from the merchant.
  * @param amount              the transaction amount. {@link Money}, not a raw number, for the same
  *                            reason every new money-handling calculation in this codebase uses it —
  *                            see {@code Money}'s own class doc.
@@ -36,6 +42,8 @@ import java.time.LocalDate;
  * fail-fast validation in this codebase: a parser that produced a null date is a bug, and the bug
  * should surface at the exact call site that made the mistake, with a message naming the field,
  * rather than as an NPE three layers downstream with no indication which parser was responsible.
+ * {@code counterpartyName} is deliberately not in that list — null is its legitimate, common value,
+ * not a forgotten field.
  *
  * <p>Deliberately does NOT check that {@link #amount} is positive or that {@link #transactionDate}
  * is not absurdly far in the future — those are not "this cannot be a receipt" bugs, they are "is
@@ -44,8 +52,8 @@ import java.time.LocalDate;
  * checking a condition this constructor has already made impossible would be validating a state
  * that cannot occur.
  */
-public record ParsedReceipt(String gmailMessageId, String merchantDomain, Money amount,
-                            LocalDate transactionDate, double confidence) {
+public record ParsedReceipt(String gmailMessageId, String merchantDomain, String counterpartyName,
+                            Money amount, LocalDate transactionDate, double confidence) {
 
     public ParsedReceipt {
         if (gmailMessageId == null || gmailMessageId.isBlank()) {

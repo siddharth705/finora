@@ -93,6 +93,21 @@ class MerchantEmailSanitizerTest {
         assertThat(result.plainText()).contains("Order Total: Rs. 500.00");
     }
 
+    /** Regression coverage from code review: real HTML email templates commonly use {@code &nbsp;}
+     *  for layout spacing, which decodes to a literal U+00A0 character that neither Java's
+     *  {@code \s} nor a literal {@code " "} in a parser's own pattern matches -- left uncollapsed,
+     *  a perfectly well-formed receipt using nbsp spacing would silently fail every parser's regex
+     *  and get reported MALFORMED. */
+    @Test
+    @DisplayName("non-breaking spaces (&nbsp;) collapse the same as ordinary whitespace")
+    void nonBreakingSpacesAreNormalizedToOrdinarySpaces() {
+        String raw = "<p>Paid&nbsp;to&nbsp;Sunrise General Store&nbsp;₹&nbsp;480</p>";
+
+        SanitizedGmailMessage result = sanitizer.sanitize("m1", "phonepe.com", raw);
+
+        assertThat(result.plainText()).isEqualTo("Paid to Sunrise General Store ₹ 480");
+    }
+
     @Test
     void nullBodyProducesAnEmptyMessageRatherThanThrowing() {
         SanitizedGmailMessage result = sanitizer.sanitize("m1", "amazon.in", null);
