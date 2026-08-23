@@ -85,6 +85,36 @@ describe('Ledger — Why this category?', () => {
     expect(transactionsApi.explanation).toHaveBeenCalledWith('txn-1');
   });
 
+  it('shows the confidence percentage when the explanation includes one', async () => {
+    const user = userEvent.setup();
+    vi.mocked(transactionsApi.explanation).mockResolvedValue({
+      decisionSource: 'LEARNED_PATTERN',
+      summary: 'Categorized based on how you\'ve categorized "SWIGGY" before.',
+      evidence: ['Every time you confirm or correct a category, Finora remembers it for that merchant.'],
+      confidence: 82,
+    });
+    renderLedger();
+
+    await user.click(await screen.findByTitle('Why this category?'));
+
+    expect(await screen.findByText(/82% confidence/i)).toBeInTheDocument();
+  });
+
+  it('shows no confidence line when the explanation has none', async () => {
+    const user = userEvent.setup();
+    vi.mocked(transactionsApi.explanation).mockResolvedValue({
+      decisionSource: 'MANUAL',
+      summary: 'You set this category yourself.',
+      evidence: [],
+    });
+    renderLedger();
+
+    await user.click(await screen.findByTitle('Why this category?'));
+
+    await screen.findByText(/you set this category yourself/i);
+    expect(screen.queryByText(/% confidence/i)).not.toBeInTheDocument();
+  });
+
   it('shows a plain error when the explanation fails to load', async () => {
     const user = userEvent.setup();
     vi.mocked(transactionsApi.explanation).mockRejectedValue(new Error('network error'));

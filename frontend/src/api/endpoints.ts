@@ -209,6 +209,9 @@ export interface TransactionExplanation {
   decisionSource: string;
   summary: string;
   evidence: string[];
+  // 0-100, or absent -- see TransactionExplanationDto's own doc comment for which decision
+  // sources populate this (never MANUAL/FILE_PROVIDED).
+  confidence?: number;
 }
 
 export const transactionsApi = {
