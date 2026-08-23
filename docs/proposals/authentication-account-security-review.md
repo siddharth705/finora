@@ -1,17 +1,22 @@
 # Finora Authentication & Account Security — Review & Design
 
-**Status: Approved.** Next: Phase 0 decisions (§Open decisions).
-Implementation: not started as a program — Phase 1 is done, Phase 3's
-backend slice is in flight (see its amendment note), nothing else has
-begun. Committed via a worktree per `CLAUDE.md` (primary checkout is a
-shared read-only-for-writes checkout). This is a roadmap — each phase ships
-as its own ticket/PR, never as one combined PR.
+**Status: Approved.** Next: Phase 0's remaining open decisions (§Open
+decisions) — decision 5 (Phase 2 sequencing) is now resolved, the other 5
+are not. Implementation: Phase 1 is done, Phase 2's audit-hardening slice
+is done, Phase 3's backend slice (`/auth/identify`, PR #327) is merged —
+its frontend entry-page UX is not started. Phases 3.5/4/5 have not begun.
+Committed via a worktree per `CLAUDE.md` (primary checkout is a shared
+read-only-for-writes checkout). This is a roadmap — each phase ships as
+its own ticket/PR, never as one combined PR.
 
 **Phase 1 (Apple step-up verification) is already done** — PR #290 merged
 before this document's audit ran, and the audit missed it; corrected here.
 Phase ordering was revised 2026-08-23 (audit/observability now precedes the
-unified entry UX — see §3's note); Phase 0's remaining open decisions still
-gate Phases 2 and 4, and partly gate Phase 3 (see its amendment).
+unified entry UX — see §3's note). Phase 2's audit-hardening slice shipped
+2026-08-23, sequenced with `user-security-center-proposal.md` per open
+decision 5 below (resolved: coordinate, not independent). Phase 0's other
+5 open decisions still gate Phase 4, and partly gate Phase 3 (see its
+amendment).
 
 ---
 
@@ -141,11 +146,15 @@ Firebase), `email_verification_tokens`, `password_reset_tokens`,
   deliberately timing-matched to a wrong-password response so a locked
   account isn't distinguishable from a bad password (BH-014).
 - **Audit logging**: real append-only `audit_logs` table + `AuditService`
-  with redaction/retention. **Gap**: no IP/user-agent columns on the table
-  itself — device/IP data only lands in the JSONB `metadata` blob where a
-  caller bothers to pass it (deactivate does; most flows don't). No
-  `LOGIN_FAILED` action is recorded per attempt, only `ACCOUNT_LOCKED` once
-  the threshold trips.
+  with redaction/retention. **Gap, as of the original audit**: no
+  IP/user-agent columns on the table itself — device/IP data only landed in
+  the JSONB `metadata` blob where a caller bothered to pass it (deactivate
+  did; most flows didn't). No `LOGIN_FAILED` action was recorded per
+  attempt, only `ACCOUNT_LOCKED` once the threshold tripped. **UPDATE
+  (2026-08-23): closed by Phase 2 for the login family specifically** — see
+  §3's Phase 2 entry. Still no dedicated IP/UA *columns* (metadata-only, by
+  design — see that entry), and non-login flows (password-change,
+  deactivate, etc.) are unchanged by this slice.
 - **Enumeration protection** is genuinely mature: generic forgot-password
   responses, timing-matched lockout responses, fail-closed on case-collision
   lookups. This is further along than most fintech MVPs.
@@ -166,14 +175,19 @@ reset two-factor flow, and a real (if partial) step-up primitive are already
 in production and already correct in their design intent. The actual gaps
 are narrow and specific:
 
-1. No unified `/auth` entry page (register is a separate conscious step).
-2. No `POST /auth/identify`-style endpoint.
+1. No unified `/auth` entry page (register is a separate conscious step) —
+   **backend piece (item 2) done; the page itself is not (Phase 3, §3).**
+2. ~~No `POST /auth/identify`-style endpoint~~ — **fixed by PR #327,
+   already on main.**
 3. ~~No Apple equivalent of `GoogleReauthVerifier`~~ — **fixed by PR #290,
    already on main; see §1.4 update.**
 4. No change-email feature.
 5. Step-up is wired individually into 5 call sites rather than a declarative,
    reusable primitive new sensitive actions can opt into.
-6. Audit logs lack IP/UA columns; no per-attempt login-failure logging.
+6. ~~Audit logs lack IP/UA columns; no per-attempt login-failure logging.~~
+   — **closed for the login family by Phase 2, 2026-08-23; see §1.6
+   update.** No dedicated columns added (metadata-only, by design); other
+   flows unchanged.
 7. BH-015 (reset-flow phone number exposure) still open.
 
 ---
@@ -378,21 +392,37 @@ match.
   reauthentication attempt, tracked from zero (previously impossible) to
   parity with Google/password users
 
-**Phase 2 — P1 security: Audit/observability hardening**
-`security(auth): improve authentication audit logging`
-- Add IP/user-agent columns to `audit_logs` (or at minimum standardize
-  `RequestMetadata` capture into `metadata` across all auth actions, not
-  just deactivate)
-- Add `LOGIN_FAILED` per-attempt audit action
-- Composes with, doesn't duplicate, the separately-proposed
-  `user-security-center-proposal.md` login-history work — sequence together
-  since they touch the same table (a decision, not a merge — see open
-  decisions)
-- Fintech-app requirement, treat as P1 not a nice-to-have
-- Success metrics: security-event audit coverage % (proportion of
-  login/password-change/deactivate/delete events carrying IP+UA, target
-  100%); suspicious-login detections surfaced per week once coverage
-  supports it
+**Phase 2 — P1 security: Audit/observability hardening — ✅ DONE (this slice)**
+`security(auth): audit-log hardening + self-service login history`
+- Done, sequenced with `user-security-center-proposal.md` per open decision
+  5 (also committed by this same change, previously only uncommitted in the
+  primary checkout): `RequestMetadata` (ip/device) now captured into
+  `metadata` on every login-family audit event (`USER_LOGIN`,
+  `USER_LOGIN_GOOGLE`, `USER_LOGIN_APPLE`, MFA completion, reactivation
+  login), not just `ACCOUNT_REACTIVATED`/deactivate as before
+- `LOGIN_FAILED` per-attempt audit action added, at both failure points in
+  `login()` (bad credentials, and the BH-014 locked-account branch, tagged
+  with a `reason` so the two are distinguishable server-side without
+  changing the caller-facing response) — fires only when the identifier
+  resolved to a real account, mirroring `registerFailedLogin`'s own
+  null-user guard, so an unknown identifier still can't be probed via the
+  audit trail either
+- `GET /api/v1/users/me/login-history` (security-center §3.1, option (a)):
+  self-service view of the caller's own last 50 login-family events,
+  behind `AuditService.findLoginHistory` (not a direct repository call from
+  the controller — `LayerDependencyDirectionTest` enforces this)
+- Not done in this slice, left for a later pass: dedicated IP/UA *columns*
+  on `audit_logs` (metadata-only for now, matching the security-center
+  doc's own recommendation to prefer (a) over a schema change);
+  new-device detection/alerting (§3.2, blocked on the notification
+  platform proposal); security event categories (§3.4); IP/device
+  retention sweep (§3.5, needs a decided number first); non-login audit
+  actions (password-change, deactivate, etc.) still only carry metadata
+  where they already did before this change
+- Success metrics: security-event audit coverage % (proportion of login
+  events carrying IP+device, now effectively 100% of `USER_LOGIN`/
+  `LOGIN_FAILED` writes going forward); self-service login-history adoption
+  once shipped to a settings UI (not yet built — backend only so far)
 
 **Phase 3 — P1 UX: Unified authentication entry flow**
 `feat(auth): unified authentication entry flow`
@@ -471,8 +501,12 @@ proves the team's bar for this kind of endpoint.
 4. Is standalone phone-OTP login (§2.8) actually wanted, given per-login SMS
    cost — or is current "OTP as verification step" model sufficient?
    (Deferred to Phase 5 either way, but worth confirming intent early.)
-5. Sequencing Phase 2 (audit logging) with `user-security-center-proposal.md`
-   — same PR window or independent?
+5. ~~Sequencing Phase 2 (audit logging) with
+   `user-security-center-proposal.md` — same PR window or independent?~~ —
+   **resolved 2026-08-23: coordinate.** Phase 2 shipped using that
+   proposal's own recommended design (§3.1 option (a): metadata, not a
+   schema change), and its login-history endpoint was pulled forward into
+   the same change rather than left for a separate pass.
 6. **Account linking policy** — should Finora eventually let one account
    hold multiple authentication methods (e.g. an existing password user
    connects Google, or connects both Google and Apple), or should the

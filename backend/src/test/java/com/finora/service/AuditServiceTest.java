@@ -217,4 +217,26 @@ class AuditServiceTest {
         assertThat(savedCaptor.getValue().getAction()).isEqualTo("USER_LOGIN");
         assertThat(savedCaptor.getValue().getRedactedAt()).isNull();
     }
+
+    /** Phase 2 audit hardening / user-security-center-proposal.md §3.1 -- findLoginHistory is a
+     *  thin pass-through to the repository's own login-action filter, kept behind this service
+     *  method only so LoginHistoryController stays a thin controller (LayerDependencyDirectionTest
+     *  forbids a controller reaching into a repository directly). This locks in exactly which
+     *  action set counts as "login history" -- add a new login method's audit action here too, or
+     *  it silently won't show up for users. */
+    @Test
+    void findLoginHistory_asksTheRepositoryForExactlyTheLoginFamilyActions() {
+        UUID userId = UUID.randomUUID();
+        when(auditLogRepository.findTop50ByUserIdAndActionInOrderByCreatedAtDesc(any(), any()))
+                .thenReturn(List.of());
+
+        service.findLoginHistory(userId);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<String>> actionsCaptor = ArgumentCaptor.forClass(List.class);
+        verify(auditLogRepository).findTop50ByUserIdAndActionInOrderByCreatedAtDesc(
+                org.mockito.ArgumentMatchers.eq(userId), actionsCaptor.capture());
+        assertThat(actionsCaptor.getValue())
+                .containsExactlyInAnyOrder("USER_LOGIN", "USER_LOGIN_GOOGLE", "USER_LOGIN_APPLE", "LOGIN_FAILED");
+    }
 }
