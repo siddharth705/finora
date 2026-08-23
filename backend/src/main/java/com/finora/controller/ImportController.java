@@ -9,6 +9,7 @@ import com.finora.imports.analysis.StatementAnalysisRecorder;
 import com.finora.security.CurrentUser;
 import com.finora.imports.ImportService;
 import com.finora.imports.StatementUpload;
+import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
@@ -89,14 +90,14 @@ public class ImportController {
     // since it's already persisted on the ImportSession from staging (looked up via
     // request.sessionId()).
     @PostMapping("/csv/confirm")
-    public ResponseEntity<ApiResponse<ConfirmResponse>> confirm(@RequestBody ConfirmRequest request) {
+    public ResponseEntity<ApiResponse<ConfirmResponse>> confirm(@Valid @RequestBody ConfirmRequest request) {
         return ResponseEntity.ok(ApiResponse.ok(importService.confirmSession(currentUser.id(), request), "Import complete"));
     }
 
     // Confirms every account section of a multi-account PDF staging session together (see
     // ImportService.confirmMultiSection) -- used only when /pdf/stage returned multiAccount: true.
     @PostMapping("/pdf/confirm-multi")
-    public ResponseEntity<ApiResponse<MultiAccountConfirmResponse>> confirmMulti(@RequestBody MultiAccountConfirmRequest request) {
+    public ResponseEntity<ApiResponse<MultiAccountConfirmResponse>> confirmMulti(@Valid @RequestBody MultiAccountConfirmRequest request) {
         return ResponseEntity.ok(ApiResponse.ok(importService.confirmMultiSection(currentUser.id(), request), "Import complete"));
     }
 
