@@ -338,6 +338,57 @@ describe('Import — total amount due on the review screen', () => {
   });
 });
 
+describe('Import — detected merchant on the review screen', () => {
+  beforeEach(() => {
+    vi.mocked(categoriesApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(accountsApi.list).mockReset().mockResolvedValue([]);
+  });
+
+  it('shows the detected merchant name under the raw description', async () => {
+    vi.mocked(importApi.stagePdf).mockReset().mockResolvedValue({
+      sessionId: 'session-1', multiAccount: false, sections: null,
+      staging: {
+        rows: [{
+          date: '2026-07-10', description: 'UPI-SWIGGY-12345', amount: 350, type: 'EXPENSE',
+          suggestedCategory: 'Food', categorySource: 'learned', ruleId: null, likelyDuplicate: false,
+          referenceNumber: null, balanceAfter: null, duplicateMatch: null,
+          merchant: 'SWIGGY', merchantConfidence: 1.0,
+        }],
+        totalParsed: 1, flaggedDuplicates: 0, unparseableRows: [], detectedAccount,
+      },
+    } as never);
+    const user = userEvent.setup();
+    renderImport();
+
+    await pickAndUploadPdf(user);
+
+    expect(await screen.findByText('UPI-SWIGGY-12345')).toBeInTheDocument();
+    expect(screen.getByText('Detected: SWIGGY')).toBeInTheDocument();
+  });
+
+  it('shows nothing extra when no merchant was resolved', async () => {
+    vi.mocked(importApi.stagePdf).mockReset().mockResolvedValue({
+      sessionId: 'session-1', multiAccount: false, sections: null,
+      staging: {
+        rows: [{
+          date: '2026-07-10', description: 'SOME BRAND NEW SHOP', amount: 350, type: 'EXPENSE',
+          suggestedCategory: 'Other', categorySource: 'default', ruleId: null, likelyDuplicate: false,
+          referenceNumber: null, balanceAfter: null, duplicateMatch: null,
+          merchant: null, merchantConfidence: null,
+        }],
+        totalParsed: 1, flaggedDuplicates: 0, unparseableRows: [], detectedAccount,
+      },
+    } as never);
+    const user = userEvent.setup();
+    renderImport();
+
+    await pickAndUploadPdf(user);
+
+    expect(await screen.findByText('SOME BRAND NEW SHOP')).toBeInTheDocument();
+    expect(screen.queryByText(/^Detected:/)).not.toBeInTheDocument();
+  });
+});
+
 /**
  * Premium Import Reliability v1, Sprint 1 item 1: the failure UX contract. Finora's own curated
  * copy, not the server's `message`, is what a user reads for a code the contract owns -- see

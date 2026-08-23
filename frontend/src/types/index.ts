@@ -185,6 +185,12 @@ export interface StagedRow {
   // estimate to carry). Populated only for a Gmail-derived row -- display only, per
   // ParsedReceipt's own doc comment: nothing may skip review because this number is high.
   confidence: number | null;
+  // The canonical merchant name resolved during staging (read-only — staging never creates a new
+  // Merchant/MerchantAlias row), or null when nothing matched an existing merchant. See the backend's
+  // MerchantNormalizationEngine.resolveReadOnly for what "matched" means.
+  merchant: string | null;
+  // 1.0 when `merchant` was resolved, null otherwise. Not a rich confidence score in this phase.
+  merchantConfidence: number | null;
 }
 
 // Best-effort fields pulled from the statement itself. Every field is nullable and genuinely
