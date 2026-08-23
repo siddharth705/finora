@@ -3,8 +3,7 @@ import { motion, useReducedMotion } from 'framer-motion';
 import { hero } from './landing-config';
 import { AmbientCanvas } from './hero/AmbientCanvas';
 import { FloatingDashboardCard } from './hero/FloatingDashboardCard';
-import { HealthScoreRing } from './hero/HealthScoreRing';
-import { IntelligenceScan } from './hero/IntelligenceScan';
+import { AnalysisSequence } from './hero/AnalysisSequence';
 import { FloatingBadges } from './hero/FloatingBadges';
 import { MagneticLink, MagneticAnchor } from './MagneticLink';
 
@@ -103,9 +102,8 @@ export function Hero() {
             shown above, and read as disconnected filler crammed under one side of it. Still part
             of this same dark section (not a new <Transition>-bounded band): the claim belongs to
             Hero's story, just after the visual it's describing rather than boxed inside it. */}
-        <motion.div {...reveal(0.5)} className="mt-14 flex flex-wrap items-center justify-center gap-6">
-          <HealthScoreRing />
-          <IntelligenceScan />
+        <motion.div {...reveal(0.5)} className="mt-14">
+          <AnalysisSequence />
         </motion.div>
       </div>
     </section>

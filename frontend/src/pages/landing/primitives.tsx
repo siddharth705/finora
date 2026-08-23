@@ -57,23 +57,31 @@ export function Reveal({ children, delayMs = 0, className = '' }: {
 }
 
 /**
- * Counts up to a value once visible.
+ * Counts up to a value once visible -- or, when `trigger` is passed, once the CALLER says to
+ * rather than on its own scroll-into-view observer. That escape hatch exists for HealthScoreRing:
+ * see AnalysisSequence's own note on why the ring's number has to wait for something else (the
+ * checklist finishing) instead of firing off the same scroll-into-view moment as everyone else.
  *
- * Starts from the final value and only animates after the observer fires, so a browser without
- * IntersectionObserver -- or a test renderer -- shows the real number instead of a permanent
- * zero. An earlier version of this component defaulted to 0 and animated on mount, which rendered
- * "0" whenever the observer never fired; that is the bug this shape avoids.
+ * Starts from the final value and only animates after the observer fires (or after `trigger`
+ * turns true), so a browser without IntersectionObserver -- or a test renderer -- shows the real
+ * number instead of a permanent zero. An earlier version of this component defaulted to 0 and
+ * animated on mount, which rendered "0" whenever the observer never fired; that is the bug this
+ * shape avoids. In `trigger` mode specifically, the display sits at 0 while `trigger` is false --
+ * there is no scroll-into-view moment to fall back to display the final value at.
  */
-export function CountUp({ value, prefix = '', suffix = '', durationMs = 900 }: {
+export function CountUp({ value, prefix = '', suffix = '', durationMs = 900, trigger }: {
   value: number;
   prefix?: string;
   suffix?: string;
   durationMs?: number;
+  trigger?: boolean;
 }) {
   const ref = useRef<HTMLSpanElement | null>(null);
-  const [display, setDisplay] = useState(value);
+  const externallyControlled = trigger !== undefined;
+  const [display, setDisplay] = useState(externallyControlled ? (trigger ? value : 0) : value);
 
   useEffect(() => {
+    if (externallyControlled) return;
     const node = ref.current;
     if (!node || typeof IntersectionObserver === 'undefined') return;
     if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
@@ -98,7 +106,28 @@ export function CountUp({ value, prefix = '', suffix = '', durationMs = 900 }: {
       observer.disconnect();
       cancelAnimationFrame(frame);
     };
-  }, [value, durationMs]);
+  }, [value, durationMs, externallyControlled]);
+
+  useEffect(() => {
+    if (!externallyControlled) return;
+    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+      setDisplay(value);
+      return;
+    }
+    if (!trigger) {
+      setDisplay(0);
+      return;
+    }
+    let frame = 0;
+    const start = performance.now();
+    const tick = (now: number) => {
+      const t = Math.min(1, (now - start) / durationMs);
+      setDisplay(Math.round(value * (1 - Math.pow(1 - t, 3))));
+      if (t < 1) frame = requestAnimationFrame(tick);
+    };
+    frame = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frame);
+  }, [trigger, value, durationMs, externallyControlled]);
 
   return <span ref={ref}>{prefix}{display.toLocaleString('en-IN')}{suffix}</span>;
 }
