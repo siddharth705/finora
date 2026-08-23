@@ -122,6 +122,6 @@ public class TemplateEmailParser implements MerchantEmailParser {
         }
 
         return ParserResult.parsed(new ParsedReceipt(
-                message.gmailMessageId(), template.getMerchantDomain(), amount, date, FIXED_CONFIDENCE));
+                message.gmailMessageId(), template.getMerchantDomain(), null, amount, date, FIXED_CONFIDENCE));
     }
 }

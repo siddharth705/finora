@@ -1,0 +1,15 @@
+-- V84 added `source` (null for CSV/PDF, 'GMAIL' for a session GmailStagingBridge created) so a
+-- session's origin was an explicit column rather than something inferred from context. This adds
+-- its sibling for the same reason: `import_sessions.description` (the StagedRow's own description
+-- field, serialized inside staged_rows_json) now prefers a Gmail receipt's counterparty over its
+-- authenticated domain when one exists -- correct for what a user should see as the transaction
+-- description, but it means the description can no longer double as "the domain that was
+-- authenticated" the way it always coincidentally could before. GmailReviewService's review-queue
+-- reasoning ("Amount and date read from a verified <X> email") needs the real domain, independent
+-- of whatever a counterparty-aware parser chose to show as the description.
+--
+-- Nullable, single-valued today, same posture as `source`: every CSV/PDF session and every
+-- pre-existing Gmail session leaves this null (GmailReviewService falls back to the description in
+-- that case, its prior, imperfect-but-unchanged behavior), and only GmailStagingBridge ever sets a
+-- non-null value.
+ALTER TABLE import_sessions ADD COLUMN source_domain VARCHAR(253);

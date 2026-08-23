@@ -137,6 +137,15 @@ public class ImportSession implements com.finora.imports.storage.StoredStatement
     @Column(name = "source", length = 20)
     private String source;
 
+    /** Null for CSV/PDF and for a Gmail session predating this column (unchanged, imperfect
+     *  fallback behaviour); the authenticated domain a Gmail receipt actually came from, set only
+     *  by {@code GmailStagingBridge}. See V108's migration comment for why this exists separately
+     *  from the staged row's own description, which can now be a counterparty name instead of the
+     *  domain -- {@code GmailReviewService} needs the real domain for its review-queue reasoning
+     *  regardless of what the description shows. */
+    @Column(name = "source_domain", length = 253)
+    private String sourceDomain;
+
     @Column(nullable = false)
     private String status = STATUS_STAGED;
 
@@ -188,6 +197,8 @@ public class ImportSession implements com.finora.imports.storage.StoredStatement
     public void setSessionKind(String sessionKind) { this.sessionKind = sessionKind; }
     public String getSource() { return source; }
     public void setSource(String source) { this.source = source; }
+    public String getSourceDomain() { return sourceDomain; }
+    public void setSourceDomain(String sourceDomain) { this.sourceDomain = sourceDomain; }
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
     public Instant getCreatedAt() { return createdAt; }
