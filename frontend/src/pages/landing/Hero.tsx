@@ -70,7 +70,7 @@ export function Hero() {
               {hero.blurb}
             </p>
             <div className="flex flex-col sm:flex-row gap-3 mb-8">
-              <MagneticLink to="/register" className="m-btn m-btn-primary w-full sm:w-auto">
+              <MagneticLink to="/auth" className="m-btn m-btn-primary w-full sm:w-auto">
                 {hero.primaryCta} <ArrowRight size={16} />
               </MagneticLink>
               <MagneticAnchor

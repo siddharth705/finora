@@ -37,8 +37,10 @@ describe('App routing — unmatched paths', () => {
     // And it is specifically the landing page, asserted structurally. This used to match the CTA
     // text ("Get Started Free"), which contradicted the comment directly above it and duly broke
     // the moment that button was reworded -- a copy edit failing a routing test tells you nothing
-    // about routing. A sign-up link is what the landing page is FOR, so it survives rewording.
-    await waitFor(() => expect(container.querySelector('a[href="/register"]')).not.toBeNull());
+    // about routing. An entry-flow link is what the landing page is FOR, so it survives rewording.
+    // (Points at /auth, not /register directly, since the landing page's CTAs now route through
+    // the unified identifier-first entry page -- see AuthEntry.tsx.)
+    await waitFor(() => expect(container.querySelector('a[href="/auth"]')).not.toBeNull());
   });
 
   it('leaves a route that does exist alone', async () => {
