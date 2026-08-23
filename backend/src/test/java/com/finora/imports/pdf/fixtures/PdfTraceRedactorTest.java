@@ -162,6 +162,38 @@ class PdfTraceRedactorTest {
         });
     }
 
+    /**
+     * See {@code TRAILING_CURRENCY_MARKER_LETTER}'s own doc comment: a real Kotak Mahindra Bank
+     * credit-card statement's amount-column header is one single run reading "(Rs.)R" -- the
+     * trailing "R" a rupee-glyph rendering artifact, not a recognizable word. Masking it alone used
+     * to zero the WHOLE run's width (redaction's own all-or-nothing rule for a run whose text
+     * changed at all), which broke PdfTableLocator's RIGHT_ALIGNED_AMOUNTS correction for that
+     * column and staged every real purchase row on that statement as unparseable.
+     */
+    @Test
+    void aCurrencyMarkersTrailingLetterSurvivesWhole_soItsRunKeepsItsRealWidth() {
+        List<PositionedText> redacted = PdfTraceRedactor.redact(
+                List.of(new PositionedText("(Rs.)R", 545.59f, 498.50f, 0, 24.41f)));
+
+        assertThat(redacted).singleElement().satisfies(run -> {
+            assertThat(run.text()).isEqualTo("(Rs.)R");
+            assertThat(run.width()).isEqualTo(24.41f);
+        });
+    }
+
+    /** The exception above is scoped to a currency marker's own closing paren, not any bare letter
+     *  anywhere -- a stray single-letter initial elsewhere in the document must still be masked. */
+    @Test
+    void aBareLetterNotFollowingACurrencyMarker_isStillMasked() {
+        List<PositionedText> redacted = PdfTraceRedactor.redact(
+                List.of(new PositionedText("JANE R SMITH", 50f, 100f, 0, 90f)));
+
+        assertThat(redacted).singleElement().satisfies(run -> {
+            assertThat(run.text()).isEqualTo("XXXX X XXXXX");
+            assertThat(run.width()).isZero();
+        });
+    }
+
     private String redact(String text) {
         return PdfTraceRedactor.redact(List.of(new PositionedText(text.trim(), 0f, 0f, 0)))
                 .get(0).text();

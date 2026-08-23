@@ -287,9 +287,12 @@ class HeaderProseRejectionTest {
         put("hdfc-txn-date-narration-header", 1);
         put("hsbc-savings-ledger-validation", 1);
         put("icici-savings-ledger-validation", 1);
+        put("kotak-credit-card-category-sections-and-page-footer", 1);
         put("kotak-savings-ledger-validation", 1);
         put("pnb-savings-ledger-validation", 1);
         put("union-bank-savings-ledger-validation", 1);
+        put("cbi-account-discrepancy-disclaimer-trailer", 1);
+        put("pnb-one-account-discrepancy-disclaimer-trailer", 1);
     }};
 
     @Test

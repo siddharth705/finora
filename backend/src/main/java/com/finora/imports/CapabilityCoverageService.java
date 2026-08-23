@@ -176,7 +176,53 @@ public class CapabilityCoverageService {
             // break via the ordinary trailing-continuation merge. Resets at the next header
             // (repeated or new), unlike the permanent TRAILING_CONTENT_TRIGGERS family -- see
             // PdfTableLocator.pageLegendBlockActive's own doc comment.
-            "PAGE_LEGEND_BLOCK_SUPPRESSED");
+            "PAGE_LEGEND_BLOCK_SUPPRESSED",
+            // A real Kotak Mahindra Bank credit-card statement groups its own ledger into
+            // sub-categories mid-table with bare, dateless heading lines ("Payments and Other
+            // Credits", "Primary Card Transactions- <masked card>", "Retail Purchases and Cash
+            // Transactions") -- the ordinary leading/trailing narration merge had no notion of "this
+            // is a category divider, not prose" and swept each one onto whichever real transaction
+            // row it happened to sit closer to. See PdfTableLocator.CREDIT_CARD_CATEGORY_HEADER.
+            "TRANSACTION_CATEGORY_HEADER_SUPPRESSED",
+            // The same real Kotak statement states its transaction date range inside the table's
+            // own repeated column-header row ("Transaction details from 16-Feb-2026 to
+            // 15-Mar-2026") rather than any pre-table "Statement Period" field -- invisible to
+            // PdfMetadataExtractor, which only ever sees auxiliaryText (the lines BEFORE a header is
+            // recognized). See TransactionTableDateRangeExtractor.
+            "PRINTED_TRANSACTION_TABLE_DATE_RANGE",
+            // Two real, independently-uploaded savings-account statements (Central Bank of India,
+            // PNB ONE) each close with a regulatory-boilerplate discrepancy-notification sentence
+            // that sits before either document's own true end -- swept into the last real
+            // transaction's trailing narration before any existing closing marker had a chance to
+            // fire. See PdfTableLocator.ACCOUNT_DISCREPANCY_DISCLAIMER_MARKER.
+            "ACCOUNT_DISCREPANCY_DISCLAIMER_CLOSED",
+            // Two more real, independently-uploaded savings-account statements (HDFC, SBI) each
+            // close with a "Statement Summary" balance-recap block after the last real transaction,
+            // with no other recognized closing marker anywhere in either document -- its own header
+            // row and trailing security disclaimer both swept into the last real transaction's
+            // trailing narration before this trigger existed. See
+            // PdfTableLocator.STATEMENT_SUMMARY_BLOCK_MARKER.
+            "STATEMENT_SUMMARY_BLOCK_CLOSED",
+            // A real Axis Bank credit-card statement's true end opens with "Your cheque should be
+            // payable to..." followed by an ECS-registration sentence and an "IMPORTANT MESSAGE"
+            // legal/GST disclaimer block, swept into the last real transaction's trailing narration
+            // before this trigger existed. See PdfTableLocator.CHEQUE_PAYABLE_FOOTER_MARKER.
+            "CHEQUE_PAYABLE_FOOTER_CLOSED",
+            // A real HDFC "Tata Neu Plus" credit-card statement's transaction table ends with a
+            // "Note:" footnote explaining how its "Base NeuCoins" rewards column is calculated,
+            // directly beneath the last real transaction -- swept into that transaction's trailing
+            // narration before this trigger existed. See PdfTableLocator.NEUCOINS_FOOTNOTE_MARKER.
+            "NEUCOINS_FOOTNOTE_CLOSED",
+            // A real SBI credit-card statement's supplementary-cardholder section closes its
+            // transaction table with a "SAVINGS AND BENEFITS SECTION" heading, introducing a Cash
+            // Back / Petrol Surcharge Waiver / Reward Points recap grid -- swept into the last real
+            // transaction's trailing narration before this trigger existed. See
+            // PdfTableLocator.SAVINGS_AND_BENEFITS_SECTION_MARKER.
+            "SAVINGS_AND_BENEFITS_SECTION_CLOSED",
+            // A real Canara Bank statement's own bare "Chq: <reference>" trailer line, past
+            // MAX_TRAILING_CONTINUATION_ROWS's count cap, recovered as trailing content anyway by
+            // content shape rather than count -- see PdfTableLocator.CHEQUE_REFERENCE_TRAILER.
+            "CHEQUE_REFERENCE_TRAILER_RECOVERED");
 
     /**
      * @param importsAnalysed    how many imports these counts are drawn from -- a coverage figure

@@ -985,17 +985,18 @@ public class ImportService {
         } else {
             statementImport.setFileContent(fileContent);
         }
-        // Bug fix: this used to be minDate/maxDate unconditionally -- the confirmed rows' own date
-        // range, which is only ever a lower bound on the statement's true period whenever a cycle
-        // has no activity near its own printed boundary dates. PdfPreviewGenerator/StatementValidator
+        // Bug fix: this used to fall back further, to minDate/maxDate -- the confirmed rows' own
+        // date range, which is only ever a LOWER bound on the statement's true period whenever a
+        // cycle has no activity near its own printed boundary dates. Confirmed wrong against a real
+        // Kotak Mahindra Bank credit-card statement, whose own earliest/latest transactions fall
+        // inside its printed period rather than at its edges. PdfPreviewGenerator/StatementValidator
         // already compute and surface the printed period at staging time (see their own
-        // buildDetectedAccountInfo), and ConfirmRequest now echoes it back -- same precedence as
-        // those two methods: prefer the printed period, fall back to the transaction range only when
-        // nothing was printed (or an older client didn't send it).
-        statementImport.setStatementPeriodStart(
-                request.statementPeriodStart() != null ? request.statementPeriodStart() : minDate);
-        statementImport.setStatementPeriodEnd(
-                request.statementPeriodEnd() != null ? request.statementPeriodEnd() : maxDate);
+        // buildDetectedAccountInfo, which had and removed the identical transaction-range fallback),
+        // and ConfirmRequest echoes that back here -- so this is exactly what was printed, or
+        // genuinely null when nothing was ever printed (or an older client didn't send it), never a
+        // guess reconstructed from the rows.
+        statementImport.setStatementPeriodStart(request.statementPeriodStart());
+        statementImport.setStatementPeriodEnd(request.statementPeriodEnd());
         statementImport.setOpeningBalance(request.statementOpeningBalance());
         statementImport.setClosingBalance(request.statementClosingBalance());
         statementImport.setTransactionsImported(toInsert.size());

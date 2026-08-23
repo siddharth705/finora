@@ -205,6 +205,14 @@ public class PdfPreviewGenerator {
         // reads a section's transaction rows anyway, so handing every section the same document-
         // level reading is correct, not a simplification that loses anything.
         CreditCardSummaryEvidence printedCreditCardSummary = CreditCardSummaryExtractor.extract(positioned, ctx);
+        // Read the same way, for the same reason: a statement that states its transaction date
+        // range inside the table's own repeated header row (rather than any pre-table "Statement
+        // Period" field) never reaches PdfMetadataExtractor's auxiliaryText at all -- see
+        // TransactionTableDateRangeExtractor's own doc comment. Document-level like
+        // printedCreditCardSummary above, for the same reason: the header row it reads repeats
+        // identically across every section of the same document.
+        TransactionTableDateRangeExtractor.PrintedDateRange printedDateRange =
+                TransactionTableDateRangeExtractor.extract(positioned, ctx);
 
         if (doc.sections().isEmpty()) {
             // "Never lose information" (see the engineering principles doc) applies at the
@@ -227,7 +235,7 @@ public class PdfPreviewGenerator {
             // section and there is no other candidate it could describe. Withholding it here left
             // the contradiction -- printed activity, nothing staged -- with nothing to state it.
             StagedAccountSection section = buildLedgerSection(userId, filename, emptySection, unknown, ctx,
-                    printedSummary, printedCreditCardSummary);
+                    printedSummary, printedCreditCardSummary, printedDateRange);
             return new PdfGenerationResult(List.of(surfaceUnrecognizedText(section, empty.preTableLines())), ctx);
         }
 
@@ -238,7 +246,8 @@ public class PdfPreviewGenerator {
             // is not answerable here -- see attributePrintedSummary below, which decides it once
             // every section exists.
             List<StagedAccountSection> staged = buildSections(userId, filename, doc.sections().get(i),
-                    i, doc.sections().size(), ctx, PrintedSummary.NONE, printedCreditCardSummary);
+                    i, doc.sections().size(), ctx, PrintedSummary.NONE, printedCreditCardSummary,
+                    printedDateRange);
             for (StagedAccountSection s : staged) unparseableAcrossDocument.addAll(s.unparseableRows());
             result.addAll(staged);
         }
@@ -270,7 +279,8 @@ public class PdfPreviewGenerator {
                                                       PdfTableLocator.LocatedSection section,
                                                       int sectionIndex, int sectionCount, DocumentContext ctx,
                                                       PrintedSummary printedSummary,
-                                                      CreditCardSummaryEvidence printedCreditCardSummary) {
+                                                      CreditCardSummaryEvidence printedCreditCardSummary,
+                                                      TransactionTableDateRangeExtractor.PrintedDateRange printedDateRange) {
         List<String> columns = section.rows().isEmpty() ? List.of() : List.copyOf(section.rows().get(0).keySet());
         ProductDiscovery.DiscoveredProduct product = productDiscovery.discover(
                 new ProductEvidenceCollector.Section(columns, section.auxiliaryText(), null,
@@ -289,7 +299,7 @@ public class PdfPreviewGenerator {
             return buildProductSections(filename, section, product, ctx);
         }
         return List.of(buildLedgerSection(userId, filename, section, product, ctx, printedSummary,
-                printedCreditCardSummary));
+                printedCreditCardSummary, printedDateRange));
     }
 
     /**
@@ -323,7 +333,8 @@ public class PdfPreviewGenerator {
                                                     PdfTableLocator.LocatedSection section,
                                                     ProductDiscovery.DiscoveredProduct product,
                                                     DocumentContext ctx, PrintedSummary printedSummary,
-                                                    CreditCardSummaryEvidence printedCreditCardSummary) {
+                                                    CreditCardSummaryEvidence printedCreditCardSummary,
+                                                    TransactionTableDateRangeExtractor.PrintedDateRange printedDateRange) {
         List<StagedRow> staged = new ArrayList<>();
         // "Never lose information" (see the engineering principles doc) -- a row that fails to
         // normalize is reported with WHY, not just silently absent from the row count. Real cost
@@ -431,7 +442,7 @@ public class PdfPreviewGenerator {
 
         int dupCount = (int) staged.stream().filter(StagedRow::likelyDuplicate).count();
         DetectedAccountInfo detected = buildDetectedAccountInfo(filename, section, staged, balancePoints, product, ctx,
-                printedCreditCardSummary);
+                printedCreditCardSummary, printedDateRange);
         // Per section rather than per file: a composite statement's sections have separate balance
         // chains, and one can verify while another does not.
         var verification = importVerifier.verify(documentOrder,
@@ -525,17 +536,31 @@ public class PdfPreviewGenerator {
                                                            List<StagedRow> staged, List<BalancePoint> balancePoints,
                                                            ProductDiscovery.DiscoveredProduct product,
                                                            DocumentContext ctx,
-                                                           CreditCardSummaryEvidence printedCreditCardSummary) {
+                                                           CreditCardSummaryEvidence printedCreditCardSummary,
+                                                           TransactionTableDateRangeExtractor.PrintedDateRange printedDateRange) {
         LocalDate statementStart = null;
         LocalDate statementEnd = null;
         BigDecimal openingBalance = null;
         BigDecimal closingBalance = null;
 
         SharedSectionFacts facts = sharedFacts(filename, section, ctx);
-        statementStart = facts.metadata().statementPeriodStart() != null ? facts.metadata().statementPeriodStart()
-                : staged.stream().map(StagedRow::date).min(LocalDate::compareTo).orElse(null);
-        statementEnd = facts.metadata().statementPeriodEnd() != null ? facts.metadata().statementPeriodEnd()
-                : staged.stream().map(StagedRow::date).max(LocalDate::compareTo).orElse(null);
+        // Bug fix: this used to fall back to the confirmed rows' own min/max transaction date
+        // whenever nothing was printed -- which is only ever a LOWER bound on the statement's true
+        // period whenever a cycle has no activity near its own printed boundary dates. Confirmed
+        // wrong against a real Kotak Mahindra Bank credit-card statement: its printed period is
+        // 16-Feb-2026 to 15-Mar-2026, but its own earliest/latest transactions fall on 15-Feb and
+        // 14-Mar, so the transaction-range fallback silently reported a narrower, incorrect period
+        // even though the statement states its real one. Two genuine sources are tried, in order --
+        // PdfMetadataExtractor's own "Statement Period" label (a pre-table field), then
+        // TransactionTableDateRangeExtractor's table-header reading (see its own doc comment for why
+        // a field stated inside the table's own header row never reaches the first source at all) --
+        // and if neither ever printed a period, this stays null rather than guessing one from the
+        // rows. ImportService.confirmMultiSection's own analogous fallback was removed for the same
+        // reason; see its own comment.
+        statementStart = facts.metadata().statementPeriodStart() != null
+                ? facts.metadata().statementPeriodStart() : printedDateRange.start();
+        statementEnd = facts.metadata().statementPeriodEnd() != null
+                ? facts.metadata().statementPeriodEnd() : printedDateRange.end();
 
         // Phase 2G: was independent BalanceChainUtil.first(minDateGroup)/last(maxDateGroup) calls,
         // each only ever looking at its own boundary date in isolation -- exactly the same
