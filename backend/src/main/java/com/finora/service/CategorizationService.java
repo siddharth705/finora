@@ -67,7 +67,16 @@ public class CategorizationService {
     // decisionSource/ruleId are the new fields: decisionSource is always set; ruleId is non-null
     // only when a category_rules row (not the static keyword table) produced this suggestion.
     public record Suggestion(String category, String source, UUID merchantId,
-                              Transaction.DecisionSource decisionSource, UUID ruleId) {}
+                              Transaction.DecisionSource decisionSource, UUID ruleId, Integer confidence) {
+        /** Pre-confidence arity (Transaction Intelligence Phase B). Kept so every existing call site
+         *  that constructs a Suggestion directly -- production and test alike -- keeps compiling
+         *  unchanged. Defaults confidence to null, which is correct for any caller from before this
+         *  field existed. */
+        public Suggestion(String category, String source, UUID merchantId,
+                           Transaction.DecisionSource decisionSource, UUID ruleId) {
+            this(category, source, merchantId, decisionSource, ruleId, null);
+        }
+    }
 
     /**
      * The USER-then-GLOBAL rule set for one user, loaded once -- a thin passthrough to
@@ -105,7 +114,8 @@ public class CategorizationService {
             CategoryRule rule = ruleMatch.get().rule();
             boolean isUserRule = ruleMatch.get().isUserScope();
             return new Suggestion(rule.getActionValue(), isUserRule ? "user_rule" : "global_rule", merchant.getId(),
-                    isUserRule ? Transaction.DecisionSource.USER_RULE : Transaction.DecisionSource.GLOBAL_RULE, rule.getId());
+                    isUserRule ? Transaction.DecisionSource.USER_RULE : Transaction.DecisionSource.GLOBAL_RULE, rule.getId(),
+                    ConfidenceEngine.INITIAL_RULE_CONFIDENCE);
         }
 
         List<MerchantCategoryLearning> distribution = learningRepository.findByUserIdAndMerchantId(userId, merchant.getId());
@@ -114,7 +124,8 @@ public class CategorizationService {
             if (top != null) {
                 Category cat = categoryRepository.findById(top.getCategoryId()).orElse(null);
                 if (cat != null) {
-                    return new Suggestion(cat.getName(), "learned", merchant.getId(), Transaction.DecisionSource.LEARNED_PATTERN, null);
+                    Integer confidence = confidenceEngine.recomputeDistribution(distribution).get(top.getCategoryId());
+                    return new Suggestion(cat.getName(), "learned", merchant.getId(), Transaction.DecisionSource.LEARNED_PATTERN, null, confidence);
                 }
             }
         }
@@ -122,7 +133,8 @@ public class CategorizationService {
         String ruleCat = CategoryRules.suggestCategory(description);
         boolean matchedKeyword = !ruleCat.equals("Other");
         return new Suggestion(ruleCat, matchedKeyword ? "rule" : "default", merchant.getId(),
-                matchedKeyword ? Transaction.DecisionSource.KEYWORD_MATCH : Transaction.DecisionSource.MERCHANT_DEFAULT, null);
+                matchedKeyword ? Transaction.DecisionSource.KEYWORD_MATCH : Transaction.DecisionSource.MERCHANT_DEFAULT, null,
+                matchedKeyword ? ConfidenceEngine.INITIAL_RULE_CONFIDENCE : ConfidenceEngine.INITIAL_DEFAULT_CONFIDENCE);
     }
 
     /**
@@ -198,7 +210,8 @@ public class CategorizationService {
             CategoryRule rule = ruleMatch.get().rule();
             boolean isUserRule = ruleMatch.get().isUserScope();
             return new Suggestion(rule.getActionValue(), isUserRule ? "user_rule" : "global_rule", merchantId,
-                    isUserRule ? Transaction.DecisionSource.USER_RULE : Transaction.DecisionSource.GLOBAL_RULE, rule.getId());
+                    isUserRule ? Transaction.DecisionSource.USER_RULE : Transaction.DecisionSource.GLOBAL_RULE, rule.getId(),
+                    ConfidenceEngine.INITIAL_RULE_CONFIDENCE);
         }
 
         if (merchantId != null) {
@@ -208,8 +221,9 @@ public class CategorizationService {
                 if (top != null) {
                     Category cat = categoryRepository.findById(top.getCategoryId()).orElse(null);
                     if (cat != null) {
+                        Integer confidence = confidenceEngine.recomputeDistribution(distribution).get(top.getCategoryId());
                         return new Suggestion(cat.getName(), "learned", merchantId,
-                                Transaction.DecisionSource.LEARNED_PATTERN, null);
+                                Transaction.DecisionSource.LEARNED_PATTERN, null, confidence);
                     }
                 }
             }
@@ -218,7 +232,8 @@ public class CategorizationService {
         String ruleCat = CategoryRules.suggestCategory(description);
         boolean matchedKeyword = !ruleCat.equals("Other");
         return new Suggestion(ruleCat, matchedKeyword ? "rule" : "default", merchantId,
-                matchedKeyword ? Transaction.DecisionSource.KEYWORD_MATCH : Transaction.DecisionSource.MERCHANT_DEFAULT, null);
+                matchedKeyword ? Transaction.DecisionSource.KEYWORD_MATCH : Transaction.DecisionSource.MERCHANT_DEFAULT, null,
+                matchedKeyword ? ConfidenceEngine.INITIAL_RULE_CONFIDENCE : ConfidenceEngine.INITIAL_DEFAULT_CONFIDENCE);
     }
 
     /** Maps the persisted-through-review categorySource string (StagedRow/ConfirmedRow,
