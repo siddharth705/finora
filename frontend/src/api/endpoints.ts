@@ -300,6 +300,12 @@ export interface ConfirmPayload {
   newAccount: NewAccountPayload | null;
   statementOpeningBalance: number | null;
   statementClosingBalance: number | null;
+  // Echoed back from DetectedAccountInfo.statementPeriodStart/End, same round-trip as the
+  // opening/closing balance fields above -- see ConfirmRequest's own doc comment on the backend
+  // for the bug this closes (persistSection used to silently re-derive the period from the
+  // confirmed rows' own date range instead of the printed period shown on the review screen).
+  statementPeriodStart: string | null;
+  statementPeriodEnd: string | null;
   // Only meaningful to confirmReimport, for a statement whose stored bytes are a password-protected
   // PDF -- see ConfirmRequest's own doc comment on the backend. Every other confirm path ignores it.
   password?: string;
@@ -313,6 +319,8 @@ export interface SectionConfirmPayload {
   newAccount: NewAccountPayload | null;
   statementOpeningBalance: number | null;
   statementClosingBalance: number | null;
+  statementPeriodStart: string | null;
+  statementPeriodEnd: string | null;
 }
 
 export interface MultiAccountConfirmPayload {

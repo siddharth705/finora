@@ -603,7 +603,8 @@ public class ImportService {
                     null, // this section's ConfirmRequest doesn't carry its own sessionId -- the session is claimed once, above, for the whole multi-account request
                     sectionConfirm.rows(), sectionConfirm.existingAccountId(), sectionConfirm.newAccount(),
                     sectionConfirm.statementOpeningBalance(), sectionConfirm.statementClosingBalance(),
-                    null); // a multi-section PDF was already unlocked once to be staged; no password to carry here
+                    null, // a multi-section PDF was already unlocked once to be staged; no password to carry here
+                    sectionConfirm.statementPeriodStart(), sectionConfirm.statementPeriodEnd());
             persisted.add(persistSection(userId, session.getFileName(), statementContentService.read(session), perAccountRequest, i,
                     session.getLayoutMetadataJson(), session.getLayoutFingerprint(), session.getActivatedCapabilitiesJson(),
                 // A multi-section import is CSV/PDF only -- a Gmail receipt is never
@@ -978,8 +979,17 @@ public class ImportService {
         } else {
             statementImport.setFileContent(fileContent);
         }
-        statementImport.setStatementPeriodStart(minDate);
-        statementImport.setStatementPeriodEnd(maxDate);
+        // Bug fix: this used to be minDate/maxDate unconditionally -- the confirmed rows' own date
+        // range, which is only ever a lower bound on the statement's true period whenever a cycle
+        // has no activity near its own printed boundary dates. PdfPreviewGenerator/StatementValidator
+        // already compute and surface the printed period at staging time (see their own
+        // buildDetectedAccountInfo), and ConfirmRequest now echoes it back -- same precedence as
+        // those two methods: prefer the printed period, fall back to the transaction range only when
+        // nothing was printed (or an older client didn't send it).
+        statementImport.setStatementPeriodStart(
+                request.statementPeriodStart() != null ? request.statementPeriodStart() : minDate);
+        statementImport.setStatementPeriodEnd(
+                request.statementPeriodEnd() != null ? request.statementPeriodEnd() : maxDate);
         statementImport.setOpeningBalance(request.statementOpeningBalance());
         statementImport.setClosingBalance(request.statementClosingBalance());
         statementImport.setTransactionsImported(toInsert.size());
@@ -1251,7 +1261,13 @@ public class ImportService {
                 section.categoryTally(), warnings,
                 accountSnapshot, section.totalCredits(), section.totalDebits(),
                 section.statementOpeningBalance(), section.statementClosingBalance(),
-                section.minDate(), section.maxDate(),
+                // The already-resolved value on the just-saved row, not section.minDate()/maxDate()
+                // -- this is the immediate post-confirm summary the "Statement period: ..." line
+                // (Import.tsx) reads, and it must agree with what Statement History shows later, or
+                // a printed period narrower/wider than the confirmed rows' own range would appear
+                // correct here and wrong there (or vice versa) depending purely on which screen the
+                // user happened to look at. See persistSection's own comment for the precedence.
+                section.savedImport().getStatementPeriodStart(), section.savedImport().getStatementPeriodEnd(),
                 System.currentTimeMillis() - section.startedAtMs(),
                 "CSV");
     }
