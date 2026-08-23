@@ -1,16 +1,20 @@
 import { Eyebrow, Reveal, Section } from './primitives';
 import { importSection } from './landing-config';
-import { ImportScrollStory } from './import-story/ImportScrollStory';
+import { ImportRevealSequence } from './import-story/ImportRevealSequence';
 
 /**
  * Import, shown as a mechanism rather than described as one.
  *
- * The mechanism is a pinned, GSAP-ScrollTrigger-scrubbed sequence (see
- * docs/superpowers/specs/2026-08-23-scroll-storytelling-design.md) on desktop, and a reveal-once
- * version of the same three beats on mobile/reduced-motion -- both live in ./import-story,
- * rendered here via ImportScrollStory. That whole scene is aria-hidden; the real information
- * ("upload once, everything else is automatic") is this section's own copy below, unchanged and
- * always in normal document flow regardless of animation state.
+ * The mechanism is ImportRevealSequence's reveal-once sequence (documents -> processing ->
+ * insights), played once as this section scrolls into view -- no pinning, no scroll-scrub. That
+ * scene is aria-hidden; the real information ("upload once, everything else is automatic") is
+ * this section's own copy, always in normal document flow regardless of animation state.
+ *
+ * This used to be a pinned, GSAP-ScrollTrigger-scrubbed sequence on desktop (mobile/reduced-motion
+ * already used ImportRevealSequence as a fallback -- see its own doc comment). Dropped after real
+ * user feedback that pinning the page for ~2.5 screen-heights of scroll to watch three beats felt
+ * bad regardless of how short the distance was tuned to -- not a length problem to tune away, a
+ * mechanic problem. ImportRevealSequence is now the only version, for every visitor.
  *
  * Every format listed is genuinely supported today -- password-protected PDFs and multi-account
  * composite statements included. Nothing aspirational in this list.
@@ -33,7 +37,7 @@ export function ImportSection() {
         </Reveal>
 
         <Reveal delayMs={120}>
-          <ImportScrollStory />
+          <ImportRevealSequence />
         </Reveal>
       </div>
     </Section>
