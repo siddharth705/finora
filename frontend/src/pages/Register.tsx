@@ -8,6 +8,7 @@ import { useAuth } from '../context/AuthContext';
 import { BrandMark } from '../components/BrandMark';
 import { PasswordInput } from '../components/PasswordInput';
 import { GoogleSignInButton } from '../components/GoogleSignInButton';
+import { AppleSignInButton } from '../components/AppleSignInButton';
 
 const FEATURES = [
   { icon: ShieldCheck, iconBg: 'bg-blue-100', iconColor: 'text-blue-600', title: 'Secure & Private', desc: 'Your data is encrypted and bank-level secure.' },
@@ -65,7 +66,7 @@ const FULL_NAME_PATTERN = /^[\p{L}][\p{L}\s.'-]{0,98}[\p{L}]$/u;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export default function Register() {
-  const { register, loginWithGoogle } = useAuth();
+  const { register, loginWithGoogle, loginWithApple } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   // D-28 PR4-C: captured once at mount, not re-read on every render -- a referral link's `?ref=`
@@ -166,6 +167,21 @@ export default function Register() {
       void navigate(phoneVerified ? '/app' : '/verify-phone');
     } catch (err: any) {
       setError(err.response?.data?.message ?? 'Google sign-in failed.');
+      setShowContinueLogin(err.response?.status === 403);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleAppleCredential(idToken: string, fullName: string | null) {
+    setError(null);
+    setShowContinueLogin(false);
+    setLoading(true);
+    try {
+      const phoneVerified = await loginWithApple(idToken, fullName);
+      void navigate(phoneVerified ? '/app' : '/verify-phone');
+    } catch (err: any) {
+      setError(err.response?.data?.message ?? 'Apple sign-in failed.');
       setShowContinueLogin(err.response?.status === 403);
     } finally {
       setLoading(false);
@@ -408,6 +424,9 @@ export default function Register() {
           </div>
 
           <GoogleSignInButton text="signup_with" onCredential={handleGoogleCredential} onError={setError} />
+          <div className="mt-3">
+            <AppleSignInButton onCredential={handleAppleCredential} onError={setError} />
+          </div>
 
           <p className="text-sm mt-4 text-center text-muted">
             Already have an account? <Link to="/login" className="text-primary font-medium">Sign in</Link>
