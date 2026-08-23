@@ -95,6 +95,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
     private final RateLimiter loginLimiter;
     private final RateLimiter registerLimiter;
     private final RateLimiter forgotPasswordLimiter;
+    private final RateLimiter identifyLimiter;
     // Staging used to be memory-only (parse, return the response, nothing persisted) -- as of
     // ADR-0002 (persisted import sessions), every call writes a real row to import_sessions
     // INCLUDING the raw file bytes, bounded only by a 48h TTL and cleanup that only runs on that
@@ -239,6 +240,11 @@ public class RateLimitFilter extends OncePerRequestFilter {
     static final int DEFAULT_LOGIN_MAX = 10, DEFAULT_LOGIN_WINDOW = 60;
     static final int DEFAULT_REGISTER_MAX = 5, DEFAULT_REGISTER_WINDOW = 300;
     static final int DEFAULT_FORGOT_MAX = 5, DEFAULT_FORGOT_WINDOW = 300;
+    // Auth/security review §2.2: tighter than loginLimiter's per-second rate (10/300s here vs
+    // 10/60s for login) -- unlike login, a hit here costs the caller nothing (no password to
+    // guess, no lockout risk), so it is the cheaper endpoint to script against and gets the
+    // tighter ceiling.
+    static final int DEFAULT_IDENTIFY_MAX = 10, DEFAULT_IDENTIFY_WINDOW = 300;
     static final int DEFAULT_IMPORT_STAGE_MAX = 10, DEFAULT_IMPORT_STAGE_WINDOW = 600;
     static final int DEFAULT_PASSWORD_CHANGE_MAX = 15, DEFAULT_PASSWORD_CHANGE_WINDOW = 600;
     static final int DEFAULT_PHONE_CHANGE_MAX = 15, DEFAULT_PHONE_CHANGE_WINDOW = 600;
@@ -268,6 +274,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
                 DEFAULT_LOGIN_MAX, DEFAULT_LOGIN_WINDOW,
                 DEFAULT_REGISTER_MAX, DEFAULT_REGISTER_WINDOW,
                 DEFAULT_FORGOT_MAX, DEFAULT_FORGOT_WINDOW,
+                DEFAULT_IDENTIFY_MAX, DEFAULT_IDENTIFY_WINDOW,
                 DEFAULT_IMPORT_STAGE_MAX, DEFAULT_IMPORT_STAGE_WINDOW,
                 DEFAULT_PASSWORD_CHANGE_MAX, DEFAULT_PASSWORD_CHANGE_WINDOW,
                 DEFAULT_PHONE_CHANGE_MAX, DEFAULT_PHONE_CHANGE_WINDOW,
@@ -302,6 +309,8 @@ public class RateLimitFilter extends OncePerRequestFilter {
             @Value("${app.rate-limit.register.window-seconds:300}") int registerWindow,
             @Value("${app.rate-limit.forgot-password.max:5}") int forgotMax,
             @Value("${app.rate-limit.forgot-password.window-seconds:300}") int forgotWindow,
+            @Value("${app.rate-limit.identify.max:10}") int identifyMax,
+            @Value("${app.rate-limit.identify.window-seconds:300}") int identifyWindow,
             @Value("${app.rate-limit.import-stage.max:10}") int importStageMax,
             @Value("${app.rate-limit.import-stage.window-seconds:600}") int importStageWindow,
             @Value("${app.rate-limit.password-change.max:15}") int passwordChangeMax,
@@ -328,6 +337,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
         this.loginLimiter = new RateLimiter(loginMax, loginWindow);
         this.registerLimiter = new RateLimiter(registerMax, registerWindow);
         this.forgotPasswordLimiter = new RateLimiter(forgotMax, forgotWindow);
+        this.identifyLimiter = new RateLimiter(identifyMax, identifyWindow);
         this.importStageLimiter = new RateLimiter(importStageMax, importStageWindow);
         this.passwordChangeLimiter = new RateLimiter(passwordChangeMax, passwordChangeWindow);
         this.phoneChangeLimiter = new RateLimiter(phoneChangeMax, phoneChangeWindow);
@@ -344,6 +354,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
                 new LimitedEndpoint(PARSER.parse("/api/v1/auth/register"), registerLimiter),
                 new LimitedEndpoint(PARSER.parse("/api/v1/auth/google"), googleLimiter),
                 new LimitedEndpoint(PARSER.parse("/api/v1/auth/apple"), appleLimiter),
+                new LimitedEndpoint(PARSER.parse("/api/v1/auth/identify"), identifyLimiter),
                 new LimitedEndpoint(PARSER.parse("/api/v1/auth/forgot-password"), forgotPasswordLimiter),
                 new LimitedEndpoint(PARSER.parse("/api/v1/auth/reset-password"), resetPasswordLimiter),
                 // BH-015. This class's comment above dismissed /auth/reset-password/phone as

@@ -63,6 +63,28 @@ public class AuthDtos {
     ) {}
 
     /**
+     * Identifier-first entry step (auth/security review §2.2,
+     * docs/proposals/authentication-account-security-review.md): given an email or phone,
+     * {@code AuthService.identify} says what the client should show next without a raw
+     * account-existence boolean. Always resolves within {@link com.finora.entity.User#SCOPE_USER}
+     * -- unlike {@link LoginRequest}, this deliberately has no {@code scope} field, since the
+     * admin portal has its own separate sign-in flow and was never meant to reach this endpoint.
+     */
+    public record IdentifyRequest(@NotBlank String identifier) {}
+
+    /**
+     * @param nextAction what the client should present next: {@code "PASSWORD"}, {@code "GOOGLE"},
+     *        or {@code "APPLE"} for an existing account (mirrors
+     *        {@link com.finora.entity.User#getSignInMethod()} exactly), or {@code "CONTINUE"} for
+     *        an identifier with no account -- deliberately not a boolean {@code exists} field, to
+     *        avoid handing back a directly machine-readable existence oracle. This narrows rather
+     *        than eliminates enumeration risk (the four distinct values are themselves
+     *        distinguishable); the rate limit on this endpoint (see RateLimitFilter) is the other
+     *        half of that mitigation, not a substitute for it.
+     */
+    public record IdentifyResponse(String nextAction) {}
+
+    /**
      * D-23: {@code idToken} is the raw Google ID token from Google Identity Services (web) or a
      * native Google Sign-In SDK (mobile, Phase 2) -- never the frontend's own parsed claims.
      * {@code AuthService.loginWithGoogle} verifies it server-side via
