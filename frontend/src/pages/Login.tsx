@@ -9,6 +9,7 @@ import { BrandMark } from '../components/BrandMark';
 import { PasswordInput } from '../components/PasswordInput';
 import { ReactivateAccountPrompt } from '../components/ReactivateAccountPrompt';
 import { GoogleSignInButton } from '../components/GoogleSignInButton';
+import { AppleSignInButton } from '../components/AppleSignInButton';
 import { SESSION_ENDED_REASON_KEY } from '../api/client';
 import { AUTH_ACCOUNT_DEACTIVATED } from '../api/errorCodes';
 import { safeStorage } from '../lib/safeStorage';
@@ -26,7 +27,7 @@ const FEATURES = [
 ];
 
 export default function Login() {
-  const { login, loginWithGoogle } = useAuth();
+  const { login, loginWithGoogle, loginWithApple } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   // Phase 3 (§2.2): AuthEntry.tsx already resolved this identifier to an existing account via
@@ -133,6 +134,18 @@ export default function Login() {
       afterAuthSuccess(await loginWithGoogle(idToken));
     } catch (err: any) {
       handleAuthError(err, 'Google sign-in failed.');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleAppleCredential(idToken: string, fullName: string | null) {
+    setError(null);
+    setLoading(true);
+    try {
+      afterAuthSuccess(await loginWithApple(idToken, fullName));
+    } catch (err: any) {
+      handleAuthError(err, 'Apple sign-in failed.');
     } finally {
       setLoading(false);
     }
@@ -267,6 +280,9 @@ export default function Login() {
           </div>
 
           <GoogleSignInButton text="signin_with" onCredential={handleGoogleCredential} onError={setError} />
+          <div className="mt-3">
+            <AppleSignInButton onCredential={handleAppleCredential} onError={setError} />
+          </div>
 
           <div className="flex items-start gap-2.5 bg-primary-light rounded-lg p-3 mt-6">
             <ShieldCheck size={16} className="text-primary flex-shrink-0 mt-0.5" />

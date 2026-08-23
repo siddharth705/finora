@@ -103,6 +103,12 @@ export const authApi = {
   // Google-verified email, or creates one, and returns the same AuthResponseDto shape either way.
   google: (idToken: string) =>
     api.post<AuthResponseDto>('/auth/google', { idToken }),
+  // D-26 (web). Same shape as google() -- idToken is what AppleSignInButton's signIn() promise
+  // resolves with, verified server-side (AppleIdTokenVerifierService), never trusted as-is.
+  // fullName is only ever present on the FIRST authorization for a given Apple ID/client id pair
+  // (Apple's own constraint, not this client's) -- forwarded through unvalidated, same as native.
+  apple: (idToken: string, fullName: string | null) =>
+    api.post<AuthResponseDto>('/auth/apple', { idToken, fullName }),
   // token is the raw verification token from a /verify-email?token=... link (register(), or a
   // fresh one loginWithGoogle sends when it finds a matching but not-yet-verified account -- see
   // VerifyEmail.tsx). Not authenticated: the token itself is the proof.
