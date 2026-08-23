@@ -61,8 +61,8 @@ describe('AuthEntryScreen', () => {
     expect(authApi.identify).not.toHaveBeenCalled();
   });
 
-  it('navigates to Login with the identifier and method when nextAction is PASSWORD', async () => {
-    jest.mocked(authApi.identify).mockResolvedValue({ nextAction: 'PASSWORD' });
+  it('navigates to Login with the identifier prefilled when nextAction is EXISTS', async () => {
+    jest.mocked(authApi.identify).mockResolvedValue({ nextAction: 'EXISTS' });
     renderScreen();
 
     fireEvent.changeText(screen.getByLabelText('Email or mobile number'), 'jane@example.com');
@@ -71,20 +71,7 @@ describe('AuthEntryScreen', () => {
 
     expect(authApi.identify).toHaveBeenCalledWith('jane@example.com');
     await waitFor(() =>
-      expect(mockNavigate).toHaveBeenCalledWith('Login', { identifier: 'jane@example.com', method: 'PASSWORD' })
-    );
-  });
-
-  it('navigates to Login with method GOOGLE when nextAction is GOOGLE', async () => {
-    jest.mocked(authApi.identify).mockResolvedValue({ nextAction: 'GOOGLE' });
-    renderScreen();
-
-    fireEvent.changeText(screen.getByLabelText('Email or mobile number'), 'jane@example.com');
-    fireEvent.press(screen.getByRole('button', { name: 'Continue' }));
-    await settle();
-
-    await waitFor(() =>
-      expect(mockNavigate).toHaveBeenCalledWith('Login', { identifier: 'jane@example.com', method: 'GOOGLE' })
+      expect(mockNavigate).toHaveBeenCalledWith('Login', { identifier: 'jane@example.com' })
     );
   });
 
