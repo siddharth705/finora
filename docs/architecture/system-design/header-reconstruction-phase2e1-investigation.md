@@ -212,13 +212,24 @@ precision as SBI or IOB** — this pass did not dump `groupIntoRows`' actual row
 landed in is inferred from the y-coordinates above, not directly observed. Flagged as a strong,
 evidence-backed hypothesis distinct from the SBI/IOB mechanism, not yet a confirmed root cause.
 
+**Correction (2026-08-22):** now confirmed. A follow-up pass dumped `groupIntoRows`' actual
+row-bucket assignment directly (reflection-based throwaway probe, real OCR pipeline, deleted after
+use): the 5 labels split into exactly `[Balance, Date]` and `[Details, Withdrawals, Deposits]`,
+matching this section's inference precisely. Root cause: `groupIntoRows` clusters against a *fixed*
+first-member anchor (`ROW_Y_TOLERANCE = 3.0f`, `PdfTableLocator.java:73,1838`), not the previous
+member, so the 5.28pt of *total* y-jitter across the line exceeds tolerance even though each
+individual consecutive gap does not. Full mechanism recorded in
+[header-reconstruction-design.md](header-reconstruction-design.md) §9.4. Confirmed as
+row-formation-stage, unrelated to `mergeHeaderLines`/header composition, matching this doc's own
+§8-equivalent framing exactly.
+
 ## 2E.1.a taxonomy — three real documents, related but distinct failure classes
 
 | Document | Collapsed header | Failure class | Confidence |
 |---|---|---|---|
 | SBI CC Section 1 | `[Date, Amount]` | `HEADER_PARTITION` — a later line supplies a column with no x-overlap to any seeded anchor | **Root-caused, precisely traced.** |
 | Statement.pdf (IOB) | `[Date), Type]` | `HEADER_PARTITION` (same mechanism as SBI) **+** `TEXT_EXTRACTION_FUSION` (PDFBox fuses 2 column names into 1 run on the seed line, upstream of the merge logic) | **Root-caused, precisely traced.** |
-| HSBC DB.pdf (OCR) | `[Date, Balance]` | Likely `HEADER_PARTITION` again, triggered by OCR y-jitter splitting one visual header line into multiple physical rows, rather than a genuinely multi-row-printed header | **Reproduced and confirmed live; exact row-bucket split not directly observed — a strong hypothesis, not a confirmed mechanism.** |
+| HSBC DB.pdf (OCR) | `[Date, Balance]` | OCR y-jitter splitting one visual header line into multiple physical rows via `groupIntoRows`' fixed-anchor clustering — **not** `HEADER_PARTITION`; this never reaches `mergeHeaderLines` at all | **Confirmed 2026-08-22 — exact row-bucket split directly observed; see correction above and `header-reconstruction-design.md` §9.4.** |
 
 Revises the prior (pre-this-pass) framing: this is not three unrelated bugs. SBI and IOB are the
 *same* algorithmic gap in `mergeHeaderLines` — no path to compose non-overlapping columns supplied
