@@ -1,5 +1,5 @@
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
-import { NavigationContainer, DefaultTheme, DarkTheme } from '@react-navigation/native';
+import { NavigationContainer, DefaultTheme, DarkTheme, type LinkingOptions } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { AuthEntryScreen } from '../screens/AuthEntryScreen';
 import { LoginScreen } from '../screens/LoginScreen';
@@ -10,10 +10,41 @@ import { AppTabs } from './AppTabs';
 import { useAuth } from '../context/AuthContext';
 import { useTheme, useThemeSetting } from '../theme';
 import { useAuthStackInitialRoute } from './useAuthStackInitialRoute';
-import type { AuthStackParamList } from './types';
+import type { AppTabParamList, AuthStackParamList } from './types';
 
 const AuthStack = createNativeStackNavigator<AuthStackParamList>();
 const AppStack = createNativeStackNavigator();
+
+/**
+ * Phase 4's first deep-link consumer: EmailChangeService emails a confirmation link to the new
+ * address, and tapping it needs to land on VerifyEmailChangeScreen with sessionId/token intact.
+ *
+ * Custom scheme only ("finora://email-change-verify?..."), not a true universal/app link
+ * ("https://app.finoratech.info/email-change-verify?..." routed to the app instead of a browser)
+ * -- that needs iOS Associated Domains + a hosted apple-app-site-association file, and Android App
+ * Links + a hosted assetlinks.json signed with the release keystore's fingerprint, none of which
+ * this repo currently has (and neither is something a code change alone can stand up or verify --
+ * it needs real Apple Developer / Play Console access this environment doesn't have). The web
+ * confirmation page (VerifyEmailChange.tsx) still emails the same https:// link it always did, so
+ * it keeps working from any device or email client exactly as before; it separately offers an
+ * "Open in the Finora app" link using this same custom scheme for anyone reading that email on
+ * their phone. Revisit true universal links once the native hosting/signing pieces exist.
+ *
+ * Only the one path this phase needs is registered -- not a blanket linking setup for every screen
+ * in the app.
+ */
+const linking: LinkingOptions<AppTabParamList> = {
+  prefixes: ['finora://'],
+  config: {
+    screens: {
+      More: {
+        screens: {
+          VerifyEmailChange: 'email-change-verify',
+        },
+      },
+    },
+  },
+};
 
 /**
  * The mobile counterpart of the web app's ProtectedRoute, expressed the way React Navigation
@@ -65,7 +96,7 @@ export function RootNavigator() {
   };
 
   return (
-    <NavigationContainer theme={navTheme}>
+    <NavigationContainer theme={navTheme} linking={linking}>
       {token === null ? (
         // initialRouteName -- not just AuthEntry listed first -- because which screen this stack
         // should open on differs by how it got here: a cold, never-signed-in launch starts on
