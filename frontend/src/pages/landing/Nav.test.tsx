@@ -4,25 +4,32 @@ import { describe, expect, it } from 'vitest';
 import { Nav } from './Nav';
 
 describe('Nav', () => {
-  it('renders transparent, inverted styling when overHero is true', () => {
+  it('renders dark, inverted, non-sticky styling while overHero is true', () => {
+    // Regression test: the header must NOT overlap Hero. It sits in normal document flow
+    // (position: static) and scrolls away with the page -- there is no scroll position at which
+    // it and Hero's own content (the dashboard preview, floating badges) occupy the same screen
+    // space, which is what a real reported overlap glitch traced back to.
     render(
       <MemoryRouter>
         <Nav overHero={true} />
       </MemoryRouter>
     );
     const header = screen.getByRole('banner');
+    expect(header.style.position).toBe('static');
     expect(header.style.background).not.toContain('255, 255, 255');
     expect(header.style.backdropFilter === 'none' || header.style.backdropFilter === '').toBe(true);
     expect(screen.getByText('Finora')).toHaveStyle({ color: '#F8FAFC' });
   });
 
-  it('renders the translucent-glass look when overHero is false', () => {
+  it('renders the sticky, translucent-glass look when overHero is false', () => {
     render(
       <MemoryRouter>
         <Nav overHero={false} />
       </MemoryRouter>
     );
     const header = screen.getByRole('banner');
+    expect(header.style.position).toBe('sticky');
+    expect(header.style.top).toBe('0px');
     expect(header.style.background).toContain('255, 255, 255');
     expect(screen.getByText('Finora')).toHaveStyle({ color: '#0F172A' });
   });
