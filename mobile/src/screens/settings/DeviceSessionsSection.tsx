@@ -88,7 +88,7 @@ export function DeviceSessionsSection() {
                 <Text style={[styles.device, { color: c.ink }]} numberOfLines={1}>
                   {deviceLabel(s)}
                 </Text>
-                <Text style={[styles.meta, { color: c.muted }]} numberOfLines={1}>
+                <Text style={[styles.meta, { color: c.mutedInk }]} numberOfLines={1}>
                   {lastActive ? `Last active ${lastActive}` : 'Not used yet'}
                   {s.lastSeenIp ? ` · ${s.lastSeenIp}` : ''}
                 </Text>

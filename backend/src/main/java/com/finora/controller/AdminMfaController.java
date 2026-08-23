@@ -62,7 +62,7 @@ public class AdminMfaController {
     @PostMapping("/disable")
     public ApiResponse<Void> disable(@RequestBody DisableRequest request) {
         UUID userId = currentUser.id();
-        adminMfaService.disable(userId, request.currentPassword(), request.googleIdToken(), userId);
+        adminMfaService.disable(userId, request.currentPassword(), request.googleIdToken(), request.appleIdToken(), userId);
         return ApiResponse.ok(null, "MFA disabled.");
     }
 }

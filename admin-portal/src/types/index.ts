@@ -61,6 +61,30 @@ export interface AlertDto {
   detail: string;
 }
 
+// --- Integrations (AdminIntegrationsController / com.finora.service.AdminIntegrationsService) ---
+// IntegrationDto reuses the SAME live status ProviderStatusDto carries, plus a curated
+// description -- see the backend DTO's own comment for why Database/Financial Intelligence
+// Engine/Statement Import are internal engine checks, not integrations, and stay off this page.
+
+export interface IntegrationDto {
+  name: string;
+  category: string;
+  description: string;
+  status: 'UP' | 'DEGRADED' | 'DOWN';
+  detail: string;
+}
+
+/** No status field: nothing is running yet for these, so there is nothing to check. */
+export interface UpcomingIntegrationDto {
+  name: string;
+  description: string;
+}
+
+export interface IntegrationsOverviewDto {
+  integrations: IntegrationDto[];
+  upcoming: UpcomingIntegrationDto[];
+}
+
 /** Every field here is a real, currently-unaddressed platform-wide count -- see backend
  *  NeedsAttentionDto's own doc comment. Not a fabricated to-do list. */
 export interface NeedsAttentionDto {
@@ -72,17 +96,31 @@ export interface NeedsAttentionDto {
 
 /** Mirrors backend OperationalDashboardDto exactly. importsWithSkippedRowsToday is the honest
  *  substitute for "failed imports" -- see that record's own doc comment for why this pipeline
- *  has no real FAILED signal to report today. */
+ *  has no real FAILED signal to report today. inactiveUsersLast7Days is the inverse of
+ *  activeUsersToday's own query -- a user who predates the 7-day window with no login in it, or
+ *  none ever -- an Insights figure, not a daily-reset tile, so it has no previousDay sibling. */
 export interface OperationalDashboardDto {
   totalUsers: number;
   activeUsersToday: number;
   transactionsToday: number;
   importsToday: number;
   importsWithSkippedRowsToday: number;
+  inactiveUsersLast7Days: number;
+  previousDay: PreviousDayDto;
   needsAttention: NeedsAttentionDto;
   health: PlatformHealthDto;
   alerts: AlertDto[];
   recentActivity: AuditLogDto[];
+}
+
+/** Mirrors backend PreviousDayDto exactly -- yesterday's counts for the four stat tiles that
+ *  reset daily, backing each tile's "vs yesterday" delta. No totalUsers sibling: see that
+ *  record's own doc comment for why a running total has no "vs yesterday" comparison. */
+export interface PreviousDayDto {
+  activeUsers: number;
+  transactions: number;
+  imports: number;
+  importsWithSkippedRows: number;
 }
 
 /** D-27 PR3-D. Mirrors backend ActivationFunnelDto exactly -- see that record's own doc comment
@@ -93,6 +131,16 @@ export interface ActivationFunnelDto {
   firstImport: number;
   firstBudget: number;
   firstGoal: number;
+}
+
+/** Mirrors backend ActivityTrendPointDto exactly -- one calendar day of the Platform Activity
+ *  chart, oldest first, today included. date is a plain calendar day (YYYY-MM-DD), not a
+ *  timestamp -- there is no time-of-day component to a daily point. */
+export interface ActivityTrendPointDto {
+  date: string;
+  signups: number;
+  imports: number;
+  transactions: number;
 }
 
 /** D-28 PR4-A. Mirrors backend BillingDtos.SubscriptionSummaryDto exactly -- one row per user's
@@ -401,6 +449,10 @@ export interface MerchantTemplateDto {
   merchantDomain: string;
   merchantName: string;
   receiptMarker: string;
+  /** Optional. Pipe-separated literal phrases that mean a message is NOT a receipt for this
+   *  template (a refund, return, exchange, or cancellation notice), checked before receiptMarker
+   *  -- see MerchantTemplate.matchesNonReceiptMarker's own doc comment. */
+  nonReceiptMarker: string | null;
   amountPattern: string;
   datePattern: string;
   enabled: boolean;
@@ -414,6 +466,7 @@ export interface CreateMerchantTemplateRequest {
   merchantDomain: string;
   merchantName: string;
   receiptMarker: string;
+  nonReceiptMarker: string;
   amountPattern: string;
   datePattern: string;
 }
@@ -423,6 +476,7 @@ export interface CreateMerchantTemplateRequest {
 export interface UpdateMerchantTemplateRequest {
   merchantName: string;
   receiptMarker: string;
+  nonReceiptMarker: string;
   amountPattern: string;
   datePattern: string;
 }
@@ -433,6 +487,7 @@ export interface UpdateMerchantTemplateRequest {
 export interface TestMerchantTemplateRequest {
   merchantDomain: string;
   receiptMarker: string;
+  nonReceiptMarker: string;
   amountPattern: string;
   datePattern: string;
   sampleHtml: string;

@@ -1,10 +1,18 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react-native';
+import { Dimensions } from 'react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { DashboardScreen } from './DashboardScreen';
 import {
   accountsApi, dashboardApi, goalsApi, insightsApi, reportsApi, transactionsApi, userApi,
 } from '../api/endpoints';
 import type { DashboardSummary } from '../types';
+
+// useWindowDimensions (used for chart width and, per the "large Dynamic Type" describe block
+// below, font scale) reads its value from Dimensions.get('window') on mount -- spying there,
+// rather than re-mocking the whole 'react-native' module, avoids re-running the module's own
+// native TurboModule getters (which blow up under jest-expo when the module object is spread
+// rather than used as-is).
+const dimensionsGetSpy = jest.spyOn(Dimensions, 'get');
 
 /**
  * The distinction this file exists to protect: a dashboard that FAILED TO LOAD must never be
@@ -89,6 +97,9 @@ function renderScreen() {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  // Reset to the default (non-scaled) window on every test -- a leftover large fontScale from one
+  // test must never leak into the next.
+  dimensionsGetSpy.mockReturnValue({ width: 390, height: 844, scale: 2, fontScale: 1 });
   // Everything except the summary succeeds, so each test isolates one variable: the summary call.
   accounts.list.mockResolvedValue([]);
   transactions.search.mockResolvedValue({
@@ -270,5 +281,59 @@ describe('when the dashboard is legitimately empty', () => {
 
     expect(emptyShowsError).toBe(false);
     expect(failureShowsKpis).toBe(false);
+  });
+});
+
+describe('large Dynamic Type support (mobile design review, iOS VoiceOver/Dynamic Type pass)', () => {
+  // A financial description long enough to actually truncate at either line count -- short enough
+  // fixtures would pass numberOfLines={1} by accident and prove nothing.
+  const LONG_DESCRIPTION = 'Payment to Greenfield Grocers and Home Essentials Superstore Ltd';
+  const LONG_GOAL_NAME = 'Emergency Fund for Home Repairs and Unexpected Medical Expenses';
+
+  beforeEach(() => {
+    transactions.search.mockResolvedValue({
+      content: [{
+        id: 't1', accountId: 'a1', categoryId: 'c1', categoryName: 'Shopping', date: '2026-08-01',
+        description: LONG_DESCRIPTION, merchant: 'Greenfield Grocers', paymentMethod: 'CARD',
+        amount: 1200, type: 'EXPENSE', tags: [], notes: null, reconciliationStatus: 'OK',
+        recurring: false, needsCategoryReview: false, categoryManuallySet: false,
+      }],
+      page: 0, size: 5, totalElements: 1, totalPages: 1,
+    } as never);
+    goals.list.mockResolvedValue([
+      { id: 'g1', name: LONG_GOAL_NAME, targetAmount: 100000, currentAmount: 25000 },
+    ] as never);
+  });
+
+  it('truncates the transaction description and goal name to one line at the default text size', async () => {
+    dashboard.summary.mockResolvedValue(emptySummary());
+    renderScreen();
+
+    const desc = await screen.findByText(LONG_DESCRIPTION);
+    expect(desc.props.numberOfLines).toBe(1);
+
+    const goalName = await screen.findByText(LONG_GOAL_NAME);
+    expect(goalName.props.numberOfLines).toBe(1);
+  });
+
+  it('allows two lines instead of truncating once Dynamic Type is scaled up', async () => {
+    dimensionsGetSpy.mockReturnValue({ width: 390, height: 844, scale: 2, fontScale: 1.3 });
+    dashboard.summary.mockResolvedValue(emptySummary());
+    renderScreen();
+
+    const desc = await screen.findByText(LONG_DESCRIPTION);
+    expect(desc.props.numberOfLines).toBe(2);
+
+    const goalName = await screen.findByText(LONG_GOAL_NAME);
+    expect(goalName.props.numberOfLines).toBe(2);
+  });
+
+  it('still allows two lines at full accessibility text sizes, not just the first large step', async () => {
+    dimensionsGetSpy.mockReturnValue({ width: 390, height: 844, scale: 2, fontScale: 2.0 });
+    dashboard.summary.mockResolvedValue(emptySummary());
+    renderScreen();
+
+    expect((await screen.findByText(LONG_DESCRIPTION)).props.numberOfLines).toBe(2);
+    expect((await screen.findByText(LONG_GOAL_NAME)).props.numberOfLines).toBe(2);
   });
 });

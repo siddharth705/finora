@@ -122,7 +122,7 @@ export function VerifyPhoneScreen() {
         />
       </View>
 
-      <Text style={[styles.hint, { color: c.muted }]}>
+      <Text style={[styles.hint, { color: c.mutedInk }]}>
         Verification is required before you can use your account.
       </Text>
     </AuthScreenLayout>

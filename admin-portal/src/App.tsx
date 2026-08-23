@@ -35,6 +35,7 @@ const Subscriptions = lazy(() => import('./pages/Subscriptions'));
 const Referrals = lazy(() => import('./pages/Referrals'));
 const AuditLog = lazy(() => import('./pages/AuditLog'));
 const SystemHealth = lazy(() => import('./pages/SystemHealth'));
+const Integrations = lazy(() => import('./pages/Integrations'));
 const Diagnostics = lazy(() => import('./pages/Diagnostics'));
 const LayoutIntelligence = lazy(() => import('./pages/LayoutIntelligence'));
 const LayoutStudio = lazy(() => import('./pages/LayoutStudio'));
@@ -93,6 +94,7 @@ export default function App() {
               <Route path="/referrals" element={<ProtectedRoute><Referrals /></ProtectedRoute>} />
               <Route path="/audit" element={<ProtectedRoute><AuditLog /></ProtectedRoute>} />
               <Route path="/health" element={<ProtectedRoute><SystemHealth /></ProtectedRoute>} />
+              <Route path="/integrations" element={<ProtectedRoute><Integrations /></ProtectedRoute>} />
               <Route path="/diagnostics" element={<ProtectedRoute><Diagnostics /></ProtectedRoute>} />
               <Route path="/layout-intelligence" element={<ProtectedRoute><LayoutIntelligence /></ProtectedRoute>} />
               <Route path="/layout-studio" element={<ProtectedRoute><LayoutStudio /></ProtectedRoute>} />

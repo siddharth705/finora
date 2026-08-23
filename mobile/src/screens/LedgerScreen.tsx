@@ -8,6 +8,7 @@ import { transactionsApi, type TransactionFilters } from '../api/endpoints';
 import { invalidateFinancialData } from '../lib/invalidateFinancialData';
 import { toUserMessage } from '../lib/apiError';
 import { useDebouncedValue } from '../lib/useDebouncedValue';
+import { useLargeFontScale } from '../lib/useLargeFontScale';
 import { fmtCurrency } from '../lib/format';
 import { radius, spacing, useTheme } from '../theme';
 import type { Transaction } from '../types';
@@ -18,6 +19,7 @@ type TypeFilter = 'ALL' | 'INCOME' | 'EXPENSE';
 export function LedgerScreen() {
   const c = useTheme();
   const insets = useSafeAreaInsets();
+  const largeText = useLargeFontScale();
   const queryClient = useQueryClient();
   const [keywordInput, setKeywordInput] = useState('');
   const debouncedKeyword = useDebouncedValue(keywordInput, 300);
@@ -204,10 +206,10 @@ export function LedgerScreen() {
               }}
             >
               <View style={styles.rowMain}>
-                <Text style={[styles.desc, { color: c.ink }]} numberOfLines={1}>
+                <Text style={[styles.desc, { color: c.ink }]} numberOfLines={largeText ? 2 : 1}>
                   {t.description || t.merchant || 'Transaction'}
                 </Text>
-                <Text style={[styles.meta, { color: c.muted }]} numberOfLines={1}>
+                <Text style={[styles.meta, { color: c.mutedInk }]} numberOfLines={1}>
                   {t.categoryName} · {t.date}
                   {t.reconciliationStatus === 'DUPLICATE' ? ' · Duplicate' : ''}
                 </Text>
