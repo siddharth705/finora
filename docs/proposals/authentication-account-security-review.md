@@ -544,9 +544,9 @@ match.
 - **Mobile — ✅ DONE, shipped 2026-08-23**: `ChangeEmailSheet` (Settings'
   Security section, next to Change Password) + `VerifyEmailChangeScreen`,
   reached via a new `finora://email-change-verify?sessionId=...&token=...`
-  deep link registered in `RootNavigator`'s `linking` config -- Phase 4
-  mobile's first deep-link consumer, since mobile had none at all before
-  this (no `expo-linking` usage, no `NavigationContainer.linking`).
+  deep link -- Phase 4 mobile's first deep-link consumer, since mobile had
+  none at all before this (no `expo-linking` usage, no
+  `NavigationContainer.linking`).
   Password-only step-up (no `signInMethod` branch): no mobile settings
   flow, including `ChangePasswordSheet`, has a Google-reauth step-up path
   yet, so this doesn't add a first one speculatively -- add the `GOOGLE`
@@ -562,6 +562,20 @@ match.
   the custom scheme, for anyone reading that email on their phone.
   Revisit true universal links once the native hosting/signing pieces
   exist -- tracked here, not silently scoped out.
+  **Self-review fix (2026-08-23, follow-up PR after this shipped)**:
+  `RootNavigator` mounts one of three mutually-exclusive navigator trees
+  depending on auth state (signed-out `AuthStack`, a bare
+  phone-unverified `AppStack`, or `AppTabs`), but the deep link's target
+  screen only exists inside `AppTabs`. Registering the path in React
+  Navigation's own declarative `linking.config` (as originally shipped)
+  meant a signed-out or phone-unverified tap silently dropped the link --
+  no error, `sessionId`/`token` just gone, no retry path short of
+  reopening the email. Replaced with `useEmailChangeDeepLink`, an
+  imperative, auth-state-aware hook (unit-tested directly, no
+  `NavigationContainer` integration test needed) that listens for the raw
+  URL independently of whichever tree is mounted, stashes it if the app
+  isn't ready, and replays it via a `navigationRef` the moment sign-in and
+  phone verification complete.
 - **Amendment (2026-08-23)**: implemented ahead of the remaining 5 open
   decisions being resolved, same situation Phase 3's backend slice was in
   (see its own amendment above). Checked each one against this specific
