@@ -118,6 +118,38 @@ reactivation token, and any OAuth-in-flight state — not just the step value.
 Matters on shared computers. Add a regression test asserting all of these are
 cleared, not just that `step` changes.
 
+## Refresh and back/forward-cache behavior
+
+Since `step` and all transient form state live only in the orchestrator's
+React state (not in the URL — there's one URL, `/auth`, for the whole flow),
+a genuine hard reload already resets to `IDENTIFY` by construction: the
+component remounts from scratch and `useState`'s initial values win. The one
+exception is deliberate — the reset-password deep link's `location.state`
+(identifier + banner, used to start on `PASSWORD`) is pushed via
+`navigate(path, {state})`, and browsers persist `history.state` across a
+reload of that same entry. That's intentional: it's the same deep-link case
+already covered under Security boundaries above, still not treated as proof
+of identity, still gated by the backend's own reset-token/phone-verification
+check — a reload shouldn't un-authenticate a shortcut the user was already
+sitting on.
+
+The case that needs explicit handling: browser **back/forward-cache (bfcache)
+restore**. If a user is on `/auth` mid-flow (say, `PASSWORD` or the
+reactivation prompt), navigates away, then hits Forward, some browsers
+restore the exact live page instance from memory rather than remounting it —
+which would silently show whatever step/state was on screen when they left,
+stale password field and all. Add a `pageshow` listener in the orchestrator
+that checks `event.persisted` and, when true, runs the same full-state clear
+"Not you?" already uses (identifier, password, confirmPassword, error,
+reactivation token, OAuth-in-flight state) before rendering — i.e. a bfcache
+restore always lands back on `IDENTIFY`, deep-link case included, since at
+that point there's no way to tell whether the restore is safe.
+
+Tests to add: remounting the orchestrator (equivalent to a hard reload)
+defaults to `IDENTIFY` unless deep-link state is present; firing a
+`pageshow` event with `persisted: true` clears all transient state and shows
+`IDENTIFY` regardless of which step was active beforehand.
+
 ## Routing changes
 
 `App.tsx`: `/login` and `/register` become `<Navigate to="/auth" replace />`.
