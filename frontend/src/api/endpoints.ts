@@ -334,7 +334,7 @@ export interface ConfirmPayload {
 
 // One account's worth of reviewed rows within a MultiAccountConfirmPayload -- same shape as
 // ConfirmPayload minus sessionId (shared once at the top level instead of repeated per section).
-export interface SectionConfirmPayload {
+interface SectionConfirmPayload {
   rows: ConfirmedRowPayload[];
   existingAccountId: string | null;
   newAccount: NewAccountPayload | null;
@@ -617,7 +617,7 @@ export const dashboardApi = {
   journey: () => api.get<FinancialJourney>('/dashboard/journey').then((r) => r.data),
 };
 
-export interface NetWorthSnapshotPoint {
+interface NetWorthSnapshotPoint {
   date: string;
   netWorth: number;
 }
@@ -632,7 +632,7 @@ export const networthApi = {
   saveSnapshot: () => api.post<NetWorthData>('/networth/snapshot').then((r) => r.data),
 };
 
-export interface CategoryMover {
+interface CategoryMover {
   category: string;
   current: number;
   priorAverage: number;

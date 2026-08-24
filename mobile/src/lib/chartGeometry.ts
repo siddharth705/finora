@@ -67,7 +67,7 @@ export function buildArcs(slices: { label: string; value: number }[]): ArcSlice[
 
 export const CASHFLOW_HEIGHT = 150;
 export const CASHFLOW_PAD_TOP = 8;
-export const CASHFLOW_PAD_BOTTOM = 22;
+const CASHFLOW_PAD_BOTTOM = 22;
 export const CASHFLOW_PLOT_HEIGHT = CASHFLOW_HEIGHT - CASHFLOW_PAD_TOP - CASHFLOW_PAD_BOTTOM;
 
 export interface CashFlowScale {
@@ -98,7 +98,7 @@ export function cashFlowScale(
 
 export const TREND_HEIGHT = 150;
 export const TREND_PAD_TOP = 8;
-export const TREND_PAD_BOTTOM = 22;
+const TREND_PAD_BOTTOM = 22;
 export const TREND_PLOT_HEIGHT = TREND_HEIGHT - TREND_PAD_TOP - TREND_PAD_BOTTOM;
 
 export interface TrendScale {

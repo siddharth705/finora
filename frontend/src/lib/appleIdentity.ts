@@ -4,7 +4,7 @@
 // chosen over a full-page redirect to match Google's one-click posture; a redirectURI is still
 // required by Apple's API even in popup mode, used internally as the postMessage-relay target.
 
-export interface AppleCredentialResponse {
+interface AppleCredentialResponse {
   authorization: {
     id_token: string;
     code: string;

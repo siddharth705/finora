@@ -13,7 +13,7 @@ const BLANK_ACCOUNT: CreateAccountRequest = {
 
 const ACCOUNT_TYPES = ['SAVINGS', 'CREDIT_CARD', 'WALLET', 'INVESTMENT'];
 
-export function AccountForm({
+function AccountForm({
   initial, editing, onCancel, onSubmit, submitting, error,
 }: {
   initial: CreateAccountRequest;

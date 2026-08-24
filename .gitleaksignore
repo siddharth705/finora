@@ -1,0 +1,21 @@
+# Historical findings from gitleaks' full-history scan of this repo, individually reviewed and
+# confirmed to not be real secrets before this file was created (2026-08-25). Each entry is pinned
+# to a fingerprint (commit:file:rule:line), not a path or pattern, so a NEW secret added to any of
+# these files still gets caught -- the same discipline scripts/check-dependency-advisories.py
+# applies to dependency advisories: an accepted entry is named and reasoned about, not a blanket
+# exemption.
+
+# ProductionConfigValidator's own placeholder-encryption-key constant (LOCAL_DEV_ENCRYPTION_KEY).
+# It exists so the validator can reject this exact value if it ever appears in a production
+# environment -- see the constant's own doc comment. Flagging the validator's known-bad reference
+# value as a leak would be flagging the guard, not a gap in it. Two fingerprints because the line
+# moved between commits when the constant was introduced.
+abca670e8a953ceb99c5d1c52ccb56c3a462290a:backend/src/main/java/com/finora/config/ProductionConfigValidator.java:generic-api-key:112
+e370f7b65397fb4d0155b71f6959d537f8f52370:backend/src/main/java/com/finora/config/ProductionConfigValidator.java:generic-api-key:111
+
+# Test fixtures: fabricated tokens/passwords used only to exercise encrypt/decrypt round trips and
+# auth-flow rejection paths. None ever authenticated against a real system.
+abca670e8a953ceb99c5d1c52ccb56c3a462290a:backend/src/test/java/com/finora/security/crypto/EncryptionServiceTest.java:generic-api-key:71
+e370f7b65397fb4d0155b71f6959d537f8f52370:backend/src/test/java/com/finora/security/crypto/EncryptionServiceTest.java:generic-api-key:71
+f9b579fe41c0e4458545b7915bf3964927d8705a:backend/src/test/java/com/finora/controller/PasswordChangeFlowIT.java:generic-api-key:153
+cb6ba7b6685745691a75d73c43904df0d19d7e15:backend/src/test/java/com/finora/controller/AuthFlowIT.java:generic-api-key:94
