@@ -1,6 +1,6 @@
 # Unified auth entry (`/login` + `/register` → `/auth`)
 
-Status: approved, pending implementation plan.
+Status: implemented (docs/superpowers/plans/2026-08-24-unified-auth-entry.md, 7/7 tasks).
 
 ## Goal
 
