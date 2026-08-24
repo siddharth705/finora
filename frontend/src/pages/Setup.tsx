@@ -144,7 +144,7 @@ export default function Setup() {
   return (
     <div className="space-y-4">
       {/* Statement import is the primary way an account is meant to get onto this page —
-          Finora detects the account details from the file and creates it automatically.
+          Fynora detects the account details from the file and creates it automatically.
           Everything below this is the manual fallback for accounts you'd rather set up by hand. */}
       <div className="bg-primary-light border border-primary/20 rounded-xl2 p-5 flex items-center justify-between gap-4 flex-wrap">
         <div className="flex items-center gap-3">
@@ -153,7 +153,7 @@ export default function Setup() {
           </div>
           <div>
             <p className="text-sm font-semibold text-ink">Import a bank or credit card statement</p>
-            <p className="text-xs text-muted">Finora detects the bank, account, and transactions automatically — no manual setup needed.</p>
+            <p className="text-xs text-muted">Fynora detects the bank, account, and transactions automatically — no manual setup needed.</p>
           </div>
         </div>
         <Link to="/app/import" className="bg-primary text-on-primary text-xs font-semibold rounded-lg px-4 py-2.5 flex-shrink-0">

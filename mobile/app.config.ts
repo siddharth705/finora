@@ -42,7 +42,7 @@ const androidGoogleServices = process.env.GOOGLE_SERVICES_JSON ?? './google-serv
 const here = (p: string) => (path.isAbsolute(p) ? p : path.join(__dirname, p));
 
 const config: ExpoConfig = {
-  name: 'Finora',
+  name: 'Fynora',
   slug: 'finora-mobile',
   version: '1.0.0',
   orientation: 'portrait',
@@ -132,7 +132,7 @@ const config: ExpoConfig = {
     // Android's biometric prompt needs no equivalent build-time config. See src/lib/appLock.ts.
     [
       'expo-local-authentication',
-      { faceIDPermission: 'Allow Finora to use Face ID to unlock the app.' },
+      { faceIDPermission: 'Allow Fynora to use Face ID to unlock the app.' },
     ],
     [
       'expo-build-properties',

@@ -163,7 +163,7 @@ export default function Login() {
         <div className="hidden lg:block">
           <Link to="/" className="flex items-center gap-2.5 mb-8 w-fit">
             <BrandMark size={36} variant="auto" className="rounded-lg" />
-            <span className="font-extrabold tracking-wide text-ink text-xl">FINORA</span>
+            <span className="font-extrabold tracking-wide text-ink text-xl">FYNORA</span>
           </Link>
 
           <span className="inline-block bg-primary-light text-primary text-xs font-medium px-3 py-1 rounded-full mb-4">
@@ -217,7 +217,7 @@ export default function Login() {
           <div className="flex items-center gap-2 mb-6 lg:hidden">
             <Link to="/" className="flex items-center gap-2 w-fit">
               <BrandMark size={28} variant="auto" className="rounded-lg" />
-              <span className="font-extrabold tracking-wide text-ink">FINORA</span>
+              <span className="font-extrabold tracking-wide text-ink">FYNORA</span>
             </Link>
           </div>
 

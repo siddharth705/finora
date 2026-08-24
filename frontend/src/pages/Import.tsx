@@ -518,7 +518,7 @@ export default function Import() {
       } else if (contractMessage) {
         // Premium Import Reliability v1 failure UX contract: for a code we have curated copy for,
         // that copy is what the user reads, not the server's `message` -- the whole point of the
-        // contract is that Finora controls the wording, even though the server's own message is
+        // contract is that Fynora controls the wording, even though the server's own message is
         // already reasonable prose (see ExtractionCheck.java). Only a code with no curated entry
         // falls through to the server message / generic fallback below. Sprint 4 item 22:
         // userActionRequired comes off the wire (ErrorCode.userActionRequired(), computed once
@@ -753,7 +753,7 @@ export default function Import() {
               id="pdf-password"
               ref={passwordInput}
               type="password"
-              // This is the bank's password for this document, not a Finora credential -- offering
+              // This is the bank's password for this document, not a Fynora credential -- offering
               // to save it in a password manager would put it in the user's vault alongside real
               // logins, and it changes with every statement anyway.
               autoComplete="off"
@@ -887,7 +887,7 @@ export default function Import() {
               Retrying <span className="font-medium">{retryState.retryFileName}</span>
             </p>
             <p className="text-xs text-muted mt-0.5">
-              Last attempt: {importFailureMessage(retryState.retryFailureCode) ?? "Finora couldn't complete this import."} Select the file below to try again.
+              Last attempt: {importFailureMessage(retryState.retryFailureCode) ?? "Fynora couldn't complete this import."} Select the file below to try again.
             </p>
           </div>
         </div>
@@ -904,7 +904,7 @@ export default function Import() {
           // Bug fix: the actual <input type="file"> is visually hidden (className="hidden",
           // display:none), which removes it from the tab order entirely -- a keyboard-only user
           // had no way to open the file picker on this page at all, the primary way data enters
-          // Finora. This div is now itself a focusable, keyboard-operable trigger (Enter/Space),
+          // Fynora. This div is now itself a focusable, keyboard-operable trigger (Enter/Space),
           // matching the standard accessible-clickable-div pattern.
           onKeyDown={(e) => {
             if (uploadProgress !== null) return;

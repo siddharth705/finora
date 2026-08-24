@@ -47,7 +47,7 @@ export function AuthScreenLayout({ title, subtitle, error, banner, children, foo
       >
         <View style={styles.brandRow}>
           <BrandMark size={30} />
-          <Text style={[styles.brandName, { color: c.ink }]}>FINORA</Text>
+          <Text style={[styles.brandName, { color: c.ink }]}>FYNORA</Text>
         </View>
 
         <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }]}>

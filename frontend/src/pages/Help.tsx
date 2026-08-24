@@ -10,8 +10,8 @@ interface HelpArticle {
 }
 
 const ARTICLES: HelpArticle[] = [
-  { category: 'Getting Started', question: 'What is Finora?', answer: 'Finora is a personal finance platform that imports your bank/card statements, categorizes transactions automatically, and gives you one dashboard across accounts, budgets, goals, and investments.' },
-  { category: 'Getting Started', question: 'Do I need to connect my bank account?', answer: "No live bank connection is required. You export a CSV statement from your bank or card's own portal and upload it to Finora — nothing requires your bank login credentials." },
+  { category: 'Getting Started', question: 'What is Fynora?', answer: 'Fynora is a personal finance platform that imports your bank/card statements, categorizes transactions automatically, and gives you one dashboard across accounts, budgets, goals, and investments.' },
+  { category: 'Getting Started', question: 'Do I need to connect my bank account?', answer: "No live bank connection is required. You export a CSV statement from your bank or card's own portal and upload it to Fynora — nothing requires your bank login credentials." },
 
   { category: 'Account Registration', question: 'What do I need to sign up?', answer: 'A full name, email address, mobile number, and a password of at least 8 characters. You\'ll verify your phone number with an OTP right after registering.' },
   { category: 'Account Registration', question: 'Can I use the same email or phone number twice?', answer: 'No — each email address and mobile number can only be registered to one account. If you see a "duplicate" error, that identifier is already in use.' },
@@ -20,21 +20,21 @@ const ARTICLES: HelpArticle[] = [
   { category: 'Login & Authentication', question: 'What happens if I enter the wrong password too many times?', answer: 'After several consecutive failed attempts, the account is temporarily locked for a short period as a security measure, then unlocks automatically.' },
   { category: 'Login & Authentication', question: 'Why do I need to verify my phone number?', answer: "Phone verification confirms you have access to the number on file and is required before you can use the rest of the app — you'll be redirected to the verification screen until it's complete." },
 
-  { category: 'Importing Statements', question: 'Which file formats are supported?', answer: 'CSV exports from your bank or card portal, and PDF statements — including password-protected ones your bank emails you. Finora automatically detects common column-naming variants (e.g. "Debit (INR)" vs "Withdrawal Amt") across different banks. PDF support covers digital, text-based statements; a scanned or photographed PDF has no selectable text for us to read, so those still need a CSV export instead.' },
+  { category: 'Importing Statements', question: 'Which file formats are supported?', answer: 'CSV exports from your bank or card portal, and PDF statements — including password-protected ones your bank emails you. Fynora automatically detects common column-naming variants (e.g. "Debit (INR)" vs "Withdrawal Amt") across different banks. PDF support covers digital, text-based statements; a scanned or photographed PDF has no selectable text for us to read, so those still need a CSV export instead.' },
   { category: 'Importing Statements', question: 'Can I import statements for more than one account?', answer: 'Yes — each statement is matched to an existing account or used to create a new one automatically, based on details detected in the file.' },
-  { category: 'Importing Statements', question: 'What if I import the same statement twice?', answer: 'Finora checks for likely duplicate transactions during import and flags them for your review rather than silently double-counting them.' },
+  { category: 'Importing Statements', question: 'What if I import the same statement twice?', answer: 'Fynora checks for likely duplicate transactions during import and flags them for your review rather than silently double-counting them.' },
 
   { category: 'Managing Accounts', question: 'Can I add an account manually?', answer: 'Yes — from the Accounts page you can add a savings account, credit card, wallet, or investment account by hand, including an optional account holder name and masked account number.' },
   { category: 'Managing Accounts', question: 'How is my account number displayed?', answer: 'Account numbers are shown masked by default, with an eye icon to reveal them on your own screen — this is a display convenience, not an additional storage boundary.' },
 
   { category: 'Transactions', question: 'Can I edit a transaction after it\'s imported?', answer: 'Yes — every transaction supports full edit and delete, including its category, merchant, description, notes, tags, date, amount, and type.' },
-  { category: 'Transactions', question: 'Why was my transaction categorized incorrectly?', answer: 'Automatic categorization is always a starting suggestion, never a final decision. Correct it once and Finora remembers your correction for that merchant going forward.' },
+  { category: 'Transactions', question: 'Why was my transaction categorized incorrectly?', answer: 'Automatic categorization is always a starting suggestion, never a final decision. Correct it once and Fynora remembers your correction for that merchant going forward.' },
   { category: 'Transactions', question: 'What happens to my Dashboard when I delete a transaction?', answer: 'Deleting or editing a transaction automatically refreshes the Dashboard, Accounts, Budgets, Reports, Goals, and Insights — nothing is left showing stale numbers.' },
 
   { category: 'Budgets', question: 'How do I set a budget?', answer: 'Go to Budgets, choose a category, and set a monthly limit. Your spend against that limit updates in real time as transactions come in.' },
   { category: 'Budgets', question: 'Will I be warned before going over budget?', answer: 'Yes — the Budget Progress bar changes color as you approach and exceed your limit, both on the Budgets page and the Dashboard.' },
 
-  { category: 'Goals', question: 'How do I track a savings goal?', answer: 'Create a goal with a target amount and, optionally, a target date. Add contributions as you save, and Finora tracks your percentage complete.' },
+  { category: 'Goals', question: 'How do I track a savings goal?', answer: 'Create a goal with a target amount and, optionally, a target date. Add contributions as you save, and Fynora tracks your percentage complete.' },
 
   { category: 'Investments', question: 'Can I track my investments alongside everyday spending?', answer: 'Yes — investment accounts contribute to your overall net worth figure alongside savings and credit card accounts.' },
 
@@ -45,7 +45,7 @@ const ARTICLES: HelpArticle[] = [
   { category: 'Statement History', question: 'Where can I see past imports?', answer: 'Statement History groups every import by the account it belongs to, and lets you view its transactions, download the original file, re-import it, or delete it.' },
   { category: 'Statement History', question: 'What happens if I delete an account with statements?', answer: 'A deleted account remains visible in Statement History for 7 days from the deletion date before it disappears, in case you need to reference it.' },
 
-  { category: 'Troubleshooting', question: 'My statement showed "0 transactions found" — what happened?', answer: 'This usually means the file\'s header row uses column names Finora didn\'t recognize. Try re-exporting from your bank with default column names, or contact support with the file.' },
+  { category: 'Troubleshooting', question: 'My statement showed "0 transactions found" — what happened?', answer: 'This usually means the file\'s header row uses column names Fynora didn\'t recognize. Try re-exporting from your bank with default column names, or contact support with the file.' },
   { category: 'Troubleshooting', question: 'I can\'t re-import a statement into a deleted account.', answer: 'That\'s expected — a deleted account can\'t receive new statements. Restore isn\'t currently self-serve; contact support if you need this reversed within the 7-day window.' },
 
   { category: 'Contact Support', question: 'How do I reach support?', answer: `Email ${SUPPORT_EMAIL} with a description of the issue — for import problems, attaching the file (with sensitive numbers redacted if you prefer) speeds up a diagnosis.` },

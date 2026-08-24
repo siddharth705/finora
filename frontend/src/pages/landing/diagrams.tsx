@@ -10,7 +10,7 @@ import { FlowArrow, Reveal } from './primitives';
  * thing, so they are hidden from assistive tech rather than narrated twice.
  */
 
-/** PDF / CSV / protected PDF -> Finora -> dashboard. */
+/** PDF / CSV / protected PDF -> Fynora -> dashboard. */
 export function ImportFlow() {
   const inputs = [
     { icon: <FileText size={15} />, label: 'PDF', tint: '#EF4444' },
@@ -92,7 +92,7 @@ export function LearningFlow() {
   const stages = [
     { caption: 'Imported', value: 'Amazon', tag: 'Shopping', tone: 'muted' },
     { caption: 'You change it to', value: 'Amazon', tag: 'Household', tone: 'edit' },
-    { caption: 'Finora learns', value: 'Updating pattern…', tag: null, tone: 'learn' },
+    { caption: 'Fynora learns', value: 'Updating pattern…', tag: null, tone: 'learn' },
     { caption: 'Next import', value: 'Amazon', tag: 'Household', tone: 'done' },
   ];
 

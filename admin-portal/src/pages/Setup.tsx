@@ -138,7 +138,7 @@ export default function Setup() {
           <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-rose-400 to-[#15171C] flex items-center justify-center">
             <Sparkles size={18} className="text-white" strokeWidth={2.5} />
           </div>
-          <span className="font-extrabold tracking-wide text-xl text-ink">FINORA</span>
+          <span className="font-extrabold tracking-wide text-xl text-ink">FYNORA</span>
         </div>
         <p className="text-center text-sm text-muted mb-8">Let's get your platform set up.</p>
 
@@ -153,14 +153,14 @@ export default function Setup() {
             <Card>
               <div>
                 <p className="text-sm font-semibold text-ink mb-1">Enter your installation key</p>
-                <p className="text-xs text-muted">A one-time key was generated when Finora first started.</p>
+                <p className="text-xs text-muted">A one-time key was generated when Fynora first started.</p>
               </div>
 
               {!installationKeyAvailable && (
                 <p className="text-sm text-warning bg-warning-bg rounded-lg px-3.5 py-2.5">
-                  Finora couldn't find an installation key. It may not have been generated yet,
+                  Fynora couldn't find an installation key. It may not have been generated yet,
                   or has already been used elsewhere -- see below for where to look, or ask
-                  whoever deployed Finora for the key.
+                  whoever deployed Fynora for the key.
                 </p>
               )}
 

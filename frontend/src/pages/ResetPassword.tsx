@@ -162,7 +162,7 @@ export default function ResetPassword() {
           <span className="w-7 h-7 rounded-lg bg-gradient-to-br from-primary to-primary-dark flex items-center justify-center">
             <Sparkles size={14} className="text-on-primary" strokeWidth={2.5} />
           </span>
-          <span className="font-extrabold tracking-wide text-ink">FINORA</span>
+          <span className="font-extrabold tracking-wide text-ink">FYNORA</span>
         </div>
 
         {/* Anchor for Firebase's invisible reCAPTCHA -- rendered once, outside the phone/otp

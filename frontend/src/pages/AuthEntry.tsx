@@ -128,7 +128,7 @@ export default function AuthEntry() {
           <div className="flex items-center gap-2 mb-6">
             <Link to="/" className="flex items-center gap-2 w-fit">
               <BrandMark size={28} variant="auto" className="rounded-lg" />
-              <span className="font-extrabold tracking-wide text-ink">FINORA</span>
+              <span className="font-extrabold tracking-wide text-ink">FYNORA</span>
             </Link>
           </div>
 

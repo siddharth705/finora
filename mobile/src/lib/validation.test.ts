@@ -66,7 +66,7 @@ describe('sanitizeOtp', () => {
   // 123456" to "Your c" before this runs, which then strips to nothing at all.
   it('extracts the code from a pasted SMS', () => {
     expect(sanitizeOtp('Your code is 123456')).toBe('123456');
-    expect(sanitizeOtp('123456 is your Finora code')).toBe('123456');
+    expect(sanitizeOtp('123456 is your Fynora code')).toBe('123456');
   });
 
   it('caps at six digits', () => {
