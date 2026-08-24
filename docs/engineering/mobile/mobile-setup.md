@@ -439,7 +439,7 @@ Both are set for `production` and `preview`:
 
 | Variable | Type | Why |
 | --- | --- | --- |
-| `EXPO_PUBLIC_API_BASE_URL` | plaintext | `https://api.finoratech.info`. `EXPO_PUBLIC_*` is inlined into the bundle, so it is public by definition — marking it secret would be theatre |
+| `EXPO_PUBLIC_API_BASE_URL` | plaintext | `https://api.fynora.net`. `EXPO_PUBLIC_*` is inlined into the bundle, so it is public by definition — marking it secret would be theatre |
 | `GOOGLE_SERVICES_JSON` | **secret file** | The Firebase Android config. Gitignored, so EAS never receives it in the upload |
 
 ```bash
