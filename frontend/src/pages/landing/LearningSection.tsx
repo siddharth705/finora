@@ -8,7 +8,7 @@ import { useLearningTimeline } from './useLearningTimeline';
 /**
  * The learning loop, played rather than diagrammed.
  *
- * Five beats: the import guesses, the guess is wrong, you fix it, Finora records the preference,
+ * Five beats: the import guesses, the guess is wrong, you fix it, Fynora records the preference,
  * the next import is already right. A static before/after states the same thing but leaves the
  * reader to work out the causality; watching the connector draw from card to card and the final
  * "Pattern confirmed" pulse land does it for them.
@@ -22,7 +22,7 @@ import { useLearningTimeline } from './useLearningTimeline';
 const STAGES = [
   { caption: 'First import', merchant: 'Amazon', tag: 'Uncategorized', tone: 'unknown' as const },
   { caption: 'You fix it', merchant: 'Amazon', tag: 'Shopping', tone: 'edit' as const },
-  { caption: 'Finora records it', merchant: 'Pattern saved', tag: null, tone: 'learn' as const },
+  { caption: 'Fynora records it', merchant: 'Pattern saved', tag: null, tone: 'learn' as const },
   { caption: 'Next import', merchant: 'Amazon', tag: 'Shopping', tone: 'done' as const, confirmedLine: 'Pattern confirmed' },
 ];
 

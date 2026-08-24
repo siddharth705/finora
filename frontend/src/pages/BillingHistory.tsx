@@ -39,7 +39,7 @@ export default function BillingHistory() {
     <div className="space-y-4">
       <div className="mb-2">
         <h1 className="text-xl font-bold text-ink">Billing History</h1>
-        <p className="text-sm text-muted">Your Finora payment records.</p>
+        <p className="text-sm text-muted">Your Fynora payment records.</p>
       </div>
 
       {payments.length === 0 ? (
@@ -49,7 +49,7 @@ export default function BillingHistory() {
             iconBg="bg-blue-100"
             iconColor="text-blue-600"
             title="No billing history yet"
-            desc="Finora is currently free to use — payment records will appear here once billing is available."
+            desc="Fynora is currently free to use — payment records will appear here once billing is available."
           />
         </FinoraCard>
       ) : (

@@ -46,7 +46,7 @@ function useIsRooted(): boolean {
 /** Single source of truth for the warning message -- spoken by iOS below, and rendered by the
  *  banner's own <Text> further down, so the two can never drift apart. */
 const ROOT_WARNING_MESSAGE =
-  "This device appears to be rooted or jailbroken — Finora's own protections may not be fully effective here";
+  "This device appears to be rooted or jailbroken — Fynora's own protections may not be fully effective here";
 
 /** Nest inside OfflineBoundary (or vice versa) freely -- both follow the identical "consume the
  *  real top inset once, then zero it for children" pattern, so stacking either order composes

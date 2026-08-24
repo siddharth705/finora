@@ -581,7 +581,7 @@ app:
       # /app/settings, not /settings -- the frontend's Settings page lives under the /app prefix
       # (App.tsx's route table); anything else falls through the router's catch-all to the public
       # marketing homepage, which reads as "Finora logged me out" even on a successful connection.
-      post-connect-redirect: ${GOOGLE_OAUTH_POST_CONNECT_REDIRECT:https://app.finoratech.info/app/settings}
+      post-connect-redirect: ${GOOGLE_OAUTH_POST_CONNECT_REDIRECT:https://app.fynora.net/app/settings}
 
       # Gmail message discovery (Phase C4) and receipt extraction (Phase C5-B), one worker, one
       # config block -- extraction runs immediately after discovery for the same connection, not

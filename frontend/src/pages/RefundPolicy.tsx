@@ -6,11 +6,11 @@ export default function RefundPolicy() {
   return (
     <PublicLayout
       title="Refund & Cancellation Policy"
-      subtitle="Last updated: August 2026. Applies to any paid Finora subscription."
+      subtitle="Last updated: August 2026. Applies to any paid Fynora subscription."
     >
       <PublicSection title="Current Billing Status">
         <p>
-          Finora currently offers a Free plan only. No payment method is collected and no charges occur today.
+          Fynora currently offers a Free plan only. No payment method is collected and no charges occur today.
           This policy describes the terms that will govern billing once paid plans are formally launched — see{' '}
           <Link to="/terms" className="text-primary hover:underline">Terms & Conditions</Link> for the full
           subscription clause.
@@ -27,7 +27,7 @@ export default function RefundPolicy() {
 
       <PublicSection title="Refunds">
         <p>
-          Finora does not offer refunds for partial billing periods or unused time within a cycle you've already
+          Fynora does not offer refunds for partial billing periods or unused time within a cycle you've already
           paid for. If you cancel partway through a cycle, you retain access until the cycle ends rather than
           receiving a prorated refund.
         </p>

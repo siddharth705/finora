@@ -245,7 +245,7 @@ function TraceView({ trace }: { trace: ImportTrace }) {
       <Panel
         icon={<GraduationCap size={16} className="text-primary" />}
         title="Learning"
-        hint="What the import taught the system. Zero is a legitimate answer — an import of merchants Finora already knew teaches it nothing."
+        hint="What the import taught the system. Zero is a legitimate answer — an import of merchants Fynora already knew teaches it nothing."
       >
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
           <Field label="Events" value={trace.learning.events} />

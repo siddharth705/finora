@@ -196,14 +196,14 @@ export default function Register() {
         <div className="hidden lg:block">
           <Link to="/" className="flex items-center gap-2.5 mb-8 w-fit">
             <BrandMark size={36} variant="auto" className="rounded-lg" />
-            <span className="font-extrabold tracking-wide text-ink text-xl">FINORA</span>
+            <span className="font-extrabold tracking-wide text-ink text-xl">FYNORA</span>
           </Link>
 
           <span className="inline-block bg-primary-light text-primary text-xs font-medium px-3 py-1 rounded-full mb-4">
             Your finances, finally in one place
           </span>
           <h1 className="text-4xl font-bold text-ink leading-tight mb-4">
-            Take control of your money with <span className="text-primary">Finora</span>
+            Take control of your money with <span className="text-primary">Fynora</span>
           </h1>
           <p className="text-muted text-base mb-8 max-w-md">
             Import statements, track spending, set budgets and get AI-powered insights to build a
@@ -244,7 +244,7 @@ export default function Register() {
           <div className="flex items-center gap-2 mb-6 lg:hidden">
             <Link to="/" className="flex items-center gap-2 w-fit">
               <BrandMark size={28} variant="auto" className="rounded-lg" />
-              <span className="font-extrabold tracking-wide text-ink">FINORA</span>
+              <span className="font-extrabold tracking-wide text-ink">FYNORA</span>
             </Link>
           </div>
 
@@ -395,7 +395,7 @@ export default function Register() {
                   new tab on the same process/thread as this one. `noopener` severs that handle;
                   `noreferrer` additionally drops the Referer header, which is the right default
                   even for an internal link since neither page needs to know the other opened it. */}
-              I agree to Finora's <Link to="/terms" target="_blank" rel="noopener noreferrer" className="text-primary font-medium">Terms of Service</Link> and{' '}
+              I agree to Fynora's <Link to="/terms" target="_blank" rel="noopener noreferrer" className="text-primary font-medium">Terms of Service</Link> and{' '}
               <Link to="/privacy" target="_blank" rel="noopener noreferrer" className="text-primary font-medium">Privacy Policy</Link>.
             </span>
           </label>

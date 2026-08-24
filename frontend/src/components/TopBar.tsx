@@ -243,7 +243,7 @@ export function TopBar() {
                 <Keyboard size={15} className="text-muted" /> Keyboard shortcuts
               </button>
               <a
-                href={`${SUPPORT_MAILTO}?subject=Finora%20feedback`}
+                href={`${SUPPORT_MAILTO}?subject=Fynora%20feedback`}
                 onClick={() => setOpenMenu(null)}
                 className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-sm text-ink hover:bg-bg"
               >

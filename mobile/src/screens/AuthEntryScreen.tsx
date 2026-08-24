@@ -123,7 +123,7 @@ export function AuthEntryScreen({ navigation }: Props) {
     return (
       <AuthScreenLayout title="Welcome back" error={error}>
         <Text style={[styles.body, { color: c.muted }]}>
-          Your Finora account is deactivated. Sign in again to reactivate it — your data was
+          Your Fynora account is deactivated. Sign in again to reactivate it — your data was
           retained and nothing was lost.
         </Text>
 

@@ -86,7 +86,7 @@ export function Sidebar() {
     <aside className="w-64 flex-shrink-0 bg-sidebar min-h-screen flex flex-col py-6 px-4">
       <div className="flex items-center gap-2.5 px-2 mb-1">
         <BrandMark size={32} invert className="rounded-lg flex-shrink-0" />
-        <span className="text-white font-extrabold tracking-wide text-lg">FINORA</span>
+        <span className="text-white font-extrabold tracking-wide text-lg">FYNORA</span>
       </div>
       <div className="px-2 mb-8">
         <span className="inline-block bg-warning-bg text-warning text-[10px] font-bold tracking-widest uppercase rounded px-2 py-0.5">

@@ -94,10 +94,10 @@ describe('VerifyEmailChange', () => {
    * email on their phone needs an explicit way to jump into the app instead. finora:// is the
    * custom scheme RootNavigator's `linking` config registers there.
    */
-  it('offers a link to open the confirmation in the Finora app, carrying the same sessionId and token', () => {
+  it('offers a link to open the confirmation in the Fynora app, carrying the same sessionId and token', () => {
     renderPage('session-1', 'real-token');
 
-    expect(screen.getByRole('link', { name: /open in the finora app/i })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: /open in the fynora app/i })).toHaveAttribute(
       'href', 'finora://email-change-verify?sessionId=session-1&token=real-token'
     );
   });

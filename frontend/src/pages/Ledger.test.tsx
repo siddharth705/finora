@@ -90,7 +90,7 @@ describe('Ledger — Why this category?', () => {
     vi.mocked(transactionsApi.explanation).mockResolvedValue({
       decisionSource: 'LEARNED_PATTERN',
       summary: 'Categorized based on how you\'ve categorized "SWIGGY" before.',
-      evidence: ['Every time you confirm or correct a category, Finora remembers it for that merchant.'],
+      evidence: ['Every time you confirm or correct a category, Fynora remembers it for that merchant.'],
       confidence: 82,
     });
     renderLedger();

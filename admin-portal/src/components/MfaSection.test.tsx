@@ -80,7 +80,7 @@ describe('MfaSection', () => {
       const user = userEvent.setup();
       vi.mocked(adminMfaApi.enroll).mockResolvedValue({
         secret: 'JBSWY3DPEHPK3PXP',
-        provisioningUri: 'otpauth://totp/Finora%20Admin:admin@finora.test?secret=JBSWY3DPEHPK3PXP&issuer=Finora%20Admin',
+        provisioningUri: 'otpauth://totp/Fynora%20Admin:admin@finora.test?secret=JBSWY3DPEHPK3PXP&issuer=Fynora%20Admin',
       });
       vi.mocked(adminMfaApi.confirm).mockResolvedValue({ recoveryCodes: ['AAAAA-BBBBB', 'CCCCC-DDDDD'] });
       // Re-queried after enrolling to reflect the now-enabled state.
