@@ -209,7 +209,7 @@ export function ImportScreen() {
       if ('multiAccount' in res && res.multiAccount) {
         await importApi.discardSession(res.sessionId).catch(() => {});
         setError(
-          'This statement covers more than one account. Multi-account statements can only be imported from the Finora web app for now.'
+          'This statement covers more than one account. Multi-account statements can only be imported from the Fynora web app for now.'
         );
         setUploadProgress(null);
         return;
@@ -334,7 +334,7 @@ export function ImportScreen() {
                   secureTextEntry
                   autoCapitalize="none"
                   autoCorrect={false}
-                  // The bank's password for one document, not a Finora credential -- it doesn't
+                  // The bank's password for one document, not a Fynora credential -- it doesn't
                   // belong in the OS keychain alongside real logins, and it changes every month.
                   autoComplete="off"
                   textContentType="none"

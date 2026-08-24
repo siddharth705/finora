@@ -20,7 +20,7 @@ export function Logo({ invert = false }: { invert?: boolean }) {
         className="font-extrabold tracking-tight text-[17px]"
         style={{ fontFamily: "'Manrope', Inter, sans-serif", color: invert ? '#F8FAFC' : '#0F172A' }}
       >
-        Finora
+        Fynora
       </span>
     </Link>
   );

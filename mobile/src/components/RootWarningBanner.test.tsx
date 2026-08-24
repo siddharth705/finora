@@ -84,7 +84,7 @@ describe('RootWarningBoundary', () => {
 
       await waitFor(() => expect(announceSpy).toHaveBeenCalledTimes(1));
       expect(announceSpy).toHaveBeenCalledWith(
-        "This device appears to be rooted or jailbroken — Finora's own protections may not be fully effective here"
+        "This device appears to be rooted or jailbroken — Fynora's own protections may not be fully effective here"
       );
     });
 

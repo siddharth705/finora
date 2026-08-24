@@ -226,7 +226,7 @@ describe('StatementHistoryScreen — re-importing a password-protected statement
     await tapReimport();
     const field = await screen.findByLabelText('Statement password');
 
-    // The bank's password for one document, not a Finora credential.
+    // The bank's password for one document, not a Fynora credential.
     expect(field.props.autoComplete).toBe('off');
     expect(field.props.textContentType).toBe('none');
     expect(field.props.secureTextEntry).toBe(true);

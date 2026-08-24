@@ -5,12 +5,12 @@ import { CAREERS_EMAIL, CAREERS_MAILTO } from '../lib/contact';
 export default function Careers() {
   return (
     <PublicLayout
-      title="Careers at Finora"
+      title="Careers at Fynora"
       subtitle="We're building a financial operating system people trust with their money — that starts with the team building it."
     >
       <div className="grid sm:grid-cols-3 gap-6 mb-10">
         {[
-          { icon: <Heart size={18} />, title: 'Why Join Finora', body: 'Work on a product where security, correctness, and user trust matter as much as speed of shipping.' },
+          { icon: <Heart size={18} />, title: 'Why Join Fynora', body: 'Work on a product where security, correctness, and user trust matter as much as speed of shipping.' },
           { icon: <Compass size={18} />, title: 'Company Culture', body: 'Small team, high ownership, and a bias toward getting the details right — especially anywhere real money is involved.' },
           { icon: <Rocket size={18} />, title: 'Mission', body: 'Make understanding your own finances effortless, for everyone, not just people comfortable with spreadsheets.' },
         ].map((item) => (
@@ -24,7 +24,7 @@ export default function Careers() {
 
       <PublicSection title="Future Opportunities">
         <p>
-          Finora is early — the team is small today, but we expect to grow across engineering, design, and
+          Fynora is early — the team is small today, but we expect to grow across engineering, design, and
           product as the platform matures. If that timeline interests you, we'd rather hear from you early than
           not at all.
         </p>

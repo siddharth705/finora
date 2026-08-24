@@ -76,7 +76,7 @@ export function toPrintableHtml(report: ReportData): string {
 </style>
 </head>
 <body>
-  <h1>Finora — ${escapeHtml(report.month)}</h1>
+  <h1>Fynora — ${escapeHtml(report.month)}</h1>
   <p class="sub">Monthly report</p>
   <div class="totals">
     <div class="total"><div class="label">Income</div><div class="value income">${escapeHtml(fmtCurrency(report.income))}</div></div>
@@ -97,7 +97,7 @@ async function share(uri: string, mimeType: string, utiType: string, dialogTitle
 }
 
 export async function shareCsv(report: ReportData): Promise<void> {
-  const name = `finora-report-${report.month}.csv`;
+  const name = `fynora-report-${report.month}.csv`;
   const file = new File(Paths.cache, name);
   // A previous export of the same month leaves the file behind, and create() won't overwrite.
   if (file.exists) file.delete();
@@ -108,5 +108,5 @@ export async function shareCsv(report: ReportData): Promise<void> {
 
 export async function sharePdf(report: ReportData): Promise<void> {
   const { uri } = await Print.printToFileAsync({ html: toPrintableHtml(report) });
-  await share(uri, 'application/pdf', 'com.adobe.pdf', `finora-report-${report.month}.pdf`);
+  await share(uri, 'application/pdf', 'com.adobe.pdf', `fynora-report-${report.month}.pdf`);
 }

@@ -194,7 +194,7 @@ describe('Register — duplicate account (409)', () => {
 describe('Register — logo', () => {
   it('links back to the landing page', () => {
     renderRegister();
-    const logoLinks = screen.getAllByRole('link', { name: /FINORA/i });
+    const logoLinks = screen.getAllByRole('link', { name: /FYNORA/i });
     expect(logoLinks.length).toBeGreaterThan(0);
     logoLinks.forEach((link) => expect(link).toHaveAttribute('href', '/'));
   });

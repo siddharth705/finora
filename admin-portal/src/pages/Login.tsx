@@ -136,7 +136,7 @@ export default function Login() {
         <div className="w-full max-w-sm">
           <div className="flex items-center gap-2.5 justify-center mb-8">
             <BrandMark size={36} variant="auto" className="rounded-lg flex-shrink-0" />
-            <span className="font-extrabold tracking-wide text-xl text-ink">FINORA ADMIN</span>
+            <span className="font-extrabold tracking-wide text-xl text-ink">FYNORA ADMIN</span>
           </div>
 
           <form onSubmit={handleMfaSubmit} className="bg-card border border-border rounded-xl2 shadow-soft p-6 space-y-4">
@@ -191,7 +191,7 @@ export default function Login() {
       <div className="w-full max-w-sm">
         <div className="flex items-center gap-2.5 justify-center mb-8">
           <BrandMark size={36} variant="auto" className="rounded-lg flex-shrink-0" />
-          <span className="font-extrabold tracking-wide text-xl text-ink">FINORA ADMIN</span>
+          <span className="font-extrabold tracking-wide text-xl text-ink">FYNORA ADMIN</span>
         </div>
 
         <form onSubmit={handleSubmit} className="bg-card border border-border rounded-xl2 shadow-soft p-6 space-y-4">
@@ -245,7 +245,7 @@ export default function Login() {
 
         <p className="text-center text-xs text-muted mt-6">
           This portal is for accounts with admin permissions only. Regular users should use the
-          main Finora app.
+          main Fynora app.
         </p>
       </div>
     </div>
