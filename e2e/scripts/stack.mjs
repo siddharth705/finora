@@ -143,6 +143,10 @@ async function startBackend() {
       // Nothing else in the suite spends this budget.
       RATE_LIMIT_PASSWORD_CHANGE_MAX: '10000',
       RATE_LIMIT_RESET_PASSWORD_MAX: '10000',
+      // AuthContext's bootstrap effect calls POST /auth/refresh on every page load, and the
+      // suite's userPage/adminPage fixtures create a fresh page per test -- the default ceiling
+      // (15/300s) is reachable well before the suite is, unrelated to whether the product works.
+      RATE_LIMIT_REFRESH_MAX: '10000',
     },
   });
   child.unref();

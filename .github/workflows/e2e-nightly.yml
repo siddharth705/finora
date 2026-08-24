@@ -143,6 +143,12 @@ jobs:
           # The unified /auth entry screen calls POST /auth/identify before every sign-in, which
           # the suite's signIn() fixture now does too -- raised for the same reason as LOGIN above.
           RATE_LIMIT_IDENTIFY_MAX: 10000
+          # AuthContext's bootstrap effect calls POST /auth/refresh on every page load (unrelated
+          # to this PR -- see that effect's own comment). The default ceiling (15/300s) was never
+          # hit before because the suite's userPage/adminPage fixtures create a fresh page per
+          # test; investigating a smoke-job 429, the backend log showed exactly 15 refresh calls
+          # went through before the next one tripped it. Raised for the same reason as the others.
+          RATE_LIMIT_REFRESH_MAX: 10000
         run: |
           java -jar target/finora-backend-*.jar > "$RUNNER_TEMP/backend.log" 2>&1 &
           for _ in $(seq 1 60); do
