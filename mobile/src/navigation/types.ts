@@ -62,7 +62,7 @@ export type MoreStackParamList = {
  * StatementImportService.confirmReimport's own doc comment for the incident). Carried through now
  * instead, in memory only, for exactly as long as this one review-and-confirm round trip lasts.
  */
-export interface ReimportParams {
+interface ReimportParams {
   statementImportId: string;
   accountId: string;
   accountName: string;

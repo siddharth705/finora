@@ -12,7 +12,7 @@ import { csv } from './statements';
  * arranged state is state the product actually produces.
  */
 
-export interface StagedRow {
+interface StagedRow {
   date: string;
   description: string;
   amount: number;
@@ -26,7 +26,7 @@ export interface StagedRow {
   duplicateMatch: DuplicateMatch | null;
 }
 
-export interface DuplicateMatch {
+interface DuplicateMatch {
   existingTransactionId: string;
   existingAccountId: string | null;
   existingDate: string;

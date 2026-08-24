@@ -3,7 +3,7 @@ import * as Sharing from 'expo-sharing';
 import { api, rawApi, type ApiEnvelope } from './client';
 import { encodeBase64 } from '../lib/base64';
 import type {
-  Account, AccountStatementGroup, BankInfo, Budget, DashboardSummary, DetectedAccountInfo, Goal,
+  Account, AccountStatementGroup, Budget, DashboardSummary, DetectedAccountInfo, Goal,
   ImportSummary, ReimportResult, StagedAccountSection, StagedRow, StatementSummary, Transaction,
   WorkspaceSettings, UnparseableRow,
 } from '../types';
@@ -91,10 +91,6 @@ export const accountsApi = {
   create: (body: AccountRequest) => api.post<Account>('/accounts', body).then((r) => r.data),
   update: (id: string, body: AccountRequest) => api.put<Account>(`/accounts/${id}`, body).then((r) => r.data),
   remove: (id: string) => api.delete(`/accounts/${id}`),
-};
-
-export const banksApi = {
-  list: (q?: string) => api.get<BankInfo[]>('/banks', { params: q ? { q } : undefined }).then((r) => r.data),
 };
 
 export interface TransactionFilters {
@@ -228,7 +224,7 @@ export interface ConfirmPayload {
   password?: string;
 }
 
-export interface SectionConfirmPayload {
+interface SectionConfirmPayload {
   rows: ConfirmedRowPayload[];
   existingAccountId: string | null;
   newAccount: NewAccountPayload | null;
@@ -393,7 +389,7 @@ export const dashboardApi = {
   summary: () => api.get<DashboardSummary>('/dashboard/summary').then((r) => r.data),
 };
 
-export interface NetWorthSnapshotPoint {
+interface NetWorthSnapshotPoint {
   date: string;
   netWorth: number;
 }
@@ -408,7 +404,7 @@ export const networthApi = {
   saveSnapshot: () => api.post<NetWorthData>('/networth/snapshot').then((r) => r.data),
 };
 
-export interface CategoryMover {
+interface CategoryMover {
   category: string;
   current: number;
   priorAverage: number;

@@ -50,7 +50,7 @@ export interface ProviderStatusDto {
   detail: string;
 }
 
-export interface PlatformHealthDto {
+interface PlatformHealthDto {
   overallStatus: 'UP' | 'DEGRADED' | 'DOWN';
   providers: ProviderStatusDto[];
 }
@@ -66,7 +66,7 @@ export interface AlertDto {
 // description -- see the backend DTO's own comment for why Database/Financial Intelligence
 // Engine/Statement Import are internal engine checks, not integrations, and stay off this page.
 
-export interface IntegrationDto {
+interface IntegrationDto {
   name: string;
   category: string;
   description: string;
@@ -75,7 +75,7 @@ export interface IntegrationDto {
 }
 
 /** No status field: nothing is running yet for these, so there is nothing to check. */
-export interface UpcomingIntegrationDto {
+interface UpcomingIntegrationDto {
   name: string;
   description: string;
 }
@@ -116,7 +116,7 @@ export interface OperationalDashboardDto {
 /** Mirrors backend PreviousDayDto exactly -- yesterday's counts for the four stat tiles that
  *  reset daily, backing each tile's "vs yesterday" delta. No totalUsers sibling: see that
  *  record's own doc comment for why a running total has no "vs yesterday" comparison. */
-export interface PreviousDayDto {
+interface PreviousDayDto {
   activeUsers: number;
   transactions: number;
   imports: number;
@@ -203,20 +203,20 @@ export interface MeAccessDto {
 /** Mirrors backend DiagnosticsDto -- see its own class doc for the full reasoning. version/
  *  gitCommit are null when the app was started without the build-info/git-commit-id Maven goals
  *  having run (e.g. an IDE run configuration), never a fabricated placeholder. */
-export interface ApplicationInfoDto {
+interface ApplicationInfoDto {
   version: string | null;
   gitCommit: string | null;
   springProfile: string;
 }
 
-export interface RuntimeInfoDto {
+interface RuntimeInfoDto {
   uptimeSeconds: number;
   flywayVersion: string;
   cacheEnabled: boolean;
 }
 
 /** phoneVerificationPolicy is a fixed descriptive string, not a toggle -- see ADR-0001. */
-export interface ConfigurationSummaryDto {
+interface ConfigurationSummaryDto {
   registrationsEnabled: boolean;
   setupCompleted: boolean;
   phoneVerificationPolicy: string;
@@ -502,7 +502,7 @@ export interface TestMerchantTemplateResult {
   violations: { field: string; reason: string }[];
 }
 
-export interface MerchantDistributionEntry {
+interface MerchantDistributionEntry {
   category: string;
   confirmationCount: number;
   confidence: number;
@@ -566,7 +566,7 @@ export interface LearningSummaryDto {
 
 // --- Relationship Engine (AdminUserRelationshipController) ---
 
-export interface RelationshipIdentifierDto {
+interface RelationshipIdentifierDto {
   id: string;
   identifierType: string;
   identifierValue: string;
@@ -580,7 +580,7 @@ export interface RelationshipDto {
   identifiers: RelationshipIdentifierDto[];
 }
 
-export interface RelationshipIdentifierRequest {
+interface RelationshipIdentifierRequest {
   identifierType: string;
   identifierValue: string;
 }
@@ -658,7 +658,7 @@ export interface ReconciliationStatsDto {
   totalTransactions: number;
 }
 
-export interface WorkspaceHealthDto {
+interface WorkspaceHealthDto {
   rulesEnabled: boolean;
   merchantLearningActive: boolean;
   reconciliationHealthy: boolean;
@@ -790,7 +790,7 @@ export interface StatementAnalysisDetailDto {
  * reference (SA-20260806-0145) and the job id.
  */
 
-export interface ImportTraceJob {
+interface ImportTraceJob {
   status: string;
   attemptCount: number;
   rowsTotal: number | null;
@@ -825,14 +825,14 @@ export interface ImportTraceFinding {
   recordedAt: string;
 }
 
-export interface ImportTraceLearningEvent {
+interface ImportTraceLearningEvent {
   id: string;
   status: string;
   attemptCount: number;
   createdAt: string;
 }
 
-export interface ImportTraceLearning {
+interface ImportTraceLearning {
   /** Zero is a legitimate answer: an import of merchants Finora already knew teaches it nothing. */
   events: number;
   byStatus: Record<string, number>;
@@ -840,7 +840,7 @@ export interface ImportTraceLearning {
   outstanding: ImportTraceLearningEvent[];
 }
 
-export interface ImportTraceCompletion {
+interface ImportTraceCompletion {
   /** Null when nothing was confirmed. Staging successfully and importing are different events —
    *  a job reaching COMPLETED means only the first, because confirming is the user's decision. */
   statementImportId: string | null;
