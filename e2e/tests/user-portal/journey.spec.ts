@@ -105,6 +105,11 @@ test.describe('public surface', () => {
     await page.getByLabel(/email|phone/i).first().fill(`new-${Date.now()}@example.com`);
     await page.getByRole('button', { name: /continue/i }).click();
 
+    // Waits for a field only the register step has before counting: count() doesn't auto-wait,
+    // so right after the click resolves the render can still be in flight, sampling an empty DOM
+    // and counting zero links -- see smoke.spec.ts's identical fix for the same race.
+    await expect(page.getByLabel(/full name/i)).toBeVisible();
+
     const newTabLinks = page.locator('a[target="_blank"]');
     const total = await newTabLinks.count();
     test.skip(total === 0, 'no new-tab links on this page');
