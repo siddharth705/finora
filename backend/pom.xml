@@ -160,7 +160,7 @@
     <dependency>
       <groupId>com.google.api-client</groupId>
       <artifactId>google-api-client</artifactId>
-      <version>2.7.0</version>
+      <version>2.9.0</version>
     </dependency>
 
     <!-- D-23 Phase 2: Sign in with Apple (ID token verification). Apple, unlike Google, has no
@@ -175,7 +175,7 @@
     <dependency>
       <groupId>com.auth0</groupId>
       <artifactId>jwks-rsa</artifactId>
-      <version>0.22.2</version>
+      <version>0.24.1</version>
     </dependency>
 
     <!-- Validation -->
@@ -262,7 +262,7 @@
     <dependency>
       <groupId>software.amazon.awssdk</groupId>
       <artifactId>s3</artifactId>
-      <version>2.53.0</version>
+      <version>2.54.1</version>
       <exclusions>
         <exclusion>
           <groupId>software.amazon.awssdk</groupId>
@@ -273,7 +273,7 @@
     <dependency>
       <groupId>software.amazon.awssdk</groupId>
       <artifactId>apache-client</artifactId>
-      <version>2.53.0</version>
+      <version>2.54.1</version>
     </dependency>
 
     <!-- Firebase Admin SDK: server-side verification of Firebase ID tokens issued by Firebase
