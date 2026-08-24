@@ -179,7 +179,7 @@ test.describe('Phase 12 — negative and interruption cases', () => {
     await userPage.evaluate(() => { localStorage.clear(); sessionStorage.clear(); });
     await userPage.goto('/app/import');
 
-    await expect(userPage).toHaveURL(/\/login/, { timeout: 20_000 });
+    await expect(userPage).toHaveURL(/\/auth/, { timeout: 20_000 });
   });
 
   /** An unauthenticated caller must be refused by the API, not merely hidden by the router. */

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import ResetPassword from './ResetPassword';
 import { authApi } from '../api/endpoints';
 import { sendPhoneVerificationCode, confirmPhoneVerificationCode } from '../lib/phoneAuth';
@@ -25,13 +25,26 @@ const FAKE_CONFIRMATION = { confirm: vi.fn() } as any;
 const LOCAL_PHONE = '9876543210'; // synthetic-ok: invented test number
 const FULL_PHONE = `+91${LOCAL_PHONE}`;
 
+function AuthStub() {
+  const location = useLocation();
+  const state = location.state as { identifier?: string; banner?: string; skipToPassword?: boolean } | null;
+  return (
+    <div>
+      <p>Auth page</p>
+      <p>identifier={state?.identifier ?? 'none'}</p>
+      <p>banner={state?.banner ?? 'none'}</p>
+      <p>skipToPassword={String(state?.skipToPassword ?? false)}</p>
+    </div>
+  );
+}
+
 function renderPage(token: string | null = 'reset-token-abc') {
   const path = token ? `/reset-password?token=${token}` : '/reset-password';
   return render(
     <MemoryRouter initialEntries={[path]}>
       <Routes>
         <Route path="/reset-password" element={<ResetPassword />} />
-        <Route path="/login" element={<p>Login page</p>} />
+        <Route path="/auth" element={<AuthStub />} />
       </Routes>
     </MemoryRouter>
   );
@@ -141,6 +154,30 @@ describe('ResetPassword', () => {
     await waitFor(() => expect(screen.getByText('Password updated')).toBeInTheDocument());
     expect(confirmPhoneVerificationCode).toHaveBeenCalledWith(FAKE_CONFIRMATION, '654321');
     expect(authApi.resetPassword).toHaveBeenCalledWith('reset-token-abc', 'fake-firebase-id-token', 'BrandNewPass1!');
+  });
+
+  /**
+   * D-26 unified entry (2026-08-24): this used to navigate to /login with just a success banner.
+   * Now targets /auth's password step directly -- but WITHOUT an identifier, unlike AuthEntry's
+   * other deep-link callers. ResetPasswordResponse (backend) only ever carries a message, never
+   * the account's email, so there's genuinely nothing here to prefill with; skipping straight to
+   * the password step still saves the identify() round trip even though the field itself starts
+   * blank.
+   */
+  it('navigates to /auth\'s password step (skipToPassword, banner, no identifier) after a successful reset', async () => {
+    renderPage();
+    const user = userEvent.setup();
+    await confirmPhoneStep(user);
+
+    await user.type(screen.getByLabelText(/verification code/i), '654321');
+    await user.type(screen.getByLabelText(/^new password$/i), 'BrandNewPass1!');
+    await user.type(screen.getByLabelText(/confirm password/i), 'BrandNewPass1!');
+    await user.click(screen.getByRole('button', { name: /update password/i }));
+
+    await waitFor(() => expect(screen.getByText('Auth page')).toBeInTheDocument(), { timeout: 3000 });
+    expect(screen.getByText('identifier=none')).toBeInTheDocument();
+    expect(screen.getByText('banner=Password reset successfully. Please sign in using your new password.')).toBeInTheDocument();
+    expect(screen.getByText('skipToPassword=true')).toBeInTheDocument();
   });
 
   it('has exactly one reCAPTCHA anchor in the DOM, unaffected by the phone-to-OTP step transition', async () => {

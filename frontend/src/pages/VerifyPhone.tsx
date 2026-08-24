@@ -177,7 +177,7 @@ export default function VerifyPhone() {
   // failed.
   function handleLogout() {
     logout();
-    void navigate('/login');
+    void navigate('/auth');
   }
 
   function startChangingNumber() {

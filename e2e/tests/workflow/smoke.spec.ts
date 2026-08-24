@@ -36,10 +36,10 @@ test.describe('@smoke — the product works end to end', () => {
   const startedAt = Date.now();
 
   test('1. a user can sign in', async ({ userPage }) => {
-    // The userPage fixture signs in and asserts it left /login; this makes that a named step rather
+    // The userPage fixture signs in and asserts it left /auth; this makes that a named step rather
     // than a precondition buried in a fixture, because "nobody can log in" is the single failure
     // that makes every other result meaningless.
-    await expect(userPage).not.toHaveURL(/\/login/);
+    await expect(userPage).not.toHaveURL(/\/auth/);
     await expect(userPage.locator('body')).not.toBeEmpty();
   });
 
@@ -148,7 +148,7 @@ test.describe('@smoke — the product works end to end', () => {
     await userPage.getByRole('button', { name: /log ?out|sign ?out/i }).first().click();
 
     await userPage.goto('/app', { waitUntil: 'commit' }).catch(() => {});
-    await expect(userPage).toHaveURL(/\/login/, { timeout: 20_000 });
+    await expect(userPage).toHaveURL(/\/auth/, { timeout: 20_000 });
   });
 
   /**
