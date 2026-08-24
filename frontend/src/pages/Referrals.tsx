@@ -54,7 +54,7 @@ export default function Referrals() {
     <div className="space-y-4">
       <div className="mb-2">
         <h1 className="text-xl font-bold text-ink">Refer & Earn</h1>
-        <p className="text-sm text-muted">Share Finora with friends and earn rewards when they join.</p>
+        <p className="text-sm text-muted">Share Fynora with friends and earn rewards when they join.</p>
       </div>
 
       <FinoraCard padding="lg">

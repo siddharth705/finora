@@ -21,7 +21,7 @@ import { parsePositiveAmount } from '../lib/validation';
 import { radius, spacing, THEME_SETTINGS, useTheme, useThemeSetting, type ThemeSetting } from '../theme';
 
 /**
- * Port of frontend/src/pages/Settings.tsx -- "how Finora behaves for you", as opposed to
+ * Port of frontend/src/pages/Settings.tsx -- "how Fynora behaves for you", as opposed to
  * ProfileScreen's "who you are".
  *
  * Same capabilities-first scope as the web page, and worth restating because it is the easiest
@@ -188,7 +188,7 @@ export function SettingsScreen() {
         />
       }
     >
-      <SectionCard title="General" subtitle="Customize how Finora works for you">
+      <SectionCard title="General" subtitle="Customize how Fynora works for you">
         <TextField
           label="Low balance alert"
           value={lowBalance}

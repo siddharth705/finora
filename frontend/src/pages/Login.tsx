@@ -9,6 +9,7 @@ import { BrandMark } from '../components/BrandMark';
 import { PasswordInput } from '../components/PasswordInput';
 import { ReactivateAccountPrompt } from '../components/ReactivateAccountPrompt';
 import { GoogleSignInButton } from '../components/GoogleSignInButton';
+import { AppleSignInButton } from '../components/AppleSignInButton';
 import { SESSION_ENDED_REASON_KEY } from '../api/client';
 import { AUTH_ACCOUNT_DEACTIVATED } from '../api/errorCodes';
 import { safeStorage } from '../lib/safeStorage';
@@ -26,7 +27,7 @@ const FEATURES = [
 ];
 
 export default function Login() {
-  const { login, loginWithGoogle } = useAuth();
+  const { login, loginWithGoogle, loginWithApple } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   // Phase 3 (§2.2): AuthEntry.tsx already resolved this identifier to an existing account via
@@ -138,6 +139,18 @@ export default function Login() {
     }
   }
 
+  async function handleAppleCredential(idToken: string, fullName: string | null) {
+    setError(null);
+    setLoading(true);
+    try {
+      afterAuthSuccess(await loginWithApple(idToken, fullName));
+    } catch (err: any) {
+      handleAuthError(err, 'Apple sign-in failed.');
+    } finally {
+      setLoading(false);
+    }
+  }
+
   function handleReactivated(phoneVerified: boolean) {
     afterAuthSuccess(phoneVerified);
   }
@@ -150,7 +163,7 @@ export default function Login() {
         <div className="hidden lg:block">
           <Link to="/" className="flex items-center gap-2.5 mb-8 w-fit">
             <BrandMark size={36} variant="auto" className="rounded-lg" />
-            <span className="font-extrabold tracking-wide text-ink text-xl">FINORA</span>
+            <span className="font-extrabold tracking-wide text-ink text-xl">FYNORA</span>
           </Link>
 
           <span className="inline-block bg-primary-light text-primary text-xs font-medium px-3 py-1 rounded-full mb-4">
@@ -204,7 +217,7 @@ export default function Login() {
           <div className="flex items-center gap-2 mb-6 lg:hidden">
             <Link to="/" className="flex items-center gap-2 w-fit">
               <BrandMark size={28} variant="auto" className="rounded-lg" />
-              <span className="font-extrabold tracking-wide text-ink">FINORA</span>
+              <span className="font-extrabold tracking-wide text-ink">FYNORA</span>
             </Link>
           </div>
 
@@ -267,6 +280,9 @@ export default function Login() {
           </div>
 
           <GoogleSignInButton text="signin_with" onCredential={handleGoogleCredential} onError={setError} />
+          <div className="mt-3">
+            <AppleSignInButton onCredential={handleAppleCredential} onError={setError} />
+          </div>
 
           <div className="flex items-start gap-2.5 bg-primary-light rounded-lg p-3 mt-6">
             <ShieldCheck size={16} className="text-primary flex-shrink-0 mt-0.5" />

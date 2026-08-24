@@ -138,7 +138,7 @@ export function AddTransactionModal({ onClose, onSaved }: { onClose: () => void;
                 <div>
                   <label htmlFor="add-txn-category" className="block text-[11px] uppercase text-muted mb-1">Category</label>
                   <select id="add-txn-category" value={category} onChange={(e) => setCategory(e.target.value)} className="bg-card text-ink border border-border rounded-lg px-3 py-2 text-sm w-full">
-                    <option value="">Let Finora categorize it</option>
+                    <option value="">Let Fynora categorize it</option>
                     {categories.map((c) => <option key={c} value={c}>{c}</option>)}
                   </select>
                   {categoriesQ.isError && (

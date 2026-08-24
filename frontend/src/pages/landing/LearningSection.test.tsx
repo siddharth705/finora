@@ -30,7 +30,7 @@ describe('LearningSection', () => {
     expect(screen.getAllByText('Amazon').length).toBeGreaterThanOrEqual(3);
     expect(screen.getByText('First import')).toBeInTheDocument();
     expect(screen.getByText('You fix it')).toBeInTheDocument();
-    expect(screen.getByText('Finora records it')).toBeInTheDocument();
+    expect(screen.getByText('Fynora records it')).toBeInTheDocument();
     expect(screen.getByText('Next import')).toBeInTheDocument();
   });
 

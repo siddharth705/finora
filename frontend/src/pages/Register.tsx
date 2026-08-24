@@ -8,6 +8,7 @@ import { useAuth } from '../context/AuthContext';
 import { BrandMark } from '../components/BrandMark';
 import { PasswordInput } from '../components/PasswordInput';
 import { GoogleSignInButton } from '../components/GoogleSignInButton';
+import { AppleSignInButton } from '../components/AppleSignInButton';
 
 const FEATURES = [
   { icon: ShieldCheck, iconBg: 'bg-blue-100', iconColor: 'text-blue-600', title: 'Secure & Private', desc: 'Your data is encrypted and bank-level secure.' },
@@ -65,7 +66,7 @@ const FULL_NAME_PATTERN = /^[\p{L}][\p{L}\s.'-]{0,98}[\p{L}]$/u;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export default function Register() {
-  const { register, loginWithGoogle } = useAuth();
+  const { register, loginWithGoogle, loginWithApple } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   // D-28 PR4-C: captured once at mount, not re-read on every render -- a referral link's `?ref=`
@@ -172,6 +173,21 @@ export default function Register() {
     }
   }
 
+  async function handleAppleCredential(idToken: string, fullName: string | null) {
+    setError(null);
+    setShowContinueLogin(false);
+    setLoading(true);
+    try {
+      const phoneVerified = await loginWithApple(idToken, fullName);
+      void navigate(phoneVerified ? '/app' : '/verify-phone');
+    } catch (err: any) {
+      setError(err.response?.data?.message ?? 'Apple sign-in failed.');
+      setShowContinueLogin(err.response?.status === 403);
+    } finally {
+      setLoading(false);
+    }
+  }
+
   return (
     <div className="min-h-screen bg-bg flex flex-col items-center justify-center p-4 lg:p-8 gap-6">
       <div className="w-full max-w-6xl grid lg:grid-cols-2 gap-10 lg:gap-16 items-center">
@@ -180,14 +196,14 @@ export default function Register() {
         <div className="hidden lg:block">
           <Link to="/" className="flex items-center gap-2.5 mb-8 w-fit">
             <BrandMark size={36} variant="auto" className="rounded-lg" />
-            <span className="font-extrabold tracking-wide text-ink text-xl">FINORA</span>
+            <span className="font-extrabold tracking-wide text-ink text-xl">FYNORA</span>
           </Link>
 
           <span className="inline-block bg-primary-light text-primary text-xs font-medium px-3 py-1 rounded-full mb-4">
             Your finances, finally in one place
           </span>
           <h1 className="text-4xl font-bold text-ink leading-tight mb-4">
-            Take control of your money with <span className="text-primary">Finora</span>
+            Take control of your money with <span className="text-primary">Fynora</span>
           </h1>
           <p className="text-muted text-base mb-8 max-w-md">
             Import statements, track spending, set budgets and get AI-powered insights to build a
@@ -228,7 +244,7 @@ export default function Register() {
           <div className="flex items-center gap-2 mb-6 lg:hidden">
             <Link to="/" className="flex items-center gap-2 w-fit">
               <BrandMark size={28} variant="auto" className="rounded-lg" />
-              <span className="font-extrabold tracking-wide text-ink">FINORA</span>
+              <span className="font-extrabold tracking-wide text-ink">FYNORA</span>
             </Link>
           </div>
 
@@ -379,7 +395,7 @@ export default function Register() {
                   new tab on the same process/thread as this one. `noopener` severs that handle;
                   `noreferrer` additionally drops the Referer header, which is the right default
                   even for an internal link since neither page needs to know the other opened it. */}
-              I agree to Finora's <Link to="/terms" target="_blank" rel="noopener noreferrer" className="text-primary font-medium">Terms of Service</Link> and{' '}
+              I agree to Fynora's <Link to="/terms" target="_blank" rel="noopener noreferrer" className="text-primary font-medium">Terms of Service</Link> and{' '}
               <Link to="/privacy" target="_blank" rel="noopener noreferrer" className="text-primary font-medium">Privacy Policy</Link>.
             </span>
           </label>
@@ -408,6 +424,9 @@ export default function Register() {
           </div>
 
           <GoogleSignInButton text="signup_with" onCredential={handleGoogleCredential} onError={setError} />
+          <div className="mt-3">
+            <AppleSignInButton onCredential={handleAppleCredential} onError={setError} />
+          </div>
 
           <p className="text-sm mt-4 text-center text-muted">
             Already have an account? <Link to="/login" className="text-primary font-medium">Sign in</Link>

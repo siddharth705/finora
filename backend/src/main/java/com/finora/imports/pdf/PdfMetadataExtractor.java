@@ -191,8 +191,20 @@ public class PdfMetadataExtractor {
     // date itself is stated as a plain sentence in the address block instead: "Remember to pay by
     // 02-Apr-2026". Neither PAYMENT_DUE_DATE's own "Label: Value" shape nor GRID_DUE_DATE_LABEL's
     // "due date" phrase-search can ever match this real wording, so the field silently stayed null.
+    //
+    // Bug fix: the captured group used to be `(.+)$` -- everything to the end of the line -- handed
+    // straight to parseDate, which requires the WHOLE captured string to match a format exactly. Any
+    // trailing punctuation or words after the date ("...by 02-Apr-2026." or "...to avoid late fees")
+    // made the greedy capture include them and silently fail every format, the exact "field stayed
+    // null" bug this pattern exists to fix, just for a different real phrasing than the one evidenced
+    // trace happens to have. Bounded to one whitespace-delimited token instead -- a trailing clause
+    // ("to avoid late fees") stops the capture at the space before it; trailing punctuation directly
+    // against the date ("2026.") is still captured (it's non-whitespace) and stripped below before
+    // parsing. (DATE_LIKE below, despite the name, cannot substitute for this: its two alternatives
+    // are digit-only-separated and space-separated-month-name, neither of which matches this
+    // document's own hyphenated day-Mon-year shape, "02-Apr-2026".)
     private static final Pattern PAYMENT_DUE_DATE_SENTENCE = Pattern.compile(
-            "(?i)remember\\s+to\\s+pay\\s+by\\s+(.+)$");
+            "(?i)remember\\s+to\\s+pay\\s+by\\s+(\\S+)");
     private static final Pattern DATE_LIKE = Pattern.compile(
             "\\b\\d{1,2}[-/]\\d{1,2}[-/]\\d{2,4}\\b|\\b\\d{1,2}\\s+[A-Za-z]{3,9}\\.?,?\\s+\\d{4}\\b");
     // A date immediately preceded or followed by " - " is one half of an explicit range (e.g. a
@@ -412,9 +424,12 @@ public class PdfMetadataExtractor {
             if (paymentDueDate == null) {
                 Matcher dueDateSentence = PAYMENT_DUE_DATE_SENTENCE.matcher(line);
                 if (dueDateSentence.find()) {
-                    LocalDate parsedDueDate = parseDate(dueDateSentence.group(1).trim());
-                    if (parsedDueDate != null) {
-                        paymentDueDate = parsedDueDate;
+                    // Trailing punctuation directly against the date ("...2026.") was captured along
+                    // with it (\S+ stops only at whitespace) -- stripped here rather than widening the
+                    // pattern, so a genuine trailing digit is never mistaken for punctuation to strip.
+                    String token = dueDateSentence.group(1).replaceAll("[.,;:]+$", "");
+                    paymentDueDate = parseDate(token);
+                    if (paymentDueDate != null) {
                         if (ctx != null) ctx.record("GRID_METADATA_FALLBACK");
                         continue;
                     }

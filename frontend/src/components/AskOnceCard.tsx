@@ -97,7 +97,7 @@ export function AskOnceCard() {
         <h2 className="font-semibold text-ink text-sm">A few transactions need your input</h2>
       </div>
       <p className="text-xs text-muted mb-4">
-        Pick a category once — Finora will remember it for every future transaction from the same merchant.
+        Pick a category once — Fynora will remember it for every future transaction from the same merchant.
       </p>
       {error && <p className="text-xs text-danger mb-3">{error}</p>}
       <div className="space-y-3">

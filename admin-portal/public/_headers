@@ -32,7 +32,9 @@
   #   - style-src adds https://fonts.googleapis.com and 'unsafe-inline' (style={{...}} usage).
   #   - font-src adds https://fonts.gstatic.com, where the Google Fonts stylesheet points its
   #     @font-face src at.
-  #   - connect-src adds api.finoratech.info (VITE_API_BASE_URL -- see src/api/client.ts),
+  #   - connect-src adds api.finoratech.info and api.fynora.net (VITE_API_BASE_URL -- see
+  #     src/api/client.ts; both stay listed during the Fynora domain migration so the app keeps
+  #     working from either origin until finoratech.info is retired),
   #     identitytoolkit.googleapis.com and securetoken.googleapis.com (Firebase Auth's REST
   #     endpoints), and Sentry's ingest hosts (no-ops unless VITE_SENTRY_DSN is set). Also
   #     https://www.google.com -- reCAPTCHA Enterprise's actual verification call
@@ -43,7 +45,7 @@
   #   - frame-src allows https://www.google.com -- the reCAPTCHA challenge iframe.
   #   - frame-ancestors 'none' takes over X-Frame-Options' job (both do the same thing; setting
   #     both would just be two places to keep in sync).
-  Content-Security-Policy: default-src 'self'; script-src 'self' https://www.gstatic.com https://www.google.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' https://api.finoratech.info https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://www.google.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io; frame-src https://www.google.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'
+  Content-Security-Policy: default-src 'self'; script-src 'self' https://www.gstatic.com https://www.google.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' https://api.finoratech.info https://api.fynora.net https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://www.google.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io; frame-src https://www.google.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'
   Strict-Transport-Security: max-age=31536000; includeSubDomains
   Referrer-Policy: strict-origin-when-cross-origin
 

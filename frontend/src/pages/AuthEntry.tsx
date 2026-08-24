@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { ShieldCheck, ArrowRight, User } from 'lucide-react';
 import { BrandMark } from '../components/BrandMark';
 import { GoogleSignInButton } from '../components/GoogleSignInButton';
+import { AppleSignInButton } from '../components/AppleSignInButton';
 import { authApi } from '../api/endpoints';
 import { useAuth } from '../context/AuthContext';
 import { AUTH_ACCOUNT_DEACTIVATED } from '../api/errorCodes';
@@ -41,7 +42,7 @@ const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
  * reasoning). The backend's own signInMethod refusal at actual login time is unaffected.
  */
 export default function AuthEntry() {
-  const { loginWithGoogle } = useAuth();
+  const { loginWithGoogle, loginWithApple } = useAuth();
   const navigate = useNavigate();
   const [identifier, setIdentifier] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -91,6 +92,26 @@ export default function AuthEntry() {
     }
   }
 
+  async function handleAppleCredential(idToken: string, fullName: string | null) {
+    setError(null);
+    setLoading(true);
+    try {
+      const phoneVerified = await loginWithApple(idToken, fullName);
+      void navigate(phoneVerified ? '/app' : '/verify-phone', { state: phoneVerified ? undefined : { fromLogin: true } });
+    } catch (err: any) {
+      const token = err.response?.data?.errorCode === AUTH_ACCOUNT_DEACTIVATED
+        ? err.response?.data?.details?.reactivationToken
+        : null;
+      if (token) {
+        setReactivationToken(token);
+      } else {
+        setError(err.response?.data?.message ?? 'Apple sign-in failed.');
+      }
+    } finally {
+      setLoading(false);
+    }
+  }
+
   return (
     <div className="min-h-screen bg-bg flex flex-col items-center justify-center p-4 gap-6">
       <div className="w-full max-w-sm">
@@ -107,7 +128,7 @@ export default function AuthEntry() {
           <div className="flex items-center gap-2 mb-6">
             <Link to="/" className="flex items-center gap-2 w-fit">
               <BrandMark size={28} variant="auto" className="rounded-lg" />
-              <span className="font-extrabold tracking-wide text-ink">FINORA</span>
+              <span className="font-extrabold tracking-wide text-ink">FYNORA</span>
             </Link>
           </div>
 
@@ -147,6 +168,9 @@ export default function AuthEntry() {
           </div>
 
           <GoogleSignInButton text="signin_with" onCredential={handleGoogleCredential} onError={setError} />
+          <div className="mt-3">
+            <AppleSignInButton onCredential={handleAppleCredential} onError={setError} />
+          </div>
 
           <div className="flex items-start gap-2.5 bg-primary-light rounded-lg p-3 mt-6">
             <ShieldCheck size={16} className="text-primary flex-shrink-0 mt-0.5" />

@@ -109,12 +109,12 @@ DB_NAME=<Railway Postgres database name>
 DB_USER=<Railway Postgres username>
 DB_PASSWORD=<Railway Postgres password>
 JWT_SECRET=<a real random 32+ char value — see "Generating JWT_SECRET" below; never reuse an example>
-CORS_ORIGINS=https://app.finoratech.info,https://admin.finoratech.info
-APP_BASE_URL=https://app.finoratech.info
-ADMIN_APP_BASE_URL=https://admin.finoratech.info
+CORS_ORIGINS=https://app.fynora.net,https://admin.fynora.net
+APP_BASE_URL=https://app.fynora.net
+ADMIN_APP_BASE_URL=https://admin.fynora.net
 RESEND_API_KEY=<your real Resend API key>
-EMAIL_FROM=noreply@finoratech.info
-EMAIL_FROM_NAME=Finora
+EMAIL_FROM=noreply@fynora.net
+EMAIL_FROM_NAME=Fynora
 # Either a mounted file path directly, or GOOGLE_APPLICATION_CREDENTIALS_BASE64 instead (see below
 # and the environment variable audit table above) -- Railway's Variables tab only stores strings.
 GOOGLE_APPLICATION_CREDENTIALS=/path/to/firebase-service-account.json
@@ -309,8 +309,8 @@ silently stops working looks identical to scrubbing that works.
 **Also verify `CORS_ORIGINS` on the Railway backend matches your ACTUAL deployed frontend
 origin(s) exactly** — scheme, host, no trailing slash. Cloudflare Pages assigns its own
 `<project-name>.pages.dev` domain (and a different one per preview deployment) by default; once a
-custom domain is attached (Pages project → Custom domains — e.g. `app.finoratech.info` /
-`admin.finoratech.info`, both proxied through the same Cloudflare account the apex domain's DNS
+custom domain is attached (Pages project → Custom domains — e.g. `app.fynora.net` /
+`admin.fynora.net`, both proxied through the same Cloudflare account the apex domain's DNS
 lives in), that becomes the real production origin and `CORS_ORIGINS`/`APP_BASE_URL`/
 `ADMIN_APP_BASE_URL` on the backend must be updated to match it — the `.pages.dev` origin keeps
 working alongside a custom domain (Cloudflare doesn't disable it), so nothing breaks immediately if
@@ -336,9 +336,33 @@ build — unlike a `VITE_*` variable change, this one takes effect without a red
   so it's the one step a domain cutover silently breaks if skipped: every OTP screen on the new
   domain fails with `auth/unauthorized-domain` while the rest of the app works normally.
 
+**Retiring an old domain (finoratech.info → fynora.net, 2026-08): none of this is automatic.**
+Attaching a new Cloudflare Pages custom domain makes the OLD one keep serving the exact same
+content indefinitely — Cloudflare does not infer that a newer domain should take over. Two things
+have to be set up by hand, in Cloudflare, or the migration just leaves two live copies of the site
+answering `200` forever:
+
+- **Bulk Redirects** (Cloudflare dashboard → Rules → Redirect Rules, or the older Page Rules UI) —
+  one rule per old subdomain, each a path-preserving 301 to its `fynora.net` equivalent:
+  `finoratech.info/*` → `https://fynora.net/$1` (the apex already 301s to `app.finoratech.info`
+  today; repoint that target instead of adding a second hop), `app.finoratech.info/*` →
+  `https://app.fynora.net/$1`, `admin.finoratech.info/*` → `https://admin.fynora.net/$1`. The API
+  origin (`api.finoratech.info`) should stay serving directly, not redirect — it has no browser to
+  follow a 301, and both `EmailProperties`/CSP intentionally keep accepting it during the
+  transition (see `frontend/public/_headers`, `admin-portal/public/_headers`).
+- **Search Console.** Add `fynora.net` as a property (Cloudflare's existing DNS makes domain-level
+  verification via a TXT record the fastest path), then use URL Inspection → Request Indexing on
+  the handful of pages that matter for organic traffic (landing, About, Careers) rather than
+  waiting on the crawl queue. There is no sitemap in this repo to submit — the site is small enough
+  that request-indexing the key pages directly is faster than building one.
+
+Until the redirects exist, `finoratech.info` and `fynora.net` are simply two live copies of the
+same site — worth confirming with `curl -sD - -o /dev/null https://app.finoratech.info/` (should
+show a `301`/`location: https://app.fynora.net/` once this is done, not a `200`).
+
 ## Dev environment (admin-portal, frontend, mobile)
 
-The backend already runs on two Railway environments — Production (`api.finoratech.info`) and Dev
+The backend already runs on two Railway environments — Production (`api.fynora.net`) and Dev
 (`dev-api.finoratech.info`). This section covers giving the three client surfaces (admin-portal,
 frontend, mobile) a matching Dev tier, so a feature can be exercised end-to-end against a live
 backend before it ever touches production data, Firebase, or real Google accounts.

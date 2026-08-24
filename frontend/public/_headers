@@ -52,8 +52,10 @@
   #   - font-src adds https://fonts.gstatic.com, where fonts.googleapis.com's stylesheet actually
   #     points its @font-face src at.
   #   - img-src adds https://cdn.brandfetch.io -- BankLogo.tsx's Brandfetch Logo API.
-  #   - connect-src adds api.finoratech.info (the deployed backend origin VITE_API_BASE_URL
-  #     points at -- see src/api/client.ts), identitytoolkit.googleapis.com and
+  #   - connect-src adds api.finoratech.info and api.fynora.net (the deployed backend origin
+  #     VITE_API_BASE_URL points at -- see src/api/client.ts; both stay listed during the Fynora
+  #     domain migration so the app keeps working from either origin until finoratech.info is
+  #     retired), identitytoolkit.googleapis.com and
   #     securetoken.googleapis.com (Firebase Auth's own REST endpoints, used by the Firebase Web
   #     SDK the phone-verification flow calls), and Sentry's ingest hosts (src/lib/monitoring.ts,
   #     no-ops unless VITE_SENTRY_DSN is set, but the connect-src entry costs nothing when unused).
@@ -78,7 +80,7 @@
   #     loads).
   #   - frame-ancestors 'none' takes over X-Frame-Options' job (both do the same thing; setting
   #     both would just be two places to keep in sync).
-  Content-Security-Policy: default-src 'self'; script-src 'self' https://www.gstatic.com https://www.google.com https://accounts.google.com/gsi/client https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://accounts.google.com/gsi/style; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: https://cdn.brandfetch.io; connect-src 'self' https://api.finoratech.info https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://accounts.google.com/gsi/ https://www.google.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io; frame-src https://www.google.com https://accounts.google.com/gsi/; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'
+  Content-Security-Policy: default-src 'self'; script-src 'self' https://www.gstatic.com https://www.google.com https://accounts.google.com/gsi/client https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://accounts.google.com/gsi/style; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: https://cdn.brandfetch.io; connect-src 'self' https://api.finoratech.info https://api.fynora.net https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://accounts.google.com/gsi/ https://www.google.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io; frame-src https://www.google.com https://accounts.google.com/gsi/; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'
   Strict-Transport-Security: max-age=31536000; includeSubDomains
   Referrer-Policy: strict-origin-when-cross-origin
 

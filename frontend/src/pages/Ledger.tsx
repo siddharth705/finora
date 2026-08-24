@@ -172,7 +172,7 @@ export default function Ledger() {
                     {t.categoryName}
                     <span
                       className={`text-[9px] uppercase ml-1.5 px-1 py-0.5 rounded ${t.categoryManuallySet ? 'bg-primary/15 text-primary' : 'bg-gray-200 text-gray-500'}`}
-                      title={t.categoryManuallySet ? 'You set this category' : 'Automatically assigned by Finora'}
+                      title={t.categoryManuallySet ? 'You set this category' : 'Automatically assigned by Fynora'}
                     >
                       {t.categoryManuallySet ? 'Manual' : 'Auto'}
                     </span>
@@ -286,7 +286,7 @@ export default function Ledger() {
 }
 
 // "Why this category?" -- fetched on demand rather than carried on every row, since most rows
-// are never expanded. Every branch below is Finora's own real categorization decision read back
+// are never expanded. Every branch below is Fynora's own real categorization decision read back
 // out, not a new guess made for this panel -- see TransactionExplanationDto's own doc comment.
 function ExplanationModal({ transaction, onClose }: { transaction: Transaction; onClose: () => void }) {
   const [explanation, setExplanation] = useState<TransactionExplanation | null>(null);

@@ -103,6 +103,12 @@ export const authApi = {
   // Google-verified email, or creates one, and returns the same AuthResponseDto shape either way.
   google: (idToken: string) =>
     api.post<AuthResponseDto>('/auth/google', { idToken }),
+  // D-26 (web). Same shape as google() -- idToken is what AppleSignInButton's signIn() promise
+  // resolves with, verified server-side (AppleIdTokenVerifierService), never trusted as-is.
+  // fullName is only ever present on the FIRST authorization for a given Apple ID/client id pair
+  // (Apple's own constraint, not this client's) -- forwarded through unvalidated, same as native.
+  apple: (idToken: string, fullName: string | null) =>
+    api.post<AuthResponseDto>('/auth/apple', { idToken, fullName }),
   // token is the raw verification token from a /verify-email?token=... link (register(), or a
   // fresh one loginWithGoogle sends when it finds a matching but not-yet-verified account -- see
   // VerifyEmail.tsx). Not authenticated: the token itself is the proof.
@@ -788,14 +794,13 @@ export const accountLifecycleApi = {
     api.post<{ message: string }>('/users/me/account/delete', { sessionId }).then((r) => r.data),
   // Phase C (Download My Data). POST with the password in the body -- responseType: 'blob' since
   // the response is a streamed ZIP, not JSON (see UserController.exportData/DataExportService on
-  // the backend). The filename mirrors the backend's own "finora-data-export-<date>.zip" pattern
-  // rather than being read back out of Content-Disposition -- nothing else in this codebase parses
-  // that header either (statementImportsApi.downloadFile above takes its filename from the caller
-  // instead), and the two dates can only disagree by the moment the request straddles midnight.
+  // the backend). The filename is chosen client-side rather than read back out of
+  // Content-Disposition -- nothing else in this codebase parses that header either
+  // (statementImportsApi.downloadFile above takes its filename from the caller instead).
   exportData: async (currentPassword: string | null, googleIdToken: string | null) => {
     try {
       const res = await api.post('/users/me/data-export', { currentPassword, googleIdToken }, { responseType: 'blob' });
-      downloadBlob(res.data as Blob, `finora-data-export-${new Date().toISOString().slice(0, 10)}.zip`);
+      downloadBlob(res.data as Blob, `fynora-data-export-${new Date().toISOString().slice(0, 10)}.zip`);
     } catch (err) {
       // responseType: 'blob' applies to error responses too -- see withBlobErrorMessage's own doc
       // comment above (statementImportsApi.downloadFile hits the identical issue).

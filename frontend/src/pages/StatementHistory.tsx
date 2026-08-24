@@ -20,7 +20,7 @@ import { FinoraCard, EmptyState, ConfirmDialog } from '../design-system';
 // generic fallback rather than "undefined" or an internal code -- unlike Import.tsx's fallback,
 // there is no server `message` available for a historical record to fall back to first.
 function messageFor(failureCode: string | null): string {
-  return importFailureMessage(failureCode) ?? "Finora couldn't complete this import.";
+  return importFailureMessage(failureCode) ?? "Fynora couldn't complete this import.";
 }
 
 function fmt(n: number | null) {
@@ -365,7 +365,7 @@ function ReimportPasswordModal({
 
           <p className="text-xs text-muted">
             <span className="text-ink font-medium break-all">{prompt.statement.fileName}</span> is
-            password protected. Finora doesn't store statement passwords, so re-importing needs it again.
+            password protected. Fynora doesn't store statement passwords, so re-importing needs it again.
           </p>
 
           <div>
@@ -375,7 +375,7 @@ function ReimportPasswordModal({
             <input
               id="reimport-password"
               type="password"
-              // The bank's password for one document, not a Finora credential -- it doesn't belong
+              // The bank's password for one document, not a Fynora credential -- it doesn't belong
               // in the user's password manager next to real logins.
               autoComplete="off"
               autoFocus
@@ -428,7 +428,7 @@ function FailedImportsSection({ failures }: { failures: ImportFailureSummary[] }
         <AlertTriangle size={16} className="text-danger" />
         <div>
           <h2 className="font-semibold text-ink text-sm">Failed Imports</h2>
-          <p className="text-xs text-muted">Statements Finora could not import.</p>
+          <p className="text-xs text-muted">Statements Fynora could not import.</p>
         </div>
       </div>
       <div className="divide-y divide-border">
