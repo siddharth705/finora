@@ -48,7 +48,7 @@ export const EMPTY_REVIEW: RowReview = { included: [], decisions: [] };
  * impossible. The backend derives one from the other (`TransactionNormalizer`), so today they never
  * disagree; this keys on the one that can actually be reviewed so that they cannot start to.
  */
-export function isUnderReview(row: StagedRow): boolean {
+function isUnderReview(row: StagedRow): boolean {
   return row.duplicateMatch != null;
 }
 

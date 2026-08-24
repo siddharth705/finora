@@ -116,7 +116,7 @@ export interface DashboardSummary {
 // D-25 PR3-B/C. `type` is one of ACCOUNT_CREATED/FIRST_IMPORT/FIRST_BUDGET/FIRST_GOAL/
 // FIRST_GOAL_ACHIEVED (FinancialJourneyDto's own constants) -- left as `string`, not a union,
 // so an unrecognized future value degrades to a generic label instead of a type error.
-export interface JourneyMilestone {
+interface JourneyMilestone {
   type: string;
   completed: boolean;
   completedAt: string | null;
@@ -261,7 +261,7 @@ export interface DetectedAccountInfo {
 // Mirrors the backend FinancialProductType enum. FD/RD/PPF/EPF/NPS/mutual fund/demat route to the
 // Investments module rather than a separate Deposits one; LOAN/INSURANCE/FOREX_CARD are recognised
 // but not modelled yet, so they surface on the review screen instead of creating anything.
-export type FinancialProductType =
+type FinancialProductType =
   | 'SAVINGS' | 'CURRENT' | 'OVERDRAFT' | 'WALLET'
   | 'CREDIT_CARD'
   | 'FIXED_DEPOSIT' | 'RECURRING_DEPOSIT' | 'PPF' | 'EPF' | 'NPS' | 'MUTUAL_FUND' | 'DEMAT'
@@ -270,7 +270,7 @@ export type FinancialProductType =
 
 // A rule-based (never weighted) reliability status -- see ImportReliabilityStatus on the
 // backend for the exact derivation. Mirrors that enum's three values.
-export type ImportReliabilityStatus = 'CLEAN' | 'REVIEW_RECOMMENDED' | 'NEEDS_ATTENTION';
+type ImportReliabilityStatus = 'CLEAN' | 'REVIEW_RECOMMENDED' | 'NEEDS_ATTENTION';
 
 // Whether an import can be proven faithful to the statement it came from, and on what basis --
 // see ImportDto.VerificationReport on the backend, and
@@ -310,7 +310,7 @@ export interface BalanceChainDetails {
   discrepancies: BalanceRowDiscrepancy[];
 }
 
-export interface BalanceRowDiscrepancy {
+interface BalanceRowDiscrepancy {
   rowIndex: number;
   expectedBalance: number;
   actualBalance: number;

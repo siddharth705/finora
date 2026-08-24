@@ -1258,7 +1258,7 @@ const PRODUCT_LABELS: Record<string, string> = {
   LOAN: 'Loan', INSURANCE: 'Insurance', FOREX_CARD: 'Forex Card', UNKNOWN: 'Unidentified product',
 };
 
-export function productLabel(product: string): string {
+function productLabel(product: string): string {
   return PRODUCT_LABELS[product] ?? product.replace(/_/g, ' ');
 }
 
