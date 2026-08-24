@@ -21,7 +21,7 @@ const AppStack = createNativeStackNavigator();
  * address, and tapping it needs to land on VerifyEmailChangeScreen with sessionId/token intact.
  *
  * Custom scheme only ("finora://email-change-verify?..."), not a true universal/app link
- * ("https://app.finoratech.info/email-change-verify?..." routed to the app instead of a browser)
+ * ("https://app.fynora.net/email-change-verify?..." routed to the app instead of a browser)
  * -- that needs iOS Associated Domains + a hosted apple-app-site-association file, and Android App
  * Links + a hosted assetlinks.json signed with the release keystore's fingerprint, none of which
  * this repo currently has (and neither is something a code change alone can stand up or verify --
