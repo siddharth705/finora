@@ -78,6 +78,39 @@ permissions:
 # extra provisioning step -- unlike the self-hosted Mac, which needed Docker Desktop kept running
 # by hand.
 jobs:
+  # Complementary to GitHub's native push protection, not a replacement for it: push protection
+  # blocks a small set of high-confidence provider patterns (AWS keys, Stripe keys, and similar) at
+  # push time and only looks at the current push. This job runs gitleaks' much broader,
+  # entropy-based ruleset against the PR's actual commit range, so a secret pattern push protection
+  # doesn't recognize still gets caught before merge. The nightly job in
+  # .github/workflows/gitleaks-nightly.yml covers the complementary gap this one can't: full
+  # repository history, not just this PR's diff.
+  #
+  # fetch-depth: 0, same reasoning as the backend job's PII check above -- the action needs the
+  # base commit to compute the PR's diff range, and a shallow checkout doesn't have it.
+  #
+  # False positives already found in this repo's history are recorded in .gitleaksignore by
+  # fingerprint (commit:file:rule:line), not by path or pattern, so a new secret in one of those
+  # same files still gets caught -- see that file for the specific findings and why each is safe.
+  secret-scan:
+    name: Secret scan (gitleaks)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@v3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # PR comments need `pull-requests: write`, which this workflow deliberately doesn't
+          # grant (see the file-level `permissions:` block and its reasoning). The job's own
+          # red/green status is the signal; a second notification channel isn't worth widening the
+          # token for.
+          GITLEAKS_ENABLE_COMMENTS: false
+
   backend:
     # No test count in the name: it was "934" while the suite was already at 936, because a
     # hardcoded total goes stale on the very next commit that adds a test and nothing fails when
