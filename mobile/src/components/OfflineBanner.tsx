@@ -5,7 +5,7 @@ import { SafeAreaInsetsContext, useSafeAreaInsets } from 'react-native-safe-area
 import { spacing, useTheme } from '../theme';
 
 /** Subscribes to React Query's own notion of connectivity, fed by NetInfo in api/queryClient.ts. */
-export function useOnline(): boolean {
+function useOnline(): boolean {
   const [online, setOnline] = useState(() => onlineManager.isOnline());
   useEffect(() => onlineManager.subscribe(setOnline), []);
   return online;
