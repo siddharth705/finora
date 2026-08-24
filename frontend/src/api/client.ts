@@ -181,7 +181,7 @@ export function clearSessionAndRedirect(reason?: string) {
   // more useful than a silent bounce to the login screen.
   safeStorage.setItem(SESSION_ENDED_REASON_KEY,
     reason || 'Your session has ended. Please sign in again to continue.');
-  window.location.href = '/login';
+  window.location.href = '/auth';
 }
 
 // Every backend response arrives wrapped in a standard envelope:

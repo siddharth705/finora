@@ -76,25 +76,26 @@ test.describe('account lifecycle', () => {
     await modal.getByLabel('Reason').selectOption('TAKING_A_BREAK');
     await modal.getByRole('button', { name: 'Deactivate Account' }).click();
 
-    await expect(userPage, 'deactivating did not redirect to /login').toHaveURL(/\/login/, { timeout: 20_000 });
+    await expect(userPage, 'deactivating did not redirect to /auth').toHaveURL(/\/auth/, { timeout: 20_000 });
     await expect(userPage.getByRole('status')).toHaveText(/account has been deactivated/i);
 
     // Proves the deactivation actually happened server-side (AuthService.enforceAccountIsSignable)
     // rather than only clearing this browser's own session -- a normal sign-in with the same,
     // still-correct password must be intercepted before it reaches the app.
     await userPage.getByLabel(/email|phone/i).first().fill(user.email);
+    await userPage.getByRole('button', { name: /continue/i }).click();
     await userPage.getByLabel(/password/i).first().fill(user.password);
     await userPage.getByRole('button', { name: /sign in|log in/i }).click();
 
     await expect(userPage.getByRole('heading', { name: 'Welcome back' })).toBeVisible();
-    await expect(userPage, 'a deactivated account should not have reached the app').toHaveURL(/\/login/);
+    await expect(userPage, 'a deactivated account should not have reached the app').toHaveURL(/\/auth/);
 
     // Closes the loop: reactivating is the whole point of the self-service window this account
     // is still inside (app.account-lifecycle.reactivation-window-enabled is off by default in
     // this suite's backend config, which AuthService.selfServiceReactivationWindowHasClosed
     // treats as "never closes").
     await userPage.getByRole('button', { name: 'Reactivate my account' }).click();
-    await expect(userPage, 'reactivating should return the user to the app').not.toHaveURL(/\/login/, { timeout: 20_000 });
+    await expect(userPage, 'reactivating should return the user to the app').not.toHaveURL(/\/auth/, { timeout: 20_000 });
   });
 
   test('Delete Account verifies the current password against the backend before the phone-OTP step this suite cannot complete', async ({ userPage, user, allowConsoleErrors }) => {
