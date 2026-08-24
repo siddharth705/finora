@@ -186,10 +186,10 @@ export default function Setup() {
               <details className="text-xs text-muted">
                 <summary className="cursor-pointer font-medium text-ink select-none">Where do I find it?</summary>
                 <p className="mt-2 leading-relaxed">
-                  For a local installation, Finora writes it to a file named{' '}
+                  For a local installation, Fynora writes it to a file named{' '}
                   <code className="bg-bg px-1 py-0.5 rounded">installation.key</code> inside a{' '}
                   <code className="bg-bg px-1 py-0.5 rounded">.finora</code> folder in your project
-                  directory. If that file isn't there, the key was printed to Finora's own startup
+                  directory. If that file isn't there, the key was printed to Fynora's own startup
                   output instead -- look for a message starting with "FINORA FIRST-RUN SETUP."
                 </p>
               </details>
