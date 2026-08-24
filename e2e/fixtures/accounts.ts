@@ -74,7 +74,7 @@ async function post(path: string, body: unknown, token?: string) {
 
 /** Signs in and returns a fresh access token. Used after seeding, and again by any test that needs
  *  to arrange state over the API rather than through the UI. */
-export async function login(email: string, password = PASSWORD, scope: 'USER' | 'ADMIN' = 'USER') {
+async function login(email: string, password = PASSWORD, scope: 'USER' | 'ADMIN' = 'USER') {
   const { payload } = await post('/auth/login', { identifier: email, password, scope });
   if (!payload?.success) {
     throw new Error(`Seed login failed for ${email}: ${payload?.errorCode} ${payload?.message}`);
@@ -151,11 +151,4 @@ export async function createAdmin(prefix = 'admin'): Promise<TestUser> {
   if (!row) throw new Error(`Seeded admin ${email} was not found after registration`);
 
   return { id: row.id, email, password: PASSWORD, fullName, phone, token: await login(email, PASSWORD, 'ADMIN') };
-}
-
-/** A user with no admin role at all — for asserting that an admin surface refuses, rather than
- *  assuming it does because nobody tried. */
-export async function createPlainUserToken(): Promise<string> {
-  const user = await createUser('unprivileged');
-  return user.token;
 }
