@@ -133,50 +133,50 @@ public class ResendEmailProvider implements EmailProvider {
     @Override
     public EmailResult sendPasswordResetEmail(String toEmail, String resetLink) {
         String html = """
-                <p>We received a request to reset your Finora password.</p>
+                <p>We received a request to reset your Fynora password.</p>
                 <p><a href="%s">Click here to set a new password</a> — this link expires in 30 minutes.</p>
                 <p>If you didn't request this, you can safely ignore this email.</p>
                 """.formatted(resetLink);
-        return send(EmailMessage.html(toEmail, "Reset your Finora password", html));
+        return send(EmailMessage.html(toEmail, "Reset your Fynora password", html));
     }
 
     @Override
     public EmailResult sendEmailVerificationEmail(String toEmail, String verifyLink) {
         String html = """
-                <p>Please verify your email address to finish setting up your Finora account.</p>
+                <p>Please verify your email address to finish setting up your Fynora account.</p>
                 <p><a href="%s">Click here to verify your email</a> — this link expires in 24 hours.</p>
-                <p>If you didn't create a Finora account, you can safely ignore this email.</p>
+                <p>If you didn't create a Fynora account, you can safely ignore this email.</p>
                 """.formatted(verifyLink);
-        return send(EmailMessage.html(toEmail, "Verify your Finora email address", html));
+        return send(EmailMessage.html(toEmail, "Verify your Fynora email address", html));
     }
 
     @Override
     public EmailResult sendEmailChangeVerificationEmail(String toEmail, String verifyLink) {
         String html = """
-                <p>Confirm this email address to finish changing the email on your Finora account.</p>
+                <p>Confirm this email address to finish changing the email on your Fynora account.</p>
                 <p><a href="%s">Click here to confirm</a> — this link expires in 15 minutes.</p>
                 <p>If you didn't request this change, you can safely ignore this email — your account's
                 email address will not change unless you click the link above.</p>
                 """.formatted(verifyLink);
-        return send(EmailMessage.html(toEmail, "Confirm your new Finora email address", html));
+        return send(EmailMessage.html(toEmail, "Confirm your new Fynora email address", html));
     }
 
     @Override
     public EmailResult sendWelcomeEmail(String toEmail, String fullName) {
         String html = """
-                <p>Welcome to Finora, %s!</p>
+                <p>Welcome to Fynora, %s!</p>
                 <p>Your account is ready — import a bank statement or connect an account to get started.</p>
                 """.formatted(fullName);
-        return send(EmailMessage.html(toEmail, "Welcome to Finora", html));
+        return send(EmailMessage.html(toEmail, "Welcome to Fynora", html));
     }
 
     @Override
     public EmailResult sendPasswordChangedEmail(String toEmail) {
         String html = """
-                <p>Your Finora password was just changed.</p>
+                <p>Your Fynora password was just changed.</p>
                 <p>If this wasn't you, contact support immediately and change your password again.</p>
                 """;
-        return send(EmailMessage.html(toEmail, "Your Finora password was changed", html));
+        return send(EmailMessage.html(toEmail, "Your Fynora password was changed", html));
     }
 
     @Override
@@ -192,31 +192,31 @@ public class ResendEmailProvider implements EmailProvider {
         String ipLine = (ip != null && !ip.isBlank())
                 ? "<p>IP address: %s</p>".formatted(ip) : "";
         String html = """
-                <p>Your Finora account was deactivated on %s (UTC).</p>
+                <p>Your Fynora account was deactivated on %s (UTC).</p>
                 %s%s
                 <p>Your data is retained securely. Sign in again any time to reactivate your account.</p>
                 <p>If you didn't do this, contact support immediately.</p>
                 """.formatted(when, deviceLine, ipLine);
-        return send(EmailMessage.html(toEmail, "Your Finora account was deactivated", html));
+        return send(EmailMessage.html(toEmail, "Your Fynora account was deactivated", html));
     }
 
     @Override
     public EmailResult sendAccountReactivatedEmail(String toEmail) {
         String html = """
-                <p>Welcome back — your Finora account has been reactivated.</p>
+                <p>Welcome back — your Fynora account has been reactivated.</p>
                 <p>If you didn't do this, contact support immediately.</p>
                 """;
-        return send(EmailMessage.html(toEmail, "Your Finora account was reactivated", html));
+        return send(EmailMessage.html(toEmail, "Your Fynora account was reactivated", html));
     }
 
     @Override
     public EmailResult sendAccountDeletedEmail(String toEmail, Instant deletedAt) {
         String when = DEACTIVATED_AT_FORMAT.format(deletedAt.atZone(ZoneOffset.UTC));
         String html = """
-                <p>Your Finora account and all your data were permanently deleted on %s (UTC).</p>
+                <p>Your Fynora account and all your data were permanently deleted on %s (UTC).</p>
                 <p>This cannot be undone.</p>
                 <p>If you didn't do this, contact support immediately.</p>
                 """.formatted(when);
-        return send(EmailMessage.html(toEmail, "Your Finora account has been deleted", html));
+        return send(EmailMessage.html(toEmail, "Your Fynora account has been deleted", html));
     }
 }

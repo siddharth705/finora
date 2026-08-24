@@ -109,12 +109,12 @@ DB_NAME=<Railway Postgres database name>
 DB_USER=<Railway Postgres username>
 DB_PASSWORD=<Railway Postgres password>
 JWT_SECRET=<a real random 32+ char value — see "Generating JWT_SECRET" below; never reuse an example>
-CORS_ORIGINS=https://app.finoratech.info,https://admin.finoratech.info
-APP_BASE_URL=https://app.finoratech.info
-ADMIN_APP_BASE_URL=https://admin.finoratech.info
+CORS_ORIGINS=https://app.fynora.net,https://admin.fynora.net
+APP_BASE_URL=https://app.fynora.net
+ADMIN_APP_BASE_URL=https://admin.fynora.net
 RESEND_API_KEY=<your real Resend API key>
-EMAIL_FROM=noreply@finoratech.info
-EMAIL_FROM_NAME=Finora
+EMAIL_FROM=noreply@fynora.net
+EMAIL_FROM_NAME=Fynora
 # Either a mounted file path directly, or GOOGLE_APPLICATION_CREDENTIALS_BASE64 instead (see below
 # and the environment variable audit table above) -- Railway's Variables tab only stores strings.
 GOOGLE_APPLICATION_CREDENTIALS=/path/to/firebase-service-account.json
@@ -309,8 +309,8 @@ silently stops working looks identical to scrubbing that works.
 **Also verify `CORS_ORIGINS` on the Railway backend matches your ACTUAL deployed frontend
 origin(s) exactly** — scheme, host, no trailing slash. Cloudflare Pages assigns its own
 `<project-name>.pages.dev` domain (and a different one per preview deployment) by default; once a
-custom domain is attached (Pages project → Custom domains — e.g. `app.finoratech.info` /
-`admin.finoratech.info`, both proxied through the same Cloudflare account the apex domain's DNS
+custom domain is attached (Pages project → Custom domains — e.g. `app.fynora.net` /
+`admin.fynora.net`, both proxied through the same Cloudflare account the apex domain's DNS
 lives in), that becomes the real production origin and `CORS_ORIGINS`/`APP_BASE_URL`/
 `ADMIN_APP_BASE_URL` on the backend must be updated to match it — the `.pages.dev` origin keeps
 working alongside a custom domain (Cloudflare doesn't disable it), so nothing breaks immediately if
