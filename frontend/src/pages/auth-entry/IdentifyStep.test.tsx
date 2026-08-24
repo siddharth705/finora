@@ -68,7 +68,9 @@ describe('IdentifyStep', () => {
     // error before the component ever calls and awaits it. An async throw only creates the
     // rejection when actually invoked.
     vi.mocked(authApi.identify).mockImplementation(async () => {
-      throw { response: { data: { message: 'Too many attempts, try again later.' } } };
+      throw Object.assign(new Error('Too many attempts, try again later.'), {
+        response: { data: { message: 'Too many attempts, try again later.' } },
+      });
     });
     const onExists = vi.fn();
     const onContinue = vi.fn();
