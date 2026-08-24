@@ -17,7 +17,7 @@
 // logoPath points at a real SVG file that may not exist yet -- see BankLogo.tsx's own comment
 // for why (no bundled/licensed logo assets in this build) -- the component tries to load it and
 // falls back to the initials badge on error, so this is safe to render unconditionally.
-export interface BankInfo {
+interface BankInfo {
   id: string;
   officialName: string | null;
   shortName: string;
@@ -256,7 +256,7 @@ export interface DetectedAccountInfo {
 // Mirrors the backend FinancialProductType enum. FD/RD/PPF/EPF/NPS/mutual fund/demat route to the
 // Investments module rather than a separate Deposits one; LOAN/INSURANCE/FOREX_CARD are recognised
 // but not modelled yet, so they surface on the review screen instead of creating anything.
-export type FinancialProductType =
+type FinancialProductType =
   | 'SAVINGS' | 'CURRENT' | 'OVERDRAFT' | 'WALLET'
   | 'CREDIT_CARD'
   | 'FIXED_DEPOSIT' | 'RECURRING_DEPOSIT' | 'PPF' | 'EPF' | 'NPS' | 'MUTUAL_FUND' | 'DEMAT'

@@ -105,7 +105,7 @@ export function InlineRuleForm({
   );
 }
 
-export function RuleRow({ userId, rule }: { userId: string; rule: RuleDto }) {
+function RuleRow({ userId, rule }: { userId: string; rule: RuleDto }) {
   const queryClient = useQueryClient();
   const [editing, setEditing] = useState(false);
   const [error, setError] = useState<string | null>(null);
