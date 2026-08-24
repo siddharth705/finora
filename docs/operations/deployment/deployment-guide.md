@@ -338,7 +338,7 @@ build — unlike a `VITE_*` variable change, this one takes effect without a red
 
 ## Dev environment (admin-portal, frontend, mobile)
 
-The backend already runs on two Railway environments — Production (`api.finoratech.info`) and Dev
+The backend already runs on two Railway environments — Production (`api.fynora.net`) and Dev
 (`dev-api.finoratech.info`). This section covers giving the three client surfaces (admin-portal,
 frontend, mobile) a matching Dev tier, so a feature can be exercised end-to-end against a live
 backend before it ever touches production data, Firebase, or real Google accounts.
