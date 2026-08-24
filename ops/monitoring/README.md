@@ -28,7 +28,7 @@ request and proven to work before it is relied upon.
 ## External monitoring
 
 Production availability is monitored externally through **Better Stack**, using an HTTP(S) monitor
-against `https://api.finoratech.info/actuator/health`. The monitor expects HTTP `200` and a body
+against `https://api.fynora.net/actuator/health`. The monitor expects HTTP `200` and a body
 containing `"status":"UP"` — a status-code-only check would pass against a misconfigured proxy or a
 maintenance page serving the wrong body, so it checks both.
 
