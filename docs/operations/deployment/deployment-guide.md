@@ -336,6 +336,30 @@ build — unlike a `VITE_*` variable change, this one takes effect without a red
   so it's the one step a domain cutover silently breaks if skipped: every OTP screen on the new
   domain fails with `auth/unauthorized-domain` while the rest of the app works normally.
 
+**Retiring an old domain (finoratech.info → fynora.net, 2026-08): none of this is automatic.**
+Attaching a new Cloudflare Pages custom domain makes the OLD one keep serving the exact same
+content indefinitely — Cloudflare does not infer that a newer domain should take over. Two things
+have to be set up by hand, in Cloudflare, or the migration just leaves two live copies of the site
+answering `200` forever:
+
+- **Bulk Redirects** (Cloudflare dashboard → Rules → Redirect Rules, or the older Page Rules UI) —
+  one rule per old subdomain, each a path-preserving 301 to its `fynora.net` equivalent:
+  `finoratech.info/*` → `https://fynora.net/$1` (the apex already 301s to `app.finoratech.info`
+  today; repoint that target instead of adding a second hop), `app.finoratech.info/*` →
+  `https://app.fynora.net/$1`, `admin.finoratech.info/*` → `https://admin.fynora.net/$1`. The API
+  origin (`api.finoratech.info`) should stay serving directly, not redirect — it has no browser to
+  follow a 301, and both `EmailProperties`/CSP intentionally keep accepting it during the
+  transition (see `frontend/public/_headers`, `admin-portal/public/_headers`).
+- **Search Console.** Add `fynora.net` as a property (Cloudflare's existing DNS makes domain-level
+  verification via a TXT record the fastest path), then use URL Inspection → Request Indexing on
+  the handful of pages that matter for organic traffic (landing, About, Careers) rather than
+  waiting on the crawl queue. There is no sitemap in this repo to submit — the site is small enough
+  that request-indexing the key pages directly is faster than building one.
+
+Until the redirects exist, `finoratech.info` and `fynora.net` are simply two live copies of the
+same site — worth confirming with `curl -sD - -o /dev/null https://app.finoratech.info/` (should
+show a `301`/`location: https://app.fynora.net/` once this is done, not a `200`).
+
 ## Dev environment (admin-portal, frontend, mobile)
 
 The backend already runs on two Railway environments — Production (`api.fynora.net`) and Dev
