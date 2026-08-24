@@ -131,6 +131,9 @@ async function startBackend() {
       RATE_LIMIT_REGISTER_MAX: '10000',
       RATE_LIMIT_LOGIN_MAX: '10000',
       RATE_LIMIT_IMPORT_STAGE_MAX: '10000',
+      // The unified /auth entry screen calls POST /auth/identify before every sign-in, which
+      // signIn() in fixtures/test.ts now does too -- raised for the same reason as LOGIN above.
+      RATE_LIMIT_IDENTIFY_MAX: '10000',
       // BH-050: forgot-password is deliberately NOT raised, and must stay that way. The
       // negative phase asserts that rate limiting is actually ENFORCED, and it needs one
       // endpoint whose ceiling it can reach -- otherwise its assertion is unreachable and
