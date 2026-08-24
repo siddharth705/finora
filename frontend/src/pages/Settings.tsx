@@ -375,16 +375,18 @@ export default function Settings() {
   // every refresh token server-side, so there is nothing left to be signed in to.
   //
   // Bug fix, confirmed against a real browser (not just this app's mocked-useAuth test suite):
-  // this used to call AuthContext's logout() and then navigate('/login', { state: { message } }),
-  // the way ResetPassword.tsx hands Login.tsx a one-shot confirmation. That works for
-  // ResetPassword because it isn't behind ProtectedRoute. Here, logout() calls setToken(null) --
-  // a REACT STATE update -- which App.tsx's ProtectedRoute (wrapping /app/settings) reacts to
-  // immediately by client-side-routing to /login itself, via its own stateless
-  // <Navigate to="/login" replace />. That reactive redirect runs (and, critically, mounts Login
-  // long enough for its one-shot useEffect to read AND clear SESSION_ENDED_REASON_KEY) before the
-  // browser's actual window.location.href navigation below ever fires -- so by the time the real,
-  // hard-reloaded page loads, the reason this function set has already been consumed and thrown
-  // away by a Login instance that never really existed to the user.
+  // this used to call AuthContext's logout() and then navigate('/auth', { state: { message } }),
+  // the way ResetPassword.tsx hands AuthEntry's PasswordStep a one-shot confirmation. That works
+  // for ResetPassword because it isn't behind ProtectedRoute. Here, logout() calls setToken(null)
+  // -- a REACT STATE update -- which App.tsx's ProtectedRoute (wrapping /app/settings) reacts to
+  // immediately by client-side-routing to /auth itself, via its own stateless
+  // <Navigate to="/auth" replace />. That reactive redirect runs and mounts a throwaway AuthEntry
+  // instance -- landing on its identify step, since a bare <Navigate> carries no deep-link state
+  // -- before the browser's actual window.location.href navigation below ever fires. The
+  // SESSION_ENDED_REASON_KEY this function is about to set would land in storage while that
+  // instance still exists, only for it to be torn down and replaced by the real, hard-reloaded
+  // page moments later -- fragile either way, whether or not that particular instance happens to
+  // read the key back out before dying.
   //
   // The fix is to never touch AuthContext's React state at all, the same way client.ts's
   // (now-exported) clearSessionAndRedirect already avoids this. Second bug fix, caught in review:

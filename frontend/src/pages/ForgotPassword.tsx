@@ -58,7 +58,7 @@ export default function ForgotPassword() {
                 <a href={devLink} className="underline break-all text-primary">{devLink}</a>
               </div>
             )}
-            <Link to="/login" className="text-sm text-primary font-medium">Back to sign in</Link>
+            <Link to="/auth" className="text-sm text-primary font-medium">Back to sign in</Link>
           </>
         ) : (
           <form onSubmit={handleSubmit} noValidate>
@@ -90,7 +90,7 @@ export default function ForgotPassword() {
             </button>
 
             <p className="text-sm mt-4 text-center">
-              <Link to="/login" className="text-primary font-medium">Back to sign in</Link>
+              <Link to="/auth" className="text-primary font-medium">Back to sign in</Link>
             </p>
           </form>
         )}
