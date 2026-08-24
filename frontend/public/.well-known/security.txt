@@ -1,4 +1,4 @@
-Contact: mailto:security@finoratech.info # synthetic-ok
+Contact: mailto:security@fynora.net # synthetic-ok
 Expires: 2027-08-13
 Preferred-Languages: en
-Canonical: https://finoratech.info/.well-known/security.txt
+Canonical: https://fynora.net/.well-known/security.txt
