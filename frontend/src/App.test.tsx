@@ -44,15 +44,15 @@ describe('App routing — unmatched paths', () => {
   });
 
   it('leaves a route that does exist alone', async () => {
-    window.history.pushState({}, '', '/login');
+    window.history.pushState({}, '', '/terms');
 
     render(<App />);
 
-    await waitFor(() => expect(window.location.pathname).toBe('/login'));
+    await waitFor(() => expect(window.location.pathname).toBe('/terms'));
   });
 
   it('replaces rather than pushes, so Back does not bounce into the bad URL again', async () => {
-    window.history.pushState({}, '', '/login');
+    window.history.pushState({}, '', '/terms');
     window.history.pushState({}, '', '/definitely-not-a-page');
 
     render(<App />);
@@ -60,6 +60,18 @@ describe('App routing — unmatched paths', () => {
     await waitFor(() => expect(window.location.pathname).toBe('/'));
 
     window.history.back();
-    await waitFor(() => expect(window.location.pathname).toBe('/login'));
+    await waitFor(() => expect(window.location.pathname).toBe('/terms'));
+  });
+});
+
+describe('App routing — /login and /register redirect to /auth', () => {
+  beforeEach(() => {
+    window.history.pushState({}, '', '/');
+  });
+
+  it.each(['/login', '/register'])('redirects %s to /auth', async (path) => {
+    window.history.pushState({}, '', path);
+    render(<App />);
+    await waitFor(() => expect(window.location.pathname).toBe('/auth'));
   });
 });

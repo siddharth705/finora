@@ -17,12 +17,17 @@ test.describe('public pages', () => {
 
     // Located by href rather than by link text: the CTA's wording is marketing copy that changes
     // (this audit already corrected several such strings), but the route it points at is the
-    // actual behaviour worth asserting.
-    await expect(page.locator('a[href="/register"]').first()).toBeVisible();
+    // actual behaviour worth asserting. Marketing CTAs route through the unified /auth entry
+    // screen rather than /register directly.
+    await expect(page.locator('a[href="/auth"]').first()).toBeVisible();
   });
 
-  test('the register page opens with its Terms and Privacy links safely configured', async ({ page }) => {
+  test('the register step opens with its Terms and Privacy links safely configured', async ({ page }) => {
+    // /register redirects to /auth's identify step; an identifier with no account reaches the
+    // register step, which is where these Terms/Privacy links actually live now.
     await page.goto('/register');
+    await page.getByLabel(/email|phone/i).first().fill(`new-${Date.now()}@example.com`);
+    await page.getByRole('button', { name: /continue/i }).click();
 
     // Regression guard for the reverse-tabnabbing fix: these two links open in a new tab, and a
     // new tab opened without rel=noopener keeps a live window.opener handle back to the

@@ -169,11 +169,24 @@ function assertClean(errors: string[]) {
 }
 
 export async function signIn(page: Page, appOrigin: string, email: string, password: string) {
-  await page.goto(`${appOrigin}/login`);
+  // The admin portal is a separate app that this PR does not touch -- it still has its own plain
+  // /login form, one step, no identify/continue split. Only the user-facing app got the unified
+  // /auth entry screen.
+  if (appOrigin === ADMIN_APP) {
+    await page.goto(`${appOrigin}/login`);
+    await page.getByLabel(/email|phone/i).first().fill(email);
+    await page.getByLabel(/password/i).first().fill(password);
+    await page.getByRole('button', { name: /sign in|log in/i }).click();
+    await expect(page, `sign-in for ${email} never left /login`).not.toHaveURL(/\/login/, { timeout: 20_000 });
+    return;
+  }
+
+  await page.goto(`${appOrigin}/auth`);
   await page.getByLabel(/email|phone/i).first().fill(email);
+  await page.getByRole('button', { name: /continue/i }).click();
   await page.getByLabel(/password/i).first().fill(password);
   await page.getByRole('button', { name: /sign in|log in/i }).click();
-  await expect(page, `sign-in for ${email} never left /login`).not.toHaveURL(/\/login/, { timeout: 20_000 });
+  await expect(page, `sign-in for ${email} never left /auth`).not.toHaveURL(/\/auth$/, { timeout: 20_000 });
 }
 
 /**
