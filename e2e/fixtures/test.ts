@@ -169,11 +169,12 @@ function assertClean(errors: string[]) {
 }
 
 export async function signIn(page: Page, appOrigin: string, email: string, password: string) {
-  await page.goto(`${appOrigin}/login`);
+  await page.goto(`${appOrigin}/auth`);
   await page.getByLabel(/email|phone/i).first().fill(email);
+  await page.getByRole('button', { name: /continue/i }).click();
   await page.getByLabel(/password/i).first().fill(password);
   await page.getByRole('button', { name: /sign in|log in/i }).click();
-  await expect(page, `sign-in for ${email} never left /login`).not.toHaveURL(/\/login/, { timeout: 20_000 });
+  await expect(page, `sign-in for ${email} never left /auth`).not.toHaveURL(/\/auth$/, { timeout: 20_000 });
 }
 
 /**
