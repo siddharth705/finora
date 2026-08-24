@@ -26,8 +26,6 @@ const About = lazy(() => import('./pages/About'));
 const Careers = lazy(() => import('./pages/Careers'));
 const Help = lazy(() => import('./pages/Help'));
 const AuthEntry = lazy(() => import('./pages/AuthEntry'));
-const Login = lazy(() => import('./pages/Login'));
-const Register = lazy(() => import('./pages/Register'));
 const ForgotPassword = lazy(() => import('./pages/ForgotPassword'));
 const ResetPassword = lazy(() => import('./pages/ResetPassword'));
 const VerifyEmail = lazy(() => import('./pages/VerifyEmail'));
@@ -126,8 +124,11 @@ export default function App() {
 
           {/* Auth */}
           <Route path="/auth" element={<AuthEntry />} />
-          <Route path="/login" element={<Login />} />
-          <Route path="/register" element={<Register />} />
+          {/* /login and /register no longer have their own pages -- AuthEntry (D-26 unified
+              entry) absorbed both. Kept as redirects, not removed, so old bookmarks/emails/links
+              still land somewhere real. */}
+          <Route path="/login" element={<Navigate to="/auth" replace />} />
+          <Route path="/register" element={<Navigate to="/auth" replace />} />
           <Route path="/forgot-password" element={<ForgotPassword />} />
           <Route path="/reset-password" element={<ResetPassword />} />
           <Route path="/verify-email" element={<VerifyEmail />} />

@@ -144,8 +144,15 @@ export default function ResetPassword() {
       await authApi.resetPassword(token, firebaseIdToken, password);
       setDone(true);
       setTimeout(() => {
-        void navigate('/login', {
-          state: { message: 'Password reset successfully. Please sign in using your new password.' },
+        // D-26 unified entry: skips straight to /auth's password step rather than the identify
+        // step, since this user just proved phone ownership for an account that definitely
+        // exists. No `identifier` to prefill with, though -- ResetPasswordResponse only ever
+        // carries a message, never the account's email.
+        void navigate('/auth', {
+          state: {
+            banner: 'Password reset successfully. Please sign in using your new password.',
+            skipToPassword: true,
+          },
         });
       }, 2000);
     } catch (err: any) {
@@ -224,7 +231,7 @@ export default function ResetPassword() {
             </button>
 
             <p className="text-sm mt-4 text-center">
-              <Link to="/login" className="text-primary font-medium">Back to sign in</Link>
+              <Link to="/auth" className="text-primary font-medium">Back to sign in</Link>
             </p>
           </form>
         ) : (
@@ -316,7 +323,7 @@ export default function ResetPassword() {
             </button>
 
             <p className="text-sm mt-4 text-center">
-              <Link to="/login" className="text-primary font-medium">Back to sign in</Link>
+              <Link to="/auth" className="text-primary font-medium">Back to sign in</Link>
             </p>
           </form>
         )}
