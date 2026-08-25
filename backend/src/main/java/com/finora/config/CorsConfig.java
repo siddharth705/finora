@@ -38,7 +38,13 @@ public class CorsConfig {
                 .map(String::trim)
                 .filter(o -> !o.isEmpty())
                 .toList();
-        config.setAllowedOrigins(origins);
+        // setAllowedOriginPatterns, not setAllowedOrigins: Cloudflare Pages mints a distinct
+        // subdomain per branch preview (e.g. finora-<branch>.finora-cng.pages.dev), so an
+        // exact-match list can never cover "the next PR's preview" -- only a pattern like
+        // https://*.finora-cng.pages.dev can. Patterns are safe alongside allowCredentials(true)
+        // below (unlike the literal wildcard "*", which Spring rejects when credentials are
+        // allowed); each entry here can still be a plain exact origin with no "*" in it.
+        config.setAllowedOriginPatterns(origins);
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
         // BH-036. CorrelationIdFilter reuses the client's X-Request-Id when one is supplied and
         // echoes it back on every response, but CORS listed it in neither allowedHeaders nor
