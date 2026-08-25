@@ -49,8 +49,8 @@ const BASE_URL = import.meta.env.VITE_API_BASE_URL
 //
 // DEPLOYMENT PRECONDITION, because this now depends on it rather than merely benefiting from it:
 // the cookie is Secure, SameSite=Lax and host-only, scoped to /api/v1/auth. It reaches the API
-// only when the app and the API share a registrable domain (app.finoratech.info /
-// api.finoratech.info). Point VITE_API_BASE_URL at a different site -- a *.pages.dev or a bare
+// only when the app and the API share a registrable domain (app.fynora.net /
+// api.fynora.net). Point VITE_API_BASE_URL at a different site -- a *.pages.dev or a bare
 // *.up.railway.app -- and the browser will not attach it, refresh will fail, and users will be
 // signed out every 15 minutes. That was survivable before because localStorage papered over it.
 export const api = axios.create({ baseURL: BASE_URL, withCredentials: true });

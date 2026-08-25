@@ -336,36 +336,50 @@ build — unlike a `VITE_*` variable change, this one takes effect without a red
   so it's the one step a domain cutover silently breaks if skipped: every OTP screen on the new
   domain fails with `auth/unauthorized-domain` while the rest of the app works normally.
 
-**Retiring an old domain (finoratech.info → fynora.net, 2026-08): none of this is automatic.**
-Attaching a new Cloudflare Pages custom domain makes the OLD one keep serving the exact same
-content indefinitely — Cloudflare does not infer that a newer domain should take over. Two things
-have to be set up by hand, in Cloudflare, or the migration just leaves two live copies of the site
-answering `200` forever:
+**`finoratech.info` is a hard cutover, not a graceful migration (2026-08-25).** This section
+used to describe setting up 301 redirects from `finoratech.info`/`app.finoratech.info`/
+`admin.finoratech.info`/`api.finoratech.info` to their `fynora.net` equivalents. That plan is
+dead: `finoratech.info` was sold to a third party — Railway's edge is healthy and reachable, but
+the domain's own nameserver delegation now points at the buyer's registrar (Afternic parking
+nameservers, confirmed via `dig +trace`), not at Cloudflare, no matter what records exist inside
+Cloudflare's dashboard for it. Nobody on this project can add a redirect, a DNS record, or
+anything else to a domain they no longer control. Treat every `finoratech.info` link, email, and
+API allowance as **untrusted**, not as a domain to migrate away from politely:
 
-- **Bulk Redirects** (Cloudflare dashboard → Rules → Redirect Rules, or the older Page Rules UI) —
-  one rule per old subdomain, each a path-preserving 301 to its `fynora.net` equivalent:
-  `finoratech.info/*` → `https://fynora.net/$1` (the apex already 301s to `app.finoratech.info`
-  today; repoint that target instead of adding a second hop), `app.finoratech.info/*` →
-  `https://app.fynora.net/$1`, `admin.finoratech.info/*` → `https://admin.fynora.net/$1`. The API
-  origin (`api.finoratech.info`) should stay serving directly, not redirect — it has no browser to
-  follow a 301, and both `EmailProperties`/CSP intentionally keep accepting it during the
-  transition (see `frontend/public/_headers`, `admin-portal/public/_headers`).
+- **CSP no longer allows `api.finoratech.info`.** `frontend/public/_headers` and
+  `admin-portal/public/_headers` used to keep it listed in `connect-src` "during the transition" —
+  removed. A CSP entry for a domain someone else now owns is an exfiltration path, not a
+  compatibility nicety, and there is no transition to keep it for.
+- **No redirects, ever, for this domain.** Any `finoratech.info` link already out in the world
+  (old emails, old bookmarks, search results) is simply broken now. That's the cost of the
+  domain changing hands, not something a config change here can fix.
+- **Google Cloud OAuth, Railway's custom domain, and Cloudflare Pages' custom domains** for
+  `finoratech.info` and its subdomains (`app.`, `admin.`, `api.`, and the `dev-*` tier — see "Dev
+  environment" below, which has its own live `finoratech.info` references still pointing at
+  infrastructure that needs to stop trusting that domain) all need removing directly in their
+  respective consoles — none of that is expressible in this repo.
 - **Search Console.** Add `fynora.net` as a property (Cloudflare's existing DNS makes domain-level
   verification via a TXT record the fastest path), then use URL Inspection → Request Indexing on
   the handful of pages that matter for organic traffic (landing, About, Careers) rather than
   waiting on the crawl queue. There is no sitemap in this repo to submit — the site is small enough
-  that request-indexing the key pages directly is faster than building one.
-
-Until the redirects exist, `finoratech.info` and `fynora.net` are simply two live copies of the
-same site — worth confirming with `curl -sD - -o /dev/null https://app.finoratech.info/` (should
-show a `301`/`location: https://app.fynora.net/` once this is done, not a `200`).
+  that request-indexing the key pages directly is faster than building one. No point requesting
+  deindexing of the old domain's pages — that's now the buyer's content, not this project's to
+  manage either way.
 
 ## Dev environment (admin-portal, frontend, mobile)
 
-The backend already runs on two Railway environments — Production (`api.fynora.net`) and Dev
-(`dev-api.finoratech.info`). This section covers giving the three client surfaces (admin-portal,
-frontend, mobile) a matching Dev tier, so a feature can be exercised end-to-end against a live
-backend before it ever touches production data, Firebase, or real Google accounts.
+The backend already runs on two Railway environments — Production (`api.fynora.net`) and Dev.
+The Dev environment's own custom domain and every `dev-*.finoratech.info` reference below are
+stale in the same way as the production ones above (see the hard-cutover note): they still name
+a domain this project no longer controls, and no `fynora.net` Dev-tier equivalent has been
+provisioned yet. Remove Dev's `finoratech.info` custom domain in Railway and the `dev-app.`/
+`dev-admin.` ones in Cloudflare Pages the same way as the production custom domains; re-add the
+`dev-*.fynora.net` equivalents (and update `CORS_ORIGINS`/`APP_BASE_URL`/`ADMIN_APP_BASE_URL`
+below, Cloudflare Pages' Preview env bucket, and `mobile/eas.json`'s `dev` profile — see
+`docs/engineering/mobile/mobile-setup.md`) once they exist. This section covers giving the three
+client surfaces (admin-portal, frontend, mobile) a matching Dev tier, so a feature can be
+exercised end-to-end against a live backend before it ever touches production data, Firebase, or
+real Google accounts.
 
 **Nothing shared with Production here — a deliberately separate Firebase project.** Production's
 convention (one Firebase project, same values in both `frontend/` and `admin-portal/` — see
