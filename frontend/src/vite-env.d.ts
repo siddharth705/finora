@@ -30,3 +30,8 @@ interface ImportMetaEnv {
 interface ImportMeta {
   readonly env: ImportMetaEnv;
 }
+
+/** Injected by vite.config.ts's `define` -- the deployed commit SHA (Cloudflare Pages'
+ *  CF_PAGES_COMMIT_SHA), or '' when building outside Cloudflare Pages (local dev, the test
+ *  suite). Powers Sentry release tagging -- see lib/monitoring.ts. */
+declare const __APP_RELEASE__: string;
