@@ -1,6 +1,11 @@
 import { useState, type FormEvent } from 'react';
 import { User } from 'lucide-react';
 import { authApi } from '../../api/endpoints';
+import { useAuth } from '../../context/AuthContext';
+import { GoogleSignInButton } from '../../components/GoogleSignInButton';
+import { AppleSignInButton } from '../../components/AppleSignInButton';
+import { ReactivateAccountPrompt } from '../../components/ReactivateAccountPrompt';
+import { AUTH_ACCOUNT_DEACTIVATED } from '../../api/errorCodes';
 
 // Matches RegisterStep's own EMAIL_PATTERN -- used here only to decide which of Register's two
 // fields (email vs mobile number) to prefill when nextAction is CONTINUE, not as a submission
@@ -10,14 +15,37 @@ const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 interface IdentifyStepProps {
   onExists: (identifier: string) => void;
   onContinue: (identifier: string, prefill: { email?: string; phoneNumber?: string }) => void;
+  // Google/Apple don't need the /auth/identify lookup this step otherwise exists to make -- the
+  // provider already knows who the user is, and loginWithGoogle/loginWithApple transparently
+  // sign in an existing account or provision a new one (AuthService#loginWithOAuthIdentity does
+  // both server-side, same call PasswordStep and RegisterStep already make). So this step can
+  // complete auth directly rather than only ever handing off to password/register.
+  onSuccess: (phoneVerified: boolean) => void;
 }
 
-export function IdentifyStep({ onExists, onContinue }: IdentifyStepProps) {
+export function IdentifyStep({ onExists, onContinue, onSuccess }: IdentifyStepProps) {
+  const { loginWithGoogle, loginWithApple } = useAuth();
   const [identifier, setIdentifier] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [reactivationToken, setReactivationToken] = useState<string | null>(null);
 
   const identifierValid = identifier.trim().length > 0;
+
+  // Same as PasswordStep's own handleAuthError -- an OAuth credential proves identity exactly like
+  // a verified password does, so AuthService#enforceAccountIsSignable's AUTH_ACCOUNT_DEACTIVATED
+  // response (with its one-time reactivation token) is reachable from a Google/Apple sign-in here
+  // exactly as it already is from PasswordStep, now that this step can complete auth directly.
+  function handleOAuthError(err: any, fallbackMessage: string) {
+    const token = err.response?.data?.errorCode === AUTH_ACCOUNT_DEACTIVATED
+      ? err.response?.data?.details?.reactivationToken
+      : null;
+    if (token) {
+      setReactivationToken(token);
+    } else {
+      setError(err.response?.data?.message ?? fallbackMessage);
+    }
+  }
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -38,6 +66,40 @@ export function IdentifyStep({ onExists, onContinue }: IdentifyStepProps) {
     } finally {
       setLoading(false);
     }
+  }
+
+  async function handleGoogleCredential(idToken: string) {
+    setError(null);
+    setLoading(true);
+    try {
+      onSuccess(await loginWithGoogle(idToken));
+    } catch (err: any) {
+      handleOAuthError(err, 'Google sign-in failed.');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleAppleCredential(idToken: string, fullName: string | null) {
+    setError(null);
+    setLoading(true);
+    try {
+      onSuccess(await loginWithApple(idToken, fullName));
+    } catch (err: any) {
+      handleOAuthError(err, 'Apple sign-in failed.');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  if (reactivationToken) {
+    return (
+      <ReactivateAccountPrompt
+        token={reactivationToken}
+        onCancel={() => setReactivationToken(null)}
+        onReactivated={(phoneVerified) => onSuccess(phoneVerified)}
+      />
+    );
   }
 
   return (
@@ -69,6 +131,17 @@ export function IdentifyStep({ onExists, onContinue }: IdentifyStepProps) {
       >
         {loading ? 'Continuing…' : 'Continue'}
       </button>
+
+      <div className="flex items-center gap-3 my-5">
+        <div className="flex-1 h-px bg-border" />
+        <span className="text-xs text-muted">OR</span>
+        <div className="flex-1 h-px bg-border" />
+      </div>
+
+      <GoogleSignInButton text="signin_with" onCredential={handleGoogleCredential} onError={setError} />
+      <div className="mt-3">
+        <AppleSignInButton onCredential={handleAppleCredential} onError={setError} />
+      </div>
     </form>
   );
 }
