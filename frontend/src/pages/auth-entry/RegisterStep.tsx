@@ -5,6 +5,8 @@ import { useAuth } from '../../context/AuthContext';
 import { PasswordInput } from '../../components/PasswordInput';
 import { GoogleSignInButton } from '../../components/GoogleSignInButton';
 import { AppleSignInButton } from '../../components/AppleSignInButton';
+import { ReactivateAccountPrompt } from '../../components/ReactivateAccountPrompt';
+import { AUTH_ACCOUNT_DEACTIVATED } from '../../api/errorCodes';
 
 function passwordStrength(pw: string): { score: number; label: string; color: string } {
   let score = 0;
@@ -51,6 +53,7 @@ export function RegisterStep({ prefill, referralCode, onSuccess, onAccountExists
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [touched, setTouched] = useState<Record<string, boolean>>({});
+  const [reactivationToken, setReactivationToken] = useState<string | null>(null);
 
   const trimmedName = fullName.trim();
   const fullNameValid = trimmedName.length >= 2 && FULL_NAME_PATTERN.test(trimmedName);
@@ -93,14 +96,31 @@ export function RegisterStep({ prefill, referralCode, onSuccess, onAccountExists
     }
   }
 
+  // Same as PasswordStep/IdentifyStep's own OAuth error handling -- AuthService#loginWithOAuthIdentity
+  // reports AUTH_ACCOUNT_DEACTIVATED (with a one-time reactivation token) whenever the Google/Apple
+  // account's email matches an EXISTING but deactivated account, reachable here regardless of what
+  // this form's own fields say since Google/Apple's returned email need not match them at all.
+  // Checked before the existing 403 -> onAccountExists fallback, which covers the other 403 case
+  // (an existing, active-but-unverified account) that fallback was already written for.
+  function handleOAuthError(err: any, fallbackMessage: string) {
+    const token = err.response?.data?.errorCode === AUTH_ACCOUNT_DEACTIVATED
+      ? err.response?.data?.details?.reactivationToken
+      : null;
+    if (token) {
+      setReactivationToken(token);
+      return;
+    }
+    setError(err.response?.data?.message ?? fallbackMessage);
+    if (err.response?.status === 403) onAccountExists(email.trim());
+  }
+
   async function handleGoogleCredential(idToken: string) {
     setError(null);
     setLoading(true);
     try {
       onSuccess(await loginWithGoogle(idToken));
     } catch (err: any) {
-      setError(err.response?.data?.message ?? 'Google sign-in failed.');
-      if (err.response?.status === 403) onAccountExists(email.trim());
+      handleOAuthError(err, 'Google sign-in failed.');
     } finally {
       setLoading(false);
     }
@@ -112,11 +132,20 @@ export function RegisterStep({ prefill, referralCode, onSuccess, onAccountExists
     try {
       onSuccess(await loginWithApple(idToken, fullNameFromApple));
     } catch (err: any) {
-      setError(err.response?.data?.message ?? 'Apple sign-in failed.');
-      if (err.response?.status === 403) onAccountExists(email.trim());
+      handleOAuthError(err, 'Apple sign-in failed.');
     } finally {
       setLoading(false);
     }
+  }
+
+  if (reactivationToken) {
+    return (
+      <ReactivateAccountPrompt
+        token={reactivationToken}
+        onCancel={() => setReactivationToken(null)}
+        onReactivated={(phoneVerified) => onSuccess(phoneVerified)}
+      />
+    );
   }
 
   return (

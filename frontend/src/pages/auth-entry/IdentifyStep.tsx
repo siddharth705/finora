@@ -4,6 +4,8 @@ import { authApi } from '../../api/endpoints';
 import { useAuth } from '../../context/AuthContext';
 import { GoogleSignInButton } from '../../components/GoogleSignInButton';
 import { AppleSignInButton } from '../../components/AppleSignInButton';
+import { ReactivateAccountPrompt } from '../../components/ReactivateAccountPrompt';
+import { AUTH_ACCOUNT_DEACTIVATED } from '../../api/errorCodes';
 
 // Matches RegisterStep's own EMAIL_PATTERN -- used here only to decide which of Register's two
 // fields (email vs mobile number) to prefill when nextAction is CONTINUE, not as a submission
@@ -26,8 +28,24 @@ export function IdentifyStep({ onExists, onContinue, onSuccess }: IdentifyStepPr
   const [identifier, setIdentifier] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [reactivationToken, setReactivationToken] = useState<string | null>(null);
 
   const identifierValid = identifier.trim().length > 0;
+
+  // Same as PasswordStep's own handleAuthError -- an OAuth credential proves identity exactly like
+  // a verified password does, so AuthService#enforceAccountIsSignable's AUTH_ACCOUNT_DEACTIVATED
+  // response (with its one-time reactivation token) is reachable from a Google/Apple sign-in here
+  // exactly as it already is from PasswordStep, now that this step can complete auth directly.
+  function handleOAuthError(err: any, fallbackMessage: string) {
+    const token = err.response?.data?.errorCode === AUTH_ACCOUNT_DEACTIVATED
+      ? err.response?.data?.details?.reactivationToken
+      : null;
+    if (token) {
+      setReactivationToken(token);
+    } else {
+      setError(err.response?.data?.message ?? fallbackMessage);
+    }
+  }
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -56,7 +74,7 @@ export function IdentifyStep({ onExists, onContinue, onSuccess }: IdentifyStepPr
     try {
       onSuccess(await loginWithGoogle(idToken));
     } catch (err: any) {
-      setError(err.response?.data?.message ?? 'Google sign-in failed.');
+      handleOAuthError(err, 'Google sign-in failed.');
     } finally {
       setLoading(false);
     }
@@ -68,10 +86,20 @@ export function IdentifyStep({ onExists, onContinue, onSuccess }: IdentifyStepPr
     try {
       onSuccess(await loginWithApple(idToken, fullName));
     } catch (err: any) {
-      setError(err.response?.data?.message ?? 'Apple sign-in failed.');
+      handleOAuthError(err, 'Apple sign-in failed.');
     } finally {
       setLoading(false);
     }
+  }
+
+  if (reactivationToken) {
+    return (
+      <ReactivateAccountPrompt
+        token={reactivationToken}
+        onCancel={() => setReactivationToken(null)}
+        onReactivated={(phoneVerified) => onSuccess(phoneVerified)}
+      />
+    );
   }
 
   return (
