@@ -111,6 +111,45 @@ jobs:
           # token for.
           GITLEAKS_ENABLE_COMMENTS: false
 
+  # Catches copy-pasted logic between the two web apps -- or within one of them -- before it
+  # drifts into two variants of the same bug fixed in only one place. Scoped to frontend/src and
+  # admin-portal/src only: mobile is a different language surface (React Native, not web) with its
+  # own conventions, and the backend's duplication needs Java-aware detection this tool doesn't do
+  # well.
+  #
+  # Test files are excluded (.jscpd.json's `ignore`) -- repeated arrange/act/assert shape across
+  # tests is normal and not the kind of duplication this check exists to catch; flagging it would
+  # just be noise a reviewer has to read past on every run.
+  #
+  # .jscpd.json's threshold (7) is calibrated against this tree's actual duplication as measured
+  # when this job was added (~5.7% of lines across the two scoped directories, test files
+  # excluded), not against zero -- the 100-plus clones already in the codebase at that point are
+  # not something this job retroactively fails on, per the "an established threshold, not blind
+  # refactoring of every existing match" scope decision behind adding it. The gate exists to catch
+  # meaningfully *new* duplication from here on, with headroom for ordinary week-to-week movement
+  # in the baseline rather than requiring every existing clone to be resolved first. A genuine
+  # false positive -- two blocks that must legitimately look identical -- can be scoped out with a
+  # `// jscpd:ignore-start` / `// jscpd:ignore-end` comment pair around it, rather than by raising
+  # the threshold repo-wide.
+  duplication-scan:
+    name: Code duplication (jscpd)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: jscpd
+        run: npm run dupes
+
   backend:
     # No test count in the name: it was "934" while the suite was already at 936, because a
     # hardcoded total goes stale on the very next commit that adds a test and nothing fails when
