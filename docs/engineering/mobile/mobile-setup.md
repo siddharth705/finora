@@ -502,15 +502,24 @@ cd mobile && npx eas build --platform android --profile preview
 ### `dev` profile — local builds only, points at Railway's Dev environment
 
 A fourth, additive profile (`development`/`preview`/`production` above are untouched) for testing
-against `dev-api.finoratech.info` instead of production, with its own separate Firebase project
-(never production's — see `docs/operations/deployment/deployment-guide.md`'s "Dev environment"
-section for why). `eas.json` inlines its API URL directly:
+against the Dev environment's backend instead of production, with its own separate Firebase
+project (never production's — see `docs/operations/deployment/deployment-guide.md`'s "Dev
+environment" section for why).
+
+`eas.json` used to inline `EXPO_PUBLIC_API_BASE_URL: "https://dev-api.finoratech.info"` here.
+`finoratech.info` was sold and is no longer under this project's control — treat it as untrusted,
+not as a domain to migrate away from gracefully. No `dev-api.fynora.net` (or equivalent)
+equivalent exists yet, so the profile currently sets no value for this on purpose, the same way
+`development`/`preview` above already do: a missing value makes `mobile/src/api/client.ts` throw
+a clear, loud error at startup rather than a `dev` build silently talking to a domain someone else
+now owns. Set `EXPO_PUBLIC_API_BASE_URL` in the profile's `env` block once a real Dev-tier domain
+on `fynora.net` exists:
 
 ```jsonc
 "dev": {
   "distribution": "internal",
   "android": { "buildType": "apk" },
-  "env": { "EXPO_PUBLIC_API_BASE_URL": "https://dev-api.finoratech.info" }
+  "env": { "EXPO_PUBLIC_API_BASE_URL": "https://dev-api.fynora.net" }
 }
 ```
 
