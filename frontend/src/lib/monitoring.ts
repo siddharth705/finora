@@ -141,6 +141,12 @@ export function initMonitoring(): void {
 
     environment: import.meta.env.DEV ? 'development' : 'production',
 
+    // Matches the release name source maps were uploaded under (vite.config.ts), so Sentry can
+    // resolve a minified frame back to a real file and line. `|| undefined` rather than passing
+    // '' through: an empty string (no CF_PAGES_COMMIT_SHA -- local dev, or a deploy pipeline
+    // other than Cloudflare Pages) is a real release name to Sentry, not "no release set".
+    release: __APP_RELEASE__ || undefined,
+
     // Crash reporting only. Performance spans are keyed by URL, which would reintroduce the
     // identifiers scrubbed above, and there's no performance question being asked yet that would
     // justify that trade. Stated explicitly even though no tracing integration is registered --
