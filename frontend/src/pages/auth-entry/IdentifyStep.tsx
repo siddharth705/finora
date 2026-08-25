@@ -1,6 +1,9 @@
 import { useState, type FormEvent } from 'react';
 import { User } from 'lucide-react';
 import { authApi } from '../../api/endpoints';
+import { useAuth } from '../../context/AuthContext';
+import { GoogleSignInButton } from '../../components/GoogleSignInButton';
+import { AppleSignInButton } from '../../components/AppleSignInButton';
 
 // Matches RegisterStep's own EMAIL_PATTERN -- used here only to decide which of Register's two
 // fields (email vs mobile number) to prefill when nextAction is CONTINUE, not as a submission
@@ -10,9 +13,16 @@ const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 interface IdentifyStepProps {
   onExists: (identifier: string) => void;
   onContinue: (identifier: string, prefill: { email?: string; phoneNumber?: string }) => void;
+  // Google/Apple don't need the /auth/identify lookup this step otherwise exists to make -- the
+  // provider already knows who the user is, and loginWithGoogle/loginWithApple transparently
+  // sign in an existing account or provision a new one (AuthService#loginWithOAuthIdentity does
+  // both server-side, same call PasswordStep and RegisterStep already make). So this step can
+  // complete auth directly rather than only ever handing off to password/register.
+  onSuccess: (phoneVerified: boolean) => void;
 }
 
-export function IdentifyStep({ onExists, onContinue }: IdentifyStepProps) {
+export function IdentifyStep({ onExists, onContinue, onSuccess }: IdentifyStepProps) {
+  const { loginWithGoogle, loginWithApple } = useAuth();
   const [identifier, setIdentifier] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -35,6 +45,30 @@ export function IdentifyStep({ onExists, onContinue }: IdentifyStepProps) {
       }
     } catch (err: any) {
       setError(err.response?.data?.message ?? 'Something went wrong. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleGoogleCredential(idToken: string) {
+    setError(null);
+    setLoading(true);
+    try {
+      onSuccess(await loginWithGoogle(idToken));
+    } catch (err: any) {
+      setError(err.response?.data?.message ?? 'Google sign-in failed.');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleAppleCredential(idToken: string, fullName: string | null) {
+    setError(null);
+    setLoading(true);
+    try {
+      onSuccess(await loginWithApple(idToken, fullName));
+    } catch (err: any) {
+      setError(err.response?.data?.message ?? 'Apple sign-in failed.');
     } finally {
       setLoading(false);
     }
@@ -69,6 +103,17 @@ export function IdentifyStep({ onExists, onContinue }: IdentifyStepProps) {
       >
         {loading ? 'Continuing…' : 'Continue'}
       </button>
+
+      <div className="flex items-center gap-3 my-5">
+        <div className="flex-1 h-px bg-border" />
+        <span className="text-xs text-muted">OR</span>
+        <div className="flex-1 h-px bg-border" />
+      </div>
+
+      <GoogleSignInButton text="signin_with" onCredential={handleGoogleCredential} onError={setError} />
+      <div className="mt-3">
+        <AppleSignInButton onCredential={handleAppleCredential} onError={setError} />
+      </div>
     </form>
   );
 }
