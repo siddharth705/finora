@@ -515,6 +515,7 @@ export function ImportScreen() {
                     onChangeText={(name) => setAccountForm((f) => ({ ...f, name }))}
                     placeholder="Imported Account"
                     placeholderTextColor={c.muted}
+                    accessibilityLabel="Account name"
                     style={[styles.input, { color: c.ink, borderColor: c.border, backgroundColor: c.inputBg }]}
                   />
                   <View style={styles.typeRow}>
