@@ -666,8 +666,12 @@ finora:
 sentry:
   dsn: ${SENTRY_DSN:}
   environment: ${SENTRY_ENVIRONMENT:development}
-  # Set by the deploy to the commit SHA, so an error points at a deploy rather than at "production".
-  release: ${SENTRY_RELEASE:}
+  # So an error points at a deploy rather than at "production". Falls back to RAILWAY_GIT_COMMIT_SHA
+  # -- one of Railway's own automatically-injected variables, present on every deploy with no
+  # dashboard configuration needed -- rather than requiring SENTRY_RELEASE to be set by hand.
+  # SENTRY_RELEASE still wins if explicitly set, for a non-Railway deploy or to name a release
+  # something other than the raw commit SHA.
+  release: ${SENTRY_RELEASE:${RAILWAY_GIT_COMMIT_SHA:}}
   # The starter would otherwise install a logback appender that ships every ERROR log as an event,
   # in addition to the exceptions we capture deliberately. On this backend a log line is the single
   # most likely place for a narration or an amount to appear, so that channel stays closed and

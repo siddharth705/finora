@@ -306,6 +306,39 @@ portal — the ids of the customers an admin was viewing. See `src/lib/monitorin
 for exactly what is stripped and why; the scrubbers are unit-tested, because scrubbing that
 silently stops working looks identical to scrubbing that works.
 
+### Sentry release tagging and source maps (both frontends)
+
+Optional, and everything above works fully without it -- a build without these still deploys and
+reports crashes exactly as described above, just with minified stack traces instead of real file
+and line numbers.
+
+**Release tagging needs nothing set here.** `vite.config.ts` in each app reads
+`CF_PAGES_COMMIT_SHA`, which Cloudflare Pages injects into the build environment automatically
+for every build (Production and Preview alike) -- no dashboard configuration needed. It's wired
+through as the Sentry release name (`__APP_RELEASE__` in `vite-env.d.ts`, consumed by
+`lib/monitoring.ts`'s `Sentry.init`) so an error groups by deploy rather than by "production" as a
+whole. The backend does the equivalent from Railway's own auto-injected `RAILWAY_GIT_COMMIT_SHA`
+-- see `sentry.release` in `application.yml`.
+
+**Source map upload needs three build environment variables**, set in Cloudflare Pages' project
+Settings -> Environment variables (recommended: Production bucket only -- every open PR's Preview
+build already shares Firebase Dev-tier config per the Dev environment section below, but there's
+no reason for every preview build to also upload a Sentry release):
+
+```
+SENTRY_ORG=<your org slug, from your Sentry URL>
+SENTRY_PROJECT=<your project slug, from your Sentry URL>
+SENTRY_AUTH_TOKEN=<a Sentry auth token with project:releases scope -- a real secret, never commit it>
+```
+
+`vite.config.ts` applies the `@sentry/vite-plugin` only when all three are present, the same
+"absent config degrades to no-op" posture as `VITE_SENTRY_DSN` above -- a build missing any of
+them still succeeds, it just doesn't upload maps. The uploaded `.js.map` files are deleted from
+the built output immediately after upload (`sourcemaps.filesToDeleteAfterUpload` in each
+`vite.config.ts`), so they never end up served publicly from `dist/` -- Sentry has its own copy by
+the time this deletes them, and the app's own bundle already only ships hidden-sourcemap
+references (`build.sourcemap: 'hidden'`), not maps anyone's browser would fetch.
+
 **Also verify `CORS_ORIGINS` on the Railway backend matches your ACTUAL deployed frontend
 origin(s) exactly** — scheme, host, no trailing slash. Cloudflare Pages assigns its own
 `<project-name>.pages.dev` domain (and a different one per preview deployment) by default; once a
