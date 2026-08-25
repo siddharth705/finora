@@ -219,7 +219,7 @@ export function LoginScreen({ navigation, route }: Props) {
         />
       </View>
 
-      <Button label="Sign in" onPress={handleSubmit} loading={loading} />
+      <Button label="Sign in" onPress={handleSubmit} loading={loading} testID="login-submit" />
 
       {showSocialSignIn ? (
         <>

@@ -1,0 +1,39 @@
+# Signs in as the account .maestro/seed-test-user.sh creates, then confirms the app landed in the
+# signed-in shell rather than staying on Login or bouncing to phone verification (see that script's
+# own comment for why phone_verified is seeded directly rather than through the product -- the
+# same reason e2e/fixtures/accounts.ts does it for the Playwright suite).
+#
+# A fresh install lands on AuthEntryScreen (mobile/src/screens/AuthEntryScreen.tsx), not Login
+# directly -- RootNavigator only picks Login as the initial route after a sign-out. This flow goes
+# through AuthEntry, matching what `clearState: true` below actually produces.
+appId: com.finoratech.app
+env:
+  TEST_EMAIL: maestro-test@finora.test
+  TEST_PASSWORD: MaestroSeedPass2026
+---
+- launchApp:
+    clearState: true
+
+- assertVisible: "Sign in or create an account"
+- tapOn: "Email or mobile number"
+- inputText: ${TEST_EMAIL}
+- tapOn: "Continue"
+
+# AuthEntryScreen navigates to Login with the identifier prefilled once POST /auth/identify
+# resolves it to an existing account -- see that screen's own doc comment. AuthScreenLayout's own
+# title is ALSO the literal text "Sign in" -- a plain `tapOn: "Sign in"` matches that heading
+# first (non-interactive) rather than the submit button below it, so the button carries its own
+# testID (Button.tsx / LoginScreen.tsx) precisely so this selector isn't ambiguous.
+- assertVisible: "Sign in"
+- tapOn: "Password"
+- inputText: ${TEST_PASSWORD}
+# The on-screen keyboard covers the submit button entirely (it sits just below the password
+# field) until dismissed -- verified against a real emulator run, not assumed.
+- hideKeyboard
+- tapOn:
+    id: "login-submit"
+
+# RootNavigator swaps the whole Auth stack out once AuthContext holds a token and the account is
+# phone-verified (see LoginScreen.tsx's own comment: "No navigation on success"). Home is the
+# first bottom tab -- see AppTabs.tsx -- and renders DashboardScreen.
+- assertVisible: "Home"
