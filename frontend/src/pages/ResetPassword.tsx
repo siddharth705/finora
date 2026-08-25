@@ -282,7 +282,7 @@ export default function ResetPassword() {
               minLength={8}
               maxLength={72}
               autoComplete="new-password"
-              className="w-full border border-border rounded-lg px-3 py-2.5 pr-10 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+              className="w-full border border-border rounded-lg px-3 py-2.5 pr-10 text-sm bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-primary/30"
             />
             {password.length > 0 && (
               <div className="mt-2 mb-1">
@@ -308,7 +308,7 @@ export default function ResetPassword() {
               onBlur={() => markTouched('confirm')}
               required
               autoComplete="new-password"
-              className="w-full border border-border rounded-lg px-3 py-2.5 pr-10 mb-1 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+              className="w-full border border-border rounded-lg px-3 py-2.5 pr-10 mb-1 text-sm bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-primary/30"
             />
             <p className="text-[11px] mb-4 h-3.5">
               {touched.confirm && !passwordsMatch && <span className="text-danger">Passwords don't match.</span>}
