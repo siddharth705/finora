@@ -1,0 +1,9 @@
+{
+  "path": ["frontend/src", "admin-portal/src"],
+  "ignore": ["**/*.test.ts", "**/*.test.tsx", "**/*.stories.tsx"],
+  "minLines": 5,
+  "minTokens": 50,
+  "threshold": 7,
+  "reporters": ["console"],
+  "gitignore": true
+}
