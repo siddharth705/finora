@@ -103,6 +103,7 @@ export function LedgerScreen() {
         placeholderTextColor={c.muted}
         autoCapitalize="none"
         autoCorrect={false}
+        accessibilityLabel="Search transactions"
         style={[styles.search, { backgroundColor: c.card, borderColor: c.border, color: c.ink }]}
       />
 

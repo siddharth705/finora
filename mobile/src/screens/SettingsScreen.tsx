@@ -295,13 +295,20 @@ export function SettingsScreen() {
           <>
             {/* An "adjustable" with increment/decrement actions is React Native's equivalent of the
                 web's range input -- a screen reader announces the value and offers swipe up/down to
-                change it, which a pair of plain buttons would not. */}
+                change it, which a pair of plain buttons would not. The two Pressables below are kept
+                reachable too, deliberately: a screen reader user can either swipe on this container
+                or navigate directly to "Increase threshold" / "Decrease threshold" and activate one,
+                same as a sighted user tapping them (see SettingsScreen.test.tsx, which presses both
+                by that label). eslint-disable-next-line is for react-native-a11y/no-nested-touchables:
+                the rule is a static check for "accessible view contains a Pressable", with no way to
+                know that the redundant reachability here is the intended design, not an oversight. */}
+            {/* eslint-disable-next-line react-native-a11y/no-nested-touchables -- see comment above */}
             <View
               style={styles.stepper}
               accessible
               accessibilityRole="adjustable"
               accessibilityLabel="Confidence threshold"
-              accessibilityValue={{ min: 0, max: 100, now: threshold, text: `${threshold} percent` }}
+              accessibilityValue={{ min: 0, max: 100, now: threshold }}
               accessibilityActions={[{ name: 'increment' }, { name: 'decrement' }]}
               onAccessibilityAction={(e) => {
                 if (e.nativeEvent.actionName === 'increment') nudgeThreshold(THRESHOLD_STEP);
