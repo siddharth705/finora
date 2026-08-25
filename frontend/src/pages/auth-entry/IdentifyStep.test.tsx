@@ -147,4 +147,32 @@ describe('IdentifyStep', () => {
     await waitFor(() => expect(screen.getByText('New registrations are currently disabled.')).toBeInTheDocument());
     expect(onSuccess).not.toHaveBeenCalled();
   });
+
+  // Gap found on self-review: a deactivated account signing in via password already gets a
+  // one-click reactivation prompt (PasswordStep.tsx's handleAuthError), because
+  // AuthService#enforceAccountIsSignable throws AUTH_ACCOUNT_DEACTIVATED with a reactivation token
+  // for ANY sign-in method, including loginWithOAuthIdentity (Google/Apple). Before this step could
+  // trigger Google/Apple itself, that path was unreachable from here -- a deactivated user could
+  // only reach Google/Apple via PasswordStep, which already handled it. Now that Google/Apple sign
+  // in directly from IdentifyStep, the SAME deactivated-account response is reachable here too, and
+  // dropping straight to a generic error message strands the user with no way to reactivate.
+  it('shows the reactivation prompt, not a generic error, when Google sign-in reports a deactivated account', async () => {
+    vi.stubEnv('VITE_GOOGLE_LOGIN_CLIENT_ID', 'test-client-id.apps.googleusercontent.com');
+    vi.mocked(isGoogleLoginConfigured).mockReturnValue(true);
+    const initialize = vi.fn();
+    vi.mocked(loadGoogleIdentityServices).mockResolvedValue({ initialize, renderButton: vi.fn() } as any);
+    vi.mocked(authApi.google).mockImplementation(async () => {
+      throw Object.assign(new Error('This account is deactivated.'), {
+        response: { data: { errorCode: 'AUTH_007', details: { reactivationToken: 'reactivate-me-token' } } },
+      });
+    });
+    const { onSuccess } = renderStep();
+
+    await waitFor(() => expect(initialize).toHaveBeenCalled());
+    const { callback } = initialize.mock.calls[0][0];
+    callback({ credential: 'a-real-looking-jwt' });
+
+    expect(await screen.findByRole('button', { name: /reactivate my account/i })).toBeInTheDocument();
+    expect(onSuccess).not.toHaveBeenCalled();
+  });
 });
