@@ -57,7 +57,10 @@
   #     Fynora domain migration; finoratech.info was sold and is no longer under this project's
   #     control, so it is removed rather than kept as a "just in case" allowance -- there is no
   #     redirect to fall back to, and a CSP entry for a domain someone else now owns is a real
-  #     exfiltration path, not a compatibility nicety. Also identitytoolkit.googleapis.com and
+  #     exfiltration path, not a compatibility nicety. Also https://dev-api.fynora.net -- the
+  #     dev-tier Railway backend Cloudflare Pages' branch-preview deployments point
+  #     VITE_API_BASE_URL at, so sign-in/identify/refresh/register work when manually QA'ing a PR
+  #     preview instead of hitting a CSP block. Also identitytoolkit.googleapis.com and
   #     securetoken.googleapis.com (Firebase Auth's own REST endpoints, used by the Firebase Web
   #     SDK the phone-verification flow calls), and Sentry's ingest hosts (src/lib/monitoring.ts,
   #     no-ops unless VITE_SENTRY_DSN is set, but the connect-src entry costs nothing when unused).
@@ -82,7 +85,7 @@
   #     loads).
   #   - frame-ancestors 'none' takes over X-Frame-Options' job (both do the same thing; setting
   #     both would just be two places to keep in sync).
-  Content-Security-Policy: default-src 'self'; script-src 'self' https://www.gstatic.com https://www.google.com https://accounts.google.com/gsi/client https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://accounts.google.com/gsi/style; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: https://cdn.brandfetch.io; connect-src 'self' https://api.fynora.net https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://accounts.google.com/gsi/ https://www.google.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io; frame-src https://www.google.com https://accounts.google.com/gsi/; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'
+  Content-Security-Policy: default-src 'self'; script-src 'self' https://www.gstatic.com https://www.google.com https://accounts.google.com/gsi/client https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://accounts.google.com/gsi/style; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: https://cdn.brandfetch.io; connect-src 'self' https://api.fynora.net https://dev-api.fynora.net https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://accounts.google.com/gsi/ https://www.google.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io; frame-src https://www.google.com https://accounts.google.com/gsi/; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'
   Strict-Transport-Security: max-age=31536000; includeSubDomains
   Referrer-Policy: strict-origin-when-cross-origin
 
