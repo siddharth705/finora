@@ -3,11 +3,13 @@
   "private": true,
   "description": "Repo-wide dev tooling only (commit hygiene, git hooks). Application code lives in backend/, frontend/, admin-portal/, and mobile/, each with its own package.json / pom.xml.",
   "scripts": {
-    "prepare": "husky"
+    "prepare": "husky",
+    "dupes": "jscpd"
   },
   "devDependencies": {
     "@commitlint/cli": "^19.3.0",
     "@commitlint/config-conventional": "^19.2.2",
-    "husky": "^9.1.4"
+    "husky": "^9.1.4",
+    "jscpd": "^5.0.16"
   }
 }
