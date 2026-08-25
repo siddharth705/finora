@@ -1,0 +1,59 @@
+# Signs in, imports .maestro/fixtures/maestro-statement.csv (3 rows, pushed to the emulator's
+# Download folder by CI/local setup before this flow runs -- see mobile/.maestro/README.md), and
+# confirms the summary screen. "Choose a file" opens the OS's own document picker
+# (expo-document-picker -- see mobile/src/lib/statementFile.ts), not anything this app renders, so
+# this flow drives Android's system Files UI directly rather than an in-app selector.
+#
+# Deliberately NOT idempotent by re-running against a fresh account each time: this flow reuses the
+# same seeded account as login.yaml/dashboard.yaml (Maestro flows are static YAML with no per-run
+# random data -- see seed-test-user.sh's own comment), so a second run stages the same 3 rows again
+# and the review step's duplicate-detection notices they already exist. IMPORT_STAGE rate limiting
+# aside, that's a second real code path being exercised, not a bug in the flow -- but it does mean
+# CI seeds a fresh database per run rather than re-running this against a long-lived one.
+appId: com.finoratech.app
+env:
+  TEST_EMAIL: maestro-test@finora.test
+  TEST_PASSWORD: MaestroSeedPass2026
+---
+- launchApp:
+    clearState: true
+- tapOn: "Email or mobile number"
+- inputText: ${TEST_EMAIL}
+- tapOn: "Continue"
+- tapOn: "Password"
+- inputText: ${TEST_PASSWORD}
+# See login.yaml's own comments: the keyboard covers the submit button until dismissed, and
+# AuthScreenLayout's title is also literally "Sign in" so the button needs its own testID.
+- hideKeyboard
+- tapOn:
+    id: "login-submit"
+
+- tapOn: "Import"
+- assertVisible: "Import a statement"
+- tapOn: "Choose a file"
+
+# Android's system document picker (DocumentsUI) opens on "Recent", which only shows files
+# MediaStore has already indexed -- a file just placed there by `adb push` doesn't appear until
+# indexed, verified against a real emulator run rather than assumed. The hamburger icon (top-left,
+# no accessible label of its own -- verified via `maestro hierarchy`, hence a coordinate tap
+# instead of a text/id selector) opens the root drawer, where "Downloads" always appears for the
+# on-device Download folder regardless of MediaStore indexing.
+- tapOn:
+    point: "7%,8%"
+- tapOn: "Downloads"
+- tapOn: "maestro-statement.csv"
+
+# [1-9]\d*, not \d+: the same button reads "Import 0 transactions" and stays disabled (a no-op
+# tap) whenever every row is an unresolved possible-duplicate -- e.g. a rerun against a database
+# that already has this exact statement's transactions in it (see this file's header comment).
+# \d+ matches that "0" too, so a rerun would silently pass this assertion while tapping nothing
+# and everything after it would fail on the review screen, not the summary -- confirmed by
+# reproducing exactly that against a stale local database before tightening this.
+- assertVisible: "File into"
+- assertVisible:
+    text: "Import [1-9]\\d* transactions?"
+- tapOn:
+    text: "Import [1-9]\\d* transactions?"
+
+- assertVisible: "Import complete"
+- assertVisible: "Import another"

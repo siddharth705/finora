@@ -143,6 +143,17 @@ const config: ExpoConfig = {
           // rnfirebase.io's Expo config-plugin install guide.
           forceStaticLinking: ['RNFBApp', 'RNFBAuth'],
         },
+        android: {
+          // Android blocks cleartext (plain HTTP) traffic by default for any app targeting API 28+,
+          // which every real build of this app correctly leaves alone — production and staging are
+          // both HTTPS. The one build that needs it is a Maestro run against a local/CI backend at
+          // http://10.0.2.2:<port> (the emulator's alias for the host), which has no certificate to
+          // terminate TLS with. MAESTRO_ALLOW_CLEARTEXT is unset for every other build path (a
+          // developer's `expo run:android`, any `eas build` profile), so this is `undefined` --
+          // Expo's own default -- everywhere except a Maestro build, which sets it explicitly. See
+          // mobile/.maestro/README.md.
+          usesCleartextTraffic: process.env.MAESTRO_ALLOW_CLEARTEXT === 'true' ? true : undefined,
+        },
       },
     ],
   ],

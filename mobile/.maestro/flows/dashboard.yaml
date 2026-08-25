@@ -1,0 +1,31 @@
+# Signs in (same account as login.yaml) and checks the Home tab actually renders real dashboard
+# content rather than a stuck loading spinner or the error state -- see DashboardScreen.tsx's own
+# loading/error branches. Assumes nothing about ledger contents: a freshly seeded account has no
+# transactions, so this only asserts on what's true for EVERY account, verified vs.
+# mobile/src/screens/DashboardScreen.tsx directly rather than assumed.
+appId: com.finoratech.app
+env:
+  TEST_EMAIL: maestro-test@finora.test
+  TEST_PASSWORD: MaestroSeedPass2026
+---
+- launchApp:
+    clearState: true
+- tapOn: "Email or mobile number"
+- inputText: ${TEST_EMAIL}
+- tapOn: "Continue"
+- tapOn: "Password"
+- inputText: ${TEST_PASSWORD}
+# See login.yaml's own comments: the keyboard covers the submit button until dismissed, and
+# AuthScreenLayout's title is also literally "Sign in" so the button needs its own testID.
+- hideKeyboard
+- tapOn:
+    id: "login-submit"
+
+- assertVisible: "Home"
+- assertVisible: "Total Balance"
+- assertVisible: "Income"
+- assertVisible: "Expenses"
+- assertVisible: "Net Savings"
+- assertVisible: "Cash Flow"
+- assertVisible: "Spending by Category"
+- assertVisible: "Recent Transactions"

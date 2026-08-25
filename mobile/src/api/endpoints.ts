@@ -2,6 +2,7 @@ import { File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import { api, rawApi, type ApiEnvelope } from './client';
 import { encodeBase64 } from '../lib/base64';
+import { isOffline } from '../lib/apiError';
 import type {
   Account, AccountStatementGroup, Budget, DashboardSummary, DetectedAccountInfo, Goal,
   ImportSummary, ReimportResult, StagedAccountSection, StagedRow, StatementSummary, Transaction,
@@ -281,16 +282,45 @@ export interface RNFile {
   type: string;
 }
 
+/**
+ * One retry, only for a genuine transport-layer failure (no response reached the client at all --
+ * see isOffline()'s own doc comment).
+ *
+ * The document picker (`pickStatement()` in lib/statementFile.ts) hands control to a separate OS
+ * activity and back. Verified against a real device, not assumed: the moment that activity
+ * returns, an upload started immediately can fail with axios's ERR_NETWORK even though the file is
+ * confirmed present on disk and every other endpoint reached from the same screen moments earlier
+ * or later succeeds -- the app's process is briefly resumed before the OS has finished restoring
+ * its network callback registration (visible in logcat as a ConnectivityService RemoteException
+ * for this app's own request package right after the picker activity exits). A fixed delay before
+ * every upload would tax the common case to paper over a one-off timing gap; retrying once, only
+ * on the specific error shape this gap produces, costs nothing when the gap isn't there and
+ * recovers when it is.
+ */
+async function stageWithRetry<T>(attempt: () => Promise<T>): Promise<T> {
+  try {
+    return await attempt();
+  } catch (e) {
+    if (!isOffline(e)) throw e;
+    return attempt();
+  }
+}
+
 export const importApi = {
+  // No explicit Content-Type header on either upload below: 'multipart/form-data' with no boundary
+  // is invalid HTTP (the multipart parser needs one), and axios only computes the correct
+  // boundary-included header when nothing has already set Content-Type. This was previously set by
+  // hand -- turned out to be a red herring for the real bug below (see stageWithRetry's own doc
+  // comment), but wrong regardless of that, since a manual header without a boundary can never be
+  // valid multipart.
   stageCsv: (file: RNFile, onProgress?: ProgressCallback) => {
     const form = new FormData();
     form.append('file', file as unknown as Blob);
-    return api
-      .post<{ sessionId: string; staging: StagingResult }>('/import/csv/stage', form, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-        ...toUploadProgressConfig(onProgress),
-      })
-      .then((r) => r.data);
+    return stageWithRetry(() =>
+      api
+        .post<{ sessionId: string; staging: StagingResult }>('/import/csv/stage', form, toUploadProgressConfig(onProgress))
+        .then((r) => r.data)
+    );
   },
   // `password` opens a protected statement (most Indian banks e-mail them that way). It rides in
   // the form body, never the query string, so it can't reach a server access log. Omitted when
@@ -300,12 +330,11 @@ export const importApi = {
     const form = new FormData();
     form.append('file', file as unknown as Blob);
     if (password) form.append('password', password);
-    return api
-      .post<PdfStagingSessionResult>('/import/pdf/stage', form, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-        ...toUploadProgressConfig(onProgress),
-      })
-      .then((r) => r.data);
+    return stageWithRetry(() =>
+      api
+        .post<PdfStagingSessionResult>('/import/pdf/stage', form, toUploadProgressConfig(onProgress))
+        .then((r) => r.data)
+    );
   },
   confirm: (payload: ConfirmPayload) =>
     api.post<ImportSummary>('/import/csv/confirm', payload).then((r) => r.data),
