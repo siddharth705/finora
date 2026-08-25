@@ -556,25 +556,39 @@ command; `env:set` is its replacement for both creating and updating a variable.
 
 ## Android validation status
 
-Recorded 2026-08-09. **Android is not production-ready yet** — the end-to-end journey has not been
-completed on a device.
+Updated 2026-08-25, on an **emulator** (this repo's own Pixel_10 AVD, `google_apis_playstore`
+system image) -- not yet on a real device. **Android is not production-ready** in the sense the
+"Device validation checklist" below means: nothing here exercises real Firebase phone-OTP,
+Play Integrity, or Google/Apple sign-in, all of which need a real device and a real Firebase
+project (see that section's own header). What's below is the plain email/password + CSV import
+path, driven end-to-end by Maestro -- see `mobile/.maestro/README.md`.
 
 | Step | Status |
 | --- | --- |
-| `expo prebuild -p android` | Passed — first time it has completed in this repo |
+| `expo prebuild -p android` | Passed |
 | Emulator boot (Pixel 10) | Passed |
 | Backend reachable (`/actuator/health`) | Passed |
-| Gradle build on **JDK 25** | **Failed** — CMake configuration, classified environment/toolchain |
-| Gradle build on **JDK 21** | In progress at time of writing |
-| Install / launch | Not yet attempted |
-| Register → phone verification → login | Not yet attempted |
-| Import → review → confirm → ledger | Not yet attempted |
+| Gradle build on **JDK 25** | Failed -- CMake configuration, classified environment/toolchain (2026-08-09 finding, unchanged) |
+| Gradle build on **JDK 21** | **Passed** -- both `assembleDebug` and `assembleRelease`, first time either has completed in this repo |
+| Install / launch | **Passed** -- `assembleDebug` installs and launches, but is the `expo-dev-client` shell with no embedded bundle; `assembleRelease` (debug-signed by the generated `android/app/build.gradle`, no real keystore needed) is what actually renders this app's own screens |
+| Login (email/password) | **Passed** -- `mobile/.maestro/flows/login.yaml`. Not tested here: phone-OTP verification, Google/Apple sign-in -- all three require Firebase credentials this validation run didn't have, by design (see `.maestro/README.md`) |
+| Dashboard | **Passed** -- `mobile/.maestro/flows/dashboard.yaml` |
+| Import → review → confirm → ledger | **Passed** -- `mobile/.maestro/flows/import.yaml`, a real CSV staged, reviewed (including live duplicate-detection against a reused account), confirmed, and landing in "Import complete" with correct totals |
 | Logout | Not yet attempted |
 
-Nothing here should be read as "Android works". It establishes that the project *configures* and
-*compiles* far enough to be worth validating, and that the one failure so far was the host
-toolchain rather than this codebase. The bar for calling Android ready is the journey above
-completing against known financial fixtures, not a successful `assembleDebug`.
+One real, previously-undiscovered bug found and fixed by this validation, not a pre-existing known
+issue: `importApi.stageCsv`/`stagePdf` (`mobile/src/api/endpoints.ts`) could fail the *first*
+upload attempt right after the document picker returns control to the app, with axios's
+`ERR_NETWORK` -- a transient connectivity gap in the OS's own network-callback delivery during that
+activity handoff, not anything wrong with the request itself. Fixed with a single retry scoped to
+that one call site (see `stageWithRetry`'s doc comment there for the full diagnosis and why a fixed
+delay was rejected in favor of a real retry).
+
+Nothing here should be read as "Android works" in the full sense the checklist below asks for --
+notably, no real phone-OTP, Play Integrity, or OAuth flow has been exercised, and this was an
+emulator, not a device. It does establish that the app now genuinely builds, installs, launches,
+and completes its three most-used journeys on Android, closing the gap this section flagged on
+2026-08-09.
 
 ## Device validation checklist
 
