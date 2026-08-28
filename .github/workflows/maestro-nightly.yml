@@ -115,6 +115,14 @@ jobs:
       # statements raises them: production per-IP ceilings would stop this run partway through
       # regardless of whether the product works. IMPORT_STAGE specifically because import.yaml
       # stages a statement; the others are raised defensively, matching ci.yml's smoke job.
+      #
+      # $JAVA_HOME/bin/java, not bare `java` -- setting the JAVA_HOME env var does NOT change what
+      # `java` on PATH resolves to. setup-java's multi-version install only puts the LAST-listed
+      # version (21, for the Android Gradle build) on PATH by default; the jar above was built with
+      # JDK 25 above via mvnw, which does honor JAVA_HOME internally. A bare `java` here loads a
+      # JDK-25-compiled class file with a JDK 21 runtime and dies immediately with "has been
+      # compiled by a more recent version of the Java Runtime" -- confirmed by hitting exactly that
+      # in this workflow's first real run.
       - name: Start the backend
         working-directory: backend
         env:
@@ -129,7 +137,7 @@ jobs:
           RATE_LIMIT_REFRESH_MAX: 10000
         run: |
           GOOGLE_APPLICATION_CREDENTIALS="$RUNNER_TEMP/maestro-creds.json" \
-            java -jar target/finora-backend-*.jar > "$RUNNER_TEMP/backend.log" 2>&1 &
+            "$JAVA_HOME/bin/java" -jar target/finora-backend-*.jar > "$RUNNER_TEMP/backend.log" 2>&1 &
           for _ in $(seq 1 60); do
             if curl -sf http://localhost:18090/actuator/health | grep -q '"UP"'; then
               echo "backend up"; exit 0
