@@ -33,8 +33,16 @@ public class ReconciliationService {
     // the refund pass below. Deliberately not folded into CategoryRules (util package): that
     // table drives the CATEGORY suggestion ("Fees/Interest", "Transfer", ...), this drives
     // RECONCILIATION status, a different concern evaluated at a different point in the pipeline.
+    //
+    // "reversal" used to live in this set. Split out below (Phase 1 of the reconciliation
+    // roadmap, docs/proposals/reconciliation-evolution-roadmap-proposal.md) because a bank-side
+    // reversal ("this payment bounced") and a merchant refund ("this order was returned") are
+    // different real-world events that were producing an identical REFUND verdict -- the pass's
+    // matching mechanism (same account, refund window, capacity tracking) is unchanged, only the
+    // final classification now distinguishes them.
     private static final Set<String> REFUND_KEYWORDS = Set.of(
-            "refund", "reversal", "returned", "chargeback", "credit adjustment", "cancelled", "canceled");
+            "refund", "returned", "chargeback", "credit adjustment", "cancelled", "canceled");
+    private static final Set<String> REVERSAL_KEYWORDS = Set.of("reversal", "payment reversed");
 
     // A run past this is worth a log line on its own. Chosen against the measurement in
     // scaling-triggers.md rather than picked as a round number: the windowed passes take ~105 ms
@@ -157,7 +165,7 @@ public class ReconciliationService {
         // Dashboard's duplicateMatches/transferMatches/refundMatches already show, computed
         // fresh on every read -- this is a different, complementary number: how much did the
         // most recent run actually do).
-        int newDuplicates = 0, newTransfers = 0, newRefunds = 0;
+        int newDuplicates = 0, newTransfers = 0, newRefunds = 0, newReversals = 0;
 
         // Every row the passes below touch, written once at the end instead of one save() per
         // match. A large first import can flag hundreds of duplicates, and each save() was its own
@@ -302,21 +310,24 @@ public class ReconciliationService {
         // EXPENSE", and both get marked REFUND: ₹1,000 of real income silently excluded from every
         // total on the strength of one ₹500 purchase.
         //
-        // Seeded from already-resolved REFUND rows already sitting in refundCandidates (skipped by
-        // the `getReconciliationStatus() != OK` check below, same as a resolved duplicate is
-        // skipped in pass 1), not just accumulated fresh in this loop -- a prior run's match must
-        // count against this run's capacity too, not only matches made in the same pass.
+        // Seeded from already-resolved REFUND/REVERSAL rows already sitting in refundCandidates
+        // (skipped by the `getReconciliationStatus() != OK` check below, same as a resolved
+        // duplicate is skipped in pass 1), not just accumulated fresh in this loop -- a prior
+        // run's match must count against this run's capacity too, not only matches made in the
+        // same pass. Both statuses draw against the same expense's capacity: which of the two an
+        // income row became doesn't change how much of the original purchase it accounts for.
         //
         // Correct across BOTH entry points without a new query: CANDIDATE_WINDOW_DAYS is
         // Math.max(REFUND_WINDOW_DAYS, ...), so it is never smaller than REFUND_WINDOW_DAYS by
-        // construction. Any prior REFUND row that could compete for the same expense as a NEW
-        // income row in this run must itself sit within REFUND_WINDOW_DAYS of that expense --
-        // which means it is provably inside reconcileForImport's own fetch window too, so it is
-        // always present in `all`/`refundCandidates` here, never silently missing.
+        // construction. Any prior REFUND/REVERSAL row that could compete for the same expense as
+        // a NEW income row in this run must itself sit within REFUND_WINDOW_DAYS of that expense
+        // -- which means it is provably inside reconcileForImport's own fetch window too, so it
+        // is always present in `all`/`refundCandidates` here, never silently missing.
         Map<UUID, BigDecimal> refundedSoFarByExpenseId = new HashMap<>();
         for (Transaction t : refundCandidates) {
-            if (t.getReconciliationStatus() == Transaction.ReconciliationStatus.REFUND
-                    && t.getRefundOfTransactionId() != null) {
+            boolean isResolvedRefundLeg = t.getReconciliationStatus() == Transaction.ReconciliationStatus.REFUND
+                    || t.getReconciliationStatus() == Transaction.ReconciliationStatus.REVERSAL;
+            if (isResolvedRefundLeg && t.getRefundOfTransactionId() != null) {
                 refundedSoFarByExpenseId.merge(t.getRefundOfTransactionId(), t.getAmount(), BigDecimal::add);
             }
         }
@@ -326,6 +337,9 @@ public class ReconciliationService {
             if (income.getReconciliationStatus() != Transaction.ReconciliationStatus.OK) continue;
 
             boolean refundKeyword = looksLikeRefund(income.getDescription());
+            // Computed once per income row, same as refundKeyword above -- both are properties of
+            // the income's own description, not of any particular candidate expense.
+            boolean reversalKeyword = looksLikeReversal(income.getDescription());
             Transaction bestMatch = null;
             boolean bestMatchSameMerchant = false;
             // A refund lands at or after its purchase and within REFUND_WINDOW_DAYS of it, so the
@@ -346,10 +360,12 @@ public class ReconciliationService {
                 // Need at least one real signal -- either the description says "refund"/
                 // "reversal"/etc, or the (already-resolved, see Transaction.merchant) merchant
                 // token matches the original purchase's. Neither alone is required everywhere;
-                // both being absent means there's no actual evidence this is a refund at all.
+                // all three being absent means there's no actual evidence this is a refund (or a
+                // reversal) at all. The matching mechanism itself doesn't care which of the two
+                // this turns out to be -- that's decided once, after a match is found, below.
                 boolean sameMerchant = expense.getMerchant() != null && !expense.getMerchant().isBlank()
                         && expense.getMerchant().equalsIgnoreCase(income.getMerchant());
-                if (!refundKeyword && !sameMerchant) continue;
+                if (!refundKeyword && !reversalKeyword && !sameMerchant) continue;
 
                 // BH-007: capacity is what's LEFT of the expense, not its original amount -- an
                 // expense already fully claimed by an earlier match (this pass or a prior one) has
@@ -369,16 +385,30 @@ public class ReconciliationService {
             }
 
             if (bestMatch != null) {
-                income.setReconciliationStatus(Transaction.ReconciliationStatus.REFUND);
+                // Classification, not matching: the loop above found the same candidate expense
+                // either way, using the same window/capacity/tiebreak rules. reversalKeyword takes
+                // priority when present -- "reversal" is a specific bank-side signal, so a
+                // description that happens to carry both a refund word and a reversal word (rare)
+                // is read as the more specific claim. sameMerchant-only matches (no keyword at
+                // all) stay REFUND, since a merchant match alone says nothing about *why* the
+                // money came back.
+                if (reversalKeyword) {
+                    income.setReconciliationStatus(Transaction.ReconciliationStatus.REVERSAL);
+                    income.setReconciliationExplanation(
+                            ReconciliationExplanation.reversal(income, bestMatch, bestMatchSameMerchant));
+                    newReversals++;
+                } else {
+                    income.setReconciliationStatus(Transaction.ReconciliationStatus.REFUND);
+                    income.setReconciliationExplanation(
+                            ReconciliationExplanation.refund(income, bestMatch, refundKeyword, bestMatchSameMerchant));
+                    newRefunds++;
+                }
                 income.setRefundOfTransactionId(bestMatch.getId());
-                income.setReconciliationExplanation(
-                        ReconciliationExplanation.refund(income, bestMatch, refundKeyword, bestMatchSameMerchant));
                 dirty.add(income);
-                newRefunds++;
                 // Claims this income's amount against the expense's capacity immediately, so the
                 // NEXT income row in this same pass sees the reduced remainder rather than the
                 // original amount -- this is what makes two ₹500 incomes against one ₹500 expense
-                // resolve to one REFUND and one OK, not two REFUNDs.
+                // resolve to one REFUND/REVERSAL and one OK, not two.
                 refundedSoFarByExpenseId.merge(bestMatch.getId(), income.getAmount(), BigDecimal::add);
             }
         }
@@ -456,6 +486,7 @@ public class ReconciliationService {
             details.put("duplicatesFound", newDuplicates);
             details.put("transfersMatched", newTransfers);
             details.put("refundsMatched", newRefunds);
+            details.put("reversalsMatched", newReversals);
             details.put("rowsWritten", dirty.size());
             details.put("durationMs", elapsedMs);
             // Says which condition put this row here, so a reader of the trail can tell "this run
@@ -538,6 +569,11 @@ public class ReconciliationService {
     private boolean looksLikeRefund(String description) {
         String normalized = CategoryRules.normalize(description);
         return REFUND_KEYWORDS.stream().anyMatch(normalized::contains);
+    }
+
+    private boolean looksLikeReversal(String description) {
+        String normalized = CategoryRules.normalize(description);
+        return REVERSAL_KEYWORDS.stream().anyMatch(normalized::contains);
     }
 
     /** Exact-amount matches always outrank partial-amount matches; among equally-good matches,

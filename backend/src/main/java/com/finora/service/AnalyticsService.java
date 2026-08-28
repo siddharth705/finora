@@ -281,8 +281,8 @@ public class AnalyticsService {
 
     /** The offsets for the same user, so a refunded purchase contributes what it actually cost. */
     private RefundNetting refundsFor(UUID userId) {
-        return RefundNetting.from(transactionRepository.findByUserIdAndReconciliationStatus(
-                userId, Transaction.ReconciliationStatus.REFUND));
+        return RefundNetting.from(transactionRepository.findByUserIdAndReconciliationStatusIn(
+                userId, java.util.List.of(Transaction.ReconciliationStatus.REFUND, Transaction.ReconciliationStatus.REVERSAL)));
     }
 
     private Map<UUID, String> merchantNamesFor(UUID userId) {

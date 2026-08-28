@@ -120,8 +120,14 @@ public final class RefundNetting {
         return net.signum() < 0 ? BigDecimal.ZERO : net;
     }
 
-    /** True when this row is the income side of a matched refund. */
+    /**
+     * True when this row is the income side of a matched refund or reversal. Both statuses net
+     * the same way against the purchase they reverse -- REFUND vs. REVERSAL only records *why*
+     * the money came back (a merchant refund vs. a bank-side reversal), not whether it should be
+     * netted off the original expense, which is unconditionally yes for either.
+     */
     private static boolean isRefundLeg(Transaction t) {
-        return t.getReconciliationStatus() == Transaction.ReconciliationStatus.REFUND;
+        return t.getReconciliationStatus() == Transaction.ReconciliationStatus.REFUND
+                || t.getReconciliationStatus() == Transaction.ReconciliationStatus.REVERSAL;
     }
 }

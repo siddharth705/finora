@@ -294,6 +294,39 @@ class ReconciliationServiceTest {
     }
 
     @Test
+    void reconcileForUser_linksAReversalKeywordCreditAsReversal_notRefund() {
+        UUID accountId = UUID.randomUUID();
+
+        Transaction purchase = txn(UUID.randomUUID(), accountId, LocalDate.of(2026, 7, 1),
+                new BigDecimal("1200.00"), Transaction.Type.EXPENSE, "NEFT PAYMENT TO XYZ", Instant.now());
+        Transaction reversal = txn(UUID.randomUUID(), accountId, LocalDate.of(2026, 7, 2),
+                new BigDecimal("1200.00"), Transaction.Type.INCOME, "PAYMENT REVERSAL NEFT XYZ", Instant.now());
+
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(purchase, reversal));
+
+        reconciliationService.reconcileForUser(userId);
+
+        assertThat(reversal.getReconciliationStatus()).isEqualTo(Transaction.ReconciliationStatus.REVERSAL);
+        assertThat(reversal.getRefundOfTransactionId()).isEqualTo(purchase.getId());
+    }
+
+    @Test
+    void reconcileForUser_stillClassifiesAPlainRefundKeywordAsRefund_notReversal() {
+        UUID accountId = UUID.randomUUID();
+
+        Transaction purchase = txn(UUID.randomUUID(), accountId, LocalDate.of(2026, 7, 1),
+                new BigDecimal("899.00"), Transaction.Type.EXPENSE, "MYNTRA ORDER 552", Instant.now());
+        Transaction refund = txn(UUID.randomUUID(), accountId, LocalDate.of(2026, 7, 5),
+                new BigDecimal("899.00"), Transaction.Type.INCOME, "MYNTRA RETURN REFUND 552", Instant.now());
+
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(purchase, refund));
+
+        reconciliationService.reconcileForUser(userId);
+
+        assertThat(refund.getReconciliationStatus()).isEqualTo(Transaction.ReconciliationStatus.REFUND);
+    }
+
+    @Test
     void reconcileForUser_linksAPartialRefundByMerchantMatch_withoutRefundKeyword() {
         UUID accountId = UUID.randomUUID();
 
