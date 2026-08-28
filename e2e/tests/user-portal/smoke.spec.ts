@@ -13,7 +13,7 @@ test.describe('public pages', () => {
   test('the landing page renders and offers a route to register', async ({ page }) => {
     await page.goto('/');
 
-    await expect(page).toHaveTitle(/Finora/);
+    await expect(page).toHaveTitle(/Fynora/);
 
     // Located by href rather than by link text: the CTA's wording is marketing copy that changes
     // (this audit already corrected several such strings), but the route it points at is the
