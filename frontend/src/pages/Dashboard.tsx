@@ -214,10 +214,19 @@ export default function Dashboard() {
       ? `Last month has fewer than ${summary.comparisonGateMinTransactions} transactions, too few to compare reliably.`
       : null;
 
+  // The categories actually behind a real Total Expenses delta -- e.g. "expenses up 12%" alone
+  // never says WHY; DashboardService.expenseCategoryMovers already ranked the real contributors,
+  // this just renders each into one line. Empty whenever expenseDeltaPct is null (nothing to
+  // explain about a hidden number -- comparisonGateReasonText above already covers that case).
+  const expenseMoverLines = summary.expenseCategoryMovers.map((m) => {
+    const pctText = m.pctChange === null ? `new ${periodLabel}` : `${m.pctChange >= 0 ? '+' : ''}${m.pctChange.toFixed(0)}%`;
+    return `${m.category}: ${fmt(m.currentAmount)} vs ${fmt(m.priorAmount)} (${pctText})`;
+  });
+
   const kpis = [
     { label: 'Total Balance', value: fmt(summary.currentBalance), delta: null as number | null, icon: Wallet, iconBg: 'bg-blue-100', iconColor: 'text-blue-600' },
     { label: 'Total Income', value: fmt(summary.monthlyIncome), delta: summary.incomeDeltaPct, icon: ArrowDownCircle, iconBg: 'bg-green-100', iconColor: 'text-green-600', gateReasonText: comparisonGateReasonText },
-    { label: 'Total Expenses', value: fmt(summary.monthlyExpense), delta: summary.expenseDeltaPct, icon: ArrowUpCircle, iconBg: 'bg-red-100', iconColor: 'text-red-600', invertDelta: true, gateReasonText: comparisonGateReasonText },
+    { label: 'Total Expenses', value: fmt(summary.monthlyExpense), delta: summary.expenseDeltaPct, icon: ArrowUpCircle, iconBg: 'bg-red-100', iconColor: 'text-red-600', invertDelta: true, gateReasonText: comparisonGateReasonText, moverLines: expenseMoverLines },
     { label: 'Net Savings', value: fmt(summary.netCashFlow), delta: summary.netDeltaPct, icon: PiggyBank, iconBg: 'bg-primary-light', iconColor: 'text-primary', gateReasonText: comparisonGateReasonText },
     { label: 'Savings Rate', value: summary.savingsRatePct.toFixed(0) + '%', delta: null as number | null, icon: PieChart, iconBg: 'bg-purple-100', iconColor: 'text-purple-600' },
   ];
@@ -276,6 +285,7 @@ export default function Dashboard() {
             deltaLabel={deltaLabel}
             invertDelta={k.invertDelta}
             gateReasonText={k.gateReasonText}
+            moverLines={k.moverLines}
           />
         ))}
       </div>

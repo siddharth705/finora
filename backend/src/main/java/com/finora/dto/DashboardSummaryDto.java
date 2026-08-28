@@ -99,5 +99,20 @@ public record DashboardSummaryDto(
          * hardcoding a threshold.
          */
         String comparisonGateReason,
-        int comparisonGateMinTransactions
-) {}
+        int comparisonGateMinTransactions,
+
+        /*
+         * The categories behind a real (non-null) expenseDeltaPct -- e.g. "Dining ₹8,000 vs ₹5,000
+         * (+60%)" instead of leaving "expenses are up 12%" with no explanation of which categories
+         * moved. Built from the SAME currentMonth/priorMonth spendByCategory comparison
+         * expenseDeltaPct itself comes from (DashboardService.categoryMovers), NOT
+         * InsightsService's rolling 3-month-average movers -- a different prior-period definition
+         * that would make this list disagree with the number it's meant to explain. Always empty
+         * when expenseDeltaPct is null: there's nothing to explain about a number that isn't being
+         * shown (comparisonGateReason above already covers why not). Ranked by rupee contribution
+         * to the delta and capped at 3, largest first.
+         */
+        List<CategoryMover> expenseCategoryMovers
+) {
+    public record CategoryMover(String category, BigDecimal currentAmount, BigDecimal priorAmount, Double pctChange) {}
+}

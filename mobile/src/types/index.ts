@@ -144,6 +144,16 @@ export interface DashboardSummary {
   // deltas are real numbers or null for a self-explanatory reason. Mirrors frontend/src/types/index.ts.
   comparisonGateReason: 'PARTIAL_PRIOR_MONTH' | 'TOO_FEW_PRIOR_TRANSACTIONS' | null;
   comparisonGateMinTransactions: number;
+  // The categories behind a real (non-null) expenseDeltaPct (web only so far, same reason as
+  // healthScore above). Always empty when expenseDeltaPct is null. Mirrors frontend/src/types/index.ts.
+  expenseCategoryMovers: CategoryMover[];
+}
+
+export interface CategoryMover {
+  category: string;
+  currentAmount: number;
+  priorAmount: number;
+  pctChange: number | null;
 }
 
 export interface Budget {

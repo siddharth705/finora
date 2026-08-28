@@ -85,4 +85,45 @@ describe('MetricCard', () => {
     );
     expect(screen.queryByRole('button', { name: /why/i })).not.toBeInTheDocument();
   });
+
+  it('renders no "Why?" toggle on a real delta with no movers to explain it', () => {
+    render(
+      <MetricCard
+        label="Total Expenses" value="₹5,000" icon={Wallet} iconBg="bg-red-100" iconColor="text-red-600"
+        delta={12.3} deltaLabel="vs last month" moverLines={[]}
+      />
+    );
+    expect(screen.queryByRole('button', { name: /why/i })).not.toBeInTheDocument();
+  });
+
+  it('renders a "Why?" toggle next to a real delta that has category movers behind it', () => {
+    render(
+      <MetricCard
+        label="Total Expenses" value="₹8,000" icon={Wallet} iconBg="bg-red-100" iconColor="text-red-600"
+        delta={60} deltaLabel="vs last month"
+        moverLines={['Dining: ₹8,000 vs ₹5,000 (+60%)']}
+      />
+    );
+    expect(screen.getByRole('button', { name: 'Why?' })).toBeInTheDocument();
+    expect(screen.queryByText(/Dining/)).not.toBeInTheDocument();
+  });
+
+  it('reveals every mover line on clicking "Why?", and hides them again on a second click', async () => {
+    const user = userEvent.setup();
+    render(
+      <MetricCard
+        label="Total Expenses" value="₹8,000" icon={Wallet} iconBg="bg-red-100" iconColor="text-red-600"
+        delta={60} deltaLabel="vs last month"
+        moverLines={['Dining: ₹8,000 vs ₹5,000 (+60%)', 'Travel: ₹2,000 vs ₹1,000 (+100%)']}
+      />
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Why?' }));
+    expect(screen.getByText('Dining: ₹8,000 vs ₹5,000 (+60%)')).toBeInTheDocument();
+    expect(screen.getByText('Travel: ₹2,000 vs ₹1,000 (+100%)')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Hide' })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Hide' }));
+    expect(screen.queryByText(/Dining/)).not.toBeInTheDocument();
+  });
 });
