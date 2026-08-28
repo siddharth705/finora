@@ -27,6 +27,7 @@ import type {
   LayoutEvidenceReport,
   ImportTrace,
   CustomerFailureSummary,
+  ReconciliationExplorerTrace,
 } from '../types';
 
 // Which portal this account belongs to. The same person may hold a USER account and an ADMIN
@@ -442,6 +443,16 @@ export const adminUserLearningApi = {
 
 export const adminReconciliationApi = {
   platformStats: () => api.get<ReconciliationStatsDto>('/admin/reconciliation/stats').then((r) => r.data),
+};
+
+/** One transaction, traced from raw to final classification -- Phase 2's Founder Operations
+ *  Dashboard, Reconciliation Explorer (AdminReconciliationExplorerController). Same
+ *  RECONCILIATION_VIEW permission as adminReconciliationApi above; a 404 means no transaction
+ *  with that id exists, not a permission problem. */
+export const adminReconciliationExplorerApi = {
+  trace: (transactionId: string) =>
+    api.get<ReconciliationExplorerTrace>(`/admin/reconciliation/explorer/${encodeURIComponent(transactionId)}`)
+      .then((r) => r.data),
 };
 
 /** Admin, read-only Reconciliation Monitor + Workspace Health for a specific user --
