@@ -23,6 +23,10 @@ export function CategoryCombobox({ value, onChange, onCreateNew, excludeCategory
   }, []);
 
   useEffect(() => {
+    setQuery(value);
+  }, [value]);
+
+  useEffect(() => {
     const onClickOutside = (e: MouseEvent) => {
       if (containerRef.current && !containerRef.current.contains(e.target as Node)) setOpen(false);
     };

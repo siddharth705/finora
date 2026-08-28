@@ -63,4 +63,18 @@ describe('CategoryCombobox', () => {
       expect(screen.queryByText(/^Create "/)).not.toBeInTheDocument();
     });
   });
+
+  it('resyncs the displayed value when the value prop changes externally', async () => {
+    const { rerender } = render(<CategoryCombobox value="Groceries" onChange={vi.fn()} />);
+
+    await waitFor(() => {
+      expect(screen.getByRole('combobox')).toHaveValue('Groceries');
+    });
+
+    rerender(<CategoryCombobox value="Investments" onChange={vi.fn()} />);
+
+    await waitFor(() => {
+      expect(screen.getByRole('combobox')).toHaveValue('Investments');
+    });
+  });
 });
