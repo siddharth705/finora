@@ -308,9 +308,16 @@ public class DashboardService {
                 + consistencyScore * 0.15 + cashFlowScore * 0.15);
         String label = overall >= 80 ? "Excellent" : overall >= 60 ? "Good" : overall >= 40 ? "Fair" : "Needs Attention";
 
+        // "Debt Utilization" (not "Debt Score") used to label this -- but debtScore is INVERTED
+        // utilization (100 - avgUtil*100, so 100 = no debt / best), and a user with zero credit
+        // cards got debtScore=100 by design (see avgUtil above). Labelled "Debt Utilization: 100%"
+        // that reads as "maxed out"; it means the opposite. Every other entry in this map is
+        // already a "higher = healthier" score under a name that doesn't fight that reading --
+        // this was the one where the underlying real-world quantity (utilization) and the
+        // displayed number run in opposite directions, so it's the one that needed renaming.
         Map<String, Double> breakdown = new LinkedHashMap<>();
         breakdown.put("Savings Rate", savingsRateScore);
-        breakdown.put("Debt Utilization", debtScore);
+        breakdown.put("Debt Score", debtScore);
         breakdown.put("Emergency Fund", emergencyScore);
         breakdown.put("Spend Consistency", consistencyScore);
         breakdown.put("Cash Flow Stability", cashFlowScore);
