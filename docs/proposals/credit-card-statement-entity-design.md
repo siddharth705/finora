@@ -8,7 +8,7 @@
 
 The roadmap proposal said this would "reuse fields `CreditCardFlowReconciliationValidator` already extracts." Implementing item 6 alongside the other five Phase 1 items surfaced two things that claim got wrong, both found by reading the actual code rather than assuming:
 
-1. **No due date or minimum due is extracted anywhere in this codebase.** `CreditCardSummaryExtractor.CreditCardSummaryEvidence` — the record the validator reads — carries `previousBalance`, `purchases`, `cashAdvances`, `fees`, `paymentsAndCredits`, `totalAmountDue`, and provenance fields. Nothing else. Building due-date/minimum-due extraction now would mean inventing new PDF-parsing capability without a real document driving it — exactly what `docs/engineering/financial-document-intelligence-principles.md`'s "evidence before capability" gate exists to prevent, per `CreditCardSummaryExtractor`'s own class doc.
+1. **`minimum_due` is not extracted anywhere in this codebase; `due_date` is.** `CreditCardSummaryExtractor.CreditCardSummaryEvidence` — the record the validator reads — carries `previousBalance`, `purchases`, `cashAdvances`, `fees`, `paymentsAndCredits`, `totalAmountDue`, and provenance fields, and nothing else; "minimum due"/"minimum amount due" text only feeds a classification signal (`hasHeaderMatch` in `PdfPreviewGenerator`, used to help detect that a section is a credit-card statement at all), never a parsed value. Building minimum-due extraction now would mean inventing new PDF-parsing capability without a real document driving it — exactly what `docs/engineering/financial-document-intelligence-principles.md`'s "evidence before capability" gate exists to prevent. Payment due date is a different story: `PdfMetadataExtractor` already extracts it, with dedicated tested logic across several real label layouts (HDFC/Axis/AU same-line, multi-line grid, ordinal-day, and plain-sentence forms — see `PdfMetadataExtractorTest`'s `paymentDueDate` cases), and it already reaches `DetectedAccountInfo.paymentDueDate`. This design was corrected mid-implementation after re-reading that code; due date belongs in scope, not deferred.
 2. **The evidence doesn't survive from staging to confirm.** `CreditCardSummaryEvidence` is computed once, during `/pdf/stage`, consumed by `CreditCardFlowReconciliationValidator` to produce a `VerificationFinding` (staging-time telemetry), and then it's gone. Nothing carries it forward to the point `StatementImport` actually gets written. Creating a real, permanent `credit_card_statement` row means threading this evidence through the staging→confirm handoff — not just adding a table.
 
 Both are addressed below rather than worked around.
@@ -19,7 +19,8 @@ Both are addressed below rather than worked around.
 |---|---|---|
 | `previousBalance`, `purchases`, `cashAdvances`, `fees`, `paymentsAndCredits`, `totalAmountDue` | ✅ | Already extracted by `CreditCardSummaryExtractor`, verified against real documents |
 | `period_start` / `period_end` | ✅ | Already resolved generically for every PDF import (`StatementImport.statementPeriodStart/End`), not CC-specific |
-| `due_date`, `minimum_due` | ❌ | Not extracted anywhere today. A future PR, gated on reading real statements that print them and building extraction the same evidence-first way every other field in this package was built |
+| `due_date` | ✅ | Already extracted by `PdfMetadataExtractor` (`DetectedAccountInfo.paymentDueDate`), tested against several real label layouts |
+| `minimum_due` | ❌ | Not extracted anywhere today — only used as a classification signal, never parsed to a value. A future PR, gated on reading real statements that print it and building extraction the same evidence-first way every other field in this package was built |
 | Payment-matching (`CC_PAYMENT` edges, `paid_status`) | ❌ | Depends on the transaction graph (roadmap Phase 2), which hasn't shipped. Adding `paid_transaction_id`/`paid_status` columns now would be speculative — unused columns for a mechanism that doesn't exist yet |
 
 ## Schema
@@ -34,6 +35,7 @@ CREATE TABLE credit_card_statement (
     statement_import_id  UUID NOT NULL UNIQUE REFERENCES statement_imports(id) ON DELETE CASCADE,
     period_start         DATE,
     period_end           DATE,
+    due_date             DATE,
     previous_balance     NUMERIC(14,2),
     purchases            NUMERIC(14,2),
     cash_advances        NUMERIC(14,2),
@@ -54,7 +56,7 @@ Created **only** when the confirmed account's `accountType == CREDIT_CARD` and t
 
 ### `import_sessions.credit_card_summary_json` (new column, nullable TEXT)
 
-The staging-time carrier. `CreditCardSummaryEvidence` (all 8 fields, Jackson-serialized) written here at `/pdf/stage`, exactly parallel to how `layout_metadata_json`/`activated_capabilities_json`/`unparseable_summary_json` already carry their own staging-time facts forward — same mechanism, same column shape, one more field.
+The staging-time carrier. `CreditCardSummaryEvidence` (all 8 fields, Jackson-serialized) **plus** `DetectedAccountInfo.paymentDueDate` — added to the same JSON payload as a ninth field rather than a second new column, since both are staging-time CC facts that need the identical carry-forward treatment — written here at `/pdf/stage`, exactly parallel to how `layout_metadata_json`/`activated_capabilities_json`/`unparseable_summary_json` already carry their own staging-time facts forward — same mechanism, same column shape, two more fields.
 
 No equivalent JSON column is added to `statement_imports` — the structured `credit_card_statement` table is the permanent record; keeping a second, raw copy of the same evidence there would be storing the same facts twice for no reader that needs the raw form once the structured row exists.
 
@@ -111,7 +113,7 @@ sequenceDiagram
 
 - `entity/CreditCardStatement.java`
 - `repository/CreditCardStatementRepository.java` — `findByAccountIdOrderByPeriodStartDesc`, `findByStatementImportId`
-- No new controller/API in this PR — the row exists for Phase 3's payment-matching to consume, and for a future "your card bill" surface once due date exists to make it genuinely actionable. Read access can wait for a caller that actually needs it, rather than shipping a speculative endpoint now.
+- No new controller/API in this PR — the row (with `due_date` included) exists for Phase 3's payment-matching to consume, and for a future "your card bill" surface. Read access can wait for a caller that actually needs it, rather than shipping a speculative endpoint now.
 
 ## Migration plan
 
