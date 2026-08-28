@@ -341,6 +341,93 @@ public class MerchantLearningService {
         return new Summary(learnedMerchantIds.size(), totalConfirmations, correctedCount, resetCount);
     }
 
+    /**
+     * Everything the Learning Engine has to do before a category row can legally be deleted.
+     * Called by {@code CategoryService.delete} inside that method's own transaction.
+     *
+     * <p>Three tables reference {@code categories(id)} from this module, and the original design's
+     * FK audit missed all three:
+     *
+     * <ul>
+     *   <li>{@code merchant_learning_audit.previous_category_id} / {@code new_category_id} --
+     *       nullable, no explicit {@code ON DELETE}, therefore {@code NO ACTION}. Postgres REFUSES
+     *       the delete outright. This is not an edge case: an audit row is written on every manual
+     *       recategorization, so essentially every category a user has actually used is
+     *       undeletable until these are cleared. Cleared to NULL rather than repointed -- see
+     *       {@code MerchantLearningAuditRepository.clearPreviousCategoryReferences} for why
+     *       rewriting an audit trail to name a category the user never chose is the wrong answer.
+     *   <li>{@code merchant_category_learning.category_id} -- {@code ON DELETE CASCADE}. Does not
+     *       block the delete, but silently throws away the merchant training data ("Blinkit means
+     *       Groceries, confirmed 14 times") that the user is in the middle of asking us to MOVE,
+     *       not discard. Repointed at the reassignment target below.
+     *   <li>{@code merchant_learning_events.category_id} -- {@code ON DELETE CASCADE}, and
+     *       deliberately left to cascade. That table is the durable retry queue for not-yet-applied
+     *       learning (V62), and its own migration comment states the intent directly: an event
+     *       naming a category that no longer exists "is not retryable, it is meaningless."
+     *       Repointing a queued event at a category the user never chose for it would apply a
+     *       confirmation they never made. Telemetry/queue state, not app-relied-upon state.
+     * </ul>
+     *
+     * <p><b>Merge semantics when both categories know the same merchant.</b>
+     * {@code UNIQUE(user_id, merchant_id, category_id)} means a straight UPDATE would violate the
+     * constraint whenever the target already has its own row for that merchant. In that case the
+     * source row's {@code confirmationCount} is ADDED to the target's and the source is deleted,
+     * rather than the source simply being discarded: the user is reassigning those transactions to
+     * the target, so those confirmations genuinely now belong to it, and dropping them would
+     * under-weight the target in {@code ConfidenceEngine.topCategory}. The later of the two
+     * {@code lastConfirmedAt} values wins. Confidence is recomputed per affected merchant
+     * afterwards so the distribution still sums correctly.
+     *
+     * @param reassignTo the delete's reassignment target, or {@code null} when the category is
+     *                   being deleted with no target (only legal when it has no dependents). With
+     *                   no target there is nowhere to move the training data to, so the learning
+     *                   rows are left to CASCADE -- the audit clearing above still has to happen
+     *                   either way, since that is what actually blocks the delete.
+     */
+    @Transactional
+    public void onCategoryDeleted(UUID userId, UUID deletedCategoryId, UUID reassignTo) {
+        if (reassignTo != null && !reassignTo.equals(deletedCategoryId)) {
+            repointCategory(userId, deletedCategoryId, reassignTo);
+        }
+        auditRepository.clearPreviousCategoryReferences(userId, deletedCategoryId);
+        auditRepository.clearNewCategoryReferences(userId, deletedCategoryId);
+    }
+
+    /** @see #onCategoryDeleted */
+    private void repointCategory(UUID userId, UUID fromCategoryId, UUID toCategoryId) {
+        List<MerchantCategoryLearning> sources = learningRepository.findByUserIdAndCategoryId(userId, fromCategoryId);
+        Set<UUID> touchedMerchantIds = new HashSet<>();
+
+        for (MerchantCategoryLearning source : sources) {
+            touchedMerchantIds.add(source.getMerchantId());
+            Optional<MerchantCategoryLearning> existingTarget = learningRepository
+                    .findByUserIdAndMerchantIdAndCategoryId(userId, source.getMerchantId(), toCategoryId);
+
+            if (existingTarget.isPresent()) {
+                MerchantCategoryLearning target = existingTarget.get();
+                target.setConfirmationCount(target.getConfirmationCount() + source.getConfirmationCount());
+                if (source.getLastConfirmedAt().isAfter(target.getLastConfirmedAt())) {
+                    target.setLastConfirmedAt(source.getLastConfirmedAt());
+                }
+                target.setUpdatedAt(Instant.now());
+                learningRepository.save(target);
+                learningRepository.delete(source);
+            } else {
+                source.setCategoryId(toCategoryId);
+                source.setUpdatedAt(Instant.now());
+                learningRepository.save(source);
+            }
+        }
+
+        // Deleted/merged rows must be gone from the DB's point of view before the per-merchant
+        // re-read below, or a merged-away source row comes back from the persistence context and
+        // gets its confidence recomputed as if it still existed.
+        learningRepository.flush();
+        for (UUID merchantId : touchedMerchantIds) {
+            recomputeAndSave(learningRepository.findByUserIdAndMerchantId(userId, merchantId));
+        }
+    }
+
     private void recomputeAndSave(List<MerchantCategoryLearning> pairs) {
         var confidenceByCategory = confidenceEngine.recomputeDistribution(pairs);
         for (MerchantCategoryLearning pair : pairs) {

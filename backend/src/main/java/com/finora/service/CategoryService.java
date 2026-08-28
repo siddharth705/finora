@@ -32,17 +32,20 @@ public class CategoryService {
     private final CategoryRuleRepository categoryRuleRepository;
     private final TransactionRepository transactionRepository;
     private final BudgetRepository budgetRepository;
+    private final MerchantLearningService merchantLearningService;
     private final AuditService auditService;
 
     public CategoryService(CategoryRepository categoryRepository,
                             CategoryRuleRepository categoryRuleRepository,
                             TransactionRepository transactionRepository,
                             BudgetRepository budgetRepository,
+                            MerchantLearningService merchantLearningService,
                             AuditService auditService) {
         this.categoryRepository = categoryRepository;
         this.categoryRuleRepository = categoryRuleRepository;
         this.transactionRepository = transactionRepository;
         this.budgetRepository = budgetRepository;
+        this.merchantLearningService = merchantLearningService;
         this.auditService = auditService;
     }
 
@@ -122,6 +125,17 @@ public class CategoryService {
         if (category.isSystem()) {
             throw new ApiException(HttpStatus.FORBIDDEN, "This is a system category and can't be deleted.");
         }
+        // The ownership guard below passes for reassignTo == categoryId -- it IS still the
+        // caller's own category at that point, it just won't exist a few lines later. Left
+        // unguarded, the reassignment moves every transaction onto the row about to be deleted,
+        // and transactions.category_id's ON DELETE SET NULL (V1) then nulls all of them: the user
+        // asked to move their data somewhere and lost every category assignment instead, with a
+        // 200 back. Rejected explicitly rather than treated as a no-op delete, because "delete X,
+        // move everything to X" is not a coherent request to guess an intent for.
+        if (reassignTo != null && reassignTo.equals(categoryId)) {
+            throw new ApiException(HttpStatus.BAD_REQUEST,
+                    "Can't reassign a category to itself — pick a different category to move things to.");
+        }
 
         long transactionCount = transactionRepository.countByUserIdAndCategoryId(userId, categoryId);
         var existingBudget = budgetRepository.findByUserIdAndCategoryId(userId, categoryId);
@@ -146,6 +160,13 @@ public class CategoryService {
                 categoryRuleRepository.save(rule);
             }
         }
+
+        // Unconditional, NOT inside the hasDependents branch above. The Learning Engine's
+        // references are independent of transactions/budgets/rules -- a merchant can carry
+        // learning and audit rows for a category whose transactions have since been deleted, and
+        // merchant_learning_audit's NO ACTION foreign keys refuse the delete regardless of whether
+        // this service considers the category "in use". See MerchantLearningService.onCategoryDeleted.
+        merchantLearningService.onCategoryDeleted(userId, categoryId, reassignTo);
 
         auditService.record(userId, "CATEGORY_DELETED", "Category", categoryId,
                 Map.of("name", category.getName(), "transactionCount", transactionCount,

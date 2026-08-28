@@ -43,6 +43,14 @@ public interface MerchantCategoryLearningRepository extends JpaRepository<Mercha
 
     List<MerchantCategoryLearning> findByUserId(UUID userId);
 
+    /**
+     * Every merchant this user has confirmed under one specific category. Backs
+     * {@code MerchantLearningService.repointCategory}, which moves those confirmations to the
+     * reassignment target when the category is deleted instead of letting V7's
+     * {@code ON DELETE CASCADE} silently destroy the merchant's training data.
+     */
+    List<MerchantCategoryLearning> findByUserIdAndCategoryId(UUID userId, UUID categoryId);
+
     /** AccountPurgeSweepService -- hard delete, no soft-delete concern on this entity. */
     void deleteByUserId(UUID userId);
 

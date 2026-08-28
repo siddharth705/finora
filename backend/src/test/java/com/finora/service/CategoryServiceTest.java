@@ -25,11 +25,12 @@ class CategoryServiceTest {
     private final CategoryRuleRepository categoryRuleRepository = mock(CategoryRuleRepository.class);
     private final TransactionRepository transactionRepository = mock(TransactionRepository.class);
     private final BudgetRepository budgetRepository = mock(BudgetRepository.class);
+    private final MerchantLearningService merchantLearningService = mock(MerchantLearningService.class);
     private final AuditService auditService = mock(AuditService.class);
 
     private CategoryService service() {
         return new CategoryService(categoryRepository, categoryRuleRepository,
-                transactionRepository, budgetRepository, auditService);
+                transactionRepository, budgetRepository, merchantLearningService, auditService);
     }
 
     @Test
@@ -170,6 +171,30 @@ class CategoryServiceTest {
         assertThat(rule.getActionValue()).isEqualTo("SIP");
         verify(categoryRuleRepository).save(rule);
         verify(categoryRepository).delete(toDelete);
+        verify(merchantLearningService).onCategoryDeleted(userId, categoryId, targetId);
+    }
+
+    // Final-branch review, finding 3. requireOwned passes for reassignTo == categoryId (it is
+    // still the caller's own category at that moment), so without an explicit guard the delete
+    // reassigned every transaction onto the row it was about to remove and
+    // transactions.category_id ON DELETE SET NULL then nulled all of them -- total category loss,
+    // reported as success.
+    @Test
+    void deleteRejectsReassigningACategoryToItself() {
+        UUID categoryId = UUID.randomUUID();
+        Category toDelete = new Category();
+        toDelete.setUserId(userId);
+        toDelete.setName("Mutual Fund SIP");
+        toDelete.setSystem(false);
+        org.springframework.test.util.ReflectionTestUtils.setField(toDelete, "id", categoryId);
+        when(categoryRepository.findById(categoryId)).thenReturn(Optional.of(toDelete));
+
+        assertThatThrownBy(() -> service().delete(userId, categoryId, categoryId))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("reassign a category to itself");
+
+        verify(transactionRepository, never()).reassignCategory(any(), any(), any());
+        verify(categoryRepository, never()).delete(any(Category.class));
     }
 
     @Test
