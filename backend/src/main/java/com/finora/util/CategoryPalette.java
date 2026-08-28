@@ -1,8 +1,8 @@
 package com.finora.util;
 
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.Set;
 
 /**
  * The finite icon/color token vocabulary a Category's icon/color columns are validated against.
@@ -13,46 +13,50 @@ public final class CategoryPalette {
 
     private CategoryPalette() {}
 
-    public static final Map<String, String> ICONS = new LinkedHashMap<>();
+    public static final Map<String, String> ICONS;
     static {
-        ICONS.put("tag", "Tag");
-        ICONS.put("home", "Home");
-        ICONS.put("shopping-cart", "Groceries");
-        ICONS.put("utensils", "Dining");
-        ICONS.put("car", "Transport");
-        ICONS.put("zap", "Utilities");
-        ICONS.put("shopping-bag", "Shopping");
-        ICONS.put("heart-pulse", "Health");
-        ICONS.put("film", "Entertainment");
-        ICONS.put("trending-up", "Investing");
-        ICONS.put("percent", "Fees");
-        ICONS.put("repeat", "Transfer");
-        ICONS.put("users", "People");
-        ICONS.put("landmark", "Loan");
-        ICONS.put("shield", "Insurance");
-        ICONS.put("graduation-cap", "Education");
-        ICONS.put("refresh-cw", "Subscription");
-        ICONS.put("plane", "Travel");
-        ICONS.put("gift", "Gifts");
-        ICONS.put("paw-print", "Pets");
-        ICONS.put("sofa", "Home & Furnishing");
-        ICONS.put("receipt", "Taxes");
-        ICONS.put("banknote", "Cash");
-        ICONS.put("briefcase", "Business");
-        ICONS.put("arrow-down-circle", "Income");
+        Map<String, String> temp = new LinkedHashMap<>();
+        temp.put("tag", "Tag");
+        temp.put("home", "Home");
+        temp.put("shopping-cart", "Groceries");
+        temp.put("utensils", "Dining");
+        temp.put("car", "Transport");
+        temp.put("zap", "Utilities");
+        temp.put("shopping-bag", "Shopping");
+        temp.put("heart-pulse", "Health");
+        temp.put("film", "Entertainment");
+        temp.put("trending-up", "Investing");
+        temp.put("percent", "Fees");
+        temp.put("repeat", "Transfer");
+        temp.put("users", "People");
+        temp.put("landmark", "Loan");
+        temp.put("shield", "Insurance");
+        temp.put("graduation-cap", "Education");
+        temp.put("refresh-cw", "Subscription");
+        temp.put("plane", "Travel");
+        temp.put("gift", "Gifts");
+        temp.put("paw-print", "Pets");
+        temp.put("sofa", "Home & Furnishing");
+        temp.put("receipt", "Taxes");
+        temp.put("banknote", "Cash");
+        temp.put("briefcase", "Business");
+        temp.put("arrow-down-circle", "Income");
+        ICONS = Collections.unmodifiableMap(temp);
     }
 
-    public static final Map<String, String> COLORS = new LinkedHashMap<>();
+    public static final Map<String, String> COLORS;
     static {
-        COLORS.put("gray", "#6b7280");
-        COLORS.put("blue", "#2563eb");
-        COLORS.put("green", "#16a34a");
-        COLORS.put("red", "#dc2626");
-        COLORS.put("orange", "#ea580c");
-        COLORS.put("yellow", "#d97706");
-        COLORS.put("purple", "#7c3aed");
-        COLORS.put("pink", "#db2777");
-        COLORS.put("teal", "#0d9488");
+        Map<String, String> temp = new LinkedHashMap<>();
+        temp.put("gray", "#6b7280");
+        temp.put("blue", "#2563eb");
+        temp.put("green", "#16a34a");
+        temp.put("red", "#dc2626");
+        temp.put("orange", "#ea580c");
+        temp.put("yellow", "#d97706");
+        temp.put("purple", "#7c3aed");
+        temp.put("pink", "#db2777");
+        temp.put("teal", "#0d9488");
+        COLORS = Collections.unmodifiableMap(temp);
     }
 
     public static boolean isValidIcon(String token) {
