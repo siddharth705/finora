@@ -152,6 +152,12 @@ export interface DashboardSummary {
   // Mirrors frontend/src/types/index.ts.
   duplicateTransactionCount: number;
   detectedDuplicates: DetectedDuplicate[];
+  // Categorization Confidence (web only so far, same reason as healthScore above). Null below
+  // categorizationConfidenceMinTransactions engine-decided transactions this month.
+  // Mirrors frontend/src/types/index.ts.
+  categorizationConfidenceScore: number | null;
+  categorizationConfidenceTransactionCount: number;
+  categorizationConfidenceMinTransactions: number;
 }
 
 export interface CategoryMover {

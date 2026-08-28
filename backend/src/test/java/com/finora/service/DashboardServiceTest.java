@@ -494,6 +494,70 @@ class DashboardServiceTest {
     }
 
     @Test
+    @DisplayName("categorization confidence: averages this month's engine-decided transactions once past the floor")
+    void summarize_averagesCategorizationConfidence_pastTheFloor() {
+        List<Transaction> txns = new java.util.ArrayList<>();
+        int[] confidences = {60, 70, 80, 90, 100}; // average 80, exactly MIN_TRANSACTIONS_FOR_CONFIDENCE_SCORE (5) rows
+        for (int i = 0; i < confidences.length; i++) {
+            Transaction t = txn(new BigDecimal("100.00"), Transaction.Type.EXPENSE,
+                    LocalDate.of(2026, 7, 1 + i), Transaction.ReconciliationStatus.OK);
+            t.setDecisionConfidence(confidences[i]);
+            txns.add(t);
+        }
+        when(transactionRepository.findByUserId(userId)).thenReturn(txns);
+
+        DashboardSummaryDto summary = dashboardService.summarize(userId);
+
+        assertThat(summary.categorizationConfidenceScore()).isEqualTo(80);
+        assertThat(summary.categorizationConfidenceTransactionCount()).isEqualTo(5);
+        assertThat(summary.categorizationConfidenceMinTransactions()).isEqualTo(DashboardService.MIN_TRANSACTIONS_FOR_CONFIDENCE_SCORE);
+    }
+
+    @Test
+    @DisplayName("categorization confidence: null below the minimum-transactions floor, not a misleadingly small average")
+    void summarize_reportsNoCategorizationConfidence_belowTheFloor() {
+        List<Transaction> txns = new java.util.ArrayList<>();
+        for (int i = 0; i < DashboardService.MIN_TRANSACTIONS_FOR_CONFIDENCE_SCORE - 1; i++) {
+            Transaction t = txn(new BigDecimal("100.00"), Transaction.Type.EXPENSE,
+                    LocalDate.of(2026, 7, 1 + i), Transaction.ReconciliationStatus.OK);
+            t.setDecisionConfidence(50);
+            txns.add(t);
+        }
+        when(transactionRepository.findByUserId(userId)).thenReturn(txns);
+
+        DashboardSummaryDto summary = dashboardService.summarize(userId);
+
+        assertThat(summary.categorizationConfidenceScore()).isNull();
+        assertThat(summary.categorizationConfidenceTransactionCount()).isEqualTo(DashboardService.MIN_TRANSACTIONS_FOR_CONFIDENCE_SCORE - 1);
+    }
+
+    @Test
+    @DisplayName("categorization confidence: MANUAL/FILE_PROVIDED transactions (null decisionConfidence) don't count toward the floor or the average")
+    void summarize_excludesTransactionsWithNoDecisionConfidence() {
+        List<Transaction> txns = new java.util.ArrayList<>();
+        // 5 engine-decided (clears the floor) plus 3 MANUAL entries with no confidence at all --
+        // the manual ones must neither drag the average toward zero nor count toward the floor.
+        for (int i = 0; i < 5; i++) {
+            Transaction t = txn(new BigDecimal("100.00"), Transaction.Type.EXPENSE,
+                    LocalDate.of(2026, 7, 1 + i), Transaction.ReconciliationStatus.OK);
+            t.setDecisionConfidence(90);
+            txns.add(t);
+        }
+        for (int i = 0; i < 3; i++) {
+            Transaction manual = txn(new BigDecimal("50.00"), Transaction.Type.EXPENSE,
+                    LocalDate.of(2026, 7, 10 + i), Transaction.ReconciliationStatus.OK);
+            // decisionConfidence left null, as it always is for MANUAL/FILE_PROVIDED.
+            txns.add(manual);
+        }
+        when(transactionRepository.findByUserId(userId)).thenReturn(txns);
+
+        DashboardSummaryDto summary = dashboardService.summarize(userId);
+
+        assertThat(summary.categorizationConfidenceScore()).isEqualTo(90);
+        assertThat(summary.categorizationConfidenceTransactionCount()).isEqualTo(5);
+    }
+
+    @Test
     void summarize_flagsALiquidAccountBelowTheUsersLowBalanceThreshold() {
         // Override setUp()'s 100000 balance with one below the default 2000 threshold.
         savings.setBalance(new BigDecimal("500.00"));
