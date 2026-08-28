@@ -5,8 +5,11 @@ import com.finora.dto.CategoryDto;
 import com.finora.dto.CategoryOptionsDto;
 import com.finora.repository.CategoryRepository;
 import com.finora.security.CurrentUser;
+import com.finora.service.CategoryService;
 import com.finora.util.CategoryPalette;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -17,12 +20,17 @@ import java.util.List;
 public class CategoryController {
 
     private final CategoryRepository categoryRepository;
+    private final CategoryService categoryService;
     private final CurrentUser currentUser;
 
-    public CategoryController(CategoryRepository categoryRepository, CurrentUser currentUser) {
+    public CategoryController(CategoryRepository categoryRepository, CategoryService categoryService,
+                               CurrentUser currentUser) {
         this.categoryRepository = categoryRepository;
+        this.categoryService = categoryService;
         this.currentUser = currentUser;
     }
+
+    public record CreateCategoryRequest(String name, String icon, String color) {}
 
     @GetMapping
     public ApiResponse<List<CategoryDto>> list() {
@@ -41,5 +49,11 @@ public class CategoryController {
                 .map(e -> new CategoryOptionsDto.Option(e.getKey(), e.getValue()))
                 .toList();
         return ApiResponse.ok(new CategoryOptionsDto(icons, colors));
+    }
+
+    @PostMapping
+    public ApiResponse<CategoryDto> create(@RequestBody CreateCategoryRequest request) {
+        var c = categoryService.create(currentUser.id(), request.name(), request.icon(), request.color());
+        return ApiResponse.ok(new CategoryDto(c.getId(), c.getName(), c.isSystem(), c.getIcon(), c.getColor()));
     }
 }

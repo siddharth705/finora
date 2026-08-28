@@ -55,4 +55,18 @@ class CategoryControllerIT extends AbstractIntegrationTest {
         assertThat(data.get("icons").size()).isGreaterThan(0);
         assertThat(data.get("colors").size()).isGreaterThan(0);
     }
+
+    @Test
+    void createRejectsADuplicateNameCaseInsensitively() {
+        User user = createUser();
+        HttpHeaders headers = authHeaders(user);
+        headers.setContentType(org.springframework.http.MediaType.APPLICATION_JSON);
+
+        restTemplate.postForEntity("/api/v1/categories",
+                new HttpEntity<>(java.util.Map.of("name", "SIP"), headers), String.class);
+        var second = restTemplate.postForEntity("/api/v1/categories",
+                new HttpEntity<>(java.util.Map.of("name", "sip"), headers), String.class);
+
+        assertThat(second.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+    }
 }

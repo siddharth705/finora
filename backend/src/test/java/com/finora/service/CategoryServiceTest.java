@@ -1,0 +1,76 @@
+package com.finora.service;
+
+import com.finora.entity.Category;
+import com.finora.exception.ApiException;
+import com.finora.repository.CategoryRepository;
+import com.finora.repository.CategoryRuleRepository;
+import com.finora.repository.TransactionRepository;
+import com.finora.repository.BudgetRepository;
+import org.junit.jupiter.api.Test;
+
+import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.*;
+
+class CategoryServiceTest {
+
+    private final UUID userId = UUID.randomUUID();
+    private final CategoryRepository categoryRepository = mock(CategoryRepository.class);
+    private final CategoryRuleRepository categoryRuleRepository = mock(CategoryRuleRepository.class);
+    private final TransactionRepository transactionRepository = mock(TransactionRepository.class);
+    private final BudgetRepository budgetRepository = mock(BudgetRepository.class);
+    private final AuditService auditService = mock(AuditService.class);
+
+    private CategoryService service() {
+        return new CategoryService(categoryRepository, categoryRuleRepository,
+                transactionRepository, budgetRepository, auditService);
+    }
+
+    @Test
+    void createsACategoryWithDefaultIconAndColorWhenOmitted() {
+        when(categoryRepository.findByUserIdAndNameIgnoreCaseOrderByIdAsc(userId, "SIP"))
+                .thenReturn(List.of());
+        when(categoryRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        Category created = service().create(userId, "SIP", null, null);
+
+        assertThat(created.getName()).isEqualTo("SIP");
+        assertThat(created.isSystem()).isFalse();
+        assertThat(created.getIcon()).isEqualTo("tag");
+        assertThat(created.getColor()).isEqualTo("gray");
+    }
+
+    @Test
+    void rejectsACaseInsensitiveDuplicateForTheSameUser() {
+        Category existing = new Category();
+        existing.setUserId(userId);
+        existing.setName("SIP");
+        when(categoryRepository.findByUserIdAndNameIgnoreCaseOrderByIdAsc(userId, "sip"))
+                .thenReturn(List.of(existing));
+
+        assertThatThrownBy(() -> service().create(userId, "sip", null, null))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("already have a category named");
+    }
+
+    @Test
+    void rejectsAnIconTokenOutsideTheCuratedAllowList() {
+        when(categoryRepository.findByUserIdAndNameIgnoreCaseOrderByIdAsc(userId, "SIP"))
+                .thenReturn(List.of());
+
+        assertThatThrownBy(() -> service().create(userId, "SIP", "not-a-real-icon", null))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("icon");
+    }
+
+    @Test
+    void rejectsABlankName() {
+        assertThatThrownBy(() -> service().create(userId, "  ", null, null))
+                .isInstanceOf(ApiException.class);
+    }
+}
