@@ -110,7 +110,12 @@ public class PreviewGenerator {
             Map<String, String> row = csvParser.zipRow(headerRow, cells);
 
             StagedRow parsed = transactionNormalizer.normalize(userId, row, ctx, rules, duplicateIndex, merchantIndex);
+            // 1-based, relative to the first data row -- the position an operator reviewing this
+            // import in the Import Explorer would count rows by, not the raw file line number
+            // (which would also count the header and any rows above it).
+            int rowPosition = i - headerIdx;
             if (parsed != null) {
+                parsed = parsed.withRowPosition(rowPosition);
                 // RowKind.BALANCE_MARKER rows (see that enum's doc comment) are excluded from
                 // `staged` -- the same fix, and the same reasoning, as PdfPreviewGenerator's
                 // ledger-section loop: a structural balance-only row must never become an

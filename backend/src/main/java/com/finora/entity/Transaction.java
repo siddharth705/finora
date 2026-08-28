@@ -142,6 +142,19 @@ public class Transaction extends BaseEntity {
     @Column(name = "row_ordinal")
     private Integer rowOrdinal;
 
+    /**
+     * Position within its statement section as originally parsed (1-based), echoed from {@code
+     * ConfirmedRow.rowPosition} at confirm time -- distinct from {@link #rowOrdinal}, which is
+     * insertion order among CONFIRMED rows only and compresses away every excluded/dropped row.
+     * Null for a manual transaction, for anything imported before this field existed, and for
+     * anything imported by a client that predates the echoed field -- see {@code
+     * ImportDto.ConfirmedRow.rowPosition}'s own doc comment. Import Row Trace's only reason to
+     * exist (Founder Operations Dashboard, docs/proposals/reconciliation-evolution-roadmap-
+     * proposal.md Part 9).
+     */
+    @Column(name = "source_row_position")
+    private Integer sourceRowPosition;
+
     // See DecisionSource above. Defaults to MERCHANT_DEFAULT (matches the V17 column default) so
     // any write path that doesn't explicitly set this fails safe to the least-specific label
     // rather than silently claiming a rule/learning match that didn't happen.
@@ -246,6 +259,8 @@ public class Transaction extends BaseEntity {
     public UUID getStatementImportId() { return statementImportId; }
     public Integer getRowOrdinal() { return rowOrdinal; }
     public void setRowOrdinal(Integer rowOrdinal) { this.rowOrdinal = rowOrdinal; }
+    public Integer getSourceRowPosition() { return sourceRowPosition; }
+    public void setSourceRowPosition(Integer sourceRowPosition) { this.sourceRowPosition = sourceRowPosition; }
 
     public void setStatementImportId(UUID statementImportId) { this.statementImportId = statementImportId; }
     public DecisionSource getDecisionSource() { return decisionSource; }
