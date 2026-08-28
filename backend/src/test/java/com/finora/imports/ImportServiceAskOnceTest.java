@@ -548,6 +548,40 @@ class ImportServiceAskOnceTest {
     }
 
     @Test
+    void confirm_persistsTotalAmountDueAndPaymentDueDate_echoedFromTheRequest() throws Exception {
+        // Same round-trip as the statement-period fields above: DetectedAccountInfo.totalAmountDue/
+        // paymentDueDate (CreditCardSummaryExtractor / PdfMetadataExtractor at staging time) has
+        // nowhere to land at confirm without the request echoing it back -- see
+        // credit-card-statement-entity-design.md.
+        var row1 = new ConfirmedRow(LocalDate.of(2026, 7, 10), "SWIGGY*ORDR9182 BLR",
+                BigDecimal.valueOf(486), "EXPENSE", "Dining", true, "rule", null, false, null, null);
+        var request = new ConfirmRequest(null, List.of(row1), accountId, null, null, null, null,
+                LocalDate.of(2026, 7, 1), LocalDate.of(2026, 7, 31),
+                BigDecimal.valueOf(12450.75), LocalDate.of(2026, 8, 5));
+
+        importService.confirm(userId, dummyFile(), request);
+
+        ArgumentCaptor<StatementImport> captor = ArgumentCaptor.forClass(StatementImport.class);
+        verify(statementImportRepository).save(captor.capture());
+        assertThat(captor.getValue().getTotalAmountDue()).isEqualByComparingTo(BigDecimal.valueOf(12450.75));
+        assertThat(captor.getValue().getPaymentDueDate()).isEqualTo(LocalDate.of(2026, 8, 5));
+    }
+
+    @Test
+    void confirm_leavesTotalAmountDueAndPaymentDueDateNull_forANonCreditCardImport() throws Exception {
+        var row1 = new ConfirmedRow(LocalDate.of(2026, 7, 10), "SWIGGY*ORDR9182 BLR",
+                BigDecimal.valueOf(486), "EXPENSE", "Dining", true, "rule", null, false, null, null);
+        var request = new ConfirmRequest(null, List.of(row1), accountId, null, null, null, null);
+
+        importService.confirm(userId, dummyFile(), request);
+
+        ArgumentCaptor<StatementImport> captor = ArgumentCaptor.forClass(StatementImport.class);
+        verify(statementImportRepository).save(captor.capture());
+        assertThat(captor.getValue().getTotalAmountDue()).isNull();
+        assertThat(captor.getValue().getPaymentDueDate()).isNull();
+    }
+
+    @Test
     void confirm_appliesSideEffectRules_andReflectsTheOverriddenCategoryInTheTallyAndTheSavedTransaction() throws Exception {
         // A matching MARK_INVESTMENT rule overrides whatever category was staged for this row --
         // CategorizationService.applySideEffectRules returns the new Category, and confirm() must

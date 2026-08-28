@@ -56,6 +56,8 @@ const groups: AccountStatementGroup[] = [{
     statementPeriodEnd: null,
     openingBalance: null,
     closingBalance: null,
+    totalAmountDue: null,
+    paymentDueDate: null,
     transactionsImported: 12,
     transactionsSkipped: 0,
     importedAt: '2026-08-01T10:00:00Z',
@@ -488,5 +490,42 @@ describe('StatementHistory — delete confirmation', () => {
 
     expect(statementImportsApi.remove).not.toHaveBeenCalled();
     expect(screen.queryByText('Delete "protected-statement.pdf"?')).not.toBeInTheDocument();
+  });
+});
+
+// Credit-card statement entity, roadmap item 6 -- totalAmountDue/paymentDueDate are null for
+// every existing fixture above (a savings statement); this covers the one line that only appears
+// for a credit-card statement whose payment-summary panel was found.
+describe('StatementHistory — credit-card statement total due', () => {
+  const ccGroups: AccountStatementGroup[] = [{
+    ...groups[0],
+    accountType: 'CREDIT_CARD',
+    statements: [{
+      ...groups[0].statements[0],
+      totalAmountDue: 12450.75,
+      paymentDueDate: '2026-08-05',
+    }],
+  }];
+
+  beforeEach(() => {
+    vi.mocked(statementImportsApi.listGroupedByAccount).mockReset().mockResolvedValue(ccGroups);
+    vi.mocked(importApi.listFailures).mockReset().mockResolvedValue([]);
+    vi.mocked(importJobsApi.recent).mockReset().mockResolvedValue([]);
+  });
+
+  it('shows the total due and payment due date for a credit-card statement', async () => {
+    renderPage();
+
+    expect((await screen.findAllByText(/Total due/)).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/₹12,451/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/5 Aug 2026/).length).toBeGreaterThan(0);
+  });
+
+  it('shows nothing extra for a statement with no total due (the default fixture)', async () => {
+    vi.mocked(statementImportsApi.listGroupedByAccount).mockReset().mockResolvedValue(groups);
+    renderPage();
+
+    await screen.findByText('protected-statement.pdf');
+    expect(screen.queryByText(/Total due/)).not.toBeInTheDocument();
   });
 });
