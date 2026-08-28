@@ -111,6 +111,78 @@ class DashboardServiceTest {
     }
 
     @Test
+    @DisplayName("categoryReviewWarning fires at/above the threshold, with the real amount/count/pct behind it")
+    void summarize_flagsCategoryReviewWarning_atOrAboveTheThreshold() {
+        LocalDate july = LocalDate.of(2026, 7, 15);
+        // 8000 flagged / 10000 total = 80% -- comfortably above the 20% threshold, matching the
+        // real "81% in Other" case this warning exists for.
+        Transaction flagged1 = txn(new BigDecimal("5000.00"), Transaction.Type.EXPENSE, july, Transaction.ReconciliationStatus.OK);
+        flagged1.setNeedsCategoryReview(true);
+        Transaction flagged2 = txn(new BigDecimal("3000.00"), Transaction.Type.EXPENSE, july, Transaction.ReconciliationStatus.OK);
+        flagged2.setNeedsCategoryReview(true);
+        Transaction clean = txn(new BigDecimal("2000.00"), Transaction.Type.EXPENSE, july, Transaction.ReconciliationStatus.OK);
+
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(flagged1, flagged2, clean));
+
+        DashboardSummaryDto summary = dashboardService.summarize(userId);
+
+        assertThat(summary.categoryReviewWarning()).isTrue();
+        assertThat(summary.categoryReviewSpendAmount()).isEqualByComparingTo("8000.00");
+        assertThat(summary.categoryReviewTransactionCount()).isEqualTo(2);
+        assertThat(summary.categoryReviewSpendPct()).isCloseTo(80.0, org.assertj.core.data.Offset.offset(0.01));
+        assertThat(summary.categoryReviewSpendWarningThresholdPct())
+                .isEqualTo(DashboardService.CATEGORY_REVIEW_SPEND_WARNING_THRESHOLD_PCT);
+    }
+
+    @Test
+    @DisplayName("categoryReviewWarning stays off below the threshold")
+    void summarize_doesNotFlagCategoryReviewWarning_belowTheThreshold() {
+        LocalDate july = LocalDate.of(2026, 7, 15);
+        // 1000 flagged / 10000 total = 10% -- well under the 20% threshold.
+        Transaction flagged = txn(new BigDecimal("1000.00"), Transaction.Type.EXPENSE, july, Transaction.ReconciliationStatus.OK);
+        flagged.setNeedsCategoryReview(true);
+        Transaction clean = txn(new BigDecimal("9000.00"), Transaction.Type.EXPENSE, july, Transaction.ReconciliationStatus.OK);
+
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(flagged, clean));
+
+        DashboardSummaryDto summary = dashboardService.summarize(userId);
+
+        assertThat(summary.categoryReviewWarning()).isFalse();
+        assertThat(summary.categoryReviewSpendPct()).isCloseTo(10.0, org.assertj.core.data.Offset.offset(0.01));
+    }
+
+    @Test
+    @DisplayName("categoryReviewWarning ignores an INCOME transaction flagged for review -- this is a SPEND metric")
+    void summarize_ignoresFlaggedIncome_whenComputingCategoryReviewSpend() {
+        LocalDate july = LocalDate.of(2026, 7, 15);
+        Transaction flaggedIncome = txn(new BigDecimal("50000.00"), Transaction.Type.INCOME, july, Transaction.ReconciliationStatus.OK);
+        flaggedIncome.setNeedsCategoryReview(true);
+        Transaction cleanExpense = txn(new BigDecimal("5000.00"), Transaction.Type.EXPENSE, july, Transaction.ReconciliationStatus.OK);
+
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(flaggedIncome, cleanExpense));
+
+        DashboardSummaryDto summary = dashboardService.summarize(userId);
+
+        assertThat(summary.categoryReviewWarning()).isFalse();
+        assertThat(summary.categoryReviewSpendAmount()).isEqualByComparingTo("0.00");
+        assertThat(summary.categoryReviewSpendPct()).isEqualTo(0.0);
+    }
+
+    @Test
+    @DisplayName("categoryReviewSpendPct is 0, not NaN, when there is no expense at all this month")
+    void summarize_reportsZeroCategoryReviewPct_whenThereIsNoExpense() {
+        LocalDate july = LocalDate.of(2026, 7, 15);
+        Transaction incomeOnly = txn(new BigDecimal("50000.00"), Transaction.Type.INCOME, july, Transaction.ReconciliationStatus.OK);
+
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(incomeOnly));
+
+        DashboardSummaryDto summary = dashboardService.summarize(userId);
+
+        assertThat(summary.categoryReviewWarning()).isFalse();
+        assertThat(summary.categoryReviewSpendPct()).isEqualTo(0.0);
+    }
+
+    @Test
     void summarize_flagsALiquidAccountBelowTheUsersLowBalanceThreshold() {
         // Override setUp()'s 100000 balance with one below the default 2000 threshold.
         savings.setBalance(new BigDecimal("500.00"));

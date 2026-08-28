@@ -112,6 +112,34 @@ public class DashboardService {
                         t -> categoriesById.getOrDefault(t.getCategoryId(), unknownCategory()).getName(),
                         Collectors.reducing(BigDecimal.ZERO, refunds::reportableAmount, BigDecimal::add)));
 
+        // "Other" (CategorizationService/CategoryRules's literal fallback name when nothing matched
+        // a rule, keyword, or learned pattern) is a REAL, resolvable category -- not the same thing
+        // as a transaction with no category at all (that's unknownCategory()'s "Uncategorized"
+        // above). Neither name alone is the right signal for "does this transaction's category
+        // actually tell the user anything": a transaction can be genuinely, confidently categorized
+        // AS "Other" if the user's own confidence threshold accepts it. `needsCategoryReview` is
+        // already the exact per-transaction answer to that question -- CategorizationService sets
+        // it only for a default("Other")-sourced guess that ALSO misses the user's own
+        // autoApplyConfidenceThreshold (see that method's own doc comment) -- so this reuses it
+        // instead of re-deriving a parallel, less precise "is the name Other or Uncategorized"
+        // heuristic that would either over- or under-count relative to what Ledger already shows
+        // the user as a "needs review" badge on the exact same transactions.
+        List<Transaction> currentMonthExpenses = active.stream()
+                .filter(t -> t.getTxnType() == Transaction.Type.EXPENSE
+                        && Objects.equals(YearMonth.from(t.getTxnDate()).toString(), currentMonth))
+                .toList();
+        BigDecimal categoryReviewSpend = currentMonthExpenses.stream()
+                .filter(Transaction::isNeedsCategoryReview)
+                .map(refunds::reportableAmount).reduce(BigDecimal.ZERO, BigDecimal::add);
+        int categoryReviewTransactionCount = (int) currentMonthExpenses.stream()
+                .filter(Transaction::isNeedsCategoryReview).count();
+        BigDecimal totalMonthlySpend = currentMonthExpenses.stream()
+                .map(refunds::reportableAmount).reduce(BigDecimal.ZERO, BigDecimal::add);
+        double categoryReviewSpendPct = totalMonthlySpend.compareTo(BigDecimal.ZERO) > 0
+                ? categoryReviewSpend.divide(totalMonthlySpend, 6, RoundingMode.HALF_UP).doubleValue() * 100
+                : 0;
+        boolean categoryReviewWarning = categoryReviewSpendPct >= CATEGORY_REVIEW_SPEND_WARNING_THRESHOLD_PCT;
+
         // Same current-month EXPENSE figures as spendByCategory above, just keyed by category id
         // (rather than display name) so they can be joined against Budget.categoryId below --
         // mirrors BudgetService.listForUser()'s own spend-by-category computation, scoped to this
@@ -167,9 +195,18 @@ public class DashboardService {
                 spendByCategory, notifications,
                 // Which month everything above actually describes. Without these the client had no
                 // choice but to guess, and it guessed "this month" -- see Bug 05.
-                period.month(), period.isCurrent()
+                period.month(), period.isCurrent(),
+                categoryReviewWarning, categoryReviewSpendPct, categoryReviewSpend,
+                categoryReviewTransactionCount, CATEGORY_REVIEW_SPEND_WARNING_THRESHOLD_PCT
         );
     }
+
+    // 20% of a month's spend needing a better category is the point at which "some transactions
+    // are generically categorized" becomes "categorization is broadly unreliable this month" --
+    // low enough to catch the real case that motivated this (81% in "Other"), high enough that a
+    // handful of genuinely ambiguous transactions in an otherwise well-categorized month doesn't
+    // nag every user on every visit.
+    static final double CATEGORY_REVIEW_SPEND_WARNING_THRESHOLD_PCT = 20.0;
 
     private Category unknownCategory() {
         Category c = new Category(); c.setName("Uncategorized"); return c;

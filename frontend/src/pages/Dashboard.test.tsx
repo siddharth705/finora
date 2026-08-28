@@ -57,6 +57,11 @@ function summary(overrides: Partial<DashboardSummary> = {}): DashboardSummary {
     notifications: [],
     reportingMonth: '2026-08',
     reportingMonthIsCurrent: true,
+    categoryReviewWarning: false,
+    categoryReviewSpendPct: 0,
+    categoryReviewSpendAmount: 0,
+    categoryReviewTransactionCount: 0,
+    categoryReviewSpendWarningThresholdPct: 20,
     ...overrides,
   };
 }
@@ -178,6 +183,80 @@ describe('Dashboard — Financial Health Score', () => {
     // also a KPI tile label elsewhere on the page, same reason the breakdown test above scopes.
     expect(card.queryByText('out of 100')).not.toBeInTheDocument();
     expect(card.queryByText('Savings Rate')).not.toBeInTheDocument();
+  });
+});
+
+describe('Dashboard — Spending Breakdown category review warning', () => {
+  beforeEach(() => {
+    vi.mocked(dashboardApi.summary).mockReset().mockResolvedValue(summary());
+    vi.mocked(dashboardApi.journey).mockReset().mockResolvedValue({ milestones: [] });
+    vi.mocked(accountsApi.list).mockReset().mockResolvedValue([]);
+    // totalElements: 0 (isEmpty) -- these tests don't care about Financial Health Score, and
+    // rendering it alongside a populated Doughnut chart mounts two Chart.js instances at once,
+    // which crashes in jsdom ("can't acquire context from the given item", no error boundary to
+    // catch it). The existing "0%, not NaN%" test below proves a populated Doughnut renders fine
+    // on its own with isEmpty -- matching that pattern rather than the Health Score block's.
+    vi.mocked(transactionsApi.search).mockReset().mockResolvedValue({
+      content: [], page: 0, size: 4, totalElements: 0, totalPages: 0,
+    });
+    vi.mocked(transactionsApi.create).mockReset();
+    vi.mocked(categoriesApi.list).mockReset().mockResolvedValue([
+      { id: 'cat-1', name: 'Groceries' } as any,
+      { id: 'cat-2', name: 'Salary' } as any,
+    ]);
+    vi.mocked(goalsApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(insightsApi.get).mockReset().mockResolvedValue({ sentences: [], movers: [] });
+    vi.mocked(userApi.get).mockReset().mockResolvedValue({
+      email: 'amy@example.test', fullName: 'Amy Santiago', lowBalanceThreshold: 2000,
+      theme: 'system', timezone: 'Asia/Kolkata', phoneNumber: '+919876500000',
+      phoneVerified: true, createdAt: '2026-01-01T00:00:00Z', passwordChangedAt: null, signInMethod: 'PASSWORD',
+    });
+    vi.mocked(budgetsApi.list).mockReset().mockResolvedValue([]);
+    // Empty (not a real month) -- CashFlowChart isn't gated by the page-level isEmpty at all;
+    // it's driven independently by these two APIs. Real data here mounts a SECOND live Chart.js
+    // canvas (a Line chart) alongside the Doughnut these tests actually care about, and jsdom
+    // can't survive two real chart.js instances mounting at once ("Failed to create chart:
+    // can't acquire context from the given item", uncaught, unmounts the whole tree). Matches
+    // the existing "0%, not NaN%" test's own pattern below, which proves a populated Doughnut
+    // alone renders fine.
+    vi.mocked(reportsApi.availableMonths).mockReset().mockResolvedValue([]);
+    vi.mocked(reportsApi.forMonth).mockReset();
+    vi.mocked(recurringApi.list).mockReset().mockResolvedValue([]);
+  });
+
+  it('shows the callout with the real amount/count/pct when the warning is active', async () => {
+    vi.mocked(dashboardApi.summary).mockResolvedValue(summary({
+      spendByCategory: { Other: 73306, Shopping: 16627, Groceries: 193 },
+      categoryReviewWarning: true, categoryReviewSpendPct: 81, categoryReviewSpendAmount: 73306,
+      categoryReviewTransactionCount: 24,
+    }));
+    renderDashboard();
+
+    expect(await screen.findByText('Spending needs category review')).toBeInTheDocument();
+    expect(screen.getByText(/₹73,306 \(81%\) across 24 transactions/)).toBeInTheDocument();
+    expect(screen.getByText('Review transactions →').closest('a')).toHaveAttribute('href', '/app/transactions');
+  });
+
+  it('uses singular wording for exactly one flagged transaction', async () => {
+    vi.mocked(dashboardApi.summary).mockResolvedValue(summary({
+      spendByCategory: { Other: 500 },
+      categoryReviewWarning: true, categoryReviewSpendPct: 100, categoryReviewSpendAmount: 500,
+      categoryReviewTransactionCount: 1,
+    }));
+    renderDashboard();
+
+    expect(await screen.findByText(/across 1 transaction this/)).toBeInTheDocument();
+  });
+
+  it('stays hidden when the warning is not active, even with real spending data', async () => {
+    vi.mocked(dashboardApi.summary).mockResolvedValue(summary({
+      spendByCategory: { Groceries: 5000, Dining: 2000 },
+      categoryReviewWarning: false, categoryReviewSpendPct: 5,
+    }));
+    renderDashboard();
+
+    await screen.findByText('Spending Breakdown');
+    expect(screen.queryByText('Spending needs category review')).not.toBeInTheDocument();
   });
 });
 
