@@ -23,6 +23,7 @@ class ReconciliationServiceTest {
     private RelationshipService relationshipService;
     private AuditService auditService;
     private TransactionGraphService transactionGraphService;
+    private com.finora.integrations.google.merchant.GmailReconciliationMatcher gmailReconciliationMatcher;
     private ReconciliationService reconciliationService;
     private final UUID userId = UUID.randomUUID();
 
@@ -36,8 +37,12 @@ class ReconciliationServiceTest {
         relationshipService = mock(RelationshipService.class);
         auditService = mock(AuditService.class);
         transactionGraphService = mock(TransactionGraphService.class);
+        // Unstubbed by default -- findMatchAmongTransactions returns Optional.empty(), so every
+        // existing test here (none of which involve a GMAIL_IMPORT transaction) sees zero Gmail
+        // matches and is unaffected by the new pass. The dedicated Gmail-pass tests below stub it.
+        gmailReconciliationMatcher = mock(com.finora.integrations.google.merchant.GmailReconciliationMatcher.class);
         reconciliationService = new ReconciliationService(transactionRepository, relationshipService, auditService,
-                transactionGraphService);
+                transactionGraphService, gmailReconciliationMatcher);
     }
 
     private Transaction txn(UUID id, UUID accountId, LocalDate date, BigDecimal amount,
@@ -837,6 +842,121 @@ class ReconciliationServiceTest {
         assertThat(edges).hasSize(1);
         assertThat(edges.get(0).confidence()).isLessThan(80);
         assertThat(edges.get(0).status()).isEqualTo(TransactionRelationship.Status.CANDIDATE);
+    }
+
+    // --- Gmail cross-source matches (docs/proposals/reconciliation-evolution-roadmap-proposal.md
+    // Part 5, extended to the pass Phase 2's confidence-engine PR deliberately left out) ---
+
+    @Test
+    void reconcileForUser_writesAFuzzyScoredDuplicateEdge_forAMatchedGmailTransaction() {
+        UUID accountId = UUID.randomUUID();
+        Transaction bankTxn = txn(UUID.randomUUID(), accountId, LocalDate.of(2026, 7, 10),
+                new BigDecimal("499.00"), Transaction.Type.EXPENSE, "AMZN MKTPLACE 4521",
+                Instant.parse("2026-07-10T10:00:00Z"));
+        bankTxn.setSource(Transaction.Source.CSV_IMPORT);
+        Transaction gmailTxn = txn(UUID.randomUUID(), accountId, LocalDate.of(2026, 7, 11),
+                new BigDecimal("499.00"), Transaction.Type.EXPENSE, "Amazon",
+                Instant.parse("2026-07-11T09:00:00Z"));
+        gmailTxn.setSource(Transaction.Source.GMAIL_IMPORT);
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(bankTxn, gmailTxn));
+        when(gmailReconciliationMatcher.findMatchAmongTransactions(gmailTxn, List.of(bankTxn)))
+                .thenReturn(java.util.Optional.of(bankTxn));
+
+        reconciliationService.reconcileForUser(userId);
+
+        List<TransactionGraphService.PendingEdge> edges = capturePendingEdges();
+        assertThat(edges).hasSize(1);
+        TransactionGraphService.PendingEdge edge = edges.get(0);
+        assertThat(edge.fromTransactionId()).isEqualTo(gmailTxn.getId());
+        assertThat(edge.toTransactionId()).isEqualTo(bankTxn.getId());
+        assertThat(edge.relationshipType()).isEqualTo(TransactionRelationship.RelationshipType.DUPLICATE);
+        assertThat(edge.sourceTrust()).isEqualTo(SourceTrust.of(Transaction.Source.GMAIL_IMPORT));
+        assertThat(edge.explanation()).containsEntry("matchedTransactionId", bankTxn.getId().toString());
+        // FUZZY's base score (0.75) with a 1-day date_decay is comfortably below the
+        // needs-review cutoff -- this is the pass's whole point (see its own class comment).
+        assertThat(edge.confidence()).isLessThan(80);
+        assertThat(edge.status()).isEqualTo(TransactionRelationship.Status.CANDIDATE);
+    }
+
+    /**
+     * The deliberate scope boundary: a FUZZY match is real evidence for the graph/explainability
+     * layer, not license to silently exclude a legitimate expense from a user's spend totals off a
+     * text-similarity match. See ReconciliationService's own comment on this pass for why.
+     */
+    @Test
+    void reconcileForUser_leavesTheGmailTransactionsLegacyColumnsUntouched_evenWhenMatched() {
+        UUID accountId = UUID.randomUUID();
+        Transaction bankTxn = txn(UUID.randomUUID(), accountId, LocalDate.of(2026, 7, 10),
+                new BigDecimal("499.00"), Transaction.Type.EXPENSE, "AMZN MKTPLACE 4521",
+                Instant.parse("2026-07-10T10:00:00Z"));
+        bankTxn.setSource(Transaction.Source.CSV_IMPORT);
+        Transaction gmailTxn = txn(UUID.randomUUID(), accountId, LocalDate.of(2026, 7, 11),
+                new BigDecimal("499.00"), Transaction.Type.EXPENSE, "Amazon",
+                Instant.parse("2026-07-11T09:00:00Z"));
+        gmailTxn.setSource(Transaction.Source.GMAIL_IMPORT);
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(bankTxn, gmailTxn));
+        when(gmailReconciliationMatcher.findMatchAmongTransactions(gmailTxn, List.of(bankTxn)))
+                .thenReturn(java.util.Optional.of(bankTxn));
+
+        reconciliationService.reconcileForUser(userId);
+
+        assertThat(gmailTxn.getIsDuplicateOf()).isNull();
+        assertThat(gmailTxn.getReconciliationStatus()).isEqualTo(Transaction.ReconciliationStatus.OK);
+    }
+
+    @Test
+    void reconcileForUser_writesNoEdge_whenNoCandidateSharesTheGmailTransactionsAmount() {
+        UUID accountId = UUID.randomUUID();
+        Transaction bankTxn = txn(UUID.randomUUID(), accountId, LocalDate.of(2026, 7, 10),
+                new BigDecimal("250.00"), Transaction.Type.EXPENSE, "SWIGGY", Instant.parse("2026-07-10T10:00:00Z"));
+        bankTxn.setSource(Transaction.Source.CSV_IMPORT);
+        Transaction gmailTxn = txn(UUID.randomUUID(), accountId, LocalDate.of(2026, 7, 11),
+                new BigDecimal("499.00"), Transaction.Type.EXPENSE, "Amazon", Instant.parse("2026-07-11T09:00:00Z"));
+        gmailTxn.setSource(Transaction.Source.GMAIL_IMPORT);
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(bankTxn, gmailTxn));
+
+        reconciliationService.reconcileForUser(userId);
+
+        org.mockito.Mockito.verify(transactionGraphService, org.mockito.Mockito.never()).linkAll(org.mockito.ArgumentMatchers.anyList());
+        org.mockito.Mockito.verifyNoInteractions(gmailReconciliationMatcher);
+    }
+
+    /**
+     * BH-044's own "reclassified" audit condition, extended: this pass is the first one that can
+     * write a real change (a graph edge) without also touching `dirty` -- see the fix comment on
+     * `changedSomething` in ReconciliationService for why pendingEdges.isEmpty() alone would have
+     * been wrong here.
+     */
+    @Test
+    void reconcileForUser_recordsAnAuditRow_whenTheOnlyChangeIsAGmailMatch() {
+        UUID accountId = UUID.randomUUID();
+        Transaction bankTxn = txn(UUID.randomUUID(), accountId, LocalDate.of(2026, 7, 10),
+                new BigDecimal("499.00"), Transaction.Type.EXPENSE, "AMZN MKTPLACE 4521",
+                Instant.parse("2026-07-10T10:00:00Z"));
+        bankTxn.setSource(Transaction.Source.CSV_IMPORT);
+        Transaction gmailTxn = txn(UUID.randomUUID(), accountId, LocalDate.of(2026, 7, 11),
+                new BigDecimal("499.00"), Transaction.Type.EXPENSE, "Amazon",
+                Instant.parse("2026-07-11T09:00:00Z"));
+        gmailTxn.setSource(Transaction.Source.GMAIL_IMPORT);
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(bankTxn, gmailTxn));
+        when(gmailReconciliationMatcher.findMatchAmongTransactions(gmailTxn, List.of(bankTxn)))
+                .thenReturn(java.util.Optional.of(bankTxn));
+        // Simulates linkAll's real behavior: the edge it's handed is genuinely new, so it comes
+        // back in the written list (see TransactionGraphService.linkAll's own doc comment on why
+        // an idempotent skip would return it empty instead).
+        when(transactionGraphService.linkAll(org.mockito.ArgumentMatchers.anyList()))
+                .thenAnswer(inv -> inv.getArgument(0));
+
+        reconciliationService.reconcileForUser(userId);
+
+        org.mockito.ArgumentCaptor<java.util.Map<String, Object>> detailsCaptor =
+                org.mockito.ArgumentCaptor.forClass(java.util.Map.class);
+        org.mockito.Mockito.verify(auditService).record(
+                org.mockito.ArgumentMatchers.eq(userId), org.mockito.ArgumentMatchers.eq("RECONCILIATION_RUN"),
+                org.mockito.ArgumentMatchers.eq("Transaction"), org.mockito.ArgumentMatchers.isNull(),
+                detailsCaptor.capture());
+        assertThat(detailsCaptor.getValue()).containsEntry("gmailMatchesFound", 1);
+        assertThat(detailsCaptor.getValue()).containsEntry("recordedBecause", "reclassified");
     }
 
     @SuppressWarnings("unchecked")
