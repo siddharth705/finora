@@ -604,7 +604,8 @@ public class ImportService {
                     sectionConfirm.rows(), sectionConfirm.existingAccountId(), sectionConfirm.newAccount(),
                     sectionConfirm.statementOpeningBalance(), sectionConfirm.statementClosingBalance(),
                     null, // a multi-section PDF was already unlocked once to be staged; no password to carry here
-                    sectionConfirm.statementPeriodStart(), sectionConfirm.statementPeriodEnd());
+                    sectionConfirm.statementPeriodStart(), sectionConfirm.statementPeriodEnd(),
+                    sectionConfirm.totalAmountDue(), sectionConfirm.paymentDueDate());
             persisted.add(persistSection(userId, session.getFileName(), statementContentService.read(session), perAccountRequest, i,
                     session.getLayoutMetadataJson(), session.getLayoutFingerprint(), session.getActivatedCapabilitiesJson(),
                 // A multi-section import is CSV/PDF only -- a Gmail receipt is never
@@ -1000,6 +1001,11 @@ public class ImportService {
         statementImport.setStatementPeriodEnd(request.statementPeriodEnd());
         statementImport.setOpeningBalance(request.statementOpeningBalance());
         statementImport.setClosingBalance(request.statementClosingBalance());
+        // Echoed from DetectedAccountInfo.totalAmountDue/paymentDueDate the same way the period
+        // above is -- null for a CSV import or any non-credit-card statement, same as on
+        // DetectedAccountInfo itself; see credit-card-statement-entity-design.md.
+        statementImport.setTotalAmountDue(request.totalAmountDue());
+        statementImport.setPaymentDueDate(request.paymentDueDate());
         statementImport.setTransactionsImported(toInsert.size());
         statementImport.setTransactionsSkipped(skipped);
         // Measured here rather than after the save so it covers the same work the response reports

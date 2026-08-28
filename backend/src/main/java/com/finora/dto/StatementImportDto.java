@@ -28,6 +28,10 @@ public class StatementImportDto {
             LocalDate statementPeriodEnd,
             BigDecimal openingBalance,
             BigDecimal closingBalance,
+            // Credit-card statement entity, roadmap item 6 -- null for a non-credit-card statement,
+            // same as on StatementImport itself. See that entity's own doc comment.
+            BigDecimal totalAmountDue,
+            LocalDate paymentDueDate,
             int transactionsImported,
             int transactionsSkipped,
             Instant importedAt,
@@ -35,8 +39,8 @@ public class StatementImportDto {
     ) {
         public static Summary from(StatementImport s, int duplicateCount) {
             return new Summary(s.getId(), s.getFileName(), s.getStatementPeriodStart(), s.getStatementPeriodEnd(),
-                    s.getOpeningBalance(), s.getClosingBalance(), s.getTransactionsImported(),
-                    s.getTransactionsSkipped(), s.getImportedAt(), duplicateCount);
+                    s.getOpeningBalance(), s.getClosingBalance(), s.getTotalAmountDue(), s.getPaymentDueDate(),
+                    s.getTransactionsImported(), s.getTransactionsSkipped(), s.getImportedAt(), duplicateCount);
         }
 
         /** Same mapping as {@link #from(StatementImport, int)}, from the {@code fileContent}-free
@@ -45,8 +49,8 @@ public class StatementImportDto {
          *  {@code DataExportService} needs this overload rather than the entity one. */
         public static Summary from(StatementImportRepository.StatementMetadata s, int duplicateCount) {
             return new Summary(s.getId(), s.getFileName(), s.getStatementPeriodStart(), s.getStatementPeriodEnd(),
-                    s.getOpeningBalance(), s.getClosingBalance(), s.getTransactionsImported(),
-                    s.getTransactionsSkipped(), s.getImportedAt(), duplicateCount);
+                    s.getOpeningBalance(), s.getClosingBalance(), s.getTotalAmountDue(), s.getPaymentDueDate(),
+                    s.getTransactionsImported(), s.getTransactionsSkipped(), s.getImportedAt(), duplicateCount);
         }
     }
 
