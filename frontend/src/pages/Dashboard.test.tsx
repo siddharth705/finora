@@ -18,7 +18,7 @@ import type { DashboardSummary } from '../types';
 vi.mock('../api/endpoints', () => ({
   dashboardApi: { summary: vi.fn(), journey: vi.fn() },
   accountsApi: { list: vi.fn() },
-  transactionsApi: { search: vi.fn(), create: vi.fn() },
+  transactionsApi: { search: vi.fn(), create: vi.fn(), confirmNotDuplicate: vi.fn() },
   categoriesApi: { list: vi.fn() },
   goalsApi: { list: vi.fn() },
   insightsApi: { get: vi.fn() },
@@ -77,6 +77,10 @@ function summary(overrides: Partial<DashboardSummary> = {}): DashboardSummary {
     // Defaults to no movers (the delta above is null in this fixture, so there's nothing to
     // explain) so existing tests keep seeing a plain "Why?"-free delta line.
     expenseCategoryMovers: [],
+    // Defaults to nothing detected so existing tests, none of which cares about this card, keep
+    // rendering exactly as they did before this field existed.
+    duplicateTransactionCount: 0,
+    detectedDuplicates: [],
     ...overrides,
   };
 }
@@ -401,6 +405,114 @@ describe('Dashboard — Next Actions', () => {
 
     await screen.findByText('No transactions yet'); // Recent Transactions' own per-section empty state
     expect(screen.queryByText('Next Actions')).not.toBeInTheDocument();
+  });
+});
+
+describe('Dashboard — Detected Issues', () => {
+  beforeEach(() => {
+    vi.mocked(dashboardApi.summary).mockReset().mockResolvedValue(summary());
+    vi.mocked(dashboardApi.journey).mockReset().mockResolvedValue({ milestones: [] });
+    vi.mocked(accountsApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(transactionsApi.search).mockReset().mockResolvedValue({
+      content: [], page: 0, size: 4, totalElements: 12, totalPages: 3,
+    });
+    vi.mocked(transactionsApi.confirmNotDuplicate).mockReset();
+    vi.mocked(goalsApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(insightsApi.get).mockReset().mockResolvedValue({ sentences: [], movers: [] });
+    vi.mocked(userApi.get).mockReset().mockResolvedValue({
+      email: 'amy@example.test', fullName: 'Amy Santiago', lowBalanceThreshold: 2000,
+      theme: 'system', timezone: 'Asia/Kolkata', phoneNumber: '+919876500000',
+      phoneVerified: true, createdAt: '2026-01-01T00:00:00Z', passwordChangedAt: null, signInMethod: 'PASSWORD',
+    });
+    vi.mocked(budgetsApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(reportsApi.availableMonths).mockReset().mockResolvedValue([]);
+    vi.mocked(reportsApi.forMonth).mockReset();
+    vi.mocked(recurringApi.list).mockReset().mockResolvedValue([]);
+  });
+
+  it('stays hidden when nothing was detected', async () => {
+    vi.mocked(dashboardApi.summary).mockResolvedValue(summary({ duplicateTransactionCount: 0 }));
+    renderDashboard();
+
+    await screen.findByText('Financial Health Score');
+    expect(screen.queryByText('Detected Issues')).not.toBeInTheDocument();
+  });
+
+  it('lists a detected duplicate with a "Not a duplicate" action', async () => {
+    vi.mocked(dashboardApi.summary).mockResolvedValue(summary({
+      duplicateTransactionCount: 1,
+      detectedDuplicates: [
+        { transactionId: 'txn-1', date: '2026-07-10', merchant: 'Swiggy', amount: 500 },
+      ],
+    }));
+    renderDashboard();
+
+    expect(await screen.findByText('Detected Issues')).toBeInTheDocument();
+    expect(screen.getByText(
+      'We found 1 transaction that looks like a duplicate and excluded it from your totals.'
+    )).toBeInTheDocument();
+    expect(screen.getByText('Swiggy')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Not a duplicate' })).toBeInTheDocument();
+  });
+
+  it('uses plural wording for more than one detected duplicate', async () => {
+    vi.mocked(dashboardApi.summary).mockResolvedValue(summary({
+      duplicateTransactionCount: 2,
+      detectedDuplicates: [
+        { transactionId: 'txn-1', date: '2026-07-10', merchant: 'Swiggy', amount: 500 },
+        { transactionId: 'txn-2', date: '2026-07-09', merchant: 'Zomato', amount: 300 },
+      ],
+    }));
+    renderDashboard();
+
+    expect(await screen.findByText(
+      'We found 2 transactions that look like duplicates and excluded them from your totals.'
+    )).toBeInTheDocument();
+  });
+
+  it('notes how many more exist beyond the capped display list', async () => {
+    vi.mocked(dashboardApi.summary).mockResolvedValue(summary({
+      duplicateTransactionCount: 8,
+      detectedDuplicates: [
+        { transactionId: 'txn-1', date: '2026-07-10', merchant: 'Swiggy', amount: 500 },
+      ],
+    }));
+    renderDashboard();
+
+    expect(await screen.findByText('and 7 more')).toBeInTheDocument();
+  });
+
+  it('calls confirmNotDuplicate and refreshes the summary when clicked', async () => {
+    vi.mocked(dashboardApi.summary).mockResolvedValue(summary({
+      duplicateTransactionCount: 1,
+      detectedDuplicates: [
+        { transactionId: 'txn-1', date: '2026-07-10', merchant: 'Swiggy', amount: 500 },
+      ],
+    }));
+    vi.mocked(transactionsApi.confirmNotDuplicate).mockResolvedValue({} as any);
+    renderDashboard();
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Not a duplicate' }));
+
+    expect(transactionsApi.confirmNotDuplicate).toHaveBeenCalledWith('txn-1');
+    await waitFor(() => expect(dashboardApi.summary).toHaveBeenCalledTimes(2));
+  });
+
+  it('shows an inline error and re-enables the button when the confirm call fails', async () => {
+    vi.mocked(dashboardApi.summary).mockResolvedValue(summary({
+      duplicateTransactionCount: 1,
+      detectedDuplicates: [
+        { transactionId: 'txn-1', date: '2026-07-10', merchant: 'Swiggy', amount: 500 },
+      ],
+    }));
+    vi.mocked(transactionsApi.confirmNotDuplicate).mockRejectedValue(new Error('network error'));
+    renderDashboard();
+
+    const button = await screen.findByRole('button', { name: 'Not a duplicate' });
+    await userEvent.click(button);
+
+    expect(await screen.findByText("Couldn't update this transaction. Please try again.")).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Not a duplicate' })).not.toBeDisabled();
   });
 });
 

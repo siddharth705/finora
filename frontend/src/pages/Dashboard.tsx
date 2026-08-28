@@ -8,7 +8,7 @@ import {
 import {
   Wallet, ArrowDownCircle, ArrowUpCircle, PieChart,
   ShoppingBag, Utensils, Car, Sparkles, Plus, PiggyBank, TrendingUp, TrendingDown, Target, ShieldCheck, Repeat,
-  UploadCloud, Receipt, LineChart as LineChartIcon, Mail, AlertTriangle, ListChecks,
+  UploadCloud, Receipt, LineChart as LineChartIcon, Mail, AlertTriangle, ListChecks, Copy,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { BankLogo } from '../components/BankLogo';
@@ -106,6 +106,28 @@ export default function Dashboard() {
   const queryClient = useQueryClient();
   const [cashFlowRange, setCashFlowRange] = useState<CashFlowRange>('6M');
   const [showAddModal, setShowAddModal] = useState(false);
+  const [confirmingDuplicateId, setConfirmingDuplicateId] = useState<string | null>(null);
+  const [duplicateConfirmError, setDuplicateConfirmError] = useState<string | null>(null);
+
+  // BH-027's own service-layer doc comment: "the user asked for this row to count, so it counts
+  // now." transactionsApi.confirmNotDuplicate already existed and already worked -- this is the
+  // first UI anywhere in the product that calls it. dashboard-summary is invalidated so the card
+  // (and every KPI the reinstated transaction now counts toward) reflects the change immediately;
+  // recent-transactions/transactions too, since the row itself just changed status.
+  async function handleConfirmNotDuplicate(transactionId: string) {
+    setConfirmingDuplicateId(transactionId);
+    setDuplicateConfirmError(null);
+    try {
+      await transactionsApi.confirmNotDuplicate(transactionId);
+      void queryClient.invalidateQueries({ queryKey: ['dashboard-summary'] });
+      void queryClient.invalidateQueries({ queryKey: ['recent-transactions'] });
+      void queryClient.invalidateQueries({ queryKey: ['transactions'] });
+    } catch {
+      setDuplicateConfirmError("Couldn't update this transaction. Please try again.");
+    } finally {
+      setConfirmingDuplicateId(null);
+    }
+  }
 
   function onTransactionAdded() {
     setShowAddModal(false);
@@ -386,6 +408,58 @@ export default function Dashboard() {
               </li>
             ))}
           </ul>
+        )}
+      </FinoraCard>
+      )}
+
+      {/* Detected Issues -- ReconciliationService's own duplicate pass already silently excludes
+          a row from every total above the moment it runs (Transaction.isDuplicateOf), and until
+          now nothing told the user it happened. transactionsApi.confirmNotDuplicate (BH-027,
+          "no, these really are two separate transactions") already existed on the backend to let
+          a human overrule that guess -- it simply had no caller anywhere in the product. Shown
+          only when something was actually flagged (unlike Next Actions above, which stays visible
+          with a positive empty state): this is a conditional alert like Limited History and the
+          category-review warning, not a standing destination worth checking when empty. */}
+      {summary.duplicateTransactionCount > 0 && (
+      <FinoraCard padding="lg" className="mb-6">
+        <div className="flex items-center gap-2 mb-1">
+          <div className="w-8 h-8 rounded-full bg-warning-bg flex items-center justify-center">
+            <Copy size={15} className="text-warning" />
+          </div>
+          <h2 className="font-semibold text-ink">Detected Issues</h2>
+        </div>
+        <p className="text-xs text-muted mb-4 ml-10">
+          {summary.duplicateTransactionCount === 1
+            ? "We found 1 transaction that looks like a duplicate and excluded it from your totals."
+            : `We found ${summary.duplicateTransactionCount} transactions that look like duplicates and excluded them from your totals.`}
+        </p>
+        {duplicateConfirmError && (
+          <p className="text-danger text-xs mb-3">{duplicateConfirmError}</p>
+        )}
+        <ul className="divide-y divide-border">
+          {summary.detectedDuplicates.map((d) => (
+            <li key={d.transactionId} className="flex items-center justify-between gap-3 py-2.5">
+              <div className="min-w-0">
+                <p className="text-sm text-ink truncate">{d.merchant}</p>
+                <p className="text-xs text-muted">
+                  {new Date(d.date + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })} · {fmt(d.amount)}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => void handleConfirmNotDuplicate(d.transactionId)}
+                disabled={confirmingDuplicateId === d.transactionId}
+                className="text-xs text-primary font-medium flex-shrink-0 disabled:opacity-50"
+              >
+                {confirmingDuplicateId === d.transactionId ? 'Confirming…' : 'Not a duplicate'}
+              </button>
+            </li>
+          ))}
+        </ul>
+        {summary.duplicateTransactionCount > summary.detectedDuplicates.length && (
+          <p className="text-xs text-muted mt-2.5">
+            and {summary.duplicateTransactionCount - summary.detectedDuplicates.length} more
+          </p>
         )}
       </FinoraCard>
       )}
