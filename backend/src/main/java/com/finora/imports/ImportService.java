@@ -346,14 +346,15 @@ public class ImportService {
                         ? new StagingResponse(List.of(), 0, 0, null, List.of())
                         : toStagingResponse(sections.get(0));
                 var session = importSessionService.createSession(userId, fileName, fileContent, staged.rows(), staged.detectedAccount(),
-                        result.documentContext());
+                        result.documentContext(), result.creditCardSummary());
                 recordPdfParsed(userId, fileName, fileContent.length, fingerprint, sections.size(), startedAtMs,
                         diagnostics, session.getId(),
                         java.util.Collections.singletonList(staged.verification()));
                 return new PdfStagingSessionResponse(session.getId(), false, staged, null);
             }
 
-            var session = importSessionService.createMultiSection(userId, fileName, fileContent, sections, result.documentContext());
+            var session = importSessionService.createMultiSection(userId, fileName, fileContent, sections,
+                    result.documentContext(), result.creditCardSummary());
             // Per section, in section order, because a composite statement's sections have separate
             // balance chains and one can verify while another does not -- collapsing them into one
             // report would lose exactly the distinction the verification framework computes.
@@ -610,7 +611,7 @@ public class ImportService {
                     session.getLayoutMetadataJson(), session.getLayoutFingerprint(), session.getActivatedCapabilitiesJson(),
                 // A multi-section import is CSV/PDF only -- a Gmail receipt is never
                 // multi-account -- so source is always null on this path, not session.getSource().
-                session.getUnparseableSummaryJson(), null));
+                session.getUnparseableSummaryJson(), null, importSessionService.readCreditCardSummary(session)));
         }
 
         reconcileAcross(userId, persisted);
@@ -658,7 +659,7 @@ public class ImportService {
         ConfirmedRowIntegrity.requireSameRows(stagedRows, request.rows());
         return confirm(userId, session.getFileName(), statementContentService.read(session), request, null,
                 session.getLayoutMetadataJson(), session.getLayoutFingerprint(), session.getActivatedCapabilitiesJson(),
-                session.getUnparseableSummaryJson(), session.getSource());
+                session.getUnparseableSummaryJson(), session.getSource(), importSessionService.readCreditCardSummary(session));
     }
 
     /**
@@ -712,7 +713,7 @@ public class ImportService {
      */
     @Transactional
     public ConfirmResponse confirm(UUID userId, String fileName, byte[] fileContent, ConfirmRequest request) {
-        return confirm(userId, fileName, fileContent, request, null, null, null, null, null, null);
+        return confirm(userId, fileName, fileContent, request, null, null, null, null, null, null, null);
     }
 
     /**
@@ -724,7 +725,7 @@ public class ImportService {
      */
     @Transactional
     public ConfirmResponse confirm(UUID userId, String fileName, byte[] fileContent, ConfirmRequest request, Integer sourceSectionIndex) {
-        return confirm(userId, fileName, fileContent, request, sourceSectionIndex, null, null, null, null, null);
+        return confirm(userId, fileName, fileContent, request, sourceSectionIndex, null, null, null, null, null, null);
     }
 
     /**
@@ -739,13 +740,18 @@ public class ImportService {
      * <p>{@code source} (C5-B): {@link com.finora.entity.ImportSession#SOURCE_GMAIL} or null, copied
      * verbatim from the session the same way the metadata trio is -- never recomputed here, and
      * multi-section confirms always pass null (a Gmail receipt is never multi-section).
+     *
+     * <p>{@code creditCardSummaryJson} (roadmap item 6 follow-up, PR #451): same "copied verbatim,
+     * never recomputed" treatment, one more field.
      */
     @Transactional
     public ConfirmResponse confirm(UUID userId, String fileName, byte[] fileContent, ConfirmRequest request, Integer sourceSectionIndex,
                                     String layoutMetadataJson, String layoutFingerprint, String activatedCapabilitiesJson,
-                                    String unparseableSummaryJson, String source) {
+                                    String unparseableSummaryJson, String source,
+                                    com.finora.imports.pdf.CreditCardSummaryExtractor.CreditCardSummaryEvidence creditCardSummary) {
         PersistedSection section = persistSection(userId, fileName, fileContent, request, sourceSectionIndex,
-                layoutMetadataJson, layoutFingerprint, activatedCapabilitiesJson, unparseableSummaryJson, source);
+                layoutMetadataJson, layoutFingerprint, activatedCapabilitiesJson, unparseableSummaryJson, source,
+                creditCardSummary);
         reconcileAcross(userId, List.of(section));
         return summarise(userId, section);
     }
@@ -806,7 +812,8 @@ public class ImportService {
     private PersistedSection persistSection(UUID userId, String fileName, byte[] fileContent, ConfirmRequest request,
                                     Integer sourceSectionIndex,
                                     String layoutMetadataJson, String layoutFingerprint, String activatedCapabilitiesJson,
-                                    String unparseableSummaryJson, String source) {
+                                    String unparseableSummaryJson, String source,
+                                    com.finora.imports.pdf.CreditCardSummaryExtractor.CreditCardSummaryEvidence creditCardSummary) {
         long startedAtMs = System.currentTimeMillis();
         List<String> accountsCreated = new ArrayList<>();
         // What was created, by PRODUCT rather than by account. The summary says "1 Savings, 1 Fixed
@@ -1006,6 +1013,19 @@ public class ImportService {
         // DetectedAccountInfo itself; see credit-card-statement-entity-design.md.
         statementImport.setTotalAmountDue(request.totalAmountDue());
         statementImport.setPaymentDueDate(request.paymentDueDate());
+        // Roadmap item 6 follow-up (PR #451): the rest of the same billing-summary panel, copied
+        // verbatim from the ImportSession this confirm came from -- same trio-of-metadata treatment
+        // as layoutMetadataJson above, not echoed via the request like totalAmountDue/paymentDueDate
+        // are, since a caller with none (confirmReimport, Gmail) always passes NONE here rather than
+        // routing it through ConfirmRequest at all.
+        if (creditCardSummary != null
+                && creditCardSummary != com.finora.imports.pdf.CreditCardSummaryExtractor.CreditCardSummaryEvidence.NONE) {
+            statementImport.setPreviousBalance(creditCardSummary.previousBalance());
+            statementImport.setPurchases(creditCardSummary.purchases());
+            statementImport.setCashAdvances(creditCardSummary.cashAdvances());
+            statementImport.setFees(creditCardSummary.fees());
+            statementImport.setPaymentsAndCredits(creditCardSummary.paymentsAndCredits());
+        }
         statementImport.setTransactionsImported(toInsert.size());
         statementImport.setTransactionsSkipped(skipped);
         // Measured here rather than after the save so it covers the same work the response reports
