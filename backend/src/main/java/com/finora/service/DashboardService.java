@@ -109,7 +109,7 @@ public class DashboardService {
         // history is one ~30-day window straddling Jun 26 -- Jul 26 gets a "priorMonth" of June that
         // is really 5 leftover days of the SAME import, not last month's real spending -- dividing
         // pct()'s delta against that near-empty sliver is exactly how a genuine steady spender saw
-        // a reported "928.8%" income swing. isReliablePriorMonth requires prior to be both a FULL
+        // a reported "928.8%" income swing. priorMonthGateReason requires prior to be both a FULL
         // calendar month (not the ragged edge of the overall imported date range) and to carry
         // enough of its own transactions that one or two stray rows can't dominate the ratio --
         // below either bar, the comparison isn't wrong, it's just not a comparison, and pct() below
@@ -304,14 +304,26 @@ public class DashboardService {
         LocalDate earliestTxnDate = active.stream().map(Transaction::getTxnDate).min(Comparator.naturalOrder()).orElse(null);
         LocalDate latestTxnDate = active.stream().map(Transaction::getTxnDate).max(Comparator.naturalOrder()).orElse(null);
         if (earliestTxnDate == null || latestTxnDate == null) return null;
-        boolean isEarliestBucket = month.equals(YearMonth.from(earliestTxnDate).toString());
-        boolean isLatestBucket = month.equals(YearMonth.from(latestTxnDate).toString());
-        if (isEarliestBucket && earliestTxnDate.getDayOfMonth() != 1) return "PARTIAL_PRIOR_MONTH";
-        if (isLatestBucket && latestTxnDate.getDayOfMonth() != YearMonth.from(latestTxnDate).lengthOfMonth()) return "PARTIAL_PRIOR_MONTH";
+        if (isPartialBoundaryMonth(month, earliestTxnDate, latestTxnDate)) return "PARTIAL_PRIOR_MONTH";
 
         long monthTxnCount = active.stream()
                 .filter(t -> YearMonth.from(t.getTxnDate()).toString().equals(month)).count();
         return monthTxnCount < MIN_TRANSACTIONS_FOR_DELTA_COMPARISON ? "TOO_FEW_PRIOR_TRANSACTIONS" : null;
+    }
+
+    /** True when `month` is the ragged near or far edge of the user's whole imported date range --
+     *  i.e. it's the calendar-month bucket containing `earliestTxnDate` but doesn't start on the
+     *  1st, or the bucket containing `latestTxnDate` but doesn't run through month-end. A bucket
+     *  like this holds a partial slice of a continuous statement window, not a genuine full month,
+     *  so it can't be trusted for either a month-over-month delta or a consistency/cash-flow
+     *  average -- both {@link #priorMonthGateReason} and {@link #computeHealthScore} exclude it via
+     *  this shared check. */
+    private boolean isPartialBoundaryMonth(String month, LocalDate earliestTxnDate, LocalDate latestTxnDate) {
+        boolean isEarliestBucket = earliestTxnDate != null && month.equals(YearMonth.from(earliestTxnDate).toString());
+        boolean isLatestBucket = latestTxnDate != null && month.equals(YearMonth.from(latestTxnDate).toString());
+        if (isEarliestBucket && earliestTxnDate.getDayOfMonth() != 1) return true;
+        if (isLatestBucket && latestTxnDate.getDayOfMonth() != YearMonth.from(latestTxnDate).lengthOfMonth()) return true;
+        return false;
     }
 
     // D-25 PR3-A. Owner's choice among the proposal's own options (transaction count vs. time
@@ -365,12 +377,7 @@ public class DashboardService {
         List<BigDecimal> fullMonthlyIncome = new ArrayList<>();
         for (int i = 0; i < last6.size(); i++) {
             String m = last6.get(i);
-            boolean partialStart = i == 0 && earliestTxnDate != null
-                    && m.equals(YearMonth.from(earliestTxnDate).toString()) && earliestTxnDate.getDayOfMonth() != 1;
-            boolean partialEnd = i == last6.size() - 1 && latestTxnDate != null
-                    && m.equals(YearMonth.from(latestTxnDate).toString())
-                    && latestTxnDate.getDayOfMonth() != YearMonth.from(latestTxnDate).lengthOfMonth();
-            if (partialStart || partialEnd) continue;
+            if (isPartialBoundaryMonth(m, earliestTxnDate, latestTxnDate)) continue;
             fullMonthlyExpense.add(monthlyExpense.get(i));
             fullMonthlyIncome.add(monthlyIncome.get(i));
         }
