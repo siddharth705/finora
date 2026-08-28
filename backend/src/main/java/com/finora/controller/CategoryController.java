@@ -25,7 +25,7 @@ public class CategoryController {
     @GetMapping
     public ApiResponse<List<CategoryDto>> list() {
         var categories = categoryRepository.findByUserId(currentUser.id()).stream()
-                .map(c -> new CategoryDto(c.getId(), c.getName(), c.isSystem()))
+                .map(c -> new CategoryDto(c.getId(), c.getName(), c.isSystem(), c.getIcon(), c.getColor()))
                 .toList();
         return ApiResponse.ok(categories);
     }
