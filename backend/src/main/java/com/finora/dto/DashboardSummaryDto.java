@@ -1,8 +1,10 @@
 package com.finora.dto;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 public record DashboardSummaryDto(
         BigDecimal currentBalance,
@@ -112,7 +114,27 @@ public record DashboardSummaryDto(
          * shown (comparisonGateReason above already covers why not). Ranked by rupee contribution
          * to the delta and capped at 3, largest first.
          */
-        List<CategoryMover> expenseCategoryMovers
+        List<CategoryMover> expenseCategoryMovers,
+
+        /*
+         * Detected Issues. ReconciliationService's own duplicate pass (see Transaction.
+         * isDuplicateOf/ReconciliationStatus.DUPLICATE) already silently excludes a row from every
+         * total above the moment it runs -- RefundNetting.reportable() drops anything with
+         * isDuplicateOf set -- and until now nothing told the user it happened.
+         * TransactionService.confirmNotDuplicate (BH-027, "no, these really are two separate
+         * transactions") already existed to let a human overrule that guess; it simply had no
+         * caller anywhere in the product. This doesn't compute a new verdict -- it surfaces the one
+         * already sitting on the row, the same "thin, presentation-only read" reasoning
+         * TransactionExplanationService's own doc comment gives for "Why this category?".
+         * duplicateTransactionCount is the TRUE, uncapped total so the client can say "N found"
+         * without hardcoding DashboardService.DETECTED_DUPLICATES_DISPLAY_LIMIT, mirroring how
+         * limitedHistoryMonthFloor already avoids a hardcoded threshold; detectedDuplicates is the
+         * capped, newest-first list the card actually renders.
+         */
+        int duplicateTransactionCount,
+        List<DetectedDuplicate> detectedDuplicates
 ) {
     public record CategoryMover(String category, BigDecimal currentAmount, BigDecimal priorAmount, Double pctChange) {}
+
+    public record DetectedDuplicate(UUID transactionId, LocalDate date, String merchant, BigDecimal amount) {}
 }

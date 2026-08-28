@@ -158,6 +158,16 @@ export interface DashboardSummary {
    * with the number it's meant to explain. Always empty when expenseDeltaPct is null.
    */
   expenseCategoryMovers: CategoryMover[];
+  /**
+   * Detected Issues. ReconciliationService's own duplicate pass already silently excludes a row
+   * from every total above the moment it runs (Transaction.isDuplicateOf) -- until now nothing
+   * told the user it happened. transactionsApi.confirmNotDuplicate (BH-027) already existed to
+   * let a human overrule that guess; it simply had no caller anywhere in the product.
+   * duplicateTransactionCount is the TRUE, uncapped total; detectedDuplicates is the capped,
+   * newest-first list the card actually renders.
+   */
+  duplicateTransactionCount: number;
+  detectedDuplicates: DetectedDuplicate[];
 }
 
 export interface CategoryMover {
@@ -165,6 +175,13 @@ export interface CategoryMover {
   currentAmount: number;
   priorAmount: number;
   pctChange: number | null;
+}
+
+export interface DetectedDuplicate {
+  transactionId: string;
+  date: string;
+  merchant: string;
+  amount: number;
 }
 
 // D-25 PR3-B/C. `type` is one of ACCOUNT_CREATED/FIRST_IMPORT/FIRST_BUDGET/FIRST_GOAL/
