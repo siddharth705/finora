@@ -109,12 +109,13 @@ public class DashboardService {
         // history is one ~30-day window straddling Jun 26 -- Jul 26 gets a "priorMonth" of June that
         // is really 5 leftover days of the SAME import, not last month's real spending -- dividing
         // pct()'s delta against that near-empty sliver is exactly how a genuine steady spender saw
-        // a reported "928.8%" income swing. isReliablePriorMonth requires prior to be both a FULL
+        // a reported "928.8%" income swing. priorMonthGateReason requires prior to be both a FULL
         // calendar month (not the ragged edge of the overall imported date range) and to carry
         // enough of its own transactions that one or two stray rows can't dominate the ratio --
         // below either bar, the comparison isn't wrong, it's just not a comparison, and pct() below
         // says so with null (which MetricCard already renders as a muted "--" rather than a number).
-        boolean priorMonthReliable = isReliablePriorMonth(active, priorMonth);
+        String comparisonGateReason = priorMonthGateReason(active, priorMonth);
+        boolean priorMonthReliable = comparisonGateReason == null;
 
         BigDecimal savingsRate = incomeCur.compareTo(BigDecimal.ZERO) > 0
                 ? netCur.divide(incomeCur, 4, RoundingMode.HALF_UP).multiply(BigDecimal.valueOf(100))
@@ -226,7 +227,8 @@ public class DashboardService {
                 period.month(), period.isCurrent(),
                 limitedHistory, months.size(), LIMITED_HISTORY_MONTH_FLOOR, statementCount, accounts.size(),
                 categoryReviewWarning, categoryReviewSpendPct, categoryReviewSpend,
-                categoryReviewTransactionCount, CATEGORY_REVIEW_SPEND_WARNING_THRESHOLD_PCT
+                categoryReviewTransactionCount, CATEGORY_REVIEW_SPEND_WARNING_THRESHOLD_PCT,
+                comparisonGateReason, MIN_TRANSACTIONS_FOR_DELTA_COMPARISON
         );
     }
 
@@ -291,20 +293,22 @@ public class DashboardService {
     // triple-digit swing the way they did for the bug this constant exists to prevent.
     static final int MIN_TRANSACTIONS_FOR_DELTA_COMPARISON = 3;
 
-    /** True when `month` is trustworthy as a delta's denominator: a FULL calendar month (not the
-     *  ragged edge of the overall imported date range -- see the comment at this method's call
-     *  site) carrying at least {@link #MIN_TRANSACTIONS_FOR_DELTA_COMPARISON} transactions of its
-     *  own. */
-    private boolean isReliablePriorMonth(List<Transaction> active, String month) {
-        if (month == null) return false;
+    /** Why `month` isn't trustworthy as a delta's denominator, or null when it is: a FULL calendar
+     *  month (not the ragged edge of the overall imported date range -- see the comment at this
+     *  method's call site) carrying at least {@link #MIN_TRANSACTIONS_FOR_DELTA_COMPARISON}
+     *  transactions of its own. The reason string is returned to the client (see
+     *  DashboardSummaryDto.comparisonGateReason) so a nulled-out delta can explain itself instead
+     *  of just vanishing into a muted "—". */
+    private String priorMonthGateReason(List<Transaction> active, String month) {
+        if (month == null) return null;
         LocalDate earliestTxnDate = active.stream().map(Transaction::getTxnDate).min(Comparator.naturalOrder()).orElse(null);
         LocalDate latestTxnDate = active.stream().map(Transaction::getTxnDate).max(Comparator.naturalOrder()).orElse(null);
-        if (earliestTxnDate == null || latestTxnDate == null) return false;
-        if (isPartialBoundaryMonth(month, earliestTxnDate, latestTxnDate)) return false;
+        if (earliestTxnDate == null || latestTxnDate == null) return null;
+        if (isPartialBoundaryMonth(month, earliestTxnDate, latestTxnDate)) return "PARTIAL_PRIOR_MONTH";
 
         long monthTxnCount = active.stream()
                 .filter(t -> YearMonth.from(t.getTxnDate()).toString().equals(month)).count();
-        return monthTxnCount >= MIN_TRANSACTIONS_FOR_DELTA_COMPARISON;
+        return monthTxnCount < MIN_TRANSACTIONS_FOR_DELTA_COMPARISON ? "TOO_FEW_PRIOR_TRANSACTIONS" : null;
     }
 
     /** True when `month` is the ragged near or far edge of the user's whole imported date range --
@@ -312,7 +316,7 @@ public class DashboardService {
      *  1st, or the bucket containing `latestTxnDate` but doesn't run through month-end. A bucket
      *  like this holds a partial slice of a continuous statement window, not a genuine full month,
      *  so it can't be trusted for either a month-over-month delta or a consistency/cash-flow
-     *  average -- both {@link #isReliablePriorMonth} and {@link #computeHealthScore} exclude it via
+     *  average -- both {@link #priorMonthGateReason} and {@link #computeHealthScore} exclude it via
      *  this shared check. */
     private boolean isPartialBoundaryMonth(String month, LocalDate earliestTxnDate, LocalDate latestTxnDate) {
         boolean isEarliestBucket = earliestTxnDate != null && month.equals(YearMonth.from(earliestTxnDate).toString());
