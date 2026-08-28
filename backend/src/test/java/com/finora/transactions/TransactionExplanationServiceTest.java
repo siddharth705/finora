@@ -211,6 +211,109 @@ class TransactionExplanationServiceTest {
         assertThat(result.confidence()).isNull();
     }
 
+    /**
+     * "Why this match?" -- Phase 1, docs/proposals/reconciliation-evolution-roadmap-proposal.md.
+     * The overwhelming common case: nothing matched this row, so there's nothing to explain.
+     */
+    @Test
+    void reconciliationIsNull_forAnOkTransaction() {
+        Transaction t = transaction(Transaction.DecisionSource.MANUAL, null, Transaction.Source.MANUAL);
+        when(transactionRepository.findById(txnId)).thenReturn(Optional.of(t));
+
+        TransactionExplanationDto result = service.explain(userId, txnId);
+
+        assertThat(result.reconciliation()).isNull();
+    }
+
+    @Test
+    void reconciliationExplainsARefund_withTheMatchedExpenseIdFromTheEntity_notTheJson() {
+        UUID expenseId = UUID.randomUUID();
+        Transaction t = transaction(Transaction.DecisionSource.MANUAL, null, Transaction.Source.CSV_IMPORT);
+        t.setReconciliationStatus(Transaction.ReconciliationStatus.REFUND);
+        t.setRefundOfTransactionId(expenseId);
+        t.setReconciliationExplanation(java.util.Map.of("type", "REFUND", "reason", java.util.Map.of(
+                "refundKeyword", true, "sameMerchant", false,
+                "refundAmount", "340.00", "purchaseAmount", "340.00", "partialRefund", false)));
+        when(transactionRepository.findById(txnId)).thenReturn(Optional.of(t));
+
+        var reconciliation = service.explain(userId, txnId).reconciliation();
+
+        assertThat(reconciliation.status()).isEqualTo("REFUND");
+        assertThat(reconciliation.matchedTransactionId()).isEqualTo(expenseId);
+        assertThat(reconciliation.summary()).contains("refund").contains("based on its wording");
+        assertThat(reconciliation.evidence()).contains("Full refund");
+    }
+
+    @Test
+    void reconciliationExplainsAReversal_distinctlyFromARefund() {
+        UUID expenseId = UUID.randomUUID();
+        Transaction t = transaction(Transaction.DecisionSource.MANUAL, null, Transaction.Source.CSV_IMPORT);
+        t.setReconciliationStatus(Transaction.ReconciliationStatus.REVERSAL);
+        t.setRefundOfTransactionId(expenseId);
+        t.setReconciliationExplanation(java.util.Map.of("type", "REVERSAL", "reason", java.util.Map.of(
+                "reversalKeyword", true, "sameMerchant", false,
+                "reversalAmount", "1200.00", "purchaseAmount", "1200.00", "partialReversal", false)));
+        when(transactionRepository.findById(txnId)).thenReturn(Optional.of(t));
+
+        var reconciliation = service.explain(userId, txnId).reconciliation();
+
+        assertThat(reconciliation.status()).isEqualTo("REVERSAL");
+        assertThat(reconciliation.summary()).contains("reversal").doesNotContain("refund");
+        assertThat(reconciliation.evidence()).contains("Full reversal");
+    }
+
+    @Test
+    void reconciliationExplainsATransfer_withTheTransferPairId() {
+        UUID pairId = UUID.randomUUID();
+        Transaction t = transaction(Transaction.DecisionSource.MANUAL, null, Transaction.Source.CSV_IMPORT);
+        t.setReconciliationStatus(Transaction.ReconciliationStatus.TRANSFER);
+        t.setTransfer(true);
+        t.setTransferPairId(pairId);
+        t.setReconciliationExplanation(java.util.Map.of("type", "TRANSFER", "reason", java.util.Map.of(
+                "differentAccount", true, "oppositeDirection", true,
+                "amountDifference", "0.00", "dateDifferenceDays", 2L, "dayWindowApplied", 4L,
+                "relationshipIdentifierMatched", false)));
+        when(transactionRepository.findById(txnId)).thenReturn(Optional.of(t));
+
+        var reconciliation = service.explain(userId, txnId).reconciliation();
+
+        assertThat(reconciliation.status()).isEqualTo("TRANSFER");
+        assertThat(reconciliation.matchedTransactionId()).isEqualTo(pairId);
+        assertThat(reconciliation.summary()).contains("2 day(s) apart");
+    }
+
+    @Test
+    void reconciliationExplainsADuplicate_withTheOriginalTransactionId() {
+        UUID originalId = UUID.randomUUID();
+        Transaction t = transaction(Transaction.DecisionSource.MANUAL, null, Transaction.Source.CSV_IMPORT);
+        t.setReconciliationStatus(Transaction.ReconciliationStatus.DUPLICATE);
+        t.setIsDuplicateOf(originalId);
+        when(transactionRepository.findById(txnId)).thenReturn(Optional.of(t));
+
+        var reconciliation = service.explain(userId, txnId).reconciliation();
+
+        assertThat(reconciliation.status()).isEqualTo("DUPLICATE");
+        assertThat(reconciliation.matchedTransactionId()).isEqualTo(originalId);
+        assertThat(reconciliation.summary()).contains("duplicate");
+    }
+
+    /** A row that predates V55 (reconciliation_explanation) has a status but no recorded JSON --
+     *  still a real, honest answer, not an error. */
+    @Test
+    void reconciliationStillAnswers_whenTheExplanationJsonPredatesV55() {
+        UUID originalId = UUID.randomUUID();
+        Transaction t = transaction(Transaction.DecisionSource.MANUAL, null, Transaction.Source.CSV_IMPORT);
+        t.setReconciliationStatus(Transaction.ReconciliationStatus.DUPLICATE);
+        t.setIsDuplicateOf(originalId);
+        // reconciliationExplanation deliberately left null
+        when(transactionRepository.findById(txnId)).thenReturn(Optional.of(t));
+
+        var reconciliation = service.explain(userId, txnId).reconciliation();
+
+        assertThat(reconciliation.status()).isEqualTo("DUPLICATE");
+        assertThat(reconciliation.evidence()).isEmpty();
+    }
+
     @Test
     void someoneElsesTransactionIsRejected() {
         Transaction t = transaction(Transaction.DecisionSource.MANUAL, null, Transaction.Source.MANUAL);
