@@ -438,6 +438,7 @@ function EditTransactionModal({
                 />
               ) : (
                 <CategoryCombobox
+                  inputId="edit-txn-category"
                   value={category}
                   onChange={setCategory}
                   onCreateNew={setCreatingCategory}

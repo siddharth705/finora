@@ -126,12 +126,17 @@ export default function Dashboard() {
   // (predates custom categories, and covered only 4 of the 25 default categories even before user-
   // created ones existed). Looked up by categoryId instead so every category -- default or custom
   // -- renders its own real, backend-assigned icon/color token.
-  const [categoriesById, setCategoriesById] = useState<Record<string, CategoryOption>>({});
-  useEffect(() => {
-    categoriesApi.list().then((cats) => {
-      setCategoriesById(Object.fromEntries(cats.map((c) => [c.id, c])));
-    });
-  }, []);
+  //
+  // On the shared ['categories'] key rather than its own useState+useEffect: this page also
+  // renders AskOnceCard and MerchantGroupReviewCard, each of which mounts CategoryComboboxes
+  // reading the same key, so one fetch serves all of them. It also picks up react-query's error
+  // handling, replacing a bare .then() with no .catch() at all -- a rejected promise there was an
+  // unhandled rejection, and the icons simply fell back to the default forever with no signal.
+  const categoriesQ = useQuery({ queryKey: ['categories'], queryFn: () => categoriesApi.list(), retry: false });
+  const categoriesById: Record<string, CategoryOption> = useMemo(
+    () => Object.fromEntries((categoriesQ.data ?? []).map((c) => [c.id, c])),
+    [categoriesQ.data],
+  );
 
   function onTransactionAdded() {
     setShowAddModal(false);
