@@ -436,6 +436,26 @@ export default function Dashboard() {
                   </div>
                 ))}
               </div>
+              {/* Not gated on the "Other" category name -- "Other" is a real, resolvable category
+                  (the categorization engine's fallback when nothing matched), so a transaction
+                  landing there isn't necessarily uncategorized. categoryReviewWarning instead
+                  reuses Transaction.needsCategoryReview, the same per-transaction signal Ledger's
+                  "needs review" badge already shows -- flagged only when a default("Other")-
+                  sourced guess ALSO misses the user's own confidence threshold. */}
+              {summary.categoryReviewWarning && (
+                <div className="bg-warning-bg border border-warning/30 rounded-xl2 px-4 py-3 flex items-start gap-2.5 mt-4">
+                  <AlertTriangle size={15} className="text-warning flex-shrink-0 mt-0.5" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-medium text-ink">Spending needs category review</p>
+                    <p data-testid="category-review-detail" className="text-[11px] text-muted mt-0.5">
+                      {`${fmt(summary.categoryReviewSpendAmount)} (${summary.categoryReviewSpendPct.toFixed(0)}%) across ${summary.categoryReviewTransactionCount} transaction${summary.categoryReviewTransactionCount === 1 ? '' : 's'} ${periodLabel} landed in a generic category and could use a closer look.`}
+                    </p>
+                    <Link to="/app/transactions" className="inline-block mt-2 text-[11px] font-medium text-primary">
+                      Review transactions →
+                    </Link>
+                  </div>
+                </div>
+              )}
               <Link to="/app/reports" className="mt-4 text-center text-xs font-medium text-primary bg-primary-light rounded-lg py-2.5">
                 View Full Report →
               </Link>
