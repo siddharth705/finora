@@ -85,6 +85,55 @@ class ImportSessionServiceTest {
         assertThat(created.getExpiresAt()).isAfter(Instant.now());
     }
 
+    private com.finora.imports.pdf.CreditCardSummaryExtractor.CreditCardSummaryEvidence sampleCreditCardSummary() {
+        return new com.finora.imports.pdf.CreditCardSummaryExtractor.CreditCardSummaryEvidence(
+                new BigDecimal("10000"), new BigDecimal("2450.75"), BigDecimal.ZERO, new BigDecimal("50"),
+                new BigDecimal("10000"), new BigDecimal("12450.75"),
+                com.finora.imports.pdf.CreditCardSummaryExtractor.CreditCardSummaryEvidence.ExtractionMethod.GRID,
+                List.of());
+    }
+
+    @Test
+    void createSession_withACreditCardSummary_persistsAndReadsItBack() {
+        ImportSession created = service.createSession(userId, "statement.pdf", new byte[]{1, 2, 3},
+                List.of(sampleRow()), sampleDetected(), null, sampleCreditCardSummary());
+
+        assertThat(created.getCreditCardSummaryJson()).contains("12450.75");
+        assertThat(service.readCreditCardSummary(created)).isEqualTo(sampleCreditCardSummary());
+    }
+
+    @Test
+    void createSession_withNoCreditCardSummary_leavesTheColumnNull() {
+        ImportSession created = service.createSession(userId, "statement.csv", new byte[]{1, 2, 3},
+                List.of(sampleRow()), sampleDetected());
+
+        assertThat(created.getCreditCardSummaryJson()).isNull();
+        assertThat(service.readCreditCardSummary(created))
+                .isEqualTo(com.finora.imports.pdf.CreditCardSummaryExtractor.CreditCardSummaryEvidence.NONE);
+    }
+
+    @Test
+    void createSession_withCreditCardSummaryEvidenceNone_alsoLeavesTheColumnNull() {
+        // NONE is never null itself (see that constant's own doc comment) -- confirms the "not
+        // NONE either" check actually fires, not just the plain-null one above.
+        ImportSession created = service.createSession(userId, "statement.pdf", new byte[]{1, 2, 3},
+                List.of(sampleRow()), sampleDetected(), null,
+                com.finora.imports.pdf.CreditCardSummaryExtractor.CreditCardSummaryEvidence.NONE);
+
+        assertThat(created.getCreditCardSummaryJson()).isNull();
+    }
+
+    @Test
+    void createMultiSection_withACreditCardSummary_persistsIt() {
+        var sections = List.of(new com.finora.dto.ImportDto.StagedAccountSection(
+                sampleDetected(), List.of(sampleRow()), 1, 0, List.of()));
+
+        ImportSession created = service.createMultiSection(userId, "statement.pdf", new byte[]{1, 2, 3},
+                sections, null, sampleCreditCardSummary());
+
+        assertThat(created.getCreditCardSummaryJson()).contains("12450.75");
+    }
+
     /**
      * Storage review lifecycle change: staging ALWAYS writes to temporary (database) storage now,
      * regardless of whether a storage provider is configured -- object storage is not reached

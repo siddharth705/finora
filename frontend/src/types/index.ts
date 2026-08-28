@@ -365,6 +365,9 @@ export interface StatementSummary {
   statementPeriodEnd: string | null;
   openingBalance: number | null;
   closingBalance: number | null;
+  // Credit-card statement entity, roadmap item 6. Null for a non-credit-card statement.
+  totalAmountDue: number | null;
+  paymentDueDate: string | null;
   transactionsImported: number;
   transactionsSkipped: number;
   importedAt: string;

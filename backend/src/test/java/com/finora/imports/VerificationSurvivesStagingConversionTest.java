@@ -104,8 +104,8 @@ class VerificationSurvivesStagingConversionTest {
         ReconciliationService reconciliationService = mock(ReconciliationService.class);
         RecurringService recurringService = mock(RecurringService.class);
         importSessionService = mock(ImportSessionService.class);
-        when(importSessionService.createSession(any(), any(), any(), any(), any(), any())).thenReturn(session());
-        when(importSessionService.createMultiSection(any(), any(), any(), any(), any())).thenReturn(session());
+        when(importSessionService.createSession(any(), any(), any(), any(), any(), any(), any())).thenReturn(session());
+        when(importSessionService.createMultiSection(any(), any(), any(), any(), any(), any())).thenReturn(session());
 
         DuplicateDetector duplicateDetector = new DuplicateDetector(transactionRepository);
         TransactionNormalizer transactionNormalizer = new TransactionNormalizer(categorizationService,
@@ -132,7 +132,8 @@ class VerificationSurvivesStagingConversionTest {
     private void stubSections(List<StagedAccountSection> sections) throws Exception {
         when(pdfPreviewGenerator.generateSectionsWithContext(any(), any(), any(), any())).thenReturn(
                 new com.finora.imports.pdf.PdfPreviewGenerator.PdfGenerationResult(sections,
-                        new DocumentContext("PDF", "test")));
+                        new DocumentContext("PDF", "test"),
+                        com.finora.imports.pdf.CreditCardSummaryExtractor.CreditCardSummaryEvidence.NONE));
         when(pdfPreviewGenerator.generateSections(any(), any(), any(), any())).thenReturn(sections);
     }
 

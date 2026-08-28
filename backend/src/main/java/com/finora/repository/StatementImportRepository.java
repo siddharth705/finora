@@ -53,6 +53,10 @@ public interface StatementImportRepository extends JpaRepository<StatementImport
         LocalDate getStatementPeriodEnd();
         BigDecimal getOpeningBalance();
         BigDecimal getClosingBalance();
+        // Credit-card statement entity, roadmap item 6 -- see StatementImport's own doc comment on
+        // these two fields. Null for a non-credit-card statement, same as on the entity.
+        BigDecimal getTotalAmountDue();
+        LocalDate getPaymentDueDate();
         int getTransactionsImported();
         int getTransactionsSkipped();
         Instant getImportedAt();
@@ -62,6 +66,7 @@ public interface StatementImportRepository extends JpaRepository<StatementImport
            SELECT s.id AS id, s.accountId AS accountId, s.fileName AS fileName,
                   s.statementPeriodStart AS statementPeriodStart, s.statementPeriodEnd AS statementPeriodEnd,
                   s.openingBalance AS openingBalance, s.closingBalance AS closingBalance,
+                  s.totalAmountDue AS totalAmountDue, s.paymentDueDate AS paymentDueDate,
                   s.transactionsImported AS transactionsImported, s.transactionsSkipped AS transactionsSkipped,
                   s.importedAt AS importedAt
              FROM StatementImport s
