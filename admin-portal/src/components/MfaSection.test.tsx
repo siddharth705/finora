@@ -149,24 +149,40 @@ describe('MfaSection', () => {
 
       const passwordField = await screen.findByPlaceholderText('Current password');
       await user.type(passwordField, 'my-current-password');
+      await user.type(screen.getByLabelText(/authenticator code or recovery code/i), '654321');
       await user.click(screen.getByRole('button', { name: /disable two-factor authentication/i }));
 
-      await waitFor(() => expect(adminMfaApi.disable).toHaveBeenCalledWith('my-current-password', null));
+      await waitFor(() => expect(adminMfaApi.disable).toHaveBeenCalledWith('my-current-password', null, '654321'));
       await waitFor(() => expect(notifySuccess).toHaveBeenCalledWith('Two-factor authentication disabled.'));
     });
 
-    it('shows a Google reauth prompt instead of a password field for a GOOGLE-method admin', async () => {
+    it('requires a code before the disable button is enabled for a PASSWORD-method admin', async () => {
+      const user = userEvent.setup();
+      renderSection();
+      await user.click(await screen.findByRole('button', { name: /disable/i }));
+
+      await user.type(await screen.findByPlaceholderText('Current password'), 'my-current-password');
+
+      expect(screen.getByRole('button', { name: /disable two-factor authentication/i })).toBeDisabled();
+    });
+
+    it('shows a Google reauth prompt instead of a password field for a GOOGLE-method admin, gated behind entering a code first', async () => {
       const user = userEvent.setup();
       vi.mocked(userApi.get).mockResolvedValue({ phoneNumber: '+919876543705', signInMethod: 'GOOGLE' }); // synthetic-ok
 
       renderSection();
       await user.click(await screen.findByRole('button', { name: /disable/i }));
 
-      // VITE_GOOGLE_LOGIN_CLIENT_ID is unset in this test environment, so GoogleReauthPrompt
-      // shows its own explicit "unavailable" message rather than silently rendering nothing --
-      // the point of this test is that the PASSWORD-only field is never offered to this account.
-      expect(await screen.findByText(/isn't available right now/i)).toBeInTheDocument();
+      // Without a code entered yet, the Google button isn't offered -- the point of this test is
+      // that re-auth alone (password or Google) can never be enough to strip MFA once it's on.
+      expect(await screen.findByText(/enter a code above/i)).toBeInTheDocument();
       expect(screen.queryByPlaceholderText('Current password')).not.toBeInTheDocument();
+
+      await user.type(screen.getByLabelText(/authenticator code or recovery code/i), '654321');
+
+      // VITE_GOOGLE_LOGIN_CLIENT_ID is unset in this test environment, so GoogleReauthPrompt
+      // shows its own explicit "unavailable" message rather than silently rendering nothing.
+      expect(await screen.findByText(/isn't available right now/i)).toBeInTheDocument();
     });
 
     it('shows an error when the current credential is rejected', async () => {
@@ -178,10 +194,25 @@ describe('MfaSection', () => {
 
       const passwordField = await screen.findByPlaceholderText('Current password');
       await user.type(passwordField, 'wrong-password');
+      await user.type(screen.getByLabelText(/authenticator code or recovery code/i), '000000');
       await user.click(screen.getByRole('button', { name: /disable two-factor authentication/i }));
 
       expect(await screen.findByText('Current credential could not be verified.')).toBeInTheDocument();
       expect(notifySuccess).not.toHaveBeenCalled();
+    });
+
+    it('shows a code-specific error when the code itself is rejected', async () => {
+      const user = userEvent.setup();
+      vi.mocked(adminMfaApi.disable).mockRejectedValue(apiError(AUTH_MFA_INVALID_CODE));
+
+      renderSection();
+      await user.click(await screen.findByRole('button', { name: /disable/i }));
+
+      await user.type(await screen.findByPlaceholderText('Current password'), 'my-current-password');
+      await user.type(screen.getByLabelText(/authenticator code or recovery code/i), '000000');
+      await user.click(screen.getByRole('button', { name: /disable two-factor authentication/i }));
+
+      expect(await screen.findByText(/that code didn't work/i)).toBeInTheDocument();
     });
 
     it('cancels the disable flow without calling the API', async () => {

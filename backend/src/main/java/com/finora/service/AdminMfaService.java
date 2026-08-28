@@ -200,18 +200,31 @@ public class AdminMfaService {
 
     /** Requires fresh proof of the account's own sign-in credential -- the same bar
      *  {@code UserAccountLifecycleService.deactivate} and password change already hold a
-     *  security-downgrading action to, via the same {@link GoogleReauthVerifier}. Removing MFA is
-     *  exactly that: whoever can do this can turn a two-factor account back into a one-factor one.
+     *  security-downgrading action to, via the same {@link GoogleReauthVerifier} -- AND, when MFA
+     *  is currently enabled, a live TOTP code or an unused recovery code. Removing MFA is exactly
+     *  the downgrade enrolling it protected against: whoever can do this can turn a two-factor
+     *  account back into a one-factor one, so it needs the same proof-of-possession of the second
+     *  factor that {@link #confirm} required to turn it on, not password/re-auth alone -- password
+     *  re-auth alone would mean a stolen live session plus the account password is enough to strip
+     *  MFA with no TOTP secret or recovery code ever proven, undoing the protection MFA is meant to
+     *  add against exactly that kind of session compromise. Skipped only when there is no enabled
+     *  credential to protect (nothing for a second factor to guard).
      *
      *  @param actingAdminId see {@link #confirm}'s own doc comment -- same convention, same
      *         always-equal-to-userId guarantee, same reason. */
     @Transactional
-    public void disable(UUID userId, String currentPassword, String googleIdToken, String appleIdToken, UUID actingAdminId) {
+    public void disable(UUID userId, String currentPassword, String googleIdToken, String appleIdToken, String code, UUID actingAdminId) {
         requireFeatureEnabled();
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "User not found"));
         if (!googleReauthVerifier.verify(user, currentPassword, googleIdToken, appleIdToken)) {
             throw new ApiException(HttpStatus.UNAUTHORIZED, "Current credential could not be verified.");
+        }
+
+        Optional<AdminTotpCredential> enabledCredential = credentialRepository.findByUserId(userId)
+                .filter(AdminTotpCredential::isEnabled);
+        if (enabledCredential.isPresent() && !verifyMfaCode(userId, enabledCredential.get(), code)) {
+            throw new ApiException(ErrorCode.AUTH_MFA_INVALID_CODE);
         }
 
         credentialRepository.deleteByUserId(userId);
@@ -262,18 +275,26 @@ public class AdminMfaService {
                 .filter(AdminTotpCredential::isEnabled)
                 .orElseThrow(() -> new ApiException(ErrorCode.AUTH_MFA_INVALID_CODE));
 
-        String secret = encryptionService.decrypt(credential.secret());
-        boolean verified = TotpGenerator.verify(secret, code);
-        if (!verified) {
-            verified = tryConsumeRecoveryCode(userId, code);
-        }
-        if (!verified) {
+        if (!verifyMfaCode(userId, credential, code)) {
             throw new ApiException(ErrorCode.AUTH_MFA_INVALID_CODE);
         }
 
         challenge.markUsed();
         challengeRepository.save(challenge);
         return userId;
+    }
+
+    /** Checked in that order, since a TOTP code is the expected path and a recovery code is the
+     *  fallback for "I don't have my authenticator." Consumes the recovery code (marks it used) if
+     *  that's the branch that matched, same as {@link #verifyChallenge} already relied on. Shared
+     *  by {@link #verifyChallenge} and {@link #disable} -- both are "prove you still hold the
+     *  second factor," just gating a different action. */
+    private boolean verifyMfaCode(UUID userId, AdminTotpCredential credential, String code) {
+        String secret = encryptionService.decrypt(credential.secret());
+        if (TotpGenerator.verify(secret, code)) {
+            return true;
+        }
+        return tryConsumeRecoveryCode(userId, code);
     }
 
     private boolean tryConsumeRecoveryCode(UUID userId, String code) {
