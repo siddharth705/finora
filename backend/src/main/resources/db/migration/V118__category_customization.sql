@@ -164,11 +164,21 @@ SELECT b.id AS budget_id,
        b.category_id AS original_category_id,
        r.survivor_id AS surviving_category_id,
        b.monthly_limit,
+       b.deleted_at,
        b.created_at,
        b.updated_at,
        now() AS dropped_at
 FROM ranked r JOIN budgets b ON b.id = r.budget_id
 WHERE r.rn > 1;
+
+-- CREATE TABLE ... AS SELECT copies no constraints from the source -- this table must stay
+-- self-purging the same way every other per-user table in this app is: AccountPurgeSweepService
+-- walks a fixed list of tables to hard-delete on account deletion and has no knowledge of this one,
+-- so without this FK a deleted account's user_id and the monthly limit it once set would survive
+-- account erasure indefinitely in an unowned table.
+ALTER TABLE v118_dropped_budgets
+    ADD CONSTRAINT v118_dropped_budgets_user_id_fkey
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE;
 
 WITH dup AS (
     SELECT id, user_id,
