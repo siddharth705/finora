@@ -141,4 +141,36 @@ class StatementImportRepositoryIT extends AbstractIntegrationTest {
         assertThat(statementImportRepository.findCapabilityDataByUserId(userId)).hasSize(1);
         assertThat(statementImportRepository.findCapabilityDataByUserId(otherUserId)).hasSize(1);
     }
+
+    // --- findByUserIdAndTotalAmountDueIsNotNull: ReconciliationService's CC_PAYMENT pass (roadmap
+    // Phase 3, docs/proposals/reconciliation-evolution-roadmap-proposal.md Part 4) ---
+
+    @Test
+    @Transactional
+    void findByUserIdAndTotalAmountDueIsNotNull_returnsOnlyCreditCardStatements() {
+        StatementImport ccStatement = saveStatement(null, null);
+        ccStatement.setTotalAmountDue(new BigDecimal("2500.00"));
+        ccStatement.setPaymentDueDate(java.time.LocalDate.of(2026, 7, 15));
+        statementImportRepository.save(ccStatement);
+        saveStatement(null, null); // an ordinary (non-credit-card) statement, totalAmountDue left null
+        entityManager.flush();
+        entityManager.clear();
+
+        List<StatementImport> results = statementImportRepository.findByUserIdAndTotalAmountDueIsNotNull(userId);
+
+        assertThat(results).hasSize(1);
+        assertThat(results.get(0).getId()).isEqualTo(ccStatement.getId());
+    }
+
+    @Test
+    @Transactional
+    void findByUserIdAndTotalAmountDueIsNotNull_scopedToOneUser() {
+        StatementImport ccStatement = saveStatement(null, null);
+        ccStatement.setTotalAmountDue(new BigDecimal("2500.00"));
+        statementImportRepository.save(ccStatement);
+        entityManager.flush();
+        entityManager.clear();
+
+        assertThat(statementImportRepository.findByUserIdAndTotalAmountDueIsNotNull(UUID.randomUUID())).isEmpty();
+    }
 }

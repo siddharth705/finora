@@ -73,6 +73,20 @@ public final class ReconciliationPolicy {
     public static final BigDecimal TRANSFER_AMOUNT_TOLERANCE = BigDecimal.ONE;
 
     /**
+     * How far a savings-side payment can land from a credit card statement's printed due date and
+     * still be considered a candidate settlement of that statement -- roadmap Phase 3, "Credit card
+     * settlement" (docs/proposals/reconciliation-evolution-roadmap-proposal.md Part 4).
+     *
+     * <p>Reuses {@link #OWN_ACCOUNT_MATCH_DAY_WINDOW}'s value rather than inventing a new number: a
+     * card payment is routinely made several days early (auto-pay, a person clearing it as soon as
+     * the statement arrives) or a few days late, and this is the same order of magnitude this file
+     * already judged reasonable for "settles slower than an instant transfer, but is still clearly
+     * the same event." Already covered by {@link #CANDIDATE_WINDOW_DAYS}'s existing max (dominated
+     * by {@link #REFUND_WINDOW_DAYS}), so no change to that derivation was needed.
+     */
+    public static final long CC_PAYMENT_DUE_DATE_WINDOW_DAYS = OWN_ACCOUNT_MATCH_DAY_WINDOW;
+
+    /**
      * How far either side of an import's own date range the candidate set has to reach for a
      * windowed reconciliation to find everything an unbounded one would.
      *
