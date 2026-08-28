@@ -186,6 +186,91 @@ class DashboardServiceTest {
     }
 
     @Test
+    @DisplayName("comparison gating: a partial-boundary prior month doesn't produce a wild delta percentage")
+    void summarize_gatesDeltas_whenThePriorMonthIsAPartialBoundarySliver() {
+        // Reproduces the real bug: one continuous ~30-day statement window (Jun 26 -- Jul 26)
+        // straddles a calendar boundary, so "priorMonth" (June) is really just 5 leftover days of
+        // the SAME import, not a genuine separate historical month -- a handful of stray June
+        // transactions against a full July of real spending used to report as a 900%+ swing.
+        List<Transaction> txns = new java.util.ArrayList<>();
+        for (LocalDate d = LocalDate.of(2026, 6, 26); !d.isAfter(LocalDate.of(2026, 6, 30)); d = d.plusDays(1)) {
+            txns.add(txn(new BigDecimal("500.00"), Transaction.Type.INCOME, d, Transaction.ReconciliationStatus.OK));
+        }
+        for (LocalDate d = LocalDate.of(2026, 7, 1); !d.isAfter(LocalDate.of(2026, 7, 26)); d = d.plusDays(1)) {
+            txns.add(txn(new BigDecimal("1200.00"), Transaction.Type.INCOME, d, Transaction.ReconciliationStatus.OK));
+        }
+        when(transactionRepository.findByUserId(userId)).thenReturn(txns);
+
+        DashboardSummaryDto summary = dashboardService.summarize(userId);
+
+        assertThat(summary.incomeDeltaPct()).isNull();
+        assertThat(summary.expenseDeltaPct()).isNull();
+        assertThat(summary.netDeltaPct()).isNull();
+    }
+
+    @Test
+    @DisplayName("comparison gating: a FULL prior month with too few transactions still doesn't get a delta")
+    void summarize_gatesDeltas_whenTheFullPriorMonthHasTooFewTransactions() {
+        // Isolated from the partial-boundary gate: the earlier of June's two transactions falls on
+        // the 1st, so June passes the "full calendar month" boundary check cleanly -- it's gated
+        // purely because only 2 transactions (below MIN_TRANSACTIONS_FOR_DELTA_COMPARISON) fall in
+        // it, and one or two stray rows could still single-handedly swing the ratio.
+        List<Transaction> txns = new java.util.ArrayList<>();
+        txns.add(txn(new BigDecimal("100.00"), Transaction.Type.INCOME, LocalDate.of(2026, 6, 1), Transaction.ReconciliationStatus.OK));
+        txns.add(txn(new BigDecimal("100.00"), Transaction.Type.INCOME, LocalDate.of(2026, 6, 20), Transaction.ReconciliationStatus.OK));
+        for (LocalDate d = LocalDate.of(2026, 7, 1); !d.isAfter(LocalDate.of(2026, 7, 31)); d = d.plusDays(1)) {
+            txns.add(txn(new BigDecimal("1000.00"), Transaction.Type.INCOME, d, Transaction.ReconciliationStatus.OK));
+        }
+        when(transactionRepository.findByUserId(userId)).thenReturn(txns);
+
+        DashboardSummaryDto summary = dashboardService.summarize(userId);
+
+        assertThat(summary.incomeDeltaPct()).isNull();
+    }
+
+    @Test
+    @DisplayName("comparison gating: a real, comparable prior month still gets a real delta")
+    void summarize_stillComputesADelta_whenThePriorMonthIsGenuinelyComparable() {
+        // Two full calendar months, both with real transaction volume -- the fix must not smother a
+        // legitimate comparison, only the artifacts.
+        List<Transaction> txns = new java.util.ArrayList<>();
+        for (LocalDate d = LocalDate.of(2026, 6, 1); !d.isAfter(LocalDate.of(2026, 6, 30)); d = d.plusDays(1)) {
+            txns.add(txn(new BigDecimal("100.00"), Transaction.Type.INCOME, d, Transaction.ReconciliationStatus.OK));
+        }
+        for (LocalDate d = LocalDate.of(2026, 7, 1); !d.isAfter(LocalDate.of(2026, 7, 31)); d = d.plusDays(1)) {
+            txns.add(txn(new BigDecimal("200.00"), Transaction.Type.INCOME, d, Transaction.ReconciliationStatus.OK));
+        }
+        when(transactionRepository.findByUserId(userId)).thenReturn(txns);
+
+        DashboardSummaryDto summary = dashboardService.summarize(userId);
+
+        // June: 30 * 100 = 3000. July: 31 * 200 = 6200. (6200-3000)/3000 * 100 ~= 106.67%.
+        assertThat(summary.incomeDeltaPct()).isNotNull();
+        assertThat(summary.incomeDeltaPct()).isCloseTo(106.67, org.assertj.core.data.Offset.offset(0.5));
+    }
+
+    @Test
+    @DisplayName("comparison gating: an exactly-zero prior month still gates, same as before this change")
+    void summarize_stillGatesDeltas_whenThePriorMonthIsExactlyZero() {
+        // Pre-existing behaviour (prior == 0 -> null) must survive unchanged, isolated from the two
+        // NEW gates: June is a genuine FULL month (1st -- 30th) with plenty of its own transactions
+        // (clears MIN_TRANSACTIONS_FOR_DELTA_COMPARISON) -- just none of them INCOME, so incomePrior
+        // is genuinely, legitimately 0, not a thin-data artifact.
+        List<Transaction> txns = new java.util.ArrayList<>();
+        for (LocalDate d = LocalDate.of(2026, 6, 1); !d.isAfter(LocalDate.of(2026, 6, 30)); d = d.plusDays(1)) {
+            txns.add(txn(new BigDecimal("500.00"), Transaction.Type.EXPENSE, d, Transaction.ReconciliationStatus.OK));
+        }
+        for (LocalDate d = LocalDate.of(2026, 7, 1); !d.isAfter(LocalDate.of(2026, 7, 31)); d = d.plusDays(1)) {
+            txns.add(txn(new BigDecimal("1000.00"), Transaction.Type.INCOME, d, Transaction.ReconciliationStatus.OK));
+        }
+        when(transactionRepository.findByUserId(userId)).thenReturn(txns);
+
+        DashboardSummaryDto summary = dashboardService.summarize(userId);
+
+        assertThat(summary.incomeDeltaPct()).isNull();
+    }
+
+    @Test
     void summarize_flagsALiquidAccountBelowTheUsersLowBalanceThreshold() {
         // Override setUp()'s 100000 balance with one below the default 2000 threshold.
         savings.setBalance(new BigDecimal("500.00"));
