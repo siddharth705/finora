@@ -44,13 +44,11 @@ import java.util.UUID;
  * <h2>Why a class and not a helper method on each caller</h2>
  *
  * <p>Because there were two copies of the one-sided filter and they were identical, which is how
- * they were both wrong. A third reader is coming ({@code BudgetService} — see below), and the rule
- * has to have one owner before it has three call sites.
- *
- * <p><b>{@code BudgetService} deliberately still does not use this.</b> It loads one calendar
- * month by date range, so the refund rows that offset its expenses are frequently outside the set
- * it queried, and wiring this in means changing that query. That is a real fix and a separate one;
- * it is named here so the remaining copy is a known gap rather than an oversight.
+ * they were both wrong. A third reader, {@code BudgetService}, now uses it too (Phase 1 of
+ * docs/proposals/reconciliation-evolution-roadmap-proposal.md) — it queries refund/reversal rows
+ * across all time via {@code findByUserIdAndReconciliationStatusIn} rather than the calendar-month
+ * window it reports spend in, same as {@code ReportService}/{@code AnalyticsService} already did,
+ * for the same reason: a refund routinely arrives in a later month than the purchase it reverses.
  */
 public final class RefundNetting {
 
