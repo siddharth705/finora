@@ -16,6 +16,7 @@ import com.finora.repository.UserRepository;
 import com.finora.transactions.TransactionService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.test.context.TestPropertySource;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -42,7 +43,15 @@ import static org.assertj.core.api.Assertions.assertThatCode;
  * repository, so {@code categoryRepository.delete(category)} is a no-op that cannot fail — the
  * bug is structurally invisible to it, and was. Only a real Postgres with the real Flyway schema
  * enforces the foreign key that this whole fix exists to satisfy.
+ *
+ * <p><b>Why the learning queue is off here.</b> The queue worker polls on a schedule and applies
+ * events by calling {@code MerchantLearningService.confirm}, which writes a fresh
+ * merchant_learning_audit row. With the poller live, one firing between this test's delete and its
+ * commit re-references the category the delete is removing and the FK fails again — a test-time
+ * race against a background thread, not the bug under test. Same reason and same switch as
+ * {@code MerchantLearningImportIT} and {@code BulkRecategorizeLearningIT}.
  */
+@TestPropertySource(properties = "app.learning.queue.enabled=false")
 class CategoryDeleteLearningReferencesIT extends AbstractIntegrationTest {
 
     @Autowired private CategoryService categoryService;
