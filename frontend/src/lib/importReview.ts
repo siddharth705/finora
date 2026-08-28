@@ -151,6 +151,7 @@ export function toConfirmedRows(
     // survives if the staged ruleId is echoed back here, same as categorySource already was.
     ruleId: r.ruleId,
     categoryConfidence: r.categoryConfidence,
+    rowPosition: r.rowPosition,
     likelyDuplicate: r.likelyDuplicate,
     referenceNumber: r.referenceNumber,
     balanceAfter: r.balanceAfter,

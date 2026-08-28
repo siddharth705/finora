@@ -267,6 +267,11 @@ export interface StagedRow {
   // from the source document, not a guess). Distinct from `confidence` above (Gmail-receipt
   // extraction reliability) and `merchantConfidence` (merchant-identity resolution).
   categoryConfidence: number | null;
+  // 1-based position within its section as originally parsed, or null for a client/import path
+  // that predates this field. Echoed back unchanged in the confirm request so it lands on
+  // Transaction.sourceRowPosition -- the only thing the admin Import Row Trace (Founder
+  // Operations Dashboard) reads it for. No UI consumes it here.
+  rowPosition: number | null;
 }
 
 export interface MerchantGroup {

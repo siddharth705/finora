@@ -377,12 +377,17 @@ public class PdfPreviewGenerator {
         // Same reasoning again, for merchant resolution (Transaction Intelligence Phase A) -- see
         // PreviewGenerator's identical hoist and MerchantIndex's own doc comment.
         MerchantIndex merchantIndex = transactionNormalizer.merchantIndexFor(userId);
-        for (Map<String, String> row : section.rows()) {
+        List<Map<String, String>> sectionRows = section.rows();
+        for (int i = 0; i < sectionRows.size(); i++) {
+            Map<String, String> row = sectionRows.get(i);
+            // 1-based, within this section -- same convention as PreviewGenerator's CSV path.
+            int rowPosition = i + 1;
             StagedRow parsed = transactionNormalizer.normalize(userId, row, ctx, rules, duplicateIndex, merchantIndex);
             if (parsed == null) {
                 unparseable.add(new UnparseableRow(row, transactionNormalizer.explainFailure(row)));
                 continue;
             }
+            parsed = parsed.withRowPosition(rowPosition);
             // RowKind.BALANCE_MARKER (see that enum's doc comment): a row whose only recognizable
             // amount came from a Balance-style column, not a real debit/credit/amount column --
             // structurally a statement's own OPENING BALANCE/CLOSING BALANCE label, not a

@@ -225,6 +225,11 @@ export interface StagedRow {
    * judge that against, which is not a review.
    */
   duplicateMatch: DuplicateMatch | null;
+  // 1-based position within its section as originally parsed, or null for a client/import path
+  // that predates this field. Echoed back unchanged in the confirm request so it lands on
+  // Transaction.sourceRowPosition -- the only thing the admin Import Row Trace (Founder
+  // Operations Dashboard) reads it for. No UI here consumes it.
+  rowPosition: number | null;
 }
 
 /**

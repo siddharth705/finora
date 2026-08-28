@@ -268,6 +268,8 @@ export interface ConfirmedRowPayload {
   categorySource: string;
   ruleId: string | null;
   categoryConfidence: number | null;
+  /** Echoed from StagedRow.rowPosition unchanged -- see that field's own doc comment. */
+  rowPosition: number | null;
   /** What the engine guessed. */
   likelyDuplicate: boolean;
   /**
