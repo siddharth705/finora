@@ -193,6 +193,27 @@ public class DashboardService {
                 : 0;
         boolean categoryReviewWarning = categoryReviewSpendPct >= CATEGORY_REVIEW_SPEND_WARNING_THRESHOLD_PCT;
 
+        // Categorization Confidence: how sure the categorization ENGINE was, on average, about the
+        // categories it assigned this month -- a positive, ongoing data-quality signal, distinct
+        // from categoryReviewWarning above (which only fires when spend is BADLY miscategorized).
+        // decisionConfidence is null for MANUAL/FILE_PROVIDED transactions (an explicit human/file
+        // choice, not a guess -- see the field's own doc comment) and for anything that predates
+        // Transaction Intelligence Phase B, so both are excluded from the average rather than
+        // silently counted as some default score. Scoped to BOTH income and expense this month
+        // (categorization isn't spend-only), unlike categoryReviewSpend above which is deliberately
+        // EXPENSE-only. Gated below MIN_TRANSACTIONS_FOR_CONFIDENCE_SCORE for the same reason
+        // healthScoreAvailable gates the health score: an average of one or two decisions reads as
+        // confident or shaky by chance, not by anything real about the categorization engine.
+        List<Integer> currentMonthConfidenceScores = active.stream()
+                .filter(t -> Objects.equals(YearMonth.from(t.getTxnDate()).toString(), currentMonth))
+                .map(Transaction::getDecisionConfidence)
+                .filter(Objects::nonNull)
+                .toList();
+        int categorizationConfidenceTransactionCount = currentMonthConfidenceScores.size();
+        Integer categorizationConfidenceScore = categorizationConfidenceTransactionCount >= MIN_TRANSACTIONS_FOR_CONFIDENCE_SCORE
+                ? (int) Math.round(currentMonthConfidenceScores.stream().mapToInt(Integer::intValue).average().orElse(0))
+                : null;
+
         // Same current-month EXPENSE figures as spendByCategory above, just keyed by category id
         // (rather than display name) so they can be joined against Budget.categoryId below --
         // mirrors BudgetService.listForUser()'s own spend-by-category computation, scoped to this
@@ -265,7 +286,8 @@ public class DashboardService {
                 categoryReviewTransactionCount, CATEGORY_REVIEW_SPEND_WARNING_THRESHOLD_PCT,
                 comparisonGateReason, MIN_TRANSACTIONS_FOR_DELTA_COMPARISON,
                 expenseCategoryMovers,
-                duplicates.size(), detectedDuplicates
+                duplicates.size(), detectedDuplicates,
+                categorizationConfidenceScore, categorizationConfidenceTransactionCount, MIN_TRANSACTIONS_FOR_CONFIDENCE_SCORE
         );
     }
 
@@ -416,6 +438,11 @@ public class DashboardService {
     // meaningful way to rank duplicates by importance, only by how long they've been sitting
     // unreviewed.
     static final int DETECTED_DUPLICATES_DISPLAY_LIMIT = 5;
+
+    // Lower than MIN_TRANSACTIONS_FOR_HEALTH_SCORE deliberately: this is a single average, not a
+    // multi-component composite, so it needs less data to say something real. Still high enough
+    // that one lucky or unlucky guess can't swing the whole number.
+    static final int MIN_TRANSACTIONS_FOR_CONFIDENCE_SCORE = 5;
 
     private record HealthResult(Integer score, String label, Map<String, Double> breakdown,
                                  boolean available, int transactionCount, int minTransactions) {}
