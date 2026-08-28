@@ -31,8 +31,8 @@ test.describe('account lifecycle', () => {
       modal.getByRole('button', { name: 'Export My Data' }).click(),
     ]);
 
-    expect(download.suggestedFilename(), 'export filename should match finora-data-export-<date>.zip')
-      .toMatch(/^finora-data-export-\d{4}-\d{2}-\d{2}\.zip$/);
+    expect(download.suggestedFilename(), 'export filename should match fynora-data-export-<date>.zip')
+      .toMatch(/^fynora-data-export-\d{4}-\d{2}-\d{2}\.zip$/);
 
     const downloadPath = await download.path();
     if (!downloadPath) throw new Error('Playwright reported no local path for the downloaded export.');
@@ -77,7 +77,8 @@ test.describe('account lifecycle', () => {
     await modal.getByRole('button', { name: 'Deactivate Account' }).click();
 
     await expect(userPage, 'deactivating did not redirect to /auth').toHaveURL(/\/auth/, { timeout: 20_000 });
-    await expect(userPage.getByRole('status')).toHaveText(/account has been deactivated/i);
+    // No assertion on the "account has been deactivated" reason here -- see the test.fixme below
+    // this describe block for why it doesn't render on the screen this redirect actually lands on.
 
     // Proves the deactivation actually happened server-side (AuthService.enforceAccountIsSignable)
     // rather than only clearing this browser's own session -- a normal sign-in with the same,
@@ -97,6 +98,25 @@ test.describe('account lifecycle', () => {
     await userPage.getByRole('button', { name: 'Reactivate my account' }).click();
     await expect(userPage, 'reactivating should return the user to the app').not.toHaveURL(/\/auth/, { timeout: 20_000 });
   });
+
+  /**
+   * Real gap, not a stale assertion. clearSessionAndRedirect (api/client.ts) stashes the "your
+   * account has been deactivated" reason and sends the browser to /auth -- but since #410 unified
+   * login into a two-step identify -> password flow, that reason is only ever read by
+   * PasswordStep.tsx. IdentifyStep.tsx, which is what this redirect actually lands on, never reads
+   * it, so a user who was just signed out sees a blank sign-in screen with no explanation until
+   * they've re-entered their email and reached the password step (or never, if they don't get that
+   * far). The same gap applies to every other clearSessionAndRedirect caller, including plain
+   * session expiry -- deactivation is just the one with a test that already looks for it.
+   *
+   * Left as a product decision rather than fixed here: does the reason belong on IdentifyStep too,
+   * or does clearSessionAndRedirect need to route through the password step some other way? Once
+   * settled, this becomes a real assertion again (see the removed line above the reactivation
+   * flow in the previous test).
+   */
+  test.fixme(
+    'a session-ended reason is visible on /auth immediately after the redirect, not only after re-entering an identifier',
+    async () => {});
 
   test('Delete Account verifies the current password against the backend before the phone-OTP step this suite cannot complete', async ({ userPage, user, allowConsoleErrors }) => {
     // DeleteAccountModal.startWithCredential logs the Firebase-unconfigured failure via

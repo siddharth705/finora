@@ -1,7 +1,7 @@
 import { test as base, expect, type Page, type ConsoleMessage } from '@playwright/test';
 import { Api } from './api';
 import { createAdmin, createUser, type TestUser } from './accounts';
-import { ADMIN_APP, USER_APP } from './config';
+import { ADMIN_APP, API_BASE, USER_APP } from './config';
 
 /**
  * The suite's fixtures.
@@ -187,6 +187,18 @@ export async function signIn(page: Page, appOrigin: string, email: string, passw
   await page.getByLabel(/password/i).first().fill(password);
   await page.getByRole('button', { name: /sign in|log in/i }).click();
   await expect(page, `sign-in for ${email} never left /auth`).not.toHaveURL(/\/auth$/, { timeout: 20_000 });
+}
+
+/**
+ * Ends the current session for real. Since SEC-01 (#187) the access token is in-memory only and
+ * the session that matters lives in an HttpOnly refresh cookie -- `localStorage.clear()` /
+ * `sessionStorage.clear()` doesn't touch it, so a page that merely cleared storage would still
+ * sail through the next silent `/auth/refresh` and land right back on an app route. `page.request`
+ * shares the browsing context's cookies, so this hits the real endpoint the same way the app's own
+ * logout button does (AuthContext.tsx's `logout()`), revoking the refresh token server-side.
+ */
+export async function endSession(page: Page) {
+  await page.request.post(`${API_BASE}/auth/logout`);
 }
 
 /**
