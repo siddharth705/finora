@@ -8,7 +8,7 @@ import {
 import {
   Wallet, ArrowDownCircle, ArrowUpCircle, PieChart,
   ShoppingBag, Utensils, Car, Sparkles, Plus, PiggyBank, TrendingUp, TrendingDown, Target, ShieldCheck, Repeat,
-  UploadCloud, Receipt, LineChart as LineChartIcon, Mail, AlertTriangle,
+  UploadCloud, Receipt, LineChart as LineChartIcon, Mail, AlertTriangle, ListChecks,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { BankLogo } from '../components/BankLogo';
@@ -346,6 +346,36 @@ export default function Dashboard() {
               </div>
             </div>
           </div>
+        )}
+      </FinoraCard>
+      )}
+
+      {/* Next Actions -- summary.notifications (DashboardService.buildNotifications: credit-card
+          payments due soon, low-balance warnings, budget-threshold alerts) has always been
+          computed and sent on every dashboard load, but was only ever rendered in TopBar's
+          bell-icon dropdown -- easy to miss entirely if a user doesn't happen to open it. This
+          surfaces the SAME list, unchanged, directly on the page it's actually about, rather
+          than computing anything new. Hidden while isEmpty, same reasoning as Financial Health
+          Score above: a brand-new account has nothing computed here to act on yet. */}
+      {!isEmpty && (
+      <FinoraCard padding="lg" className="mb-6">
+        <div className="flex items-center gap-2 mb-4">
+          <div className="w-8 h-8 rounded-full bg-primary-light flex items-center justify-center">
+            <ListChecks size={15} className="text-primary" />
+          </div>
+          <h2 className="font-semibold text-ink">Next Actions</h2>
+        </div>
+        {summary.notifications.length === 0 ? (
+          <p className="text-sm text-muted">Nothing needs your attention right now.</p>
+        ) : (
+          <ul className="space-y-2.5">
+            {summary.notifications.map((n, i) => (
+              <li key={i} className="flex items-start gap-2.5">
+                <AlertTriangle size={14} className="text-warning flex-shrink-0 mt-0.5" />
+                <span className="text-sm text-ink">{n}</span>
+              </li>
+            ))}
+          </ul>
         )}
       </FinoraCard>
       )}
