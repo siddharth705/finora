@@ -41,13 +41,23 @@ succeed today.
 
 ## Data model changes
 
+Icon and color are **curated tokens**, not free-form values — a fixed backend
+enum-like set, not arbitrary lucide names or hex codes. This keeps every
+category (system and user) visually consistent and means the picker UI is
+always rendering from the same finite palette:
+
 ```sql
 -- V<next>__category_customization.sql
 ALTER TABLE categories
-    ADD COLUMN icon  VARCHAR(40),   -- lucide-react icon name, e.g. "piggy-bank"; NULL = use the
-                                     -- existing frontend CATEGORY_ICON name-keyed fallback map
-    ADD COLUMN color VARCHAR(9);    -- hex, e.g. "#7C3AED"; NULL = deterministic color-from-name,
-                                     -- same "hash the string, pick a preset swatch" approach avatars use
+    ADD COLUMN icon  VARCHAR(30) NOT NULL DEFAULT 'tag',   -- token, e.g. "chart", "home", "utensils"
+    ADD COLUMN color VARCHAR(20) NOT NULL DEFAULT 'gray';  -- token, e.g. "blue", "purple", "teal"
+
+-- Backfill the ~15 seeded system categories with real tokens (not left at the
+-- generic default) using the same name -> icon mapping the frontend's
+-- CATEGORY_ICON map already encodes, e.g.:
+--   UPDATE categories SET icon = 'shopping-bag', color = 'purple' WHERE is_system AND name = 'Shopping';
+--   UPDATE categories SET icon = 'utensils',     color = 'orange' WHERE is_system AND name = 'Dining';
+--   ... (one UPDATE per seeded name, values chosen to match current rendering)
 
 CREATE UNIQUE INDEX uq_categories_user_name_ci
     ON categories (user_id, lower(name));
@@ -55,15 +65,32 @@ CREATE UNIQUE INDEX uq_categories_user_name_ci
 -- uniqueness enforced at the DB, not just app-level checked-then-created.
 ```
 
-Both new columns are nullable and additive — system categories keep
-rendering exactly as they do today (frontend's hardcoded `CATEGORY_ICON` map,
-`Dashboard.tsx:74`, untouched). Only user-created categories populate them.
+`icon`/`color` are `NOT NULL` with defaults — every category, system or user,
+always has a real value. Both columns are validated against a curated allow-
+list at the service layer (a plain `Set<String>` constant, not a DB enum
+type, so adding a new icon later is a one-line change, not a migration).
+
+**Retiring the frontend hardcoded map:** `Dashboard.tsx`'s `CATEGORY_ICON`
+(`Dashboard.tsx:74`, keyed by category *name*) is replaced by rendering
+`category.icon`/`category.color` directly from the API response — the
+backend becomes the single source of truth instead of a frontend map that
+only knows about the original seeded names and falls back to a generic icon
+for anything else (including, previously, every custom category).
+
+A new `GET /categories/options` endpoint returns `{ icons: [...], colors:
+[...] }` (each an ordered list of `{ token, label }`) so the icon
+grid/color-swatch picker renders from the same allow-list the backend
+validates against, instead of duplicating the list in the frontend.
 
 ## Backend API
 
 New endpoints on `CategoryController` (today: `GET /categories` only):
 
-- `POST /categories` — `{ name, icon?, color? }`. Rejects if `isSystem`-named
+- `GET /categories/options` — `{ icons: [{token,label}], colors: [{token,label}] }`,
+  the curated allow-lists the picker UI renders from.
+- `POST /categories` — `{ name, icon?, color? }`. `icon`/`color` default to
+  `"tag"`/`"gray"` if omitted; either must be a valid token from the
+  allow-list if provided (400 otherwise). Rejects if `isSystem`-named
   collision or case-insensitive duplicate for this user (409). Rejects blank/
   overlong names (`VARCHAR(80)` ceiling already on the column). Returns the
   created `Category`.
@@ -96,22 +123,25 @@ One shared component, `CategoryCombobox`, replaces the plain `<select>` in
 all three consumers (`Ledger.tsx` edit modal, `AskOnceCard.tsx`,
 `MerchantGroupReviewCard.tsx`):
 
-- Type-ahead filter over `categoriesApi.list()`.
-- If the typed text doesn't exactly match an existing category (case-
-  insensitive), show a trailing `+ Create "{text}"` row.
-- **Duplicate suggestions:** while typing, run a lightweight client-side
-  similarity match (normalized Levenshtein ratio, threshold ~0.6) against the
-  already-fetched category list — no new endpoint, the list is small
-  (typically under a few dozen per user). Near-matches surface above the
-  `+ Create` row as "Did you mean: SIP, Investments?" so the user can pick an
-  existing one instead of creating a near-duplicate; they can still create
-  their own if none fit.
-- Selecting `+ Create` opens a small inline panel: name (prefilled from the
-  typed text), an icon grid (a curated ~24-icon subset of `lucide-react`,
-  matching what `Dashboard.tsx`'s `CATEGORY_ICON` map already draws from),
-  and a color swatch row (8–10 presets pulled from the existing design
-  tokens, not a full picker). Submits `POST /categories`, then selects the
-  new category.
+Typing filters the list in strict priority order, so the create option is
+never the first thing offered:
+
+1. **Exact/prefix matches** against `categoriesApi.list()` — shown first,
+   ranked as today.
+2. **Fuzzy suggestions** — a lightweight client-side similarity match
+   (normalized Levenshtein ratio, threshold ~0.6) against the same
+   already-fetched list, no new endpoint needed (the list is small, typically
+   under a few dozen per user). Near-matches the exact-filter missed surface
+   here labeled "Did you mean: SIP, Investments?" — one more chance to reuse
+   an existing category before creating a near-duplicate.
+3. **`+ Create "{text}"`** — only shown once (1) and (2) have had their say,
+   as the last row. Selecting it opens a small inline panel: name (prefilled
+   from the typed text), an icon grid, and a color swatch row, both rendered
+   from `GET /categories/options`. Submits `POST /categories`, then selects
+   the new category.
+
+Beyond the typing flow:
+
 - Each user-created category row in the list gets a small edit/delete
   affordance (pencil/trash icon on hover) opening the same inline panel
   (rename) or the delete-confirmation dialog. System categories show neither.
@@ -138,6 +168,18 @@ all three consumers (`Ledger.tsx` edit modal, `AskOnceCard.tsx`,
   category name as a point-in-time string — expected/correct for an audit
   trail, not something a rename should retroactively rewrite.
 
+## Future: category merge
+
+Not built now, but this design doesn't need to change shape to support it
+later. "Merge 'Mutual Fund SIP' into 'SIP'" is functionally identical to the
+delete flow already specified: `DELETE /categories/{Mutual Fund SIP id}
+?reassignTo={SIP id}` already reassigns every transaction, the one possible
+budget, and every matching personal rule from the source to the target, then
+removes the source category. A future "Merge categories" entry point would
+just be a friendlier UI (e.g. a "merge into..." action alongside delete, or a
+multi-select-then-merge flow) calling this same endpoint — no new backend
+work is anticipated.
+
 ## Parked: rule `category_id` migration
 
 Considered during design as an alternative to the rename-cascade approach:
@@ -161,8 +203,9 @@ design question, not as a follow-on to this one.
 
 - Backend: `CategoryControllerIT` (or extend existing category tests) for
   create/rename/delete happy paths, 403 on `isSystem` mutation attempts,
-  case-insensitive duplicate rejection, and the rename/delete cascade to
-  matching `CategoryRule` rows.
+  case-insensitive duplicate rejection, icon/color token validation
+  (rejects an unlisted token), and the rename/delete cascade to matching
+  `CategoryRule` rows.
 - `TransactionGroupingServiceTest`-style unit coverage for the delete
   transaction (reassignment across transactions + budget + rules in one go,
   rollback on partial failure).
