@@ -215,7 +215,7 @@ paid_status         enum "UNPAID | PARTIALLY_PAID | PAID | OVERPAID"
 
 ### Reconciliation rules
 
-- **Statement creation:** when a CC statement is imported, a `credit_card_statement` row is created from the same header fields `CreditCardFlowReconciliationValidator` already extracts today — this is additive, not a new parser.
+- **Statement creation:** when a CC statement is imported, a `credit_card_statement` row is created from the balance fields (`previousBalance`, `purchases`, `cashAdvances`, `fees`, `paymentsAndCredits`, `totalAmountDue`) `CreditCardSummaryExtractor` already extracts today, plus the period `StatementImport` already resolves for every PDF import. `due_date`/`minimum_due` are **not** extracted by anything in this codebase yet and stay out of scope until a future extraction PR builds that the same evidence-first way every other field here was built. This also isn't purely additive: the extracted evidence is discarded after staging today, so shipping this means threading it through to confirm time, not just adding a table — see [credit-card-statement-entity-design.md](credit-card-statement-entity-design.md) for the full design.
 - **Payment candidate search:** a savings-account EXPENSE within ±7 days of `due_date`, amount within ₹1–₹50 of `statement_balance` (small variance for late-fee/rounding), to a payee matching the card's issuer (reuse `RelationshipService` own-account identifiers, extended to bank-issuer name matching).
 - **Settlement:** once matched, every EXPENSE row inside `[period_start, period_end]` on the card account gets a `CC_PAYMENT` edge from the payment transaction. `paid_status` updates from the matched amount vs. `statement_balance`.
 - **Net-worth/cash-flow reads:** a payment transaction with `reconciliationStatus = CREDIT_CARD_PAYMENT` is excluded from expense totals the same way a `TRANSFER` already is — this is a one-line addition to whatever filter currently excludes `TRANSFER`/`DUPLICATE`, not a new reporting engine.
@@ -408,7 +408,7 @@ Draft sequencing — reorder freely. Weights are relative effort within the phas
 
 | Item | Description | Weight |
 |---|---|---|
-| Credit card statement entity | `credit_card_statement` table, populated at CC import time from fields `CreditCardFlowReconciliationValidator` already extracts — period, balance, due date. Visible to the user immediately. Payment-matching stays in Phase 3, since that part genuinely needs the graph. | 20% |
+| Credit card statement entity | `credit_card_statement` table, populated at confirm time from the balance fields already extracted (period, previous balance, purchases, cash advances, fees, payments/credits, total due) — **not** due date or minimum due, which nothing extracts today. Requires threading the staging-time evidence through to confirm (a staging→confirm contract change, not just a new table) — see [credit-card-statement-entity-design.md](credit-card-statement-entity-design.md). Visible to the user immediately. Payment-matching stays in Phase 3, since that part genuinely needs the graph. | 20% |
 | Explainability API | Expose the JSON that `ReconciliationExplanation` already writes — no new computation. | 20% |
 | Static source trust ranking | A constant per `Transaction.source` (AA 100 · Statement 95 · Gmail 70 · Manual 30), used only as a tiebreak inside the existing duplicate pass. Not the full `match_confidence` formula — that's Phase 2. | 15% |
 | Curated merchant alias seed | Top-50 merchant aliases + default categories, same pattern as existing `MerchantTemplate` seeds. | 20% |
