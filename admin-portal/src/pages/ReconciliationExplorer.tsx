@@ -80,7 +80,14 @@ function EdgeRow({ edge }: { edge: ReconciliationExplorerEdge }) {
             column against a threshold they'd have to know. */}
         {edge.status === 'CANDIDATE' && <span className="text-warning text-xs"> — needs review</span>}
       </td>
-      <td className="py-2 text-muted">{edge.detectionMethod}</td>
+      <td className="py-2 pr-3 text-muted">{edge.detectionMethod}</td>
+      <td className="py-2 text-muted font-mono text-xs break-all">
+        {edge.explanation === null || Object.keys(edge.explanation).length === 0
+          ? '—'
+          : Object.entries(edge.explanation)
+              .map(([k, v]) => `${k}=${typeof v === 'object' && v !== null ? JSON.stringify(v) : String(v)}`)
+              .join('  ')}
+      </td>
     </tr>
   );
 }
@@ -127,7 +134,8 @@ function TraceView({ trace }: { trace: ReconciliationExplorerTrace }) {
                 <tr className="text-left text-[10px] uppercase text-muted border-b border-border">
                   <th className="py-2 pr-3">Type</th><th className="py-2 pr-3">Counterpart</th>
                   <th className="py-2 pr-3">Confidence</th><th className="py-2 pr-3">Source trust</th>
-                  <th className="py-2 pr-3">Status</th><th className="py-2">Detection</th>
+                  <th className="py-2 pr-3">Status</th><th className="py-2 pr-3">Detection</th>
+                  <th className="py-2">Explanation</th>
                 </tr>
               </thead>
               <tbody>
