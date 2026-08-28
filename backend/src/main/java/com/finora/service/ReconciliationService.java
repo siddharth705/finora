@@ -1,6 +1,7 @@
 package com.finora.service;
 
 import com.finora.entity.Transaction;
+import com.finora.entity.TransactionRelationship;
 import com.finora.repository.TransactionRepository;
 import com.finora.util.CategoryRules;
 import org.slf4j.Logger;
@@ -52,15 +53,22 @@ public class ReconciliationService {
 
     private static final Logger log = LoggerFactory.getLogger(ReconciliationService.class);
 
+    // Deterministic-rule confidence for every edge the four passes below write -- the real,
+    // per-match confidence formula (amount_factor/date_decay) is Phase 2's separate Confidence
+    // scoring engine item, not built yet. Same scale as Transaction.decisionConfidence (0-100).
+    private static final int RULE_ENGINE_CONFIDENCE = 100;
+
     private final TransactionRepository transactionRepository;
     private final RelationshipService relationshipService;
     private final AuditService auditService;
+    private final TransactionGraphService transactionGraphService;
 
     public ReconciliationService(TransactionRepository transactionRepository, RelationshipService relationshipService,
-                                  AuditService auditService) {
+                                  AuditService auditService, TransactionGraphService transactionGraphService) {
         this.transactionRepository = transactionRepository;
         this.relationshipService = relationshipService;
         this.auditService = auditService;
+        this.transactionGraphService = transactionGraphService;
     }
 
     /**
@@ -180,6 +188,12 @@ public class ReconciliationService {
         // subject of the duplicate pass).
         Set<Transaction> dirty = new LinkedHashSet<>();
 
+        // Every graph edge the four passes below produce, written once via TransactionGraphService
+        // .linkAll(...) at the end -- same reasoning as `dirty` above, and for the same run: an
+        // import that flags hundreds of duplicates would otherwise mean hundreds of individual
+        // exists-check-plus-save round trips against transaction_relationships.
+        List<TransactionGraphService.PendingEdge> pendingEdges = new java.util.ArrayList<>();
+
         Map<String, List<Transaction>> byDuplicateKey = new HashMap<>();
         for (Transaction t : all) {
             if (t.getIsDuplicateOf() != null) continue; // already resolved by a prior run
@@ -211,9 +225,14 @@ public class ReconciliationService {
                 if (t.getNotDuplicateConfirmedAt() != null) continue;
                 t.setIsDuplicateOf(canonical.getId());
                 t.setReconciliationStatus(Transaction.ReconciliationStatus.DUPLICATE);
-                t.setReconciliationExplanation(ReconciliationExplanation.duplicate(canonical.getId()));
+                Map<String, Object> explanation = ReconciliationExplanation.duplicate(canonical.getId());
+                t.setReconciliationExplanation(explanation);
                 dirty.add(t);
                 newDuplicates++;
+                pendingEdges.add(new TransactionGraphService.PendingEdge(userId, t.getId(), canonical.getId(),
+                        TransactionRelationship.RelationshipType.DUPLICATE, t.getAmount(), RULE_ENGINE_CONFIDENCE,
+                        TransactionRelationship.Status.AUTO_CONFIRMED, TransactionRelationship.DetectionMethod.RULE_ENGINE,
+                        explanation));
             }
         }
 
@@ -294,13 +313,23 @@ public class ReconciliationService {
                     // Both sides get their own explanation, each naming the other. A transfer is
                     // one decision but two rows, and someone looking at either row should not have
                     // to fetch the partner to find out why this one was excluded from totals.
-                    a.setReconciliationExplanation(
-                            ReconciliationExplanation.transfer(a, b, dayWindow, relationshipMatch));
-                    b.setReconciliationExplanation(
-                            ReconciliationExplanation.transfer(b, a, dayWindow, relationshipMatch));
+                    Map<String, Object> explanationA = ReconciliationExplanation.transfer(a, b, dayWindow, relationshipMatch);
+                    Map<String, Object> explanationB = ReconciliationExplanation.transfer(b, a, dayWindow, relationshipMatch);
+                    a.setReconciliationExplanation(explanationA);
+                    b.setReconciliationExplanation(explanationB);
                     dirty.add(a);
                     dirty.add(b);
                     newTransfers++; // one pair = one match, not two (see WorkspaceSummaryDto's own note on this asymmetry)
+                    // One edge per direction, matching transferPairId's own symmetric shape (see
+                    // V114's backfill comment) rather than picking an arbitrary canonical side.
+                    pendingEdges.add(new TransactionGraphService.PendingEdge(userId, a.getId(), b.getId(),
+                            TransactionRelationship.RelationshipType.TRANSFER, a.getAmount(), RULE_ENGINE_CONFIDENCE,
+                            TransactionRelationship.Status.AUTO_CONFIRMED, TransactionRelationship.DetectionMethod.RULE_ENGINE,
+                            explanationA));
+                    pendingEdges.add(new TransactionGraphService.PendingEdge(userId, b.getId(), a.getId(),
+                            TransactionRelationship.RelationshipType.TRANSFER, b.getAmount(), RULE_ENGINE_CONFIDENCE,
+                            TransactionRelationship.Status.AUTO_CONFIRMED, TransactionRelationship.DetectionMethod.RULE_ENGINE,
+                            explanationB));
                     break;
                 }
             }
@@ -399,19 +428,27 @@ public class ReconciliationService {
                 // is read as the more specific claim. sameMerchant-only matches (no keyword at
                 // all) stay REFUND, since a merchant match alone says nothing about *why* the
                 // money came back.
+                TransactionRelationship.RelationshipType edgeType;
+                Map<String, Object> explanation;
                 if (reversalKeyword) {
                     income.setReconciliationStatus(Transaction.ReconciliationStatus.REVERSAL);
-                    income.setReconciliationExplanation(
-                            ReconciliationExplanation.reversal(income, bestMatch, bestMatchSameMerchant));
+                    explanation = ReconciliationExplanation.reversal(income, bestMatch, bestMatchSameMerchant);
+                    income.setReconciliationExplanation(explanation);
                     newReversals++;
+                    edgeType = TransactionRelationship.RelationshipType.REVERSAL;
                 } else {
                     income.setReconciliationStatus(Transaction.ReconciliationStatus.REFUND);
-                    income.setReconciliationExplanation(
-                            ReconciliationExplanation.refund(income, bestMatch, refundKeyword, bestMatchSameMerchant));
+                    explanation = ReconciliationExplanation.refund(income, bestMatch, refundKeyword, bestMatchSameMerchant);
+                    income.setReconciliationExplanation(explanation);
                     newRefunds++;
+                    edgeType = TransactionRelationship.RelationshipType.REFUND;
                 }
                 income.setRefundOfTransactionId(bestMatch.getId());
                 dirty.add(income);
+                pendingEdges.add(new TransactionGraphService.PendingEdge(userId, income.getId(), bestMatch.getId(),
+                        edgeType, income.getAmount(), RULE_ENGINE_CONFIDENCE,
+                        TransactionRelationship.Status.AUTO_CONFIRMED, TransactionRelationship.DetectionMethod.RULE_ENGINE,
+                        explanation));
                 // Claims this income's amount against the expense's capacity immediately, so the
                 // NEXT income row in this same pass sees the reduced remainder rather than the
                 // original amount -- this is what makes two ₹500 incomes against one ₹500 expense
@@ -424,6 +461,7 @@ public class ReconciliationService {
         // Hibernate's configured batch_size/order_updates can actually apply -- they could do
         // nothing when this was a save() per match.
         if (!dirty.isEmpty()) transactionRepository.saveAll(dirty);
+        if (!pendingEdges.isEmpty()) transactionGraphService.linkAll(pendingEdges);
 
         long elapsedMs = (System.nanoTime() - startedAtNanos) / 1_000_000;
 

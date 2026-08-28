@@ -52,6 +52,7 @@ class ReconciliationEndToEndTest {
     private TransactionRepository transactionRepository;
     private RelationshipService relationshipService;
     private AuditService auditService;
+    private TransactionGraphService transactionGraphService;
     private ReconciliationService reconciliationService;
 
     private final UUID userId = UUID.randomUUID();
@@ -63,7 +64,9 @@ class ReconciliationEndToEndTest {
         transactionRepository = mock(TransactionRepository.class);
         relationshipService = mock(RelationshipService.class);
         auditService = mock(AuditService.class);
-        reconciliationService = new ReconciliationService(transactionRepository, relationshipService, auditService);
+        transactionGraphService = mock(TransactionGraphService.class);
+        reconciliationService = new ReconciliationService(transactionRepository, relationshipService, auditService,
+                transactionGraphService);
     }
 
     private Transaction txn(UUID accountId, LocalDate date, String amount, Transaction.Type type,
