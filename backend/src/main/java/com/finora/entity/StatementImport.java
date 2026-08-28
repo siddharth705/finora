@@ -109,6 +109,36 @@ public class StatementImport extends BaseEntity implements com.finora.imports.st
     @Column(name = "payment_due_date")
     private LocalDate paymentDueDate;
 
+    /** The rest of a credit-card statement's own billing-summary panel -- see
+     *  {@code CreditCardSummaryExtractor.CreditCardSummaryEvidence}, whose fields these mirror
+     *  exactly. Copied verbatim from the {@code ImportSession} this confirm came from (see
+     *  {@code ImportService.persistSection}'s own comment), never recomputed here.
+     *
+     *  <p>Null whenever no summary panel was found, same as {@link #totalAmountDue} -- but NOT
+     *  always null together with it: {@code StatementImportService.confirmReimport} has no
+     *  {@code ImportSession} to copy this from (it re-parses via {@code parseAndStageAnyFormat},
+     *  which never persists one), so a re-imported credit-card statement's row always has these
+     *  four null even though {@link #totalAmountDue}/{@link #paymentDueDate} (echoed through
+     *  {@code ConfirmRequest}, which reimport-confirm does carry) are populated. Accepted as a
+     *  narrower version of the same "best-effort, no session on this path" limitation {@code
+     *  layoutMetadataJson} and its siblings already have -- closing it means threading
+     *  {@code CreditCardSummaryEvidence} through {@code parseAndStageAnyFormat} too, a separate
+     *  follow-up. */
+    @Column(name = "previous_balance")
+    private BigDecimal previousBalance;
+
+    @Column(name = "purchases")
+    private BigDecimal purchases;
+
+    @Column(name = "cash_advances")
+    private BigDecimal cashAdvances;
+
+    @Column(name = "fees")
+    private BigDecimal fees;
+
+    @Column(name = "payments_and_credits")
+    private BigDecimal paymentsAndCredits;
+
     @Column(name = "transactions_imported", nullable = false)
     private int transactionsImported;
 
@@ -234,6 +264,16 @@ public class StatementImport extends BaseEntity implements com.finora.imports.st
     public void setTotalAmountDue(BigDecimal totalAmountDue) { this.totalAmountDue = totalAmountDue; }
     public LocalDate getPaymentDueDate() { return paymentDueDate; }
     public void setPaymentDueDate(LocalDate paymentDueDate) { this.paymentDueDate = paymentDueDate; }
+    public BigDecimal getPreviousBalance() { return previousBalance; }
+    public void setPreviousBalance(BigDecimal previousBalance) { this.previousBalance = previousBalance; }
+    public BigDecimal getPurchases() { return purchases; }
+    public void setPurchases(BigDecimal purchases) { this.purchases = purchases; }
+    public BigDecimal getCashAdvances() { return cashAdvances; }
+    public void setCashAdvances(BigDecimal cashAdvances) { this.cashAdvances = cashAdvances; }
+    public BigDecimal getFees() { return fees; }
+    public void setFees(BigDecimal fees) { this.fees = fees; }
+    public BigDecimal getPaymentsAndCredits() { return paymentsAndCredits; }
+    public void setPaymentsAndCredits(BigDecimal paymentsAndCredits) { this.paymentsAndCredits = paymentsAndCredits; }
     public int getTransactionsImported() { return transactionsImported; }
     public void setTransactionsImported(int transactionsImported) { this.transactionsImported = transactionsImported; }
     public int getTransactionsSkipped() { return transactionsSkipped; }

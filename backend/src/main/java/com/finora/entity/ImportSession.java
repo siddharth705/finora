@@ -128,6 +128,16 @@ public class ImportSession implements com.finora.imports.storage.StoredStatement
     @Column(name = "activated_capabilities_json", columnDefinition = "TEXT")
     private String activatedCapabilitiesJson;
 
+    /** Credit-card statement entity, roadmap item 6 follow-up (PR #451's totalAmountDue/
+     *  paymentDueDate already survived staging via {@link #detectedAccountJson}/{@link
+     *  #sectionsJson}; this carries {@code CreditCardSummaryExtractor.CreditCardSummaryEvidence}'s
+     *  full balance breakdown, which is not on {@code DetectedAccountInfo} and would otherwise be
+     *  discarded after staging). Jackson-serialized, PDF-only, null whenever no such panel was
+     *  found -- same "best-effort, never recomputed after the fact" discipline as {@link
+     *  #layoutMetadataJson} and its siblings. */
+    @Column(name = "credit_card_summary_json", columnDefinition = "TEXT")
+    private String creditCardSummaryJson;
+
     @Column(name = "session_kind", nullable = false)
     private String sessionKind = KIND_SINGLE_ACCOUNT;
 
@@ -193,6 +203,8 @@ public class ImportSession implements com.finora.imports.storage.StoredStatement
     public void setLayoutFingerprint(String layoutFingerprint) { this.layoutFingerprint = layoutFingerprint; }
     public String getActivatedCapabilitiesJson() { return activatedCapabilitiesJson; }
     public void setActivatedCapabilitiesJson(String activatedCapabilitiesJson) { this.activatedCapabilitiesJson = activatedCapabilitiesJson; }
+    public String getCreditCardSummaryJson() { return creditCardSummaryJson; }
+    public void setCreditCardSummaryJson(String creditCardSummaryJson) { this.creditCardSummaryJson = creditCardSummaryJson; }
     public String getSessionKind() { return sessionKind; }
     public void setSessionKind(String sessionKind) { this.sessionKind = sessionKind; }
     public String getSource() { return source; }
