@@ -54,4 +54,23 @@ describe('CategoryDeleteDialog', () => {
       expect(onDeleted).toHaveBeenCalled();
     });
   });
+
+  it('shows an error and does not call onDeleted when delete fails', async () => {
+    const user = userEvent.setup();
+    vi.mocked(categoriesApi.usage).mockResolvedValue({ transactionCount: 0, hasBudget: false, ruleCount: 0 });
+    vi.mocked(categoriesApi.delete).mockRejectedValue({
+      response: { data: { message: 'A dependent was added to this category.' } },
+    });
+    const onDeleted = vi.fn();
+    render(<CategoryDeleteDialog category={CATEGORY} onDeleted={onDeleted} onCancel={vi.fn()} />);
+
+    const deleteButton = await screen.findByRole('button', { name: /delete/i });
+    await waitFor(() => expect(deleteButton).toBeEnabled());
+    await user.click(deleteButton);
+
+    await waitFor(() => {
+      expect(screen.getByText(/a dependent was added to this category/i)).toBeInTheDocument();
+    });
+    expect(onDeleted).not.toHaveBeenCalled();
+  });
 });

@@ -20,6 +20,7 @@ export function CategoryDeleteDialog({ category, onDeleted, onCancel }: Category
   const [targetId, setTargetId] = useState<string | undefined>(undefined);
   const [allCategories, setAllCategories] = useState<CategoryOption[]>([]);
   const [deleting, setDeleting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     categoriesApi.usage(category.id).then(setUsage).catch(() => setUsage(null));
@@ -31,9 +32,12 @@ export function CategoryDeleteDialog({ category, onDeleted, onCancel }: Category
 
   const confirm = async () => {
     setDeleting(true);
+    setError(null);
     try {
       await categoriesApi.delete(category.id, targetId);
       onDeleted();
+    } catch (e: any) {
+      setError(e?.response?.data?.message ?? 'Could not delete this category.');
     } finally {
       setDeleting(false);
     }
@@ -62,6 +66,7 @@ export function CategoryDeleteDialog({ category, onDeleted, onCancel }: Category
           />
         </div>
       )}
+      {error && <p className="text-[11px] text-danger">{error}</p>}
       <div className="flex gap-2 justify-end">
         <button type="button" className="text-sm px-3 py-1.5" onClick={onCancel}>Cancel</button>
         <button
