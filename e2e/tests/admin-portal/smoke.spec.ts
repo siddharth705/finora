@@ -15,7 +15,7 @@ test.describe('unauthenticated access', () => {
     // `/` is a ProtectedRoute wrapping Dashboard. Landing on the dashboard without a session
     // would be an access-control failure, not a cosmetic one.
     await expect(page).toHaveURL(/\/login/);
-    await expect(page).toHaveTitle(/Finora Admin/);
+    await expect(page).toHaveTitle(/Fynora Admin/);
   });
 
   test('the sign-in form exposes its fields by accessible name', async ({ page }) => {
@@ -27,7 +27,11 @@ test.describe('unauthenticated access', () => {
     // scanning an empty container, having redirected away before the form rendered. A real
     // browser navigating to the real route cannot make that mistake.
     await expect(page.getByLabel('Email or phone')).toBeVisible();
-    await expect(page.getByLabel('Password')).toBeVisible();
+    // exact: true -- otherwise this also resolves the visibility-toggle button next to the field,
+    // whose own aria-label ("Show password") contains this string too. Two matches turned a
+    // passing assertion into a strict-mode violation the moment that toggle shipped (#243); it
+    // isn't a duplicate or missing field.
+    await expect(page.getByLabel('Password', { exact: true })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Sign in' })).toBeVisible();
   });
 

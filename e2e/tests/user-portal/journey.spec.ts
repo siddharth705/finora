@@ -1,4 +1,4 @@
-import { test, expect, signIn } from '../../fixtures/test';
+import { test, expect, signIn, endSession } from '../../fixtures/test';
 import { USER_APP } from '../../fixtures/config';
 import type { Page } from '@playwright/test';
 
@@ -54,9 +54,11 @@ test.describe('authenticated session', () => {
       if (await logout.isVisible().catch(() => false)) {
         await logout.click();
       } else {
-        // Some layouts keep logout behind a menu. Clearing storage is what a closed browser does,
-        // and the guard must hold either way.
-        await userPage.evaluate(() => { localStorage.clear(); sessionStorage.clear(); });
+        // Some layouts keep logout behind a menu. Since SEC-01 (#187) the session that matters is
+        // an HttpOnly refresh cookie, not anything in storage -- closing the browser no longer
+        // ends it (that's the point: a returning user's session survives a reload), so the guard
+        // needs the session actually revoked here, the same way the real logout button does.
+        await endSession(userPage);
       }
 
       // waitUntil 'commit' rather than the default: the app redirects to /auth mid-navigation, and
@@ -72,7 +74,10 @@ test.describe('authenticated session', () => {
   test('signing in as a second account does not inherit the first session',
     async ({ page, user }) => {
       await signIn(page, USER_APP, user.email, user.password);
-      await page.evaluate(() => { localStorage.clear(); sessionStorage.clear(); });
+      // Since SEC-01 (#187) the session lives in an HttpOnly refresh cookie, not storage -- see
+      // endSession's own comment. Ending it for real is what leaves the browser in the state a
+      // second person signing in would actually find it in.
+      await endSession(page);
 
       // 'commit' rather than the default: the guard redirects mid-navigation, and waiting for load
       // on the request that redirect aborts is an ERR_ABORTED rather than a failure of the guard.
