@@ -130,6 +130,13 @@ public interface StatementImportRepository extends JpaRepository<StatementImport
      *  finder's removal. */
     long countByUserId(UUID userId);
 
+    /** Every statement import that carries credit-card summary fields -- {@code totalAmountDue} is
+     *  null for a non-credit-card statement and populated whenever {@code
+     *  CreditCardSummaryExtractor} found a payment-summary panel (see {@code StatementImport
+     *  .totalAmountDue}'s own doc comment), so this is the credit-card-statement filter for free,
+     *  with no new column. Backs {@code ReconciliationService}'s CC_PAYMENT pass (roadmap Phase 3). */
+    List<StatementImport> findByUserIdAndTotalAmountDueIsNotNull(UUID userId);
+
     /**
      * The {@code id}/{@code activatedCapabilitiesJson}/{@code unparseableSummaryJson} columns
      * {@code CapabilityCoverageService.forUser} actually reads, deliberately excluding {@code
