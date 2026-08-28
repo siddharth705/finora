@@ -12,6 +12,9 @@ env:
     clearState: true
 - tapOn: "Email or mobile number"
 - inputText: ${TEST_EMAIL}
+# See login.yaml's own comment: the keyboard covers "Continue" too, and a tap through it can hit
+# Gboard's own toolbar instead of the app.
+- hideKeyboard
 - tapOn: "Continue"
 - tapOn: "Password"
 - inputText: ${TEST_PASSWORD}
