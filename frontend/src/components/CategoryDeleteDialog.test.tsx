@@ -7,7 +7,7 @@ import { CategoryDeleteDialog } from './CategoryDeleteDialog';
 import { categoriesApi } from '../api/endpoints';
 
 vi.mock('../api/endpoints', () => ({
-  categoriesApi: { usage: vi.fn(), delete: vi.fn(), list: vi.fn() },
+  categoriesApi: { usage: vi.fn(), delete: vi.fn(), list: vi.fn(), create: vi.fn(), options: vi.fn() },
 }));
 
 const CATEGORY = { id: '1', name: 'Mutual Fund SIP', isSystem: false, icon: 'tag', color: 'gray' };
@@ -60,6 +60,41 @@ describe('CategoryDeleteDialog', () => {
 
     await waitFor(() => {
       expect(categoriesApi.delete).toHaveBeenCalledWith('1', undefined);
+      expect(onDeleted).toHaveBeenCalled();
+    });
+  });
+
+  // Final-branch review, parked finding 2. Creating a brand-new target category from inside this
+  // dialog's own picker used to resolve name -> id against the shared ['categories'] cache, which
+  // hadn't refetched yet at the moment of creation -- targetId stayed undefined and Delete stayed
+  // disabled forever even though a target had genuinely been picked.
+  it('enables delete and reassigns to the real id after creating a new target category inline', async () => {
+    const user = userEvent.setup();
+    vi.mocked(categoriesApi.usage).mockResolvedValue({ transactionCount: 5, hasBudget: false, ruleCount: 0 });
+    vi.mocked(categoriesApi.options).mockResolvedValue({ icons: [], colors: [] });
+    vi.mocked(categoriesApi.create).mockResolvedValue({
+      id: '3', name: 'Subscriptions', isSystem: false, icon: 'tag', color: 'gray',
+    });
+    vi.mocked(categoriesApi.delete).mockResolvedValue({} as any);
+    const onDeleted = vi.fn();
+    renderWithClient(<CategoryDeleteDialog category={CATEGORY} onDeleted={onDeleted} onCancel={vi.fn()} />);
+
+    const combobox = await screen.findByRole('combobox');
+    await user.click(combobox);
+    await user.type(combobox, 'Subscriptions');
+
+    await user.click(await screen.findByText('Create "Subscriptions"'));
+    const nameInput = await screen.findByPlaceholderText('Category name');
+    expect(nameInput).toHaveValue('Subscriptions');
+    await user.click(screen.getByText('Save'));
+
+    const deleteButton = await screen.findByRole('button', { name: /delete/i });
+    await waitFor(() => expect(deleteButton).toBeEnabled());
+
+    await user.click(deleteButton);
+
+    await waitFor(() => {
+      expect(categoriesApi.delete).toHaveBeenCalledWith('1', '3');
       expect(onDeleted).toHaveBeenCalled();
     });
   });

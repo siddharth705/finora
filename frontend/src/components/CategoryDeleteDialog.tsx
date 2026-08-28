@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQueryClient } from '@tanstack/react-query';
 import { categoriesApi, type CategoryOption } from '../api/endpoints';
 import { CategoryCombobox } from './CategoryCombobox';
 
@@ -22,11 +22,6 @@ export function CategoryDeleteDialog({ category, onDeleted, onCancel }: Category
   const [targetId, setTargetId] = useState<string | undefined>(undefined);
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  // Same shared ['categories'] cache the target picker below reads, so the name -> id lookup
-  // cannot disagree with the list the user actually picked from.
-  const allCategories: CategoryOption[] =
-    useQuery({ queryKey: ['categories'], queryFn: () => categoriesApi.list(), retry: false }).data ?? [];
 
   useEffect(() => {
     categoriesApi.usage(category.id).then(setUsage).catch(() => setUsage(null));
@@ -66,10 +61,13 @@ export function CategoryDeleteDialog({ category, onDeleted, onCancel }: Category
           <p className="text-[11px] uppercase text-muted mb-1">Move everything to</p>
           <CategoryCombobox
             value={targetName}
-            onChange={(name) => {
-              setTargetName(name);
-              setTargetId(allCategories.find((c) => c.name === name)?.id);
-            }}
+            onChange={setTargetName}
+            // Captures the id directly from the selection itself -- an existing row, a fuzzy
+            // suggestion, or a category just created via this combobox's own inline "+ Create"
+            // flow -- instead of re-resolving it by name against the shared ['categories'] cache,
+            // which can still be stale (not yet refetched) at the moment a brand-new category is
+            // selected here. See CategoryCombobox's onSelect doc comment.
+            onSelect={(c: CategoryOption) => setTargetId(c.id)}
             excludeCategoryId={category.id}
           />
         </div>

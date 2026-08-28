@@ -20,6 +20,16 @@ interface CategoryComboboxProps {
    * instead of its "+ Create" row doing nothing at all.
    */
   onCreateNew?: (typedText: string) => void;
+  /**
+   * Optional. Fires alongside onChange whenever a selection resolves to a concrete category --
+   * an existing row picked from the list, a fuzzy "did you mean" suggestion, or (notably) a
+   * brand-new category just created through this combobox's own inline create panel. onChange
+   * only ever carries a name, which is not enough to identify the row unambiguously (a stale or
+   * not-yet-refetched ['categories'] cache can't be re-searched by name for a category that was
+   * just created in this same interaction). Consumers that need the id -- CategoryDeleteDialog's
+   * reassignment-target picker chiefly -- should use this instead of re-deriving it themselves.
+   */
+  onSelect?: (category: CategoryOption) => void;
   excludeCategoryId?: string;
   /**
    * Associates an external `<label htmlFor>` with the real input. Ledger's edit modal has carried
@@ -35,7 +45,7 @@ type Panel =
   | { kind: 'delete'; category: CategoryOption };
 
 export function CategoryCombobox({
-  value, onChange, onCreateNew, excludeCategoryId, inputId,
+  value, onChange, onCreateNew, onSelect, excludeCategoryId, inputId,
 }: CategoryComboboxProps) {
   // Shared cache key, deliberately: AskOnceCard renders one of these per row (up to ten) and
   // MerchantGroupReviewCard one per merchant group. With a local useState fetch that was N
@@ -94,9 +104,10 @@ export function CategoryCombobox({
 
   const showCreateRow = trimmedQuery.length > 0 && !exactNameMatch;
 
-  const select = (name: string) => {
-    onChange(name);
-    setQuery(name);
+  const select = (category: CategoryOption) => {
+    onChange(category.name);
+    onSelect?.(category);
+    setQuery(category.name);
     setOpen(false);
   };
 
@@ -123,7 +134,7 @@ export function CategoryCombobox({
         onSaved={(saved) => {
           // A rename has to follow through to the field's own value, or the parent keeps holding
           // a category name that no longer exists.
-          if (!isEdit || panel.category.name === value) select(saved.name);
+          if (!isEdit || panel.category.name === value) select(saved);
           setPanel(null);
         }}
         onCancel={() => setPanel(null)}
@@ -173,7 +184,7 @@ export function CategoryCombobox({
               <button
                 type="button"
                 className="flex-1 min-w-0 text-left px-3 py-2 text-sm truncate"
-                onClick={() => select(c.name)}
+                onClick={() => select(c)}
               >
                 {c.name}
               </button>
@@ -210,7 +221,7 @@ export function CategoryCombobox({
                   key={c.id}
                   type="button"
                   className="ml-2 underline"
-                  onClick={() => select(c.name)}
+                  onClick={() => select(c)}
                 >
                   {c.name}
                 </button>
