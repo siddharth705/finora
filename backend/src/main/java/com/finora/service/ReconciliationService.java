@@ -187,9 +187,16 @@ public class ReconciliationService {
         }
         for (List<Transaction> group : byDuplicateKey.values()) {
             if (group.size() < 2) continue;
-            Transaction earliest = group.stream().min(Comparator.comparing(Transaction::getCreatedAt)).orElseThrow();
+            // Canonical selection: higher SourceTrust wins outright (Phase 1 of the reconciliation
+            // roadmap); creation order is only the tiebreak between two rows from the same source,
+            // which is what this comparison degrades to when SourceTrust can't distinguish them --
+            // exactly the behavior this pass had before source trust existed.
+            Transaction canonical = group.stream()
+                    .min(Comparator.<Transaction>comparingInt(t -> -SourceTrust.of(t.getSource()))
+                            .thenComparing(Transaction::getCreatedAt))
+                    .orElseThrow();
             for (Transaction t : group) {
-                if (t == earliest || t.getIsDuplicateOf() != null) continue;
+                if (t == canonical || t.getIsDuplicateOf() != null) continue;
                 // A human already ruled on this row and said it is a real, separate transaction.
                 // Nothing this pass can observe outranks that: it sees identical date, amount and
                 // description and cannot distinguish "the same statement uploaded twice" from "two
@@ -199,12 +206,12 @@ public class ReconciliationService {
                 //
                 // Checked here, inside the marking loop, rather than by excluding these rows from
                 // the grouping above: a confirmed row still belongs in its group so it can serve as
-                // `earliest`, and so a THIRD, genuinely accidental copy still gets flagged against
+                // `canonical`, and so a THIRD, genuinely accidental copy still gets flagged against
                 // it. Skipping the mark is the whole of the change; skipping the row is not.
                 if (t.getNotDuplicateConfirmedAt() != null) continue;
-                t.setIsDuplicateOf(earliest.getId());
+                t.setIsDuplicateOf(canonical.getId());
                 t.setReconciliationStatus(Transaction.ReconciliationStatus.DUPLICATE);
-                t.setReconciliationExplanation(ReconciliationExplanation.duplicate(earliest.getId()));
+                t.setReconciliationExplanation(ReconciliationExplanation.duplicate(canonical.getId()));
                 dirty.add(t);
                 newDuplicates++;
             }
