@@ -221,6 +221,16 @@ export interface TransactionExplanation {
   // 0-100, or absent -- see TransactionExplanationDto's own doc comment for which decision
   // sources populate this (never MANUAL/FILE_PROVIDED).
   confidence?: number;
+  // "Why this match?" -- absent for the common case (reconciliationStatus OK, nothing matched
+  // this row). See TransactionExplanationDto.ReconciliationExplanationDto.
+  reconciliation?: TransactionReconciliationExplanation;
+}
+
+export interface TransactionReconciliationExplanation {
+  status: 'DUPLICATE' | 'TRANSFER' | 'REFUND' | 'REVERSAL';
+  matchedTransactionId: string | null;
+  summary: string;
+  evidence: string[];
 }
 
 export const transactionsApi = {
