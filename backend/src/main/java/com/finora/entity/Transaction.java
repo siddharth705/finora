@@ -28,7 +28,13 @@ import java.util.UUID;
 public class Transaction extends BaseEntity {
 
     public enum Type { INCOME, EXPENSE }
-    public enum ReconciliationStatus { OK, DUPLICATE, TRANSFER, REFUND }
+    // REVERSAL added Phase 1 of the reconciliation roadmap (docs/proposals/
+    // reconciliation-evolution-roadmap-proposal.md). Previously a bank-side reversal ("this
+    // payment bounced") and a merchant refund ("this order was returned") were indistinguishable
+    // -- both matched on the same REFUND_KEYWORDS set in ReconciliationService and produced
+    // identical REFUND rows. No DB CHECK constrains this column (plain VARCHAR(20) since V1, see
+    // Source below), so adding a value here needed no migration.
+    public enum ReconciliationStatus { OK, DUPLICATE, TRANSFER, REFUND, REVERSAL }
     // GMAIL_IMPORT added C5-B. PDF-sourced transactions are still tagged CSV_IMPORT (a pre-existing
     // gap -- ImportService.persistSection hardcodes CSV_IMPORT regardless of upload format), which
     // this does not fix; it is not repeated for Gmail. No DB CHECK constrains this column (plain
@@ -155,8 +161,11 @@ public class Transaction extends BaseEntity {
     @Column(name = "decision_confidence")
     private Integer decisionConfidence;
 
-    // Only set when reconciliationStatus is REFUND -- points back at the original EXPENSE
-    // transaction this INCOME transaction reverses. See ReconciliationService's refund pass.
+    // Only set when reconciliationStatus is REFUND or REVERSAL -- points back at the original
+    // EXPENSE transaction this INCOME transaction reverses. Both statuses share this field: the
+    // distinction is *why* the money came back (a merchant refund vs. a bank-side reversal), not
+    // which expense it reverses or how that link is stored. See ReconciliationService's refund
+    // pass.
     @Column(name = "refund_of_transaction_id")
     private UUID refundOfTransactionId;
 

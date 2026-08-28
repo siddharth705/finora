@@ -57,6 +57,18 @@ class RefundNettingTest {
         return t;
     }
 
+    /** The income side of a matched reversal, exactly as ReconciliationService leaves it -- same
+     *  shape as {@link #refundOf}, different status. */
+    private static Transaction reversalOf(UUID expenseId, String amount) {
+        Transaction t = new Transaction();
+        withId(t, UUID.randomUUID());
+        t.setTxnType(Transaction.Type.INCOME);
+        t.setAmount(money(amount));
+        t.setReconciliationStatus(Transaction.ReconciliationStatus.REVERSAL);
+        t.setRefundOfTransactionId(expenseId);
+        return t;
+    }
+
     private static Transaction income(String amount) {
         Transaction t = new Transaction();
         withId(t, UUID.randomUUID());
@@ -143,6 +155,21 @@ class RefundNettingTest {
                 .as("a refund against one purchase must not reduce another")
                 .isEqualByComparingTo("2400.00");
         assertThat(RefundNetting.reportable(ledger)).containsExactly(salary, groceries, refunded);
+    }
+
+    @Test
+    @DisplayName("a REVERSAL leg nets the same as a REFUND leg -- the split only changes the label")
+    void aReversalNetsThePurchaseTheSameWayARefundDoes() {
+        UUID purchaseId = UUID.randomUUID();
+        Transaction purchase = expense(purchaseId, "1200.00");
+        List<Transaction> ledger = List.of(purchase, reversalOf(purchaseId, "1200.00"));
+
+        RefundNetting refunds = RefundNetting.from(ledger);
+
+        assertThat(RefundNetting.reportable(ledger))
+                .as("the reversal's income leg is excluded, same as a refund's")
+                .containsExactly(purchase);
+        assertThat(refunds.reportableAmount(purchase)).isEqualByComparingTo("0.00");
     }
 
     @Test
