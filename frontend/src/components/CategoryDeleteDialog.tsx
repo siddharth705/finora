@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { categoriesApi, type CategoryOption } from '../api/endpoints';
 import { CategoryCombobox } from './CategoryCombobox';
 
@@ -15,16 +16,20 @@ interface CategoryDeleteDialogProps {
 }
 
 export function CategoryDeleteDialog({ category, onDeleted, onCancel }: CategoryDeleteDialogProps) {
+  const queryClient = useQueryClient();
   const [usage, setUsage] = useState<Usage | null>(null);
   const [targetName, setTargetName] = useState('');
   const [targetId, setTargetId] = useState<string | undefined>(undefined);
-  const [allCategories, setAllCategories] = useState<CategoryOption[]>([]);
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Same shared ['categories'] cache the target picker below reads, so the name -> id lookup
+  // cannot disagree with the list the user actually picked from.
+  const allCategories: CategoryOption[] =
+    useQuery({ queryKey: ['categories'], queryFn: () => categoriesApi.list(), retry: false }).data ?? [];
+
   useEffect(() => {
     categoriesApi.usage(category.id).then(setUsage).catch(() => setUsage(null));
-    categoriesApi.list().then(setAllCategories).catch(() => setAllCategories([]));
   }, [category.id]);
 
   const hasDependents = usage != null && (usage.transactionCount > 0 || usage.hasBudget || usage.ruleCount > 0);
@@ -35,6 +40,9 @@ export function CategoryDeleteDialog({ category, onDeleted, onCancel }: Category
     setError(null);
     try {
       await categoriesApi.delete(category.id, targetId);
+      queryClient.invalidateQueries({ queryKey: ['categories'] });
+      // Reassignment rewrites transactions' categories, so anything showing them is stale too.
+      queryClient.invalidateQueries({ queryKey: ['transactions'] });
       onDeleted();
     } catch (e: any) {
       setError(e?.response?.data?.message ?? 'Could not delete this category.');

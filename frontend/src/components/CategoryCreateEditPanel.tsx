@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { categoriesApi, type CategoryOption, type CategoryOptions } from '../api/endpoints';
 
 interface CategoryCreateEditPanelProps {
@@ -14,6 +15,7 @@ interface CategoryCreateEditPanelProps {
 export function CategoryCreateEditPanel({
   mode, initialName = '', categoryId, initialIcon = 'tag', initialColor = 'gray', onSaved, onCancel,
 }: CategoryCreateEditPanelProps) {
+  const queryClient = useQueryClient();
   const [options, setOptions] = useState<CategoryOptions>({ icons: [], colors: [] });
   const [name, setName] = useState(initialName);
   const [icon, setIcon] = useState(initialIcon);
@@ -36,6 +38,10 @@ export function CategoryCreateEditPanel({
       const saved = mode === 'create'
         ? await categoriesApi.create(name.trim(), icon, color)
         : await categoriesApi.update(categoryId!, { name: name.trim(), icon, color });
+      // Every CategoryCombobox on the page reads the same ['categories'] query. Without this, a
+      // category created in one of them stays invisible to its siblings, which then offer
+      // "+ Create" for a name that now exists and 409 on the second create.
+      queryClient.invalidateQueries({ queryKey: ['categories'] });
       onSaved(saved);
     } catch (e: any) {
       setError(e?.response?.data?.message ?? 'Could not save this category.');
@@ -49,6 +55,7 @@ export function CategoryCreateEditPanel({
       <input
         className="bg-card text-ink border border-border rounded-lg px-3 py-2 text-sm w-full"
         value={name}
+        maxLength={80}
         onChange={(e) => setName(e.target.value)}
         placeholder="Category name"
       />
