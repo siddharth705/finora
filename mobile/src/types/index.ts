@@ -139,6 +139,11 @@ export interface DashboardSummary {
   categoryReviewSpendAmount: number;
   categoryReviewTransactionCount: number;
   categoryReviewSpendWarningThresholdPct: number;
+  // Why incomeDeltaPct/expenseDeltaPct/netDeltaPct came back null (web only so far, same reason as
+  // healthScore above) -- 'PARTIAL_PRIOR_MONTH' or 'TOO_FEW_PRIOR_TRANSACTIONS', or null when the
+  // deltas are real numbers or null for a self-explanatory reason. Mirrors frontend/src/types/index.ts.
+  comparisonGateReason: 'PARTIAL_PRIOR_MONTH' | 'TOO_FEW_PRIOR_TRANSACTIONS' | null;
+  comparisonGateMinTransactions: number;
 }
 
 export interface Budget {

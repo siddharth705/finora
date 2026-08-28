@@ -203,11 +203,22 @@ export default function Dashboard() {
   const totalSpend = categoryEntries.reduce((s, [, v]) => s + v, 0);
   const donutColors = ['#3b82f6', '#16a34a', '#f59e0b', '#8b5cf6', '#ef4444', '#94a3b8'];
 
+  // incomeDeltaPct/expenseDeltaPct/netDeltaPct share one gate on the backend (DashboardService
+  // computes a single priorMonthReliable boolean and applies it to all three), so there's one
+  // reason to explain, not three -- computed once here and handed to whichever of the three KPI
+  // cards below actually has a nulled-out delta to explain. Balance/Savings Rate never carry a
+  // gate reason: their "—" is "this KPI has no delta concept at all", not a withheld comparison.
+  const comparisonGateReasonText = summary.comparisonGateReason === 'PARTIAL_PRIOR_MONTH'
+    ? "Last month's data only covers part of the month, so comparing it wouldn't be a fair like-for-like."
+    : summary.comparisonGateReason === 'TOO_FEW_PRIOR_TRANSACTIONS'
+      ? `Last month has fewer than ${summary.comparisonGateMinTransactions} transactions, too few to compare reliably.`
+      : null;
+
   const kpis = [
     { label: 'Total Balance', value: fmt(summary.currentBalance), delta: null as number | null, icon: Wallet, iconBg: 'bg-blue-100', iconColor: 'text-blue-600' },
-    { label: 'Total Income', value: fmt(summary.monthlyIncome), delta: summary.incomeDeltaPct, icon: ArrowDownCircle, iconBg: 'bg-green-100', iconColor: 'text-green-600' },
-    { label: 'Total Expenses', value: fmt(summary.monthlyExpense), delta: summary.expenseDeltaPct, icon: ArrowUpCircle, iconBg: 'bg-red-100', iconColor: 'text-red-600', invertDelta: true },
-    { label: 'Net Savings', value: fmt(summary.netCashFlow), delta: summary.netDeltaPct, icon: PiggyBank, iconBg: 'bg-primary-light', iconColor: 'text-primary' },
+    { label: 'Total Income', value: fmt(summary.monthlyIncome), delta: summary.incomeDeltaPct, icon: ArrowDownCircle, iconBg: 'bg-green-100', iconColor: 'text-green-600', gateReasonText: comparisonGateReasonText },
+    { label: 'Total Expenses', value: fmt(summary.monthlyExpense), delta: summary.expenseDeltaPct, icon: ArrowUpCircle, iconBg: 'bg-red-100', iconColor: 'text-red-600', invertDelta: true, gateReasonText: comparisonGateReasonText },
+    { label: 'Net Savings', value: fmt(summary.netCashFlow), delta: summary.netDeltaPct, icon: PiggyBank, iconBg: 'bg-primary-light', iconColor: 'text-primary', gateReasonText: comparisonGateReasonText },
     { label: 'Savings Rate', value: summary.savingsRatePct.toFixed(0) + '%', delta: null as number | null, icon: PieChart, iconBg: 'bg-purple-100', iconColor: 'text-purple-600' },
   ];
 
@@ -264,6 +275,7 @@ export default function Dashboard() {
             delta={k.delta}
             deltaLabel={deltaLabel}
             invertDelta={k.invertDelta}
+            gateReasonText={k.gateReasonText}
           />
         ))}
       </div>

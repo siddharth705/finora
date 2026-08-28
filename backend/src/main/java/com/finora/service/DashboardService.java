@@ -114,7 +114,8 @@ public class DashboardService {
         // enough of its own transactions that one or two stray rows can't dominate the ratio --
         // below either bar, the comparison isn't wrong, it's just not a comparison, and pct() below
         // says so with null (which MetricCard already renders as a muted "--" rather than a number).
-        boolean priorMonthReliable = isReliablePriorMonth(active, priorMonth);
+        String comparisonGateReason = priorMonthGateReason(active, priorMonth);
+        boolean priorMonthReliable = comparisonGateReason == null;
 
         BigDecimal savingsRate = incomeCur.compareTo(BigDecimal.ZERO) > 0
                 ? netCur.divide(incomeCur, 4, RoundingMode.HALF_UP).multiply(BigDecimal.valueOf(100))
@@ -226,7 +227,8 @@ public class DashboardService {
                 period.month(), period.isCurrent(),
                 limitedHistory, months.size(), LIMITED_HISTORY_MONTH_FLOOR, statementCount, accounts.size(),
                 categoryReviewWarning, categoryReviewSpendPct, categoryReviewSpend,
-                categoryReviewTransactionCount, CATEGORY_REVIEW_SPEND_WARNING_THRESHOLD_PCT
+                categoryReviewTransactionCount, CATEGORY_REVIEW_SPEND_WARNING_THRESHOLD_PCT,
+                comparisonGateReason, MIN_TRANSACTIONS_FOR_DELTA_COMPARISON
         );
     }
 
@@ -291,23 +293,25 @@ public class DashboardService {
     // triple-digit swing the way they did for the bug this constant exists to prevent.
     static final int MIN_TRANSACTIONS_FOR_DELTA_COMPARISON = 3;
 
-    /** True when `month` is trustworthy as a delta's denominator: a FULL calendar month (not the
-     *  ragged edge of the overall imported date range -- see the comment at this method's call
-     *  site) carrying at least {@link #MIN_TRANSACTIONS_FOR_DELTA_COMPARISON} transactions of its
-     *  own. */
-    private boolean isReliablePriorMonth(List<Transaction> active, String month) {
-        if (month == null) return false;
+    /** Why `month` isn't trustworthy as a delta's denominator, or null when it is: a FULL calendar
+     *  month (not the ragged edge of the overall imported date range -- see the comment at this
+     *  method's call site) carrying at least {@link #MIN_TRANSACTIONS_FOR_DELTA_COMPARISON}
+     *  transactions of its own. The reason string is returned to the client (see
+     *  DashboardSummaryDto.comparisonGateReason) so a nulled-out delta can explain itself instead
+     *  of just vanishing into a muted "—". */
+    private String priorMonthGateReason(List<Transaction> active, String month) {
+        if (month == null) return null;
         LocalDate earliestTxnDate = active.stream().map(Transaction::getTxnDate).min(Comparator.naturalOrder()).orElse(null);
         LocalDate latestTxnDate = active.stream().map(Transaction::getTxnDate).max(Comparator.naturalOrder()).orElse(null);
-        if (earliestTxnDate == null || latestTxnDate == null) return false;
+        if (earliestTxnDate == null || latestTxnDate == null) return null;
         boolean isEarliestBucket = month.equals(YearMonth.from(earliestTxnDate).toString());
         boolean isLatestBucket = month.equals(YearMonth.from(latestTxnDate).toString());
-        if (isEarliestBucket && earliestTxnDate.getDayOfMonth() != 1) return false;
-        if (isLatestBucket && latestTxnDate.getDayOfMonth() != YearMonth.from(latestTxnDate).lengthOfMonth()) return false;
+        if (isEarliestBucket && earliestTxnDate.getDayOfMonth() != 1) return "PARTIAL_PRIOR_MONTH";
+        if (isLatestBucket && latestTxnDate.getDayOfMonth() != YearMonth.from(latestTxnDate).lengthOfMonth()) return "PARTIAL_PRIOR_MONTH";
 
         long monthTxnCount = active.stream()
                 .filter(t -> YearMonth.from(t.getTxnDate()).toString().equals(month)).count();
-        return monthTxnCount >= MIN_TRANSACTIONS_FOR_DELTA_COMPARISON;
+        return monthTxnCount < MIN_TRANSACTIONS_FOR_DELTA_COMPARISON ? "TOO_FEW_PRIOR_TRANSACTIONS" : null;
     }
 
     // D-25 PR3-A. Owner's choice among the proposal's own options (transaction count vs. time

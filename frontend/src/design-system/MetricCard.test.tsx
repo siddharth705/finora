@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { Wallet } from 'lucide-react';
 import { MetricCard } from './MetricCard';
 
@@ -40,5 +41,48 @@ describe('MetricCard', () => {
   it('defaults the value color to text-ink when no valueColor is given', () => {
     render(<MetricCard label="Total Balance" value="₹1,000" icon={Wallet} iconBg="bg-blue-100" iconColor="text-blue-600" />);
     expect(screen.getByText('₹1,000')).toHaveClass('text-ink');
+  });
+
+  it('renders no "Why?" toggle for a muted placeholder that has no gate reason', () => {
+    render(<MetricCard label="Balance" value="₹500" icon={Wallet} iconBg="bg-blue-100" iconColor="text-blue-600" deltaLabel="vs last month" />);
+    expect(screen.queryByRole('button', { name: /why/i })).not.toBeInTheDocument();
+  });
+
+  it('renders a "Why?" toggle next to a muted placeholder that has a gate reason', () => {
+    render(
+      <MetricCard
+        label="Total Income" value="₹500" icon={Wallet} iconBg="bg-green-100" iconColor="text-green-600"
+        deltaLabel="vs last month" gateReasonText="Last month has fewer than 3 transactions, too few to compare reliably."
+      />
+    );
+    expect(screen.getByRole('button', { name: 'Why?' })).toBeInTheDocument();
+    expect(screen.queryByText(/fewer than 3 transactions/)).not.toBeInTheDocument();
+  });
+
+  it('reveals the gate reason text on clicking "Why?", and hides it again on a second click', async () => {
+    const user = userEvent.setup();
+    render(
+      <MetricCard
+        label="Total Income" value="₹500" icon={Wallet} iconBg="bg-green-100" iconColor="text-green-600"
+        deltaLabel="vs last month" gateReasonText="Last month has fewer than 3 transactions, too few to compare reliably."
+      />
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Why?' }));
+    expect(screen.getByText(/fewer than 3 transactions/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Hide' })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Hide' }));
+    expect(screen.queryByText(/fewer than 3 transactions/)).not.toBeInTheDocument();
+  });
+
+  it('never renders a "Why?" toggle once the delta is a real number, even if a gate reason is passed', () => {
+    render(
+      <MetricCard
+        label="Total Income" value="₹500" icon={Wallet} iconBg="bg-green-100" iconColor="text-green-600"
+        delta={12.3} deltaLabel="vs last month" gateReasonText="Last month has fewer than 3 transactions, too few to compare reliably."
+      />
+    );
+    expect(screen.queryByRole('button', { name: /why/i })).not.toBeInTheDocument();
   });
 });

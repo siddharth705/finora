@@ -206,6 +206,7 @@ class DashboardServiceTest {
         assertThat(summary.incomeDeltaPct()).isNull();
         assertThat(summary.expenseDeltaPct()).isNull();
         assertThat(summary.netDeltaPct()).isNull();
+        assertThat(summary.comparisonGateReason()).isEqualTo("PARTIAL_PRIOR_MONTH");
     }
 
     @Test
@@ -226,6 +227,8 @@ class DashboardServiceTest {
         DashboardSummaryDto summary = dashboardService.summarize(userId);
 
         assertThat(summary.incomeDeltaPct()).isNull();
+        assertThat(summary.comparisonGateReason()).isEqualTo("TOO_FEW_PRIOR_TRANSACTIONS");
+        assertThat(summary.comparisonGateMinTransactions()).isEqualTo(DashboardService.MIN_TRANSACTIONS_FOR_DELTA_COMPARISON);
     }
 
     @Test
@@ -247,6 +250,7 @@ class DashboardServiceTest {
         // June: 30 * 100 = 3000. July: 31 * 200 = 6200. (6200-3000)/3000 * 100 ~= 106.67%.
         assertThat(summary.incomeDeltaPct()).isNotNull();
         assertThat(summary.incomeDeltaPct()).isCloseTo(106.67, org.assertj.core.data.Offset.offset(0.5));
+        assertThat(summary.comparisonGateReason()).isNull();
     }
 
     @Test
@@ -268,6 +272,10 @@ class DashboardServiceTest {
         DashboardSummaryDto summary = dashboardService.summarize(userId);
 
         assertThat(summary.incomeDeltaPct()).isNull();
+        // The prior month itself is perfectly reliable -- it's genuinely, legitimately zero income,
+        // not a thin-data artifact -- so this null shouldn't carry a gate reason a "Why?" disclosure
+        // would show; the amount being zero is self-explanatory.
+        assertThat(summary.comparisonGateReason()).isNull();
     }
 
     @Test
