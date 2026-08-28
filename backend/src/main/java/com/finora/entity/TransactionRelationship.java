@@ -55,8 +55,20 @@ public class TransactionRelationship {
     @Column(name = "matched_amount")
     private BigDecimal matchedAmount;
 
+    // "How sure are we THIS SPECIFIC PAIRING is correct?" -- match type, amount closeness, date
+    // proximity. See ConfidenceScorer. Deliberately never combined with sourceTrust below into one
+    // number -- a perfect PDF match (low-trust source, high-quality match) and a sloppy AA match
+    // (high-trust source, weak match) must not be able to land on the same blended score and look
+    // identical.
     @Column(name = "confidence")
     private Integer confidence;
+
+    // "How much do we trust THIS CHANNEL in general?" -- static per-source (SourceTrust.of()),
+    // recorded at match time rather than re-derived from the transaction's current source, so a
+    // historical edge's trust stays what it was even if SourceTrust's constants are retuned later.
+    // Null for edges written before V115.
+    @Column(name = "source_trust")
+    private Integer sourceTrust;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
@@ -96,6 +108,8 @@ public class TransactionRelationship {
     public void setMatchedAmount(BigDecimal matchedAmount) { this.matchedAmount = matchedAmount; }
     public Integer getConfidence() { return confidence; }
     public void setConfidence(Integer confidence) { this.confidence = confidence; }
+    public Integer getSourceTrust() { return sourceTrust; }
+    public void setSourceTrust(Integer sourceTrust) { this.sourceTrust = sourceTrust; }
     public Status getStatus() { return status; }
     public void setStatus(Status status) { this.status = status; }
     public DetectionMethod getDetectionMethod() { return detectionMethod; }

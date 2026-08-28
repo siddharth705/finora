@@ -53,6 +53,14 @@ env:
 # and everything after it would fail on the review screen, not the summary -- confirmed by
 # reproducing exactly that against a stale local database before tightening this.
 - assertVisible: "File into"
+# Same reason as dashboard.yaml's scrollUntilVisible: the button is ImportScreen.tsx's
+# ListFooterComponent, past the transaction rows above it, and this emulator's 320x640 screen is
+# too short to reach it without scrolling -- confirmed via a real run's UI-hierarchy dump, which
+# had no "Import N transactions" text mounted at all at the pre-scroll position.
+- scrollUntilVisible:
+    element:
+      text: "Import [1-9]\\d* transactions?"
+    direction: DOWN
 - assertVisible:
     text: "Import [1-9]\\d* transactions?"
 - tapOn:
