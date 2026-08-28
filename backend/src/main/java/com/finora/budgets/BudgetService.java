@@ -9,6 +9,7 @@ import com.finora.repository.CategoryRepository;
 import com.finora.repository.TransactionRepository;
 import com.finora.repository.UserRepository;
 import com.finora.service.AuditService;
+import com.finora.service.RefundNetting;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -61,12 +62,19 @@ public class BudgetService {
         // one uncategorized expense this month. Safe to filter out: a budget's categoryId is
         // never null, so an uncategorized transaction could never match one of these lookups
         // below anyway (see DashboardService.summarize()'s spendByCategoryId for the same fix).
-        Map<UUID, BigDecimal> spendByCategory = transactionRepository
-                .findByUserIdAndTxnDateBetween(userId, from, to).stream()
-                .filter(t -> t.getTxnType() == Transaction.Type.EXPENSE && !t.isTransfer() && t.getIsDuplicateOf() == null
-                        && t.getCategoryId() != null)
+        //
+        // Bug fix: this was the one known-remaining copy of the one-sided refund filter
+        // RefundNetting replaced everywhere else (see that class's own doc comment, "BudgetService
+        // deliberately still does not use this") -- a refunded purchase's expense leg was counted
+        // in full here even after ReportService/AnalyticsService/DashboardService had all been
+        // fixed to net it. RefundNetting.reportable() drops the income leg (same as the old
+        // filter's job); reportableAmount() nets any matched refund/reversal off the expense.
+        RefundNetting refunds = refundsFor(userId);
+        Map<UUID, BigDecimal> spendByCategory = RefundNetting.reportable(
+                        transactionRepository.findByUserIdAndTxnDateBetween(userId, from, to)).stream()
+                .filter(t -> t.getTxnType() == Transaction.Type.EXPENSE && t.getCategoryId() != null)
                 .collect(Collectors.groupingBy(Transaction::getCategoryId,
-                        Collectors.reducing(BigDecimal.ZERO, Transaction::getAmount, BigDecimal::add)));
+                        Collectors.reducing(BigDecimal.ZERO, refunds::reportableAmount, BigDecimal::add)));
 
         return budgetRepository.findByUserId(userId).stream().map(b -> {
             Category cat = categoriesById.get(b.getCategoryId());
@@ -150,11 +158,24 @@ public class BudgetService {
         YearMonth thisMonth = YearMonth.now(safeZoneId(userId));
         LocalDate from = thisMonth.atDay(1);
         LocalDate to = thisMonth.atEndOfMonth();
-        return transactionRepository.findByUserIdAndTxnDateBetween(userId, from, to).stream()
-                .filter(t -> t.getTxnType() == Transaction.Type.EXPENSE && !t.isTransfer() && t.getIsDuplicateOf() == null
-                        && categoryId.equals(t.getCategoryId()))
-                .map(Transaction::getAmount)
+        RefundNetting refunds = refundsFor(userId);
+        return RefundNetting.reportable(transactionRepository.findByUserIdAndTxnDateBetween(userId, from, to)).stream()
+                .filter(t -> t.getTxnType() == Transaction.Type.EXPENSE && categoryId.equals(t.getCategoryId()))
+                .map(refunds::reportableAmount)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
+    }
+
+    /**
+     * The refund/reversal offsets for this user, queried across all time rather than the current
+     * month's window -- a refund routinely arrives in a later month than the purchase it
+     * reverses (BH-005), so netting against only the in-window rows would leave every
+     * cross-month refund uncorrected, which is most of them. Same pattern as
+     * {@code ReportService}/{@code AnalyticsService}; see {@link RefundNetting}'s own class
+     * comment for why this table specifically was the one known-remaining gap.
+     */
+    private RefundNetting refundsFor(UUID userId) {
+        return RefundNetting.from(transactionRepository.findByUserIdAndReconciliationStatusIn(
+                userId, List.of(Transaction.ReconciliationStatus.REFUND, Transaction.ReconciliationStatus.REVERSAL)));
     }
 
     /** Delegates to {@link com.finora.util.UserZone} -- one of four hand-copied implementations,

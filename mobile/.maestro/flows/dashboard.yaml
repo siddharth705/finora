@@ -12,6 +12,9 @@ env:
     clearState: true
 - tapOn: "Email or mobile number"
 - inputText: ${TEST_EMAIL}
+# See login.yaml's own comment: the keyboard covers "Continue" too, and a tap through it can hit
+# Gboard's own toolbar instead of the app.
+- hideKeyboard
 - tapOn: "Continue"
 - tapOn: "Password"
 - inputText: ${TEST_PASSWORD}
@@ -28,4 +31,13 @@ env:
 - assertVisible: "Net Savings"
 - assertVisible: "Cash Flow"
 - assertVisible: "Spending by Category"
+# DashboardScreen.tsx renders "Recent Transactions" unconditionally (see that file's own
+# EmptyState branch for a zero-transaction account), but this emulator's screen is only 320x640 --
+# too short to fit every card above the fold. A real run confirmed the section genuinely isn't in
+# the mounted tree yet at this scroll position, not just visually clipped, so this needs an actual
+# scroll rather than a taller assertion timeout.
+- scrollUntilVisible:
+    element:
+      text: "Recent Transactions"
+    direction: DOWN
 - assertVisible: "Recent Transactions"

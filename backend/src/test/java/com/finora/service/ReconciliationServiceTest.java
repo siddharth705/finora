@@ -1,6 +1,7 @@
 package com.finora.service;
 
 import com.finora.entity.Transaction;
+import com.finora.entity.TransactionRelationship;
 import com.finora.repository.TransactionRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -21,6 +22,7 @@ class ReconciliationServiceTest {
     private TransactionRepository transactionRepository;
     private RelationshipService relationshipService;
     private AuditService auditService;
+    private TransactionGraphService transactionGraphService;
     private ReconciliationService reconciliationService;
     private final UUID userId = UUID.randomUUID();
 
@@ -33,7 +35,9 @@ class ReconciliationServiceTest {
         // behavior unchanged.
         relationshipService = mock(RelationshipService.class);
         auditService = mock(AuditService.class);
-        reconciliationService = new ReconciliationService(transactionRepository, relationshipService, auditService);
+        transactionGraphService = mock(TransactionGraphService.class);
+        reconciliationService = new ReconciliationService(transactionRepository, relationshipService, auditService,
+                transactionGraphService);
     }
 
     private Transaction txn(UUID id, UUID accountId, LocalDate date, BigDecimal amount,
@@ -71,6 +75,55 @@ class ReconciliationServiceTest {
         assertThat(original.getIsDuplicateOf()).isNull();
         assertThat(duplicate.getIsDuplicateOf()).isEqualTo(original.getId());
         assertThat(duplicate.getReconciliationStatus()).isEqualTo(Transaction.ReconciliationStatus.DUPLICATE);
+    }
+
+    /**
+     * Phase 1, docs/proposals/reconciliation-evolution-roadmap-proposal.md. Previously canonical
+     * selection was purely "whichever was created first" -- a bank statement imported AFTER a
+     * Gmail receipt that happens to collide on the exact duplicate key would lose to it. Source
+     * trust (CSV_IMPORT=95 > GMAIL_IMPORT=60) now wins outright, regardless of creation order.
+     */
+    @Test
+    void reconcileForUser_prefersTheHigherTrustSource_asCanonical_evenWhenCreatedLater() {
+        UUID accountId = UUID.randomUUID();
+        LocalDate date = LocalDate.of(2026, 7, 10);
+
+        Transaction gmailReceipt = txn(UUID.randomUUID(), accountId, date, new BigDecimal("499.00"),
+                Transaction.Type.EXPENSE, "AMAZON ORDER 4471", Instant.parse("2026-07-10T09:00:00Z"));
+        gmailReceipt.setSource(Transaction.Source.GMAIL_IMPORT);
+        Transaction bankStatement = txn(UUID.randomUUID(), accountId, date, new BigDecimal("499.00"),
+                Transaction.Type.EXPENSE, "AMAZON ORDER 4471", Instant.parse("2026-07-10T18:00:00Z"));
+        bankStatement.setSource(Transaction.Source.CSV_IMPORT);
+
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(gmailReceipt, bankStatement));
+
+        reconciliationService.reconcileForUser(userId);
+
+        assertThat(bankStatement.getIsDuplicateOf())
+                .as("the bank statement is the higher-trust source; it stays canonical despite arriving later")
+                .isNull();
+        assertThat(gmailReceipt.getIsDuplicateOf()).isEqualTo(bankStatement.getId());
+    }
+
+    /** Same source, same trust -- the tiebreak degrades back to creation order, unchanged. */
+    @Test
+    void reconcileForUser_fallsBackToCreationOrder_whenBothRowsShareASource() {
+        UUID accountId = UUID.randomUUID();
+        LocalDate date = LocalDate.of(2026, 7, 10);
+
+        Transaction earlier = txn(UUID.randomUUID(), accountId, date, new BigDecimal("499.00"),
+                Transaction.Type.EXPENSE, "AMAZON ORDER 4471", Instant.parse("2026-07-10T09:00:00Z"));
+        earlier.setSource(Transaction.Source.CSV_IMPORT);
+        Transaction later = txn(UUID.randomUUID(), accountId, date, new BigDecimal("499.00"),
+                Transaction.Type.EXPENSE, "AMAZON ORDER 4471", Instant.parse("2026-07-10T18:00:00Z"));
+        later.setSource(Transaction.Source.CSV_IMPORT);
+
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(earlier, later));
+
+        reconciliationService.reconcileForUser(userId);
+
+        assertThat(earlier.getIsDuplicateOf()).isNull();
+        assertThat(later.getIsDuplicateOf()).isEqualTo(earlier.getId());
     }
 
     @Test
@@ -291,6 +344,39 @@ class ReconciliationServiceTest {
 
         assertThat(refund.getReconciliationStatus()).isEqualTo(Transaction.ReconciliationStatus.REFUND);
         assertThat(refund.getRefundOfTransactionId()).isEqualTo(purchase.getId());
+    }
+
+    @Test
+    void reconcileForUser_linksAReversalKeywordCreditAsReversal_notRefund() {
+        UUID accountId = UUID.randomUUID();
+
+        Transaction purchase = txn(UUID.randomUUID(), accountId, LocalDate.of(2026, 7, 1),
+                new BigDecimal("1200.00"), Transaction.Type.EXPENSE, "NEFT PAYMENT TO XYZ", Instant.now());
+        Transaction reversal = txn(UUID.randomUUID(), accountId, LocalDate.of(2026, 7, 2),
+                new BigDecimal("1200.00"), Transaction.Type.INCOME, "PAYMENT REVERSAL NEFT XYZ", Instant.now());
+
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(purchase, reversal));
+
+        reconciliationService.reconcileForUser(userId);
+
+        assertThat(reversal.getReconciliationStatus()).isEqualTo(Transaction.ReconciliationStatus.REVERSAL);
+        assertThat(reversal.getRefundOfTransactionId()).isEqualTo(purchase.getId());
+    }
+
+    @Test
+    void reconcileForUser_stillClassifiesAPlainRefundKeywordAsRefund_notReversal() {
+        UUID accountId = UUID.randomUUID();
+
+        Transaction purchase = txn(UUID.randomUUID(), accountId, LocalDate.of(2026, 7, 1),
+                new BigDecimal("899.00"), Transaction.Type.EXPENSE, "MYNTRA ORDER 552", Instant.now());
+        Transaction refund = txn(UUID.randomUUID(), accountId, LocalDate.of(2026, 7, 5),
+                new BigDecimal("899.00"), Transaction.Type.INCOME, "MYNTRA RETURN REFUND 552", Instant.now());
+
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(purchase, refund));
+
+        reconciliationService.reconcileForUser(userId);
+
+        assertThat(refund.getReconciliationStatus()).isEqualTo(Transaction.ReconciliationStatus.REFUND);
     }
 
     @Test
@@ -579,5 +665,185 @@ class ReconciliationServiceTest {
         assertThat(metadataCaptor.getValue())
                 .containsEntry("duplicatesFound", 1)
                 .containsEntry("recordedBecause", "reclassified");
+    }
+
+    /**
+     * Phase 2, docs/proposals/reconciliation-evolution-roadmap-proposal.md, Part 3. Each of the
+     * four passes now dual-writes a {@link TransactionRelationship} edge alongside its legacy
+     * column -- these pin down the exact (from, to, type) shape each pass writes, since a wrong
+     * direction here would be wrong for every one of these edges going forward, not just one test.
+     */
+    @Test
+    void reconcileForUser_alsoWritesADuplicateEdge() {
+        UUID accountId = UUID.randomUUID();
+        LocalDate date = LocalDate.of(2026, 7, 10);
+        Transaction original = txn(UUID.randomUUID(), accountId, date, new BigDecimal("486.00"),
+                Transaction.Type.EXPENSE, "SWIGGY*ORDR9182 BLR", Instant.parse("2026-07-10T10:00:00Z"));
+        Transaction duplicate = txn(UUID.randomUUID(), accountId, date, new BigDecimal("486.00"),
+                Transaction.Type.EXPENSE, "SWIGGY*ORDR9182 BLR", Instant.parse("2026-07-10T10:05:00Z"));
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(original, duplicate));
+
+        reconciliationService.reconcileForUser(userId);
+
+        List<TransactionGraphService.PendingEdge> edges = capturePendingEdges();
+        assertThat(edges).hasSize(1);
+        TransactionGraphService.PendingEdge edge = edges.get(0);
+        assertThat(edge.userId()).isEqualTo(userId);
+        assertThat(edge.fromTransactionId()).isEqualTo(duplicate.getId());
+        assertThat(edge.toTransactionId()).isEqualTo(original.getId());
+        assertThat(edge.relationshipType()).isEqualTo(TransactionRelationship.RelationshipType.DUPLICATE);
+        assertThat(edge.matchedAmount()).isEqualByComparingTo("486.00");
+        assertThat(edge.confidence()).isEqualTo(99); // exact composite-key match, no window to decay
+        assertThat(edge.sourceTrust()).isEqualTo(SourceTrust.of(Transaction.Source.MANUAL));
+        assertThat(edge.status()).isEqualTo(TransactionRelationship.Status.AUTO_CONFIRMED);
+        assertThat(edge.detectionMethod()).isEqualTo(TransactionRelationship.DetectionMethod.RULE_ENGINE);
+    }
+
+    @Test
+    void reconcileForUser_alsoWritesATransferEdge_inBothDirections() {
+        UUID savings = UUID.randomUUID();
+        UUID creditCard = UUID.randomUUID();
+        LocalDate date = LocalDate.of(2026, 7, 10);
+        Transaction payment = txn(UUID.randomUUID(), savings, date, new BigDecimal("5000.00"),
+                Transaction.Type.EXPENSE, "CC PAYMENT XXXX1234", Instant.parse("2026-07-10T10:00:00Z"));
+        Transaction credit = txn(UUID.randomUUID(), creditCard, date, new BigDecimal("5000.00"),
+                Transaction.Type.INCOME, "PAYMENT RECEIVED", Instant.parse("2026-07-10T10:05:00Z"));
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(payment, credit));
+
+        reconciliationService.reconcileForUser(userId);
+
+        List<TransactionGraphService.PendingEdge> edges = capturePendingEdges();
+        assertThat(edges).hasSize(2);
+        // Same date, exact amount -- base(MERCHANT_AND_AMOUNT) with no decay from either factor.
+        int expectedConfidence = ConfidenceScorer.score(ConfidenceScorer.MatchType.MERCHANT_AND_AMOUNT,
+                new BigDecimal("5000.00"), BigDecimal.ZERO, 0, 4);
+        assertThat(edges).anySatisfy(e -> {
+            assertThat(e.fromTransactionId()).isEqualTo(payment.getId());
+            assertThat(e.toTransactionId()).isEqualTo(credit.getId());
+            assertThat(e.relationshipType()).isEqualTo(TransactionRelationship.RelationshipType.TRANSFER);
+            assertThat(e.confidence()).isEqualTo(expectedConfidence);
+            assertThat(e.status()).isEqualTo(TransactionRelationship.Status.AUTO_CONFIRMED);
+        });
+        assertThat(edges).anySatisfy(e -> {
+            assertThat(e.fromTransactionId()).isEqualTo(credit.getId());
+            assertThat(e.toTransactionId()).isEqualTo(payment.getId());
+            assertThat(e.relationshipType()).isEqualTo(TransactionRelationship.RelationshipType.TRANSFER);
+        });
+    }
+
+    /**
+     * A clean amount+merchant match that lands right at the edge of its date window scores low
+     * enough to cross the needs-review threshold -- the graph edge becomes CANDIDATE instead of
+     * AUTO_CONFIRMED, even though the Transaction row's own legacy TRANSFER classification (which
+     * this confidence model does not touch) is unaffected.
+     */
+    @Test
+    void reconcileForUser_marksALowConfidenceTransferEdgeAsCandidate_notAutoConfirmed() {
+        UUID savings = UUID.randomUUID();
+        UUID creditCard = UUID.randomUUID();
+        Transaction payment = txn(UUID.randomUUID(), savings, LocalDate.of(2026, 7, 1),
+                new BigDecimal("5000.00"), Transaction.Type.EXPENSE, "NEFT PAYMENT TO CARD",
+                Instant.parse("2026-07-01T10:00:00Z"));
+        Transaction credit = txn(UUID.randomUUID(), creditCard, LocalDate.of(2026, 7, 5),
+                new BigDecimal("5000.00"), Transaction.Type.INCOME, "PAYMENT RECEIVED",
+                Instant.parse("2026-07-05T10:00:00Z"));
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(payment, credit));
+
+        reconciliationService.reconcileForUser(userId);
+
+        // Still classified as a transfer on the transaction itself -- the legacy column is
+        // unaffected by confidence.
+        assertThat(payment.getReconciliationStatus()).isEqualTo(Transaction.ReconciliationStatus.TRANSFER);
+
+        List<TransactionGraphService.PendingEdge> edges = capturePendingEdges();
+        assertThat(edges).allSatisfy(e -> {
+            assertThat(e.confidence()).isLessThan(80);
+            assertThat(e.status()).isEqualTo(TransactionRelationship.Status.CANDIDATE);
+        });
+    }
+
+    @Test
+    void reconcileForUser_alsoWritesARefundEdge() {
+        UUID accountId = UUID.randomUUID();
+        Transaction purchase = txn(UUID.randomUUID(), accountId, LocalDate.of(2026, 7, 1),
+                new BigDecimal("999.00"), Transaction.Type.EXPENSE, "AMAZON ORDER 1122",
+                Instant.parse("2026-07-01T10:00:00Z"));
+        Transaction refund = txn(UUID.randomUUID(), accountId, LocalDate.of(2026, 7, 5),
+                new BigDecimal("999.00"), Transaction.Type.INCOME, "AMAZON REFUND 1122",
+                Instant.parse("2026-07-05T10:00:00Z"));
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(purchase, refund));
+
+        reconciliationService.reconcileForUser(userId);
+
+        List<TransactionGraphService.PendingEdge> edges = capturePendingEdges();
+        assertThat(edges).hasSize(1);
+        TransactionGraphService.PendingEdge edge = edges.get(0);
+        assertThat(edge.fromTransactionId()).isEqualTo(refund.getId());
+        assertThat(edge.toTransactionId()).isEqualTo(purchase.getId());
+        assertThat(edge.relationshipType()).isEqualTo(TransactionRelationship.RelationshipType.REFUND);
+        assertThat(edge.matchedAmount()).isEqualByComparingTo("999.00");
+        int expectedConfidence = ConfidenceScorer.score(ConfidenceScorer.MatchType.MERCHANT_AND_AMOUNT,
+                new BigDecimal("999.00"), BigDecimal.ZERO, 4, 180);
+        assertThat(edge.confidence()).isEqualTo(expectedConfidence);
+        assertThat(edge.status()).isEqualTo(TransactionRelationship.Status.AUTO_CONFIRMED);
+    }
+
+    @Test
+    void reconcileForUser_alsoWritesAReversalEdge_distinctFromRefund() {
+        UUID accountId = UUID.randomUUID();
+        Transaction purchase = txn(UUID.randomUUID(), accountId, LocalDate.of(2026, 7, 1),
+                new BigDecimal("500.00"), Transaction.Type.EXPENSE, "MERCHANT PAYMENT 1122",
+                Instant.parse("2026-07-01T10:00:00Z"));
+        Transaction reversal = txn(UUID.randomUUID(), accountId, LocalDate.of(2026, 7, 3),
+                new BigDecimal("500.00"), Transaction.Type.INCOME, "PAYMENT REVERSED 1122",
+                Instant.parse("2026-07-03T10:00:00Z"));
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(purchase, reversal));
+
+        reconciliationService.reconcileForUser(userId);
+
+        List<TransactionGraphService.PendingEdge> edges = capturePendingEdges();
+        assertThat(edges).hasSize(1);
+        TransactionGraphService.PendingEdge edge = edges.get(0);
+        assertThat(edge.fromTransactionId()).isEqualTo(reversal.getId());
+        assertThat(edge.toTransactionId()).isEqualTo(purchase.getId());
+        assertThat(edge.relationshipType()).isEqualTo(TransactionRelationship.RelationshipType.REVERSAL);
+        assertThat(edge.matchedAmount()).isEqualByComparingTo("500.00");
+        int expectedConfidence = ConfidenceScorer.score(ConfidenceScorer.MatchType.MERCHANT_AND_AMOUNT,
+                new BigDecimal("500.00"), BigDecimal.ZERO, 2, 180);
+        assertThat(edge.confidence()).isEqualTo(expectedConfidence);
+        assertThat(edge.status()).isEqualTo(TransactionRelationship.Status.AUTO_CONFIRMED);
+    }
+
+    /**
+     * A large partial refund shortfall against a small purchase amount pushes amount_factor down
+     * far enough to cross the needs-review threshold -- the edge lands CANDIDATE, distinct from
+     * the exact-amount refund above.
+     */
+    @Test
+    void reconcileForUser_marksALowConfidencePartialRefundEdgeAsCandidate() {
+        UUID accountId = UUID.randomUUID();
+        Transaction purchase = txn(UUID.randomUUID(), accountId, LocalDate.of(2026, 7, 1),
+                new BigDecimal("1000.00"), Transaction.Type.EXPENSE, "AMAZON ORDER 1122",
+                Instant.parse("2026-07-01T10:00:00Z"));
+        // A tiny partial refund -- ~10% of the purchase -- refunded well into the window.
+        Transaction refund = txn(UUID.randomUUID(), accountId, LocalDate.of(2026, 12, 20),
+                new BigDecimal("100.00"), Transaction.Type.INCOME, "AMAZON REFUND 1122",
+                Instant.parse("2026-12-20T10:00:00Z"));
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(purchase, refund));
+
+        reconciliationService.reconcileForUser(userId);
+
+        List<TransactionGraphService.PendingEdge> edges = capturePendingEdges();
+        assertThat(edges).hasSize(1);
+        assertThat(edges.get(0).confidence()).isLessThan(80);
+        assertThat(edges.get(0).status()).isEqualTo(TransactionRelationship.Status.CANDIDATE);
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<TransactionGraphService.PendingEdge> capturePendingEdges() {
+        org.mockito.ArgumentCaptor<List<TransactionGraphService.PendingEdge>> captor =
+                org.mockito.ArgumentCaptor.forClass(List.class);
+        org.mockito.Mockito.verify(transactionGraphService).linkAll(captor.capture());
+        return captor.getValue();
     }
 }

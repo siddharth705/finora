@@ -86,6 +86,18 @@ class BudgetServiceTest {
         return t;
     }
 
+    /** The income side of a matched refund/reversal, exactly as ReconciliationService leaves it. */
+    private Transaction refundOf(UUID expenseId, BigDecimal amount, Transaction.ReconciliationStatus status) {
+        Transaction t = new Transaction();
+        ReflectionTestUtils.setField(t, "id", UUID.randomUUID());
+        t.setUserId(userId);
+        t.setAmount(amount);
+        t.setTxnType(Transaction.Type.INCOME);
+        t.setReconciliationStatus(status);
+        t.setRefundOfTransactionId(expenseId);
+        return t;
+    }
+
     @Test
     void listForUser_matchesSpendToTheRightBudgetByCategory() {
         Category dining = category("Dining");
@@ -99,6 +111,54 @@ class BudgetServiceTest {
         assertThat(result).hasSize(1);
         assertThat(result.get(0).categoryName()).isEqualTo("Dining");
         assertThat(result.get(0).spentThisMonth()).isEqualByComparingTo("1200.00");
+    }
+
+    /**
+     * Phase 1, docs/proposals/reconciliation-evolution-roadmap-proposal.md. Previously the one
+     * known-remaining copy of the one-sided refund filter RefundNetting replaced everywhere else
+     * -- a refunded purchase counted in full here even after ReportService/AnalyticsService had
+     * both been fixed. Queried across all time (not the month window), same as those two, because
+     * a refund routinely lands in a later month than the purchase it reverses.
+     */
+    @Test
+    void listForUser_netsARefundedPurchase_offItsCategorysSpend() {
+        Category dining = category("Dining");
+        UUID purchaseId = UUID.randomUUID();
+        Transaction purchase = expense(new BigDecimal("1200.00"), dining.getId());
+        ReflectionTestUtils.setField(purchase, "id", purchaseId);
+
+        when(categoryRepository.findByUserId(userId)).thenReturn(List.of(dining));
+        when(budgetRepository.findByUserId(userId)).thenReturn(List.of(budget(dining.getId(), new BigDecimal("5000.00"))));
+        when(transactionRepository.findByUserIdAndTxnDateBetween(any(), any(), any()))
+                .thenReturn(List.of(purchase));
+        when(transactionRepository.findByUserIdAndReconciliationStatusIn(eq(userId), any()))
+                .thenReturn(List.of(refundOf(purchaseId, new BigDecimal("1200.00"), Transaction.ReconciliationStatus.REFUND)));
+
+        List<BudgetDto> result = budgetService.listForUser(userId);
+
+        assertThat(result.get(0).spentThisMonth())
+                .as("a fully refunded purchase costs nothing against the budget")
+                .isEqualByComparingTo("0.00");
+    }
+
+    /** Same fix, the REVERSAL status -- RefundNetting nets both the same way. */
+    @Test
+    void listForUser_netsAReversedPurchase_offItsCategorysSpend() {
+        Category dining = category("Dining");
+        UUID purchaseId = UUID.randomUUID();
+        Transaction purchase = expense(new BigDecimal("1200.00"), dining.getId());
+        ReflectionTestUtils.setField(purchase, "id", purchaseId);
+
+        when(categoryRepository.findByUserId(userId)).thenReturn(List.of(dining));
+        when(budgetRepository.findByUserId(userId)).thenReturn(List.of(budget(dining.getId(), new BigDecimal("5000.00"))));
+        when(transactionRepository.findByUserIdAndTxnDateBetween(any(), any(), any()))
+                .thenReturn(List.of(purchase));
+        when(transactionRepository.findByUserIdAndReconciliationStatusIn(eq(userId), any()))
+                .thenReturn(List.of(refundOf(purchaseId, new BigDecimal("1200.00"), Transaction.ReconciliationStatus.REVERSAL)));
+
+        List<BudgetDto> result = budgetService.listForUser(userId);
+
+        assertThat(result.get(0).spentThisMonth()).isEqualByComparingTo("0.00");
     }
 
     @Test

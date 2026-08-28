@@ -1,6 +1,7 @@
 package com.finora.service;
 
 import com.finora.entity.Transaction;
+import com.finora.entity.TransactionRelationship;
 import com.finora.repository.TransactionRepository;
 import com.finora.util.CategoryRules;
 import org.slf4j.Logger;
@@ -33,8 +34,16 @@ public class ReconciliationService {
     // the refund pass below. Deliberately not folded into CategoryRules (util package): that
     // table drives the CATEGORY suggestion ("Fees/Interest", "Transfer", ...), this drives
     // RECONCILIATION status, a different concern evaluated at a different point in the pipeline.
+    //
+    // "reversal" used to live in this set. Split out below (Phase 1 of the reconciliation
+    // roadmap, docs/proposals/reconciliation-evolution-roadmap-proposal.md) because a bank-side
+    // reversal ("this payment bounced") and a merchant refund ("this order was returned") are
+    // different real-world events that were producing an identical REFUND verdict -- the pass's
+    // matching mechanism (same account, refund window, capacity tracking) is unchanged, only the
+    // final classification now distinguishes them.
     private static final Set<String> REFUND_KEYWORDS = Set.of(
-            "refund", "reversal", "returned", "chargeback", "credit adjustment", "cancelled", "canceled");
+            "refund", "returned", "chargeback", "credit adjustment", "cancelled", "canceled");
+    private static final Set<String> REVERSAL_KEYWORDS = Set.of("reversal", "payment reversed");
 
     // A run past this is worth a log line on its own. Chosen against the measurement in
     // scaling-triggers.md rather than picked as a round number: the windowed passes take ~105 ms
@@ -44,15 +53,27 @@ public class ReconciliationService {
 
     private static final Logger log = LoggerFactory.getLogger(ReconciliationService.class);
 
+    // The roadmap doc's needs-review cutoff (Part 5): any match scoring below this becomes a
+    // CANDIDATE edge instead of AUTO_CONFIRMED -- reusing TransactionRelationship.Status rather
+    // than adding a separate needs_review column, since CANDIDATE already means exactly "written,
+    // not yet trusted enough to stand on its own." This governs only the graph edge's status; the
+    // Transaction row's own reconciliationStatus/legacy pointer is unaffected -- those stay the
+    // simple, always-authoritative signal they have always been, and it is the more sophisticated
+    // graph layer that carries the confidence-aware distinction for whatever review surface Phase
+    // 2's Founder Operations Dashboard item eventually builds on top of it.
+    private static final int NEEDS_REVIEW_THRESHOLD = 80;
+
     private final TransactionRepository transactionRepository;
     private final RelationshipService relationshipService;
     private final AuditService auditService;
+    private final TransactionGraphService transactionGraphService;
 
     public ReconciliationService(TransactionRepository transactionRepository, RelationshipService relationshipService,
-                                  AuditService auditService) {
+                                  AuditService auditService, TransactionGraphService transactionGraphService) {
         this.transactionRepository = transactionRepository;
         this.relationshipService = relationshipService;
         this.auditService = auditService;
+        this.transactionGraphService = transactionGraphService;
     }
 
     /**
@@ -157,7 +178,7 @@ public class ReconciliationService {
         // Dashboard's duplicateMatches/transferMatches/refundMatches already show, computed
         // fresh on every read -- this is a different, complementary number: how much did the
         // most recent run actually do).
-        int newDuplicates = 0, newTransfers = 0, newRefunds = 0;
+        int newDuplicates = 0, newTransfers = 0, newRefunds = 0, newReversals = 0;
 
         // Every row the passes below touch, written once at the end instead of one save() per
         // match. A large first import can flag hundreds of duplicates, and each save() was its own
@@ -172,6 +193,12 @@ public class ReconciliationService {
         // subject of the duplicate pass).
         Set<Transaction> dirty = new LinkedHashSet<>();
 
+        // Every graph edge the four passes below produce, written once via TransactionGraphService
+        // .linkAll(...) at the end -- same reasoning as `dirty` above, and for the same run: an
+        // import that flags hundreds of duplicates would otherwise mean hundreds of individual
+        // exists-check-plus-save round trips against transaction_relationships.
+        List<TransactionGraphService.PendingEdge> pendingEdges = new java.util.ArrayList<>();
+
         Map<String, List<Transaction>> byDuplicateKey = new HashMap<>();
         for (Transaction t : all) {
             if (t.getIsDuplicateOf() != null) continue; // already resolved by a prior run
@@ -179,9 +206,16 @@ public class ReconciliationService {
         }
         for (List<Transaction> group : byDuplicateKey.values()) {
             if (group.size() < 2) continue;
-            Transaction earliest = group.stream().min(Comparator.comparing(Transaction::getCreatedAt)).orElseThrow();
+            // Canonical selection: higher SourceTrust wins outright (Phase 1 of the reconciliation
+            // roadmap); creation order is only the tiebreak between two rows from the same source,
+            // which is what this comparison degrades to when SourceTrust can't distinguish them --
+            // exactly the behavior this pass had before source trust existed.
+            Transaction canonical = group.stream()
+                    .min(Comparator.<Transaction>comparingInt(t -> -SourceTrust.of(t.getSource()))
+                            .thenComparing(Transaction::getCreatedAt))
+                    .orElseThrow();
             for (Transaction t : group) {
-                if (t == earliest || t.getIsDuplicateOf() != null) continue;
+                if (t == canonical || t.getIsDuplicateOf() != null) continue;
                 // A human already ruled on this row and said it is a real, separate transaction.
                 // Nothing this pass can observe outranks that: it sees identical date, amount and
                 // description and cannot distinguish "the same statement uploaded twice" from "two
@@ -191,14 +225,22 @@ public class ReconciliationService {
                 //
                 // Checked here, inside the marking loop, rather than by excluding these rows from
                 // the grouping above: a confirmed row still belongs in its group so it can serve as
-                // `earliest`, and so a THIRD, genuinely accidental copy still gets flagged against
+                // `canonical`, and so a THIRD, genuinely accidental copy still gets flagged against
                 // it. Skipping the mark is the whole of the change; skipping the row is not.
                 if (t.getNotDuplicateConfirmedAt() != null) continue;
-                t.setIsDuplicateOf(earliest.getId());
+                t.setIsDuplicateOf(canonical.getId());
                 t.setReconciliationStatus(Transaction.ReconciliationStatus.DUPLICATE);
-                t.setReconciliationExplanation(ReconciliationExplanation.duplicate(earliest.getId()));
+                Map<String, Object> explanation = ReconciliationExplanation.duplicate(canonical.getId());
+                t.setReconciliationExplanation(explanation);
                 dirty.add(t);
                 newDuplicates++;
+                // Exact composite-key match: no amount delta, no date window to decay across.
+                int duplicateConfidence = ConfidenceScorer.score(ConfidenceScorer.MatchType.EXACT,
+                        t.getAmount(), BigDecimal.ZERO, 0, 0);
+                pendingEdges.add(new TransactionGraphService.PendingEdge(userId, t.getId(), canonical.getId(),
+                        TransactionRelationship.RelationshipType.DUPLICATE, t.getAmount(), duplicateConfidence,
+                        SourceTrust.of(t.getSource()), statusFor(duplicateConfidence),
+                        TransactionRelationship.DetectionMethod.RULE_ENGINE, explanation));
             }
         }
 
@@ -264,8 +306,8 @@ public class ReconciliationService {
                 if (looksLikeSalary.getOrDefault(b.getId(), false)) continue; // same guard, other side of the pair
                 if (a.getAccountId().equals(b.getAccountId()) || a.getTxnType() == b.getTxnType()) continue;
 
-                boolean sameAmount = a.getAmount().subtract(b.getAmount()).abs()
-                        .compareTo(ReconciliationPolicy.TRANSFER_AMOUNT_TOLERANCE) < 0;
+                BigDecimal amountDelta = a.getAmount().subtract(b.getAmount()).abs();
+                boolean sameAmount = amountDelta.compareTo(ReconciliationPolicy.TRANSFER_AMOUNT_TOLERANCE) < 0;
                 long daysApart = Math.abs(ChronoUnit.DAYS.between(a.getTxnDate(), b.getTxnDate()));
 
                 boolean relationshipMatch = aOwnAccountMatch || ownAccountMatch.getOrDefault(b.getId(), false);
@@ -279,13 +321,32 @@ public class ReconciliationService {
                     // Both sides get their own explanation, each naming the other. A transfer is
                     // one decision but two rows, and someone looking at either row should not have
                     // to fetch the partner to find out why this one was excluded from totals.
-                    a.setReconciliationExplanation(
-                            ReconciliationExplanation.transfer(a, b, dayWindow, relationshipMatch));
-                    b.setReconciliationExplanation(
-                            ReconciliationExplanation.transfer(b, a, dayWindow, relationshipMatch));
+                    Map<String, Object> explanationA = ReconciliationExplanation.transfer(a, b, dayWindow, relationshipMatch);
+                    Map<String, Object> explanationB = ReconciliationExplanation.transfer(b, a, dayWindow, relationshipMatch);
+                    a.setReconciliationExplanation(explanationA);
+                    b.setReconciliationExplanation(explanationB);
                     dirty.add(a);
                     dirty.add(b);
                     newTransfers++; // one pair = one match, not two (see WorkspaceSummaryDto's own note on this asymmetry)
+                    // One edge per direction, matching transferPairId's own symmetric shape (see
+                    // V114's backfill comment) rather than picking an arbitrary canonical side.
+                    // MERCHANT_AND_AMOUNT tier: matched on amount + date window (+ an own-account
+                    // relationship identifier when relationshipMatch is true), not a free-text
+                    // merchant-name comparison -- there is no merchant on either side of a transfer
+                    // -- but it's the closest of the roadmap's three tiers to "two independent
+                    // structured signals agreeing," which is what this match actually is.
+                    int confidenceA = ConfidenceScorer.score(ConfidenceScorer.MatchType.MERCHANT_AND_AMOUNT,
+                            a.getAmount(), amountDelta, daysApart, dayWindow);
+                    int confidenceB = ConfidenceScorer.score(ConfidenceScorer.MatchType.MERCHANT_AND_AMOUNT,
+                            b.getAmount(), amountDelta, daysApart, dayWindow);
+                    pendingEdges.add(new TransactionGraphService.PendingEdge(userId, a.getId(), b.getId(),
+                            TransactionRelationship.RelationshipType.TRANSFER, a.getAmount(), confidenceA,
+                            SourceTrust.of(a.getSource()), statusFor(confidenceA),
+                            TransactionRelationship.DetectionMethod.RULE_ENGINE, explanationA));
+                    pendingEdges.add(new TransactionGraphService.PendingEdge(userId, b.getId(), a.getId(),
+                            TransactionRelationship.RelationshipType.TRANSFER, b.getAmount(), confidenceB,
+                            SourceTrust.of(b.getSource()), statusFor(confidenceB),
+                            TransactionRelationship.DetectionMethod.RULE_ENGINE, explanationB));
                     break;
                 }
             }
@@ -302,21 +363,24 @@ public class ReconciliationService {
         // EXPENSE", and both get marked REFUND: ₹1,000 of real income silently excluded from every
         // total on the strength of one ₹500 purchase.
         //
-        // Seeded from already-resolved REFUND rows already sitting in refundCandidates (skipped by
-        // the `getReconciliationStatus() != OK` check below, same as a resolved duplicate is
-        // skipped in pass 1), not just accumulated fresh in this loop -- a prior run's match must
-        // count against this run's capacity too, not only matches made in the same pass.
+        // Seeded from already-resolved REFUND/REVERSAL rows already sitting in refundCandidates
+        // (skipped by the `getReconciliationStatus() != OK` check below, same as a resolved
+        // duplicate is skipped in pass 1), not just accumulated fresh in this loop -- a prior
+        // run's match must count against this run's capacity too, not only matches made in the
+        // same pass. Both statuses draw against the same expense's capacity: which of the two an
+        // income row became doesn't change how much of the original purchase it accounts for.
         //
         // Correct across BOTH entry points without a new query: CANDIDATE_WINDOW_DAYS is
         // Math.max(REFUND_WINDOW_DAYS, ...), so it is never smaller than REFUND_WINDOW_DAYS by
-        // construction. Any prior REFUND row that could compete for the same expense as a NEW
-        // income row in this run must itself sit within REFUND_WINDOW_DAYS of that expense --
-        // which means it is provably inside reconcileForImport's own fetch window too, so it is
-        // always present in `all`/`refundCandidates` here, never silently missing.
+        // construction. Any prior REFUND/REVERSAL row that could compete for the same expense as
+        // a NEW income row in this run must itself sit within REFUND_WINDOW_DAYS of that expense
+        // -- which means it is provably inside reconcileForImport's own fetch window too, so it
+        // is always present in `all`/`refundCandidates` here, never silently missing.
         Map<UUID, BigDecimal> refundedSoFarByExpenseId = new HashMap<>();
         for (Transaction t : refundCandidates) {
-            if (t.getReconciliationStatus() == Transaction.ReconciliationStatus.REFUND
-                    && t.getRefundOfTransactionId() != null) {
+            boolean isResolvedRefundLeg = t.getReconciliationStatus() == Transaction.ReconciliationStatus.REFUND
+                    || t.getReconciliationStatus() == Transaction.ReconciliationStatus.REVERSAL;
+            if (isResolvedRefundLeg && t.getRefundOfTransactionId() != null) {
                 refundedSoFarByExpenseId.merge(t.getRefundOfTransactionId(), t.getAmount(), BigDecimal::add);
             }
         }
@@ -326,8 +390,12 @@ public class ReconciliationService {
             if (income.getReconciliationStatus() != Transaction.ReconciliationStatus.OK) continue;
 
             boolean refundKeyword = looksLikeRefund(income.getDescription());
+            // Computed once per income row, same as refundKeyword above -- both are properties of
+            // the income's own description, not of any particular candidate expense.
+            boolean reversalKeyword = looksLikeReversal(income.getDescription());
             Transaction bestMatch = null;
             boolean bestMatchSameMerchant = false;
+            long bestMatchDaysBetween = 0;
             // A refund lands at or after its purchase and within REFUND_WINDOW_DAYS of it, so the
             // only expenses worth looking at sit in [income.date - 180, income.date]. Both of
             // those bounds are still re-checked inside the loop; this only avoids walking the
@@ -346,10 +414,12 @@ public class ReconciliationService {
                 // Need at least one real signal -- either the description says "refund"/
                 // "reversal"/etc, or the (already-resolved, see Transaction.merchant) merchant
                 // token matches the original purchase's. Neither alone is required everywhere;
-                // both being absent means there's no actual evidence this is a refund at all.
+                // all three being absent means there's no actual evidence this is a refund (or a
+                // reversal) at all. The matching mechanism itself doesn't care which of the two
+                // this turns out to be -- that's decided once, after a match is found, below.
                 boolean sameMerchant = expense.getMerchant() != null && !expense.getMerchant().isBlank()
                         && expense.getMerchant().equalsIgnoreCase(income.getMerchant());
-                if (!refundKeyword && !sameMerchant) continue;
+                if (!refundKeyword && !reversalKeyword && !sameMerchant) continue;
 
                 // BH-007: capacity is what's LEFT of the expense, not its original amount -- an
                 // expense already fully claimed by an earlier match (this pass or a prior one) has
@@ -365,20 +435,50 @@ public class ReconciliationService {
                     // re-deriving a signal the pass had already established -- exactly the
                     // after-the-fact reconstruction this explanation exists to avoid.
                     bestMatchSameMerchant = sameMerchant;
+                    bestMatchDaysBetween = daysBetween;
                 }
             }
 
             if (bestMatch != null) {
-                income.setReconciliationStatus(Transaction.ReconciliationStatus.REFUND);
+                // Classification, not matching: the loop above found the same candidate expense
+                // either way, using the same window/capacity/tiebreak rules. reversalKeyword takes
+                // priority when present -- "reversal" is a specific bank-side signal, so a
+                // description that happens to carry both a refund word and a reversal word (rare)
+                // is read as the more specific claim. sameMerchant-only matches (no keyword at
+                // all) stay REFUND, since a merchant match alone says nothing about *why* the
+                // money came back.
+                TransactionRelationship.RelationshipType edgeType;
+                Map<String, Object> explanation;
+                if (reversalKeyword) {
+                    income.setReconciliationStatus(Transaction.ReconciliationStatus.REVERSAL);
+                    explanation = ReconciliationExplanation.reversal(income, bestMatch, bestMatchSameMerchant);
+                    income.setReconciliationExplanation(explanation);
+                    newReversals++;
+                    edgeType = TransactionRelationship.RelationshipType.REVERSAL;
+                } else {
+                    income.setReconciliationStatus(Transaction.ReconciliationStatus.REFUND);
+                    explanation = ReconciliationExplanation.refund(income, bestMatch, refundKeyword, bestMatchSameMerchant);
+                    income.setReconciliationExplanation(explanation);
+                    newRefunds++;
+                    edgeType = TransactionRelationship.RelationshipType.REFUND;
+                }
                 income.setRefundOfTransactionId(bestMatch.getId());
-                income.setReconciliationExplanation(
-                        ReconciliationExplanation.refund(income, bestMatch, refundKeyword, bestMatchSameMerchant));
                 dirty.add(income);
-                newRefunds++;
+                // MERCHANT_AND_AMOUNT tier: matched on a refund/reversal keyword or merchant
+                // identity, plus an amount that can't exceed the original purchase. matchedAmount
+                // is the purchase's own amount (what there was to account for), not the income's --
+                // a small partial refund against a large purchase should score lower than a full
+                // one, which is exactly what amount_factor's delta-over-matchedAmount captures.
+                BigDecimal refundAmountDelta = bestMatch.getAmount().subtract(income.getAmount()).abs();
+                int refundConfidence = ConfidenceScorer.score(ConfidenceScorer.MatchType.MERCHANT_AND_AMOUNT,
+                        bestMatch.getAmount(), refundAmountDelta, bestMatchDaysBetween, REFUND_WINDOW_DAYS);
+                pendingEdges.add(new TransactionGraphService.PendingEdge(userId, income.getId(), bestMatch.getId(),
+                        edgeType, income.getAmount(), refundConfidence, SourceTrust.of(income.getSource()),
+                        statusFor(refundConfidence), TransactionRelationship.DetectionMethod.RULE_ENGINE, explanation));
                 // Claims this income's amount against the expense's capacity immediately, so the
                 // NEXT income row in this same pass sees the reduced remainder rather than the
                 // original amount -- this is what makes two ₹500 incomes against one ₹500 expense
-                // resolve to one REFUND and one OK, not two REFUNDs.
+                // resolve to one REFUND/REVERSAL and one OK, not two.
                 refundedSoFarByExpenseId.merge(bestMatch.getId(), income.getAmount(), BigDecimal::add);
             }
         }
@@ -387,6 +487,7 @@ public class ReconciliationService {
         // Hibernate's configured batch_size/order_updates can actually apply -- they could do
         // nothing when this was a save() per match.
         if (!dirty.isEmpty()) transactionRepository.saveAll(dirty);
+        if (!pendingEdges.isEmpty()) transactionGraphService.linkAll(pendingEdges);
 
         long elapsedMs = (System.nanoTime() - startedAtNanos) / 1_000_000;
 
@@ -456,6 +557,7 @@ public class ReconciliationService {
             details.put("duplicatesFound", newDuplicates);
             details.put("transfersMatched", newTransfers);
             details.put("refundsMatched", newRefunds);
+            details.put("reversalsMatched", newReversals);
             details.put("rowsWritten", dirty.size());
             details.put("durationMs", elapsedMs);
             // Says which condition put this row here, so a reader of the trail can tell "this run
@@ -479,6 +581,12 @@ public class ReconciliationService {
             log.debug("Reconciliation for user {}: {} transactions, {} ms, {} rows written.",
                     userId, all.size(), elapsedMs, dirty.size());
         }
+    }
+
+    private static TransactionRelationship.Status statusFor(int confidence) {
+        return confidence >= NEEDS_REVIEW_THRESHOLD
+                ? TransactionRelationship.Status.AUTO_CONFIRMED
+                : TransactionRelationship.Status.CANDIDATE;
     }
 
     private String duplicateKey(Transaction t) {
@@ -538,6 +646,11 @@ public class ReconciliationService {
     private boolean looksLikeRefund(String description) {
         String normalized = CategoryRules.normalize(description);
         return REFUND_KEYWORDS.stream().anyMatch(normalized::contains);
+    }
+
+    private boolean looksLikeReversal(String description) {
+        String normalized = CategoryRules.normalize(description);
+        return REVERSAL_KEYWORDS.stream().anyMatch(normalized::contains);
     }
 
     /** Exact-amount matches always outrank partial-amount matches; among equally-good matches,

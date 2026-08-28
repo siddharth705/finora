@@ -269,10 +269,15 @@ public class StatementImportService {
                 original.getFileName(), content, original.getSourceSectionIndex(), request.password());
         ConfirmedRowIntegrity.requireSameRows(freshStaging.rows(), request.rows());
 
+        // Bug fix: this used to stop at statementPeriodStart/End, silently dropping
+        // totalAmountDue/paymentDueDate even though the incoming request carries them (the
+        // frontend echoes them the same way it echoes the period) -- every re-import of a
+        // credit-card statement wiped its own total-due/due-date on the new StatementImport row.
         var scoped = new com.finora.dto.ImportDto.ConfirmRequest(
                 null, request.rows(), original.getAccountId(), null,
                 request.statementOpeningBalance(), request.statementClosingBalance(), null,
-                request.statementPeriodStart(), request.statementPeriodEnd());
+                request.statementPeriodStart(), request.statementPeriodEnd(),
+                request.totalAmountDue(), request.paymentDueDate());
         return importService.confirm(userId, original.getFileName(), content, scoped);
     }
 

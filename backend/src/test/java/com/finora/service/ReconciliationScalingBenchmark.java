@@ -96,7 +96,8 @@ class ReconciliationScalingBenchmark {
     private ReconciliationService reconciliationService(List<Transaction> history) {
         TransactionRepository repository = mock(TransactionRepository.class);
         when(repository.findByUserId(any())).thenReturn(history);
-        return new ReconciliationService(repository, mock(RelationshipService.class), mock(AuditService.class));
+        return new ReconciliationService(repository, mock(RelationshipService.class), mock(AuditService.class),
+                mock(TransactionGraphService.class));
     }
 
     private RecurringService recurringService(List<Transaction> history) {

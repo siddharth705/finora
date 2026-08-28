@@ -17,6 +17,11 @@ env:
 - assertVisible: "Sign in or create an account"
 - tapOn: "Email or mobile number"
 - inputText: ${TEST_EMAIL}
+# The keyboard covers "Continue" the same way it covers the submit button below (see the
+# hideKeyboard comment further down) -- without this, the tap can land on the Gboard toolbar
+# instead of the app, which visibly launched Gboard's own theme picker in a real CI run rather than
+# tapping Continue at all.
+- hideKeyboard
 - tapOn: "Continue"
 
 # AuthEntryScreen navigates to Login with the identifier prefilled once POST /auth/identify

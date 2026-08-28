@@ -221,6 +221,16 @@ export interface TransactionExplanation {
   // 0-100, or absent -- see TransactionExplanationDto's own doc comment for which decision
   // sources populate this (never MANUAL/FILE_PROVIDED).
   confidence?: number;
+  // "Why this match?" -- absent for the common case (reconciliationStatus OK, nothing matched
+  // this row). See TransactionExplanationDto.ReconciliationExplanationDto.
+  reconciliation?: TransactionReconciliationExplanation;
+}
+
+export interface TransactionReconciliationExplanation {
+  status: 'DUPLICATE' | 'TRANSFER' | 'REFUND' | 'REVERSAL';
+  matchedTransactionId: string | null;
+  summary: string;
+  evidence: string[];
 }
 
 export const transactionsApi = {
@@ -327,6 +337,11 @@ export interface ConfirmPayload {
   // confirmed rows' own date range instead of the printed period shown on the review screen).
   statementPeriodStart: string | null;
   statementPeriodEnd: string | null;
+  // Echoed back from DetectedAccountInfo.totalAmountDue/paymentDueDate, same round-trip as the
+  // statement period above -- see ConfirmRequest's own doc comment on the backend.
+  // credit-card-statement-entity-design.md. Both null for a non-credit-card statement.
+  totalAmountDue: number | null;
+  paymentDueDate: string | null;
   // Only meaningful to confirmReimport, for a statement whose stored bytes are a password-protected
   // PDF -- see ConfirmRequest's own doc comment on the backend. Every other confirm path ignores it.
   password?: string;
@@ -342,6 +357,8 @@ interface SectionConfirmPayload {
   statementClosingBalance: number | null;
   statementPeriodStart: string | null;
   statementPeriodEnd: string | null;
+  totalAmountDue: number | null;
+  paymentDueDate: string | null;
 }
 
 export interface MultiAccountConfirmPayload {

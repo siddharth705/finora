@@ -76,6 +76,7 @@ class AuthServiceMfaLoginTest {
                 requestMetadata,
                 mock(com.finora.service.SubscriptionService.class),
                 mock(com.finora.service.ReferralService.class),
+                mock(com.finora.service.MerchantSeedService.class),
                 Runnable::run,
                 adminMfaService
         );
