@@ -111,6 +111,33 @@ export interface DashboardSummary {
    */
   reportingMonth: string | null;
   reportingMonthIsCurrent: boolean;
+  /**
+   * True when the user has fewer than limitedHistoryMonthFloor distinct calendar months of
+   * transaction data. Trend deltas and the health score above are still real numbers -- neither
+   * is hidden -- but both are prone to thin-data artifacts this far below the floor (a near-empty
+   * prior-month denominator for the deltas; a health score built from too few comparable months).
+   * historyMonthCount/limitedHistoryMonthFloor let the client render "X / N months" without
+   * hardcoding the threshold, mirroring healthScoreTransactionCount/healthScoreMinTransactions.
+   */
+  limitedHistory: boolean;
+  historyMonthCount: number;
+  limitedHistoryMonthFloor: number;
+  statementCount: number;
+  accountCount: number;
+  /**
+   * True when categoryReviewSpendPct of this month's spend -- transactions flagged
+   * needsCategoryReview, the same signal the Ledger's "needs review" badge already uses -- is at
+   * or above categoryReviewSpendWarningThresholdPct. Deliberately NOT keyed on the category name
+   * "Uncategorized" or "Other": "Other" is a real, resolvable category (the categorization
+   * engine's fallback when nothing matched), so landing there doesn't necessarily mean a
+   * transaction has no useful category -- it means the categorization engine's own confidence
+   * check flagged it for a human to look at.
+   */
+  categoryReviewWarning: boolean;
+  categoryReviewSpendPct: number;
+  categoryReviewSpendAmount: number;
+  categoryReviewTransactionCount: number;
+  categoryReviewSpendWarningThresholdPct: number;
 }
 
 // D-25 PR3-B/C. `type` is one of ACCOUNT_CREATED/FIRST_IMPORT/FIRST_BUDGET/FIRST_GOAL/

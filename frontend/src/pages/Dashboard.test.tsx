@@ -45,7 +45,7 @@ function summary(overrides: Partial<DashboardSummary> = {}): DashboardSummary {
     healthLabel: 'Excellent',
     healthBreakdown: {
       'Savings Rate': 83,
-      'Debt Utilization': 100,
+      'Debt Score': 100,
       'Emergency Fund': 70,
       'Spend Consistency': 50,
       'Cash Flow Stability': 80,
@@ -57,6 +57,18 @@ function summary(overrides: Partial<DashboardSummary> = {}): DashboardSummary {
     notifications: [],
     reportingMonth: '2026-08',
     reportingMonthIsCurrent: true,
+    // Defaults to a mature account (not limited) so every existing test below, none of which
+    // cares about this banner, keeps rendering exactly as it did before this field existed.
+    limitedHistory: false,
+    historyMonthCount: 6,
+    limitedHistoryMonthFloor: 3,
+    statementCount: 8,
+    accountCount: 2,
+    categoryReviewWarning: false,
+    categoryReviewSpendPct: 0,
+    categoryReviewSpendAmount: 0,
+    categoryReviewTransactionCount: 0,
+    categoryReviewSpendWarningThresholdPct: 20,
     ...overrides,
   };
 }
@@ -120,18 +132,40 @@ describe('Dashboard — Financial Health Score', () => {
     // itself (the heading's own section) rather than the whole document.
     const card = within(heading.closest('div.bg-card') as HTMLElement);
     expect(card.getByText('Savings Rate')).toBeInTheDocument();
-    expect(card.getByText('Debt Utilization')).toBeInTheDocument();
+    expect(card.getByText('Debt Score')).toBeInTheDocument();
     expect(card.getByText('Emergency Fund')).toBeInTheDocument();
     expect(card.getByText('Spend Consistency')).toBeInTheDocument();
     expect(card.getByText('Cash Flow Stability')).toBeInTheDocument();
-    expect(card.getByText('100%')).toBeInTheDocument(); // Debt Utilization
+    expect(card.getByText('100%')).toBeInTheDocument(); // Debt Score
     expect(card.getByText('50%')).toBeInTheDocument(); // Spend Consistency
+  });
+
+  it("colors each breakdown bar by its OWN score, not the overall label", async () => {
+    // A perfect Debt Score (100 -- no credit card debt) must render as a healthy-colored bar even
+    // when the overall health score is poor and every other component is struggling. Before this
+    // fix, every bar inherited the overall label's color, so a 100 rendered as full-width red --
+    // reading as "maxed out" regardless of what its own number said.
+    vi.mocked(dashboardApi.summary).mockResolvedValue(summary({
+      healthScore: 28, healthLabel: 'Needs Attention',
+      healthBreakdown: { 'Savings Rate': 0, 'Debt Score': 100, 'Emergency Fund': 9, 'Spend Consistency': 8, 'Cash Flow Stability': 50 },
+    }));
+    renderDashboard();
+
+    const heading = await screen.findByText('Financial Health Score');
+    const card = within(heading.closest('div.bg-card') as HTMLElement);
+    const debtRow = card.getByText('Debt Score').closest('div')!.parentElement!;
+    const debtBar = debtRow.querySelector('.bg-success, .bg-primary, .bg-warning, .bg-danger');
+    expect(debtBar).toHaveClass('bg-success');
+
+    const savingsRow = card.getByText('Savings Rate').closest('div')!.parentElement!;
+    const savingsBar = savingsRow.querySelector('.bg-success, .bg-primary, .bg-warning, .bg-danger');
+    expect(savingsBar).toHaveClass('bg-danger');
   });
 
   it('reflects a low score honestly rather than always looking healthy', async () => {
     vi.mocked(dashboardApi.summary).mockResolvedValue(summary({
       healthScore: 28, healthLabel: 'Needs Attention',
-      healthBreakdown: { 'Savings Rate': 10, 'Debt Utilization': 20, 'Emergency Fund': 15, 'Spend Consistency': 40, 'Cash Flow Stability': 35 },
+      healthBreakdown: { 'Savings Rate': 10, 'Debt Score': 20, 'Emergency Fund': 15, 'Spend Consistency': 40, 'Cash Flow Stability': 35 },
     }));
     renderDashboard();
 
@@ -156,6 +190,150 @@ describe('Dashboard — Financial Health Score', () => {
     // also a KPI tile label elsewhere on the page, same reason the breakdown test above scopes.
     expect(card.queryByText('out of 100')).not.toBeInTheDocument();
     expect(card.queryByText('Savings Rate')).not.toBeInTheDocument();
+  });
+});
+
+describe('Dashboard — Spending Breakdown category review warning', () => {
+  beforeEach(() => {
+    vi.mocked(dashboardApi.summary).mockReset().mockResolvedValue(summary());
+    vi.mocked(dashboardApi.journey).mockReset().mockResolvedValue({ milestones: [] });
+    vi.mocked(accountsApi.list).mockReset().mockResolvedValue([]);
+    // totalElements: 0 (isEmpty) -- these tests don't care about Financial Health Score, and
+    // rendering it alongside a populated Doughnut chart mounts two Chart.js instances at once,
+    // which crashes in jsdom ("can't acquire context from the given item", no error boundary to
+    // catch it). The existing "0%, not NaN%" test below proves a populated Doughnut renders fine
+    // on its own with isEmpty -- matching that pattern rather than the Health Score block's.
+    vi.mocked(transactionsApi.search).mockReset().mockResolvedValue({
+      content: [], page: 0, size: 4, totalElements: 0, totalPages: 0,
+    });
+    vi.mocked(transactionsApi.create).mockReset();
+    vi.mocked(categoriesApi.list).mockReset().mockResolvedValue([
+      { id: 'cat-1', name: 'Groceries' } as any,
+      { id: 'cat-2', name: 'Salary' } as any,
+    ]);
+    vi.mocked(goalsApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(insightsApi.get).mockReset().mockResolvedValue({ sentences: [], movers: [] });
+    vi.mocked(userApi.get).mockReset().mockResolvedValue({
+      email: 'amy@example.test', fullName: 'Amy Santiago', lowBalanceThreshold: 2000,
+      theme: 'system', timezone: 'Asia/Kolkata', phoneNumber: '+919876500000',
+      phoneVerified: true, createdAt: '2026-01-01T00:00:00Z', passwordChangedAt: null, signInMethod: 'PASSWORD',
+    });
+    vi.mocked(budgetsApi.list).mockReset().mockResolvedValue([]);
+    // Empty (not a real month) -- CashFlowChart isn't gated by the page-level isEmpty at all;
+    // it's driven independently by these two APIs. Real data here mounts a SECOND live Chart.js
+    // canvas (a Line chart) alongside the Doughnut these tests actually care about, and jsdom
+    // can't survive two real chart.js instances mounting at once ("Failed to create chart:
+    // can't acquire context from the given item", uncaught, unmounts the whole tree). Matches
+    // the existing "0%, not NaN%" test's own pattern below, which proves a populated Doughnut
+    // alone renders fine.
+    vi.mocked(reportsApi.availableMonths).mockReset().mockResolvedValue([]);
+    vi.mocked(reportsApi.forMonth).mockReset();
+    vi.mocked(recurringApi.list).mockReset().mockResolvedValue([]);
+  });
+
+  it('shows the callout with the real amount/count/pct when the warning is active', async () => {
+    vi.mocked(dashboardApi.summary).mockResolvedValue(summary({
+      spendByCategory: { Other: 73306, Shopping: 16627, Groceries: 193 },
+      categoryReviewWarning: true, categoryReviewSpendPct: 81, categoryReviewSpendAmount: 73306,
+      categoryReviewTransactionCount: 24,
+    }));
+    renderDashboard();
+
+    expect(await screen.findByText('Spending needs category review')).toBeInTheDocument();
+    expect(screen.getByText(/₹73,306 \(81%\) across 24 transactions/)).toBeInTheDocument();
+    expect(screen.getByText('Review transactions →').closest('a')).toHaveAttribute('href', '/app/transactions');
+  });
+
+  it('uses singular wording for exactly one flagged transaction', async () => {
+    vi.mocked(dashboardApi.summary).mockResolvedValue(summary({
+      spendByCategory: { Other: 500 },
+      categoryReviewWarning: true, categoryReviewSpendPct: 100, categoryReviewSpendAmount: 500,
+      categoryReviewTransactionCount: 1,
+    }));
+    renderDashboard();
+
+    expect(await screen.findByText(/across 1 transaction this/)).toBeInTheDocument();
+  });
+
+  it('stays hidden when the warning is not active, even with real spending data', async () => {
+    vi.mocked(dashboardApi.summary).mockResolvedValue(summary({
+      spendByCategory: { Groceries: 5000, Dining: 2000 },
+      categoryReviewWarning: false, categoryReviewSpendPct: 5,
+    }));
+    renderDashboard();
+
+    await screen.findByText('Spending Breakdown');
+    expect(screen.queryByText('Spending needs category review')).not.toBeInTheDocument();
+  });
+});
+
+describe('Dashboard — Limited History Banner', () => {
+  beforeEach(() => {
+    vi.mocked(dashboardApi.summary).mockReset().mockResolvedValue(summary());
+    vi.mocked(dashboardApi.journey).mockReset().mockResolvedValue({ milestones: [] });
+    vi.mocked(accountsApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(transactionsApi.search).mockReset().mockResolvedValue({
+      content: [], page: 0, size: 4, totalElements: 12, totalPages: 3,
+    });
+    vi.mocked(goalsApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(insightsApi.get).mockReset().mockResolvedValue({ sentences: [], movers: [] });
+    vi.mocked(userApi.get).mockReset().mockResolvedValue({
+      email: 'amy@example.test', fullName: 'Amy Santiago', lowBalanceThreshold: 2000,
+      theme: 'system', timezone: 'Asia/Kolkata', phoneNumber: '+919876500000',
+      phoneVerified: true, createdAt: '2026-01-01T00:00:00Z', passwordChangedAt: null, signInMethod: 'PASSWORD',
+    });
+    vi.mocked(budgetsApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(reportsApi.availableMonths).mockReset().mockResolvedValue(['2026-08']);
+    vi.mocked(reportsApi.forMonth).mockReset().mockResolvedValue({
+      month: '2026-08', income: 80000, expense: 45000, categories: [],
+    });
+    vi.mocked(recurringApi.list).mockReset().mockResolvedValue([]);
+  });
+
+  it('shows the banner with the real counts when history is limited', async () => {
+    vi.mocked(dashboardApi.summary).mockResolvedValue(summary({
+      limitedHistory: true, historyMonthCount: 1, limitedHistoryMonthFloor: 3,
+      statementCount: 2, accountCount: 2,
+    }));
+    renderDashboard();
+
+    expect(await screen.findByText('Limited financial history')).toBeInTheDocument();
+    expect(screen.getByText(
+      'Based on 2 statements across 2 accounts and 1 month of activity. Trends and the Financial Health Score below may be unreliable until at least 3 months of history are imported.'
+    )).toBeInTheDocument();
+  });
+
+  it('does not show the banner once history clears the floor', async () => {
+    vi.mocked(dashboardApi.summary).mockResolvedValue(summary({ limitedHistory: false }));
+    renderDashboard();
+
+    await screen.findByText('Financial Health Score'); // wait for the dashboard to finish loading
+    expect(screen.queryByText('Limited financial history')).not.toBeInTheDocument();
+  });
+
+  it('uses singular wording for exactly one statement/account/month', async () => {
+    vi.mocked(dashboardApi.summary).mockResolvedValue(summary({
+      limitedHistory: true, historyMonthCount: 1, limitedHistoryMonthFloor: 3,
+      statementCount: 1, accountCount: 1,
+    }));
+    renderDashboard();
+
+    expect(await screen.findByText(
+      'Based on 1 statement across 1 account and 1 month of activity. Trends and the Financial Health Score below may be unreliable until at least 3 months of history are imported.'
+    )).toBeInTheDocument();
+  });
+
+  it('stays hidden for a zero-transaction account -- the empty state covers that case on its own', async () => {
+    vi.mocked(transactionsApi.search).mockResolvedValue({
+      content: [], page: 0, size: 4, totalElements: 0, totalPages: 0,
+    });
+    vi.mocked(dashboardApi.summary).mockResolvedValue(summary({
+      limitedHistory: true, historyMonthCount: 0, statementCount: 0, accountCount: 0,
+    }));
+    renderDashboard();
+
+    await screen.findByText('No transactions yet'); // Recent Transactions' own per-section empty state
+    expect(screen.queryByText('Limited financial history')).not.toBeInTheDocument();
   });
 });
 
