@@ -19,16 +19,24 @@ import { FinoraCard } from './FinoraCard';
  * month is too thin to trust (see DashboardSummaryDto.comparisonGateReason). Passing a reason
  * turns the "—" into a "Why?" disclosure, same inline pattern as Import.tsx's product-detection
  * evidence toggle, instead of a user having to wonder why last month's line just disappeared.
+ *
+ * `moverLines`: the flip side -- a real, non-gated delta ("expenses up 12%") is still a bare
+ * number with no explanation of what actually moved. Passing pre-formatted lines (e.g. "Dining
+ * ₹8,000 vs ₹5,000 (+60%)", from DashboardSummaryDto.expenseCategoryMovers) gets the SAME "Why?"
+ * disclosure on the delta line itself, so both "why is this hidden" and "why did this change"
+ * share one interaction pattern instead of two different affordances on the same card.
  */
 export function MetricCard({
   label, value, icon: Icon, iconBg, iconColor, valueColor,
-  delta, deltaLabel, invertDelta, gateReasonText,
+  delta, deltaLabel, invertDelta, gateReasonText, moverLines,
 }: {
   label: string; value: string; icon: LucideIcon; iconBg: string; iconColor: string; valueColor?: string;
   delta?: number | null; deltaLabel?: string; invertDelta?: boolean; gateReasonText?: string | null;
+  moverLines?: string[];
 }) {
   const [showReason, setShowReason] = useState(false);
   const hasDelta = delta !== null && delta !== undefined;
+  const hasMovers = !!moverLines && moverLines.length > 0;
 
   return (
     <FinoraCard>
@@ -41,9 +49,26 @@ export function MetricCard({
       <p className={`text-2xl font-bold mb-1 ${valueColor ?? 'text-ink'}`}>{value}</p>
       {deltaLabel && (
         hasDelta ? (
-          <p className={`text-xs font-medium ${(invertDelta ? delta! < 0 : delta! >= 0) ? 'text-success' : 'text-danger'}`}>
-            {delta! >= 0 ? '▲' : '▼'} {Math.abs(delta!).toFixed(1)}% {deltaLabel}
-          </p>
+          <div>
+            <p className={`text-xs font-medium ${(invertDelta ? delta! < 0 : delta! >= 0) ? 'text-success' : 'text-danger'}`}>
+              {delta! >= 0 ? '▲' : '▼'} {Math.abs(delta!).toFixed(1)}% {deltaLabel}
+              {hasMovers && (
+                <button
+                  type="button"
+                  onClick={() => setShowReason((v) => !v)}
+                  aria-expanded={showReason}
+                  className="ml-1.5 font-normal text-primary underline underline-offset-2"
+                >
+                  {showReason ? 'Hide' : 'Why?'}
+                </button>
+              )}
+            </p>
+            {hasMovers && showReason && (
+              <ul className="mt-1 space-y-0.5 text-[11px] text-muted list-disc list-inside">
+                {moverLines!.map((line, i) => <li key={i}>{line}</li>)}
+              </ul>
+            )}
+          </div>
         ) : (
           <div>
             <p className="text-xs text-muted">

@@ -74,6 +74,9 @@ function summary(overrides: Partial<DashboardSummary> = {}): DashboardSummary {
     // "Why?" toggle, matching how they rendered before this field existed.
     comparisonGateReason: null,
     comparisonGateMinTransactions: 3,
+    // Defaults to no movers (the delta above is null in this fixture, so there's nothing to
+    // explain) so existing tests keep seeing a plain "Why?"-free delta line.
+    expenseCategoryMovers: [],
     ...overrides,
   };
 }
@@ -409,6 +412,69 @@ describe('Dashboard — comparison gate "Why?" disclosure', () => {
 
     await screen.findByText('Financial Health Score');
     expect(screen.queryByRole('button', { name: 'Why?' })).not.toBeInTheDocument();
+  });
+});
+
+describe('Dashboard — expense category movers "Why?" disclosure', () => {
+  beforeEach(() => {
+    vi.mocked(dashboardApi.summary).mockReset();
+    vi.mocked(dashboardApi.journey).mockReset().mockResolvedValue({ milestones: [] });
+    vi.mocked(accountsApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(transactionsApi.search).mockReset().mockResolvedValue({
+      content: [], page: 0, size: 4, totalElements: 12, totalPages: 3,
+    });
+    vi.mocked(goalsApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(insightsApi.get).mockReset().mockResolvedValue({ sentences: [], movers: [] });
+    vi.mocked(userApi.get).mockReset().mockResolvedValue({
+      email: 'amy@example.test', fullName: 'Amy Santiago', lowBalanceThreshold: 2000,
+      theme: 'system', timezone: 'Asia/Kolkata', phoneNumber: '+919876500000',
+      phoneVerified: true, createdAt: '2026-01-01T00:00:00Z', passwordChangedAt: null, signInMethod: 'PASSWORD',
+    });
+    vi.mocked(budgetsApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(reportsApi.availableMonths).mockReset().mockResolvedValue([]);
+    vi.mocked(reportsApi.forMonth).mockReset();
+    vi.mocked(recurringApi.list).mockReset().mockResolvedValue([]);
+  });
+
+  it('shows a "Why?" toggle on Total Expenses with real category movers, revealing each on click', async () => {
+    vi.mocked(dashboardApi.summary).mockResolvedValue(summary({
+      expenseDeltaPct: 60,
+      expenseCategoryMovers: [
+        { category: 'Dining', currentAmount: 8000, priorAmount: 5000, pctChange: 60 },
+        { category: 'Travel', currentAmount: 2000, priorAmount: 1000, pctChange: 100 },
+      ],
+    }));
+    renderDashboard();
+
+    const whyButton = await screen.findByRole('button', { name: 'Why?' });
+    expect(screen.queryByText(/Dining/)).not.toBeInTheDocument();
+
+    await userEvent.click(whyButton);
+    expect(screen.getByText('Dining: ₹8,000 vs ₹5,000 (+60%)')).toBeInTheDocument();
+    expect(screen.getByText('Travel: ₹2,000 vs ₹1,000 (+100%)')).toBeInTheDocument();
+  });
+
+  it('renders no "Why?" toggle on Total Expenses when the delta is real but no category moved', async () => {
+    vi.mocked(dashboardApi.summary).mockResolvedValue(summary({
+      expenseDeltaPct: 5, expenseCategoryMovers: [],
+    }));
+    renderDashboard();
+
+    await screen.findByText('Financial Health Score');
+    expect(screen.queryByRole('button', { name: 'Why?' })).not.toBeInTheDocument();
+  });
+
+  it('labels a brand-new category as "new this month" rather than a percentage, when it has no prior spend', async () => {
+    vi.mocked(dashboardApi.summary).mockResolvedValue(summary({
+      expenseDeltaPct: 20,
+      expenseCategoryMovers: [
+        { category: 'Electronics', currentAmount: 15000, priorAmount: 0, pctChange: null },
+      ],
+    }));
+    renderDashboard();
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Why?' }));
+    expect(screen.getByText('Electronics: ₹15,000 vs ₹0 (new this month)')).toBeInTheDocument();
   });
 });
 
