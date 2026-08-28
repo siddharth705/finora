@@ -81,6 +81,11 @@ function summary(overrides: Partial<DashboardSummary> = {}): DashboardSummary {
     // rendering exactly as they did before this field existed.
     duplicateTransactionCount: 0,
     detectedDuplicates: [],
+    // Defaults to null (below the floor) so existing tests, none of which cares about this card,
+    // keep rendering exactly as they did before this field existed.
+    categorizationConfidenceScore: null,
+    categorizationConfidenceTransactionCount: 0,
+    categorizationConfidenceMinTransactions: 5,
     ...overrides,
   };
 }
@@ -513,6 +518,85 @@ describe('Dashboard — Detected Issues', () => {
 
     expect(await screen.findByText("Couldn't update this transaction. Please try again.")).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Not a duplicate' })).not.toBeDisabled();
+  });
+});
+
+describe('Dashboard — Categorization Confidence', () => {
+  beforeEach(() => {
+    vi.mocked(dashboardApi.summary).mockReset().mockResolvedValue(summary());
+    vi.mocked(dashboardApi.journey).mockReset().mockResolvedValue({ milestones: [] });
+    vi.mocked(accountsApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(transactionsApi.search).mockReset().mockResolvedValue({
+      content: [], page: 0, size: 4, totalElements: 12, totalPages: 3,
+    });
+    vi.mocked(goalsApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(insightsApi.get).mockReset().mockResolvedValue({ sentences: [], movers: [] });
+    vi.mocked(userApi.get).mockReset().mockResolvedValue({
+      email: 'amy@example.test', fullName: 'Amy Santiago', lowBalanceThreshold: 2000,
+      theme: 'system', timezone: 'Asia/Kolkata', phoneNumber: '+919876500000',
+      phoneVerified: true, createdAt: '2026-01-01T00:00:00Z', passwordChangedAt: null, signInMethod: 'PASSWORD',
+    });
+    vi.mocked(budgetsApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(reportsApi.availableMonths).mockReset().mockResolvedValue([]);
+    vi.mocked(reportsApi.forMonth).mockReset();
+    vi.mocked(recurringApi.list).mockReset().mockResolvedValue([]);
+  });
+
+  it('stays hidden below the minimum-transactions floor', async () => {
+    vi.mocked(dashboardApi.summary).mockResolvedValue(summary({
+      categorizationConfidenceScore: null, categorizationConfidenceTransactionCount: 2,
+    }));
+    renderDashboard();
+
+    await screen.findByText('Financial Health Score');
+    expect(screen.queryByText('Categorization Confidence')).not.toBeInTheDocument();
+  });
+
+  it('shows the score, label and transaction count once past the floor', async () => {
+    vi.mocked(dashboardApi.summary).mockResolvedValue(summary({
+      categorizationConfidenceScore: 84, categorizationConfidenceTransactionCount: 12,
+      reportingMonthIsCurrent: true,
+    }));
+    renderDashboard();
+
+    const heading = await screen.findByText('Categorization Confidence');
+    const card = within(heading.closest('div.bg-card') as HTMLElement);
+    expect(card.getByText('84')).toBeInTheDocument();
+    expect(card.getByText('Excellent')).toBeInTheDocument();
+    expect(card.getByText('Based on 12 automatically categorized transactions this month.')).toBeInTheDocument();
+  });
+
+  it('uses singular wording for exactly one categorized transaction', async () => {
+    vi.mocked(dashboardApi.summary).mockResolvedValue(summary({
+      categorizationConfidenceScore: 70, categorizationConfidenceTransactionCount: 1,
+      categorizationConfidenceMinTransactions: 1,
+    }));
+    renderDashboard();
+
+    expect(await screen.findByText('Based on 1 automatically categorized transaction this month.')).toBeInTheDocument();
+  });
+
+  it('colors a low score as "Needs Attention", not "Excellent"', async () => {
+    vi.mocked(dashboardApi.summary).mockResolvedValue(summary({
+      categorizationConfidenceScore: 35, categorizationConfidenceTransactionCount: 10,
+    }));
+    renderDashboard();
+
+    expect(await screen.findByText('Categorization Confidence')).toBeInTheDocument();
+    expect(screen.getByText('Needs Attention')).toBeInTheDocument();
+  });
+
+  it('stays hidden for a zero-transaction account, same as Financial Health Score', async () => {
+    vi.mocked(transactionsApi.search).mockResolvedValue({
+      content: [], page: 0, size: 4, totalElements: 0, totalPages: 0,
+    });
+    vi.mocked(dashboardApi.summary).mockResolvedValue(summary({
+      categorizationConfidenceScore: 90, categorizationConfidenceTransactionCount: 10,
+    }));
+    renderDashboard();
+
+    await screen.findByText('No transactions yet'); // Recent Transactions' own per-section empty state
+    expect(screen.queryByText('Categorization Confidence')).not.toBeInTheDocument();
   });
 });
 
