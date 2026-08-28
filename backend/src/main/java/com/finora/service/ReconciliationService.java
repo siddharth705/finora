@@ -1,5 +1,6 @@
 package com.finora.service;
 
+import com.finora.entity.StatementImport;
 import com.finora.entity.Transaction;
 import com.finora.entity.TransactionRelationship;
 import com.finora.repository.TransactionRepository;
@@ -68,15 +69,18 @@ public class ReconciliationService {
     private final AuditService auditService;
     private final TransactionGraphService transactionGraphService;
     private final com.finora.integrations.google.merchant.GmailReconciliationMatcher gmailReconciliationMatcher;
+    private final com.finora.repository.StatementImportRepository statementImportRepository;
 
     public ReconciliationService(TransactionRepository transactionRepository, RelationshipService relationshipService,
                                   AuditService auditService, TransactionGraphService transactionGraphService,
-                                  com.finora.integrations.google.merchant.GmailReconciliationMatcher gmailReconciliationMatcher) {
+                                  com.finora.integrations.google.merchant.GmailReconciliationMatcher gmailReconciliationMatcher,
+                                  com.finora.repository.StatementImportRepository statementImportRepository) {
         this.transactionRepository = transactionRepository;
         this.relationshipService = relationshipService;
         this.auditService = auditService;
         this.transactionGraphService = transactionGraphService;
         this.gmailReconciliationMatcher = gmailReconciliationMatcher;
+        this.statementImportRepository = statementImportRepository;
     }
 
     /**
@@ -181,7 +185,8 @@ public class ReconciliationService {
         // Dashboard's duplicateMatches/transferMatches/refundMatches already show, computed
         // fresh on every read -- this is a different, complementary number: how much did the
         // most recent run actually do).
-        int newDuplicates = 0, newTransfers = 0, newRefunds = 0, newReversals = 0, newGmailMatches = 0;
+        int newDuplicates = 0, newTransfers = 0, newRefunds = 0, newReversals = 0, newGmailMatches = 0,
+                newCcPaymentMatches = 0;
 
         // Every row the passes below touch, written once at the end instead of one save() per
         // match. A large first import can flag hundreds of duplicates, and each save() was its own
@@ -543,6 +548,85 @@ public class ReconciliationService {
             newGmailMatches = gmailMatchesThisRun[0];
         }
 
+        // 5) Credit card payment matches -- roadmap Phase 3, "Credit card settlement" (docs/
+        // proposals/reconciliation-evolution-roadmap-proposal.md Part 4). Phase 1 already extracts
+        // a credit-card statement's totalAmountDue/paymentDueDate onto StatementImport at confirm
+        // time; nothing has read them since. This pass links a savings-side payment to the specific
+        // card transactions it settles -- CC_PAYMENT edges from the payment to every transaction
+        // findByStatementImportId returns for that statement, since a CC_PAYMENT edge (like every
+        // TransactionRelationship) needs a real Transaction on both ends and "the statement" itself
+        // is scalar fields, not a row; the individual charges it billed are.
+        //
+        // CANDIDATE ONLY, unconditionally -- deliberately does NOT call statusFor(confidence) the
+        // way every earlier pass does. Two reasons, not one: first, the same correctness argument
+        // as the Gmail pass above (a wrong match here would silently exclude or double-count real
+        // money, and this codebase has no CC-specific signal yet beyond amount+date proximity --
+        // no issuer check, no destination-account-type check); second, this pass runs AFTER the
+        // TRANSFER pass in this same method specifically so it can read `!isTransfer()` and skip
+        // anything TRANSFER already claimed -- a real credit-card bill payment is, today, already
+        // caught by TRANSFER's generic "payment"-keyword/same-amount heuristic, so this pass only
+        // ever sees the transactions TRANSFER left alone. AUTO_CONFIRMED status is not part of this
+        // slice at all; see the roadmap doc and this pass's own PR description for why.
+        // Unlike `all` above, deliberately NOT windowed by reconcileForImport's date range -- a
+        // user's credit-card statement count is small (a handful per card per year), so scanning
+        // every one of them on every run is cheap, and windowing it correctly would mean a second
+        // date axis (statement period vs. payment date) this v1 slice doesn't need yet. Accepted
+        // simplification, not an oversight; revisit if SLOW_RUN_WARN_MS ever fires because of it.
+        List<StatementImport> ccStatements = statementImportRepository.findByUserIdAndTotalAmountDueIsNotNull(userId);
+        if (!ccStatements.isEmpty()) {
+            int[] ccMatchesThisRun = {0};
+            for (StatementImport statement : ccStatements) {
+                if (statement.getTotalAmountDue() == null || statement.getPaymentDueDate() == null) continue;
+
+                List<Transaction> paymentCandidates = all.stream()
+                        .filter(t -> t.getTxnType() == Transaction.Type.EXPENSE)
+                        .filter(t -> !t.isTransfer())
+                        .filter(t -> !t.getAccountId().equals(statement.getAccountId()))
+                        .filter(t -> t.getAmount().compareTo(statement.getTotalAmountDue()) == 0)
+                        .filter(t -> Math.abs(ChronoUnit.DAYS.between(t.getTxnDate(), statement.getPaymentDueDate()))
+                                <= ReconciliationPolicy.CC_PAYMENT_DUE_DATE_WINDOW_DAYS)
+                        .toList();
+                if (paymentCandidates.isEmpty()) continue;
+
+                // Closest to the printed due date wins when more than one same-amount candidate
+                // falls in the window -- same tiebreak shape as the other passes above.
+                Transaction payment = paymentCandidates.stream()
+                        .min(Comparator.comparingLong(t ->
+                                Math.abs(ChronoUnit.DAYS.between(t.getTxnDate(), statement.getPaymentDueDate()))))
+                        .orElseThrow();
+
+                // EXPENSE only -- findByStatementImportId returns every transaction this statement's
+                // confirm wrote, which can include an INCOME-type row for a credit/refund printed on
+                // the same statement. A payment settles charges, not credits; an edge to a credit row
+                // would be a nonsensical "this payment settles this refund" claim.
+                List<Transaction> settledCharges = transactionRepository.findByStatementImportId(statement.getId())
+                        .stream().filter(t -> t.getTxnType() == Transaction.Type.EXPENSE).toList();
+                if (settledCharges.isEmpty()) continue; // nothing on the card side to point the edge at
+
+                long daysFromDue = Math.abs(ChronoUnit.DAYS.between(payment.getTxnDate(), statement.getPaymentDueDate()));
+                // MERCHANT_AND_AMOUNT, not EXACT: amount matches exactly (no delta), but there is a
+                // real date window to decay across, same reasoning the TRANSFER pass gives for
+                // reusing this tier for a non-merchant, structural signal.
+                int ccConfidence = ConfidenceScorer.score(ConfidenceScorer.MatchType.MERCHANT_AND_AMOUNT,
+                        payment.getAmount(), BigDecimal.ZERO, daysFromDue, ReconciliationPolicy.CC_PAYMENT_DUE_DATE_WINDOW_DAYS);
+                Map<String, Object> explanation = new java.util.LinkedHashMap<>();
+                explanation.put("type", "CC_PAYMENT_MATCH");
+                explanation.put("statementImportId", statement.getId().toString());
+                explanation.put("totalAmountDue", statement.getTotalAmountDue().toPlainString());
+                explanation.put("paymentDueDate", statement.getPaymentDueDate().toString());
+                explanation.put("daysFromDueDate", daysFromDue);
+                for (Transaction charge : settledCharges) {
+                    if (charge.getId().equals(payment.getId())) continue; // a payment cannot settle itself
+                    pendingEdges.add(new TransactionGraphService.PendingEdge(userId, payment.getId(), charge.getId(),
+                            TransactionRelationship.RelationshipType.CC_PAYMENT, payment.getAmount(), ccConfidence,
+                            SourceTrust.of(payment.getSource()), TransactionRelationship.Status.CANDIDATE,
+                            TransactionRelationship.DetectionMethod.RULE_ENGINE, explanation));
+                }
+                ccMatchesThisRun[0]++;
+            }
+            newCcPaymentMatches = ccMatchesThisRun[0];
+        }
+
         // One write for the whole run. Ordered and de-duplicated by the LinkedHashSet above, so
         // Hibernate's configured batch_size/order_updates can actually apply -- they could do
         // nothing when this was a save() per match.
@@ -633,6 +717,7 @@ public class ReconciliationService {
             details.put("refundsMatched", newRefunds);
             details.put("reversalsMatched", newReversals);
             details.put("gmailMatchesFound", newGmailMatches);
+            details.put("ccPaymentMatchesFound", newCcPaymentMatches);
             details.put("rowsWritten", dirty.size());
             details.put("durationMs", elapsedMs);
             // Says which condition put this row here, so a reader of the trail can tell "this run

@@ -24,6 +24,7 @@ class ReconciliationServiceTest {
     private AuditService auditService;
     private TransactionGraphService transactionGraphService;
     private com.finora.integrations.google.merchant.GmailReconciliationMatcher gmailReconciliationMatcher;
+    private com.finora.repository.StatementImportRepository statementImportRepository;
     private ReconciliationService reconciliationService;
     private final UUID userId = UUID.randomUUID();
 
@@ -41,8 +42,12 @@ class ReconciliationServiceTest {
         // existing test here (none of which involve a GMAIL_IMPORT transaction) sees zero Gmail
         // matches and is unaffected by the new pass. The dedicated Gmail-pass tests below stub it.
         gmailReconciliationMatcher = mock(com.finora.integrations.google.merchant.GmailReconciliationMatcher.class);
+        // Unstubbed by default -- findByUserIdAndTotalAmountDueIsNotNull returns an empty list, so
+        // every existing test here sees zero credit-card statements and is unaffected by the new
+        // CC_PAYMENT pass. The dedicated CC-payment tests below stub it.
+        statementImportRepository = mock(com.finora.repository.StatementImportRepository.class);
         reconciliationService = new ReconciliationService(transactionRepository, relationshipService, auditService,
-                transactionGraphService, gmailReconciliationMatcher);
+                transactionGraphService, gmailReconciliationMatcher, statementImportRepository);
     }
 
     private Transaction txn(UUID id, UUID accountId, LocalDate date, BigDecimal amount,
@@ -957,6 +962,148 @@ class ReconciliationServiceTest {
                 detailsCaptor.capture());
         assertThat(detailsCaptor.getValue()).containsEntry("gmailMatchesFound", 1);
         assertThat(detailsCaptor.getValue()).containsEntry("recordedBecause", "reclassified");
+    }
+
+    // --- Credit card payment matches (docs/proposals/reconciliation-evolution-roadmap-proposal.md
+    // Part 4, roadmap Phase 3) ---
+
+    private com.finora.entity.StatementImport ccStatement(UUID id, UUID cardAccountId,
+                                                            BigDecimal totalAmountDue, LocalDate paymentDueDate) {
+        com.finora.entity.StatementImport s = new com.finora.entity.StatementImport();
+        ReflectionTestUtils.setField(s, "id", id);
+        s.setUserId(userId);
+        s.setAccountId(cardAccountId);
+        s.setTotalAmountDue(totalAmountDue);
+        s.setPaymentDueDate(paymentDueDate);
+        return s;
+    }
+
+    @Test
+    void reconcileForUser_writesACcPaymentEdge_fromThePaymentToEachSettledCharge() {
+        UUID cardAccountId = UUID.randomUUID();
+        UUID savingsAccountId = UUID.randomUUID();
+        com.finora.entity.StatementImport statement =
+                ccStatement(UUID.randomUUID(), cardAccountId, new BigDecimal("2500.00"), LocalDate.of(2026, 7, 15));
+        Transaction payment = txn(UUID.randomUUID(), savingsAccountId, LocalDate.of(2026, 7, 14),
+                new BigDecimal("2500.00"), Transaction.Type.EXPENSE, "CREDIT CARD PAYMENT",
+                Instant.parse("2026-07-14T10:00:00Z"));
+        payment.setSource(Transaction.Source.CSV_IMPORT);
+        Transaction charge1 = txn(UUID.randomUUID(), cardAccountId, LocalDate.of(2026, 6, 20),
+                new BigDecimal("1500.00"), Transaction.Type.EXPENSE, "AMAZON", Instant.parse("2026-06-20T10:00:00Z"));
+        Transaction charge2 = txn(UUID.randomUUID(), cardAccountId, LocalDate.of(2026, 6, 25),
+                new BigDecimal("1000.00"), Transaction.Type.EXPENSE, "SWIGGY", Instant.parse("2026-06-25T10:00:00Z"));
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(payment, charge1, charge2));
+        when(statementImportRepository.findByUserIdAndTotalAmountDueIsNotNull(userId)).thenReturn(List.of(statement));
+        when(transactionRepository.findByStatementImportId(statement.getId())).thenReturn(List.of(charge1, charge2));
+
+        reconciliationService.reconcileForUser(userId);
+
+        List<TransactionGraphService.PendingEdge> edges = capturePendingEdges();
+        assertThat(edges).hasSize(2);
+        assertThat(edges).allMatch(e -> e.fromTransactionId().equals(payment.getId()));
+        assertThat(edges).extracting(TransactionGraphService.PendingEdge::toTransactionId)
+                .containsExactlyInAnyOrder(charge1.getId(), charge2.getId());
+        assertThat(edges).allMatch(e -> e.relationshipType() == TransactionRelationship.RelationshipType.CC_PAYMENT);
+        // CANDIDATE unconditionally -- even a same-day, exact-amount match (about as high-confidence
+        // as this pass can produce) must not auto-confirm. See the pass's own comment for why.
+        assertThat(edges).allMatch(e -> e.status() == TransactionRelationship.Status.CANDIDATE);
+        assertThat(edges).allMatch(e -> e.sourceTrust().equals(SourceTrust.of(Transaction.Source.CSV_IMPORT)));
+        // ReconciliationExplanation's own convention (see refundAmount/purchaseAmount there):
+        // amounts in an explanation map are always .toPlainString(), never a raw BigDecimal --
+        // caught a real inconsistency here in self-review before this shipped.
+        assertThat(edges.get(0).explanation()).containsEntry("totalAmountDue", "2500.00");
+        assertThat(edges.get(0).explanation().get("totalAmountDue")).isInstanceOf(String.class);
+    }
+
+    @Test
+    void reconcileForUser_skipsAPaymentAlreadyClaimedByTheTransferPass() {
+        UUID cardAccountId = UUID.randomUUID();
+        UUID savingsAccountId = UUID.randomUUID();
+        com.finora.entity.StatementImport statement =
+                ccStatement(UUID.randomUUID(), cardAccountId, new BigDecimal("2500.00"), LocalDate.of(2026, 7, 15));
+        Transaction payment = txn(UUID.randomUUID(), savingsAccountId, LocalDate.of(2026, 7, 14),
+                new BigDecimal("2500.00"), Transaction.Type.EXPENSE, "CREDIT CARD PAYMENT",
+                Instant.parse("2026-07-14T10:00:00Z"));
+        payment.setTransfer(true); // already claimed by an earlier pass this same run
+        Transaction charge = txn(UUID.randomUUID(), cardAccountId, LocalDate.of(2026, 6, 20),
+                new BigDecimal("1500.00"), Transaction.Type.EXPENSE, "AMAZON", Instant.parse("2026-06-20T10:00:00Z"));
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(payment, charge));
+        when(statementImportRepository.findByUserIdAndTotalAmountDueIsNotNull(userId)).thenReturn(List.of(statement));
+
+        reconciliationService.reconcileForUser(userId);
+
+        org.mockito.Mockito.verify(transactionGraphService, org.mockito.Mockito.never())
+                .linkAll(org.mockito.ArgumentMatchers.anyList());
+    }
+
+    @Test
+    void reconcileForUser_writesNoEdge_whenNoPaymentMatchesTheStatementsAmountAndDueDate() {
+        UUID cardAccountId = UUID.randomUUID();
+        UUID savingsAccountId = UUID.randomUUID();
+        com.finora.entity.StatementImport statement =
+                ccStatement(UUID.randomUUID(), cardAccountId, new BigDecimal("2500.00"), LocalDate.of(2026, 7, 15));
+        // Right amount, but a month past the payment window -- not a candidate.
+        Transaction farPayment = txn(UUID.randomUUID(), savingsAccountId, LocalDate.of(2026, 8, 20),
+                new BigDecimal("2500.00"), Transaction.Type.EXPENSE, "PAYMENT", Instant.parse("2026-08-20T10:00:00Z"));
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(farPayment));
+        when(statementImportRepository.findByUserIdAndTotalAmountDueIsNotNull(userId)).thenReturn(List.of(statement));
+
+        reconciliationService.reconcileForUser(userId);
+
+        org.mockito.Mockito.verify(transactionGraphService, org.mockito.Mockito.never())
+                .linkAll(org.mockito.ArgumentMatchers.anyList());
+        org.mockito.Mockito.verify(transactionRepository, org.mockito.Mockito.never())
+                .findByStatementImportId(org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void reconcileForUser_excludesIncomeTypeRows_fromTheStatementsSettledCharges() {
+        UUID cardAccountId = UUID.randomUUID();
+        UUID savingsAccountId = UUID.randomUUID();
+        com.finora.entity.StatementImport statement =
+                ccStatement(UUID.randomUUID(), cardAccountId, new BigDecimal("2500.00"), LocalDate.of(2026, 7, 15));
+        Transaction payment = txn(UUID.randomUUID(), savingsAccountId, LocalDate.of(2026, 7, 14),
+                new BigDecimal("2500.00"), Transaction.Type.EXPENSE, "CREDIT CARD PAYMENT",
+                Instant.parse("2026-07-14T10:00:00Z"));
+        Transaction charge = txn(UUID.randomUUID(), cardAccountId, LocalDate.of(2026, 6, 20),
+                new BigDecimal("1500.00"), Transaction.Type.EXPENSE, "AMAZON", Instant.parse("2026-06-20T10:00:00Z"));
+        // A credit/refund printed on the same statement -- INCOME on the card account, not a charge.
+        // Deliberately not described with a refund keyword ("cashback", not "refund"/"credit
+        // adjustment"/etc.): this test is isolating the CC_PAYMENT pass's own EXPENSE-only filter,
+        // not the separate, pre-existing refund-keyword pass, which would otherwise also match this
+        // INCOME row against `charge` and add an unrelated REFUND edge to the same captured list.
+        Transaction credit = txn(UUID.randomUUID(), cardAccountId, LocalDate.of(2026, 6, 22),
+                new BigDecimal("200.00"), Transaction.Type.INCOME, "CASHBACK", Instant.parse("2026-06-22T10:00:00Z"));
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(payment, charge, credit));
+        when(statementImportRepository.findByUserIdAndTotalAmountDueIsNotNull(userId)).thenReturn(List.of(statement));
+        when(transactionRepository.findByStatementImportId(statement.getId())).thenReturn(List.of(charge, credit));
+
+        reconciliationService.reconcileForUser(userId);
+
+        List<TransactionGraphService.PendingEdge> edges = capturePendingEdges();
+        List<TransactionGraphService.PendingEdge> ccEdges = edges.stream()
+                .filter(e -> e.relationshipType() == TransactionRelationship.RelationshipType.CC_PAYMENT).toList();
+        assertThat(ccEdges).hasSize(1);
+        assertThat(ccEdges.get(0).toTransactionId()).isEqualTo(charge.getId());
+    }
+
+    @Test
+    void reconcileForUser_writesNoEdge_whenTheStatementHasNoSettledChargesToLinkTo() {
+        UUID cardAccountId = UUID.randomUUID();
+        UUID savingsAccountId = UUID.randomUUID();
+        com.finora.entity.StatementImport statement =
+                ccStatement(UUID.randomUUID(), cardAccountId, new BigDecimal("2500.00"), LocalDate.of(2026, 7, 15));
+        Transaction payment = txn(UUID.randomUUID(), savingsAccountId, LocalDate.of(2026, 7, 14),
+                new BigDecimal("2500.00"), Transaction.Type.EXPENSE, "CREDIT CARD PAYMENT",
+                Instant.parse("2026-07-14T10:00:00Z"));
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(payment));
+        when(statementImportRepository.findByUserIdAndTotalAmountDueIsNotNull(userId)).thenReturn(List.of(statement));
+        when(transactionRepository.findByStatementImportId(statement.getId())).thenReturn(List.of());
+
+        reconciliationService.reconcileForUser(userId);
+
+        org.mockito.Mockito.verify(transactionGraphService, org.mockito.Mockito.never())
+                .linkAll(org.mockito.ArgumentMatchers.anyList());
     }
 
     @SuppressWarnings("unchecked")
