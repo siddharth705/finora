@@ -50,7 +50,7 @@ public class TransactionGraphService {
      */
     public record PendingEdge(UUID userId, UUID fromTransactionId, UUID toTransactionId,
                                TransactionRelationship.RelationshipType relationshipType,
-                               BigDecimal matchedAmount, Integer confidence,
+                               BigDecimal matchedAmount, Integer confidence, Integer sourceTrust,
                                TransactionRelationship.Status status,
                                TransactionRelationship.DetectionMethod detectionMethod,
                                Map<String, Object> explanation) {
@@ -102,6 +102,7 @@ public class TransactionGraphService {
             edge.setRelationshipType(p.relationshipType());
             edge.setMatchedAmount(p.matchedAmount());
             edge.setConfidence(p.confidence());
+            edge.setSourceTrust(p.sourceTrust());
             edge.setStatus(p.status());
             edge.setDetectionMethod(p.detectionMethod());
             edge.setExplanation(p.explanation());
