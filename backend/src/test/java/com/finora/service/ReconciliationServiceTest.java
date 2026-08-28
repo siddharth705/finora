@@ -73,6 +73,55 @@ class ReconciliationServiceTest {
         assertThat(duplicate.getReconciliationStatus()).isEqualTo(Transaction.ReconciliationStatus.DUPLICATE);
     }
 
+    /**
+     * Phase 1, docs/proposals/reconciliation-evolution-roadmap-proposal.md. Previously canonical
+     * selection was purely "whichever was created first" -- a bank statement imported AFTER a
+     * Gmail receipt that happens to collide on the exact duplicate key would lose to it. Source
+     * trust (CSV_IMPORT=95 > GMAIL_IMPORT=60) now wins outright, regardless of creation order.
+     */
+    @Test
+    void reconcileForUser_prefersTheHigherTrustSource_asCanonical_evenWhenCreatedLater() {
+        UUID accountId = UUID.randomUUID();
+        LocalDate date = LocalDate.of(2026, 7, 10);
+
+        Transaction gmailReceipt = txn(UUID.randomUUID(), accountId, date, new BigDecimal("499.00"),
+                Transaction.Type.EXPENSE, "AMAZON ORDER 4471", Instant.parse("2026-07-10T09:00:00Z"));
+        gmailReceipt.setSource(Transaction.Source.GMAIL_IMPORT);
+        Transaction bankStatement = txn(UUID.randomUUID(), accountId, date, new BigDecimal("499.00"),
+                Transaction.Type.EXPENSE, "AMAZON ORDER 4471", Instant.parse("2026-07-10T18:00:00Z"));
+        bankStatement.setSource(Transaction.Source.CSV_IMPORT);
+
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(gmailReceipt, bankStatement));
+
+        reconciliationService.reconcileForUser(userId);
+
+        assertThat(bankStatement.getIsDuplicateOf())
+                .as("the bank statement is the higher-trust source; it stays canonical despite arriving later")
+                .isNull();
+        assertThat(gmailReceipt.getIsDuplicateOf()).isEqualTo(bankStatement.getId());
+    }
+
+    /** Same source, same trust -- the tiebreak degrades back to creation order, unchanged. */
+    @Test
+    void reconcileForUser_fallsBackToCreationOrder_whenBothRowsShareASource() {
+        UUID accountId = UUID.randomUUID();
+        LocalDate date = LocalDate.of(2026, 7, 10);
+
+        Transaction earlier = txn(UUID.randomUUID(), accountId, date, new BigDecimal("499.00"),
+                Transaction.Type.EXPENSE, "AMAZON ORDER 4471", Instant.parse("2026-07-10T09:00:00Z"));
+        earlier.setSource(Transaction.Source.CSV_IMPORT);
+        Transaction later = txn(UUID.randomUUID(), accountId, date, new BigDecimal("499.00"),
+                Transaction.Type.EXPENSE, "AMAZON ORDER 4471", Instant.parse("2026-07-10T18:00:00Z"));
+        later.setSource(Transaction.Source.CSV_IMPORT);
+
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(earlier, later));
+
+        reconciliationService.reconcileForUser(userId);
+
+        assertThat(earlier.getIsDuplicateOf()).isNull();
+        assertThat(later.getIsDuplicateOf()).isEqualTo(earlier.getId());
+    }
+
     @Test
     void reconcileForUser_doesNotFlagDistinctTransactionsAsDuplicates() {
         UUID accountId = UUID.randomUUID();
@@ -291,6 +340,39 @@ class ReconciliationServiceTest {
 
         assertThat(refund.getReconciliationStatus()).isEqualTo(Transaction.ReconciliationStatus.REFUND);
         assertThat(refund.getRefundOfTransactionId()).isEqualTo(purchase.getId());
+    }
+
+    @Test
+    void reconcileForUser_linksAReversalKeywordCreditAsReversal_notRefund() {
+        UUID accountId = UUID.randomUUID();
+
+        Transaction purchase = txn(UUID.randomUUID(), accountId, LocalDate.of(2026, 7, 1),
+                new BigDecimal("1200.00"), Transaction.Type.EXPENSE, "NEFT PAYMENT TO XYZ", Instant.now());
+        Transaction reversal = txn(UUID.randomUUID(), accountId, LocalDate.of(2026, 7, 2),
+                new BigDecimal("1200.00"), Transaction.Type.INCOME, "PAYMENT REVERSAL NEFT XYZ", Instant.now());
+
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(purchase, reversal));
+
+        reconciliationService.reconcileForUser(userId);
+
+        assertThat(reversal.getReconciliationStatus()).isEqualTo(Transaction.ReconciliationStatus.REVERSAL);
+        assertThat(reversal.getRefundOfTransactionId()).isEqualTo(purchase.getId());
+    }
+
+    @Test
+    void reconcileForUser_stillClassifiesAPlainRefundKeywordAsRefund_notReversal() {
+        UUID accountId = UUID.randomUUID();
+
+        Transaction purchase = txn(UUID.randomUUID(), accountId, LocalDate.of(2026, 7, 1),
+                new BigDecimal("899.00"), Transaction.Type.EXPENSE, "MYNTRA ORDER 552", Instant.now());
+        Transaction refund = txn(UUID.randomUUID(), accountId, LocalDate.of(2026, 7, 5),
+                new BigDecimal("899.00"), Transaction.Type.INCOME, "MYNTRA RETURN REFUND 552", Instant.now());
+
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(purchase, refund));
+
+        reconciliationService.reconcileForUser(userId);
+
+        assertThat(refund.getReconciliationStatus()).isEqualTo(Transaction.ReconciliationStatus.REFUND);
     }
 
     @Test
