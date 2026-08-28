@@ -67,13 +67,16 @@ public class ReconciliationService {
     private final RelationshipService relationshipService;
     private final AuditService auditService;
     private final TransactionGraphService transactionGraphService;
+    private final com.finora.integrations.google.merchant.GmailReconciliationMatcher gmailReconciliationMatcher;
 
     public ReconciliationService(TransactionRepository transactionRepository, RelationshipService relationshipService,
-                                  AuditService auditService, TransactionGraphService transactionGraphService) {
+                                  AuditService auditService, TransactionGraphService transactionGraphService,
+                                  com.finora.integrations.google.merchant.GmailReconciliationMatcher gmailReconciliationMatcher) {
         this.transactionRepository = transactionRepository;
         this.relationshipService = relationshipService;
         this.auditService = auditService;
         this.transactionGraphService = transactionGraphService;
+        this.gmailReconciliationMatcher = gmailReconciliationMatcher;
     }
 
     /**
@@ -178,7 +181,7 @@ public class ReconciliationService {
         // Dashboard's duplicateMatches/transferMatches/refundMatches already show, computed
         // fresh on every read -- this is a different, complementary number: how much did the
         // most recent run actually do).
-        int newDuplicates = 0, newTransfers = 0, newRefunds = 0, newReversals = 0;
+        int newDuplicates = 0, newTransfers = 0, newRefunds = 0, newReversals = 0, newGmailMatches = 0;
 
         // Every row the passes below touch, written once at the end instead of one save() per
         // match. A large first import can flag hundreds of duplicates, and each save() was its own
@@ -483,11 +486,74 @@ public class ReconciliationService {
             }
         }
 
+        // 4) Gmail cross-source matches -- docs/proposals/reconciliation-evolution-roadmap-
+        // proposal.md Part 5's confidence engine, extended to the one pass Phase 2's earlier PR
+        // deliberately left out: GmailReconciliationMatcher already fuzzy-matches a Gmail receipt
+        // against the bank ledger at STAGING time (amount exact, date window, Levenshtein merchant
+        // similarity), but that match was never persisted -- confirming the receipt anyway created
+        // a fully independent Transaction with no link back to the bank row it duplicates. This
+        // makes that signal durable: a FUZZY-tier graph edge, the same infrastructure the other
+        // three passes above already write to.
+        //
+        // Graph edge ONLY -- deliberately does NOT set isDuplicateOf/reconciliationStatus the way
+        // the exact-match duplicate pass (1, above) does. That pass's legacy-column write is safe
+        // unconditionally because its match is a deterministic composite-key equality; FUZZY is
+        // this codebase's lowest confidence tier by design (Levenshtein threshold 0.6 admits real
+        // ambiguity), and its score will almost always land below NEEDS_REVIEW_THRESHOLD -- auto-
+        // excluding a legitimate expense from a user's spend totals off a fuzzy text match would be
+        // a real correctness risk this first slice does not take. A CANDIDATE edge is visible in
+        // the graph/explainability layer for review; today's dashboard totals are unchanged by this
+        // pass. Whether a high-scoring Gmail match should ever auto-confirm is a follow-up decision,
+        // not this one.
+        List<Transaction> gmailExpenses = all.stream()
+                .filter(t -> t.getSource() == Transaction.Source.GMAIL_IMPORT)
+                .filter(t -> t.getTxnType() == Transaction.Type.EXPENSE)
+                .toList();
+        if (!gmailExpenses.isEmpty()) {
+            Map<BigDecimal, List<Transaction>> bankExpensesByAmount = all.stream()
+                    .filter(t -> t.getSource() != Transaction.Source.GMAIL_IMPORT)
+                    .filter(t -> t.getTxnType() == Transaction.Type.EXPENSE)
+                    .collect(java.util.stream.Collectors.groupingBy(Transaction::getAmount));
+            int gmailWindowDays = com.finora.integrations.google.merchant.GmailReconciliationMatcher.DATE_WINDOW_DAYS;
+            int[] gmailMatchesThisRun = {0};
+            for (Transaction gmailTxn : gmailExpenses) {
+                List<Transaction> gmailCandidates = bankExpensesByAmount
+                        .getOrDefault(gmailTxn.getAmount(), List.of()).stream()
+                        .filter(t -> Math.abs(ChronoUnit.DAYS.between(gmailTxn.getTxnDate(), t.getTxnDate())) <= gmailWindowDays)
+                        .toList();
+                if (gmailCandidates.isEmpty()) continue;
+
+                gmailReconciliationMatcher.findMatchAmongTransactions(gmailTxn, gmailCandidates).ifPresent(matched -> {
+                    long daysIntoWindow = Math.abs(ChronoUnit.DAYS.between(gmailTxn.getTxnDate(), matched.getTxnDate()));
+                    // Exact-amount candidates only (see the groupingBy above), so amount_factor is
+                    // always 1.0 here -- date_decay across the window is what actually varies.
+                    int gmailConfidence = ConfidenceScorer.score(ConfidenceScorer.MatchType.FUZZY,
+                            gmailTxn.getAmount(), BigDecimal.ZERO, daysIntoWindow, gmailWindowDays);
+                    Map<String, Object> explanation = new java.util.LinkedHashMap<>();
+                    explanation.put("type", "GMAIL_CROSS_SOURCE_MATCH");
+                    explanation.put("matchedTransactionId", matched.getId().toString());
+                    explanation.put("daysApart", daysIntoWindow);
+                    pendingEdges.add(new TransactionGraphService.PendingEdge(userId, gmailTxn.getId(), matched.getId(),
+                            TransactionRelationship.RelationshipType.DUPLICATE, gmailTxn.getAmount(), gmailConfidence,
+                            SourceTrust.of(gmailTxn.getSource()), statusFor(gmailConfidence),
+                            TransactionRelationship.DetectionMethod.RULE_ENGINE, explanation));
+                    gmailMatchesThisRun[0]++;
+                });
+            }
+            newGmailMatches = gmailMatchesThisRun[0];
+        }
+
         // One write for the whole run. Ordered and de-duplicated by the LinkedHashSet above, so
         // Hibernate's configured batch_size/order_updates can actually apply -- they could do
         // nothing when this was a save() per match.
         if (!dirty.isEmpty()) transactionRepository.saveAll(dirty);
-        if (!pendingEdges.isEmpty()) transactionGraphService.linkAll(pendingEdges);
+        // Captured rather than discarded: linkAll returns only the edges it actually wrote, never
+        // the ones its own idempotent dedup skipped (see that method's own doc comment) -- the
+        // Gmail pass above re-evaluates every GMAIL_IMPORT transaction on every run with no
+        // persisted "already matched" flag of its own, so pendingEdges is routinely non-empty on a
+        // run that writes nothing new. writtenEdges is what changedSomething below actually needs.
+        List<TransactionRelationship> writtenEdges = pendingEdges.isEmpty()
+                ? List.of() : transactionGraphService.linkAll(pendingEdges);
 
         long elapsedMs = (System.nanoTime() - startedAtNanos) / 1_000_000;
 
@@ -546,7 +612,15 @@ public class ReconciliationService {
         //
         // The scope fields come from the caller (see reconcileForImport on why the windowed path
         // reports candidatesLoaded rather than reusing transactionsProcessed).
-        boolean changedSomething = !dirty.isEmpty();
+        // !writtenEdges.isEmpty() joins this check because of the Gmail pass above: it is the
+        // first pass that can write a real change (a graph edge) WITHOUT also touching `dirty` --
+        // every earlier pass sets a legacy column alongside its edge, so dirty was always non-empty
+        // whenever a NEW edge was written until now. writtenEdges (not pendingEdges) is what to
+        // check: the Gmail pass has no persisted "already matched" flag of its own, so it
+        // re-proposes the same edge on every run regardless of whether anything is actually new --
+        // pendingEdges.isEmpty() would make nearly every future edit for a user with any Gmail
+        // match audit-record, exactly the BH-044 noise this file spent real effort eliminating.
+        boolean changedSomething = !dirty.isEmpty() || !writtenEdges.isEmpty();
         boolean wasSlow = elapsedMs >= SLOW_RUN_WARN_MS;
         String recordedBecause = changedSomething ? "reclassified"
                 : wasSlow ? "slow"
@@ -558,6 +632,7 @@ public class ReconciliationService {
             details.put("transfersMatched", newTransfers);
             details.put("refundsMatched", newRefunds);
             details.put("reversalsMatched", newReversals);
+            details.put("gmailMatchesFound", newGmailMatches);
             details.put("rowsWritten", dirty.size());
             details.put("durationMs", elapsedMs);
             // Says which condition put this row here, so a reader of the trail can tell "this run
