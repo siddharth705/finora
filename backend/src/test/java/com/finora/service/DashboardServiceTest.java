@@ -35,6 +35,7 @@ class DashboardServiceTest {
     private BudgetRepository budgetRepository;
     private CategoryRepository categoryRepository;
     private UserRepository userRepository;
+    private com.finora.repository.StatementImportRepository statementImportRepository;
     private DashboardService dashboardService;
     private final UUID userId = UUID.randomUUID();
     private Account savings;
@@ -46,6 +47,7 @@ class DashboardServiceTest {
         categoryRepository = mock(CategoryRepository.class);
         budgetRepository = mock(BudgetRepository.class);
         userRepository = mock(UserRepository.class);
+        statementImportRepository = mock(com.finora.repository.StatementImportRepository.class);
 
         savings = new Account();
         ReflectionTestUtils.setField(savings, "id", UUID.randomUUID());
@@ -63,9 +65,10 @@ class DashboardServiceTest {
         when(categoryRepository.findByUserId(any())).thenReturn(List.of());
         when(budgetRepository.findByUserId(any())).thenReturn(List.of());
         when(userRepository.findById(any())).thenReturn(Optional.of(user));
+        when(statementImportRepository.countByUserId(any())).thenReturn(0L);
 
         dashboardService = new DashboardService(accountRepository, transactionRepository, categoryRepository,
-                budgetRepository, userRepository);
+                budgetRepository, userRepository, statementImportRepository);
     }
 
     private Transaction txn(BigDecimal amount, Transaction.Type type, LocalDate date, Transaction.ReconciliationStatus status) {
@@ -111,6 +114,163 @@ class DashboardServiceTest {
     }
 
     @Test
+    @DisplayName("categoryReviewWarning fires at/above the threshold, with the real amount/count/pct behind it")
+    void summarize_flagsCategoryReviewWarning_atOrAboveTheThreshold() {
+        LocalDate july = LocalDate.of(2026, 7, 15);
+        // 8000 flagged / 10000 total = 80% -- comfortably above the 20% threshold, matching the
+        // real "81% in Other" case this warning exists for.
+        Transaction flagged1 = txn(new BigDecimal("5000.00"), Transaction.Type.EXPENSE, july, Transaction.ReconciliationStatus.OK);
+        flagged1.setNeedsCategoryReview(true);
+        Transaction flagged2 = txn(new BigDecimal("3000.00"), Transaction.Type.EXPENSE, july, Transaction.ReconciliationStatus.OK);
+        flagged2.setNeedsCategoryReview(true);
+        Transaction clean = txn(new BigDecimal("2000.00"), Transaction.Type.EXPENSE, july, Transaction.ReconciliationStatus.OK);
+
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(flagged1, flagged2, clean));
+
+        DashboardSummaryDto summary = dashboardService.summarize(userId);
+
+        assertThat(summary.categoryReviewWarning()).isTrue();
+        assertThat(summary.categoryReviewSpendAmount()).isEqualByComparingTo("8000.00");
+        assertThat(summary.categoryReviewTransactionCount()).isEqualTo(2);
+        assertThat(summary.categoryReviewSpendPct()).isCloseTo(80.0, org.assertj.core.data.Offset.offset(0.01));
+        assertThat(summary.categoryReviewSpendWarningThresholdPct())
+                .isEqualTo(DashboardService.CATEGORY_REVIEW_SPEND_WARNING_THRESHOLD_PCT);
+    }
+
+    @Test
+    @DisplayName("categoryReviewWarning stays off below the threshold")
+    void summarize_doesNotFlagCategoryReviewWarning_belowTheThreshold() {
+        LocalDate july = LocalDate.of(2026, 7, 15);
+        // 1000 flagged / 10000 total = 10% -- well under the 20% threshold.
+        Transaction flagged = txn(new BigDecimal("1000.00"), Transaction.Type.EXPENSE, july, Transaction.ReconciliationStatus.OK);
+        flagged.setNeedsCategoryReview(true);
+        Transaction clean = txn(new BigDecimal("9000.00"), Transaction.Type.EXPENSE, july, Transaction.ReconciliationStatus.OK);
+
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(flagged, clean));
+
+        DashboardSummaryDto summary = dashboardService.summarize(userId);
+
+        assertThat(summary.categoryReviewWarning()).isFalse();
+        assertThat(summary.categoryReviewSpendPct()).isCloseTo(10.0, org.assertj.core.data.Offset.offset(0.01));
+    }
+
+    @Test
+    @DisplayName("categoryReviewWarning ignores an INCOME transaction flagged for review -- this is a SPEND metric")
+    void summarize_ignoresFlaggedIncome_whenComputingCategoryReviewSpend() {
+        LocalDate july = LocalDate.of(2026, 7, 15);
+        Transaction flaggedIncome = txn(new BigDecimal("50000.00"), Transaction.Type.INCOME, july, Transaction.ReconciliationStatus.OK);
+        flaggedIncome.setNeedsCategoryReview(true);
+        Transaction cleanExpense = txn(new BigDecimal("5000.00"), Transaction.Type.EXPENSE, july, Transaction.ReconciliationStatus.OK);
+
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(flaggedIncome, cleanExpense));
+
+        DashboardSummaryDto summary = dashboardService.summarize(userId);
+
+        assertThat(summary.categoryReviewWarning()).isFalse();
+        assertThat(summary.categoryReviewSpendAmount()).isEqualByComparingTo("0.00");
+        assertThat(summary.categoryReviewSpendPct()).isEqualTo(0.0);
+    }
+
+    @Test
+    @DisplayName("categoryReviewSpendPct is 0, not NaN, when there is no expense at all this month")
+    void summarize_reportsZeroCategoryReviewPct_whenThereIsNoExpense() {
+        LocalDate july = LocalDate.of(2026, 7, 15);
+        Transaction incomeOnly = txn(new BigDecimal("50000.00"), Transaction.Type.INCOME, july, Transaction.ReconciliationStatus.OK);
+
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(incomeOnly));
+
+        DashboardSummaryDto summary = dashboardService.summarize(userId);
+
+        assertThat(summary.categoryReviewWarning()).isFalse();
+        assertThat(summary.categoryReviewSpendPct()).isEqualTo(0.0);
+    }
+
+    @Test
+    @DisplayName("comparison gating: a partial-boundary prior month doesn't produce a wild delta percentage")
+    void summarize_gatesDeltas_whenThePriorMonthIsAPartialBoundarySliver() {
+        // Reproduces the real bug: one continuous ~30-day statement window (Jun 26 -- Jul 26)
+        // straddles a calendar boundary, so "priorMonth" (June) is really just 5 leftover days of
+        // the SAME import, not a genuine separate historical month -- a handful of stray June
+        // transactions against a full July of real spending used to report as a 900%+ swing.
+        List<Transaction> txns = new java.util.ArrayList<>();
+        for (LocalDate d = LocalDate.of(2026, 6, 26); !d.isAfter(LocalDate.of(2026, 6, 30)); d = d.plusDays(1)) {
+            txns.add(txn(new BigDecimal("500.00"), Transaction.Type.INCOME, d, Transaction.ReconciliationStatus.OK));
+        }
+        for (LocalDate d = LocalDate.of(2026, 7, 1); !d.isAfter(LocalDate.of(2026, 7, 26)); d = d.plusDays(1)) {
+            txns.add(txn(new BigDecimal("1200.00"), Transaction.Type.INCOME, d, Transaction.ReconciliationStatus.OK));
+        }
+        when(transactionRepository.findByUserId(userId)).thenReturn(txns);
+
+        DashboardSummaryDto summary = dashboardService.summarize(userId);
+
+        assertThat(summary.incomeDeltaPct()).isNull();
+        assertThat(summary.expenseDeltaPct()).isNull();
+        assertThat(summary.netDeltaPct()).isNull();
+    }
+
+    @Test
+    @DisplayName("comparison gating: a FULL prior month with too few transactions still doesn't get a delta")
+    void summarize_gatesDeltas_whenTheFullPriorMonthHasTooFewTransactions() {
+        // Isolated from the partial-boundary gate: the earlier of June's two transactions falls on
+        // the 1st, so June passes the "full calendar month" boundary check cleanly -- it's gated
+        // purely because only 2 transactions (below MIN_TRANSACTIONS_FOR_DELTA_COMPARISON) fall in
+        // it, and one or two stray rows could still single-handedly swing the ratio.
+        List<Transaction> txns = new java.util.ArrayList<>();
+        txns.add(txn(new BigDecimal("100.00"), Transaction.Type.INCOME, LocalDate.of(2026, 6, 1), Transaction.ReconciliationStatus.OK));
+        txns.add(txn(new BigDecimal("100.00"), Transaction.Type.INCOME, LocalDate.of(2026, 6, 20), Transaction.ReconciliationStatus.OK));
+        for (LocalDate d = LocalDate.of(2026, 7, 1); !d.isAfter(LocalDate.of(2026, 7, 31)); d = d.plusDays(1)) {
+            txns.add(txn(new BigDecimal("1000.00"), Transaction.Type.INCOME, d, Transaction.ReconciliationStatus.OK));
+        }
+        when(transactionRepository.findByUserId(userId)).thenReturn(txns);
+
+        DashboardSummaryDto summary = dashboardService.summarize(userId);
+
+        assertThat(summary.incomeDeltaPct()).isNull();
+    }
+
+    @Test
+    @DisplayName("comparison gating: a real, comparable prior month still gets a real delta")
+    void summarize_stillComputesADelta_whenThePriorMonthIsGenuinelyComparable() {
+        // Two full calendar months, both with real transaction volume -- the fix must not smother a
+        // legitimate comparison, only the artifacts.
+        List<Transaction> txns = new java.util.ArrayList<>();
+        for (LocalDate d = LocalDate.of(2026, 6, 1); !d.isAfter(LocalDate.of(2026, 6, 30)); d = d.plusDays(1)) {
+            txns.add(txn(new BigDecimal("100.00"), Transaction.Type.INCOME, d, Transaction.ReconciliationStatus.OK));
+        }
+        for (LocalDate d = LocalDate.of(2026, 7, 1); !d.isAfter(LocalDate.of(2026, 7, 31)); d = d.plusDays(1)) {
+            txns.add(txn(new BigDecimal("200.00"), Transaction.Type.INCOME, d, Transaction.ReconciliationStatus.OK));
+        }
+        when(transactionRepository.findByUserId(userId)).thenReturn(txns);
+
+        DashboardSummaryDto summary = dashboardService.summarize(userId);
+
+        // June: 30 * 100 = 3000. July: 31 * 200 = 6200. (6200-3000)/3000 * 100 ~= 106.67%.
+        assertThat(summary.incomeDeltaPct()).isNotNull();
+        assertThat(summary.incomeDeltaPct()).isCloseTo(106.67, org.assertj.core.data.Offset.offset(0.5));
+    }
+
+    @Test
+    @DisplayName("comparison gating: an exactly-zero prior month still gates, same as before this change")
+    void summarize_stillGatesDeltas_whenThePriorMonthIsExactlyZero() {
+        // Pre-existing behaviour (prior == 0 -> null) must survive unchanged, isolated from the two
+        // NEW gates: June is a genuine FULL month (1st -- 30th) with plenty of its own transactions
+        // (clears MIN_TRANSACTIONS_FOR_DELTA_COMPARISON) -- just none of them INCOME, so incomePrior
+        // is genuinely, legitimately 0, not a thin-data artifact.
+        List<Transaction> txns = new java.util.ArrayList<>();
+        for (LocalDate d = LocalDate.of(2026, 6, 1); !d.isAfter(LocalDate.of(2026, 6, 30)); d = d.plusDays(1)) {
+            txns.add(txn(new BigDecimal("500.00"), Transaction.Type.EXPENSE, d, Transaction.ReconciliationStatus.OK));
+        }
+        for (LocalDate d = LocalDate.of(2026, 7, 1); !d.isAfter(LocalDate.of(2026, 7, 31)); d = d.plusDays(1)) {
+            txns.add(txn(new BigDecimal("1000.00"), Transaction.Type.INCOME, d, Transaction.ReconciliationStatus.OK));
+        }
+        when(transactionRepository.findByUserId(userId)).thenReturn(txns);
+
+        DashboardSummaryDto summary = dashboardService.summarize(userId);
+
+        assertThat(summary.incomeDeltaPct()).isNull();
+    }
+
+    @Test
     void summarize_flagsALiquidAccountBelowTheUsersLowBalanceThreshold() {
         // Override setUp()'s 100000 balance with one below the default 2000 threshold.
         savings.setBalance(new BigDecimal("500.00"));
@@ -139,12 +299,46 @@ class DashboardServiceTest {
         ReflectionTestUtils.setField(user, "id", userId);
         when(userRepository.findById(any())).thenReturn(Optional.of(user));
         dashboardService = new DashboardService(accountRepository, transactionRepository, categoryRepository,
-                budgetRepository, userRepository);
+                budgetRepository, userRepository, statementImportRepository);
         when(transactionRepository.findByUserId(userId)).thenReturn(List.of());
 
         DashboardSummaryDto summary = dashboardService.summarize(userId);
 
         assertThat(summary.notifications()).noneMatch(n -> n.contains("low-balance threshold"));
+    }
+
+    @Test
+    @DisplayName("limitedHistory is true below the month floor, and reports the real counts behind it")
+    void summarize_flagsLimitedHistory_belowTheMonthFloor() {
+        LocalDate june = LocalDate.of(2026, 6, 15);
+        LocalDate july = LocalDate.of(2026, 7, 15);
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(
+                txn(new BigDecimal("500.00"), Transaction.Type.EXPENSE, june, Transaction.ReconciliationStatus.OK),
+                txn(new BigDecimal("500.00"), Transaction.Type.EXPENSE, july, Transaction.ReconciliationStatus.OK)));
+        when(statementImportRepository.countByUserId(userId)).thenReturn(2L);
+
+        DashboardSummaryDto summary = dashboardService.summarize(userId);
+
+        assertThat(summary.limitedHistory()).isTrue();
+        assertThat(summary.historyMonthCount()).isEqualTo(2);
+        assertThat(summary.limitedHistoryMonthFloor()).isEqualTo(DashboardService.LIMITED_HISTORY_MONTH_FLOOR);
+        assertThat(summary.statementCount()).isEqualTo(2);
+        assertThat(summary.accountCount()).isEqualTo(1); // setUp()'s single savings account
+    }
+
+    @Test
+    @DisplayName("limitedHistory is false once the user clears the month floor")
+    void summarize_doesNotFlagLimitedHistory_atOrAboveTheMonthFloor() {
+        List<Transaction> txns = new java.util.ArrayList<>();
+        for (int m = 5; m <= 7; m++) {
+            txns.add(txn(new BigDecimal("500.00"), Transaction.Type.EXPENSE, LocalDate.of(2026, m, 10), Transaction.ReconciliationStatus.OK));
+        }
+        when(transactionRepository.findByUserId(userId)).thenReturn(txns);
+
+        DashboardSummaryDto summary = dashboardService.summarize(userId);
+
+        assertThat(summary.limitedHistory()).isFalse();
+        assertThat(summary.historyMonthCount()).isEqualTo(3);
     }
 
     @Test
@@ -323,6 +517,156 @@ class DashboardServiceTest {
         assertThat(summary.healthLabel()).isNotNull();
         assertThat(summary.healthBreakdown()).isNotEmpty();
         assertThat(summary.healthScoreTransactionCount()).isEqualTo(10);
+    }
+
+    @Test
+    @DisplayName("a statement window straddling a calendar-month boundary doesn't tank Spend Consistency / Cash Flow Stability")
+    void summarize_partialBoundaryMonthsDontDistortConsistencyOrCashFlow() {
+        // Reproduces a real user's dashboard: one continuous ~30-day statement window (Jun 26 --
+        // Jul 26) that YearMonth-buckets into a near-empty 5-day June sliver and a near-full 26-day
+        // July bucket. Steady, identical daily spend across the whole window -- if the two buckets
+        // were compared as if both were full months, the sliver's tiny total vs. July's much larger
+        // total reads as wildly inconsistent (this is exactly how the bug produced an 8% Spend
+        // Consistency score for genuinely steady spending). With the partial boundary months
+        // excluded from the comparison, only 0 full months remain, so both scores fall through to
+        // their neutral thin-data defaults (100) rather than judge on the lopsided partial buckets.
+        List<Transaction> txns = new java.util.ArrayList<>();
+        LocalDate date = LocalDate.of(2026, 6, 26);
+        LocalDate end = LocalDate.of(2026, 7, 26);
+        while (!date.isAfter(end)) {
+            txns.add(txn(new BigDecimal("1000.00"), Transaction.Type.EXPENSE, date, Transaction.ReconciliationStatus.OK));
+            txns.add(txn(new BigDecimal("1200.00"), Transaction.Type.INCOME, date, Transaction.ReconciliationStatus.OK));
+            date = date.plusDays(1);
+        }
+        when(transactionRepository.findByUserId(userId)).thenReturn(txns);
+
+        DashboardSummaryDto summary = dashboardService.summarize(userId);
+
+        assertThat(summary.healthBreakdown().get("Spend Consistency")).isEqualTo(100.0);
+        assertThat(summary.healthBreakdown().get("Cash Flow Stability")).isEqualTo(100.0);
+    }
+
+    @Test
+    @DisplayName("a full prior month is still compared normally once the current month is complete")
+    void summarize_fullPriorMonthStillDetectsRealInconsistency() {
+        // Once there's at least one genuinely comparable full month alongside a full current month,
+        // the fix must not suppress a real difference in spending between them.
+        List<Transaction> txns = new java.util.ArrayList<>();
+        for (LocalDate d = LocalDate.of(2026, 6, 1); !d.isAfter(LocalDate.of(2026, 6, 30)); d = d.plusDays(1)) {
+            txns.add(txn(new BigDecimal("100.00"), Transaction.Type.EXPENSE, d, Transaction.ReconciliationStatus.OK));
+            txns.add(txn(new BigDecimal("200.00"), Transaction.Type.INCOME, d, Transaction.ReconciliationStatus.OK));
+        }
+        for (LocalDate d = LocalDate.of(2026, 7, 1); !d.isAfter(LocalDate.of(2026, 7, 31)); d = d.plusDays(1)) {
+            txns.add(txn(new BigDecimal("1000.00"), Transaction.Type.EXPENSE, d, Transaction.ReconciliationStatus.OK));
+            txns.add(txn(new BigDecimal("200.00"), Transaction.Type.INCOME, d, Transaction.ReconciliationStatus.OK));
+        }
+        when(transactionRepository.findByUserId(userId)).thenReturn(txns);
+
+        DashboardSummaryDto summary = dashboardService.summarize(userId);
+
+        // June (~3000) vs July (~31000) are both FULL months -- a real, large swing that the fix
+        // must still surface, not smooth over.
+        assertThat(summary.healthBreakdown().get("Spend Consistency")).isLessThan(50.0);
+    }
+
+    @Test
+    @DisplayName("a single PARTIAL calendar month (all data in one bucket) scores neutral, not on the partial data")
+    void summarize_onePartialMonth_scoresNeutral() {
+        // All of the user's history falls inside one calendar month, but doesn't span it fully
+        // (starts on the 10th, not the 1st) -- e.g. someone who signed up mid-month. There's no full
+        // month to compare against, so both scores must fall through to the neutral default rather
+        // than judge on a fragment.
+        List<Transaction> txns = new java.util.ArrayList<>();
+        for (LocalDate d = LocalDate.of(2026, 7, 10); !d.isAfter(LocalDate.of(2026, 7, 20)); d = d.plusDays(1)) {
+            txns.add(txn(new BigDecimal("5000.00"), Transaction.Type.EXPENSE, d, Transaction.ReconciliationStatus.OK));
+        }
+        when(transactionRepository.findByUserId(userId)).thenReturn(txns);
+
+        DashboardSummaryDto summary = dashboardService.summarize(userId);
+
+        assertThat(summary.healthBreakdown().get("Spend Consistency")).isEqualTo(100.0);
+        assertThat(summary.healthBreakdown().get("Cash Flow Stability")).isEqualTo(100.0);
+    }
+
+    @Test
+    @DisplayName("a single FULL calendar month gets a real (non-neutral) cash-flow reading, and a neutral consistency reading")
+    void summarize_oneFullMonth_cashFlowIsRealButConsistencyIsNeutral() {
+        // One data point can't say anything about MONTH-TO-MONTH consistency (that needs at least
+        // two full months to compare), so consistencyScore stays at the neutral default. But cash
+        // flow for that one full month is a directly known fact, not a guess -- if the whole month's
+        // income covered its expenses, that's real, verified information, not a thin-data artifact.
+        // So unlike consistency, cashFlowScore for a single full month is NOT forced to neutral --
+        // it reports what actually happened.
+        List<Transaction> txns = new java.util.ArrayList<>();
+        for (LocalDate d = LocalDate.of(2026, 7, 1); !d.isAfter(LocalDate.of(2026, 7, 31)); d = d.plusDays(1)) {
+            txns.add(txn(new BigDecimal("100.00"), Transaction.Type.EXPENSE, d, Transaction.ReconciliationStatus.OK));
+            txns.add(txn(new BigDecimal("200.00"), Transaction.Type.INCOME, d, Transaction.ReconciliationStatus.OK));
+        }
+        when(transactionRepository.findByUserId(userId)).thenReturn(txns);
+
+        DashboardSummaryDto summary = dashboardService.summarize(userId);
+
+        assertThat(summary.healthBreakdown().get("Spend Consistency")).isEqualTo(100.0);
+        assertThat(summary.healthBreakdown().get("Cash Flow Stability")).isEqualTo(100.0); // income > expense all July
+    }
+
+    @Test
+    @DisplayName("one full month + one partial (in-progress) month scores only off the full month")
+    void summarize_oneFullMonthPlusCurrentPartialMonth_scoresOnlyTheFullMonth() {
+        // June is a complete calendar month. July is still in progress (only through the 15th) --
+        // a real scenario for any user who imports mid-month. July must be excluded, and June alone
+        // (one full month) must drive the score, exactly as the single-full-month case above.
+        List<Transaction> txns = new java.util.ArrayList<>();
+        for (LocalDate d = LocalDate.of(2026, 6, 1); !d.isAfter(LocalDate.of(2026, 6, 30)); d = d.plusDays(1)) {
+            txns.add(txn(new BigDecimal("100.00"), Transaction.Type.EXPENSE, d, Transaction.ReconciliationStatus.OK));
+            txns.add(txn(new BigDecimal("200.00"), Transaction.Type.INCOME, d, Transaction.ReconciliationStatus.OK));
+        }
+        // July: heavy overspend, but only 15 days in -- must not count.
+        for (LocalDate d = LocalDate.of(2026, 7, 1); !d.isAfter(LocalDate.of(2026, 7, 15)); d = d.plusDays(1)) {
+            txns.add(txn(new BigDecimal("5000.00"), Transaction.Type.EXPENSE, d, Transaction.ReconciliationStatus.OK));
+        }
+        when(transactionRepository.findByUserId(userId)).thenReturn(txns);
+
+        DashboardSummaryDto summary = dashboardService.summarize(userId);
+
+        // If July's partial overspend leaked in, consistency/cash-flow would collapse. It doesn't:
+        // June alone (steady, income > expense) still reads as a single full, positive month.
+        assertThat(summary.healthBreakdown().get("Spend Consistency")).isEqualTo(100.0);
+        assertThat(summary.healthBreakdown().get("Cash Flow Stability")).isEqualTo(100.0);
+    }
+
+    @Test
+    @DisplayName("three full months plus a current partial month score off the three full months")
+    void summarize_threeFullMonthsPlusCurrentPartialMonth_scoresOffTheThreeFullMonths() {
+        // April/May/June are complete; July is in progress. One of the three full months (May) has
+        // a real, large expense spike relative to the other two -- if July's partial data (or the
+        // spike) were smoothed away by the fix rather than correctly included/excluded, this
+        // wouldn't show up as an inconsistency. It must.
+        List<Transaction> txns = new java.util.ArrayList<>();
+        addFullMonthOfDailyExpense(txns, 2026, 4, "100.00", "200.00");
+        addFullMonthOfDailyExpense(txns, 2026, 5, "1000.00", "200.00"); // spike month
+        addFullMonthOfDailyExpense(txns, 2026, 6, "100.00", "200.00");
+        for (LocalDate d = LocalDate.of(2026, 7, 1); !d.isAfter(LocalDate.of(2026, 7, 10)); d = d.plusDays(1)) {
+            txns.add(txn(new BigDecimal("50.00"), Transaction.Type.EXPENSE, d, Transaction.ReconciliationStatus.OK));
+        }
+        when(transactionRepository.findByUserId(userId)).thenReturn(txns);
+
+        DashboardSummaryDto summary = dashboardService.summarize(userId);
+
+        // The spike in May, among 3 full months, is real and must be reflected -- not smoothed away.
+        assertThat(summary.healthBreakdown().get("Spend Consistency")).isLessThan(60.0);
+        // April and June had income > expense; May (the spike) did not -- 2 of 3 full months
+        // positive. July's partial data must not be counted as a 4th month.
+        assertThat(summary.healthBreakdown().get("Cash Flow Stability")).isCloseTo(66.7, org.assertj.core.data.Offset.offset(0.5));
+    }
+
+    private void addFullMonthOfDailyExpense(List<Transaction> txns, int year, int month, String dailyExpense, String dailyIncome) {
+        LocalDate start = LocalDate.of(year, month, 1);
+        LocalDate end = start.withDayOfMonth(start.lengthOfMonth());
+        for (LocalDate d = start; !d.isAfter(end); d = d.plusDays(1)) {
+            txns.add(txn(new BigDecimal(dailyExpense), Transaction.Type.EXPENSE, d, Transaction.ReconciliationStatus.OK));
+            txns.add(txn(new BigDecimal(dailyIncome), Transaction.Type.INCOME, d, Transaction.ReconciliationStatus.OK));
+        }
     }
 
     @Test

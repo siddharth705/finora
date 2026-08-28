@@ -8,7 +8,7 @@ import {
 import {
   Wallet, ArrowDownCircle, ArrowUpCircle, PieChart,
   ShoppingBag, Utensils, Car, Sparkles, Plus, PiggyBank, TrendingUp, TrendingDown, Target, ShieldCheck, Repeat,
-  UploadCloud, Receipt, LineChart as LineChartIcon, Mail,
+  UploadCloud, Receipt, LineChart as LineChartIcon, Mail, AlertTriangle,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { BankLogo } from '../components/BankLogo';
@@ -59,13 +59,16 @@ function healthColor(label: string): string {
     default: return 'text-danger';
   }
 }
-function healthBarColor(label: string): string {
-  switch (label) {
-    case 'Excellent': return 'bg-success';
-    case 'Good': return 'bg-primary';
-    case 'Fair': return 'bg-warning';
-    default: return 'bg-danger';
-  }
+// Same 80/60/40 cutoffs as healthColor above, applied to ONE breakdown item's own
+// score rather than the overall label -- every item used to inherit the overall label's color, so
+// a perfect sub-score (e.g. Debt Score 100 for a user with no credit cards) rendered as a
+// full-width RED bar whenever the overall health score was "Needs Attention", reading as "maxed
+// out" regardless of what that item's own number said.
+function healthItemBarColor(score: number): string {
+  if (score >= 80) return 'bg-success';
+  if (score >= 60) return 'bg-primary';
+  if (score >= 40) return 'bg-warning';
+  return 'bg-danger';
 }
 
 const CATEGORY_ICON: Record<string, any> = {
@@ -222,6 +225,30 @@ export default function Dashboard() {
         </p>
       </div>
 
+      {/* Limited-history banner. The KPI deltas and health score below are real, computed numbers
+          -- neither is hidden here -- but both are prone to thin-data artifacts this far below
+          limitedHistoryMonthFloor: a trend delta dividing against a near-empty prior month (see
+          pct() in DashboardService, still capable of a 900%+ swing off one stray transaction), and
+          a health score built from too few comparable months (see the Spend Consistency / Cash
+          Flow Stability partial-month fix). Shown once, above everything it explains, rather than
+          leaving a user to notice the numbers look strange and wonder why. Hidden once isEmpty --
+          the zero-transaction empty state below already covers that case on its own terms. */}
+      {!isEmpty && summary.limitedHistory && (
+        <div className="bg-warning-bg border border-warning/30 rounded-xl2 px-5 py-3.5 flex items-start gap-2.5 mb-6">
+          <AlertTriangle size={16} className="text-warning flex-shrink-0 mt-0.5" />
+          <div>
+            <p className="text-sm font-medium text-ink">Limited financial history</p>
+            <p className="text-xs text-muted mt-0.5">
+              Based on {summary.statementCount} statement{summary.statementCount === 1 ? '' : 's'} across{' '}
+              {summary.accountCount} account{summary.accountCount === 1 ? '' : 's'} and{' '}
+              {summary.historyMonthCount} month{summary.historyMonthCount === 1 ? '' : 's'} of activity.
+              Trends and the Financial Health Score below may be unreliable until at least{' '}
+              {summary.limitedHistoryMonthFloor} months of history are imported.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* KPI cards. Every card gets a deltaLabel (even Balance/Savings Rate, which never carry a
           real delta) so MetricCard renders a muted "— vs last month" instead of a silent gap
           where the line would otherwise just vanish. */}
@@ -275,7 +302,7 @@ export default function Dashboard() {
                   </div>
                   <div className="h-1.5 bg-bg rounded-full overflow-hidden">
                     <div
-                      className={`h-full rounded-full ${healthBarColor(summary.healthLabel!)}`}
+                      className={`h-full rounded-full ${healthItemBarColor(score)}`}
                       style={{ width: `${Math.max(0, Math.min(100, score))}%` }}
                     />
                   </div>
@@ -409,6 +436,26 @@ export default function Dashboard() {
                   </div>
                 ))}
               </div>
+              {/* Not gated on the "Other" category name -- "Other" is a real, resolvable category
+                  (the categorization engine's fallback when nothing matched), so a transaction
+                  landing there isn't necessarily uncategorized. categoryReviewWarning instead
+                  reuses Transaction.needsCategoryReview, the same per-transaction signal Ledger's
+                  "needs review" badge already shows -- flagged only when a default("Other")-
+                  sourced guess ALSO misses the user's own confidence threshold. */}
+              {summary.categoryReviewWarning && (
+                <div className="bg-warning-bg border border-warning/30 rounded-xl2 px-4 py-3 flex items-start gap-2.5 mt-4">
+                  <AlertTriangle size={15} className="text-warning flex-shrink-0 mt-0.5" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-medium text-ink">Spending needs category review</p>
+                    <p data-testid="category-review-detail" className="text-[11px] text-muted mt-0.5">
+                      {`${fmt(summary.categoryReviewSpendAmount)} (${summary.categoryReviewSpendPct.toFixed(0)}%) across ${summary.categoryReviewTransactionCount} transaction${summary.categoryReviewTransactionCount === 1 ? '' : 's'} ${periodLabel} landed in a generic category and could use a closer look.`}
+                    </p>
+                    <Link to="/app/transactions" className="inline-block mt-2 text-[11px] font-medium text-primary">
+                      Review transactions →
+                    </Link>
+                  </div>
+                </div>
+              )}
               <Link to="/app/reports" className="mt-4 text-center text-xs font-medium text-primary bg-primary-light rounded-lg py-2.5">
                 View Full Report →
               </Link>
