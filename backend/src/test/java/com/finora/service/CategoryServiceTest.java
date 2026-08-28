@@ -212,6 +212,43 @@ class CategoryServiceTest {
                 .hasMessageContaining("reassign");
     }
 
+    // Final-branch review, parked finding 1. onCategoryDeleted (learning-data cleanup) runs
+    // unconditionally, outside the hasDependents branch that validates reassignTo -- so a
+    // category with zero transactions/budget/rules but stray merchant-learning data could be
+    // deleted with an unvalidated reassignTo, letting a bogus or someone-else's-category UUID
+    // through to the merchant learning service instead of failing with 404/403.
+    @Test
+    void deleteValidatesReassignToEvenWhenTheOnlyDependentIsMerchantLearningData() {
+        UUID categoryId = UUID.randomUUID();
+        UUID otherUsersCategoryId = UUID.randomUUID();
+        Category toDelete = new Category();
+        toDelete.setUserId(userId);
+        toDelete.setName("Mutual Fund SIP");
+        toDelete.setSystem(false);
+        org.springframework.test.util.ReflectionTestUtils.setField(toDelete, "id", categoryId);
+
+        Category othersCategory = new Category();
+        othersCategory.setUserId(UUID.randomUUID());
+        othersCategory.setName("Not Yours");
+        org.springframework.test.util.ReflectionTestUtils.setField(othersCategory, "id", otherUsersCategoryId);
+
+        when(categoryRepository.findById(categoryId)).thenReturn(Optional.of(toDelete));
+        when(categoryRepository.findById(otherUsersCategoryId)).thenReturn(Optional.of(othersCategory));
+        // Zero transactions/budget/rules -- hasDependents is false -- but merchant-learning data
+        // for this category still exists (deliberately not asserted through a mock call here,
+        // since the point under test is that reassignTo gets validated regardless of dependents).
+        when(transactionRepository.countByUserIdAndCategoryId(userId, categoryId)).thenReturn(0L);
+        when(budgetRepository.findByUserIdAndCategoryId(userId, categoryId)).thenReturn(Optional.empty());
+        when(categoryRuleRepository.findByUserIdAndActionTypeInAndActionValueIgnoreCase(
+                eq(userId), any(), eq("Mutual Fund SIP"))).thenReturn(List.of());
+
+        assertThatThrownBy(() -> service().delete(userId, categoryId, otherUsersCategoryId))
+                .isInstanceOf(ApiException.class);
+
+        verify(merchantLearningService, never()).onCategoryDeleted(any(), any(), any());
+        verify(categoryRepository, never()).delete(any(Category.class));
+    }
+
     @Test
     void deleteRejectsAnAttemptOnASystemCategory() {
         UUID categoryId = UUID.randomUUID();

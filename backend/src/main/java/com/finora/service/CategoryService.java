@@ -145,14 +145,21 @@ public class CategoryService {
                         category.getName());
         boolean hasDependents = transactionCount > 0 || existingBudget.isPresent() || !affectedRules.isEmpty();
 
-        if (hasDependents) {
-            if (reassignTo == null) {
-                throw new ApiException(HttpStatus.BAD_REQUEST,
-                        "This category is in use — pick a category to reassign it to before deleting.");
-            }
-            Category target = OwnershipGuard.requireOwned(
-                    categoryRepository.findById(reassignTo), Category::getUserId, userId, "Category");
+        if (hasDependents && reassignTo == null) {
+            throw new ApiException(HttpStatus.BAD_REQUEST,
+                    "This category is in use — pick a category to reassign it to before deleting.");
+        }
 
+        // Validated whenever a target is supplied, not just when hasDependents is true. The
+        // Learning Engine's references (below) are independent of transactions/budgets/rules -- a
+        // merchant can carry learning and audit rows for a category whose transactions have since
+        // been deleted, so reassignTo can be in play on this call even with zero dependents. Left
+        // unvalidated, a bogus or another user's category UUID would flow straight into
+        // onCategoryDeleted instead of failing with 404/403 here.
+        Category target = reassignTo == null ? null : OwnershipGuard.requireOwned(
+                categoryRepository.findById(reassignTo), Category::getUserId, userId, "Category");
+
+        if (hasDependents) {
             transactionRepository.reassignCategory(userId, categoryId, target.getId());
             existingBudget.ifPresent(budgetRepository::delete);
             for (CategoryRule rule : affectedRules) {
