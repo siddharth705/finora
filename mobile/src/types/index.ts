@@ -131,6 +131,14 @@ export interface DashboardSummary {
   limitedHistoryMonthFloor: number;
   statementCount: number;
   accountCount: number;
+  // Category review warning (web only so far, same reason as healthScore above): true when
+  // categoryReviewSpendPct of this month's spend -- transactions flagged needsCategoryReview --
+  // is at or above categoryReviewSpendWarningThresholdPct. Mirrors frontend/src/types/index.ts.
+  categoryReviewWarning: boolean;
+  categoryReviewSpendPct: number;
+  categoryReviewSpendAmount: number;
+  categoryReviewTransactionCount: number;
+  categoryReviewSpendWarningThresholdPct: number;
 }
 
 export interface Budget {

@@ -63,5 +63,23 @@ public record DashboardSummaryDto(
         int historyMonthCount,
         int limitedHistoryMonthFloor,
         int statementCount,
-        int accountCount
+        int accountCount,
+
+        /*
+         * True when categoryReviewSpendPct of this month's spend -- transactions Transaction.
+         * needsCategoryReview flags, the same signal Ledger's "needs review" badge already uses --
+         * is at or above categoryReviewSpendWarningThresholdPct (DashboardService's
+         * CATEGORY_REVIEW_SPEND_WARNING_THRESHOLD_PCT). Deliberately NOT "Uncategorized" nor
+         * "Other" by category name: "Other" is a real, resolvable category (CategoryRules'
+         * fallback when nothing matched), so a transaction landing there isn't necessarily
+         * uncategorized -- it just means the categorization engine's own confidence check flagged
+         * it. categoryReviewSpendAmount/categoryReviewTransactionCount are the raw numbers behind
+         * the flag; categoryReviewSpendWarningThresholdPct is included so the client never
+         * hardcodes the cutoff, mirroring how limitedHistoryMonthFloor already works.
+         */
+        boolean categoryReviewWarning,
+        double categoryReviewSpendPct,
+        BigDecimal categoryReviewSpendAmount,
+        int categoryReviewTransactionCount,
+        double categoryReviewSpendWarningThresholdPct
 ) {}
