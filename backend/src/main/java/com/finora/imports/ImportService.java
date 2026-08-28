@@ -909,6 +909,10 @@ public class ImportService {
             t.setDecisionSource(CategorizationService.decisionSourceFor(row.categorySource()));
             t.setDecisionRuleId(row.ruleId());
             t.setDecisionConfidence(row.categoryConfidence());
+            // Import Row Trace (Founder Operations Dashboard) -- see Transaction.sourceRowPosition's
+            // own doc comment. Null for a client that predates ConfirmedRow.rowPosition, same as
+            // every other "carried from staging" field above when an older client omits it.
+            t.setSourceRowPosition(row.rowPosition());
             // MARK_TRANSFER/MARK_INVESTMENT/ADD_TAG rules -- see
             // CategorizationService.applySideEffectRules's doc comment. A MARK_INVESTMENT match
             // returns the new Category -- reassigning `category` keeps the tally below (and any
