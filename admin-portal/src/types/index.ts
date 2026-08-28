@@ -658,6 +658,58 @@ export interface ReconciliationStatsDto {
   totalTransactions: number;
 }
 
+/* ── Reconciliation Explorer ───────────────────────────────────────────────────────────────────
+ * One transaction, raw through to final classification (AdminReconciliationExplorerController).
+ * Assembled, not scored -- same position ImportTrace takes: each block reports what its own
+ * table recorded, no derived verdict. Mirrors backend ReconciliationExplorerDto exactly.
+ */
+
+export interface ReconciliationExplorerRaw {
+  transactionId: string;
+  description: string | null;
+  amount: number;
+  txnType: 'INCOME' | 'EXPENSE';
+  txnDate: string;
+  source: 'MANUAL' | 'CSV_IMPORT' | 'GMAIL_IMPORT';
+}
+
+/** categoryName is null for an uncategorized transaction, not a lookup failure. */
+export interface ReconciliationExplorerNormalized {
+  merchant: string | null;
+  categoryName: string | null;
+}
+
+/** confidence and sourceTrust are 0-100, not the 0.0-1.0 scale the roadmap doc's own design
+ *  example used -- one confidence-scale convention across the codebase (see ConfidenceScorer's
+ *  own javadoc), matching decisionConfidence elsewhere. Both are null for an edge written before
+ *  the confidence engine shipped. */
+export interface ReconciliationExplorerEdge {
+  edgeId: string;
+  counterpartTransactionId: string;
+  relationshipType: 'TRANSFER' | 'REFUND' | 'REVERSAL' | 'DUPLICATE' | 'CC_PAYMENT' | 'EMI'
+    | 'SALARY' | 'LOAN_REPAYMENT' | 'INVESTMENT_TRANSFER' | 'CASH_WITHDRAWAL' | 'CASH_DEPOSIT';
+  confidence: number | null;
+  sourceTrust: number | null;
+  status: 'CANDIDATE' | 'AUTO_CONFIRMED' | 'USER_CONFIRMED' | 'REJECTED';
+  detectionMethod: 'RULE_ENGINE' | 'MANUAL' | 'AA_FEED' | 'USER_OVERRIDE';
+  explanation: Record<string, unknown> | null;
+}
+
+export interface ReconciliationExplorerClassification {
+  reconciliationStatus: 'OK' | 'DUPLICATE' | 'TRANSFER' | 'REFUND' | 'REVERSAL';
+  /** Null means classified before this existed, or never matched -- not a failure state. */
+  transactionExplanation: Record<string, unknown> | null;
+}
+
+export interface ReconciliationExplorerTrace {
+  raw: ReconciliationExplorerRaw;
+  normalized: ReconciliationExplorerNormalized;
+  /** Depth-1 edges touching this transaction directly -- empty means unmatched, not "not
+   *  looked up". */
+  edges: ReconciliationExplorerEdge[];
+  classification: ReconciliationExplorerClassification;
+}
+
 interface WorkspaceHealthDto {
   rulesEnabled: boolean;
   merchantLearningActive: boolean;
