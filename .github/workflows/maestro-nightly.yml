@@ -195,6 +195,20 @@ jobs:
       - name: Install Maestro CLI
         run: curl -fsSL "https://get.maestro.mobile.dev" | bash
 
+      # /dev/kvm exists on GitHub-hosted Linux runners but the runner user isn't always a member
+      # of the group that owns it -- this job's first two real runs both hit
+      # "ProbeKVM: This user doesn't have permissions to use KVM (/dev/kvm)" (empty membership in
+      # `[kvm:x:993:]`), which silently falls back to unaccelerated `-accel off` emulation and
+      # either times out waiting to boot or blows the job's overall time budget mid-flow. This is
+      # reactivecircus/android-emulator-runner's own documented fix, not something specific to
+      # this repo: a permissive udev rule so the runner user (already in the `kvm` group per
+      # /etc/group above) actually gets the access that membership implies.
+      - name: Enable KVM group perms
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
       # reactivecircus/android-emulator-runner creates the AVD, boots it with KVM acceleration
       # (GitHub-hosted Linux runners support nested virtualization), and tears it down when the
       # script block below exits -- the install/push/test sequence has to live inside that block
