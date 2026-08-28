@@ -3,9 +3,10 @@
 Three flows, deliberately narrow: **Login**, **Dashboard**, **Import** — the same three the web
 `e2e/` suite's smoke job treats as the build-confidence gate, not the milestone brief's full
 checklist (that stays a manual device-validation pass; see
-`docs/engineering/mobile/mobile-setup.md`'s "Device validation checklist"). Runs nightly plus
-`workflow_dispatch`, not on every PR — see `.github/workflows/maestro-nightly.yml`'s header for why,
-which is the same reasoning `e2e-nightly.yml` gives for the web suite.
+`docs/engineering/mobile/mobile-setup.md`'s "Device validation checklist"). Runs on PRs that touch
+`mobile/**`, plus nightly and `workflow_dispatch` regardless of what changed — not yet a required
+status check, since it's newly promoted from nightly-only; see
+`.github/workflows/maestro-nightly.yml`'s header for the full reasoning.
 
 ## Why this needs more setup than the web e2e suite
 

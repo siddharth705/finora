@@ -45,7 +45,7 @@ function summary(overrides: Partial<DashboardSummary> = {}): DashboardSummary {
     healthLabel: 'Excellent',
     healthBreakdown: {
       'Savings Rate': 83,
-      'Debt Utilization': 100,
+      'Debt Score': 100,
       'Emergency Fund': 70,
       'Spend Consistency': 50,
       'Cash Flow Stability': 80,
@@ -127,18 +127,40 @@ describe('Dashboard — Financial Health Score', () => {
     // itself (the heading's own section) rather than the whole document.
     const card = within(heading.closest('div.bg-card') as HTMLElement);
     expect(card.getByText('Savings Rate')).toBeInTheDocument();
-    expect(card.getByText('Debt Utilization')).toBeInTheDocument();
+    expect(card.getByText('Debt Score')).toBeInTheDocument();
     expect(card.getByText('Emergency Fund')).toBeInTheDocument();
     expect(card.getByText('Spend Consistency')).toBeInTheDocument();
     expect(card.getByText('Cash Flow Stability')).toBeInTheDocument();
-    expect(card.getByText('100%')).toBeInTheDocument(); // Debt Utilization
+    expect(card.getByText('100%')).toBeInTheDocument(); // Debt Score
     expect(card.getByText('50%')).toBeInTheDocument(); // Spend Consistency
+  });
+
+  it("colors each breakdown bar by its OWN score, not the overall label", async () => {
+    // A perfect Debt Score (100 -- no credit card debt) must render as a healthy-colored bar even
+    // when the overall health score is poor and every other component is struggling. Before this
+    // fix, every bar inherited the overall label's color, so a 100 rendered as full-width red --
+    // reading as "maxed out" regardless of what its own number said.
+    vi.mocked(dashboardApi.summary).mockResolvedValue(summary({
+      healthScore: 28, healthLabel: 'Needs Attention',
+      healthBreakdown: { 'Savings Rate': 0, 'Debt Score': 100, 'Emergency Fund': 9, 'Spend Consistency': 8, 'Cash Flow Stability': 50 },
+    }));
+    renderDashboard();
+
+    const heading = await screen.findByText('Financial Health Score');
+    const card = within(heading.closest('div.bg-card') as HTMLElement);
+    const debtRow = card.getByText('Debt Score').closest('div')!.parentElement!;
+    const debtBar = debtRow.querySelector('.bg-success, .bg-primary, .bg-warning, .bg-danger');
+    expect(debtBar).toHaveClass('bg-success');
+
+    const savingsRow = card.getByText('Savings Rate').closest('div')!.parentElement!;
+    const savingsBar = savingsRow.querySelector('.bg-success, .bg-primary, .bg-warning, .bg-danger');
+    expect(savingsBar).toHaveClass('bg-danger');
   });
 
   it('reflects a low score honestly rather than always looking healthy', async () => {
     vi.mocked(dashboardApi.summary).mockResolvedValue(summary({
       healthScore: 28, healthLabel: 'Needs Attention',
-      healthBreakdown: { 'Savings Rate': 10, 'Debt Utilization': 20, 'Emergency Fund': 15, 'Spend Consistency': 40, 'Cash Flow Stability': 35 },
+      healthBreakdown: { 'Savings Rate': 10, 'Debt Score': 20, 'Emergency Fund': 15, 'Spend Consistency': 40, 'Cash Flow Stability': 35 },
     }));
     renderDashboard();
 

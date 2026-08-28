@@ -3,28 +3,39 @@ name: Mobile E2E (Maestro)
 # See mobile/.maestro/README.md for the full "why" -- this header covers only the CI-shaped
 # decisions.
 #
-# NIGHTLY, NOT PER-PR -- same trade e2e-nightly.yml makes for the web suite, for a stronger
-# version of the same reason. This is the first CI job in the repo to build native Android code
-# and boot an emulator: `docs/engineering/mobile/mobile-setup.md`'s own validation table recorded
-# the JDK 21 Gradle build as "in progress" with no completed result before the work behind this
-# workflow finished it, and an Android emulator on a GitHub-hosted runner is slower and flakier
-# than anything else in this repo's CI. A brand-new, unproven, ten-plus-minute job that every PR
-# waited on would be exactly the kind of suite ci.yml's own comments warn people learn to route
-# around. `workflow_dispatch` still exists so a release can force a run on demand. Promoting this
-# to ci.yml is a reasonable next step once it's proven stable across enough nightly runs -- not
-# something this file decides on its own behalf.
+# PER-PR (path-filtered), NOT a required check yet -- promoted from nightly-only after this job's
+# first-ever fully green run (2026-08-28, run 33162043620 -- synthetic-ok: a public GitHub
+# Actions run ID, not financial/customer data), which took 9 attempts and 5 separate
+# infra fixes to reach: JDK selection, an adb-install race, a `script:` block that never actually
+# ran as one shell session under reactivecircus/android-emulator-runner, missing KVM group
+# permissions, and two real Maestro-flow bugs (a keyboard hijack, two below-the-fold scroll gaps).
+# That history is exactly why this isn't wired into main's required status checks yet -- a still-
+# possible infra flake shouldn't be able to block an unrelated PR from merging until this has run
+# clean across more than one day. `paths: mobile/**` keeps the ~25-minute emulator boot off every
+# PR that can't have touched this, matching ci.yml's own path-scoping reasoning for its jobs. The
+# nightly schedule stays on as a full-repo safety net regardless of what changed -- the same trade
+# e2e-nightly.yml makes for the web suite, just no longer the ONLY trigger. `workflow_dispatch`
+# still exists so a release can force a run on demand.
 #
 # 03:15 UTC, offset from e2e-nightly.yml's 03:00 and gitleaks-nightly.yml's 03:30 for the same
 # reason those two are offset from each other: keeping schedules visibly distinct in the Actions
 # history, not because the jobs would conflict (GitHub-hosted runners give every job its own VM).
 on:
+  pull_request:
+    paths:
+      - 'mobile/**'
+      - '.github/workflows/maestro-nightly.yml'
   schedule:
     - cron: '15 3 * * *'
   workflow_dispatch:
 
+# Per-ref, not the single global lane this had while nightly-only -- that would have serialised
+# every open PR's run behind one queue once this started triggering on pull_request. Matches
+# ci.yml's own group exactly: a new push supersedes the in-flight run on any branch except main,
+# where every run's result (nightly or workflow_dispatch) is worth keeping rather than discarding.
 concurrency:
-  group: maestro-mobile-e2e
-  cancel-in-progress: false
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 permissions:
   contents: read
