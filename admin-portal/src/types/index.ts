@@ -710,6 +710,51 @@ export interface ReconciliationExplorerTrace {
   classification: ReconciliationExplorerClassification;
 }
 
+/* ── Insight Explorer ──────────────────────────────────────────────────────────────────────────
+ * One user's dashboard insights, traced back to the transaction set and formula that produced
+ * each number (AdminInsightsExplorerController). Mirrors backend InsightsExplorerDto exactly.
+ */
+
+/** rawAmount and reportableAmount differ when a refund was netted off this expense -- the gap
+ *  between the two IS the trace for that transaction. */
+export interface InsightsExplorerTracedTransaction {
+  transactionId: string;
+  description: string | null;
+  rawAmount: number;
+  reportableAmount: number;
+  txnDate: string;
+}
+
+export interface InsightsExplorerTotalSpend {
+  amount: number;
+  categoryCount: number;
+  transactions: InsightsExplorerTracedTransaction[];
+}
+
+export interface InsightsExplorerTopCategory {
+  category: string;
+  amount: number;
+  transactions: InsightsExplorerTracedTransaction[];
+}
+
+export interface InsightsExplorerTopMerchant {
+  merchant: string;
+  amount: number;
+  transactions: InsightsExplorerTracedTransaction[];
+}
+
+/** reportingMonth and every number are null when the user has no reportable expense
+ *  transactions at all -- the same state the user-facing dashboard answers with its own
+ *  "upload or add transactions" sentence, not a lookup failure. */
+export interface InsightsExplorerTrace {
+  userId: string;
+  reportingMonth: string | null;
+  reportingMonthIsCurrent: boolean;
+  totalSpend: InsightsExplorerTotalSpend | null;
+  topCategory: InsightsExplorerTopCategory | null;
+  topMerchant: InsightsExplorerTopMerchant | null;
+}
+
 interface WorkspaceHealthDto {
   rulesEnabled: boolean;
   merchantLearningActive: boolean;
