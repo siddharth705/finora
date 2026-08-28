@@ -116,6 +116,7 @@ public class DashboardService {
         // says so with null (which MetricCard already renders as a muted "--" rather than a number).
         String comparisonGateReason = priorMonthGateReason(active, priorMonth);
         boolean priorMonthReliable = comparisonGateReason == null;
+        Double expenseDeltaPct = pct(expenseCur, expensePrior, priorMonthReliable);
 
         BigDecimal savingsRate = incomeCur.compareTo(BigDecimal.ZERO) > 0
                 ? netCur.divide(incomeCur, 4, RoundingMode.HALF_UP).multiply(BigDecimal.valueOf(100))
@@ -129,6 +130,18 @@ public class DashboardService {
                 .collect(Collectors.groupingBy(
                         t -> categoriesById.getOrDefault(t.getCategoryId(), unknownCategory()).getName(),
                         Collectors.reducing(BigDecimal.ZERO, refunds::reportableAmount, BigDecimal::add)));
+
+        // Which categories are actually behind a real (non-gated) Total Expenses delta -- e.g.
+        // "Dining spend rose 42%" instead of leaving "expenses are up 12%" unexplained. Deliberately
+        // built from the SAME currentMonth/priorMonth spendByCategory maps expenseDeltaPct itself
+        // comes from, not InsightsService's rolling 3-month average (a different prior-period
+        // definition) -- a category breakdown computed on a different comparison than the number
+        // it's explaining would be a fresh instance of the class of bug Comparison Gating exists to
+        // prevent. Empty whenever expenseDeltaPct itself is null: there's nothing to explain about a
+        // number that isn't being shown, and #490's "Why?" disclosure already covers that case.
+        List<DashboardSummaryDto.CategoryMover> expenseCategoryMovers = expenseDeltaPct != null
+                ? categoryMovers(spendByCategory, categorySpendForMonth(active, priorMonth, categoriesById, refunds))
+                : List.of();
 
         // "Other" (CategorizationService/CategoryRules's literal fallback name when nothing matched
         // a rule, keyword, or learned pattern) is a REAL, resolvable category -- not the same thing
@@ -217,7 +230,7 @@ public class DashboardService {
         return new DashboardSummaryDto(
                 liquid, totalAssets, liabilities, netWorth,
                 incomeCur, expenseCur, netCur, savingsRate,
-                pct(incomeCur, incomePrior, priorMonthReliable), pct(expenseCur, expensePrior, priorMonthReliable),
+                pct(incomeCur, incomePrior, priorMonthReliable), expenseDeltaPct,
                 pct(netCur, netPrior, priorMonthReliable),
                 health.score(), health.label(), health.breakdown(),
                 health.available(), health.transactionCount(), health.minTransactions(),
@@ -228,7 +241,8 @@ public class DashboardService {
                 limitedHistory, months.size(), LIMITED_HISTORY_MONTH_FLOOR, statementCount, accounts.size(),
                 categoryReviewWarning, categoryReviewSpendPct, categoryReviewSpend,
                 categoryReviewTransactionCount, CATEGORY_REVIEW_SPEND_WARNING_THRESHOLD_PCT,
-                comparisonGateReason, MIN_TRANSACTIONS_FOR_DELTA_COMPARISON
+                comparisonGateReason, MIN_TRANSACTIONS_FOR_DELTA_COMPARISON,
+                expenseCategoryMovers
         );
     }
 
@@ -285,6 +299,47 @@ public class DashboardService {
         if (!priorReliable || prior == null || prior.compareTo(BigDecimal.ZERO) == 0) return null;
         return current.subtract(prior).divide(prior.abs(), 6, RoundingMode.HALF_UP)
                 .multiply(BigDecimal.valueOf(100)).doubleValue();
+    }
+
+    /** Same current-month-EXPENSE-by-category grouping spendByCategory (in summarize()) uses,
+     *  parameterized by month so it can be called again for priorMonth to back
+     *  expenseCategoryMovers. */
+    private Map<String, BigDecimal> categorySpendForMonth(List<Transaction> active, String month,
+                                                            Map<UUID, Category> categoriesById, RefundNetting refunds) {
+        if (month == null) return Map.of();
+        return active.stream()
+                .filter(t -> t.getTxnType() == Transaction.Type.EXPENSE
+                        && Objects.equals(YearMonth.from(t.getTxnDate()).toString(), month))
+                .collect(Collectors.groupingBy(
+                        t -> categoriesById.getOrDefault(t.getCategoryId(), unknownCategory()).getName(),
+                        Collectors.reducing(BigDecimal.ZERO, refunds::reportableAmount, BigDecimal::add)));
+    }
+
+    /** The categories behind an expense delta, ranked by rupee contribution rather than percentage:
+     *  a category going from ₹50 to ₹500 is a 900% swing but a smaller real contributor to
+     *  expenseDeltaPct than one going from ₹5,000 to ₹8,000 (60%), and rupees are what
+     *  expenseDeltaPct's own numerator is made of. Unchanged categories are dropped rather than
+     *  shown at 0% -- nothing to explain there. */
+    private List<DashboardSummaryDto.CategoryMover> categoryMovers(Map<String, BigDecimal> currentByCat,
+                                                                     Map<String, BigDecimal> priorByCat) {
+        Set<String> categories = new HashSet<>(currentByCat.keySet());
+        categories.addAll(priorByCat.keySet());
+        return categories.stream()
+                .map(cat -> {
+                    BigDecimal current = currentByCat.getOrDefault(cat, BigDecimal.ZERO);
+                    BigDecimal prior = priorByCat.getOrDefault(cat, BigDecimal.ZERO);
+                    Double pctChange = prior.compareTo(BigDecimal.ZERO) > 0
+                            ? current.subtract(prior).divide(prior, 6, RoundingMode.HALF_UP)
+                                    .multiply(BigDecimal.valueOf(100)).doubleValue()
+                            : null;
+                    return new DashboardSummaryDto.CategoryMover(cat, current, prior, pctChange);
+                })
+                .filter(m -> m.currentAmount().compareTo(m.priorAmount()) != 0)
+                .sorted(Comparator.comparing(
+                        (DashboardSummaryDto.CategoryMover m) -> m.currentAmount().subtract(m.priorAmount()).abs())
+                        .reversed())
+                .limit(3)
+                .toList();
     }
 
     // A calendar month at least MIN_TRANSACTIONS_FOR_DELTA_COMPARISON transactions is required to
