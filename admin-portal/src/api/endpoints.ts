@@ -28,6 +28,7 @@ import type {
   ImportTrace,
   CustomerFailureSummary,
   ReconciliationExplorerTrace,
+  InsightsExplorerTrace,
 } from '../types';
 
 // Which portal this account belongs to. The same person may hold a USER account and an ADMIN
@@ -452,6 +453,17 @@ export const adminReconciliationApi = {
 export const adminReconciliationExplorerApi = {
   trace: (transactionId: string) =>
     api.get<ReconciliationExplorerTrace>(`/admin/reconciliation/explorer/${encodeURIComponent(transactionId)}`)
+      .then((r) => r.data),
+};
+
+/** One user's dashboard insights, traced back to the transaction set and formula that produced
+ *  each number -- Phase 2's Founder Operations Dashboard, Insight Explorer
+ *  (AdminInsightsExplorerController). Gated on INSIGHTS_EXPLORER_VIEW, its own permission -- see
+ *  that controller's own comment for why this isn't folded into USER_VIEW or
+ *  RECONCILIATION_VIEW. A 404 means no user with that id exists, not a permission problem. */
+export const adminInsightsExplorerApi = {
+  trace: (userId: string) =>
+    api.get<InsightsExplorerTrace>(`/admin/insights/explorer/${encodeURIComponent(userId)}`)
       .then((r) => r.data),
 };
 

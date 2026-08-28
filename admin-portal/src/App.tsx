@@ -31,6 +31,7 @@ const LearningQueue = lazy(() => import('./pages/LearningQueue'));
 const MerchantReview = lazy(() => import('./pages/MerchantReview'));
 const ReconciliationMonitor = lazy(() => import('./pages/ReconciliationMonitor'));
 const ReconciliationExplorer = lazy(() => import('./pages/ReconciliationExplorer'));
+const InsightsExplorer = lazy(() => import('./pages/InsightsExplorer'));
 const PlatformAnalytics = lazy(() => import('./pages/PlatformAnalytics'));
 const Subscriptions = lazy(() => import('./pages/Subscriptions'));
 const Referrals = lazy(() => import('./pages/Referrals'));
@@ -91,6 +92,7 @@ export default function App() {
               <Route path="/learning-queue" element={<ProtectedRoute><LearningQueue /></ProtectedRoute>} />
               <Route path="/reconciliation" element={<ProtectedRoute><ReconciliationMonitor /></ProtectedRoute>} />
               <Route path="/reconciliation-explorer" element={<ProtectedRoute><ReconciliationExplorer /></ProtectedRoute>} />
+              <Route path="/insights-explorer" element={<ProtectedRoute><InsightsExplorer /></ProtectedRoute>} />
               <Route path="/analytics" element={<ProtectedRoute><PlatformAnalytics /></ProtectedRoute>} />
               <Route path="/subscriptions" element={<ProtectedRoute><Subscriptions /></ProtectedRoute>} />
               <Route path="/referrals" element={<ProtectedRoute><Referrals /></ProtectedRoute>} />
