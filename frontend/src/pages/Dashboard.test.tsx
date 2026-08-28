@@ -345,6 +345,65 @@ describe('Dashboard — Limited History Banner', () => {
   });
 });
 
+describe('Dashboard — Next Actions', () => {
+  beforeEach(() => {
+    vi.mocked(dashboardApi.summary).mockReset().mockResolvedValue(summary());
+    vi.mocked(dashboardApi.journey).mockReset().mockResolvedValue({ milestones: [] });
+    vi.mocked(accountsApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(transactionsApi.search).mockReset().mockResolvedValue({
+      content: [], page: 0, size: 4, totalElements: 12, totalPages: 3,
+    });
+    vi.mocked(goalsApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(insightsApi.get).mockReset().mockResolvedValue({ sentences: [], movers: [] });
+    vi.mocked(userApi.get).mockReset().mockResolvedValue({
+      email: 'amy@example.test', fullName: 'Amy Santiago', lowBalanceThreshold: 2000,
+      theme: 'system', timezone: 'Asia/Kolkata', phoneNumber: '+919876500000',
+      phoneVerified: true, createdAt: '2026-01-01T00:00:00Z', passwordChangedAt: null, signInMethod: 'PASSWORD',
+    });
+    vi.mocked(budgetsApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(reportsApi.availableMonths).mockReset().mockResolvedValue(['2026-08']);
+    vi.mocked(reportsApi.forMonth).mockReset().mockResolvedValue({
+      month: '2026-08', income: 80000, expense: 45000, categories: [],
+    });
+    vi.mocked(recurringApi.list).mockReset().mockResolvedValue([]);
+  });
+
+  it('lists every notification the backend already computed', async () => {
+    vi.mocked(dashboardApi.summary).mockResolvedValue(summary({
+      notifications: [
+        'HDFC Credit Card payment of 5000.00 is due in 3 day(s).',
+        'Groceries spending of 6000.00 has reached your monthly budget of 5000.00.',
+      ],
+    }));
+    renderDashboard();
+
+    expect(await screen.findByText('Next Actions')).toBeInTheDocument();
+    expect(screen.getByText('HDFC Credit Card payment of 5000.00 is due in 3 day(s).')).toBeInTheDocument();
+    expect(screen.getByText('Groceries spending of 6000.00 has reached your monthly budget of 5000.00.')).toBeInTheDocument();
+  });
+
+  it('shows a positive empty state rather than an empty card when nothing needs attention', async () => {
+    vi.mocked(dashboardApi.summary).mockResolvedValue(summary({ notifications: [] }));
+    renderDashboard();
+
+    expect(await screen.findByText('Next Actions')).toBeInTheDocument();
+    expect(screen.getByText('Nothing needs your attention right now.')).toBeInTheDocument();
+  });
+
+  it('stays hidden for a zero-transaction account -- nothing has been computed here yet', async () => {
+    vi.mocked(transactionsApi.search).mockResolvedValue({
+      content: [], page: 0, size: 4, totalElements: 0, totalPages: 0,
+    });
+    vi.mocked(dashboardApi.summary).mockResolvedValue(summary({
+      notifications: ['This should never render while the account is empty.'],
+    }));
+    renderDashboard();
+
+    await screen.findByText('No transactions yet'); // Recent Transactions' own per-section empty state
+    expect(screen.queryByText('Next Actions')).not.toBeInTheDocument();
+  });
+});
+
 describe('Dashboard — comparison gate "Why?" disclosure', () => {
   beforeEach(() => {
     vi.mocked(dashboardApi.summary).mockReset();
