@@ -666,16 +666,18 @@ Expected: PASS (4/4)
 
 ```java
 // backend/src/main/java/com/finora/controller/CategoryController.java
-// Full replacement for the class, adding the categoryService field/constructor param, the
-// CreateCategoryRequest record, and the create() endpoint. The existing list() method and its
-// imports are unchanged from Task 1's version.
+// Full replacement for the class -- includes Task 2's existing options() endpoint verbatim
+// (do not drop it), plus this task's new categoryService field/constructor param,
+// CreateCategoryRequest record, and create() endpoint.
 package com.finora.controller;
 
 import com.finora.dto.ApiResponse;
 import com.finora.dto.CategoryDto;
+import com.finora.dto.CategoryOptionsDto;
 import com.finora.repository.CategoryRepository;
 import com.finora.security.CurrentUser;
 import com.finora.service.CategoryService;
+import com.finora.util.CategoryPalette;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -709,6 +711,17 @@ public class CategoryController {
         return ApiResponse.ok(categories);
     }
 
+    @GetMapping("/options")
+    public ApiResponse<CategoryOptionsDto> options() {
+        var icons = CategoryPalette.ICONS.entrySet().stream()
+                .map(e -> new CategoryOptionsDto.Option(e.getKey(), e.getValue()))
+                .toList();
+        var colors = CategoryPalette.COLORS.entrySet().stream()
+                .map(e -> new CategoryOptionsDto.Option(e.getKey(), e.getValue()))
+                .toList();
+        return ApiResponse.ok(new CategoryOptionsDto(icons, colors));
+    }
+
     @PostMapping
     public ApiResponse<CategoryDto> create(@RequestBody CreateCategoryRequest request) {
         var c = categoryService.create(currentUser.id(), request.name(), request.icon(), request.color());
@@ -716,7 +729,6 @@ public class CategoryController {
     }
 }
 ```
-Note: the `/options` endpoint from Task 2 (`GET /options`) and the DTO import for `CategoryOptionsDto`/`CategoryPalette` must be re-added to this file too, since this is shown as a full-file replacement — carry that method and its imports over from Task 2 when applying this change.
 
 - [ ] **Step 6: Add the integration test to `CategoryControllerIT`**
 
