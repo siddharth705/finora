@@ -90,7 +90,12 @@ export function CategoryCombobox({
     () => pool.filter((c) => c.name.toLowerCase().includes(trimmedQuery.toLowerCase())),
     [pool, trimmedQuery],
   );
-  const exactNameMatch = pool.some((c) => c.name.toLowerCase() === trimmedQuery.toLowerCase());
+  // Against the UNFILTERED list, unlike everything else here, which reads `pool`. `pool` drops
+  // excludeCategoryId, and inside CategoryDeleteDialog's reassignment picker that is the very
+  // category being deleted -- so typing its exact name found no match, offered "+ Create" for a
+  // name that plainly already exists, and 409ed on click. Only this existence check crosses the
+  // exclusion; the rows offered for selection still must not include the excluded category.
+  const exactNameMatch = categories.some((c) => c.name.toLowerCase() === trimmedQuery.toLowerCase());
 
   const fuzzySuggestions = useMemo(() => {
     if (!trimmedQuery || exactMatches.length > 0) return [];

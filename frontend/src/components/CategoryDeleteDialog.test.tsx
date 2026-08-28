@@ -116,6 +116,37 @@ describe('CategoryDeleteDialog', () => {
     });
   });
 
+  // Adversarial review, minor 4. A failed usage fetch left usage null, which is exactly what
+  // "still loading" looks like: Delete stayed disabled forever with nothing explaining why.
+  it('shows a visible notice when the usage fetch fails', async () => {
+    vi.mocked(categoriesApi.usage).mockRejectedValue(new Error('network'));
+    renderWithClient(<CategoryDeleteDialog category={CATEGORY} onDeleted={vi.fn()} onCancel={vi.fn()} />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/couldn't check what this category is used for/i)).toBeInTheDocument();
+    });
+    expect(screen.getByRole('button', { name: /delete/i })).toBeDisabled();
+  });
+
+  // Adversarial review, minor 5. exactNameMatch was computed over the excludeCategoryId-filtered
+  // pool, so typing the name of the very category being deleted found no match and offered
+  // "+ Create" for a category that plainly already exists -- which 409s on click.
+  it('does not offer to create a category whose name is the excluded one', async () => {
+    const user = userEvent.setup();
+    vi.mocked(categoriesApi.usage).mockResolvedValue({
+      transactionCount: 5, hasBudget: false, ruleCount: 0, learningRowCount: 0,
+    });
+    renderWithClient(<CategoryDeleteDialog category={CATEGORY} onDeleted={vi.fn()} onCancel={vi.fn()} />);
+
+    const combobox = await screen.findByRole('combobox');
+    await user.click(combobox);
+    await user.type(combobox, CATEGORY.name);
+
+    await waitFor(() => {
+      expect(screen.queryByText(`Create "${CATEGORY.name}"`)).not.toBeInTheDocument();
+    });
+  });
+
   it('shows an error and does not call onDeleted when delete fails', async () => {
     const user = userEvent.setup();
     vi.mocked(categoriesApi.usage).mockResolvedValue({ transactionCount: 0, hasBudget: false, ruleCount: 0, learningRowCount: 0 });

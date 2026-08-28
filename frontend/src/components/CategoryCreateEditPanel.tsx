@@ -41,7 +41,11 @@ export function CategoryCreateEditPanel({
       // Every CategoryCombobox on the page reads the same ['categories'] query. Without this, a
       // category created in one of them stays invisible to its siblings, which then offer
       // "+ Create" for a name that now exists and 409 on the second create.
-      queryClient.invalidateQueries({ queryKey: ['categories'] });
+      void queryClient.invalidateQueries({ queryKey: ['categories'] });
+      // A rename changes the category's display name everywhere it is shown, transaction rows
+      // included -- same reason CategoryDeleteDialog invalidates this after a reassignment.
+      // Create can't affect existing transactions, so it is left alone.
+      if (mode === 'edit') void queryClient.invalidateQueries({ queryKey: ['transactions'] });
       onSaved(saved);
     } catch (e: any) {
       setError(e?.response?.data?.message ?? 'Could not save this category.');

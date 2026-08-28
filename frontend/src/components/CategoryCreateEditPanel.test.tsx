@@ -14,7 +14,12 @@ vi.mock('../api/endpoints', () => ({
 // cache, so a provider is required. Fresh client per render keeps tests isolated.
 function renderWithClient(ui: ReactElement) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>);
+  const invalidated: unknown[][] = [];
+  vi.spyOn(queryClient, 'invalidateQueries').mockImplementation((filters?: any) => {
+    invalidated.push(filters?.queryKey);
+    return Promise.resolve();
+  });
+  return { ...render(<QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>), invalidated };
 }
 
 describe('CategoryCreateEditPanel', () => {
@@ -44,6 +49,39 @@ describe('CategoryCreateEditPanel', () => {
 
     expect(categoriesApi.create).toHaveBeenCalledWith('SIP', 'home', 'blue');
     expect(onSaved).toHaveBeenCalledWith({ id: '1', name: 'SIP', isSystem: false, icon: 'home', color: 'blue' });
+  });
+
+  // Adversarial review, minor 3. A rename changes the category's display name on every
+  // transaction row showing it, so ['transactions'] is as stale as ['categories'] afterwards --
+  // CategoryDeleteDialog already invalidates both after a reassignment for the same reason.
+  it('invalidates transactions as well as categories after an edit, but not after a create', async () => {
+    const user = userEvent.setup();
+    vi.mocked(categoriesApi.update).mockResolvedValue({
+      id: '1', name: 'SIP', isSystem: false, icon: 'tag', color: 'gray',
+    });
+    const edit = renderWithClient(
+      <CategoryCreateEditPanel
+        mode="edit" categoryId="1" initialName="Mutual Fund SIP" onSaved={vi.fn()} onCancel={vi.fn()}
+      />,
+    );
+    await screen.findByText('Tag');
+    await user.click(screen.getByRole('button', { name: /save/i }));
+
+    expect(edit.invalidated).toContainEqual(['categories']);
+    expect(edit.invalidated).toContainEqual(['transactions']);
+    edit.unmount();
+
+    vi.mocked(categoriesApi.create).mockResolvedValue({
+      id: '2', name: 'SIP', isSystem: false, icon: 'tag', color: 'gray',
+    });
+    const create = renderWithClient(
+      <CategoryCreateEditPanel mode="create" initialName="SIP" onSaved={vi.fn()} onCancel={vi.fn()} />,
+    );
+    await screen.findByText('Tag');
+    await user.click(screen.getByRole('button', { name: /save/i }));
+
+    expect(create.invalidated).toContainEqual(['categories']);
+    expect(create.invalidated).not.toContainEqual(['transactions']);
   });
 
   it('rejects saving a blank name', async () => {

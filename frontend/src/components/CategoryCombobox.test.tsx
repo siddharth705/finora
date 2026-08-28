@@ -196,7 +196,7 @@ describe('CategoryCombobox', () => {
       const user = userEvent.setup();
       const onChange = vi.fn();
       vi.mocked(categoriesApi.usage).mockResolvedValue({
-        transactionCount: 0, hasBudget: false, ruleCount: 0,
+        transactionCount: 0, hasBudget: false, ruleCount: 0, learningRowCount: 0,
       });
       vi.mocked(categoriesApi.delete).mockResolvedValue({} as never);
       vi.mocked(categoriesApi.list)

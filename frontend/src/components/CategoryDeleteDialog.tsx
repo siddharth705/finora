@@ -25,9 +25,19 @@ export function CategoryDeleteDialog({ category, onDeleted, onCancel }: Category
   const [targetId, setTargetId] = useState<string | undefined>(undefined);
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // A failed usage fetch used to be indistinguishable from "still loading" -- usage stayed null
+  // either way, so Delete sat silently disabled forever with nothing on screen explaining why.
+  // Same notice pattern CategoryCombobox uses for its own failed category fetch.
+  const [usageFailed, setUsageFailed] = useState(false);
 
   useEffect(() => {
-    categoriesApi.usage(category.id).then(setUsage).catch(() => setUsage(null));
+    setUsageFailed(false);
+    categoriesApi.usage(category.id)
+      .then((u) => setUsage(u))
+      .catch(() => {
+        setUsage(null);
+        setUsageFailed(true);
+      });
   }, [category.id]);
 
   const hasDependents = usage != null && (usage.transactionCount > 0 || usage.hasBudget
@@ -39,9 +49,9 @@ export function CategoryDeleteDialog({ category, onDeleted, onCancel }: Category
     setError(null);
     try {
       await categoriesApi.delete(category.id, targetId);
-      queryClient.invalidateQueries({ queryKey: ['categories'] });
+      void queryClient.invalidateQueries({ queryKey: ['categories'] });
       // Reassignment rewrites transactions' categories, so anything showing them is stale too.
-      queryClient.invalidateQueries({ queryKey: ['transactions'] });
+      void queryClient.invalidateQueries({ queryKey: ['transactions'] });
       onDeleted();
     } catch (e: any) {
       setError(e?.response?.data?.message ?? 'Could not delete this category.');
@@ -64,6 +74,11 @@ export function CategoryDeleteDialog({ category, onDeleted, onCancel }: Category
             </li>
           )}
         </ul>
+      )}
+      {usageFailed && (
+        <p className="text-[11px] text-warning">
+          Couldn't check what this category is used for — please try again.
+        </p>
       )}
       {hasDependents && (
         <div>
