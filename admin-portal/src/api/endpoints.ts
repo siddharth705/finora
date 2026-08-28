@@ -26,6 +26,7 @@ import type {
   LayoutTimelinePoint,
   LayoutEvidenceReport,
   ImportTrace,
+  ImportRowTrace,
   CustomerFailureSummary,
   ReconciliationExplorerTrace,
   InsightsExplorerTrace,
@@ -543,6 +544,15 @@ export const adminImportTraceApi = {
       .then((r) => r.data),
   byJob: (jobId: string) =>
     api.get<ImportTrace>(`/admin/imports/traces/by-job/${encodeURIComponent(jobId)}`)
+      .then((r) => r.data),
+};
+
+/** One import, row by row -- Founder Operations Dashboard, Import Row Trace
+ *  (AdminImportRowTraceController). Same PLATFORM_DIAGNOSTICS_VIEW permission as
+ *  adminImportTraceApi above; a 404 means no statement import with that id exists. */
+export const adminImportRowTraceApi = {
+  trace: (statementImportId: string) =>
+    api.get<ImportRowTrace>(`/admin/imports/row-trace/${encodeURIComponent(statementImportId)}`)
       .then((r) => r.data),
 };
 

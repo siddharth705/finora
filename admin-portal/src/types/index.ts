@@ -710,6 +710,28 @@ export interface ReconciliationExplorerTrace {
   classification: ReconciliationExplorerClassification;
 }
 
+/* ── Import Row Trace ──────────────────────────────────────────────────────────────────────────
+ * One import, row by row (AdminImportRowTraceController) -- scoped to successfully-imported rows
+ * only; a dropped or excluded-by-user row stays aggregate-only, same as ImportTrace's existing
+ * verification findings. Mirrors backend ImportRowTraceDto exactly.
+ */
+
+export interface ImportRowOutcome {
+  rowPosition: number;
+  transactionId: string;
+  description: string | null;
+  amount: number;
+  txnDate: string;
+}
+
+/** rows is empty (not missing) when this import predates row-position tracking, or was confirmed
+ *  by a client that predates echoing it -- "no position data available" is a real, statable
+ *  answer, not an error. */
+export interface ImportRowTrace {
+  statementImportId: string;
+  rows: ImportRowOutcome[];
+}
+
 /* ── Insight Explorer ──────────────────────────────────────────────────────────────────────────
  * One user's dashboard insights, traced back to the transaction set and formula that produced
  * each number (AdminInsightsExplorerController). Mirrors backend InsightsExplorerDto exactly.

@@ -42,6 +42,7 @@ const Diagnostics = lazy(() => import('./pages/Diagnostics'));
 const LayoutIntelligence = lazy(() => import('./pages/LayoutIntelligence'));
 const LayoutStudio = lazy(() => import('./pages/LayoutStudio'));
 const ImportTrace = lazy(() => import('./pages/ImportTrace'));
+const ImportRowTrace = lazy(() => import('./pages/ImportRowTrace'));
 const Settings = lazy(() => import('./pages/Settings'));
 
 const queryClient = new QueryClient({
@@ -103,6 +104,7 @@ export default function App() {
               <Route path="/layout-intelligence" element={<ProtectedRoute><LayoutIntelligence /></ProtectedRoute>} />
               <Route path="/layout-studio" element={<ProtectedRoute><LayoutStudio /></ProtectedRoute>} />
               <Route path="/import-trace" element={<ProtectedRoute><ImportTrace /></ProtectedRoute>} />
+              <Route path="/import-row-trace" element={<ProtectedRoute><ImportRowTrace /></ProtectedRoute>} />
               <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
 
               {/* Same bug, same fix as the user app's App.tsx: with no catch-all, any unmatched
