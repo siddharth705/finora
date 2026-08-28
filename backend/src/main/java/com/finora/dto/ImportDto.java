@@ -107,11 +107,41 @@ public class ImportDto {
              * the category came directly from the source file ({@code categorySource == "file"}),
              * which is a fact, not a guess.
              */
-            Integer categoryConfidence
+            Integer categoryConfidence,
+            /**
+             * This row's 1-based position within its section (page range for PDF, or line range
+             * for CSV) as originally parsed -- Founder Operations Dashboard, Import Explorer
+             * (docs/proposals/reconciliation-evolution-roadmap-proposal.md Part 9). Null for
+             * every caller that predates it, and for {@code GmailStagingBridge} (a receipt has no
+             * "row position" the way a statement line does). Set once, at the staging loop
+             * ({@code PreviewGenerator}/{@code PdfPreviewGenerator}) via {@link #withRowPosition}
+             * -- never by {@code TransactionNormalizer.normalize} itself, which has no visibility
+             * into where in the file the row it was handed came from.
+             */
+            Integer rowPosition
     ) {
+        /** The shape every caller used before {@code rowPosition} was added. Defaults null -- see
+         *  that field's own doc comment. */
+        public StagedRow(LocalDate date, String description, BigDecimal amount, String type,
+                          String suggestedCategory, String categorySource, UUID ruleId,
+                          boolean likelyDuplicate, String referenceNumber, BigDecimal balanceAfter,
+                          DuplicateMatch duplicateMatch, RowKind kind, Double confidence,
+                          String merchant, Double merchantConfidence, Integer categoryConfidence) {
+            this(date, description, amount, type, suggestedCategory, categorySource, ruleId,
+                    likelyDuplicate, referenceNumber, balanceAfter, duplicateMatch, kind, confidence,
+                    merchant, merchantConfidence, categoryConfidence, null);
+        }
+
+        /** A copy with {@code rowPosition} set -- see that field's own doc comment. */
+        public StagedRow withRowPosition(int rowPosition) {
+            return new StagedRow(date, description, amount, type, suggestedCategory, categorySource, ruleId,
+                    likelyDuplicate, referenceNumber, balanceAfter, duplicateMatch, kind, confidence,
+                    merchant, merchantConfidence, categoryConfidence, rowPosition);
+        }
+
         /** Pre-categoryConfidence arity (Transaction Intelligence Phase B). Kept so every existing
          *  construction of this 15-component shape -- production and test -- keeps compiling
-         *  unchanged. Defaults categoryConfidence to null. */
+         *  unchanged. Defaults categoryConfidence and rowPosition to null. */
         public StagedRow(LocalDate date, String description, BigDecimal amount, String type,
                           String suggestedCategory, String categorySource, UUID ruleId,
                           boolean likelyDuplicate, String referenceNumber, BigDecimal balanceAfter,
@@ -119,7 +149,7 @@ public class ImportDto {
                           String merchant, Double merchantConfidence) {
             this(date, description, amount, type, suggestedCategory, categorySource, ruleId,
                     likelyDuplicate, referenceNumber, balanceAfter, duplicateMatch, kind, confidence,
-                    merchant, merchantConfidence, null);
+                    merchant, merchantConfidence, null, null);
         }
 
         /**
@@ -689,15 +719,31 @@ public class ImportDto {
             /** Echoed from {@code StagedRow.categoryConfidence} unchanged by review -- see that
              *  field's own doc comment. Lands on {@code Transaction.decisionConfidence} at confirm
              *  time. */
-            Integer categoryConfidence
+            Integer categoryConfidence,
+            /** Echoed from {@code StagedRow.rowPosition} unchanged by review -- see that field's
+             *  own doc comment. Lands on {@code Transaction.sourceRowPosition} at confirm time
+             *  when {@code include} is true; recorded as an excluded-by-user outcome otherwise.
+             *  Null for a client that predates this field, same as every other "carried from
+             *  staging" field above when an older client omits it -- the Import Explorer just has
+             *  nothing to show for that row instead of a wrong answer. */
+            Integer rowPosition
     ) {
+        /** Pre-rowPosition arity (Founder Operations Dashboard, Import Explorer). */
+        public ConfirmedRow(LocalDate date, String description, BigDecimal amount, String type,
+                            String category, boolean include, String categorySource, UUID ruleId,
+                            boolean likelyDuplicate, String referenceNumber, BigDecimal balanceAfter,
+                            boolean confirmedNotDuplicate, Integer categoryConfidence) {
+            this(date, description, amount, type, category, include, categorySource, ruleId,
+                    likelyDuplicate, referenceNumber, balanceAfter, confirmedNotDuplicate, categoryConfidence, null);
+        }
+
         /** Pre-categoryConfidence arity (Transaction Intelligence Phase B). */
         public ConfirmedRow(LocalDate date, String description, BigDecimal amount, String type,
                             String category, boolean include, String categorySource, UUID ruleId,
                             boolean likelyDuplicate, String referenceNumber, BigDecimal balanceAfter,
                             boolean confirmedNotDuplicate) {
             this(date, description, amount, type, category, include, categorySource, ruleId,
-                    likelyDuplicate, referenceNumber, balanceAfter, confirmedNotDuplicate, null);
+                    likelyDuplicate, referenceNumber, balanceAfter, confirmedNotDuplicate, null, null);
         }
 
         /** Pre-WI5 arity. Kept so the many call sites that construct a row without a duplicate

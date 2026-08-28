@@ -166,6 +166,8 @@ export interface ConfirmedRowPayload {
   likelyDuplicate: boolean;
   referenceNumber: string | null;
   balanceAfter: number | null;
+  /** Echoed from StagedRow.rowPosition unchanged -- see that field's own doc comment. */
+  rowPosition: number | null;
   /**
    * The user's ANSWER on the duplicate review screen, as opposed to `likelyDuplicate`, which is the
    * engine's GUESS. True only when the engine flagged the row and the person chose "Import anyway".
