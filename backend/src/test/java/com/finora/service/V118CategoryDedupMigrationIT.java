@@ -155,15 +155,17 @@ class V118CategoryDedupMigrationIT {
         return id;
     }
 
-    private void seedBudget(UUID userId, UUID categoryId, String limit) throws SQLException {
+    private UUID seedBudget(UUID userId, UUID categoryId, String limit) throws SQLException {
+        UUID id = UUID.randomUUID();
         try (PreparedStatement ps = connection.prepareStatement(
                 "INSERT INTO budgets (id, user_id, category_id, monthly_limit) VALUES (?, ?, ?, ?)")) {
-            ps.setObject(1, UUID.randomUUID());
+            ps.setObject(1, id);
             ps.setObject(2, userId);
             ps.setObject(3, categoryId);
             ps.setObject(4, new java.math.BigDecimal(limit));
             ps.executeUpdate();
         }
+        return id;
     }
 
     private void seedLearning(UUID userId, UUID merchantId, UUID categoryId,
@@ -321,13 +323,24 @@ class V118CategoryDedupMigrationIT {
         seedCategory(pair[0], user, "Fuel", false);
         seedCategory(pair[1], user, "fuel", false);
         seedBudget(user, pair[0], "5000.00");
-        seedBudget(user, pair[1], "1200.00");
+        UUID loser = seedBudget(user, pair[1], "1200.00");
 
         assertThatCode(this::migrateThroughV118).doesNotThrowAnyException();
 
         assertThat(count("SELECT count(*) FROM budgets WHERE user_id = ?", user)).isEqualTo(1);
         assertThat(string("SELECT monthly_limit::text FROM budgets WHERE user_id = ?", user))
                 .isEqualTo("5000.00");
+
+        // ...and the limit that was dropped is recorded, since nothing else in the system retains
+        // it once the row is gone.
+        assertThat(count("SELECT count(*) FROM v118_dropped_budgets")).isEqualTo(1);
+        assertThat(string("SELECT user_id::text FROM v118_dropped_budgets")).isEqualTo(user.toString());
+        assertThat(string("SELECT original_category_id::text FROM v118_dropped_budgets"))
+                .isEqualTo(pair[1].toString());
+        assertThat(string("SELECT surviving_category_id::text FROM v118_dropped_budgets"))
+                .isEqualTo(pair[0].toString());
+        assertThat(string("SELECT monthly_limit::text FROM v118_dropped_budgets")).isEqualTo("1200.00");
+        assertThat(string("SELECT budget_id::text FROM v118_dropped_budgets")).isEqualTo(loser.toString());
     }
 
     @Test

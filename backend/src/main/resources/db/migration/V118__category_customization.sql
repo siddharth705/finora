@@ -55,7 +55,10 @@ ALTER TABLE categories
 -- because the de-duplication itself has to be able to violate it: promoting a system row's
 -- canonical spelling onto its survivor (immediately below) means two rows briefly hold the same
 -- exact name, until the loser is deleted at the end of this block.
-ALTER TABLE categories DROP CONSTRAINT categories_user_id_name_key;
+-- IF EXISTS: deterministic that V1 created this constraint, but application.yml sets
+-- baseline-on-migrate: true, so a schema adopted at a baseline rather than migrated from V1
+-- forward could be missing it -- and a failure here blocks the backend's boot.
+ALTER TABLE categories DROP CONSTRAINT IF EXISTS categories_user_id_name_key;
 
 -- A group can legitimately mix a system row and a user-created one ("Dining" seeded at
 -- registration + "dining" typed later by an import). Rather than change the survivor rule for
@@ -138,6 +141,35 @@ FROM grp g WHERE e.category_id = g.id;
 -- survives is deterministic rather than an accident of insertion). The
 -- others are DELETED rather than merged: two monthly limits for one category have no defensible
 -- combination (summing them invents a limit the user never chose).
+-- Audit artifact: the monthly limits the DELETE below drops are otherwise gone without trace, and
+-- there is no way to reconstruct them afterwards. Captured from the pre-DELETE state, with the
+-- category id each budget was originally attached to. Empty in the common case (no duplicates, or
+-- at most one budget per group) and intentionally left in place forever -- nothing drops it.
+CREATE TABLE v118_dropped_budgets AS
+WITH dup AS (
+    SELECT id, user_id,
+           first_value(id) OVER (PARTITION BY user_id, lower(name) ORDER BY id) AS survivor_id,
+           count(*)        OVER (PARTITION BY user_id, lower(name))            AS group_size
+    FROM categories
+),
+grp AS (SELECT id, user_id, survivor_id FROM dup WHERE group_size > 1),
+ranked AS (
+    SELECT b.id AS budget_id, g.survivor_id,
+           row_number() OVER (PARTITION BY b.user_id, g.survivor_id
+                              ORDER BY (b.category_id = g.survivor_id) DESC, b.category_id, b.id) AS rn
+    FROM budgets b JOIN grp g ON b.category_id = g.id
+)
+SELECT b.id AS budget_id,
+       b.user_id,
+       b.category_id AS original_category_id,
+       r.survivor_id AS surviving_category_id,
+       b.monthly_limit,
+       b.created_at,
+       b.updated_at,
+       now() AS dropped_at
+FROM ranked r JOIN budgets b ON b.id = r.budget_id
+WHERE r.rn > 1;
+
 WITH dup AS (
     SELECT id, user_id,
            first_value(id) OVER (PARTITION BY user_id, lower(name) ORDER BY id) AS survivor_id,
