@@ -472,6 +472,127 @@ class V118CategoryDedupMigrationIT {
                 .isEqualTo(6);
     }
 
+    /**
+     * The 25 names {@code AuthService.DEFAULT_CATEGORIES} seeds at registration, with the
+     * icon/color V118's backfill is expected to write onto each of them. Kept in the same order as
+     * that map so a drift between the two is obvious when reading them side by side.
+     */
+    private static final String[][] DEFAULT_CATEGORIES = {
+            {"Salary", "arrow-down-circle", "green"},
+            {"Rent", "home", "blue"},
+            {"Groceries", "shopping-cart", "green"},
+            {"Dining", "utensils", "orange"},
+            {"Transport", "car", "gray"},
+            {"Utilities", "zap", "yellow"},
+            {"Shopping", "shopping-bag", "purple"},
+            {"Health", "heart-pulse", "red"},
+            {"Entertainment", "film", "pink"},
+            {"Investments", "trending-up", "teal"},
+            {"Fees/Interest", "percent", "gray"},
+            {"Transfer", "repeat", "blue"},
+            {"Friend Repayment", "users", "teal"},
+            {"Loan EMI", "landmark", "red"},
+            {"Insurance", "shield", "blue"},
+            {"Education", "graduation-cap", "purple"},
+            {"Subscriptions", "refresh-cw", "pink"},
+            {"Travel", "plane", "teal"},
+            {"Gifts & Donations", "gift", "pink"},
+            {"Pets", "paw-print", "orange"},
+            {"Home & Furnishing", "sofa", "yellow"},
+            {"Taxes", "receipt", "gray"},
+            {"Cash Withdrawal", "banknote", "green"},
+            {"Business Expenses", "briefcase", "blue"},
+            {"Other", "tag", "gray"},
+    };
+
+    /**
+     * The shape essentially every real environment is in on deploy day: a registered user with the
+     * full seeded category set, real referencing rows, and NOT ONE case-variant duplicate anywhere.
+     * The de-duplication block must be a complete no-op here -- every id, every FK and every row
+     * count identical afterwards -- with the icon/color backfill the only thing that touches data.
+     */
+    @Test
+    void aPopulatedDuplicateFreeSchema_isLeftEntirelyUntouchedApartFromTheIconColorBackfill()
+            throws SQLException {
+        UUID user = seedUser();
+        UUID account = seedAccount(user);
+        UUID merchant = seedMerchant(user, "Indian Oil");
+
+        java.util.Map<String, UUID> categoryIds = new java.util.LinkedHashMap<>();
+        for (String[] row : DEFAULT_CATEGORIES) {
+            UUID id = UUID.randomUUID();
+            seedCategory(id, user, row[0], true);
+            categoryIds.put(row[0], id);
+        }
+        // Two user-created categories alongside the seeded ones -- distinct names, so still no
+        // duplicate group, but they must not pick up a system icon/color either.
+        UUID fuel = UUID.randomUUID();
+        UUID gym = UUID.randomUUID();
+        seedCategory(fuel, user, "Fuel", false);
+        seedCategory(gym, user, "gym", false);
+
+        UUID groceriesTxn = seedTransaction(user, account, categoryIds.get("Groceries"));
+        UUID fuelTxn = seedTransaction(user, account, fuel);
+        UUID budget = seedBudget(user, categoryIds.get("Dining"), "8000.00");
+        Instant confirmed = Instant.parse("2026-03-01T00:00:00Z");
+        seedLearning(user, merchant, fuel, 7, 64, confirmed);
+        seedLearning(user, merchant, categoryIds.get("Transport"), 4, 36, confirmed);
+        seedMerchantCategoryMap(user, "indian oil", fuel);
+        seedAudit(user, merchant, categoryIds.get("Transport"), fuel);
+        seedLearningEvent(user, merchant, fuel);
+
+        assertThatCode(this::migrateThroughV118).doesNotThrowAnyException();
+
+        // Nothing added, nothing removed, anywhere.
+        assertThat(count("SELECT count(*) FROM categories WHERE user_id = ?", user))
+                .isEqualTo(DEFAULT_CATEGORIES.length + 2);
+        assertThat(count("SELECT count(*) FROM transactions WHERE user_id = ?", user)).isEqualTo(2);
+        assertThat(count("SELECT count(*) FROM budgets WHERE user_id = ?", user)).isEqualTo(1);
+        assertThat(count("SELECT count(*) FROM merchant_category_learning WHERE user_id = ?", user)).isEqualTo(2);
+        assertThat(count("SELECT count(*) FROM merchant_category_map WHERE user_id = ?", user)).isEqualTo(1);
+        assertThat(count("SELECT count(*) FROM merchant_learning_audit WHERE user_id = ?", user)).isEqualTo(1);
+        assertThat(count("SELECT count(*) FROM merchant_learning_events WHERE user_id = ?", user)).isEqualTo(1);
+        assertThat(count("SELECT count(*) FROM v118_dropped_budgets")).isZero();
+
+        // Every seeded row kept its own id, its own exact name and its system flag, and got the
+        // icon/color AuthService now hands out at registration.
+        for (String[] row : DEFAULT_CATEGORIES) {
+            UUID id = categoryIds.get(row[0]);
+            assertThat(string("SELECT name FROM categories WHERE id = ?", id)).isEqualTo(row[0]);
+            assertThat(string("SELECT icon FROM categories WHERE id = ?", id)).isEqualTo(row[1]);
+            assertThat(string("SELECT color FROM categories WHERE id = ?", id)).isEqualTo(row[2]);
+            assertThat(count("SELECT count(*) FROM categories WHERE id = ? AND is_system", id)).isEqualTo(1);
+        }
+        // User-created rows keep the column defaults rather than a system row's tokens.
+        assertThat(string("SELECT name FROM categories WHERE id = ?", fuel)).isEqualTo("Fuel");
+        assertThat(string("SELECT icon || '/' || color FROM categories WHERE id = ?", fuel)).isEqualTo("tag/gray");
+        assertThat(string("SELECT name FROM categories WHERE id = ?", gym)).isEqualTo("gym");
+        assertThat(string("SELECT icon || '/' || color FROM categories WHERE id = ?", gym)).isEqualTo("tag/gray");
+
+        // Every referencing row still points where it did, with its own values intact.
+        assertThat(string("SELECT category_id::text FROM transactions WHERE id = ?", groceriesTxn))
+                .isEqualTo(categoryIds.get("Groceries").toString());
+        assertThat(string("SELECT category_id::text FROM transactions WHERE id = ?", fuelTxn))
+                .isEqualTo(fuel.toString());
+        assertThat(string("SELECT category_id::text FROM budgets WHERE id = ?", budget))
+                .isEqualTo(categoryIds.get("Dining").toString());
+        assertThat(string("SELECT monthly_limit::text FROM budgets WHERE id = ?", budget)).isEqualTo("8000.00");
+        assertThat(count("SELECT confirmation_count FROM merchant_category_learning WHERE category_id = ?", fuel))
+                .isEqualTo(7);
+        // Untouched, NOT recomputed: no survivor exists, so the confidence sweep must not reach
+        // these rows even though 64/36 is not what the share-of-total formula would produce.
+        assertThat(count("SELECT confidence FROM merchant_category_learning WHERE category_id = ?", fuel))
+                .isEqualTo(64);
+        assertThat(count("SELECT confidence FROM merchant_category_learning WHERE category_id = ?",
+                categoryIds.get("Transport"))).isEqualTo(36);
+        assertThat(string("SELECT last_confirmed_at::text FROM merchant_category_learning WHERE category_id = ?",
+                fuel)).startsWith("2026-03-01");
+        assertThat(count("SELECT count(*) FROM merchant_category_map WHERE category_id = ?", fuel)).isEqualTo(1);
+        assertThat(count("SELECT count(*) FROM merchant_learning_audit WHERE previous_category_id = ? "
+                + "AND new_category_id = ?", categoryIds.get("Transport"), fuel)).isEqualTo(1);
+        assertThat(count("SELECT count(*) FROM merchant_learning_events WHERE category_id = ?", fuel)).isEqualTo(1);
+    }
+
     @Test
     void duplicatesAcrossDifferentUsers_areNotConflated() throws SQLException {
         UUID userA = seedUser();
