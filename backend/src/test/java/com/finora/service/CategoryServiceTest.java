@@ -119,7 +119,7 @@ class CategoryServiceTest {
     }
 
     @Test
-    void usageReportsTransactionBudgetAndRuleCounts() {
+    void usageReportsTransactionBudgetRuleAndLearningCounts() {
         UUID categoryId = UUID.randomUUID();
         Category existing = new Category();
         existing.setUserId(userId);
@@ -131,12 +131,14 @@ class CategoryServiceTest {
                 .thenReturn(Optional.of(new com.finora.entity.Budget()));
         when(categoryRuleRepository.findByUserIdAndActionTypeInAndActionValueIgnoreCase(
                 eq(userId), any(), any())).thenReturn(List.of(new com.finora.entity.CategoryRule()));
+        when(merchantLearningService.learningRowCount(userId, categoryId)).thenReturn(7L);
 
         var usage = service().usage(userId, categoryId);
 
         assertThat(usage.transactionCount()).isEqualTo(12);
         assertThat(usage.hasBudget()).isTrue();
         assertThat(usage.ruleCount()).isEqualTo(1);
+        assertThat(usage.learningRowCount()).isEqualTo(7);
     }
 
     @Test
@@ -234,10 +236,12 @@ class CategoryServiceTest {
 
         when(categoryRepository.findById(categoryId)).thenReturn(Optional.of(toDelete));
         when(categoryRepository.findById(otherUsersCategoryId)).thenReturn(Optional.of(othersCategory));
-        // Zero transactions/budget/rules -- hasDependents is false -- but merchant-learning data
-        // for this category still exists (deliberately not asserted through a mock call here,
-        // since the point under test is that reassignTo gets validated regardless of dependents).
+        // Zero transactions/budget/rules, merchant-learning data present. That now counts as a
+        // dependent in its own right (adversarial review, finding 2), but the point under test is
+        // unchanged and independent of that: reassignTo is validated for ownership before it can
+        // reach the merchant learning service, whatever the dependent mix.
         when(transactionRepository.countByUserIdAndCategoryId(userId, categoryId)).thenReturn(0L);
+        when(merchantLearningService.learningRowCount(userId, categoryId)).thenReturn(2L);
         when(budgetRepository.findByUserIdAndCategoryId(userId, categoryId)).thenReturn(Optional.empty());
         when(categoryRuleRepository.findByUserIdAndActionTypeInAndActionValueIgnoreCase(
                 eq(userId), any(), eq("Mutual Fund SIP"))).thenReturn(List.of());
@@ -247,6 +251,53 @@ class CategoryServiceTest {
 
         verify(merchantLearningService, never()).onCategoryDeleted(any(), any(), any());
         verify(categoryRepository, never()).delete(any(Category.class));
+    }
+
+    // Adversarial review, finding 2. merchant_category_learning rows were not part of
+    // hasDependents, so a category whose ONLY dependent was the Learning Engine's per-merchant
+    // training data could be deleted with no reassignment target: repointCategory is gated on
+    // there being one, so V7's ON DELETE CASCADE destroyed that training data silently.
+    @Test
+    void deleteRequiresAReassignTargetWhenTheOnlyDependentIsMerchantLearningData() {
+        UUID categoryId = UUID.randomUUID();
+        Category toDelete = new Category();
+        toDelete.setUserId(userId);
+        toDelete.setName("Mutual Fund SIP");
+        toDelete.setSystem(false);
+        org.springframework.test.util.ReflectionTestUtils.setField(toDelete, "id", categoryId);
+        when(categoryRepository.findById(categoryId)).thenReturn(Optional.of(toDelete));
+        when(transactionRepository.countByUserIdAndCategoryId(userId, categoryId)).thenReturn(0L);
+        when(budgetRepository.findByUserIdAndCategoryId(userId, categoryId)).thenReturn(Optional.empty());
+        when(categoryRuleRepository.findByUserIdAndActionTypeInAndActionValueIgnoreCase(
+                eq(userId), any(), eq("Mutual Fund SIP"))).thenReturn(List.of());
+        when(merchantLearningService.learningRowCount(userId, categoryId)).thenReturn(4L);
+
+        assertThatThrownBy(() -> service().delete(userId, categoryId, null))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("reassign");
+
+        verify(merchantLearningService, never()).onCategoryDeleted(any(), any(), any());
+        verify(categoryRepository, never()).delete(any(Category.class));
+    }
+
+    @Test
+    void deleteWithNoDependentsAtAllStillNeedsNoTarget() {
+        UUID categoryId = UUID.randomUUID();
+        Category toDelete = new Category();
+        toDelete.setUserId(userId);
+        toDelete.setName("Mutual Fund SIP");
+        toDelete.setSystem(false);
+        org.springframework.test.util.ReflectionTestUtils.setField(toDelete, "id", categoryId);
+        when(categoryRepository.findById(categoryId)).thenReturn(Optional.of(toDelete));
+        when(transactionRepository.countByUserIdAndCategoryId(userId, categoryId)).thenReturn(0L);
+        when(budgetRepository.findByUserIdAndCategoryId(userId, categoryId)).thenReturn(Optional.empty());
+        when(categoryRuleRepository.findByUserIdAndActionTypeInAndActionValueIgnoreCase(
+                eq(userId), any(), eq("Mutual Fund SIP"))).thenReturn(List.of());
+        when(merchantLearningService.learningRowCount(userId, categoryId)).thenReturn(0L);
+
+        service().delete(userId, categoryId, null);
+
+        verify(categoryRepository).delete(toDelete);
     }
 
     @Test

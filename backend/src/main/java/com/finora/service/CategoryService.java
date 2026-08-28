@@ -115,7 +115,8 @@ public class CategoryService {
                 userId,
                 List.of(CategoryRule.ActionType.ASSIGN_CATEGORY, CategoryRule.ActionType.MARK_INVESTMENT),
                 category.getName()).size();
-        return new CategoryUsageDto(transactionCount, hasBudget, ruleCount);
+        long learningRowCount = merchantLearningService.learningRowCount(userId, categoryId);
+        return new CategoryUsageDto(transactionCount, hasBudget, ruleCount, learningRowCount);
     }
 
     @Transactional
@@ -143,7 +144,17 @@ public class CategoryService {
                 .findByUserIdAndActionTypeInAndActionValueIgnoreCase(userId,
                         List.of(CategoryRule.ActionType.ASSIGN_CATEGORY, CategoryRule.ActionType.MARK_INVESTMENT),
                         category.getName());
-        boolean hasDependents = transactionCount > 0 || existingBudget.isPresent() || !affectedRules.isEmpty();
+        // Learning rows count as a dependent in their own right. Left out of this check, a
+        // category with no transactions/budget/rules but real merchant training data ("Blinkit
+        // means Groceries, confirmed 14 times") was deletable with reassignTo == null -- and
+        // onCategoryDeleted's repointCategory is gated on there being a target, so V7's
+        // ON DELETE CASCADE simply destroyed that training data, with the user neither told nor
+        // asked where to move it. That is precisely the loss the onCategoryDeleted/repointCategory
+        // machinery was built to prevent, so the same "pick somewhere to move this" prompt the
+        // other three dependents get applies here.
+        long learningRowCount = merchantLearningService.learningRowCount(userId, categoryId);
+        boolean hasDependents = transactionCount > 0 || existingBudget.isPresent()
+                || !affectedRules.isEmpty() || learningRowCount > 0;
 
         if (hasDependents && reassignTo == null) {
             throw new ApiException(HttpStatus.BAD_REQUEST,

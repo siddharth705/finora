@@ -250,6 +250,20 @@ public class MerchantLearningService {
     }
 
     /**
+     * How many merchants this user has trained under one category -- the size of what
+     * {@link #onCategoryDeleted} would have to move (or, with no reassignment target, what V7's
+     * {@code ON DELETE CASCADE} would destroy) if that category were deleted right now.
+     *
+     * <p>Exposed through this service rather than by injecting
+     * {@code MerchantCategoryLearningRepository} into {@code CategoryService}, so the Learning
+     * Engine's tables stay behind the same seam its delete-time cleanup already goes through.
+     */
+    @Transactional(readOnly = true)
+    public long learningRowCount(UUID userId, UUID categoryId) {
+        return learningRepository.countByUserIdAndCategoryId(userId, categoryId);
+    }
+
+    /**
      * Financial Intelligence Workspace, Learning Engine module -- wipes this merchant's ENTIRE
      * distribution unconditionally, unlike undo() which only reverts the single most recent
      * confirmation and requires an audit-history chain to walk back through. Future transactions

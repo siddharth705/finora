@@ -643,7 +643,12 @@ export const categoriesApi = {
   delete: (id: string, reassignTo?: string) =>
     api.delete(`/categories/${id}`, { params: reassignTo ? { reassignTo } : undefined }),
   usage: (id: string) =>
-    api.get<{ transactionCount: number; hasBudget: boolean; ruleCount: number }>(
+    api.get<{
+      transactionCount: number;
+      hasBudget: boolean;
+      ruleCount: number;
+      learningRowCount: number;
+    }>(
       `/categories/${id}/usage`,
     ).then((r) => r.data),
 };

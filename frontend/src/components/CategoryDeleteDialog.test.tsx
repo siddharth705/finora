@@ -28,18 +28,35 @@ describe('CategoryDeleteDialog', () => {
   });
 
   it('shows the usage summary before allowing delete', async () => {
-    vi.mocked(categoriesApi.usage).mockResolvedValue({ transactionCount: 12, hasBudget: true, ruleCount: 1 });
+    vi.mocked(categoriesApi.usage).mockResolvedValue({ transactionCount: 12, hasBudget: true, ruleCount: 1, learningRowCount: 3 });
     renderWithClient(<CategoryDeleteDialog category={CATEGORY} onDeleted={vi.fn()} onCancel={vi.fn()} />);
 
     await waitFor(() => {
       expect(screen.getByText(/12/)).toBeInTheDocument();
       expect(screen.getByText(/1 budget/i)).toBeInTheDocument();
       expect(screen.getByText(/1 rule/i)).toBeInTheDocument();
+      expect(screen.getByText(/3 learned merchants/i)).toBeInTheDocument();
     });
   });
 
+  // Adversarial review, finding 2. Learning rows were not part of hasDependents, so a category
+  // whose only dependent was Learning Engine training data offered no reassignment picker and let
+  // Delete through with no target -- the backend then cascaded that training data away silently.
+  it('requires a reassignment target when the only dependent is learned merchant data', async () => {
+    vi.mocked(categoriesApi.usage).mockResolvedValue({
+      transactionCount: 0, hasBudget: false, ruleCount: 0, learningRowCount: 4,
+    });
+    renderWithClient(<CategoryDeleteDialog category={CATEGORY} onDeleted={vi.fn()} onCancel={vi.fn()} />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/4 learned merchants/i)).toBeInTheDocument();
+    });
+    expect(screen.getByRole('combobox')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /delete/i })).toBeDisabled();
+  });
+
   it('disables the confirm button until a reassignment target is picked, when there are dependents', async () => {
-    vi.mocked(categoriesApi.usage).mockResolvedValue({ transactionCount: 5, hasBudget: false, ruleCount: 0 });
+    vi.mocked(categoriesApi.usage).mockResolvedValue({ transactionCount: 5, hasBudget: false, ruleCount: 0, learningRowCount: 0 });
     renderWithClient(<CategoryDeleteDialog category={CATEGORY} onDeleted={vi.fn()} onCancel={vi.fn()} />);
 
     await waitFor(() => {
@@ -49,7 +66,7 @@ describe('CategoryDeleteDialog', () => {
 
   it('allows immediate delete with no target when there are zero dependents', async () => {
     const user = userEvent.setup();
-    vi.mocked(categoriesApi.usage).mockResolvedValue({ transactionCount: 0, hasBudget: false, ruleCount: 0 });
+    vi.mocked(categoriesApi.usage).mockResolvedValue({ transactionCount: 0, hasBudget: false, ruleCount: 0, learningRowCount: 0 });
     vi.mocked(categoriesApi.delete).mockResolvedValue({} as any);
     const onDeleted = vi.fn();
     renderWithClient(<CategoryDeleteDialog category={CATEGORY} onDeleted={onDeleted} onCancel={vi.fn()} />);
@@ -70,7 +87,7 @@ describe('CategoryDeleteDialog', () => {
   // disabled forever even though a target had genuinely been picked.
   it('enables delete and reassigns to the real id after creating a new target category inline', async () => {
     const user = userEvent.setup();
-    vi.mocked(categoriesApi.usage).mockResolvedValue({ transactionCount: 5, hasBudget: false, ruleCount: 0 });
+    vi.mocked(categoriesApi.usage).mockResolvedValue({ transactionCount: 5, hasBudget: false, ruleCount: 0, learningRowCount: 0 });
     vi.mocked(categoriesApi.options).mockResolvedValue({ icons: [], colors: [] });
     vi.mocked(categoriesApi.create).mockResolvedValue({
       id: '3', name: 'Subscriptions', isSystem: false, icon: 'tag', color: 'gray',
@@ -101,7 +118,7 @@ describe('CategoryDeleteDialog', () => {
 
   it('shows an error and does not call onDeleted when delete fails', async () => {
     const user = userEvent.setup();
-    vi.mocked(categoriesApi.usage).mockResolvedValue({ transactionCount: 0, hasBudget: false, ruleCount: 0 });
+    vi.mocked(categoriesApi.usage).mockResolvedValue({ transactionCount: 0, hasBudget: false, ruleCount: 0, learningRowCount: 0 });
     vi.mocked(categoriesApi.delete).mockRejectedValue({
       response: { data: { message: 'A dependent was added to this category.' } },
     });

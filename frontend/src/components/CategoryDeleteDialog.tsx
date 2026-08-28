@@ -7,6 +7,9 @@ interface Usage {
   transactionCount: number;
   hasBudget: boolean;
   ruleCount: number;
+  /** Learning Engine training rows (merchant_category_learning). A dependent like any other:
+   *  its FK cascades, so deleting without a reassignment target destroys it. */
+  learningRowCount: number;
 }
 
 interface CategoryDeleteDialogProps {
@@ -27,7 +30,8 @@ export function CategoryDeleteDialog({ category, onDeleted, onCancel }: Category
     categoriesApi.usage(category.id).then(setUsage).catch(() => setUsage(null));
   }, [category.id]);
 
-  const hasDependents = usage != null && (usage.transactionCount > 0 || usage.hasBudget || usage.ruleCount > 0);
+  const hasDependents = usage != null && (usage.transactionCount > 0 || usage.hasBudget
+    || usage.ruleCount > 0 || usage.learningRowCount > 0);
   const canDelete = usage != null && (!hasDependents || targetId != null);
 
   const confirm = async () => {
@@ -54,6 +58,11 @@ export function CategoryDeleteDialog({ category, onDeleted, onCancel }: Category
           <li>{usage.transactionCount} transactions</li>
           {usage.hasBudget && <li>1 budget</li>}
           {usage.ruleCount > 0 && <li>{usage.ruleCount} rule{usage.ruleCount === 1 ? '' : 's'}</li>}
+          {usage.learningRowCount > 0 && (
+            <li>
+              {usage.learningRowCount} learned merchant{usage.learningRowCount === 1 ? '' : 's'}
+            </li>
+          )}
         </ul>
       )}
       {hasDependents && (

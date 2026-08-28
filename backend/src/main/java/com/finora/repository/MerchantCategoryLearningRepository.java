@@ -51,6 +51,15 @@ public interface MerchantCategoryLearningRepository extends JpaRepository<Mercha
      */
     List<MerchantCategoryLearning> findByUserIdAndCategoryId(UUID userId, UUID categoryId);
 
+    /**
+     * How many merchants this user has trained under one category. Backs
+     * {@code CategoryService.usage}/{@code delete}: learning rows are a real dependent of a
+     * category (CASCADE, so a targetless delete destroys them), and counting them is what makes
+     * the delete ask for somewhere to move them instead of dropping them silently. Mirrors
+     * {@code TransactionRepository.countByUserIdAndCategoryId}.
+     */
+    long countByUserIdAndCategoryId(UUID userId, UUID categoryId);
+
     /** AccountPurgeSweepService -- hard delete, no soft-delete concern on this entity. */
     void deleteByUserId(UUID userId);
 
