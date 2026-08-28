@@ -276,6 +276,18 @@ public interface TransactionRepository extends JpaRepository<Transaction, UUID> 
     List<Transaction> findByUserIdAndReconciliationStatus(
             UUID userId, Transaction.ReconciliationStatus status);
 
+    /**
+     * Same as {@link #findByUserIdAndReconciliationStatus}, for a caller that needs more than one
+     * status at once -- specifically {@code RefundNetting.from}'s callers, which must feed it both
+     * {@code REFUND} and {@code REVERSAL} rows (both are refund legs {@code RefundNetting} nets
+     * off their original expense the same way; see that class). Kept as a separate method rather
+     * than replacing the single-status one above: most callers of the singular form genuinely want
+     * exactly one status, and forcing a {@code List.of(status)} everywhere there would read as
+     * ceremony with no benefit.
+     */
+    List<Transaction> findByUserIdAndReconciliationStatusIn(
+            UUID userId, java.util.Collection<Transaction.ReconciliationStatus> statuses);
+
     // Admin Portal, Reconciliation Monitor module -- platform-wide breakdown of every
     // reconciliation outcome, one grouped COUNT query rather than loading every transaction into
     // memory (WorkspaceDashboardService.summarize() does that, but per-user; doing the same

@@ -78,12 +78,14 @@ final class ReconciliationExplanation {
     }
 
     /**
-     * Why this income was read as a refund of {@code purchase}.
+     * Why this income was read as a refund of {@code purchase}, as opposed to a reversal (see
+     * {@link #reversal} below) or nothing at all.
      *
-     * <p>{@code refundKeyword} and {@code sameMerchant} are the two independent signals the pass
-     * requires at least one of, so recording both distinguishes a match carried by strong merchant
-     * evidence from one carried by the word "reversal" in a narration — a distinction that matters
-     * when the classification turns out to be wrong.
+     * <p>{@code refundKeyword} and {@code sameMerchant} are two of the three independent signals
+     * the pass requires at least one of (the third, a reversal keyword, routes to
+     * {@link #reversal} instead of here) — recording both distinguishes a match carried by strong
+     * merchant evidence from one carried by refund-flavored wording in a narration, a distinction
+     * that matters when the classification turns out to be wrong.
      */
     static Map<String, Object> refund(Transaction income, Transaction purchase,
                                       boolean refundKeyword, boolean sameMerchant) {
@@ -96,6 +98,28 @@ final class ReconciliationExplanation {
         reason.put("purchaseAmount", purchase.getAmount().toPlainString());
         reason.put("partialRefund", income.getAmount().compareTo(purchase.getAmount()) < 0);
         return envelope("REFUND", purchase.getId(), reason);
+    }
+
+    /**
+     * Why this income was read as a bank-side reversal of {@code purchase}, rather than a
+     * merchant refund. Same matching pass, same window and capacity rules as {@link #refund} --
+     * the only difference is which real-world event the description's wording claims this is.
+     * {@code reversalKeyword} is always {@code true} when this is called (it is the signal that
+     * decided the classification, see {@code ReconciliationService}'s refund pass); recorded
+     * anyway, alongside {@code sameMerchant}, for the same reason every other explanation here
+     * records signals that were necessarily true -- it is what a reader disputing the
+     * classification needs to see without re-deriving it.
+     */
+    static Map<String, Object> reversal(Transaction income, Transaction purchase, boolean sameMerchant) {
+        Map<String, Object> reason = new LinkedHashMap<>();
+        reason.put("sameAccount", income.getAccountId().equals(purchase.getAccountId()));
+        reason.put("dateDifferenceDays", daysBetween(purchase.getTxnDate(), income.getTxnDate()));
+        reason.put("reversalKeyword", true);
+        reason.put("sameMerchant", sameMerchant);
+        reason.put("reversalAmount", income.getAmount().toPlainString());
+        reason.put("purchaseAmount", purchase.getAmount().toPlainString());
+        reason.put("partialReversal", income.getAmount().compareTo(purchase.getAmount()) < 0);
+        return envelope("REVERSAL", purchase.getId(), reason);
     }
 
     private static Map<String, Object> envelope(String type, UUID matchedTransaction,

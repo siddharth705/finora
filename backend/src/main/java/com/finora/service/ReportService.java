@@ -47,8 +47,8 @@ public class ReportService {
         // month's expenses are frequently outside the range this month was queried with -- netting
         // against only the in-window ones would leave every cross-month refund uncorrected, which
         // is most of them.
-        RefundNetting refunds = RefundNetting.from(transactionRepository.findByUserIdAndReconciliationStatus(
-                userId, Transaction.ReconciliationStatus.REFUND));
+        RefundNetting refunds = RefundNetting.from(transactionRepository.findByUserIdAndReconciliationStatusIn(
+                userId, java.util.List.of(Transaction.ReconciliationStatus.REFUND, Transaction.ReconciliationStatus.REVERSAL)));
         List<Transaction> txns = RefundNetting.reportable(
                 transactionRepository.findByUserIdAndTxnDateBetween(userId, from, to));
 
