@@ -59,13 +59,16 @@ function healthColor(label: string): string {
     default: return 'text-danger';
   }
 }
-function healthBarColor(label: string): string {
-  switch (label) {
-    case 'Excellent': return 'bg-success';
-    case 'Good': return 'bg-primary';
-    case 'Fair': return 'bg-warning';
-    default: return 'bg-danger';
-  }
+// Same 80/60/40 cutoffs as healthColor above, applied to ONE breakdown item's own
+// score rather than the overall label -- every item used to inherit the overall label's color, so
+// a perfect sub-score (e.g. Debt Score 100 for a user with no credit cards) rendered as a
+// full-width RED bar whenever the overall health score was "Needs Attention", reading as "maxed
+// out" regardless of what that item's own number said.
+function healthItemBarColor(score: number): string {
+  if (score >= 80) return 'bg-success';
+  if (score >= 60) return 'bg-primary';
+  if (score >= 40) return 'bg-warning';
+  return 'bg-danger';
 }
 
 const CATEGORY_ICON: Record<string, any> = {
@@ -275,7 +278,7 @@ export default function Dashboard() {
                   </div>
                   <div className="h-1.5 bg-bg rounded-full overflow-hidden">
                     <div
-                      className={`h-full rounded-full ${healthBarColor(summary.healthLabel!)}`}
+                      className={`h-full rounded-full ${healthItemBarColor(score)}`}
                       style={{ width: `${Math.max(0, Math.min(100, score))}%` }}
                     />
                   </div>
