@@ -693,6 +693,8 @@ class ReconciliationServiceTest {
         assertThat(edge.toTransactionId()).isEqualTo(original.getId());
         assertThat(edge.relationshipType()).isEqualTo(TransactionRelationship.RelationshipType.DUPLICATE);
         assertThat(edge.matchedAmount()).isEqualByComparingTo("486.00");
+        assertThat(edge.confidence()).isEqualTo(99); // exact composite-key match, no window to decay
+        assertThat(edge.sourceTrust()).isEqualTo(SourceTrust.of(Transaction.Source.MANUAL));
         assertThat(edge.status()).isEqualTo(TransactionRelationship.Status.AUTO_CONFIRMED);
         assertThat(edge.detectionMethod()).isEqualTo(TransactionRelationship.DetectionMethod.RULE_ENGINE);
     }
@@ -712,15 +714,51 @@ class ReconciliationServiceTest {
 
         List<TransactionGraphService.PendingEdge> edges = capturePendingEdges();
         assertThat(edges).hasSize(2);
+        // Same date, exact amount -- base(MERCHANT_AND_AMOUNT) with no decay from either factor.
+        int expectedConfidence = ConfidenceScorer.score(ConfidenceScorer.MatchType.MERCHANT_AND_AMOUNT,
+                new BigDecimal("5000.00"), BigDecimal.ZERO, 0, 4);
         assertThat(edges).anySatisfy(e -> {
             assertThat(e.fromTransactionId()).isEqualTo(payment.getId());
             assertThat(e.toTransactionId()).isEqualTo(credit.getId());
             assertThat(e.relationshipType()).isEqualTo(TransactionRelationship.RelationshipType.TRANSFER);
+            assertThat(e.confidence()).isEqualTo(expectedConfidence);
+            assertThat(e.status()).isEqualTo(TransactionRelationship.Status.AUTO_CONFIRMED);
         });
         assertThat(edges).anySatisfy(e -> {
             assertThat(e.fromTransactionId()).isEqualTo(credit.getId());
             assertThat(e.toTransactionId()).isEqualTo(payment.getId());
             assertThat(e.relationshipType()).isEqualTo(TransactionRelationship.RelationshipType.TRANSFER);
+        });
+    }
+
+    /**
+     * A clean amount+merchant match that lands right at the edge of its date window scores low
+     * enough to cross the needs-review threshold -- the graph edge becomes CANDIDATE instead of
+     * AUTO_CONFIRMED, even though the Transaction row's own legacy TRANSFER classification (which
+     * this confidence model does not touch) is unaffected.
+     */
+    @Test
+    void reconcileForUser_marksALowConfidenceTransferEdgeAsCandidate_notAutoConfirmed() {
+        UUID savings = UUID.randomUUID();
+        UUID creditCard = UUID.randomUUID();
+        Transaction payment = txn(UUID.randomUUID(), savings, LocalDate.of(2026, 7, 1),
+                new BigDecimal("5000.00"), Transaction.Type.EXPENSE, "NEFT PAYMENT TO CARD",
+                Instant.parse("2026-07-01T10:00:00Z"));
+        Transaction credit = txn(UUID.randomUUID(), creditCard, LocalDate.of(2026, 7, 5),
+                new BigDecimal("5000.00"), Transaction.Type.INCOME, "PAYMENT RECEIVED",
+                Instant.parse("2026-07-05T10:00:00Z"));
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(payment, credit));
+
+        reconciliationService.reconcileForUser(userId);
+
+        // Still classified as a transfer on the transaction itself -- the legacy column is
+        // unaffected by confidence.
+        assertThat(payment.getReconciliationStatus()).isEqualTo(Transaction.ReconciliationStatus.TRANSFER);
+
+        List<TransactionGraphService.PendingEdge> edges = capturePendingEdges();
+        assertThat(edges).allSatisfy(e -> {
+            assertThat(e.confidence()).isLessThan(80);
+            assertThat(e.status()).isEqualTo(TransactionRelationship.Status.CANDIDATE);
         });
     }
 
@@ -744,6 +782,10 @@ class ReconciliationServiceTest {
         assertThat(edge.toTransactionId()).isEqualTo(purchase.getId());
         assertThat(edge.relationshipType()).isEqualTo(TransactionRelationship.RelationshipType.REFUND);
         assertThat(edge.matchedAmount()).isEqualByComparingTo("999.00");
+        int expectedConfidence = ConfidenceScorer.score(ConfidenceScorer.MatchType.MERCHANT_AND_AMOUNT,
+                new BigDecimal("999.00"), BigDecimal.ZERO, 4, 180);
+        assertThat(edge.confidence()).isEqualTo(expectedConfidence);
+        assertThat(edge.status()).isEqualTo(TransactionRelationship.Status.AUTO_CONFIRMED);
     }
 
     @Test
@@ -766,6 +808,35 @@ class ReconciliationServiceTest {
         assertThat(edge.toTransactionId()).isEqualTo(purchase.getId());
         assertThat(edge.relationshipType()).isEqualTo(TransactionRelationship.RelationshipType.REVERSAL);
         assertThat(edge.matchedAmount()).isEqualByComparingTo("500.00");
+        int expectedConfidence = ConfidenceScorer.score(ConfidenceScorer.MatchType.MERCHANT_AND_AMOUNT,
+                new BigDecimal("500.00"), BigDecimal.ZERO, 2, 180);
+        assertThat(edge.confidence()).isEqualTo(expectedConfidence);
+        assertThat(edge.status()).isEqualTo(TransactionRelationship.Status.AUTO_CONFIRMED);
+    }
+
+    /**
+     * A large partial refund shortfall against a small purchase amount pushes amount_factor down
+     * far enough to cross the needs-review threshold -- the edge lands CANDIDATE, distinct from
+     * the exact-amount refund above.
+     */
+    @Test
+    void reconcileForUser_marksALowConfidencePartialRefundEdgeAsCandidate() {
+        UUID accountId = UUID.randomUUID();
+        Transaction purchase = txn(UUID.randomUUID(), accountId, LocalDate.of(2026, 7, 1),
+                new BigDecimal("1000.00"), Transaction.Type.EXPENSE, "AMAZON ORDER 1122",
+                Instant.parse("2026-07-01T10:00:00Z"));
+        // A tiny partial refund -- ~10% of the purchase -- refunded well into the window.
+        Transaction refund = txn(UUID.randomUUID(), accountId, LocalDate.of(2026, 12, 20),
+                new BigDecimal("100.00"), Transaction.Type.INCOME, "AMAZON REFUND 1122",
+                Instant.parse("2026-12-20T10:00:00Z"));
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(purchase, refund));
+
+        reconciliationService.reconcileForUser(userId);
+
+        List<TransactionGraphService.PendingEdge> edges = capturePendingEdges();
+        assertThat(edges).hasSize(1);
+        assertThat(edges.get(0).confidence()).isLessThan(80);
+        assertThat(edges.get(0).status()).isEqualTo(TransactionRelationship.Status.CANDIDATE);
     }
 
     @SuppressWarnings("unchecked")

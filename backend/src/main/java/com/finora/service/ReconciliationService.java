@@ -53,10 +53,15 @@ public class ReconciliationService {
 
     private static final Logger log = LoggerFactory.getLogger(ReconciliationService.class);
 
-    // Deterministic-rule confidence for every edge the four passes below write -- the real,
-    // per-match confidence formula (amount_factor/date_decay) is Phase 2's separate Confidence
-    // scoring engine item, not built yet. Same scale as Transaction.decisionConfidence (0-100).
-    private static final int RULE_ENGINE_CONFIDENCE = 100;
+    // The roadmap doc's needs-review cutoff (Part 5): any match scoring below this becomes a
+    // CANDIDATE edge instead of AUTO_CONFIRMED -- reusing TransactionRelationship.Status rather
+    // than adding a separate needs_review column, since CANDIDATE already means exactly "written,
+    // not yet trusted enough to stand on its own." This governs only the graph edge's status; the
+    // Transaction row's own reconciliationStatus/legacy pointer is unaffected -- those stay the
+    // simple, always-authoritative signal they have always been, and it is the more sophisticated
+    // graph layer that carries the confidence-aware distinction for whatever review surface Phase
+    // 2's Founder Operations Dashboard item eventually builds on top of it.
+    private static final int NEEDS_REVIEW_THRESHOLD = 80;
 
     private final TransactionRepository transactionRepository;
     private final RelationshipService relationshipService;
@@ -229,10 +234,13 @@ public class ReconciliationService {
                 t.setReconciliationExplanation(explanation);
                 dirty.add(t);
                 newDuplicates++;
+                // Exact composite-key match: no amount delta, no date window to decay across.
+                int duplicateConfidence = ConfidenceScorer.score(ConfidenceScorer.MatchType.EXACT,
+                        t.getAmount(), BigDecimal.ZERO, 0, 0);
                 pendingEdges.add(new TransactionGraphService.PendingEdge(userId, t.getId(), canonical.getId(),
-                        TransactionRelationship.RelationshipType.DUPLICATE, t.getAmount(), RULE_ENGINE_CONFIDENCE,
-                        TransactionRelationship.Status.AUTO_CONFIRMED, TransactionRelationship.DetectionMethod.RULE_ENGINE,
-                        explanation));
+                        TransactionRelationship.RelationshipType.DUPLICATE, t.getAmount(), duplicateConfidence,
+                        SourceTrust.of(t.getSource()), statusFor(duplicateConfidence),
+                        TransactionRelationship.DetectionMethod.RULE_ENGINE, explanation));
             }
         }
 
@@ -298,8 +306,8 @@ public class ReconciliationService {
                 if (looksLikeSalary.getOrDefault(b.getId(), false)) continue; // same guard, other side of the pair
                 if (a.getAccountId().equals(b.getAccountId()) || a.getTxnType() == b.getTxnType()) continue;
 
-                boolean sameAmount = a.getAmount().subtract(b.getAmount()).abs()
-                        .compareTo(ReconciliationPolicy.TRANSFER_AMOUNT_TOLERANCE) < 0;
+                BigDecimal amountDelta = a.getAmount().subtract(b.getAmount()).abs();
+                boolean sameAmount = amountDelta.compareTo(ReconciliationPolicy.TRANSFER_AMOUNT_TOLERANCE) < 0;
                 long daysApart = Math.abs(ChronoUnit.DAYS.between(a.getTxnDate(), b.getTxnDate()));
 
                 boolean relationshipMatch = aOwnAccountMatch || ownAccountMatch.getOrDefault(b.getId(), false);
@@ -322,14 +330,23 @@ public class ReconciliationService {
                     newTransfers++; // one pair = one match, not two (see WorkspaceSummaryDto's own note on this asymmetry)
                     // One edge per direction, matching transferPairId's own symmetric shape (see
                     // V114's backfill comment) rather than picking an arbitrary canonical side.
+                    // MERCHANT_AND_AMOUNT tier: matched on amount + date window (+ an own-account
+                    // relationship identifier when relationshipMatch is true), not a free-text
+                    // merchant-name comparison -- there is no merchant on either side of a transfer
+                    // -- but it's the closest of the roadmap's three tiers to "two independent
+                    // structured signals agreeing," which is what this match actually is.
+                    int confidenceA = ConfidenceScorer.score(ConfidenceScorer.MatchType.MERCHANT_AND_AMOUNT,
+                            a.getAmount(), amountDelta, daysApart, dayWindow);
+                    int confidenceB = ConfidenceScorer.score(ConfidenceScorer.MatchType.MERCHANT_AND_AMOUNT,
+                            b.getAmount(), amountDelta, daysApart, dayWindow);
                     pendingEdges.add(new TransactionGraphService.PendingEdge(userId, a.getId(), b.getId(),
-                            TransactionRelationship.RelationshipType.TRANSFER, a.getAmount(), RULE_ENGINE_CONFIDENCE,
-                            TransactionRelationship.Status.AUTO_CONFIRMED, TransactionRelationship.DetectionMethod.RULE_ENGINE,
-                            explanationA));
+                            TransactionRelationship.RelationshipType.TRANSFER, a.getAmount(), confidenceA,
+                            SourceTrust.of(a.getSource()), statusFor(confidenceA),
+                            TransactionRelationship.DetectionMethod.RULE_ENGINE, explanationA));
                     pendingEdges.add(new TransactionGraphService.PendingEdge(userId, b.getId(), a.getId(),
-                            TransactionRelationship.RelationshipType.TRANSFER, b.getAmount(), RULE_ENGINE_CONFIDENCE,
-                            TransactionRelationship.Status.AUTO_CONFIRMED, TransactionRelationship.DetectionMethod.RULE_ENGINE,
-                            explanationB));
+                            TransactionRelationship.RelationshipType.TRANSFER, b.getAmount(), confidenceB,
+                            SourceTrust.of(b.getSource()), statusFor(confidenceB),
+                            TransactionRelationship.DetectionMethod.RULE_ENGINE, explanationB));
                     break;
                 }
             }
@@ -378,6 +395,7 @@ public class ReconciliationService {
             boolean reversalKeyword = looksLikeReversal(income.getDescription());
             Transaction bestMatch = null;
             boolean bestMatchSameMerchant = false;
+            long bestMatchDaysBetween = 0;
             // A refund lands at or after its purchase and within REFUND_WINDOW_DAYS of it, so the
             // only expenses worth looking at sit in [income.date - 180, income.date]. Both of
             // those bounds are still re-checked inside the loop; this only avoids walking the
@@ -417,6 +435,7 @@ public class ReconciliationService {
                     // re-deriving a signal the pass had already established -- exactly the
                     // after-the-fact reconstruction this explanation exists to avoid.
                     bestMatchSameMerchant = sameMerchant;
+                    bestMatchDaysBetween = daysBetween;
                 }
             }
 
@@ -445,10 +464,17 @@ public class ReconciliationService {
                 }
                 income.setRefundOfTransactionId(bestMatch.getId());
                 dirty.add(income);
+                // MERCHANT_AND_AMOUNT tier: matched on a refund/reversal keyword or merchant
+                // identity, plus an amount that can't exceed the original purchase. matchedAmount
+                // is the purchase's own amount (what there was to account for), not the income's --
+                // a small partial refund against a large purchase should score lower than a full
+                // one, which is exactly what amount_factor's delta-over-matchedAmount captures.
+                BigDecimal refundAmountDelta = bestMatch.getAmount().subtract(income.getAmount()).abs();
+                int refundConfidence = ConfidenceScorer.score(ConfidenceScorer.MatchType.MERCHANT_AND_AMOUNT,
+                        bestMatch.getAmount(), refundAmountDelta, bestMatchDaysBetween, REFUND_WINDOW_DAYS);
                 pendingEdges.add(new TransactionGraphService.PendingEdge(userId, income.getId(), bestMatch.getId(),
-                        edgeType, income.getAmount(), RULE_ENGINE_CONFIDENCE,
-                        TransactionRelationship.Status.AUTO_CONFIRMED, TransactionRelationship.DetectionMethod.RULE_ENGINE,
-                        explanation));
+                        edgeType, income.getAmount(), refundConfidence, SourceTrust.of(income.getSource()),
+                        statusFor(refundConfidence), TransactionRelationship.DetectionMethod.RULE_ENGINE, explanation));
                 // Claims this income's amount against the expense's capacity immediately, so the
                 // NEXT income row in this same pass sees the reduced remainder rather than the
                 // original amount -- this is what makes two ₹500 incomes against one ₹500 expense
@@ -555,6 +581,12 @@ public class ReconciliationService {
             log.debug("Reconciliation for user {}: {} transactions, {} ms, {} rows written.",
                     userId, all.size(), elapsedMs, dirty.size());
         }
+    }
+
+    private static TransactionRelationship.Status statusFor(int confidence) {
+        return confidence >= NEEDS_REVIEW_THRESHOLD
+                ? TransactionRelationship.Status.AUTO_CONFIRMED
+                : TransactionRelationship.Status.CANDIDATE;
     }
 
     private String duplicateKey(Transaction t) {

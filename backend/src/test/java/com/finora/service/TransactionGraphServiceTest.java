@@ -39,7 +39,7 @@ class TransactionGraphServiceTest {
 
     private TransactionGraphService.PendingEdge pendingEdge(UUID from, UUID to,
                                                               TransactionRelationship.RelationshipType type) {
-        return new TransactionGraphService.PendingEdge(userId, from, to, type, new BigDecimal("100.00"), 100,
+        return new TransactionGraphService.PendingEdge(userId, from, to, type, new BigDecimal("100.00"), 100, 95,
                 TransactionRelationship.Status.AUTO_CONFIRMED, TransactionRelationship.DetectionMethod.RULE_ENGINE,
                 Map.of("type", type.name()));
     }
