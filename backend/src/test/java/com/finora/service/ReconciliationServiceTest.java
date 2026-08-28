@@ -1,6 +1,7 @@
 package com.finora.service;
 
 import com.finora.entity.Transaction;
+import com.finora.entity.TransactionRelationship;
 import com.finora.repository.TransactionRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -21,6 +22,7 @@ class ReconciliationServiceTest {
     private TransactionRepository transactionRepository;
     private RelationshipService relationshipService;
     private AuditService auditService;
+    private TransactionGraphService transactionGraphService;
     private ReconciliationService reconciliationService;
     private final UUID userId = UUID.randomUUID();
 
@@ -33,7 +35,9 @@ class ReconciliationServiceTest {
         // behavior unchanged.
         relationshipService = mock(RelationshipService.class);
         auditService = mock(AuditService.class);
-        reconciliationService = new ReconciliationService(transactionRepository, relationshipService, auditService);
+        transactionGraphService = mock(TransactionGraphService.class);
+        reconciliationService = new ReconciliationService(transactionRepository, relationshipService, auditService,
+                transactionGraphService);
     }
 
     private Transaction txn(UUID id, UUID accountId, LocalDate date, BigDecimal amount,
@@ -661,5 +665,114 @@ class ReconciliationServiceTest {
         assertThat(metadataCaptor.getValue())
                 .containsEntry("duplicatesFound", 1)
                 .containsEntry("recordedBecause", "reclassified");
+    }
+
+    /**
+     * Phase 2, docs/proposals/reconciliation-evolution-roadmap-proposal.md, Part 3. Each of the
+     * four passes now dual-writes a {@link TransactionRelationship} edge alongside its legacy
+     * column -- these pin down the exact (from, to, type) shape each pass writes, since a wrong
+     * direction here would be wrong for every one of these edges going forward, not just one test.
+     */
+    @Test
+    void reconcileForUser_alsoWritesADuplicateEdge() {
+        UUID accountId = UUID.randomUUID();
+        LocalDate date = LocalDate.of(2026, 7, 10);
+        Transaction original = txn(UUID.randomUUID(), accountId, date, new BigDecimal("486.00"),
+                Transaction.Type.EXPENSE, "SWIGGY*ORDR9182 BLR", Instant.parse("2026-07-10T10:00:00Z"));
+        Transaction duplicate = txn(UUID.randomUUID(), accountId, date, new BigDecimal("486.00"),
+                Transaction.Type.EXPENSE, "SWIGGY*ORDR9182 BLR", Instant.parse("2026-07-10T10:05:00Z"));
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(original, duplicate));
+
+        reconciliationService.reconcileForUser(userId);
+
+        List<TransactionGraphService.PendingEdge> edges = capturePendingEdges();
+        assertThat(edges).hasSize(1);
+        TransactionGraphService.PendingEdge edge = edges.get(0);
+        assertThat(edge.userId()).isEqualTo(userId);
+        assertThat(edge.fromTransactionId()).isEqualTo(duplicate.getId());
+        assertThat(edge.toTransactionId()).isEqualTo(original.getId());
+        assertThat(edge.relationshipType()).isEqualTo(TransactionRelationship.RelationshipType.DUPLICATE);
+        assertThat(edge.matchedAmount()).isEqualByComparingTo("486.00");
+        assertThat(edge.status()).isEqualTo(TransactionRelationship.Status.AUTO_CONFIRMED);
+        assertThat(edge.detectionMethod()).isEqualTo(TransactionRelationship.DetectionMethod.RULE_ENGINE);
+    }
+
+    @Test
+    void reconcileForUser_alsoWritesATransferEdge_inBothDirections() {
+        UUID savings = UUID.randomUUID();
+        UUID creditCard = UUID.randomUUID();
+        LocalDate date = LocalDate.of(2026, 7, 10);
+        Transaction payment = txn(UUID.randomUUID(), savings, date, new BigDecimal("5000.00"),
+                Transaction.Type.EXPENSE, "CC PAYMENT XXXX1234", Instant.parse("2026-07-10T10:00:00Z"));
+        Transaction credit = txn(UUID.randomUUID(), creditCard, date, new BigDecimal("5000.00"),
+                Transaction.Type.INCOME, "PAYMENT RECEIVED", Instant.parse("2026-07-10T10:05:00Z"));
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(payment, credit));
+
+        reconciliationService.reconcileForUser(userId);
+
+        List<TransactionGraphService.PendingEdge> edges = capturePendingEdges();
+        assertThat(edges).hasSize(2);
+        assertThat(edges).anySatisfy(e -> {
+            assertThat(e.fromTransactionId()).isEqualTo(payment.getId());
+            assertThat(e.toTransactionId()).isEqualTo(credit.getId());
+            assertThat(e.relationshipType()).isEqualTo(TransactionRelationship.RelationshipType.TRANSFER);
+        });
+        assertThat(edges).anySatisfy(e -> {
+            assertThat(e.fromTransactionId()).isEqualTo(credit.getId());
+            assertThat(e.toTransactionId()).isEqualTo(payment.getId());
+            assertThat(e.relationshipType()).isEqualTo(TransactionRelationship.RelationshipType.TRANSFER);
+        });
+    }
+
+    @Test
+    void reconcileForUser_alsoWritesARefundEdge() {
+        UUID accountId = UUID.randomUUID();
+        Transaction purchase = txn(UUID.randomUUID(), accountId, LocalDate.of(2026, 7, 1),
+                new BigDecimal("999.00"), Transaction.Type.EXPENSE, "AMAZON ORDER 1122",
+                Instant.parse("2026-07-01T10:00:00Z"));
+        Transaction refund = txn(UUID.randomUUID(), accountId, LocalDate.of(2026, 7, 5),
+                new BigDecimal("999.00"), Transaction.Type.INCOME, "AMAZON REFUND 1122",
+                Instant.parse("2026-07-05T10:00:00Z"));
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(purchase, refund));
+
+        reconciliationService.reconcileForUser(userId);
+
+        List<TransactionGraphService.PendingEdge> edges = capturePendingEdges();
+        assertThat(edges).hasSize(1);
+        TransactionGraphService.PendingEdge edge = edges.get(0);
+        assertThat(edge.fromTransactionId()).isEqualTo(refund.getId());
+        assertThat(edge.toTransactionId()).isEqualTo(purchase.getId());
+        assertThat(edge.relationshipType()).isEqualTo(TransactionRelationship.RelationshipType.REFUND);
+        assertThat(edge.matchedAmount()).isEqualByComparingTo("999.00");
+    }
+
+    @Test
+    void reconcileForUser_alsoWritesAReversalEdge_distinctFromRefund() {
+        UUID accountId = UUID.randomUUID();
+        Transaction purchase = txn(UUID.randomUUID(), accountId, LocalDate.of(2026, 7, 1),
+                new BigDecimal("500.00"), Transaction.Type.EXPENSE, "MERCHANT PAYMENT 1122",
+                Instant.parse("2026-07-01T10:00:00Z"));
+        Transaction reversal = txn(UUID.randomUUID(), accountId, LocalDate.of(2026, 7, 3),
+                new BigDecimal("500.00"), Transaction.Type.INCOME, "PAYMENT REVERSED 1122",
+                Instant.parse("2026-07-03T10:00:00Z"));
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(purchase, reversal));
+
+        reconciliationService.reconcileForUser(userId);
+
+        List<TransactionGraphService.PendingEdge> edges = capturePendingEdges();
+        assertThat(edges).hasSize(1);
+        TransactionGraphService.PendingEdge edge = edges.get(0);
+        assertThat(edge.fromTransactionId()).isEqualTo(reversal.getId());
+        assertThat(edge.toTransactionId()).isEqualTo(purchase.getId());
+        assertThat(edge.relationshipType()).isEqualTo(TransactionRelationship.RelationshipType.REVERSAL);
+        assertThat(edge.matchedAmount()).isEqualByComparingTo("500.00");
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<TransactionGraphService.PendingEdge> capturePendingEdges() {
+        org.mockito.ArgumentCaptor<List<TransactionGraphService.PendingEdge>> captor =
+                org.mockito.ArgumentCaptor.forClass(List.class);
+        org.mockito.Mockito.verify(transactionGraphService).linkAll(captor.capture());
+        return captor.getValue();
     }
 }
