@@ -112,9 +112,18 @@ public class StatementImport extends BaseEntity implements com.finora.imports.st
     /** The rest of a credit-card statement's own billing-summary panel -- see
      *  {@code CreditCardSummaryExtractor.CreditCardSummaryEvidence}, whose fields these mirror
      *  exactly. Copied verbatim from the {@code ImportSession} this confirm came from (see
-     *  {@code ImportService.persistSection}'s own comment), never recomputed here. Null together
-     *  with {@link #totalAmountDue} whenever no summary panel was found -- both come from the same
-     *  extracted evidence. */
+     *  {@code ImportService.persistSection}'s own comment), never recomputed here.
+     *
+     *  <p>Null whenever no summary panel was found, same as {@link #totalAmountDue} -- but NOT
+     *  always null together with it: {@code StatementImportService.confirmReimport} has no
+     *  {@code ImportSession} to copy this from (it re-parses via {@code parseAndStageAnyFormat},
+     *  which never persists one), so a re-imported credit-card statement's row always has these
+     *  four null even though {@link #totalAmountDue}/{@link #paymentDueDate} (echoed through
+     *  {@code ConfirmRequest}, which reimport-confirm does carry) are populated. Accepted as a
+     *  narrower version of the same "best-effort, no session on this path" limitation {@code
+     *  layoutMetadataJson} and its siblings already have -- closing it means threading
+     *  {@code CreditCardSummaryEvidence} through {@code parseAndStageAnyFormat} too, a separate
+     *  follow-up. */
     @Column(name = "previous_balance")
     private BigDecimal previousBalance;
 
