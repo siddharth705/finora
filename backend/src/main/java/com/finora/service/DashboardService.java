@@ -69,6 +69,28 @@ public class DashboardService {
         Map<UUID, Category> categoriesById = categoryRepository.findByUserId(userId).stream()
                 .collect(Collectors.toMap(Category::getId, c -> c));
 
+        // Detected Issues. ReconciliationService's own duplicate pass silently excludes a row from
+        // every total above the moment isDuplicateOf is set (see RefundNetting.reportable) -- and
+        // until now nothing told the user it happened. TransactionService.confirmNotDuplicate
+        // (BH-027) already exists to let a human overrule the engine's guess ("no, these really are
+        // two separate transactions") -- it simply had no caller anywhere in the product. This
+        // doesn't compute a new verdict, just finally surfaces the one already sitting on the row.
+        // Newest first; duplicateTransactionCount is the TRUE total (uncapped) so the client can
+        // say "N found" without hardcoding DETECTED_DUPLICATES_DISPLAY_LIMIT, mirroring how
+        // limitedHistoryMonthFloor already avoids a hardcoded threshold.
+        List<Transaction> duplicates = all.stream()
+                .filter(t -> t.getReconciliationStatus() == Transaction.ReconciliationStatus.DUPLICATE)
+                .sorted(Comparator.comparing(Transaction::getTxnDate).reversed())
+                .toList();
+        List<DashboardSummaryDto.DetectedDuplicate> detectedDuplicates = duplicates.stream()
+                .limit(DETECTED_DUPLICATES_DISPLAY_LIMIT)
+                .map(t -> new DashboardSummaryDto.DetectedDuplicate(t.getId(), t.getTxnDate(),
+                        Optional.ofNullable(t.getMerchant()).filter(s -> !s.isBlank())
+                                .or(() -> Optional.ofNullable(t.getDescription()).filter(s -> !s.isBlank()))
+                                .orElse("Unknown"),
+                        t.getAmount()))
+                .toList();
+
         BigDecimal liquid = sumBalances(accounts, Account.Type.SAVINGS).add(sumBalances(accounts, Account.Type.WALLET));
         BigDecimal investments = sumBalances(accounts, Account.Type.INVESTMENT);
         BigDecimal liabilities = sumBalances(accounts, Account.Type.CREDIT_CARD);
@@ -242,7 +264,8 @@ public class DashboardService {
                 categoryReviewWarning, categoryReviewSpendPct, categoryReviewSpend,
                 categoryReviewTransactionCount, CATEGORY_REVIEW_SPEND_WARNING_THRESHOLD_PCT,
                 comparisonGateReason, MIN_TRANSACTIONS_FOR_DELTA_COMPARISON,
-                expenseCategoryMovers
+                expenseCategoryMovers,
+                duplicates.size(), detectedDuplicates
         );
     }
 
@@ -386,6 +409,13 @@ public class DashboardService {
     // RefundNetting-reportable list every other figure in this method is already computed from,
     // so "10 transactions" means the same 10 a user would see on the Ledger, not some other count.
     static final int MIN_TRANSACTIONS_FOR_HEALTH_SCORE = 10;
+
+    // A card, not a full ledger view -- capped the same way expenseCategoryMovers is, so a user
+    // with dozens of duplicates from one bad re-import isn't shown a wall of rows. Unlike that
+    // ranking-by-magnitude cap, this one is just "most recent first, stop at 5": there's no
+    // meaningful way to rank duplicates by importance, only by how long they've been sitting
+    // unreviewed.
+    static final int DETECTED_DUPLICATES_DISPLAY_LIMIT = 5;
 
     private record HealthResult(Integer score, String label, Map<String, Double> breakdown,
                                  boolean available, int transactionCount, int minTransactions) {}
