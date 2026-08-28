@@ -150,6 +150,21 @@ export interface DashboardSummary {
    */
   comparisonGateReason: 'PARTIAL_PRIOR_MONTH' | 'TOO_FEW_PRIOR_TRANSACTIONS' | null;
   comparisonGateMinTransactions: number;
+  /**
+   * The categories behind a real (non-null) expenseDeltaPct -- e.g. "Dining ₹8,000 vs ₹5,000
+   * (+60%)" instead of leaving "expenses are up 12%" unexplained. Built from the SAME
+   * currentMonth/priorMonth comparison expenseDeltaPct itself comes from, not Insights' own
+   * rolling 3-month-average movers -- a different prior-period definition that would disagree
+   * with the number it's meant to explain. Always empty when expenseDeltaPct is null.
+   */
+  expenseCategoryMovers: CategoryMover[];
+}
+
+export interface CategoryMover {
+  category: string;
+  currentAmount: number;
+  priorAmount: number;
+  pctChange: number | null;
 }
 
 // D-25 PR3-B/C. `type` is one of ACCOUNT_CREATED/FIRST_IMPORT/FIRST_BUDGET/FIRST_GOAL/
