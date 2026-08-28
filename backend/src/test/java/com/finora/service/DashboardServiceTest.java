@@ -326,6 +326,56 @@ class DashboardServiceTest {
     }
 
     @Test
+    @DisplayName("a statement window straddling a calendar-month boundary doesn't tank Spend Consistency / Cash Flow Stability")
+    void summarize_partialBoundaryMonthsDontDistortConsistencyOrCashFlow() {
+        // Reproduces a real user's dashboard: one continuous ~30-day statement window (Jun 26 --
+        // Jul 26) that YearMonth-buckets into a near-empty 5-day June sliver and a near-full 26-day
+        // July bucket. Steady, identical daily spend across the whole window -- if the two buckets
+        // were compared as if both were full months, the sliver's tiny total vs. July's much larger
+        // total reads as wildly inconsistent (this is exactly how the bug produced an 8% Spend
+        // Consistency score for genuinely steady spending). With the partial boundary months
+        // excluded from the comparison, only 0 full months remain, so both scores fall through to
+        // their neutral thin-data defaults (100) rather than judge on the lopsided partial buckets.
+        List<Transaction> txns = new java.util.ArrayList<>();
+        LocalDate date = LocalDate.of(2026, 6, 26);
+        LocalDate end = LocalDate.of(2026, 7, 26);
+        while (!date.isAfter(end)) {
+            txns.add(txn(new BigDecimal("1000.00"), Transaction.Type.EXPENSE, date, Transaction.ReconciliationStatus.OK));
+            txns.add(txn(new BigDecimal("1200.00"), Transaction.Type.INCOME, date, Transaction.ReconciliationStatus.OK));
+            date = date.plusDays(1);
+        }
+        when(transactionRepository.findByUserId(userId)).thenReturn(txns);
+
+        DashboardSummaryDto summary = dashboardService.summarize(userId);
+
+        assertThat(summary.healthBreakdown().get("Spend Consistency")).isEqualTo(100.0);
+        assertThat(summary.healthBreakdown().get("Cash Flow Stability")).isEqualTo(100.0);
+    }
+
+    @Test
+    @DisplayName("a full prior month is still compared normally once the current month is complete")
+    void summarize_fullPriorMonthStillDetectsRealInconsistency() {
+        // Once there's at least one genuinely comparable full month alongside a full current month,
+        // the fix must not suppress a real difference in spending between them.
+        List<Transaction> txns = new java.util.ArrayList<>();
+        for (LocalDate d = LocalDate.of(2026, 6, 1); !d.isAfter(LocalDate.of(2026, 6, 30)); d = d.plusDays(1)) {
+            txns.add(txn(new BigDecimal("100.00"), Transaction.Type.EXPENSE, d, Transaction.ReconciliationStatus.OK));
+            txns.add(txn(new BigDecimal("200.00"), Transaction.Type.INCOME, d, Transaction.ReconciliationStatus.OK));
+        }
+        for (LocalDate d = LocalDate.of(2026, 7, 1); !d.isAfter(LocalDate.of(2026, 7, 31)); d = d.plusDays(1)) {
+            txns.add(txn(new BigDecimal("1000.00"), Transaction.Type.EXPENSE, d, Transaction.ReconciliationStatus.OK));
+            txns.add(txn(new BigDecimal("200.00"), Transaction.Type.INCOME, d, Transaction.ReconciliationStatus.OK));
+        }
+        when(transactionRepository.findByUserId(userId)).thenReturn(txns);
+
+        DashboardSummaryDto summary = dashboardService.summarize(userId);
+
+        // June (~3000) vs July (~31000) are both FULL months -- a real, large swing that the fix
+        // must still surface, not smooth over.
+        assertThat(summary.healthBreakdown().get("Spend Consistency")).isLessThan(50.0);
+    }
+
+    @Test
     void summarize_fallsBackSafely_whenTheStoredTimezoneIsMalformed() {
         // UserSettingsService.update() now rejects a malformed timezone up front, but this proves
         // the read-time fallback here is a real backstop, not just a comment -- a row that already

@@ -245,6 +245,34 @@ public class DashboardService {
         List<BigDecimal> monthlyExpense = last6.stream().map(m -> sumForMonth(active, m, Transaction.Type.EXPENSE, refunds)).toList();
         List<BigDecimal> monthlyIncome = last6.stream().map(m -> sumForMonth(active, m, Transaction.Type.INCOME, refunds)).toList();
 
+        // `months` buckets by exact calendar month, so a user whose entire imported history is one
+        // continuous ~30-day statement window that happens to straddle a month boundary (e.g. Jun
+        // 26 -- Jul 26) gets TWO buckets: a near-empty sliver (5 days of Jun) and the bulk (26 days
+        // of Jul). Compared as if they were both full months, that sliver reads as wildly
+        // inconsistent spending / negative cash flow -- not because the user's finances are
+        // unstable, but because the bucket boundary chopped one window in half. Same class of bug
+        // this method's own doc comment warns about: a thin-data artifact, not a true reading.
+        //
+        // Fix: only compare FULL calendar months for consistency/cash-flow -- drop the first bucket
+        // if the data doesn't start on the 1st, and the last bucket if it doesn't run through
+        // month-end. If that leaves nothing comparable, fall through to the existing thin-data
+        // defaults below (cv=0 / cashFlowScore below) rather than judge on partial data.
+        LocalDate earliestTxnDate = active.stream().map(Transaction::getTxnDate).min(Comparator.naturalOrder()).orElse(null);
+        LocalDate latestTxnDate = active.stream().map(Transaction::getTxnDate).max(Comparator.naturalOrder()).orElse(null);
+        List<BigDecimal> fullMonthlyExpense = new ArrayList<>();
+        List<BigDecimal> fullMonthlyIncome = new ArrayList<>();
+        for (int i = 0; i < last6.size(); i++) {
+            String m = last6.get(i);
+            boolean partialStart = i == 0 && earliestTxnDate != null
+                    && m.equals(YearMonth.from(earliestTxnDate).toString()) && earliestTxnDate.getDayOfMonth() != 1;
+            boolean partialEnd = i == last6.size() - 1 && latestTxnDate != null
+                    && m.equals(YearMonth.from(latestTxnDate).toString())
+                    && latestTxnDate.getDayOfMonth() != YearMonth.from(latestTxnDate).lengthOfMonth();
+            if (partialStart || partialEnd) continue;
+            fullMonthlyExpense.add(monthlyExpense.get(i));
+            fullMonthlyIncome.add(monthlyIncome.get(i));
+        }
+
         BigDecimal avgExpense = average(monthlyExpense);
         BigDecimal incomeCur = last6.isEmpty() ? BigDecimal.ZERO : monthlyIncome.get(monthlyIncome.size() - 1);
         BigDecimal expenseCur = last6.isEmpty() ? BigDecimal.ZERO : monthlyExpense.get(monthlyExpense.size() - 1);
@@ -265,15 +293,16 @@ public class DashboardService {
                 : (liquid.compareTo(BigDecimal.ZERO) > 0 ? 6 : 0);
         double emergencyScore = Math.min(monthsCovered / 6, 1) * 100;
 
-        double mean = avgExpense.doubleValue();
-        double variance = monthlyExpense.size() > 1
-                ? monthlyExpense.stream().mapToDouble(v -> Math.pow(v.doubleValue() - mean, 2)).average().orElse(0)
+        double fullMean = fullMonthlyExpense.isEmpty() ? 0
+                : fullMonthlyExpense.stream().mapToDouble(BigDecimal::doubleValue).average().orElse(0);
+        double variance = fullMonthlyExpense.size() > 1
+                ? fullMonthlyExpense.stream().mapToDouble(v -> Math.pow(v.doubleValue() - fullMean, 2)).average().orElse(0)
                 : 0;
-        double cv = mean > 0 ? Math.sqrt(variance) / mean : 0;
+        double cv = fullMean > 0 ? Math.sqrt(variance) / fullMean : 0;
         double consistencyScore = Math.max(0, 100 - Math.min(cv * 100, 100));
 
-        long positiveMonths = countNonNegativeMonths(monthlyIncome, monthlyExpense);
-        double cashFlowScore = last6.isEmpty() ? 0 : (double) positiveMonths / last6.size() * 100;
+        long positiveMonths = countNonNegativeMonths(fullMonthlyIncome, fullMonthlyExpense);
+        double cashFlowScore = fullMonthlyExpense.isEmpty() ? 100 : (double) positiveMonths / fullMonthlyExpense.size() * 100;
 
         int overall = (int) Math.round(savingsRateScore * 0.25 + debtScore * 0.20 + emergencyScore * 0.25
                 + consistencyScore * 0.15 + cashFlowScore * 0.15);
