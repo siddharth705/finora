@@ -47,33 +47,35 @@ public class TransactionExplanationService {
         Transaction t = OwnershipGuard.requireOwned(
                 transactionRepository.findById(transactionId), Transaction::getUserId, userId, "Transaction");
         Integer confidence = t.getDecisionConfidence();
+        TransactionExplanationDto.ReconciliationExplanationDto reconciliation = reconciliationExplanationFor(t);
 
         return switch (t.getDecisionSource()) {
             case MANUAL -> new TransactionExplanationDto(
-                    "MANUAL", "You set this category yourself.", List.of(), confidence);
+                    "MANUAL", "You set this category yourself.", List.of(), confidence, reconciliation);
             case USER_RULE -> ruleExplanation(t, "USER_RULE",
-                    "Matched a rule you created.", confidence);
+                    "Matched a rule you created.", confidence, reconciliation);
             case GLOBAL_RULE -> ruleExplanation(t, "GLOBAL_RULE",
-                    "Matched one of Finora's built-in rules.", confidence);
+                    "Matched one of Finora's built-in rules.", confidence, reconciliation);
             case LEARNED_PATTERN -> new TransactionExplanationDto(
                     "LEARNED_PATTERN",
                     "Categorized based on how you've categorized " + merchantPhrase(t) + " before.",
                     List.of("Every time you confirm or correct a category, Finora remembers it for that merchant."),
-                    confidence);
+                    confidence, reconciliation);
             case KEYWORD_MATCH -> new TransactionExplanationDto(
                     "KEYWORD_MATCH",
                     "Matched a keyword Finora recognizes in the description.",
-                    List.of(), confidence);
+                    List.of(), confidence, reconciliation);
             case FILE_PROVIDED -> new TransactionExplanationDto(
                     "FILE_PROVIDED",
                     "The imported file specified this category directly.",
-                    List.of(), confidence);
-            case MERCHANT_DEFAULT -> defaultExplanation(t, confidence);
+                    List.of(), confidence, reconciliation);
+            case MERCHANT_DEFAULT -> defaultExplanation(t, confidence, reconciliation);
         };
     }
 
     private TransactionExplanationDto ruleExplanation(Transaction t, String source, String fallbackSummary,
-                                                        Integer confidence) {
+                                                        Integer confidence,
+                                                        TransactionExplanationDto.ReconciliationExplanationDto reconciliation) {
         CategoryRule rule = t.getDecisionRuleId() == null
                 ? null : categoryRuleRepository.findById(t.getDecisionRuleId()).orElse(null);
         // A rule can be edited or deleted after it matched -- the transaction it already
@@ -83,19 +85,21 @@ public class TransactionExplanationService {
         if (rule == null) {
             return new TransactionExplanationDto(source, fallbackSummary,
                     List.of("The specific rule is no longer available (it may have been edited or removed since)."),
-                    confidence);
+                    confidence, reconciliation);
         }
         String condition = fieldLabel(rule.getField()) + " " + operatorLabel(rule.getOperator())
                 + " " + comparisonValueLabel(rule);
         String summary = fallbackSummary + " " + condition + " → " + rule.getActionValue() + ".";
         return new TransactionExplanationDto(source, summary,
-                List.of("Rule condition: " + condition, "Assigns category: " + rule.getActionValue()), confidence);
+                List.of("Rule condition: " + condition, "Assigns category: " + rule.getActionValue()),
+                confidence, reconciliation);
     }
 
     // Same fact as GmailReviewService.reasoningFor's "isn't auto-detected yet" caveat (independently
     // worded on purpose -- this is the after-the-fact ledger explanation, not the pre-approval
     // review queue). If C6.3 ships category detection, update both.
-    private TransactionExplanationDto defaultExplanation(Transaction t, Integer confidence) {
+    private TransactionExplanationDto defaultExplanation(Transaction t, Integer confidence,
+                                                           TransactionExplanationDto.ReconciliationExplanationDto reconciliation) {
         String categoryName = t.getCategoryId() == null ? "this category"
                 : categoryRepository.findById(t.getCategoryId()).map(Category::getName).orElse("this category");
         if (t.getSource() == Transaction.Source.GMAIL_IMPORT) {
@@ -103,11 +107,92 @@ public class TransactionExplanationService {
                     "Imported from a Gmail receipt (" + merchantPhrase(t)
                             + "). Finora doesn't auto-detect a category for this merchant yet, so it defaulted to \""
                             + categoryName + "\".",
-                    List.of("No rule, learned pattern, or keyword matched this transaction."), confidence);
+                    List.of("No rule, learned pattern, or keyword matched this transaction."),
+                    confidence, reconciliation);
         }
         return new TransactionExplanationDto("MERCHANT_DEFAULT",
                 "No rule, learned pattern, or keyword matched, so this defaulted to \"" + categoryName + "\".",
-                List.of(), confidence);
+                List.of(), confidence, reconciliation);
+    }
+
+    /**
+     * "Why this match?" -- null for the common case ({@code OK}, nothing matched this row).
+     * Reads {@code reconciliationExplanation}'s {@code reason} map straight through into bullet
+     * lines rather than re-deriving anything; the matched counterpart id comes from the entity's
+     * own status-specific column, not re-parsed out of that JSON, so it can never disagree with it.
+     */
+    private TransactionExplanationDto.ReconciliationExplanationDto reconciliationExplanationFor(Transaction t) {
+        Transaction.ReconciliationStatus status = t.getReconciliationStatus();
+        if (status == Transaction.ReconciliationStatus.OK) return null;
+
+        UUID matchedId = switch (status) {
+            case DUPLICATE -> t.getIsDuplicateOf();
+            case TRANSFER -> t.getTransferPairId();
+            case REFUND, REVERSAL -> t.getRefundOfTransactionId();
+            case OK -> null; // unreachable, guarded above
+        };
+
+        java.util.Map<String, Object> reason = reasonMap(t);
+        String summary = reconciliationSummary(status, reason);
+        List<String> evidence = reason.isEmpty() ? List.of() : reconciliationEvidence(status, reason);
+        return new TransactionExplanationDto.ReconciliationExplanationDto(
+                status.name(), matchedId, summary, evidence);
+    }
+
+    @SuppressWarnings("unchecked")
+    private java.util.Map<String, Object> reasonMap(Transaction t) {
+        java.util.Map<String, Object> envelope = t.getReconciliationExplanation();
+        Object reason = envelope == null ? null : envelope.get("reason");
+        return reason instanceof java.util.Map<?, ?> m ? (java.util.Map<String, Object>) m : java.util.Map.of();
+    }
+
+    private String reconciliationSummary(Transaction.ReconciliationStatus status, java.util.Map<String, Object> reason) {
+        return switch (status) {
+            case DUPLICATE -> "Matched as a duplicate of an existing transaction — same account, date, "
+                    + "amount, and description.";
+            case TRANSFER -> {
+                Object days = reason.get("dateDifferenceDays");
+                yield "Matched as a transfer between your own accounts"
+                        + (days != null ? ", " + days + " day(s) apart" : "") + ".";
+            }
+            case REFUND -> {
+                boolean sameMerchant = Boolean.TRUE.equals(reason.get("sameMerchant"));
+                boolean keyword = Boolean.TRUE.equals(reason.get("refundKeyword"));
+                yield "Matched as a refund of an earlier purchase" + reasonClause(keyword, sameMerchant) + ".";
+            }
+            case REVERSAL -> {
+                boolean sameMerchant = Boolean.TRUE.equals(reason.get("sameMerchant"));
+                yield "Matched as a reversal of an earlier purchase, based on the wording of this "
+                        + "transaction's description" + (sameMerchant ? " and a matching merchant" : "") + ".";
+            }
+            case OK -> ""; // unreachable, guarded by the caller
+        };
+    }
+
+    private String reasonClause(boolean keyword, boolean sameMerchant) {
+        if (keyword && sameMerchant) return ", based on both its wording and a matching merchant";
+        if (keyword) return ", based on its wording";
+        if (sameMerchant) return ", based on a matching merchant";
+        return "";
+    }
+
+    private List<String> reconciliationEvidence(Transaction.ReconciliationStatus status, java.util.Map<String, Object> reason) {
+        return switch (status) {
+            case TRANSFER -> List.of(
+                    "Opposite direction: " + reason.getOrDefault("oppositeDirection", "?"),
+                    "Amount difference: ₹" + reason.getOrDefault("amountDifference", "0"),
+                    "Days apart: " + reason.getOrDefault("dateDifferenceDays", "?")
+                            + " (window: " + reason.getOrDefault("dayWindowApplied", "?") + ")");
+            case REFUND -> List.of(
+                    "Refund amount: ₹" + reason.getOrDefault("refundAmount", "?"),
+                    "Original purchase: ₹" + reason.getOrDefault("purchaseAmount", "?"),
+                    Boolean.TRUE.equals(reason.get("partialRefund")) ? "This is a partial refund" : "Full refund");
+            case REVERSAL -> List.of(
+                    "Reversal amount: ₹" + reason.getOrDefault("reversalAmount", "?"),
+                    "Original purchase: ₹" + reason.getOrDefault("purchaseAmount", "?"),
+                    Boolean.TRUE.equals(reason.get("partialReversal")) ? "This is a partial reversal" : "Full reversal");
+            case DUPLICATE, OK -> List.of();
+        };
     }
 
     private String merchantPhrase(Transaction t) {
