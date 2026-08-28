@@ -36,15 +36,18 @@ public class DashboardService {
     private final CategoryRepository categoryRepository;
     private final BudgetRepository budgetRepository;
     private final UserRepository userRepository;
+    private final com.finora.repository.StatementImportRepository statementImportRepository;
 
     public DashboardService(AccountRepository accountRepository, TransactionRepository transactionRepository,
                              CategoryRepository categoryRepository, BudgetRepository budgetRepository,
-                             UserRepository userRepository) {
+                             UserRepository userRepository,
+                             com.finora.repository.StatementImportRepository statementImportRepository) {
         this.accountRepository = accountRepository;
         this.transactionRepository = transactionRepository;
         this.categoryRepository = categoryRepository;
         this.budgetRepository = budgetRepository;
         this.userRepository = userRepository;
+        this.statementImportRepository = statementImportRepository;
     }
 
     @Transactional(readOnly = true)
@@ -99,6 +102,20 @@ public class DashboardService {
         BigDecimal netCur = incomeCur.subtract(expenseCur);
         BigDecimal netPrior = incomePrior.subtract(expensePrior);
 
+        // Comparison gating. `priorMonth` is a CALENDAR step back from `currentMonth` (see
+        // ReportingPeriod.priorMonth) -- it doesn't ask whether that calendar month is actually a
+        // genuine, separate slice of the user's history, or just the ragged far edge of the same
+        // continuous statement window `currentMonth` itself came from. A user whose entire imported
+        // history is one ~30-day window straddling Jun 26 -- Jul 26 gets a "priorMonth" of June that
+        // is really 5 leftover days of the SAME import, not last month's real spending -- dividing
+        // pct()'s delta against that near-empty sliver is exactly how a genuine steady spender saw
+        // a reported "928.8%" income swing. isReliablePriorMonth requires prior to be both a FULL
+        // calendar month (not the ragged edge of the overall imported date range) and to carry
+        // enough of its own transactions that one or two stray rows can't dominate the ratio --
+        // below either bar, the comparison isn't wrong, it's just not a comparison, and pct() below
+        // says so with null (which MetricCard already renders as a muted "--" rather than a number).
+        boolean priorMonthReliable = isReliablePriorMonth(active, priorMonth);
+
         BigDecimal savingsRate = incomeCur.compareTo(BigDecimal.ZERO) > 0
                 ? netCur.divide(incomeCur, 4, RoundingMode.HALF_UP).multiply(BigDecimal.valueOf(100))
                 : BigDecimal.ZERO;
@@ -111,6 +128,34 @@ public class DashboardService {
                 .collect(Collectors.groupingBy(
                         t -> categoriesById.getOrDefault(t.getCategoryId(), unknownCategory()).getName(),
                         Collectors.reducing(BigDecimal.ZERO, refunds::reportableAmount, BigDecimal::add)));
+
+        // "Other" (CategorizationService/CategoryRules's literal fallback name when nothing matched
+        // a rule, keyword, or learned pattern) is a REAL, resolvable category -- not the same thing
+        // as a transaction with no category at all (that's unknownCategory()'s "Uncategorized"
+        // above). Neither name alone is the right signal for "does this transaction's category
+        // actually tell the user anything": a transaction can be genuinely, confidently categorized
+        // AS "Other" if the user's own confidence threshold accepts it. `needsCategoryReview` is
+        // already the exact per-transaction answer to that question -- CategorizationService sets
+        // it only for a default("Other")-sourced guess that ALSO misses the user's own
+        // autoApplyConfidenceThreshold (see that method's own doc comment) -- so this reuses it
+        // instead of re-deriving a parallel, less precise "is the name Other or Uncategorized"
+        // heuristic that would either over- or under-count relative to what Ledger already shows
+        // the user as a "needs review" badge on the exact same transactions.
+        List<Transaction> currentMonthExpenses = active.stream()
+                .filter(t -> t.getTxnType() == Transaction.Type.EXPENSE
+                        && Objects.equals(YearMonth.from(t.getTxnDate()).toString(), currentMonth))
+                .toList();
+        BigDecimal categoryReviewSpend = currentMonthExpenses.stream()
+                .filter(Transaction::isNeedsCategoryReview)
+                .map(refunds::reportableAmount).reduce(BigDecimal.ZERO, BigDecimal::add);
+        int categoryReviewTransactionCount = (int) currentMonthExpenses.stream()
+                .filter(Transaction::isNeedsCategoryReview).count();
+        BigDecimal totalMonthlySpend = currentMonthExpenses.stream()
+                .map(refunds::reportableAmount).reduce(BigDecimal.ZERO, BigDecimal::add);
+        double categoryReviewSpendPct = totalMonthlySpend.compareTo(BigDecimal.ZERO) > 0
+                ? categoryReviewSpend.divide(totalMonthlySpend, 6, RoundingMode.HALF_UP).doubleValue() * 100
+                : 0;
+        boolean categoryReviewWarning = categoryReviewSpendPct >= CATEGORY_REVIEW_SPEND_WARNING_THRESHOLD_PCT;
 
         // Same current-month EXPENSE figures as spendByCategory above, just keyed by category id
         // (rather than display name) so they can be joined against Budget.categoryId below --
@@ -158,18 +203,46 @@ public class DashboardService {
         // clock as the period this response reports on.
         List<String> notifications = buildNotifications(accounts, budgets, spendByCategoryId, categoriesById, lowBalanceThreshold, zone);
 
+        // A dashboard built from `months.size()` (distinct calendar months touched by any
+        // transaction) < LIMITED_HISTORY_MONTH_FLOOR full months of data presents trend deltas and
+        // a health score with the same confidence as a mature account, even though both are
+        // dominated by thin-data artifacts at that point (see the partial-boundary-month fix to
+        // Spend Consistency/Cash Flow Stability, and the pct() deltas below dividing against an
+        // effectively-empty prior month). Surfacing the raw counts here lets the client show why,
+        // instead of a user having to guess "why does my score look bad" on their own.
+        int statementCount = (int) statementImportRepository.countByUserId(userId);
+        boolean limitedHistory = months.size() < LIMITED_HISTORY_MONTH_FLOOR;
+
         return new DashboardSummaryDto(
                 liquid, totalAssets, liabilities, netWorth,
                 incomeCur, expenseCur, netCur, savingsRate,
-                pct(incomeCur, incomePrior), pct(expenseCur, expensePrior), pct(netCur, netPrior),
+                pct(incomeCur, incomePrior, priorMonthReliable), pct(expenseCur, expensePrior, priorMonthReliable),
+                pct(netCur, netPrior, priorMonthReliable),
                 health.score(), health.label(), health.breakdown(),
                 health.available(), health.transactionCount(), health.minTransactions(),
                 spendByCategory, notifications,
                 // Which month everything above actually describes. Without these the client had no
                 // choice but to guess, and it guessed "this month" -- see Bug 05.
-                period.month(), period.isCurrent()
+                period.month(), period.isCurrent(),
+                limitedHistory, months.size(), LIMITED_HISTORY_MONTH_FLOOR, statementCount, accounts.size(),
+                categoryReviewWarning, categoryReviewSpendPct, categoryReviewSpend,
+                categoryReviewTransactionCount, CATEGORY_REVIEW_SPEND_WARNING_THRESHOLD_PCT
         );
     }
+
+    // 3 calendar months is the threshold most of this method's own thin-data guards already
+    // converge on independently: the health score's Spend Consistency/Cash Flow Stability need at
+    // least 2 FULL months to say anything (a 3rd guarantees at least 2 full months even when the
+    // most recent one is still in progress), and the trend percentages below are most likely to
+    // divide against a near-empty denominator with fewer months of history than that.
+    static final int LIMITED_HISTORY_MONTH_FLOOR = 3;
+
+    // 20% of a month's spend needing a better category is the point at which "some transactions
+    // are generically categorized" becomes "categorization is broadly unreliable this month" --
+    // low enough to catch the real case that motivated this (81% in "Other"), high enough that a
+    // handful of genuinely ambiguous transactions in an otherwise well-categorized month doesn't
+    // nag every user on every visit.
+    static final double CATEGORY_REVIEW_SPEND_WARNING_THRESHOLD_PCT = 20.0;
 
     private Category unknownCategory() {
         Category c = new Category(); c.setName("Uncategorized"); return c;
@@ -206,10 +279,35 @@ public class DashboardService {
                 .map(refunds::reportableAmount).reduce(BigDecimal.ZERO, BigDecimal::add);
     }
 
-    private Double pct(BigDecimal current, BigDecimal prior) {
-        if (prior == null || prior.compareTo(BigDecimal.ZERO) == 0) return null;
+    private Double pct(BigDecimal current, BigDecimal prior, boolean priorReliable) {
+        if (!priorReliable || prior == null || prior.compareTo(BigDecimal.ZERO) == 0) return null;
         return current.subtract(prior).divide(prior.abs(), 6, RoundingMode.HALF_UP)
                 .multiply(BigDecimal.valueOf(100)).doubleValue();
+    }
+
+    // A calendar month at least MIN_TRANSACTIONS_FOR_DELTA_COMPARISON transactions is required to
+    // be trusted as a delta's denominator -- low enough that a real, if quiet, month still gets a
+    // real percentage, high enough that one or two stray rows can't single-handedly produce a
+    // triple-digit swing the way they did for the bug this constant exists to prevent.
+    static final int MIN_TRANSACTIONS_FOR_DELTA_COMPARISON = 3;
+
+    /** True when `month` is trustworthy as a delta's denominator: a FULL calendar month (not the
+     *  ragged edge of the overall imported date range -- see the comment at this method's call
+     *  site) carrying at least {@link #MIN_TRANSACTIONS_FOR_DELTA_COMPARISON} transactions of its
+     *  own. */
+    private boolean isReliablePriorMonth(List<Transaction> active, String month) {
+        if (month == null) return false;
+        LocalDate earliestTxnDate = active.stream().map(Transaction::getTxnDate).min(Comparator.naturalOrder()).orElse(null);
+        LocalDate latestTxnDate = active.stream().map(Transaction::getTxnDate).max(Comparator.naturalOrder()).orElse(null);
+        if (earliestTxnDate == null || latestTxnDate == null) return false;
+        boolean isEarliestBucket = month.equals(YearMonth.from(earliestTxnDate).toString());
+        boolean isLatestBucket = month.equals(YearMonth.from(latestTxnDate).toString());
+        if (isEarliestBucket && earliestTxnDate.getDayOfMonth() != 1) return false;
+        if (isLatestBucket && latestTxnDate.getDayOfMonth() != YearMonth.from(latestTxnDate).lengthOfMonth()) return false;
+
+        long monthTxnCount = active.stream()
+                .filter(t -> YearMonth.from(t.getTxnDate()).toString().equals(month)).count();
+        return monthTxnCount >= MIN_TRANSACTIONS_FOR_DELTA_COMPARISON;
     }
 
     // D-25 PR3-A. Owner's choice among the proposal's own options (transaction count vs. time
@@ -245,6 +343,34 @@ public class DashboardService {
         List<BigDecimal> monthlyExpense = last6.stream().map(m -> sumForMonth(active, m, Transaction.Type.EXPENSE, refunds)).toList();
         List<BigDecimal> monthlyIncome = last6.stream().map(m -> sumForMonth(active, m, Transaction.Type.INCOME, refunds)).toList();
 
+        // `months` buckets by exact calendar month, so a user whose entire imported history is one
+        // continuous ~30-day statement window that happens to straddle a month boundary (e.g. Jun
+        // 26 -- Jul 26) gets TWO buckets: a near-empty sliver (5 days of Jun) and the bulk (26 days
+        // of Jul). Compared as if they were both full months, that sliver reads as wildly
+        // inconsistent spending / negative cash flow -- not because the user's finances are
+        // unstable, but because the bucket boundary chopped one window in half. Same class of bug
+        // this method's own doc comment warns about: a thin-data artifact, not a true reading.
+        //
+        // Fix: only compare FULL calendar months for consistency/cash-flow -- drop the first bucket
+        // if the data doesn't start on the 1st, and the last bucket if it doesn't run through
+        // month-end. If that leaves nothing comparable, fall through to the existing thin-data
+        // defaults below (cv=0 / cashFlowScore below) rather than judge on partial data.
+        LocalDate earliestTxnDate = active.stream().map(Transaction::getTxnDate).min(Comparator.naturalOrder()).orElse(null);
+        LocalDate latestTxnDate = active.stream().map(Transaction::getTxnDate).max(Comparator.naturalOrder()).orElse(null);
+        List<BigDecimal> fullMonthlyExpense = new ArrayList<>();
+        List<BigDecimal> fullMonthlyIncome = new ArrayList<>();
+        for (int i = 0; i < last6.size(); i++) {
+            String m = last6.get(i);
+            boolean partialStart = i == 0 && earliestTxnDate != null
+                    && m.equals(YearMonth.from(earliestTxnDate).toString()) && earliestTxnDate.getDayOfMonth() != 1;
+            boolean partialEnd = i == last6.size() - 1 && latestTxnDate != null
+                    && m.equals(YearMonth.from(latestTxnDate).toString())
+                    && latestTxnDate.getDayOfMonth() != YearMonth.from(latestTxnDate).lengthOfMonth();
+            if (partialStart || partialEnd) continue;
+            fullMonthlyExpense.add(monthlyExpense.get(i));
+            fullMonthlyIncome.add(monthlyIncome.get(i));
+        }
+
         BigDecimal avgExpense = average(monthlyExpense);
         BigDecimal incomeCur = last6.isEmpty() ? BigDecimal.ZERO : monthlyIncome.get(monthlyIncome.size() - 1);
         BigDecimal expenseCur = last6.isEmpty() ? BigDecimal.ZERO : monthlyExpense.get(monthlyExpense.size() - 1);
@@ -265,23 +391,31 @@ public class DashboardService {
                 : (liquid.compareTo(BigDecimal.ZERO) > 0 ? 6 : 0);
         double emergencyScore = Math.min(monthsCovered / 6, 1) * 100;
 
-        double mean = avgExpense.doubleValue();
-        double variance = monthlyExpense.size() > 1
-                ? monthlyExpense.stream().mapToDouble(v -> Math.pow(v.doubleValue() - mean, 2)).average().orElse(0)
+        double fullMean = fullMonthlyExpense.isEmpty() ? 0
+                : fullMonthlyExpense.stream().mapToDouble(BigDecimal::doubleValue).average().orElse(0);
+        double variance = fullMonthlyExpense.size() > 1
+                ? fullMonthlyExpense.stream().mapToDouble(v -> Math.pow(v.doubleValue() - fullMean, 2)).average().orElse(0)
                 : 0;
-        double cv = mean > 0 ? Math.sqrt(variance) / mean : 0;
+        double cv = fullMean > 0 ? Math.sqrt(variance) / fullMean : 0;
         double consistencyScore = Math.max(0, 100 - Math.min(cv * 100, 100));
 
-        long positiveMonths = countNonNegativeMonths(monthlyIncome, monthlyExpense);
-        double cashFlowScore = last6.isEmpty() ? 0 : (double) positiveMonths / last6.size() * 100;
+        long positiveMonths = countNonNegativeMonths(fullMonthlyIncome, fullMonthlyExpense);
+        double cashFlowScore = fullMonthlyExpense.isEmpty() ? 100 : (double) positiveMonths / fullMonthlyExpense.size() * 100;
 
         int overall = (int) Math.round(savingsRateScore * 0.25 + debtScore * 0.20 + emergencyScore * 0.25
                 + consistencyScore * 0.15 + cashFlowScore * 0.15);
         String label = overall >= 80 ? "Excellent" : overall >= 60 ? "Good" : overall >= 40 ? "Fair" : "Needs Attention";
 
+        // "Debt Utilization" (not "Debt Score") used to label this -- but debtScore is INVERTED
+        // utilization (100 - avgUtil*100, so 100 = no debt / best), and a user with zero credit
+        // cards got debtScore=100 by design (see avgUtil above). Labelled "Debt Utilization: 100%"
+        // that reads as "maxed out"; it means the opposite. Every other entry in this map is
+        // already a "higher = healthier" score under a name that doesn't fight that reading --
+        // this was the one where the underlying real-world quantity (utilization) and the
+        // displayed number run in opposite directions, so it's the one that needed renaming.
         Map<String, Double> breakdown = new LinkedHashMap<>();
         breakdown.put("Savings Rate", savingsRateScore);
-        breakdown.put("Debt Utilization", debtScore);
+        breakdown.put("Debt Score", debtScore);
         breakdown.put("Emergency Fund", emergencyScore);
         breakdown.put("Spend Consistency", consistencyScore);
         breakdown.put("Cash Flow Stability", cashFlowScore);

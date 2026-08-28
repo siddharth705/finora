@@ -47,5 +47,39 @@ public record DashboardSummaryDto(
          * and ReportingPeriod for why the two differ.
          */
         String reportingMonth,
-        boolean reportingMonthIsCurrent
+        boolean reportingMonthIsCurrent,
+
+        /*
+         * True when the user has fewer than DashboardService.LIMITED_HISTORY_MONTH_FLOOR distinct
+         * calendar months of transaction data. Trend deltas (incomeDeltaPct etc.) and the health
+         * score are both still COMPUTED at this point -- neither is hidden -- but both are prone to
+         * thin-data artifacts this far below that floor (a near-empty prior-month denominator for
+         * the deltas; a health score built from too few comparable months). historyMonthCount and
+         * the floor itself are included so the client can render "X / N months" without
+         * hardcoding the threshold, mirroring how healthScoreTransactionCount/minTransactions
+         * already work.
+         */
+        boolean limitedHistory,
+        int historyMonthCount,
+        int limitedHistoryMonthFloor,
+        int statementCount,
+        int accountCount,
+
+        /*
+         * True when categoryReviewSpendPct of this month's spend -- transactions Transaction.
+         * needsCategoryReview flags, the same signal Ledger's "needs review" badge already uses --
+         * is at or above categoryReviewSpendWarningThresholdPct (DashboardService's
+         * CATEGORY_REVIEW_SPEND_WARNING_THRESHOLD_PCT). Deliberately NOT "Uncategorized" nor
+         * "Other" by category name: "Other" is a real, resolvable category (CategoryRules'
+         * fallback when nothing matched), so a transaction landing there isn't necessarily
+         * uncategorized -- it just means the categorization engine's own confidence check flagged
+         * it. categoryReviewSpendAmount/categoryReviewTransactionCount are the raw numbers behind
+         * the flag; categoryReviewSpendWarningThresholdPct is included so the client never
+         * hardcodes the cutoff, mirroring how limitedHistoryMonthFloor already works.
+         */
+        boolean categoryReviewWarning,
+        double categoryReviewSpendPct,
+        BigDecimal categoryReviewSpendAmount,
+        int categoryReviewTransactionCount,
+        double categoryReviewSpendWarningThresholdPct
 ) {}
