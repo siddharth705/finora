@@ -8,7 +8,7 @@ import {
 import {
   Wallet, ArrowDownCircle, ArrowUpCircle, PieChart,
   ShoppingBag, Utensils, Car, Sparkles, Plus, PiggyBank, TrendingUp, TrendingDown, Target, ShieldCheck, Repeat,
-  UploadCloud, Receipt, LineChart as LineChartIcon, Mail,
+  UploadCloud, Receipt, LineChart as LineChartIcon, Mail, AlertTriangle,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { BankLogo } from '../components/BankLogo';
@@ -221,6 +221,30 @@ export default function Dashboard() {
           )}
         </p>
       </div>
+
+      {/* Limited-history banner. The KPI deltas and health score below are real, computed numbers
+          -- neither is hidden here -- but both are prone to thin-data artifacts this far below
+          limitedHistoryMonthFloor: a trend delta dividing against a near-empty prior month (see
+          pct() in DashboardService, still capable of a 900%+ swing off one stray transaction), and
+          a health score built from too few comparable months (see the Spend Consistency / Cash
+          Flow Stability partial-month fix). Shown once, above everything it explains, rather than
+          leaving a user to notice the numbers look strange and wonder why. Hidden once isEmpty --
+          the zero-transaction empty state below already covers that case on its own terms. */}
+      {!isEmpty && summary.limitedHistory && (
+        <div className="bg-warning-bg border border-warning/30 rounded-xl2 px-5 py-3.5 flex items-start gap-2.5 mb-6">
+          <AlertTriangle size={16} className="text-warning flex-shrink-0 mt-0.5" />
+          <div>
+            <p className="text-sm font-medium text-ink">Limited financial history</p>
+            <p className="text-xs text-muted mt-0.5">
+              Based on {summary.statementCount} statement{summary.statementCount === 1 ? '' : 's'} across{' '}
+              {summary.accountCount} account{summary.accountCount === 1 ? '' : 's'} and{' '}
+              {summary.historyMonthCount} month{summary.historyMonthCount === 1 ? '' : 's'} of activity.
+              Trends and the Financial Health Score below may be unreliable until at least{' '}
+              {summary.limitedHistoryMonthFloor} months of history are imported.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* KPI cards. Every card gets a deltaLabel (even Balance/Savings Rate, which never carry a
           real delta) so MetricCard renders a muted "— vs last month" instead of a silent gap
