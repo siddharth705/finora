@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import type { LucideIcon } from 'lucide-react';
 import { FinoraCard } from './FinoraCard';
 
@@ -12,14 +13,23 @@ import { FinoraCard } from './FinoraCard';
  * no delta line. A KPI that DOES have a delta concept but no value available yet (no prior period
  * to compare against) passes `deltaLabel` alone and gets a muted "—" placeholder instead of the
  * line silently vanishing.
+ *
+ * `gateReasonText`: some of those "—" placeholders aren't just "no prior data" -- they're
+ * DashboardService deliberately withholding a delta it could otherwise compute, because the prior
+ * month is too thin to trust (see DashboardSummaryDto.comparisonGateReason). Passing a reason
+ * turns the "—" into a "Why?" disclosure, same inline pattern as Import.tsx's product-detection
+ * evidence toggle, instead of a user having to wonder why last month's line just disappeared.
  */
 export function MetricCard({
   label, value, icon: Icon, iconBg, iconColor, valueColor,
-  delta, deltaLabel, invertDelta,
+  delta, deltaLabel, invertDelta, gateReasonText,
 }: {
   label: string; value: string; icon: LucideIcon; iconBg: string; iconColor: string; valueColor?: string;
-  delta?: number | null; deltaLabel?: string; invertDelta?: boolean;
+  delta?: number | null; deltaLabel?: string; invertDelta?: boolean; gateReasonText?: string | null;
 }) {
+  const [showReason, setShowReason] = useState(false);
+  const hasDelta = delta !== null && delta !== undefined;
+
   return (
     <FinoraCard>
       <div className="flex items-start justify-between mb-3">
@@ -30,12 +40,29 @@ export function MetricCard({
       </div>
       <p className={`text-2xl font-bold mb-1 ${valueColor ?? 'text-ink'}`}>{value}</p>
       {deltaLabel && (
-        delta !== null && delta !== undefined ? (
-          <p className={`text-xs font-medium ${(invertDelta ? delta < 0 : delta >= 0) ? 'text-success' : 'text-danger'}`}>
-            {delta >= 0 ? '▲' : '▼'} {Math.abs(delta).toFixed(1)}% {deltaLabel}
+        hasDelta ? (
+          <p className={`text-xs font-medium ${(invertDelta ? delta! < 0 : delta! >= 0) ? 'text-success' : 'text-danger'}`}>
+            {delta! >= 0 ? '▲' : '▼'} {Math.abs(delta!).toFixed(1)}% {deltaLabel}
           </p>
         ) : (
-          <p className="text-xs text-muted">— {deltaLabel}</p>
+          <div>
+            <p className="text-xs text-muted">
+              — {deltaLabel}
+              {gateReasonText && (
+                <button
+                  type="button"
+                  onClick={() => setShowReason((v) => !v)}
+                  aria-expanded={showReason}
+                  className="ml-1.5 text-primary underline underline-offset-2"
+                >
+                  {showReason ? 'Hide' : 'Why?'}
+                </button>
+              )}
+            </p>
+            {gateReasonText && showReason && (
+              <p className="text-[11px] text-muted mt-1">{gateReasonText}</p>
+            )}
+          </div>
         )
       )}
     </FinoraCard>

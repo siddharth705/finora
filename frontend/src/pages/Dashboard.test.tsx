@@ -69,6 +69,11 @@ function summary(overrides: Partial<DashboardSummary> = {}): DashboardSummary {
     categoryReviewSpendAmount: 0,
     categoryReviewTransactionCount: 0,
     categoryReviewSpendWarningThresholdPct: 20,
+    // Defaults to no gate firing (the deltas above are null because this fixture doesn't set them,
+    // not because anything was withheld) so existing tests keep seeing a plain muted "—" with no
+    // "Why?" toggle, matching how they rendered before this field existed.
+    comparisonGateReason: null,
+    comparisonGateMinTransactions: 3,
     ...overrides,
   };
 }
@@ -334,6 +339,76 @@ describe('Dashboard — Limited History Banner', () => {
 
     await screen.findByText('No transactions yet'); // Recent Transactions' own per-section empty state
     expect(screen.queryByText('Limited financial history')).not.toBeInTheDocument();
+  });
+});
+
+describe('Dashboard — comparison gate "Why?" disclosure', () => {
+  beforeEach(() => {
+    vi.mocked(dashboardApi.summary).mockReset();
+    vi.mocked(dashboardApi.journey).mockReset().mockResolvedValue({ milestones: [] });
+    vi.mocked(accountsApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(transactionsApi.search).mockReset().mockResolvedValue({
+      content: [], page: 0, size: 4, totalElements: 12, totalPages: 3,
+    });
+    vi.mocked(goalsApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(insightsApi.get).mockReset().mockResolvedValue({ sentences: [], movers: [] });
+    vi.mocked(userApi.get).mockReset().mockResolvedValue({
+      email: 'amy@example.test', fullName: 'Amy Santiago', lowBalanceThreshold: 2000,
+      theme: 'system', timezone: 'Asia/Kolkata', phoneNumber: '+919876500000',
+      phoneVerified: true, createdAt: '2026-01-01T00:00:00Z', passwordChangedAt: null, signInMethod: 'PASSWORD',
+    });
+    vi.mocked(budgetsApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(reportsApi.availableMonths).mockReset().mockResolvedValue([]);
+    vi.mocked(reportsApi.forMonth).mockReset();
+    vi.mocked(recurringApi.list).mockReset().mockResolvedValue([]);
+  });
+
+  it('shows a "Why?" toggle on Income/Expenses/Net Savings, but not Balance/Savings Rate, for a partial-boundary prior month', async () => {
+    vi.mocked(dashboardApi.summary).mockResolvedValue(summary({
+      incomeDeltaPct: null, expenseDeltaPct: null, netDeltaPct: null,
+      comparisonGateReason: 'PARTIAL_PRIOR_MONTH', comparisonGateMinTransactions: 3,
+    }));
+    renderDashboard();
+
+    await screen.findByText('Financial Health Score'); // wait for the dashboard to finish loading
+    expect(screen.getAllByRole('button', { name: 'Why?' })).toHaveLength(3);
+  });
+
+  it('explains a too-few-transactions gate with the real threshold, not a hardcoded number', async () => {
+    vi.mocked(dashboardApi.summary).mockResolvedValue(summary({
+      incomeDeltaPct: null, expenseDeltaPct: null, netDeltaPct: null,
+      comparisonGateReason: 'TOO_FEW_PRIOR_TRANSACTIONS', comparisonGateMinTransactions: 5,
+    }));
+    renderDashboard();
+
+    const [whyButton] = await screen.findAllByRole('button', { name: 'Why?' });
+    await userEvent.click(whyButton);
+
+    expect(screen.getAllByText(
+      'Last month has fewer than 5 transactions, too few to compare reliably.'
+    ).length).toBeGreaterThan(0);
+  });
+
+  it('renders no "Why?" toggle at all when the deltas are real numbers, even with an unrelated stale gate reason', async () => {
+    vi.mocked(dashboardApi.summary).mockResolvedValue(summary({
+      incomeDeltaPct: 12.3, expenseDeltaPct: -4.1, netDeltaPct: 8.0,
+      comparisonGateReason: null,
+    }));
+    renderDashboard();
+
+    await screen.findByText('Financial Health Score');
+    expect(screen.queryByRole('button', { name: 'Why?' })).not.toBeInTheDocument();
+  });
+
+  it('renders no "Why?" toggle for a null delta that is simply a genuinely-zero prior amount, not a gate', async () => {
+    vi.mocked(dashboardApi.summary).mockResolvedValue(summary({
+      incomeDeltaPct: null, expenseDeltaPct: null, netDeltaPct: null,
+      comparisonGateReason: null,
+    }));
+    renderDashboard();
+
+    await screen.findByText('Financial Health Score');
+    expect(screen.queryByRole('button', { name: 'Why?' })).not.toBeInTheDocument();
   });
 });
 

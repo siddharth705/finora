@@ -81,5 +81,23 @@ public record DashboardSummaryDto(
         double categoryReviewSpendPct,
         BigDecimal categoryReviewSpendAmount,
         int categoryReviewTransactionCount,
-        double categoryReviewSpendWarningThresholdPct
+        double categoryReviewSpendWarningThresholdPct,
+
+        /*
+         * Why incomeDeltaPct/expenseDeltaPct/netDeltaPct came back null when the user might expect
+         * a number -- one of "PARTIAL_PRIOR_MONTH" (the prior calendar month is really just the
+         * ragged edge of the same continuous statement window the current month came from, not a
+         * genuine separate month -- see DashboardService.isPartialBoundaryMonth) or
+         * "TOO_FEW_PRIOR_TRANSACTIONS" (a real, full prior month, but with fewer than
+         * comparisonGateMinTransactions transactions of its own, so a stray row or two could still
+         * dominate the ratio). Null whenever the three deltas are either real numbers or null for an
+         * unrelated, self-explanatory reason (no prior period at all, or a genuinely zero prior
+         * amount) that doesn't need a "Why?" disclosure. All three deltas share one gate/reason:
+         * DashboardService computes a single priorMonthReliable boolean and applies it to all three,
+         * so there's nothing to say per-metric that isn't already said once here. Mirrors how
+         * limitedHistoryMonthFloor/categoryReviewSpendWarningThresholdPct already avoid the client
+         * hardcoding a threshold.
+         */
+        String comparisonGateReason,
+        int comparisonGateMinTransactions
 ) {}

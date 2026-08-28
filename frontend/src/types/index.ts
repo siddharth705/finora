@@ -138,6 +138,18 @@ export interface DashboardSummary {
   categoryReviewSpendAmount: number;
   categoryReviewTransactionCount: number;
   categoryReviewSpendWarningThresholdPct: number;
+  /**
+   * Why incomeDeltaPct/expenseDeltaPct/netDeltaPct came back null when a real percentage might be
+   * expected -- 'PARTIAL_PRIOR_MONTH' (the prior calendar month is really just the ragged edge of
+   * the same continuous statement window the current month came from) or
+   * 'TOO_FEW_PRIOR_TRANSACTIONS' (a real, full prior month, but too few of its own transactions to
+   * trust as a ratio's denominator). Null whenever the deltas are real numbers, or null for a
+   * self-explanatory reason (no prior period at all, or a genuinely zero prior amount) that
+   * doesn't need a "Why?" disclosure. All three deltas share one gate, so there's nothing to say
+   * per-metric that isn't already said once here.
+   */
+  comparisonGateReason: 'PARTIAL_PRIOR_MONTH' | 'TOO_FEW_PRIOR_TRANSACTIONS' | null;
+  comparisonGateMinTransactions: number;
 }
 
 // D-25 PR3-B/C. `type` is one of ACCOUNT_CREATED/FIRST_IMPORT/FIRST_BUDGET/FIRST_GOAL/
