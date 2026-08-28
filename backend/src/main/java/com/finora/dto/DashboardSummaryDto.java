@@ -50,6 +50,22 @@ public record DashboardSummaryDto(
         boolean reportingMonthIsCurrent,
 
         /*
+         * True when the user has fewer than DashboardService.LIMITED_HISTORY_MONTH_FLOOR distinct
+         * calendar months of transaction data. Trend deltas (incomeDeltaPct etc.) and the health
+         * score are both still COMPUTED at this point -- neither is hidden -- but both are prone to
+         * thin-data artifacts this far below that floor (a near-empty prior-month denominator for
+         * the deltas; a health score built from too few comparable months). historyMonthCount and
+         * the floor itself are included so the client can render "X / N months" without
+         * hardcoding the threshold, mirroring how healthScoreTransactionCount/minTransactions
+         * already work.
+         */
+        boolean limitedHistory,
+        int historyMonthCount,
+        int limitedHistoryMonthFloor,
+        int statementCount,
+        int accountCount,
+
+        /*
          * True when categoryReviewSpendPct of this month's spend -- transactions Transaction.
          * needsCategoryReview flags, the same signal Ledger's "needs review" badge already uses --
          * is at or above categoryReviewSpendWarningThresholdPct (DashboardService's

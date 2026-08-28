@@ -57,6 +57,13 @@ function summary(overrides: Partial<DashboardSummary> = {}): DashboardSummary {
     notifications: [],
     reportingMonth: '2026-08',
     reportingMonthIsCurrent: true,
+    // Defaults to a mature account (not limited) so every existing test below, none of which
+    // cares about this banner, keeps rendering exactly as it did before this field existed.
+    limitedHistory: false,
+    historyMonthCount: 6,
+    limitedHistoryMonthFloor: 3,
+    statementCount: 8,
+    accountCount: 2,
     categoryReviewWarning: false,
     categoryReviewSpendPct: 0,
     categoryReviewSpendAmount: 0,
@@ -257,6 +264,76 @@ describe('Dashboard — Spending Breakdown category review warning', () => {
 
     await screen.findByText('Spending Breakdown');
     expect(screen.queryByText('Spending needs category review')).not.toBeInTheDocument();
+  });
+});
+
+describe('Dashboard — Limited History Banner', () => {
+  beforeEach(() => {
+    vi.mocked(dashboardApi.summary).mockReset().mockResolvedValue(summary());
+    vi.mocked(dashboardApi.journey).mockReset().mockResolvedValue({ milestones: [] });
+    vi.mocked(accountsApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(transactionsApi.search).mockReset().mockResolvedValue({
+      content: [], page: 0, size: 4, totalElements: 12, totalPages: 3,
+    });
+    vi.mocked(goalsApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(insightsApi.get).mockReset().mockResolvedValue({ sentences: [], movers: [] });
+    vi.mocked(userApi.get).mockReset().mockResolvedValue({
+      email: 'amy@example.test', fullName: 'Amy Santiago', lowBalanceThreshold: 2000,
+      theme: 'system', timezone: 'Asia/Kolkata', phoneNumber: '+919876500000',
+      phoneVerified: true, createdAt: '2026-01-01T00:00:00Z', passwordChangedAt: null, signInMethod: 'PASSWORD',
+    });
+    vi.mocked(budgetsApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(reportsApi.availableMonths).mockReset().mockResolvedValue(['2026-08']);
+    vi.mocked(reportsApi.forMonth).mockReset().mockResolvedValue({
+      month: '2026-08', income: 80000, expense: 45000, categories: [],
+    });
+    vi.mocked(recurringApi.list).mockReset().mockResolvedValue([]);
+  });
+
+  it('shows the banner with the real counts when history is limited', async () => {
+    vi.mocked(dashboardApi.summary).mockResolvedValue(summary({
+      limitedHistory: true, historyMonthCount: 1, limitedHistoryMonthFloor: 3,
+      statementCount: 2, accountCount: 2,
+    }));
+    renderDashboard();
+
+    expect(await screen.findByText('Limited financial history')).toBeInTheDocument();
+    expect(screen.getByText(
+      'Based on 2 statements across 2 accounts and 1 month of activity. Trends and the Financial Health Score below may be unreliable until at least 3 months of history are imported.'
+    )).toBeInTheDocument();
+  });
+
+  it('does not show the banner once history clears the floor', async () => {
+    vi.mocked(dashboardApi.summary).mockResolvedValue(summary({ limitedHistory: false }));
+    renderDashboard();
+
+    await screen.findByText('Financial Health Score'); // wait for the dashboard to finish loading
+    expect(screen.queryByText('Limited financial history')).not.toBeInTheDocument();
+  });
+
+  it('uses singular wording for exactly one statement/account/month', async () => {
+    vi.mocked(dashboardApi.summary).mockResolvedValue(summary({
+      limitedHistory: true, historyMonthCount: 1, limitedHistoryMonthFloor: 3,
+      statementCount: 1, accountCount: 1,
+    }));
+    renderDashboard();
+
+    expect(await screen.findByText(
+      'Based on 1 statement across 1 account and 1 month of activity. Trends and the Financial Health Score below may be unreliable until at least 3 months of history are imported.'
+    )).toBeInTheDocument();
+  });
+
+  it('stays hidden for a zero-transaction account -- the empty state covers that case on its own', async () => {
+    vi.mocked(transactionsApi.search).mockResolvedValue({
+      content: [], page: 0, size: 4, totalElements: 0, totalPages: 0,
+    });
+    vi.mocked(dashboardApi.summary).mockResolvedValue(summary({
+      limitedHistory: true, historyMonthCount: 0, statementCount: 0, accountCount: 0,
+    }));
+    renderDashboard();
+
+    await screen.findByText('No transactions yet'); // Recent Transactions' own per-section empty state
+    expect(screen.queryByText('Limited financial history')).not.toBeInTheDocument();
   });
 });
 

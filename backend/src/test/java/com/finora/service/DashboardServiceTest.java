@@ -35,6 +35,7 @@ class DashboardServiceTest {
     private BudgetRepository budgetRepository;
     private CategoryRepository categoryRepository;
     private UserRepository userRepository;
+    private com.finora.repository.StatementImportRepository statementImportRepository;
     private DashboardService dashboardService;
     private final UUID userId = UUID.randomUUID();
     private Account savings;
@@ -46,6 +47,7 @@ class DashboardServiceTest {
         categoryRepository = mock(CategoryRepository.class);
         budgetRepository = mock(BudgetRepository.class);
         userRepository = mock(UserRepository.class);
+        statementImportRepository = mock(com.finora.repository.StatementImportRepository.class);
 
         savings = new Account();
         ReflectionTestUtils.setField(savings, "id", UUID.randomUUID());
@@ -63,9 +65,10 @@ class DashboardServiceTest {
         when(categoryRepository.findByUserId(any())).thenReturn(List.of());
         when(budgetRepository.findByUserId(any())).thenReturn(List.of());
         when(userRepository.findById(any())).thenReturn(Optional.of(user));
+        when(statementImportRepository.countByUserId(any())).thenReturn(0L);
 
         dashboardService = new DashboardService(accountRepository, transactionRepository, categoryRepository,
-                budgetRepository, userRepository);
+                budgetRepository, userRepository, statementImportRepository);
     }
 
     private Transaction txn(BigDecimal amount, Transaction.Type type, LocalDate date, Transaction.ReconciliationStatus status) {
@@ -211,12 +214,46 @@ class DashboardServiceTest {
         ReflectionTestUtils.setField(user, "id", userId);
         when(userRepository.findById(any())).thenReturn(Optional.of(user));
         dashboardService = new DashboardService(accountRepository, transactionRepository, categoryRepository,
-                budgetRepository, userRepository);
+                budgetRepository, userRepository, statementImportRepository);
         when(transactionRepository.findByUserId(userId)).thenReturn(List.of());
 
         DashboardSummaryDto summary = dashboardService.summarize(userId);
 
         assertThat(summary.notifications()).noneMatch(n -> n.contains("low-balance threshold"));
+    }
+
+    @Test
+    @DisplayName("limitedHistory is true below the month floor, and reports the real counts behind it")
+    void summarize_flagsLimitedHistory_belowTheMonthFloor() {
+        LocalDate june = LocalDate.of(2026, 6, 15);
+        LocalDate july = LocalDate.of(2026, 7, 15);
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(
+                txn(new BigDecimal("500.00"), Transaction.Type.EXPENSE, june, Transaction.ReconciliationStatus.OK),
+                txn(new BigDecimal("500.00"), Transaction.Type.EXPENSE, july, Transaction.ReconciliationStatus.OK)));
+        when(statementImportRepository.countByUserId(userId)).thenReturn(2L);
+
+        DashboardSummaryDto summary = dashboardService.summarize(userId);
+
+        assertThat(summary.limitedHistory()).isTrue();
+        assertThat(summary.historyMonthCount()).isEqualTo(2);
+        assertThat(summary.limitedHistoryMonthFloor()).isEqualTo(DashboardService.LIMITED_HISTORY_MONTH_FLOOR);
+        assertThat(summary.statementCount()).isEqualTo(2);
+        assertThat(summary.accountCount()).isEqualTo(1); // setUp()'s single savings account
+    }
+
+    @Test
+    @DisplayName("limitedHistory is false once the user clears the month floor")
+    void summarize_doesNotFlagLimitedHistory_atOrAboveTheMonthFloor() {
+        List<Transaction> txns = new java.util.ArrayList<>();
+        for (int m = 5; m <= 7; m++) {
+            txns.add(txn(new BigDecimal("500.00"), Transaction.Type.EXPENSE, LocalDate.of(2026, m, 10), Transaction.ReconciliationStatus.OK));
+        }
+        when(transactionRepository.findByUserId(userId)).thenReturn(txns);
+
+        DashboardSummaryDto summary = dashboardService.summarize(userId);
+
+        assertThat(summary.limitedHistory()).isFalse();
+        assertThat(summary.historyMonthCount()).isEqualTo(3);
     }
 
     @Test

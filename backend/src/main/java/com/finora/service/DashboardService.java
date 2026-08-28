@@ -36,15 +36,18 @@ public class DashboardService {
     private final CategoryRepository categoryRepository;
     private final BudgetRepository budgetRepository;
     private final UserRepository userRepository;
+    private final com.finora.repository.StatementImportRepository statementImportRepository;
 
     public DashboardService(AccountRepository accountRepository, TransactionRepository transactionRepository,
                              CategoryRepository categoryRepository, BudgetRepository budgetRepository,
-                             UserRepository userRepository) {
+                             UserRepository userRepository,
+                             com.finora.repository.StatementImportRepository statementImportRepository) {
         this.accountRepository = accountRepository;
         this.transactionRepository = transactionRepository;
         this.categoryRepository = categoryRepository;
         this.budgetRepository = budgetRepository;
         this.userRepository = userRepository;
+        this.statementImportRepository = statementImportRepository;
     }
 
     @Transactional(readOnly = true)
@@ -186,6 +189,16 @@ public class DashboardService {
         // clock as the period this response reports on.
         List<String> notifications = buildNotifications(accounts, budgets, spendByCategoryId, categoriesById, lowBalanceThreshold, zone);
 
+        // A dashboard built from `months.size()` (distinct calendar months touched by any
+        // transaction) < LIMITED_HISTORY_MONTH_FLOOR full months of data presents trend deltas and
+        // a health score with the same confidence as a mature account, even though both are
+        // dominated by thin-data artifacts at that point (see the partial-boundary-month fix to
+        // Spend Consistency/Cash Flow Stability, and the pct() deltas below dividing against an
+        // effectively-empty prior month). Surfacing the raw counts here lets the client show why,
+        // instead of a user having to guess "why does my score look bad" on their own.
+        int statementCount = (int) statementImportRepository.countByUserId(userId);
+        boolean limitedHistory = months.size() < LIMITED_HISTORY_MONTH_FLOOR;
+
         return new DashboardSummaryDto(
                 liquid, totalAssets, liabilities, netWorth,
                 incomeCur, expenseCur, netCur, savingsRate,
@@ -196,10 +209,18 @@ public class DashboardService {
                 // Which month everything above actually describes. Without these the client had no
                 // choice but to guess, and it guessed "this month" -- see Bug 05.
                 period.month(), period.isCurrent(),
+                limitedHistory, months.size(), LIMITED_HISTORY_MONTH_FLOOR, statementCount, accounts.size(),
                 categoryReviewWarning, categoryReviewSpendPct, categoryReviewSpend,
                 categoryReviewTransactionCount, CATEGORY_REVIEW_SPEND_WARNING_THRESHOLD_PCT
         );
     }
+
+    // 3 calendar months is the threshold most of this method's own thin-data guards already
+    // converge on independently: the health score's Spend Consistency/Cash Flow Stability need at
+    // least 2 FULL months to say anything (a 3rd guarantees at least 2 full months even when the
+    // most recent one is still in progress), and the trend percentages below are most likely to
+    // divide against a near-empty denominator with fewer months of history than that.
+    static final int LIMITED_HISTORY_MONTH_FLOOR = 3;
 
     // 20% of a month's spend needing a better category is the point at which "some transactions
     // are generically categorized" becomes "categorization is broadly unreliable this month" --
