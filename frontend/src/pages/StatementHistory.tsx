@@ -266,6 +266,14 @@ export default function StatementHistory() {
                             </span>
                           )}
                         </p>
+                        {/* Credit-card statement entity, roadmap item 6 -- only present for a
+                            credit-card statement whose payment-summary panel was found. */}
+                        {s.totalAmountDue !== null && (
+                          <p className="text-xs text-muted">
+                            Total due {fmt(s.totalAmountDue)}
+                            {s.paymentDueDate && ` · Due ${fmtDate(s.paymentDueDate)}`}
+                          </p>
+                        )}
                       </div>
                       <div className="flex items-center gap-1.5 flex-shrink-0">
                         <ActionButton title="View Import Summary" onClick={() => setViewing({ mode: 'summary', statement: s })}>
@@ -551,6 +559,12 @@ function StatementDetailModal({
               <Field label="Imported">{fmtDate(viewing.statement.importedAt)}</Field>
               <Field label="Opening balance">{fmt(viewing.statement.openingBalance)}</Field>
               <Field label="Closing balance">{fmt(viewing.statement.closingBalance)}</Field>
+              {viewing.statement.totalAmountDue !== null && (
+                <Field label="Total amount due">{fmt(viewing.statement.totalAmountDue)}</Field>
+              )}
+              {viewing.statement.paymentDueDate && (
+                <Field label="Payment due date">{fmtDate(viewing.statement.paymentDueDate)}</Field>
+              )}
               <Field label="Transactions imported">{viewing.statement.transactionsImported}</Field>
               <Field label="Transactions skipped">{viewing.statement.transactionsSkipped}</Field>
               <Field label="Duplicates flagged">{viewing.statement.duplicateCount}</Field>

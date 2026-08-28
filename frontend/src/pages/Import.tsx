@@ -572,6 +572,8 @@ export default function Import() {
             statementClosingBalance: detectedAccount?.closingBalance ?? null,
             statementPeriodStart: detectedAccount?.statementPeriodStart ?? null,
             statementPeriodEnd: detectedAccount?.statementPeriodEnd ?? null,
+            totalAmountDue: detectedAccount?.totalAmountDue ?? null,
+            paymentDueDate: detectedAccount?.paymentDueDate ?? null,
             password: reimportState.password,
           })
         : await importApi.confirm({
@@ -583,6 +585,8 @@ export default function Import() {
             statementClosingBalance: detectedAccount?.closingBalance ?? null,
             statementPeriodStart: detectedAccount?.statementPeriodStart ?? null,
             statementPeriodEnd: detectedAccount?.statementPeriodEnd ?? null,
+            totalAmountDue: detectedAccount?.totalAmountDue ?? null,
+            paymentDueDate: detectedAccount?.paymentDueDate ?? null,
           });
       setSummary(result);
       setStep('summary');
@@ -625,6 +629,8 @@ export default function Import() {
           statementClosingBalance: s.detectedAccount.closingBalance ?? null,
           statementPeriodStart: s.detectedAccount.statementPeriodStart ?? null,
           statementPeriodEnd: s.detectedAccount.statementPeriodEnd ?? null,
+          totalAmountDue: s.detectedAccount.totalAmountDue ?? null,
+          paymentDueDate: s.detectedAccount.paymentDueDate ?? null,
         };
       });
 

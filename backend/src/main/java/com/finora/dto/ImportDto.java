@@ -449,12 +449,15 @@ public class ImportDto {
             BigDecimal statementOpeningBalance, BigDecimal statementClosingBalance,
             // Same round-trip, and same bug fix, as ConfirmRequest's own two trailing fields --
             // see that record's doc comment.
-            LocalDate statementPeriodStart, LocalDate statementPeriodEnd
+            LocalDate statementPeriodStart, LocalDate statementPeriodEnd,
+            // Same round-trip as ConfirmRequest's own trailing fields -- see that record's doc
+            // comment.
+            BigDecimal totalAmountDue, LocalDate paymentDueDate
     ) {
         /** Pre-existing arity -- see ConfirmRequest's own legacy constructor for why. */
         public SectionConfirm(List<ConfirmedRow> rows, UUID existingAccountId, NewAccountRequest newAccount,
                                BigDecimal statementOpeningBalance, BigDecimal statementClosingBalance) {
-            this(rows, existingAccountId, newAccount, statementOpeningBalance, statementClosingBalance, null, null);
+            this(rows, existingAccountId, newAccount, statementOpeningBalance, statementClosingBalance, null, null, null, null);
         }
     }
 
@@ -580,7 +583,12 @@ public class ImportDto {
             // no longer does that; a null here is stored as null, genuinely meaning "no period was
             // ever printed" rather than a guess reconstructed from the confirmed rows. See
             // persistSection's own comment.
-            LocalDate statementPeriodStart, LocalDate statementPeriodEnd
+            LocalDate statementPeriodStart, LocalDate statementPeriodEnd,
+            // Same round-trip as statementPeriodStart/End, and the same reason: echoed from
+            // DetectedAccountInfo.totalAmountDue/paymentDueDate as staged, not re-derived.
+            // credit-card-statement-entity-design.md -- both null for a CSV import or any
+            // non-credit-card statement, same as on DetectedAccountInfo itself.
+            BigDecimal totalAmountDue, LocalDate paymentDueDate
     ) {
         /** Pre-existing arity. Kept so the many call sites that construct a request with no printed
          *  statement period to echo -- reimport's internal re-scoping, tests, Gmail's receipt-derived
@@ -591,7 +599,17 @@ public class ImportDto {
                                NewAccountRequest newAccount, BigDecimal statementOpeningBalance,
                                BigDecimal statementClosingBalance, String password) {
             this(sessionId, rows, existingAccountId, newAccount, statementOpeningBalance,
-                    statementClosingBalance, password, null, null);
+                    statementClosingBalance, password, null, null, null, null);
+        }
+
+        /** Same arity as the pre-existing period-echoing constructor above, for call sites that
+         *  echo the printed period but predate the credit-card fields. */
+        public ConfirmRequest(UUID sessionId, List<ConfirmedRow> rows, UUID existingAccountId,
+                               NewAccountRequest newAccount, BigDecimal statementOpeningBalance,
+                               BigDecimal statementClosingBalance, String password,
+                               LocalDate statementPeriodStart, LocalDate statementPeriodEnd) {
+            this(sessionId, rows, existingAccountId, newAccount, statementOpeningBalance,
+                    statementClosingBalance, password, statementPeriodStart, statementPeriodEnd, null, null);
         }
     }
 

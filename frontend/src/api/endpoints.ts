@@ -337,6 +337,11 @@ export interface ConfirmPayload {
   // confirmed rows' own date range instead of the printed period shown on the review screen).
   statementPeriodStart: string | null;
   statementPeriodEnd: string | null;
+  // Echoed back from DetectedAccountInfo.totalAmountDue/paymentDueDate, same round-trip as the
+  // statement period above -- see ConfirmRequest's own doc comment on the backend.
+  // credit-card-statement-entity-design.md. Both null for a non-credit-card statement.
+  totalAmountDue: number | null;
+  paymentDueDate: string | null;
   // Only meaningful to confirmReimport, for a statement whose stored bytes are a password-protected
   // PDF -- see ConfirmRequest's own doc comment on the backend. Every other confirm path ignores it.
   password?: string;
@@ -352,6 +357,8 @@ interface SectionConfirmPayload {
   statementClosingBalance: number | null;
   statementPeriodStart: string | null;
   statementPeriodEnd: string | null;
+  totalAmountDue: number | null;
+  paymentDueDate: string | null;
 }
 
 export interface MultiAccountConfirmPayload {

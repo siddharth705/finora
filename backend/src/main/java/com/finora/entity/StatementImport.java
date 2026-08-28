@@ -95,6 +95,20 @@ public class StatementImport extends BaseEntity implements com.finora.imports.st
     @Column(name = "closing_balance")
     private BigDecimal closingBalance;
 
+    /** A credit-card statement's total bill for this cycle -- same field {@code
+     *  CreditCardSummaryExtractor} put on {@code DetectedAccountInfo.totalAmountDue} at staging
+     *  time, echoed back through {@code ConfirmRequest} the same way {@link #statementPeriodStart}
+     *  is. Null for CSV imports and any non-credit-card statement -- see that field's own doc
+     *  comment for why nothing here needs to re-check account type before setting it. */
+    @Column(name = "total_amount_due")
+    private BigDecimal totalAmountDue;
+
+    /** This cycle's payment due date -- {@code PdfMetadataExtractor} already extracts this
+     *  reliably (see {@code DetectedAccountInfo.paymentDueDate}'s own doc comment); null whenever
+     *  nothing was printed, or for a non-credit-card statement, same as {@link #totalAmountDue}. */
+    @Column(name = "payment_due_date")
+    private LocalDate paymentDueDate;
+
     @Column(name = "transactions_imported", nullable = false)
     private int transactionsImported;
 
@@ -216,6 +230,10 @@ public class StatementImport extends BaseEntity implements com.finora.imports.st
     public void setOpeningBalance(BigDecimal openingBalance) { this.openingBalance = openingBalance; }
     public BigDecimal getClosingBalance() { return closingBalance; }
     public void setClosingBalance(BigDecimal closingBalance) { this.closingBalance = closingBalance; }
+    public BigDecimal getTotalAmountDue() { return totalAmountDue; }
+    public void setTotalAmountDue(BigDecimal totalAmountDue) { this.totalAmountDue = totalAmountDue; }
+    public LocalDate getPaymentDueDate() { return paymentDueDate; }
+    public void setPaymentDueDate(LocalDate paymentDueDate) { this.paymentDueDate = paymentDueDate; }
     public int getTransactionsImported() { return transactionsImported; }
     public void setTransactionsImported(int transactionsImported) { this.transactionsImported = transactionsImported; }
     public int getTransactionsSkipped() { return transactionsSkipped; }
