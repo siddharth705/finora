@@ -62,7 +62,7 @@ public class CategoryService {
         c.setSystem(false);
         c.setIcon(safeIcon);
         c.setColor(safeColor);
-        Category saved = categoryRepository.save(c);
+        Category saved = saveRejectingDuplicates(c, safeName);
 
         auditService.record(userId, "CATEGORY_CREATED", "Category", saved.getId(),
                 Map.of("name", safeName));
@@ -78,7 +78,11 @@ public class CategoryService {
         }
 
         String oldName = category.getName();
-        if (newName != null && !newName.isBlank()) {
+        // `name` absent from the PATCH body (null) means "don't touch the name". An explicitly
+        // supplied blank one is a different thing entirely -- it is a name, and an invalid one --
+        // so it goes through validateName and 400s, exactly as create() does. It used to fall into
+        // the same branch as "absent", silently no-op the rename and return 200 with the old name.
+        if (newName != null) {
             String safeName = validateName(newName);
             if (!safeName.equalsIgnoreCase(oldName)) {
                 validateNoDuplicate(userId, safeName, categoryId);
@@ -87,7 +91,7 @@ public class CategoryService {
         }
         if (icon != null) category.setIcon(validateIcon(icon));
         if (color != null) category.setColor(validateColor(color));
-        Category saved = categoryRepository.save(category);
+        Category saved = saveRejectingDuplicates(category, category.getName());
 
         if (!oldName.equalsIgnoreCase(saved.getName())) {
             List<CategoryRule> affected = categoryRuleRepository
@@ -202,6 +206,23 @@ public class CategoryService {
                     "Category name can't be longer than " + MAX_NAME_LENGTH + " characters.");
         }
         return trimmed;
+    }
+
+    /**
+     * validateNoDuplicate above is a check-then-act, and V118's
+     * {@code uq_categories_user_name_ci} is what actually enforces the rule. Two concurrent
+     * creates (or renames) of the same name both pass the check and one loses at the index,
+     * which surfaced as an unhandled 500 -- the same request, one millisecond apart, answered
+     * with a 409 or a 500 depending on who won. Flushed here rather than left to commit so the
+     * violation is thrown where it can still be translated.
+     */
+    private Category saveRejectingDuplicates(Category category, String name) {
+        try {
+            return categoryRepository.saveAndFlush(category);
+        } catch (org.springframework.dao.DataIntegrityViolationException e) {
+            throw new ApiException(HttpStatus.CONFLICT,
+                    "You already have a category named \"" + name + "\".");
+        }
     }
 
     private void validateNoDuplicate(UUID userId, String name, UUID excludingCategoryId) {

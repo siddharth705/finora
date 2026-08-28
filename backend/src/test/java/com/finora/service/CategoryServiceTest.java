@@ -37,7 +37,7 @@ class CategoryServiceTest {
     void createsACategoryWithDefaultIconAndColorWhenOmitted() {
         when(categoryRepository.findByUserIdAndNameIgnoreCaseOrderByIdAsc(userId, "SIP"))
                 .thenReturn(List.of());
-        when(categoryRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(categoryRepository.saveAndFlush(any())).thenAnswer(inv -> inv.getArgument(0));
 
         Category created = service().create(userId, "SIP", null, null);
 
@@ -87,7 +87,7 @@ class CategoryServiceTest {
         when(categoryRepository.findById(categoryId)).thenReturn(Optional.of(existing));
         when(categoryRepository.findByUserIdAndNameIgnoreCaseOrderByIdAsc(userId, "SIP"))
                 .thenReturn(List.of());
-        when(categoryRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(categoryRepository.saveAndFlush(any())).thenAnswer(inv -> inv.getArgument(0));
 
         com.finora.entity.CategoryRule rule = new com.finora.entity.CategoryRule();
         rule.setUserId(userId);
@@ -101,6 +101,78 @@ class CategoryServiceTest {
         assertThat(renamed.getName()).isEqualTo("SIP");
         assertThat(rule.getActionValue()).isEqualTo("SIP");
         verify(categoryRuleRepository).save(rule);
+    }
+
+    // Adversarial review, minor 2. An explicit {"name": ""} used to fall into the same branch as
+    // an absent name, silently no-op the rename and answer 200 -- inconsistent with create(),
+    // which 400s on exactly the same input.
+    @Test
+    void renameRejectsAnExplicitlyBlankName() {
+        UUID categoryId = UUID.randomUUID();
+        Category existing = new Category();
+        existing.setUserId(userId);
+        existing.setName("Mutual Fund SIP");
+        existing.setSystem(false);
+        org.springframework.test.util.ReflectionTestUtils.setField(existing, "id", categoryId);
+        when(categoryRepository.findById(categoryId)).thenReturn(Optional.of(existing));
+
+        assertThatThrownBy(() -> service().rename(userId, categoryId, "", null, null))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("can't be blank");
+
+        verify(categoryRepository, never()).saveAndFlush(any());
+        assertThat(existing.getName()).isEqualTo("Mutual Fund SIP");
+    }
+
+    @Test
+    void renameStillLeavesTheNameAloneWhenItIsAbsentFromThePatch() {
+        UUID categoryId = UUID.randomUUID();
+        Category existing = new Category();
+        existing.setUserId(userId);
+        existing.setName("Mutual Fund SIP");
+        existing.setSystem(false);
+        org.springframework.test.util.ReflectionTestUtils.setField(existing, "id", categoryId);
+        when(categoryRepository.findById(categoryId)).thenReturn(Optional.of(existing));
+        when(categoryRepository.saveAndFlush(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        Category saved = service().rename(userId, categoryId, null, "car", null);
+
+        assertThat(saved.getName()).isEqualTo("Mutual Fund SIP");
+        assertThat(saved.getIcon()).isEqualTo("car");
+    }
+
+    // Adversarial review, minor 1. The losing side of a race between two concurrent creates of
+    // the same name loses at V118's unique index, not at validateNoDuplicate -- which surfaced as
+    // an unhandled 500 rather than the 409 the sequential path produces for the same request.
+    @Test
+    void createTranslatesAUniqueIndexViolationIntoTheSameConflict() {
+        when(categoryRepository.findByUserIdAndNameIgnoreCaseOrderByIdAsc(userId, "SIP"))
+                .thenReturn(List.of());
+        when(categoryRepository.saveAndFlush(any())).thenThrow(
+                new org.springframework.dao.DataIntegrityViolationException("uq_categories_user_name_ci"));
+
+        assertThatThrownBy(() -> service().create(userId, "SIP", null, null))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("already have a category named");
+    }
+
+    @Test
+    void renameTranslatesAUniqueIndexViolationIntoTheSameConflict() {
+        UUID categoryId = UUID.randomUUID();
+        Category existing = new Category();
+        existing.setUserId(userId);
+        existing.setName("Mutual Fund SIP");
+        existing.setSystem(false);
+        org.springframework.test.util.ReflectionTestUtils.setField(existing, "id", categoryId);
+        when(categoryRepository.findById(categoryId)).thenReturn(Optional.of(existing));
+        when(categoryRepository.findByUserIdAndNameIgnoreCaseOrderByIdAsc(userId, "SIP"))
+                .thenReturn(List.of());
+        when(categoryRepository.saveAndFlush(any())).thenThrow(
+                new org.springframework.dao.DataIntegrityViolationException("uq_categories_user_name_ci"));
+
+        assertThatThrownBy(() -> service().rename(userId, categoryId, "SIP", null, null))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("already have a category named");
     }
 
     @Test
