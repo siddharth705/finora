@@ -94,4 +94,22 @@ class CategoryControllerIT extends AbstractIntegrationTest {
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
     }
+
+    @Test
+    void usageStartsAtZeroForABrandNewCategory() throws Exception {
+        User user = createUser();
+        HttpHeaders headers = authHeaders(user);
+        headers.setContentType(org.springframework.http.MediaType.APPLICATION_JSON);
+        var created = restTemplate.postForEntity("/api/v1/categories",
+                new HttpEntity<>(java.util.Map.of("name", "SIP"), headers), String.class);
+        String categoryId = objectMapper.readTree(created.getBody()).get("data").get("id").asText();
+
+        var response = restTemplate.exchange("/api/v1/categories/" + categoryId + "/usage",
+                HttpMethod.GET, new HttpEntity<>(headers), String.class);
+
+        JsonNode data = objectMapper.readTree(response.getBody()).get("data");
+        assertThat(data.get("transactionCount").asLong()).isEqualTo(0);
+        assertThat(data.get("hasBudget").asBoolean()).isFalse();
+        assertThat(data.get("ruleCount").asLong()).isEqualTo(0);
+    }
 }

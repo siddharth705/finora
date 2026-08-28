@@ -116,4 +116,25 @@ class CategoryServiceTest {
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("system categor");
     }
+
+    @Test
+    void usageReportsTransactionBudgetAndRuleCounts() {
+        UUID categoryId = UUID.randomUUID();
+        Category existing = new Category();
+        existing.setUserId(userId);
+        existing.setSystem(false);
+        org.springframework.test.util.ReflectionTestUtils.setField(existing, "id", categoryId);
+        when(categoryRepository.findById(categoryId)).thenReturn(Optional.of(existing));
+        when(transactionRepository.countByUserIdAndCategoryId(userId, categoryId)).thenReturn(12L);
+        when(budgetRepository.findByUserIdAndCategoryId(userId, categoryId))
+                .thenReturn(Optional.of(new com.finora.entity.Budget()));
+        when(categoryRuleRepository.findByUserIdAndActionTypeInAndActionValueIgnoreCase(
+                eq(userId), any(), any())).thenReturn(List.of(new com.finora.entity.CategoryRule()));
+
+        var usage = service().usage(userId, categoryId);
+
+        assertThat(usage.transactionCount()).isEqualTo(12);
+        assertThat(usage.hasBudget()).isTrue();
+        assertThat(usage.ruleCount()).isEqualTo(1);
+    }
 }

@@ -19,6 +19,10 @@ public interface TransactionRepository extends JpaRepository<Transaction, UUID> 
      *  would strip the merchant from N ledger rows" guard. */
     long countByMerchantId(UUID merchantId);
 
+    /** How many of a user's transactions are assigned to one category. Backs the category
+     *  delete-confirmation dialog's usage summary. */
+    long countByUserIdAndCategoryId(UUID userId, UUID categoryId);
+
     /**
      * Transaction counts for many merchants at once, as (merchantId, count) pairs.
      *

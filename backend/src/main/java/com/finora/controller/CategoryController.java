@@ -3,6 +3,7 @@ package com.finora.controller;
 import com.finora.dto.ApiResponse;
 import com.finora.dto.CategoryDto;
 import com.finora.dto.CategoryOptionsDto;
+import com.finora.dto.CategoryUsageDto;
 import com.finora.repository.CategoryRepository;
 import com.finora.security.CurrentUser;
 import com.finora.service.CategoryService;
@@ -66,5 +67,10 @@ public class CategoryController {
                                             @RequestBody UpdateCategoryRequest request) {
         var c = categoryService.rename(currentUser.id(), id, request.name(), request.icon(), request.color());
         return ApiResponse.ok(new CategoryDto(c.getId(), c.getName(), c.isSystem(), c.getIcon(), c.getColor()));
+    }
+
+    @GetMapping("/{id}/usage")
+    public ApiResponse<CategoryUsageDto> usage(@PathVariable java.util.UUID id) {
+        return ApiResponse.ok(categoryService.usage(currentUser.id(), id));
     }
 }

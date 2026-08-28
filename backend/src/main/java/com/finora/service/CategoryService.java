@@ -1,5 +1,6 @@
 package com.finora.service;
 
+import com.finora.dto.CategoryUsageDto;
 import com.finora.entity.Category;
 import com.finora.entity.CategoryRule;
 import com.finora.exception.ApiException;
@@ -99,6 +100,19 @@ public class CategoryService {
         auditService.record(userId, "CATEGORY_RENAMED", "Category", saved.getId(),
                 Map.of("oldName", oldName, "newName", saved.getName()));
         return saved;
+    }
+
+    @Transactional(readOnly = true)
+    public CategoryUsageDto usage(UUID userId, UUID categoryId) {
+        Category category = OwnershipGuard.requireOwned(
+                categoryRepository.findById(categoryId), Category::getUserId, userId, "Category");
+        long transactionCount = transactionRepository.countByUserIdAndCategoryId(userId, categoryId);
+        boolean hasBudget = budgetRepository.findByUserIdAndCategoryId(userId, categoryId).isPresent();
+        long ruleCount = categoryRuleRepository.findByUserIdAndActionTypeInAndActionValueIgnoreCase(
+                userId,
+                List.of(CategoryRule.ActionType.ASSIGN_CATEGORY, CategoryRule.ActionType.MARK_INVESTMENT),
+                category.getName()).size();
+        return new CategoryUsageDto(transactionCount, hasBudget, ruleCount);
     }
 
     private String validateName(String name) {
