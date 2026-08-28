@@ -111,6 +111,19 @@ export interface DashboardSummary {
    */
   reportingMonth: string | null;
   reportingMonthIsCurrent: boolean;
+  /**
+   * True when the user has fewer than limitedHistoryMonthFloor distinct calendar months of
+   * transaction data. Trend deltas and the health score above are still real numbers -- neither
+   * is hidden -- but both are prone to thin-data artifacts this far below the floor (a near-empty
+   * prior-month denominator for the deltas; a health score built from too few comparable months).
+   * historyMonthCount/limitedHistoryMonthFloor let the client render "X / N months" without
+   * hardcoding the threshold, mirroring healthScoreTransactionCount/healthScoreMinTransactions.
+   */
+  limitedHistory: boolean;
+  historyMonthCount: number;
+  limitedHistoryMonthFloor: number;
+  statementCount: number;
+  accountCount: number;
 }
 
 // D-25 PR3-B/C. `type` is one of ACCOUNT_CREATED/FIRST_IMPORT/FIRST_BUDGET/FIRST_GOAL/
