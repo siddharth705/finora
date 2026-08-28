@@ -123,6 +123,7 @@ public class AuthService {
     // D-28 PR4-C: redeems RegisterRequest.referralCode, if present -- see register()'s own call
     // site and ReferralService.redeemCode's doc comment for why this never blocks signup.
     private final ReferralService referralService;
+    private final MerchantSeedService merchantSeedService;
     // SEC-07: dispatches the forgotPassword() email send off the request thread -- see
     // BackgroundWorkConfig.authEmailExecutor's own doc comment for why.
     private final Executor authEmailExecutor;
@@ -143,6 +144,7 @@ public class AuthService {
                         IdentityLookup identityLookup, RequestMetadata requestMetadata,
                         SubscriptionService subscriptionService,
                         ReferralService referralService,
+                        MerchantSeedService merchantSeedService,
                         @Qualifier("authEmailExecutor") Executor authEmailExecutor,
                         AdminMfaService adminMfaService) {
         this.userRepository = userRepository;
@@ -165,6 +167,7 @@ public class AuthService {
         this.requestMetadata = requestMetadata;
         this.subscriptionService = subscriptionService;
         this.referralService = referralService;
+        this.merchantSeedService = merchantSeedService;
         this.authEmailExecutor = authEmailExecutor;
         this.adminMfaService = adminMfaService;
     }
@@ -297,6 +300,7 @@ public class AuthService {
         passwordHistoryService.record(user.getId(), user.getPasswordHash());
 
         seedDefaultCategories(user.getId());
+        merchantSeedService.seedCuratedMerchants(user.getId());
         // D-28 PR4-A: every new account starts on the Free plan -- entitlement lookups are
         // fail-closed (EntitlementService), so skipping this would leave a brand-new user with no
         // subscription row at all, silently losing even BASIC_DASHBOARD the moment anything checks.
@@ -884,6 +888,7 @@ public class AuthService {
         user = userRepository.save(user);
         passwordHistoryService.record(user.getId(), user.getPasswordHash());
         seedDefaultCategories(user.getId());
+        merchantSeedService.seedCuratedMerchants(user.getId());
         // D-28 PR4-A: same "every new user gets this" discipline as seedDefaultCategories above.
         subscriptionService.provisionFreeSubscription(user.getId());
         return user;
