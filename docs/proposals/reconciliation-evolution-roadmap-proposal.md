@@ -124,7 +124,7 @@ stateDiagram-v2
 
 ### Decision audit trail
 
-No new table needed — `audit_logs` (`entity_type`, `entity_id`, `action`, `metadata` JSONB, already in `V1__init_schema.sql`) is exactly this shape today, just not yet written to from reconciliation code. Every edge creation, supersession, and override becomes one row: `action = "TRANSFER_MATCH_CREATED"` / `"CANONICAL_WINNER_CHANGED"` / `"USER_OVERRIDE_APPLIED"`, `entity_type = "transaction_relationship"`, `metadata` carrying the before/after state. This is a reuse, not a new subsystem.
+No new table needed — `audit_logs` (`entity_type`, `entity_id`, `action`, `metadata` JSONB, already in `V1__init_schema.sql`) is exactly this shape today, and `ReconciliationService` already writes to it: one `RECONCILIATION_RUN` row per run, summarizing counts. What it doesn't do yet is write one row per *edge* — this proposal extends that existing call site to also emit a row for every edge creation, supersession, and override: `action = "TRANSFER_MATCH_CREATED"` / `"CANONICAL_WINNER_CHANGED"` / `"USER_OVERRIDE_APPLIED"`, `entity_type = "transaction_relationship"`, `metadata` carrying the before/after state. This is a reuse, not a new subsystem.
 
 ### New service
 
