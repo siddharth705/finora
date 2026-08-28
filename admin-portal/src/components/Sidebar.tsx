@@ -2,7 +2,7 @@ import { NavLink, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, Users, ShieldCheck, ScrollText, HeartPulse, LogOut, Landmark, Settings,
   ListFilter, Store, FileCode, Sparkles, GitMerge, BarChart3, Stethoscope, FileSearch, ListRestart , BadgeCheck, Fingerprint, Route,
-  CreditCard, Gift, Plug, Waypoints } from 'lucide-react';
+  CreditCard, Gift, Plug, Waypoints, Lightbulb } from 'lucide-react';
 import { useAdminAuth } from '../context/AdminAuthContext';
 import { BrandMark } from './BrandMark';
 import { initials } from '../lib/initials';
@@ -35,6 +35,7 @@ const GROUPS = [
       { to: '/learning-queue', label: 'Learning Queue', icon: ListRestart, end: false, permission: 'LEARNING_QUEUE_MANAGE' },
       { to: '/reconciliation', label: 'Reconciliation Monitor', icon: GitMerge, end: false, permission: 'RECONCILIATION_VIEW' },
       { to: '/reconciliation-explorer', label: 'Reconciliation Explorer', icon: Waypoints, end: false, permission: 'RECONCILIATION_VIEW' },
+      { to: '/insights-explorer', label: 'Insight Explorer', icon: Lightbulb, end: false, permission: 'INSIGHTS_EXPLORER_VIEW' },
       { to: '/analytics', label: 'Platform Analytics', icon: BarChart3, end: false, permission: 'PLATFORM_ANALYTICS_VIEW' },
     ],
   },

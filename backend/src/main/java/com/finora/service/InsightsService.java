@@ -50,42 +50,17 @@ public class InsightsService {
 
     @Transactional(readOnly = true)
     public InsightsDto build(UUID userId) {
-        // BH-005, fourth copy -- and the one that did not even have the REFUND clause, so a
-        // refunded purchase was counted at full price in every insight and every budget
-        // recommendation derived from them. RefundNetting owns both halves: the refund's income
-        // leg is dropped and the purchase is reported at what it actually cost.
-        List<Transaction> all = transactionRepository.findByUserId(userId);
-        RefundNetting refunds = RefundNetting.from(all);
-        List<Transaction> txns = RefundNetting.reportable(all).stream()
-                .filter(t -> t.getTxnType() == Transaction.Type.EXPENSE)
-                .toList();
-
-        if (txns.isEmpty()) {
+        Optional<Pipeline> maybePipeline = pipeline(userId);
+        if (maybePipeline.isEmpty()) {
             return new InsightsDto(List.of("Upload or add transactions to see spending insights."), List.of());
         }
-
-        Map<UUID, Category> categoriesById = categoryRepository.findByUserId(userId).stream()
-                .collect(Collectors.toMap(Category::getId, c -> c));
-
-        List<String> months = txns.stream().map(t -> YearMonth.from(t.getTxnDate()).toString()).distinct().sorted().toList();
-        // The newest month the user actually has data for. Still the right REPORTING period: an
-        // empty "this month" would be a worse answer than last month's real figures, and for
-        // someone importing statements in arrears -- the normal pattern for this product -- the
-        // newest data month is routinely not the current one.
-        //
-        // Bug fix: what was wrong was the LABEL, not the choice. Sentences below asserted "this
-        // month" over whichever month this happens to be, so a user who had not yet transacted in
-        // August read July's figures as August's, and the "versus your recent average" window
-        // silently shifted with it. reportingMonthIsCurrent resolves the real calendar month in
-        // the USER's timezone -- this service was the only one reporting on a period that never
-        // did -- and the wording follows it.
-        String currentMonth = months.get(months.size() - 1);
-        boolean reportingMonthIsCurrent =
-                currentMonth.equals(YearMonth.now(UserZone.forUser(userRepository, userId)).toString());
-        String periodLabel = reportingMonthIsCurrent ? "this month" : "in " + currentMonth;
-        List<String> priorMonths = months.size() > 1
-                ? months.subList(Math.max(0, months.size() - 4), months.size() - 1)
-                : List.of();
+        Pipeline pipeline = maybePipeline.get();
+        List<Transaction> txns = pipeline.txns();
+        Map<UUID, Category> categoriesById = pipeline.categoriesById();
+        RefundNetting refunds = pipeline.refunds();
+        String currentMonth = pipeline.currentMonth();
+        String periodLabel = pipeline.reportingMonthIsCurrent() ? "this month" : "in " + currentMonth;
+        List<String> priorMonths = pipeline.priorMonths();
 
         Map<String, BigDecimal> currentByCat = groupByCategory(txns, currentMonth, categoriesById, refunds);
         Map<String, BigDecimal> priorByCat = new HashMap<>();
@@ -176,4 +151,44 @@ public class InsightsService {
                         t -> categoriesById.containsKey(t.getCategoryId()) ? categoriesById.get(t.getCategoryId()).getName() : "Uncategorized",
                         Collectors.reducing(BigDecimal.ZERO, refunds::reportableAmount, BigDecimal::add)));
     }
+
+    /**
+     * The part of {@link #build} that decides WHICH transactions count and for which month --
+     * every downstream number is a reduction over exactly this set, so this is also the
+     * reusable seam {@link InsightsExplorerService} recomputes from for the Insight Explorer's
+     * trace (docs/proposals/reconciliation-evolution-roadmap-proposal.md, Part 9): "re-run that
+     * computation in a debug mode that logs its inputs instead of just returning the final
+     * number." Package-private and returned as data rather than duplicated -- the reportable-set
+     * logic (RefundNetting + the EXPENSE filter + the newest-data-month resolution) is the part
+     * that has carried real bugs before (BH-005); a second hand-written copy in the explorer would
+     * be exactly the kind of drift this trace exists to catch, not avoid.
+     */
+    Optional<Pipeline> pipeline(UUID userId) {
+        List<Transaction> all = transactionRepository.findByUserId(userId);
+        RefundNetting refunds = RefundNetting.from(all);
+        List<Transaction> txns = RefundNetting.reportable(all).stream()
+                .filter(t -> t.getTxnType() == Transaction.Type.EXPENSE)
+                .toList();
+
+        if (txns.isEmpty()) {
+            return Optional.empty();
+        }
+
+        Map<UUID, Category> categoriesById = categoryRepository.findByUserId(userId).stream()
+                .collect(Collectors.toMap(Category::getId, c -> c));
+
+        List<String> months = txns.stream().map(t -> YearMonth.from(t.getTxnDate()).toString()).distinct().sorted().toList();
+        String currentMonth = months.get(months.size() - 1);
+        boolean reportingMonthIsCurrent =
+                currentMonth.equals(YearMonth.now(UserZone.forUser(userRepository, userId)).toString());
+        List<String> priorMonths = months.size() > 1
+                ? months.subList(Math.max(0, months.size() - 4), months.size() - 1)
+                : List.of();
+
+        return Optional.of(new Pipeline(currentMonth, reportingMonthIsCurrent, priorMonths, txns, categoriesById, refunds));
+    }
+
+    /** See {@link #pipeline}. */
+    record Pipeline(String currentMonth, boolean reportingMonthIsCurrent, List<String> priorMonths,
+                     List<Transaction> txns, Map<UUID, Category> categoriesById, RefundNetting refunds) {}
 }
