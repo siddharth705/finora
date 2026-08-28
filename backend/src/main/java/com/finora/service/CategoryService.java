@@ -1,11 +1,13 @@
 package com.finora.service;
 
 import com.finora.entity.Category;
+import com.finora.entity.CategoryRule;
 import com.finora.exception.ApiException;
 import com.finora.repository.BudgetRepository;
 import com.finora.repository.CategoryRepository;
 import com.finora.repository.CategoryRuleRepository;
 import com.finora.repository.TransactionRepository;
+import com.finora.security.OwnershipGuard;
 import com.finora.util.CategoryPalette;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -60,6 +62,42 @@ public class CategoryService {
 
         auditService.record(userId, "CATEGORY_CREATED", "Category", saved.getId(),
                 Map.of("name", safeName));
+        return saved;
+    }
+
+    @Transactional
+    public Category rename(UUID userId, UUID categoryId, String newName, String icon, String color) {
+        Category category = OwnershipGuard.requireOwned(
+                categoryRepository.findById(categoryId), Category::getUserId, userId, "Category");
+        if (category.isSystem()) {
+            throw new ApiException(HttpStatus.FORBIDDEN, "This is a system category and can't be renamed.");
+        }
+
+        String oldName = category.getName();
+        if (newName != null && !newName.isBlank()) {
+            String safeName = validateName(newName);
+            if (!safeName.equalsIgnoreCase(oldName)) {
+                validateNoDuplicate(userId, safeName, categoryId);
+            }
+            category.setName(safeName);
+        }
+        if (icon != null) category.setIcon(validateIcon(icon));
+        if (color != null) category.setColor(validateColor(color));
+        Category saved = categoryRepository.save(category);
+
+        if (!oldName.equalsIgnoreCase(saved.getName())) {
+            List<CategoryRule> affected = categoryRuleRepository
+                    .findByUserIdAndActionTypeInAndActionValueIgnoreCase(userId,
+                            List.of(CategoryRule.ActionType.ASSIGN_CATEGORY, CategoryRule.ActionType.MARK_INVESTMENT),
+                            oldName);
+            for (CategoryRule rule : affected) {
+                rule.setActionValue(saved.getName());
+                categoryRuleRepository.save(rule);
+            }
+        }
+
+        auditService.record(userId, "CATEGORY_RENAMED", "Category", saved.getId(),
+                Map.of("oldName", oldName, "newName", saved.getName()));
         return saved;
     }
 

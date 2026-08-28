@@ -3,7 +3,9 @@ package com.finora.controller;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.finora.AbstractIntegrationTest;
+import com.finora.entity.Category;
 import com.finora.entity.User;
+import com.finora.repository.CategoryRepository;
 import com.finora.repository.RefreshTokenRepository;
 import com.finora.repository.UserRepository;
 import com.finora.security.JwtService;
@@ -26,6 +28,7 @@ class CategoryControllerIT extends AbstractIntegrationTest {
     @Autowired private UserRepository userRepository;
     @Autowired private JwtService jwtService;
     @Autowired private RefreshTokenRepository refreshTokens;
+    @Autowired private CategoryRepository categoryRepository;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     private User createUser() {
@@ -68,5 +71,27 @@ class CategoryControllerIT extends AbstractIntegrationTest {
                 new HttpEntity<>(java.util.Map.of("name", "sip"), headers), String.class);
 
         assertThat(second.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+    }
+
+    @Test
+    void renamingASystemCategoryIs403() {
+        User user = createUser();
+        HttpHeaders headers = authHeaders(user);
+
+        // createUser() saves the User directly, bypassing AuthService.register()'s default-category
+        // seeding -- so seed a system category by hand rather than depending on the register flow.
+        Category groceries = new Category();
+        groceries.setUserId(user.getId());
+        groceries.setName("Groceries");
+        groceries.setSystem(true);
+        groceries.setIcon("shopping-cart");
+        groceries.setColor("green");
+        Category saved = categoryRepository.save(groceries);
+
+        headers.setContentType(org.springframework.http.MediaType.APPLICATION_JSON);
+        var response = restTemplate.exchange("/api/v1/categories/" + saved.getId(), HttpMethod.PATCH,
+                new HttpEntity<>(java.util.Map.of("name", "Food"), headers), String.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
     }
 }

@@ -15,6 +15,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 class CategoryServiceTest {
@@ -72,5 +73,47 @@ class CategoryServiceTest {
     void rejectsABlankName() {
         assertThatThrownBy(() -> service().create(userId, "  ", null, null))
                 .isInstanceOf(ApiException.class);
+    }
+
+    @Test
+    void renameCascadesToMatchingPersonalRulesButLeavesGlobalRulesAlone() {
+        UUID categoryId = UUID.randomUUID();
+        Category existing = new Category();
+        existing.setUserId(userId);
+        existing.setName("Mutual Fund SIP");
+        existing.setSystem(false);
+        org.springframework.test.util.ReflectionTestUtils.setField(existing, "id", categoryId);
+        when(categoryRepository.findById(categoryId)).thenReturn(Optional.of(existing));
+        when(categoryRepository.findByUserIdAndNameIgnoreCaseOrderByIdAsc(userId, "SIP"))
+                .thenReturn(List.of());
+        when(categoryRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        com.finora.entity.CategoryRule rule = new com.finora.entity.CategoryRule();
+        rule.setUserId(userId);
+        rule.setActionType(com.finora.entity.CategoryRule.ActionType.ASSIGN_CATEGORY);
+        rule.setActionValue("Mutual Fund SIP");
+        when(categoryRuleRepository.findByUserIdAndActionTypeInAndActionValueIgnoreCase(
+                eq(userId), any(), eq("Mutual Fund SIP"))).thenReturn(List.of(rule));
+
+        Category renamed = service().rename(userId, categoryId, "SIP", null, null);
+
+        assertThat(renamed.getName()).isEqualTo("SIP");
+        assertThat(rule.getActionValue()).isEqualTo("SIP");
+        verify(categoryRuleRepository).save(rule);
+    }
+
+    @Test
+    void renameRejectsAnAttemptOnASystemCategory() {
+        UUID categoryId = UUID.randomUUID();
+        Category system = new Category();
+        system.setUserId(userId);
+        system.setName("Groceries");
+        system.setSystem(true);
+        org.springframework.test.util.ReflectionTestUtils.setField(system, "id", categoryId);
+        when(categoryRepository.findById(categoryId)).thenReturn(Optional.of(system));
+
+        assertThatThrownBy(() -> service().rename(userId, categoryId, "Food", null, null))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("system categor");
     }
 }

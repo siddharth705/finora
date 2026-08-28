@@ -8,6 +8,8 @@ import com.finora.security.CurrentUser;
 import com.finora.service.CategoryService;
 import com.finora.util.CategoryPalette;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -32,6 +34,8 @@ public class CategoryController {
 
     public record CreateCategoryRequest(String name, String icon, String color) {}
 
+    public record UpdateCategoryRequest(String name, String icon, String color) {}
+
     @GetMapping
     public ApiResponse<List<CategoryDto>> list() {
         var categories = categoryRepository.findByUserId(currentUser.id()).stream()
@@ -54,6 +58,13 @@ public class CategoryController {
     @PostMapping
     public ApiResponse<CategoryDto> create(@RequestBody CreateCategoryRequest request) {
         var c = categoryService.create(currentUser.id(), request.name(), request.icon(), request.color());
+        return ApiResponse.ok(new CategoryDto(c.getId(), c.getName(), c.isSystem(), c.getIcon(), c.getColor()));
+    }
+
+    @PatchMapping("/{id}")
+    public ApiResponse<CategoryDto> update(@PathVariable java.util.UUID id,
+                                            @RequestBody UpdateCategoryRequest request) {
+        var c = categoryService.rename(currentUser.id(), id, request.name(), request.icon(), request.color());
         return ApiResponse.ok(new CategoryDto(c.getId(), c.getName(), c.isSystem(), c.getIcon(), c.getColor()));
     }
 }
