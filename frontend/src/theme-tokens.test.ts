@@ -40,6 +40,11 @@ const ALLOWED = [
   // and this one in particular must byte-for-byte match the backend's copy, not a rebrand-able
   // token.
   'pages/Dashboard.tsx',
+  // Same collision as pages/Dashboard.tsx above, one file earlier in the chain: this test's
+  // mocked `categoriesApi.options()` response must mirror the real backend's CategoryPalette.COLORS
+  // byte-for-byte (id 'blue' -> '#2563eb') for the test to mean anything, not a hardcoded brand
+  // reference that should track a rebrand.
+  'components/CategoryCreateEditPanel.test.tsx',
 ];
 
 /**
