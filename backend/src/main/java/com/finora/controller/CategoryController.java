@@ -8,12 +8,14 @@ import com.finora.repository.CategoryRepository;
 import com.finora.security.CurrentUser;
 import com.finora.service.CategoryService;
 import com.finora.util.CategoryPalette;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
@@ -72,5 +74,12 @@ public class CategoryController {
     @GetMapping("/{id}/usage")
     public ApiResponse<CategoryUsageDto> usage(@PathVariable java.util.UUID id) {
         return ApiResponse.ok(categoryService.usage(currentUser.id(), id));
+    }
+
+    @DeleteMapping("/{id}")
+    public ApiResponse<Void> delete(@PathVariable java.util.UUID id,
+                                     @RequestParam(required = false) java.util.UUID reassignTo) {
+        categoryService.delete(currentUser.id(), id, reassignTo);
+        return ApiResponse.ok(null);
     }
 }

@@ -137,4 +137,67 @@ class CategoryServiceTest {
         assertThat(usage.hasBudget()).isTrue();
         assertThat(usage.ruleCount()).isEqualTo(1);
     }
+
+    @Test
+    void deleteReassignsTransactionsRewritesRulesRemovesBudgetThenDeletesTheCategory() {
+        UUID categoryId = UUID.randomUUID();
+        UUID targetId = UUID.randomUUID();
+        Category toDelete = new Category();
+        toDelete.setUserId(userId);
+        toDelete.setName("Mutual Fund SIP");
+        toDelete.setSystem(false);
+        org.springframework.test.util.ReflectionTestUtils.setField(toDelete, "id", categoryId);
+        Category target = new Category();
+        target.setUserId(userId);
+        target.setName("SIP");
+        org.springframework.test.util.ReflectionTestUtils.setField(target, "id", targetId);
+
+        when(categoryRepository.findById(categoryId)).thenReturn(Optional.of(toDelete));
+        when(categoryRepository.findById(targetId)).thenReturn(Optional.of(target));
+
+        com.finora.entity.Budget budget = new com.finora.entity.Budget();
+        when(budgetRepository.findByUserIdAndCategoryId(userId, categoryId)).thenReturn(Optional.of(budget));
+
+        com.finora.entity.CategoryRule rule = new com.finora.entity.CategoryRule();
+        rule.setActionValue("Mutual Fund SIP");
+        when(categoryRuleRepository.findByUserIdAndActionTypeInAndActionValueIgnoreCase(
+                eq(userId), any(), eq("Mutual Fund SIP"))).thenReturn(List.of(rule));
+
+        service().delete(userId, categoryId, targetId);
+
+        verify(transactionRepository).reassignCategory(userId, categoryId, targetId);
+        verify(budgetRepository).delete(budget);
+        assertThat(rule.getActionValue()).isEqualTo("SIP");
+        verify(categoryRuleRepository).save(rule);
+        verify(categoryRepository).delete(toDelete);
+    }
+
+    @Test
+    void deleteRequiresAReassignTargetWhenTheCategoryHasDependents() {
+        UUID categoryId = UUID.randomUUID();
+        Category toDelete = new Category();
+        toDelete.setUserId(userId);
+        toDelete.setSystem(false);
+        org.springframework.test.util.ReflectionTestUtils.setField(toDelete, "id", categoryId);
+        when(categoryRepository.findById(categoryId)).thenReturn(Optional.of(toDelete));
+        when(transactionRepository.countByUserIdAndCategoryId(userId, categoryId)).thenReturn(3L);
+
+        assertThatThrownBy(() -> service().delete(userId, categoryId, null))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("reassign");
+    }
+
+    @Test
+    void deleteRejectsAnAttemptOnASystemCategory() {
+        UUID categoryId = UUID.randomUUID();
+        Category system = new Category();
+        system.setUserId(userId);
+        system.setSystem(true);
+        org.springframework.test.util.ReflectionTestUtils.setField(system, "id", categoryId);
+        when(categoryRepository.findById(categoryId)).thenReturn(Optional.of(system));
+
+        assertThatThrownBy(() -> service().delete(userId, categoryId, null))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("system categor");
+    }
 }

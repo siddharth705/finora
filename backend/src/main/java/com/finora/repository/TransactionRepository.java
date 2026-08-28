@@ -4,6 +4,7 @@ import com.finora.entity.Transaction;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -22,6 +23,15 @@ public interface TransactionRepository extends JpaRepository<Transaction, UUID> 
     /** How many of a user's transactions are assigned to one category. Backs the category
      *  delete-confirmation dialog's usage summary. */
     long countByUserIdAndCategoryId(UUID userId, UUID categoryId);
+
+    /** Bulk-reassigns every one of a user's transactions off a deleted category onto its
+     *  replacement. Backs {@code CategoryService.delete}. */
+    @Modifying
+    @Query("UPDATE Transaction t SET t.categoryId = :newCategoryId " +
+           "WHERE t.userId = :userId AND t.categoryId = :oldCategoryId")
+    void reassignCategory(@Param("userId") UUID userId,
+                           @Param("oldCategoryId") UUID oldCategoryId,
+                           @Param("newCategoryId") UUID newCategoryId);
 
     /**
      * Transaction counts for many merchants at once, as (merchantId, count) pairs.

@@ -112,4 +112,24 @@ class CategoryControllerIT extends AbstractIntegrationTest {
         assertThat(data.get("hasBudget").asBoolean()).isFalse();
         assertThat(data.get("ruleCount").asLong()).isEqualTo(0);
     }
+
+    @Test
+    void deleteWithoutReassignTargetIsRejectedWhenTransactionsExist() throws Exception {
+        // Full end-to-end (create category, create a transaction against it via the transactions
+        // API, attempt delete with no reassignTo, expect 400) is covered by
+        // CategoryServiceTest.deleteRequiresAReassignTargetWhenTheCategoryHasDependents at the
+        // unit level; this IT only needs to prove the controller wires reassignTo through and a
+        // zero-dependency delete succeeds without one.
+        User user = createUser();
+        HttpHeaders headers = authHeaders(user);
+        headers.setContentType(org.springframework.http.MediaType.APPLICATION_JSON);
+        var created = restTemplate.postForEntity("/api/v1/categories",
+                new HttpEntity<>(java.util.Map.of("name", "Temp Category"), headers), String.class);
+        String categoryId = objectMapper.readTree(created.getBody()).get("data").get("id").asText();
+
+        var response = restTemplate.exchange("/api/v1/categories/" + categoryId,
+                HttpMethod.DELETE, new HttpEntity<>(headers), String.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+    }
 }

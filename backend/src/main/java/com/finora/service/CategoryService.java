@@ -115,6 +115,44 @@ public class CategoryService {
         return new CategoryUsageDto(transactionCount, hasBudget, ruleCount);
     }
 
+    @Transactional
+    public void delete(UUID userId, UUID categoryId, UUID reassignTo) {
+        Category category = OwnershipGuard.requireOwned(
+                categoryRepository.findById(categoryId), Category::getUserId, userId, "Category");
+        if (category.isSystem()) {
+            throw new ApiException(HttpStatus.FORBIDDEN, "This is a system category and can't be deleted.");
+        }
+
+        long transactionCount = transactionRepository.countByUserIdAndCategoryId(userId, categoryId);
+        var existingBudget = budgetRepository.findByUserIdAndCategoryId(userId, categoryId);
+        List<CategoryRule> affectedRules = categoryRuleRepository
+                .findByUserIdAndActionTypeInAndActionValueIgnoreCase(userId,
+                        List.of(CategoryRule.ActionType.ASSIGN_CATEGORY, CategoryRule.ActionType.MARK_INVESTMENT),
+                        category.getName());
+        boolean hasDependents = transactionCount > 0 || existingBudget.isPresent() || !affectedRules.isEmpty();
+
+        if (hasDependents) {
+            if (reassignTo == null) {
+                throw new ApiException(HttpStatus.BAD_REQUEST,
+                        "This category is in use — pick a category to reassign it to before deleting.");
+            }
+            Category target = OwnershipGuard.requireOwned(
+                    categoryRepository.findById(reassignTo), Category::getUserId, userId, "Category");
+
+            transactionRepository.reassignCategory(userId, categoryId, target.getId());
+            existingBudget.ifPresent(budgetRepository::delete);
+            for (CategoryRule rule : affectedRules) {
+                rule.setActionValue(target.getName());
+                categoryRuleRepository.save(rule);
+            }
+        }
+
+        auditService.record(userId, "CATEGORY_DELETED", "Category", categoryId,
+                Map.of("name", category.getName(), "transactionCount", transactionCount,
+                        "reassignedTo", reassignTo == null ? "" : reassignTo.toString()));
+        categoryRepository.delete(category);
+    }
+
     private String validateName(String name) {
         if (name == null || name.isBlank()) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "Category name can't be blank.");
