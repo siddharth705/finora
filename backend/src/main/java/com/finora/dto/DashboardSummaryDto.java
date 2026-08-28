@@ -132,7 +132,23 @@ public record DashboardSummaryDto(
          * capped, newest-first list the card actually renders.
          */
         int duplicateTransactionCount,
-        List<DetectedDuplicate> detectedDuplicates
+        List<DetectedDuplicate> detectedDuplicates,
+
+        /*
+         * Categorization Confidence. How sure the categorization ENGINE was, on average (0-100,
+         * same scale as Transaction.decisionConfidence), about the categories it assigned THIS
+         * MONTH -- a positive, ongoing data-quality signal, distinct from categoryReviewWarning
+         * above (which only fires when spend is badly miscategorized). Null below
+         * categorizationConfidenceMinTransactions decisioned transactions this month (an average of
+         * one or two decisions reads as confident or shaky by chance, not by anything real about
+         * the engine) -- mirrors how healthScoreAvailable gates the health score below its own
+         * floor. categorizationConfidenceTransactionCount/categorizationConfidenceMinTransactions
+         * are included so the client never hardcodes the floor, same as
+         * healthScoreTransactionCount/healthScoreMinTransactions already do.
+         */
+        Integer categorizationConfidenceScore,
+        int categorizationConfidenceTransactionCount,
+        int categorizationConfidenceMinTransactions
 ) {
     public record CategoryMover(String category, BigDecimal currentAmount, BigDecimal priorAmount, Double pctChange) {}
 

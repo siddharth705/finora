@@ -8,7 +8,7 @@ import {
 import {
   Wallet, ArrowDownCircle, ArrowUpCircle, PieChart,
   ShoppingBag, Utensils, Car, Sparkles, Plus, PiggyBank, TrendingUp, TrendingDown, Target, ShieldCheck, Repeat,
-  UploadCloud, Receipt, LineChart as LineChartIcon, Mail, AlertTriangle, ListChecks, Copy,
+  UploadCloud, Receipt, LineChart as LineChartIcon, Mail, AlertTriangle, ListChecks, Copy, BadgeCheck,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { BankLogo } from '../components/BankLogo';
@@ -69,6 +69,16 @@ function healthItemBarColor(score: number): string {
   if (score >= 60) return 'bg-primary';
   if (score >= 40) return 'bg-warning';
   return 'bg-danger';
+}
+
+// Same 80/60/40 cutoffs and label vocabulary as the health score above (Excellent/Good/Fair/Needs
+// Attention), reused rather than invented fresh -- Categorization Confidence is on the same 0-100
+// scale, and a second vocabulary for the same range would just be one more thing to learn.
+function scoreLabel(score: number): string {
+  if (score >= 80) return 'Excellent';
+  if (score >= 60) return 'Good';
+  if (score >= 40) return 'Fair';
+  return 'Needs Attention';
 }
 
 const CATEGORY_ICON: Record<string, any> = {
@@ -379,6 +389,38 @@ export default function Dashboard() {
             </div>
           </div>
         )}
+      </FinoraCard>
+      )}
+
+      {/* Categorization Confidence -- how sure the categorization engine was, on average, about
+          the categories it assigned this month. A positive, ongoing data-quality signal, distinct
+          from the category-review warning below (which only fires when spend is badly
+          miscategorized) -- this can read "Excellent" in the very same month that warning fires,
+          if a small number of genuinely low-confidence transactions sit alongside a lot of
+          high-confidence ones. Hidden below categorizationConfidenceMinTransactions
+          engine-decided transactions this month (server-side floor, same reasoning as
+          healthScoreAvailable above): an average of one or two decisions isn't a real reading. */}
+      {!isEmpty && summary.categorizationConfidenceScore !== null && (
+      <FinoraCard padding="lg" className="mb-6">
+        <div className="flex items-center gap-2 mb-3">
+          <div className="w-8 h-8 rounded-full bg-primary-light flex items-center justify-center">
+            <BadgeCheck size={15} className="text-primary" />
+          </div>
+          <h2 className="font-semibold text-ink">Categorization Confidence</h2>
+        </div>
+        <div className="flex items-baseline gap-2">
+          <p className={`text-4xl font-bold ${healthColor(scoreLabel(summary.categorizationConfidenceScore))}`}>
+            {summary.categorizationConfidenceScore}
+          </p>
+          <p className="text-xs text-muted">out of 100</p>
+        </div>
+        <p className={`text-sm font-medium mt-1 ${healthColor(scoreLabel(summary.categorizationConfidenceScore))}`}>
+          {scoreLabel(summary.categorizationConfidenceScore)}
+        </p>
+        <p className="text-xs text-muted mt-2">
+          Based on {summary.categorizationConfidenceTransactionCount} automatically categorized transaction
+          {summary.categorizationConfidenceTransactionCount === 1 ? '' : 's'} {periodLabel}.
+        </p>
       </FinoraCard>
       )}
 

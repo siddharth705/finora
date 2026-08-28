@@ -168,6 +168,15 @@ export interface DashboardSummary {
    */
   duplicateTransactionCount: number;
   detectedDuplicates: DetectedDuplicate[];
+  /**
+   * Categorization Confidence. How sure the categorization engine was, on average (0-100), about
+   * the categories it assigned this month -- a positive, ongoing data-quality signal, distinct
+   * from categoryReviewWarning (which only fires when spend is badly miscategorized). Null below
+   * categorizationConfidenceMinTransactions engine-decided transactions this month.
+   */
+  categorizationConfidenceScore: number | null;
+  categorizationConfidenceTransactionCount: number;
+  categorizationConfidenceMinTransactions: number;
 }
 
 export interface CategoryMover {
