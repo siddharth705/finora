@@ -42,8 +42,8 @@ describe('CategoryCreateEditPanel', () => {
       <CategoryCreateEditPanel mode="create" initialName="SIP" onSaved={onSaved} onCancel={vi.fn()} />,
     );
 
-    await screen.findByText('Home');
-    await user.click(screen.getByText('Home'));
+    await screen.findByRole('button', { name: 'Home' });
+    await user.click(screen.getByRole('button', { name: 'Home' }));
     await user.click(screen.getByRole('button', { name: 'blue' }));
     await user.click(screen.getByRole('button', { name: /save/i }));
 
@@ -64,7 +64,7 @@ describe('CategoryCreateEditPanel', () => {
         mode="edit" categoryId="1" initialName="Mutual Fund SIP" onSaved={vi.fn()} onCancel={vi.fn()}
       />,
     );
-    await screen.findByText('Tag');
+    await screen.findByRole('button', { name: 'Tag' });
     await user.click(screen.getByRole('button', { name: /save/i }));
 
     expect(edit.invalidated).toContainEqual(['categories']);
@@ -77,7 +77,7 @@ describe('CategoryCreateEditPanel', () => {
     const create = renderWithClient(
       <CategoryCreateEditPanel mode="create" initialName="SIP" onSaved={vi.fn()} onCancel={vi.fn()} />,
     );
-    await screen.findByText('Tag');
+    await screen.findByRole('button', { name: 'Tag' });
     await user.click(screen.getByRole('button', { name: /save/i }));
 
     expect(create.invalidated).toContainEqual(['categories']);
@@ -87,7 +87,7 @@ describe('CategoryCreateEditPanel', () => {
   it('rejects saving a blank name', async () => {
     const user = userEvent.setup();
     renderWithClient(<CategoryCreateEditPanel mode="create" initialName="" onSaved={vi.fn()} onCancel={vi.fn()} />);
-    await screen.findByText('Tag');
+    await screen.findByRole('button', { name: 'Tag' });
 
     await user.click(screen.getByRole('button', { name: /save/i }));
 
