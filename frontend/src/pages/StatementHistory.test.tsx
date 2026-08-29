@@ -337,6 +337,24 @@ describe('StatementHistory — failed imports', () => {
     expect(screen.getByTitle('Re-import Statement')).toBeInTheDocument();
     expect(screen.queryByText('Failed Imports')).not.toBeInTheDocument();
   });
+
+  it('collapses and re-expands the failure list on click, same as the account-group disclosures', async () => {
+    vi.mocked(importApi.listFailures).mockReset().mockResolvedValue([aFailure()]);
+    const user = userEvent.setup();
+    renderPage();
+
+    expect(await screen.findByText('unreadable-statement.pdf')).toBeInTheDocument();
+    const toggle = screen.getByRole('button', { name: /failed imports/i });
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByText('unreadable-statement.pdf')).not.toBeInTheDocument();
+
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByText('unreadable-statement.pdf')).toBeInTheDocument();
+  });
 });
 
 /**
@@ -418,6 +436,24 @@ describe('StatementHistory — recent imports', () => {
     expect(await screen.findByText('HDFC Savings')).toBeInTheDocument();
     expect(screen.getByTitle('Re-import Statement')).toBeInTheDocument();
     expect(screen.queryByText('Recent Imports')).not.toBeInTheDocument();
+  });
+
+  it('collapses and re-expands the in-progress list on click, same as the account-group disclosures', async () => {
+    vi.mocked(importJobsApi.recent).mockReset().mockResolvedValue([aJob()]);
+    const user = userEvent.setup();
+    renderPage();
+
+    expect(await screen.findByText('still-going.csv')).toBeInTheDocument();
+    const toggle = screen.getByRole('button', { name: /recent imports/i });
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByText('still-going.csv')).not.toBeInTheDocument();
+
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByText('still-going.csv')).toBeInTheDocument();
   });
 
   /**
