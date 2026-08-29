@@ -364,7 +364,8 @@ export const adminMerchantsApi = {
  *  class doc for why. New templates come back disabled; activate is a separate call, always
  *  taken only after a successful test (see MerchantTemplates.tsx's own TestTemplatePanel). */
 export const adminMerchantTemplatesApi = {
-  list: () => api.get<MerchantTemplateDto[]>('/admin/merchant-templates').then((r) => r.data),
+  list: (page: number, size: number) =>
+    api.get<PagedResponse<MerchantTemplateDto>>('/admin/merchant-templates', { params: { page, size } }).then((r) => r.data),
   create: (request: CreateMerchantTemplateRequest) =>
     api.post<MerchantTemplateDto>('/admin/merchant-templates', request).then((r) => r.data),
   update: (id: string, request: UpdateMerchantTemplateRequest) =>
