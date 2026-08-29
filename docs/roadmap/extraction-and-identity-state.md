@@ -194,6 +194,64 @@ Secondary limit: still n=1 statement per issuer, so this establishes mask struct
 issuer, not that an issuer always masks this way. Runtime measurement makes that limit
 non-blocking rather than resolved.
 
+#### Phase 4 — candidate supplementary signals, enumerated (not designed)
+
+Reached only because Phase 3 shows no observed mask meets a 10⁻⁴-or-stricter tolerance.
+Enumeration only: no signal below has been designed, and none should be built without its
+own scoping.
+
+Availability was **measured**, not assumed, across the 8 credit-card documents (10 sections):
+
+| Signal | Sections populated |
+|---|---|
+| Masked number | 6 / 10 |
+| Credit limit | 4 / 10 |
+| Payment due date | 3 / 10 |
+| Statement period | **1 / 10** |
+| Total amount due | 1 / 10 |
+| Opening balance | **0 / 10** |
+| Closing balance | **0 / 10** |
+
+**Correction to an earlier claim in this workstream.** Statement-period adjacency and
+balance-chain continuity were described as signals "the pipeline already computes." For
+credit cards it computes neither. `openingBalance` is derived from a running-balance column,
+which credit-card statements do not have — they print a transaction list and a payment
+summary. That claim was extrapolated from bank statements and is wrong for this product.
+
+**Group 1 — available today, all weak.**
+
+| Signal | Avail. | Est. power | Stability |
+|---|---|---|---|
+| Payment due date (day-of-month) | 3/10 | ~1.4 digits (≈28 values) | stable; billing cycle fixed at issuance |
+| Credit limit | 4/10 | very low; clusters on round values | drifts as limits increase |
+| Total amount due | 1/10 | none | changes every month by design — not an identity signal |
+
+**Group 2 — would be strong, but absent.** Statement-period adjacency (1/10; billing cycle
+is customer-specific and would compose well with the mask) and balance-chain continuity
+(0/10; highest power of any candidate if present).
+
+**Group 3 — a different problem.** Transaction-set overlap is not a `DetectedAccountInfo`
+field and needs staged rows compared against stored ones. It is decisive for *re-uploading
+the same statement* and useless for month N → N+1. Phase 4 must not conflate the two.
+
+**Group 4 — explicit non-signals**, recorded so they are not re-proposed:
+
+- *Account holder name.* Every card a user owns carries their name, so it has zero power for
+  the only collision that matters — one of their cards against another. Accounts are
+  per-user.
+- *Card product name / BIN.* Discriminates product, not customer; already counted in Phase 1.
+
+**Viability caveat.** The two documents most needing supplementary signals — HSBC CC and
+ICICI CC, the `NONE` cases with no mask at all — have almost nothing else either. HSBC has
+zero populated fields; ICICI has only credit limit.
+
+**Unresolved, and it decides Group 2's fate.** This probe conflates *absent from the
+document* with *present but unextracted*. Statement periods are printed on essentially every
+credit-card statement, so 1/10 is far more likely an extraction gap (recoverable, F-item
+work) than genuine absence; balances at 0/10 are probably genuine. Separating the two is
+exactly what the extraction-loss ledger below would answer — the second question in this
+workstream that a ledger would have answered immediately.
+
 #### What the study settled
 
 The gating question is no longer *"can we extract enough of the card number?"* — it is
