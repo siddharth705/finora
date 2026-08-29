@@ -23,4 +23,17 @@ public interface TransactionRelationshipRepository extends JpaRepository<Transac
             WHERE r.fromTransactionId IN :transactionIds OR r.toTransactionId IN :transactionIds
            """)
     List<TransactionRelationship> findByEitherSideIn(@Param("transactionIds") List<UUID> transactionIds);
+
+    /**
+     * The "from" side only, for a specific relationship type, live edges only -- used by {@link
+     * com.finora.service.TransactionGraphService#ccPaymentFromTransactionIds} to ask "which of
+     * these transaction ids are a CC_PAYMENT settlement, and should therefore be excluded from
+     * expense totals the same way a TRANSFER already is" (docs/proposals/reconciliation-evolution-
+     * roadmap-proposal.md, Part 4's net-worth/cash-flow read rule). Unlike {@link
+     * #findByEitherSideIn}, direction matters here: the settled charges on the "to" side are real
+     * spend and must stay counted, only the payment itself nets out.
+     */
+    List<TransactionRelationship> findByFromTransactionIdInAndRelationshipTypeAndStatusNotAndSupersededByIsNull(
+            List<UUID> fromTransactionIds, TransactionRelationship.RelationshipType relationshipType,
+            TransactionRelationship.Status excludedStatus);
 }

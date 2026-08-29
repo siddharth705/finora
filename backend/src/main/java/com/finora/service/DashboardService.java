@@ -37,17 +37,20 @@ public class DashboardService {
     private final BudgetRepository budgetRepository;
     private final UserRepository userRepository;
     private final com.finora.repository.StatementImportRepository statementImportRepository;
+    private final TransactionGraphService transactionGraphService;
 
     public DashboardService(AccountRepository accountRepository, TransactionRepository transactionRepository,
                              CategoryRepository categoryRepository, BudgetRepository budgetRepository,
                              UserRepository userRepository,
-                             com.finora.repository.StatementImportRepository statementImportRepository) {
+                             com.finora.repository.StatementImportRepository statementImportRepository,
+                             TransactionGraphService transactionGraphService) {
         this.accountRepository = accountRepository;
         this.transactionRepository = transactionRepository;
         this.categoryRepository = categoryRepository;
         this.budgetRepository = budgetRepository;
         this.userRepository = userRepository;
         this.statementImportRepository = statementImportRepository;
+        this.transactionGraphService = transactionGraphService;
     }
 
     @Transactional(readOnly = true)
@@ -65,7 +68,7 @@ public class DashboardService {
         // Transaction::getAmount directly is what the bug was.
         List<Transaction> all = transactionRepository.findByUserId(userId);
         RefundNetting refunds = RefundNetting.from(all);
-        List<Transaction> active = RefundNetting.reportable(all);
+        List<Transaction> active = RefundNetting.reportable(all, transactionGraphService.ccPaymentFromTransactionIds(all));
         Map<UUID, Category> categoriesById = categoryRepository.findByUserId(userId).stream()
                 .collect(Collectors.toMap(Category::getId, c -> c));
 

@@ -39,13 +39,16 @@ public class InsightsService {
      *  (DashboardService, BudgetService, GoalService, AnalyticsService, NetWorthService); this one
      *  performed no calendar resolution at all. */
     private final UserRepository userRepository;
+    private final TransactionGraphService transactionGraphService;
 
     public InsightsService(TransactionRepository transactionRepository, CategoryRepository categoryRepository,
-                            BudgetRepository budgetRepository, UserRepository userRepository) {
+                            BudgetRepository budgetRepository, UserRepository userRepository,
+                            TransactionGraphService transactionGraphService) {
         this.transactionRepository = transactionRepository;
         this.categoryRepository = categoryRepository;
         this.budgetRepository = budgetRepository;
         this.userRepository = userRepository;
+        this.transactionGraphService = transactionGraphService;
     }
 
     @Transactional(readOnly = true)
@@ -166,7 +169,7 @@ public class InsightsService {
     Optional<Pipeline> pipeline(UUID userId) {
         List<Transaction> all = transactionRepository.findByUserId(userId);
         RefundNetting refunds = RefundNetting.from(all);
-        List<Transaction> txns = RefundNetting.reportable(all).stream()
+        List<Transaction> txns = RefundNetting.reportable(all, transactionGraphService.ccPaymentFromTransactionIds(all)).stream()
                 .filter(t -> t.getTxnType() == Transaction.Type.EXPENSE)
                 .toList();
 
