@@ -70,6 +70,22 @@ lives in branch ordering and five threaded mutable variables, is not.
 Deferred because it is architectural debt reduction, not coverage improvement, and the
 identity and extraction-quality backlog has clearer user impact.
 
+### Sanjay SBI branch fields — DEFERRED
+
+`Branch Code` / `Branch Name` on a real SBI savings statement use a leading-colon
+column-reordering shape. Scoped out deliberately as structural rather than a vocabulary gap,
+and deferred on the same grounds as the tabular account-number work above.
+
+One caveat attached at the time of writing, because it costs nothing to note and something
+to rediscover: the class this was compared to did not survive measurement. BOB and HSBC were
+also classified as structural, and both turned out to be vocabulary gaps whose values already
+reached `PdfMetadataExtractor` — the fix was one regex, not a new extraction channel. That
+does not make this classification wrong; SBI's shape is a different one and was assessed on
+its own. It does mean the classification is **unverified**, and that the check which settled
+the last two is cheap: probe whether the branch value reaches `auxiliaryText`. If it does,
+this is vocabulary. If it does not, the structural call is confirmed and better evidenced
+than it is today.
+
 ### HSBC account number — DEFERRED
 
 Its value reaches the extractor and could be matched, but the document is
