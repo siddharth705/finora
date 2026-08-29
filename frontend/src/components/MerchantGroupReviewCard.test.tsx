@@ -63,7 +63,7 @@ describe('MerchantGroupReviewCard', () => {
 
     await screen.findByText('SWIGGY');
     const combobox = screen.getByRole('combobox');
-    await user.type(combobox, 'Food');
+    await user.click(combobox);
     await user.click(await screen.findByText('Food'));
     await user.click(screen.getByRole('button', { name: /apply to 5 transactions/i }));
 
@@ -80,7 +80,7 @@ describe('MerchantGroupReviewCard', () => {
 
     await screen.findByText('SWIGGY');
     const combobox = screen.getByRole('combobox');
-    await user.type(combobox, 'Food');
+    await user.click(combobox);
     await user.click(await screen.findByText('Food'));
     await user.click(screen.getByRole('button', { name: /apply to 5 transactions/i }));
 
@@ -97,12 +97,12 @@ describe('MerchantGroupReviewCard', () => {
     const comboboxes = screen.getAllByRole('combobox');
     expect(comboboxes).toHaveLength(2);
 
-    await user.type(comboboxes[0], 'Food');
+    await user.click(comboboxes[0]);
     await user.click(await screen.findByText('Food'));
 
     // Only the SWIGGY row's combobox should reflect the pick -- the UBER row must stay untouched.
-    expect(screen.getAllByRole('combobox')[0]).toHaveValue('Food');
-    expect(screen.getAllByRole('combobox')[1]).toHaveValue('');
+    expect(screen.getAllByRole('combobox')[0]).toHaveTextContent('Food');
+    expect(screen.getAllByRole('combobox')[1]).toHaveTextContent('Choose category');
     expect(screen.getByRole('button', { name: /apply to 3 transactions/i })).toBeDisabled();
     expect(screen.getByRole('button', { name: /apply to 5 transactions/i })).not.toBeDisabled();
   });

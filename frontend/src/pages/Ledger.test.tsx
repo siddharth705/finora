@@ -217,13 +217,13 @@ describe('Ledger — edit transaction category picker', () => {
     renderLedger();
 
     await user.click(await screen.findByTitle('Edit transaction'));
-    const combobox = (await screen.findAllByRole('combobox')).find((el) => el.tagName === 'INPUT')!;
-    expect(combobox).toHaveValue('Shopping');
+    const combobox = (await screen.findAllByRole('combobox')).find((el) => el.tagName === 'BUTTON')!;
+    expect(combobox).toHaveTextContent('Shopping');
 
-    await user.clear(combobox);
-    await user.type(combobox, 'Groceries');
+    await user.click(combobox);
+    await user.type(await screen.findByPlaceholderText('Search categories'), 'Groceries');
     await user.click(await screen.findByText('Groceries'));
-    expect(combobox).toHaveValue('Groceries');
+    expect(combobox).toHaveTextContent('Groceries');
 
     await user.click(screen.getByRole('button', { name: /save changes/i }));
 
@@ -241,14 +241,14 @@ describe('Ledger — edit transaction category picker', () => {
     renderLedger();
 
     await user.click(await screen.findByTitle('Edit transaction'));
-    const combobox = (await screen.findAllByRole('combobox')).find((el) => el.tagName === 'INPUT')!;
+    const combobox = (await screen.findAllByRole('combobox')).find((el) => el.tagName === 'BUTTON')!;
 
-    await user.clear(combobox);
-    await user.type(combobox, 'Travel');
+    await user.click(combobox);
+    await user.type(await screen.findByPlaceholderText('Search categories'), 'Travel');
     await user.click(await screen.findByText('Create "Travel"'));
 
     // The combobox is replaced by the inline create panel -- confirm the category combobox
-    // input is gone and the panel's own name input (prefilled with the typed text) has taken
+    // trigger is gone and the panel's own name input (prefilled with the typed text) has taken
     // its place.
     expect(combobox).not.toBeInTheDocument();
     const nameInput = screen.getByPlaceholderText('Category name');
@@ -257,8 +257,8 @@ describe('Ledger — edit transaction category picker', () => {
     await user.click(screen.getByRole('button', { name: 'Save' }));
 
     await waitFor(() => {
-      const restoredCombobox = screen.getAllByRole('combobox').find((el) => el.tagName === 'INPUT')!;
-      expect(restoredCombobox).toHaveValue('Travel');
+      const restoredCombobox = screen.getAllByRole('combobox').find((el) => el.tagName === 'BUTTON')!;
+      expect(restoredCombobox).toHaveTextContent('Travel');
     });
     expect(categoriesApi.create).toHaveBeenCalledWith('Travel', 'tag', 'gray');
   });
