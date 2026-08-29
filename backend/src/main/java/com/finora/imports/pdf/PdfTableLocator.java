@@ -984,7 +984,19 @@ public class PdfTableLocator {
                     pendingHeaderReconstructionVocab = closed.headerReconstructionVocab();
                     if (ctx != null) ctx.record("COMPOSITE_STATEMENT");
                 } else {
-                    pendingAuxiliary = new ArrayList<>();
+                    // Bug fix, 2026-08-29: pendingAuxiliary used to be reset to empty here, discarding
+                    // whatever front matter (page-1 letterhead: branch name, portfolio-summary figures,
+                    // etc.) had accumulated before the document's FIRST section marker. A marker that
+                    // closes a PRIOR section (the currentRows != null branch above) already carries its
+                    // pendingAuxiliary forward via closeCurrentSection -- the first marker has no prior
+                    // section to attribute front matter to, but that is a reason to hand it to the
+                    // section this marker is about to OPEN, not to discard it outright. Found via a
+                    // real HSBC composite statement whose own "Branch Name"/"Total Deposits and
+                    // Investments" letterhead fields were silently lost this way once the
+                    // PdfTableLocator.lineOf X-ordering fix (docs/superpowers/specs/
+                    // 2026-08-29-lineof-x-ordering-fix-design.md) let this document's SECTION_MARKER
+                    // banner correctly match for the first time -- previously it never matched at all,
+                    // so this discard path was never reached for this document.
                     pendingDroppedCandidates = new ArrayList<>();
                     pendingHeaderReconstructionVocab = new ArrayList<>();
                 }
