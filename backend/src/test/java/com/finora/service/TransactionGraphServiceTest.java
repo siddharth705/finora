@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Test;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -218,5 +219,46 @@ class TransactionGraphServiceTest {
 
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> graphService.setStatus(edgeId, TransactionRelationship.Status.REJECTED))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    private com.finora.entity.Transaction txn(UUID id) {
+        com.finora.entity.Transaction t = new com.finora.entity.Transaction();
+        org.springframework.test.util.ReflectionTestUtils.setField(t, "id", id);
+        return t;
+    }
+
+    @Test
+    void ccPaymentFromTransactionIds_returnsTheFromSide_ofALiveCcPaymentEdge() {
+        UUID payment = UUID.randomUUID();
+        UUID charge = UUID.randomUUID();
+        TransactionRelationship ccPayment = edge(payment, charge, TransactionRelationship.RelationshipType.CC_PAYMENT);
+        ccPayment.setStatus(TransactionRelationship.Status.CANDIDATE);
+        when(repository.findByFromTransactionIdInAndRelationshipTypeAndStatusNotAndSupersededByIsNull(
+                List.of(payment, charge), TransactionRelationship.RelationshipType.CC_PAYMENT,
+                TransactionRelationship.Status.REJECTED))
+                .thenReturn(List.of(ccPayment));
+
+        Set<UUID> result = graphService.ccPaymentFromTransactionIds(List.of(txn(payment), txn(charge)));
+
+        assertThat(result).containsExactly(payment);
+    }
+
+    @Test
+    void ccPaymentFromTransactionIds_returnsEmpty_whenNoEdgesTouchTheBatch() {
+        UUID a = UUID.randomUUID();
+        when(repository.findByFromTransactionIdInAndRelationshipTypeAndStatusNotAndSupersededByIsNull(
+                List.of(a), TransactionRelationship.RelationshipType.CC_PAYMENT, TransactionRelationship.Status.REJECTED))
+                .thenReturn(List.of());
+
+        assertThat(graphService.ccPaymentFromTransactionIds(List.of(txn(a)))).isEmpty();
+    }
+
+    @Test
+    void ccPaymentFromTransactionIds_shortCircuits_onAnEmptyCollection() {
+        Set<UUID> result = graphService.ccPaymentFromTransactionIds(List.of());
+
+        assertThat(result).isEmpty();
+        verify(repository, never()).findByFromTransactionIdInAndRelationshipTypeAndStatusNotAndSupersededByIsNull(
+                any(), any(), any());
     }
 }
