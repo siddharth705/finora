@@ -1,8 +1,9 @@
-import { NavLink, useNavigate } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, Users, ShieldCheck, ScrollText, HeartPulse, LogOut, Landmark, Settings,
   ListFilter, Store, FileCode, Sparkles, GitMerge, BarChart3, Stethoscope, FileSearch, ListRestart , BadgeCheck, Fingerprint, Route,
-  CreditCard, Gift, Plug, Waypoints, Lightbulb, ListOrdered } from 'lucide-react';
+  CreditCard, Gift, Plug, Waypoints, Lightbulb, ListOrdered, ChevronDown, ChevronRight } from 'lucide-react';
 import { useAdminAuth } from '../context/AdminAuthContext';
 import { BrandMark } from './BrandMark';
 import { initials } from '../lib/initials';
@@ -11,7 +12,7 @@ import { initials } from '../lib/initials';
 // rendered first in the old flat list. Every other entry carries the same shape (including
 // `end`, even when false) -- a mixed shape where only some entries had an `end` key would make
 // the destructuring in visibleGroups.map() below fail to type-check for the entries that omitted
-// it. Grouping is pure presentation: the SAME 21 links, same permissions, same routes -- just
+// it. Grouping is pure presentation: the SAME 24 links, same permissions, same routes -- just
 // under section headers instead of one long flat list. A link's group here has no bearing on
 // which permission gates it or which page it points to.
 const DASHBOARD_LINK = { to: '/', label: 'Dashboard', icon: LayoutDashboard, end: true, permission: null } as const;
@@ -68,13 +69,57 @@ const GROUPS = [
   },
 ] as const;
 
+// 24 links across 5 groups is a lot to scan at once -- collapsing groups the admin isn't
+// currently using is the whole point of this being persisted, not reset every login the way a
+// dashboard card's default-expanded state is (see FinancialJourney.tsx's own comment on why that
+// one deliberately does the opposite). Best-effort only: a private-browsing tab or a blocked
+// localStorage falls back to "everything expanded", not a crash.
+const COLLAPSED_GROUPS_STORAGE_KEY = 'finora-admin-sidebar-collapsed-groups';
+
+function loadCollapsedGroups(): Set<string> {
+  try {
+    const raw = localStorage.getItem(COLLAPSED_GROUPS_STORAGE_KEY);
+    return raw ? new Set(JSON.parse(raw)) : new Set();
+  } catch {
+    return new Set();
+  }
+}
+
+function saveCollapsedGroups(collapsed: Set<string>) {
+  try {
+    localStorage.setItem(COLLAPSED_GROUPS_STORAGE_KEY, JSON.stringify([...collapsed]));
+  } catch {
+    // Best-effort persistence -- a group toggle still works for the rest of this session either way.
+  }
+}
+
+// Matches NavLink's own `end` semantics (exact vs. prefix) so a group auto-opens for whichever
+// route is actually current, not just whichever route it was on when first mounted -- landing
+// directly on e.g. /audit via a bookmark must reveal Governance even if the admin had it
+// collapsed from a previous session. `+ '/'` guards against '/reconciliation' prefix-matching
+// '/reconciliation-explorer', a real collision in this exact link set.
+function linkIsActive(pathname: string, link: { to: string; end: boolean }): boolean {
+  return link.end ? pathname === link.to : pathname === link.to || pathname.startsWith(`${link.to}/`);
+}
+
 export function Sidebar() {
   const { fullName, permissions, logout } = useAdminAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(loadCollapsedGroups);
 
   function handleLogout() {
     logout();
     void navigate('/login');
+  }
+
+  function toggleGroup(label: string) {
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(label)) next.delete(label); else next.add(label);
+      saveCollapsedGroups(next);
+      return next;
+    });
   }
 
   // Nav items whose permission (if any) the account actually holds -- a support-scoped admin
@@ -84,6 +129,28 @@ export function Sidebar() {
   const visibleGroups = GROUPS
     .map((group) => ({ ...group, links: group.links.filter((l) => permissions.includes(l.permission)) }))
     .filter((group) => group.links.length > 0);
+
+  // Landing directly on a route (bookmark, deep link, a previous toggle) whose group is
+  // currently collapsed must still open that group -- otherwise the active highlight would be
+  // hidden with no way to tell where you are. Keyed on location.pathname, not run on every
+  // render: a render-time check here (rather than an effect gated on navigation) would refire the
+  // instant the admin manually collapses the group they're currently standing in, since that
+  // group is still "active" on the very next render -- the toggle would silently undo itself.
+  // Only an actual route change should re-force it open.
+  useEffect(() => {
+    const activeGroupLabel = visibleGroups.find((g) => g.links.some((l) => linkIsActive(location.pathname, l)))?.label;
+    if (!activeGroupLabel) return;
+    setCollapsedGroups((prev) => {
+      if (!prev.has(activeGroupLabel)) return prev;
+      const next = new Set(prev);
+      next.delete(activeGroupLabel);
+      saveCollapsedGroups(next);
+      return next;
+    });
+    // Only navigation should re-evaluate this -- visibleGroups is a fresh array every render
+    // (permissions rarely change mid-session) and must not retrigger the effect on its own.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.pathname]);
 
   return (
     <aside className="w-64 flex-shrink-0 bg-sidebar min-h-screen flex flex-col py-6 px-4">
@@ -111,30 +178,43 @@ export function Sidebar() {
           {DASHBOARD_LINK.label}
         </NavLink>
 
-        {visibleGroups.map((group) => (
-          <div key={group.label}>
-            <p className="px-3 mb-1.5 text-[11px] font-semibold text-gray-500 uppercase tracking-widest">
-              {group.label}
-            </p>
-            <div className="space-y-1">
-              {group.links.map(({ to, label, icon: Icon, end }) => (
-                <NavLink
-                  key={to}
-                  to={to}
-                  end={end}
-                  className={({ isActive }) =>
-                    `flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
-                      isActive ? 'bg-primary text-on-primary' : 'text-gray-400 hover:bg-sidebar-hover hover:text-gray-200'
-                    }`
-                  }
-                >
-                  <Icon size={18} strokeWidth={2} />
-                  {label}
-                </NavLink>
-              ))}
+        {visibleGroups.map((group) => {
+          const isOpen = !collapsedGroups.has(group.label);
+          return (
+            <div key={group.label}>
+              <button
+                type="button"
+                onClick={() => toggleGroup(group.label)}
+                aria-expanded={isOpen}
+                className="w-full flex items-center justify-between px-3 mb-1.5 text-[11px] font-semibold text-gray-500 uppercase tracking-widest hover:text-gray-300"
+              >
+                {group.label}
+                {isOpen
+                  ? <ChevronDown size={13} className="flex-shrink-0" />
+                  : <ChevronRight size={13} className="flex-shrink-0" />}
+              </button>
+              {isOpen && (
+                <div className="space-y-1">
+                  {group.links.map(({ to, label, icon: Icon, end }) => (
+                    <NavLink
+                      key={to}
+                      to={to}
+                      end={end}
+                      className={({ isActive }) =>
+                        `flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+                          isActive ? 'bg-primary text-on-primary' : 'text-gray-400 hover:bg-sidebar-hover hover:text-gray-200'
+                        }`
+                      }
+                    >
+                      <Icon size={18} strokeWidth={2} />
+                      {label}
+                    </NavLink>
+                  ))}
+                </div>
+              )}
             </div>
-          </div>
-        ))}
+          );
+        })}
       </nav>
 
       <div className="pt-3 border-t border-white/10">

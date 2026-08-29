@@ -1,10 +1,13 @@
 package com.finora.rules;
 
+import com.finora.dto.PagedResponse;
 import com.finora.entity.CategoryRule;
 import com.finora.exception.ApiException;
 import com.finora.repository.CategoryRuleRepository;
 import com.finora.security.OwnershipGuard;
 import com.finora.service.AuditService;
+import com.finora.util.PageBounds;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -155,10 +158,15 @@ public class RuleService {
 
     // --- Admin: GLOBAL rule management (RULE_MANAGE) -- see AdminRuleController ---
 
+    /** Admin Portal, Global Rules list. Was an unconditional fetch-all -- seed data alone is
+     *  already 46 GLOBAL rules (V19), and admins keep adding more, same reasoning as every other
+     *  page in this pagination rollout. Priority order is preserved page to page (the query is
+     *  still ORDER BY priority ASC), so page 2 continues where page 1 left off rather than
+     *  reordering anything. */
     @Transactional(readOnly = true)
-    public List<RuleDto> listGlobal() {
-        return categoryRuleRepository.findByScopeOrderByPriorityAsc(CategoryRule.Scope.GLOBAL)
-                .stream().map(this::toDto).toList();
+    public PagedResponse<RuleDto> listGlobal(int page, int size) {
+        return PagedResponse.of(categoryRuleRepository.findByScopeOrderByPriorityAsc(CategoryRule.Scope.GLOBAL,
+                PageRequest.of(PageBounds.safePage(page), PageBounds.safeSize(size))).map(this::toDto));
     }
 
     /** actingAdminId is who the audit entry is attributed to -- a GLOBAL rule has no owning user

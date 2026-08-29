@@ -245,6 +245,7 @@ class MultiSectionZeroExtractionTest {
         m.put("union-bank-savings-ledger-validation", 19);
         m.put("cbi-account-discrepancy-disclaimer-trailer", 222);
         m.put("pnb-one-account-discrepancy-disclaimer-trailer", 61);
+        m.put("bob-transaction-row-x-ordering", 53);
         return m;
     }
 

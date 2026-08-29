@@ -6,6 +6,7 @@ import { RequirePermission } from '../components/ProtectedRoute';
 import { FormPanel } from '../components/FormPanel';
 import { DataTable, type DataTableColumn } from '../components/DataTable';
 import { ConfirmDialog } from '../components/ConfirmDialog';
+import { Pagination } from '../components/Pagination';
 import { useNotify } from '../context/NotificationContext';
 import { adminRulesApi } from '../api/endpoints';
 import type { CreateRuleRequest, RuleDto } from '../types';
@@ -13,6 +14,8 @@ import type { CreateRuleRequest, RuleDto } from '../types';
 const FIELDS = ['DESCRIPTION', 'AMOUNT', 'MERCHANT', 'ACCOUNT_TYPE'];
 const OPERATORS = ['CONTAINS', 'EQUALS', 'STARTS_WITH', 'GT', 'LT', 'BETWEEN'];
 const ACTION_TYPES = ['ASSIGN_CATEGORY', 'MARK_TRANSFER', 'MARK_INVESTMENT', 'MARK_SUBSCRIPTION', 'ADD_TAG'];
+
+const PAGE_SIZE = 20;
 
 const BLANK_FORM: CreateRuleRequest = {
   field: 'DESCRIPTION', operator: 'CONTAINS', comparisonValue: '', actionType: 'ASSIGN_CATEGORY', actionValue: '', priority: 100,
@@ -214,10 +217,11 @@ function GlobalRulesContent() {
   const [editing, setEditing] = useState<RuleDto | null>(null);
   const [confirmDeleteRule, setConfirmDeleteRule] = useState<RuleDto | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
+  const [page, setPage] = useState(0);
 
   const { data: rules, isLoading } = useQuery({
-    queryKey: ['admin-rules'],
-    queryFn: () => adminRulesApi.list(),
+    queryKey: ['admin-rules', page],
+    queryFn: () => adminRulesApi.list(page, PAGE_SIZE),
   });
 
   function invalidate() {
@@ -259,6 +263,10 @@ function GlobalRulesContent() {
   const deleteMutation = useMutation({
     mutationFn: (id: string) => adminRulesApi.delete(id),
     onSuccess: () => {
+      // Deleting the last row on a page beyond the first would otherwise leave the admin
+      // stranded on a now-empty page -- back off to the previous one so the list they land on
+      // actually has something in it, same as Pagination.tsx never rendering "Page 2 of 1".
+      setPage((p) => (p > 0 && (rules?.content.length ?? 0) <= 1 ? p - 1 : p));
       invalidate();
       notify.success('Rule deleted.');
     },
@@ -388,11 +396,20 @@ function GlobalRulesContent() {
 
       <DataTable
         columns={columns}
-        rows={rules}
+        rows={rules?.content ?? []}
         keyFor={(rule) => rule.id}
         loading={isLoading}
         emptyMessage="No global rules yet."
       />
+      {rules && (
+        <Pagination
+          page={page}
+          totalPages={rules.totalPages}
+          totalElements={rules.totalElements}
+          pageSize={PAGE_SIZE}
+          onPageChange={setPage}
+        />
+      )}
 
       {confirmDeleteRule && (
         <ConfirmDialog

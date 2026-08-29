@@ -3,6 +3,7 @@ package com.finora.controller;
 import com.finora.accounts.AccountDto.BankDto;
 import com.finora.dto.ApiResponse;
 import com.finora.dto.AuditLogDto;
+import com.finora.dto.PagedResponse;
 import com.finora.repository.AuditLogRepository;
 import com.finora.security.CurrentUser;
 import com.finora.service.BankManagementService;
@@ -43,8 +44,10 @@ public class AdminBankController {
     /** Custom banks only (not the built-in ~40) -- this is the management view, not the picker
      *  BankController's public listing serves. */
     @GetMapping
-    public ApiResponse<List<BankDto>> list() {
-        return ApiResponse.ok(bankManagementService.listCustom().stream().map(BankDto::fromCustom).toList());
+    public ApiResponse<PagedResponse<BankDto>> list(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        return ApiResponse.ok(PagedResponse.of(bankManagementService.listCustom(page, size).map(BankDto::fromCustom)));
     }
 
     @PostMapping

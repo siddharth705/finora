@@ -7,6 +7,10 @@ import com.finora.repository.AccountRepository;
 import com.finora.repository.BankRepository;
 import com.finora.util.AfterCommit;
 import com.finora.util.BankRegistry;
+import com.finora.util.PageBounds;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -89,11 +93,26 @@ public class BankManagementService {
 
     // --- Admin CRUD (BANK_MANAGE) -- see AdminBankController ---
 
-    /** Same query {@link CustomBankLookup#all()} caches -- reads through it too, so the admin
-     *  management view and every public read (resolve/listAll/search) agree on freshness instead
-     *  of the admin's own list bypassing the cache it manages. */
-    public List<Bank> listCustom() {
-        return customBankLookup.all();
+    /** Admin Portal, Banks list -- paginated for UI consistency with every other admin list page,
+     *  not because this table has the Subscriptions/Referrals-style unbounded-growth problem: the
+     *  full custom-bank catalog is already resident in memory via {@link CustomBankLookup}'s
+     *  cache (dozens to low hundreds of admin-curated rows, not a table that scales with the user
+     *  base), and every other read path here deliberately depends on that whole cached list being
+     *  available for a linear scan (see {@link #resolve} and {@link #search}'s own doc comments).
+     *  A real DB-level {@code Page<Bank>} query would mean this one endpoint reads around the
+     *  cache instead of through it, breaking the freshness guarantee
+     *  {@code AdminBankControllerIT.theListEndpoint_reflectsCreateUpdateAndDelete_immediately}
+     *  exists to prove -- so this pages the already-cached list in memory instead, via Spring's
+     *  own {@link PageImpl}. Returns a plain {@code Page<Bank>}, not a {@link PagedResponse}, so
+     *  the controller can map to {@code BankDto} first (same "service returns entities, controller
+     *  maps to DTO" split this class's other read methods already use) before wrapping. */
+    public Page<Bank> listCustom(int page, int size) {
+        List<Bank> all = customBankLookup.all();
+        int safePage = PageBounds.safePage(page);
+        int safeSize = PageBounds.safeSize(size);
+        int fromIndex = Math.min(safePage * safeSize, all.size());
+        int toIndex = Math.min(fromIndex + safeSize, all.size());
+        return new PageImpl<>(all.subList(fromIndex, toIndex), PageRequest.of(safePage, safeSize), all.size());
     }
 
     @Transactional

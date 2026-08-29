@@ -183,6 +183,51 @@ public class ReconciliationService {
                            boolean alwaysRecord) {
         long startedAtNanos = System.nanoTime();
 
+        // General retroactive edge cleanup (docs/proposals/reconciliation-evolution-roadmap-
+        // proposal.md, Part 3's supersession gap). AccountService.delete() rejects graph edges for
+        // every account deleted from now on, but an account deleted BEFORE that existed -- or
+        // through any path that doesn't go through AccountService.delete -- can leave a live edge
+        // of ANY relationship type (TRANSFER, REFUND, DUPLICATE, a Gmail cross-source match,
+        // CC_PAYMENT) sitting in the graph, pointing at a transaction whose account the user can no
+        // longer even see. Deliberately not scoped to one relationship type the way an earlier
+        // version of this fix was: a stale edge from any pass has the identical failure mode
+        // (excluding real, currently-visible money from cash flow to "net against" spend that no
+        // longer exists anywhere the user can see it), so the fix belongs at this shared level, not
+        // duplicated per pass.
+        //
+        // `all` is not a substitute for this lookup: reconcileForUser already excludes dead-account
+        // rows from it, so there is nothing left in `all` to diff against; reconcileForImport
+        // leaves every account in scope deliberately (see that method's own doc comment), so `all`
+        // there can already contain dead-account rows without saying which ones. Both cases need
+        // the same direct question answered the same way: an unscoped fetch of every transaction
+        // this user has, checked against which accounts are still live.
+        //
+        // Real, not free: unlike the passes below, which all read the already-fetched `all`, this
+        // is a genuinely new round trip on every single call -- this method runs synchronously
+        // after every transaction create, update, delete, import confirm and statement delete, so
+        // that cost lands on every one of them, for every user, indefinitely, not just for users
+        // who have ever deleted an account. Accepted deliberately: the alternative (skip this and
+        // leave the CC_PAYMENT-only version of the fix in place) traded correctness for that
+        // saved query on every OTHER relationship type, and a wrong reconciliation number is worse
+        // than one more indexed lookup. Revisit if SLOW_RUN_WARN_MS starts firing because of it --
+        // narrowing this to run only when an account was actually just deleted (event-driven, the
+        // way AccountService.delete's own forward-looking half already is) would remove the
+        // per-call cost entirely, at the price of no longer self-healing data from before this fix.
+        List<com.finora.entity.Account> liveAccounts = accountRepository.findByUserId(userId);
+        Set<UUID> liveAccountIds = liveAccounts.stream()
+                .map(com.finora.entity.Account::getId).collect(java.util.stream.Collectors.toSet());
+        // Kept (not just the id set above) so the CC_PAYMENT pass below can read a card account's
+        // own accountNumberMasked for last-4 matching without a second accountRepository round
+        // trip -- see that pass's own comment.
+        Map<UUID, com.finora.entity.Account> accountsById = liveAccounts.stream()
+                .collect(java.util.stream.Collectors.toMap(com.finora.entity.Account::getId, a -> a));
+        List<UUID> deadAccountTransactionIds = transactionRepository.findByUserId(userId).stream()
+                .filter(t -> !liveAccountIds.contains(t.getAccountId()))
+                .map(Transaction::getId)
+                .toList();
+        int staleEdgesRejected = deadAccountTransactionIds.isEmpty() ? 0
+                : transactionGraphService.rejectEdgesTouchingTransactions(deadAccountTransactionIds);
+
         // 1) Duplicates -- grouped in-memory over the already-fetched `all` list rather than one
         // findPotentialDuplicates() query per transaction (the original shape of this pass, and
         // a real N+1: a user re-importing statements ends up re-running this after every import,
@@ -578,9 +623,10 @@ public class ReconciliationService {
         // CANDIDATE ONLY, unconditionally -- deliberately does NOT call statusFor(confidence) the
         // way every earlier pass does. Two reasons, not one: first, the same correctness argument
         // as the Gmail pass above (a wrong match here would silently exclude or double-count real
-        // money, and this codebase has no CC-specific signal yet beyond amount+date proximity --
-        // no issuer check, no destination-account-type check); second, this pass runs AFTER the
-        // TRANSFER pass in this same method specifically so it can read `!isTransfer()` and skip
+        // money -- and even with the last-4 disambiguation below, this pass still has no
+        // destination-account-type check, and a last-4 match is real but bank-dependent evidence,
+        // not a guarantee, per last4CandidatesIn's own doc comment); second, this pass runs AFTER
+        // the TRANSFER pass in this same method specifically so it can read `!isTransfer()` and skip
         // anything TRANSFER already claimed -- a real credit-card bill payment is, today, already
         // caught by TRANSFER's generic "payment"-keyword/same-amount heuristic, so this pass only
         // ever sees the transactions TRANSFER left alone. AUTO_CONFIRMED status is not part of this
@@ -591,43 +637,27 @@ public class ReconciliationService {
         // date axis (statement period vs. payment date) this v1 slice doesn't need yet. Accepted
         // simplification, not an oversight; revisit if SLOW_RUN_WARN_MS ever fires because of it.
         List<StatementImport> ccStatements = statementImportRepository.findByUserIdAndTotalAmountDueIsNotNull(userId);
-        // Deleted-account leak, same shape as reconcileForUser's own fix above -- a deleted
-        // account's transactions deliberately keep deleted_at unset, so findByStatementImportId
-        // below would still return a dead card's charges forever, not just during
-        // StatementImportService's 7-day grace window. Unlike `all` (already scoped by
-        // reconcileForUser, but NOT by reconcileForImport -- see that method's own doc comment
-        // on why it deliberately leaves every account in scope), this statement lookup and the
-        // settledCharges lookup inside the loop both bypass account scoping entirely. Without
-        // this filter, a dead card's statement stays processed, a live savings-side payment
-        // gets claimed and excluded from cash flow to "settle" charges the user can no longer
-        // even see -- real, currently-visible expense money silently vanishing from reporting.
-        // The SAME liveness check is applied to paymentCandidates below, for a mirror-image
-        // reason: reconcileForImport's `all` is deliberately account-unscoped (see that method's
-        // own doc comment), so a stray payment sitting on a deleted SAVINGS account could
-        // otherwise win the closest-to-due-date tiebreak over the real, live payment -- leaving
-        // the real payment un-excluded from cash flow and the original double-count bug back,
-        // just reached through the import path instead of the per-edit one. Only queried when
-        // there's a CC statement to process at all, to avoid the extra round trip for every user
-        // without one.
-        final Set<UUID> ccLiveAccountIds = ccStatements.isEmpty() ? Set.of()
-                : accountRepository.findByUserId(userId).stream()
-                        .map(com.finora.entity.Account::getId).collect(java.util.stream.Collectors.toSet());
+        // Deleted-account leak, same shape as reconcileForUser's own top-level fix (and the same
+        // `liveAccountIds` computed there, above) -- a deleted account's transactions deliberately
+        // keep deleted_at unset, so findByStatementImportId below would still return a dead card's
+        // charges forever, not just during StatementImportService's 7-day grace window. Unlike
+        // `all` (already scoped by reconcileForUser, but NOT by reconcileForImport -- see that
+        // method's own doc comment on why it deliberately leaves every account in scope), this
+        // statement lookup and the settledCharges lookup inside the loop both bypass account
+        // scoping entirely. Without this filter, a dead card's statement stays processed, a live
+        // savings-side payment gets claimed and excluded from cash flow to "settle" charges the
+        // user can no longer even see -- real, currently-visible expense money silently vanishing
+        // from reporting. The SAME liveness check is applied to paymentCandidates below, for a
+        // mirror-image reason: reconcileForImport's `all` is deliberately account-unscoped, so a
+        // stray payment sitting on a deleted SAVINGS account could otherwise win the closest-to-
+        // due-date tiebreak over the real, live payment -- leaving the real payment un-excluded
+        // from cash flow and the original double-count bug back, just reached through the import
+        // path instead of the per-edit one.
+        //
+        // Any pre-existing CC_PAYMENT edge pointing at one of these dead statements' charges is
+        // already handled -- the general cleanup above rejects it regardless of relationship type,
+        // so this pass doesn't need its own copy of that retroactive step.
         if (!ccStatements.isEmpty()) {
-            // Retroactive half of the deleted-account fix above: AccountService.delete rejects
-            // graph edges for every account deleted from now on, but an account deleted BEFORE
-            // that existed can still have a live CC_PAYMENT edge sitting in the graph pointing at
-            // its now-invisible charges. This pass already fetches the dead statements, and it
-            // already runs on essentially every transaction edit for the user, so it's the cheap,
-            // naturally-recurring place to self-heal that -- rather than a one-off migration for a
-            // gap unlikely to have any real instances yet (this whole feature is new).
-            for (StatementImport dead : ccStatements) {
-                if (ccLiveAccountIds.contains(dead.getAccountId())) continue;
-                List<UUID> deadChargeIds = transactionRepository.findByStatementImportId(dead.getId())
-                        .stream().map(Transaction::getId).toList();
-                if (!deadChargeIds.isEmpty()) {
-                    transactionGraphService.rejectEdgesTouchingTransactions(deadChargeIds);
-                }
-            }
             // Deterministic order for the claim-tracking below: findByUserIdAndTotalAmountDueIsNotNull
             // carries no ORDER BY, so without this, which statement wins a same-due-date/same-amount
             // coincidence (see claimedPaymentIds below) could vary run to run, writing a CC_PAYMENT
@@ -637,7 +667,7 @@ public class ReconciliationService {
             // the oldest bill first) is a reasonable tiebreak, not just an arbitrary stable one;
             // statement id breaks a further tie on the same due date.
             ccStatements = ccStatements.stream()
-                    .filter(s -> ccLiveAccountIds.contains(s.getAccountId()))
+                    .filter(s -> liveAccountIds.contains(s.getAccountId()))
                     .sorted(Comparator.comparing(StatementImport::getPaymentDueDate,
                                     Comparator.nullsLast(Comparator.naturalOrder()))
                             .thenComparing(StatementImport::getId))
@@ -652,30 +682,64 @@ public class ReconciliationService {
             // claimed by more than one statement, attributing one real payment as if it settled
             // two different bills. First statement processed wins; later ones fall through to
             // "no candidate" for that payment, same as if it had genuinely already been spent
-            // elsewhere. A real issuer/last-4 disambiguation (roadmap Part 4) would pick the
-            // RIGHT winner instead of just AN exclusive one -- this only guarantees exclusivity.
+            // elsewhere. Real issuer/last-4 disambiguation (below) narrows this further where the
+            // evidence exists; where it doesn't, this due-date tiebreak is still what decides it.
             Set<UUID> claimedPaymentIds = new HashSet<>();
+            // Real card fragment matching (roadmap Part 4's "issuer-name + last-4-digit
+            // matching"), confirmed feasible against this project's own real bank-statement
+            // corpus rather than assumed -- see last4CandidatesIn's own doc comment for the ICICI
+            // example that proved it and the HDFC one that didn't. Built once per run, not per
+            // statement: every OTHER live card's last-4 needs to be known too, so a payment
+            // description naming a DIFFERENT card can be excluded as a candidate, not just
+            // deprioritized.
+            Map<UUID, String> cardLast4ByAccountId = new java.util.HashMap<>();
+            for (StatementImport s : ccStatements) {
+                com.finora.entity.Account cardAccount = accountsById.get(s.getAccountId());
+                String last4 = cardAccount == null ? null : last4Of(cardAccount.getAccountNumberMasked());
+                if (last4 != null) cardLast4ByAccountId.put(s.getAccountId(), last4);
+            }
             for (StatementImport statement : ccStatements) {
                 if (statement.getTotalAmountDue() == null || statement.getPaymentDueDate() == null) continue;
 
+                String thisCardLast4 = cardLast4ByAccountId.get(statement.getAccountId());
                 List<Transaction> paymentCandidates = all.stream()
                         .filter(t -> t.getTxnType() == Transaction.Type.EXPENSE)
                         .filter(t -> !t.isTransfer())
                         .filter(t -> !claimedPaymentIds.contains(t.getId()))
-                        .filter(t -> ccLiveAccountIds.contains(t.getAccountId()))
+                        .filter(t -> liveAccountIds.contains(t.getAccountId()))
                         .filter(t -> !t.getAccountId().equals(statement.getAccountId()))
                         .filter(t -> t.getAmount().compareTo(statement.getTotalAmountDue()) == 0)
                         .filter(t -> Math.abs(ChronoUnit.DAYS.between(t.getTxnDate(), statement.getPaymentDueDate()))
                                 <= ReconciliationPolicy.CC_PAYMENT_DUE_DATE_WINDOW_DAYS)
+                        // A candidate whose OWN description names a DIFFERENT known card is
+                        // excluded outright -- real evidence it belongs elsewhere, not just a
+                        // weaker candidate. A candidate with no identifiable fragment at all, or
+                        // one that matches THIS card, is unaffected here; see the tiebreak below
+                        // for how a match to THIS card is preferred among what's left.
+                        .filter(t -> {
+                            Set<String> descriptionLast4s = last4CandidatesIn(t.getDescription());
+                            if (descriptionLast4s.isEmpty() || descriptionLast4s.contains(thisCardLast4)) return true;
+                            return cardLast4ByAccountId.entrySet().stream()
+                                    .noneMatch(e -> !e.getKey().equals(statement.getAccountId())
+                                            && descriptionLast4s.contains(e.getValue()));
+                        })
                         .toList();
                 if (paymentCandidates.isEmpty()) continue;
 
-                // Closest to the printed due date wins when more than one same-amount candidate
-                // falls in the window -- same tiebreak shape as the other passes above.
+                // A candidate whose description names THIS card wins outright over one that
+                // doesn't, even if the non-matching one is closer to the due date -- real
+                // evidence beats a coincidence. Among candidates tied on that (most commonly:
+                // neither has an identifiable fragment at all, the common case per last4CandidatesIn's
+                // own doc comment), closest to the printed due date wins, same tiebreak shape as
+                // the other passes above.
                 Transaction payment = paymentCandidates.stream()
-                        .min(Comparator.comparingLong(t ->
-                                Math.abs(ChronoUnit.DAYS.between(t.getTxnDate(), statement.getPaymentDueDate()))))
+                        .min(Comparator
+                                .comparing((Transaction t) -> thisCardLast4 == null
+                                        || !last4CandidatesIn(t.getDescription()).contains(thisCardLast4))
+                                .thenComparingLong(t -> Math.abs(ChronoUnit.DAYS.between(t.getTxnDate(), statement.getPaymentDueDate()))))
                         .orElseThrow();
+                boolean matchedByLast4 = thisCardLast4 != null
+                        && last4CandidatesIn(payment.getDescription()).contains(thisCardLast4);
 
                 // EXPENSE only -- findByStatementImportId returns every transaction this statement's
                 // confirm wrote, which can include an INCOME-type row for a credit/refund printed on
@@ -687,10 +751,17 @@ public class ReconciliationService {
                 claimedPaymentIds.add(payment.getId());
 
                 long daysFromDue = Math.abs(ChronoUnit.DAYS.between(payment.getTxnDate(), statement.getPaymentDueDate()));
-                // MERCHANT_AND_AMOUNT, not EXACT: amount matches exactly (no delta), but there is a
-                // real date window to decay across, same reasoning the TRANSFER pass gives for
-                // reusing this tier for a non-merchant, structural signal.
-                int ccConfidence = ConfidenceScorer.score(ConfidenceScorer.MatchType.MERCHANT_AND_AMOUNT,
+                // EXACT, not MERCHANT_AND_AMOUNT, when the payment's own description names this
+                // specific card -- real positive evidence, not just amount+date proximity (see
+                // matchedByLast4 above). MERCHANT_AND_AMOUNT otherwise, unchanged: amount matches
+                // exactly (no delta), but there is a real date window to decay across, same
+                // reasoning the TRANSFER pass gives for reusing this tier for a non-merchant,
+                // structural signal. Status stays CANDIDATE regardless either way -- see this
+                // pass's own comment above on why AUTO_CONFIRMED is out of scope for this slice;
+                // a last-4 match narrows WHICH card, it doesn't yet change that verdict.
+                ConfidenceScorer.MatchType matchType = matchedByLast4
+                        ? ConfidenceScorer.MatchType.EXACT : ConfidenceScorer.MatchType.MERCHANT_AND_AMOUNT;
+                int ccConfidence = ConfidenceScorer.score(matchType,
                         payment.getAmount(), BigDecimal.ZERO, daysFromDue, ReconciliationPolicy.CC_PAYMENT_DUE_DATE_WINDOW_DAYS);
                 Map<String, Object> explanation = new java.util.LinkedHashMap<>();
                 explanation.put("type", "CC_PAYMENT_MATCH");
@@ -698,6 +769,7 @@ public class ReconciliationService {
                 explanation.put("totalAmountDue", statement.getTotalAmountDue().toPlainString());
                 explanation.put("paymentDueDate", statement.getPaymentDueDate().toString());
                 explanation.put("daysFromDueDate", daysFromDue);
+                explanation.put("matchedByLast4", matchedByLast4);
                 for (Transaction charge : settledCharges) {
                     if (charge.getId().equals(payment.getId())) continue; // a payment cannot settle itself
                     pendingEdges.add(new TransactionGraphService.PendingEdge(userId, payment.getId(), charge.getId(),
@@ -787,7 +859,12 @@ public class ReconciliationService {
         // re-proposes the same edge on every run regardless of whether anything is actually new --
         // pendingEdges.isEmpty() would make nearly every future edit for a user with any Gmail
         // match audit-record, exactly the BH-044 noise this file spent real effort eliminating.
-        boolean changedSomething = !dirty.isEmpty() || !writtenEdges.isEmpty();
+        // staleEdgesRejected joins this check for the same reason writtenEdges does: rejecting an
+        // edge is a real graph mutation with no legacy-column counterpart, so a run that ONLY
+        // rejected stale edges (no new dirty rows, no new written edges) would otherwise vanish
+        // from the audit trail exactly the way BH-044 was originally worried about -- except here
+        // the change is real, not noise.
+        boolean changedSomething = !dirty.isEmpty() || !writtenEdges.isEmpty() || staleEdgesRejected > 0;
         boolean wasSlow = elapsedMs >= SLOW_RUN_WARN_MS;
         String recordedBecause = changedSomething ? "reclassified"
                 : wasSlow ? "slow"
@@ -801,6 +878,7 @@ public class ReconciliationService {
             details.put("reversalsMatched", newReversals);
             details.put("gmailMatchesFound", newGmailMatches);
             details.put("ccPaymentMatchesFound", newCcPaymentMatches);
+            details.put("staleEdgesRejected", staleEdgesRejected);
             details.put("rowsWritten", dirty.size());
             details.put("durationMs", elapsedMs);
             // Says which condition put this row here, so a reader of the trail can tell "this run
@@ -830,6 +908,47 @@ public class ReconciliationService {
         return confidence >= NEEDS_REVIEW_THRESHOLD
                 ? TransactionRelationship.Status.AUTO_CONFIRMED
                 : TransactionRelationship.Status.CANDIDATE;
+    }
+
+    private static final java.util.regex.Pattern DIGIT_RUN = java.util.regex.Pattern.compile("\\d{4,}");
+
+    /**
+     * Every trailing-4-digit window from each run of 4+ consecutive digits in {@code text} -- the
+     * shape a masked or reference-style card fragment takes in a real bank narration (roadmap
+     * Part 4's "issuer-name + last-4-digit matching", verified against this project's own real
+     * bank-statement corpus rather than assumed: an ICICI savings-side payment read
+     * "BIL/INFT/.../CC BillPay-5001/Self" and the paid card's own printed number was
+     * "5241XXXXXXXX5001" -- masking characters or a separator (hyphen, slash) already isolate the
+     * real last-4 at the right boundary, so no bank-specific parsing is needed. Not every bank's
+     * narration carries this (an HDFC sample's trailing digits did NOT match its own card's real
+     * last-4, evidently a payment reference number instead) -- and a pure reference number
+     * produces the identical shape with no way to tell it apart from a real card fragment by this
+     * alone. See the caller: only a match against a transaction's OWN known card counts as
+     * positive evidence; an unmatched candidate is treated as unknown, never as counter-evidence.
+     */
+    private static Set<String> last4CandidatesIn(String text) {
+        if (text == null || text.isBlank()) return Set.of();
+        Set<String> candidates = new HashSet<>();
+        java.util.regex.Matcher m = DIGIT_RUN.matcher(text);
+        while (m.find()) {
+            String run = m.group();
+            candidates.add(run.substring(run.length() - 4));
+        }
+        return candidates;
+    }
+
+    /**
+     * The real last four digits of a masked account number, however the source bank formats the
+     * mask -- "652925XXXXXX3123", "5241XXXXXXXX5001", "XXXX1234" all reduce correctly by simply
+     * discarding every non-digit character and keeping the last four: a masking character is
+     * never a digit, and every masked format this project has actually seen (PdfMetadataExtractor)
+     * ends in the genuine trailing digits, never in mask characters. Null if there aren't at least
+     * four digits to take -- an unmasked, malformed, or absent value.
+     */
+    private static String last4Of(String accountNumberMasked) {
+        if (accountNumberMasked == null) return null;
+        String digitsOnly = accountNumberMasked.replaceAll("[^0-9]", "");
+        return digitsOnly.length() >= 4 ? digitsOnly.substring(digitsOnly.length() - 4) : null;
     }
 
     private String duplicateKey(Transaction t) {
