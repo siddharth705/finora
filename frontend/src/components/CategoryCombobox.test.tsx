@@ -92,6 +92,36 @@ describe('CategoryCombobox', () => {
     });
   });
 
+  // The old plain <input> never lost focus when its dropdown closed. Swapping in a button+popover
+  // introduced a real regression: selecting a row unmounts the popover (and whatever inside it had
+  // focus), and without this, focus falls back to <body> -- a keyboard/screen-reader user loses
+  // their place after every pick.
+  it('returns focus to the trigger after picking a category', async () => {
+    const user = userEvent.setup();
+    renderWithClient(<CategoryCombobox value="" onChange={vi.fn()} />);
+    const trigger = screen.getByRole('combobox');
+    await user.click(trigger);
+    await user.click(await screen.findByText('SIP'));
+
+    expect(trigger).toHaveFocus();
+  });
+
+  it('closes on Escape and returns focus to the trigger, discarding any typed search text', async () => {
+    const user = userEvent.setup();
+    renderWithClient(<CategoryCombobox value="Groceries" onChange={vi.fn()} />);
+    const trigger = screen.getByRole('combobox');
+    await user.click(trigger);
+    await user.type(screen.getByPlaceholderText('Search categories'), 'Fuel');
+
+    await user.keyboard('{Escape}');
+
+    expect(screen.queryByPlaceholderText('Search categories')).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+
+    await user.click(trigger);
+    expect(screen.getByPlaceholderText('Search categories')).toHaveValue('');
+  });
+
   it('resyncs the trigger label when the value prop changes externally', async () => {
     const { rerender } = renderWithClient(<CategoryCombobox value="Groceries" onChange={vi.fn()} />);
 
@@ -199,6 +229,11 @@ describe('CategoryCombobox', () => {
       // The renamed category was the field's own value, so the field follows the rename rather
       // than keeping a name that no longer exists.
       expect(onChange).toHaveBeenCalledWith('Monthly SIP');
+      // The rename path resolves through select(), which only clears the popover/search state --
+      // not the edit-panel state itself. Regression coverage for a bug caught in review: the panel
+      // has to be dismissed on this branch too, or the trigger button never comes back.
+      expect(screen.queryByPlaceholderText('Category name')).not.toBeInTheDocument();
+      expect(screen.getByRole('combobox')).toHaveFocus();
     });
 
     it('opens the delete dialog and drops the category from the list on confirm', async () => {

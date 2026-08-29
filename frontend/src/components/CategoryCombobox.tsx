@@ -63,6 +63,18 @@ export function CategoryCombobox({
   const [panel, setPanel] = useState<Panel | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+
+  // A plain <input> never lost focus when its dropdown closed -- the field was the thing that
+  // stayed focused. The button+popover swap breaks that: the popover (and whatever inside it had
+  // focus) unmounts on close, and without this, focus falls back to <body>, stranding keyboard and
+  // screen-reader users. Every JS-initiated close below returns focus to the trigger explicitly;
+  // a close caused by clicking elsewhere is left alone since the user's focus already moved there.
+  const closeAndRefocus = () => {
+    setOpen(false);
+    setQuery('');
+    triggerRef.current?.focus();
+  };
 
   useEffect(() => {
     const onClickOutside = (e: MouseEvent) => {
@@ -76,8 +88,28 @@ export function CategoryCombobox({
   }, []);
 
   useEffect(() => {
-    if (open) searchRef.current?.focus();
+    if (!open) return;
+    if (searchRef.current) searchRef.current.focus();
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        closeAndRefocus();
+      }
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
   }, [open]);
+
+  // Unlike closeAndRefocus, calling triggerRef.current?.focus() at the point `panel` is cleared
+  // is too early -- the trigger button doesn't exist in the DOM yet while an edit/create/delete
+  // panel is showing (they're a totally different render branch, not an overlay), so the ref is
+  // still null in the same tick. Waiting for the effect below to run after the trigger has
+  // actually (re)mounted is what makes the focus land.
+  const prevPanelRef = useRef<Panel | null>(null);
+  useEffect(() => {
+    if (prevPanelRef.current && !panel) triggerRef.current?.focus();
+    prevPanelRef.current = panel;
+  }, [panel]);
 
   const pool = useMemo(
     () => categories.filter((c) => c.id !== excludeCategoryId),
@@ -114,8 +146,7 @@ export function CategoryCombobox({
   const select = (category: CategoryOption) => {
     onChange(category.name);
     onSelect?.(category);
-    setQuery('');
-    setOpen(false);
+    closeAndRefocus();
   };
 
   const create = () => {
@@ -141,7 +172,8 @@ export function CategoryCombobox({
         initialColor={isEdit ? panel.category.color : undefined}
         onSaved={(saved) => {
           // A rename has to follow through to the field's own value, or the parent keeps holding
-          // a category name that no longer exists.
+          // a category name that no longer exists. Either branch must still dismiss the panel --
+          // select() only closes the popover/query state, never `panel` itself.
           if (!isEdit || panel.category.name === value) select(saved);
           setPanel(null);
         }}
@@ -169,6 +201,7 @@ export function CategoryCombobox({
           hint that it opened a list or could create a category. This reads as "click me to pick"
           on sight, and the value on display can never be confused with unsaved typed text. */}
       <button
+        ref={triggerRef}
         id={inputId}
         type="button"
         role="combobox"
