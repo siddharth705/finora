@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
+import { Tag } from 'lucide-react';
 import { categoriesApi, type CategoryOption, type CategoryOptions } from '../api/endpoints';
+import { ICON_COMPONENTS } from '../lib/categoryIcons';
 
 interface CategoryCreateEditPanelProps {
   mode: 'create' | 'edit';
@@ -63,18 +65,22 @@ export function CategoryCreateEditPanel({
         onChange={(e) => setName(e.target.value)}
         placeholder="Category name"
       />
-      <div className="flex flex-wrap gap-2">
-        {options.icons.map((i) => (
-          <button
-            key={i.token}
-            type="button"
-            aria-label={i.label}
-            className={`px-2 py-1 rounded border text-xs ${icon === i.token ? 'border-primary' : 'border-border'}`}
-            onClick={() => setIcon(i.token)}
-          >
-            {i.label}
-          </button>
-        ))}
+      <div className="grid grid-cols-6 gap-1.5">
+        {options.icons.map((i) => {
+          const Icon = ICON_COMPONENTS[i.token] ?? Tag;
+          return (
+            <button
+              key={i.token}
+              type="button"
+              aria-label={i.label}
+              title={i.label}
+              className={`flex items-center justify-center p-1.5 rounded border ${icon === i.token ? 'border-primary text-primary' : 'border-border text-ink'}`}
+              onClick={() => setIcon(i.token)}
+            >
+              <Icon size={15} />
+            </button>
+          );
+        })}
       </div>
       <div className="flex flex-wrap gap-2">
         {options.colors.map((c) => (

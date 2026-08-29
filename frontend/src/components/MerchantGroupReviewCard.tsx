@@ -67,12 +67,12 @@ export function MerchantGroupReviewCard() {
       {error && <p className="text-xs text-danger mb-3">{error}</p>}
       <div className="space-y-3">
         {groups.map((g) => (
-          <div key={g.merchantId} className="flex items-center gap-3 flex-wrap sm:flex-nowrap">
+          <div key={g.merchantId} className={`flex gap-3 flex-wrap sm:flex-nowrap ${creatingFor === g.merchantId ? 'items-start' : 'items-center'}`}>
             <div className="min-w-0 flex-1">
               <p className="text-sm font-medium text-ink truncate">{g.merchantName}</p>
               <p className="text-[11px] text-muted">{g.transactionIds.length} transactions</p>
             </div>
-            <div className="flex-shrink-0 w-40">
+            <div className={`flex-shrink-0 ${creatingFor === g.merchantId ? 'w-64' : 'w-40'}`}>
               {creatingFor === g.merchantId ? (
                 <CategoryCreateEditPanel
                   mode="create"

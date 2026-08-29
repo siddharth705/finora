@@ -9,8 +9,6 @@ import {
   Wallet, ArrowDownCircle, ArrowUpCircle, PieChart,
   ShoppingBag, Sparkles, Plus, PiggyBank, TrendingUp, TrendingDown, Target, ShieldCheck, Repeat,
   UploadCloud, Receipt, LineChart as LineChartIcon, Mail, AlertTriangle, ListChecks, Copy, BadgeCheck,
-  Tag, Home, ShoppingCart, Utensils, Car, Zap, HeartPulse, Film, Percent, Users, Landmark, Shield,
-  GraduationCap, RefreshCw, Plane, Gift, PawPrint, Sofa, Banknote, Briefcase,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { BankLogo } from '../components/BankLogo';
@@ -18,6 +16,7 @@ import { MerchantLogo } from '../components/MerchantLogo';
 import { AddTransactionModal } from '../components/AddTransactionModal';
 import { FinancialJourney } from '../components/FinancialJourney';
 import { FinoraCard, MetricCard, EmptyState, SectionHeader, QuickActionCard, ChartContainer, Badge, baseChartOptions } from '../design-system';
+import { ICON_COMPONENTS, COLOR_HEX } from '../lib/categoryIcons';
 import {
   dashboardApi, accountsApi, transactionsApi, categoriesApi, goalsApi, insightsApi, userApi, budgetsApi, reportsApi, recurringApi,
   type CategoryOption,
@@ -83,27 +82,6 @@ function scoreLabel(score: number): string {
   if (score >= 40) return 'Fair';
   return 'Needs Attention';
 }
-
-// Maps the curated icon-token vocabulary CategoryPalette.ICONS defines server-side to already-
-// imported lucide-react components -- lucide-react components can't be looked up by string name
-// at runtime without importing every one, so this is a small closed map instead. Every default
-// category (Task 1's migration) and every user-created one (Task 2's CategoryPalette validation)
-// draws its icon token from exactly this set, so nothing here should ever miss.
-const ICON_COMPONENTS: Record<string, any> = {
-  tag: Tag, home: Home, 'shopping-cart': ShoppingCart, utensils: Utensils, car: Car, zap: Zap,
-  'shopping-bag': ShoppingBag, 'heart-pulse': HeartPulse, film: Film, 'trending-up': TrendingUp,
-  percent: Percent, repeat: Repeat, users: Users, landmark: Landmark, shield: Shield,
-  'graduation-cap': GraduationCap, 'refresh-cw': RefreshCw, plane: Plane, gift: Gift,
-  'paw-print': PawPrint, sofa: Sofa, receipt: Receipt, banknote: Banknote, briefcase: Briefcase,
-  'arrow-down-circle': ArrowDownCircle,
-};
-// Same 9 hex values as CategoryPalette.COLORS server-side -- the frontend keeps its own copy
-// since /categories (and /categories/options) return the color TOKEN, not a CSS-ready hex string.
-const COLOR_HEX: Record<string, string> = {
-  gray: '#6b7280', blue: '#2563eb', green: '#16a34a', red: '#dc2626', orange: '#ea580c',
-  yellow: '#d97706', purple: '#7c3aed', pink: '#db2777', teal: '#0d9488',
-};
-
 
 type CashFlowRange = '3M' | '6M' | '12M';
 const RANGE_MONTHS: Record<CashFlowRange, number> = { '3M': 3, '6M': 6, '12M': 12 };
