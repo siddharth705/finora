@@ -117,12 +117,12 @@ export function AskOnceCard() {
       {error && <p className="text-xs text-danger mb-3">{error}</p>}
       <div className="space-y-3">
         {pageItems.map((t) => (
-          <div key={t.id} className="flex items-center gap-3 flex-wrap sm:flex-nowrap">
+          <div key={t.id} className={`flex gap-3 flex-wrap sm:flex-nowrap ${creatingFor === t.id ? 'items-start' : 'items-center'}`}>
             <div className="min-w-0 flex-1">
               <p className="text-sm font-medium text-ink truncate">{t.description || t.merchant}</p>
               <p className="text-[11px] text-muted">{t.date} · {fmt(t.amount)}</p>
             </div>
-            <div className="flex-shrink-0 w-40">
+            <div className={`flex-shrink-0 ${creatingFor === t.id ? 'w-64' : 'w-40'}`}>
               {creatingFor === t.id ? (
                 <CategoryCreateEditPanel
                   mode="create"
