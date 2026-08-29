@@ -109,6 +109,9 @@ export interface DashboardSummary {
   healthScore: number | null;
   healthLabel: string | null;
   healthBreakdown: Record<string, number>;
+  // The real quantity behind each healthBreakdown entry (web only so far, same reason as
+  // healthScore above). Mirrors frontend/src/types/index.ts.
+  healthBreakdownDetail: Record<string, string>;
   healthScoreAvailable: boolean;
   healthScoreTransactionCount: number;
   healthScoreMinTransactions: number;
