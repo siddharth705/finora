@@ -63,8 +63,45 @@ public class PdfMetadataExtractor {
     // is a two-column SECTION HEADER ("Branch Address" | "Statement Details" side by side, same
     // pattern as an earlier "Your Details" | "Account Details" header higher up the page), not a
     // genuine "Branch: <name>" field -- without the negative lookahead, the bare "Branch" match
-    // consumed "Address Statement Details" as if it were the branch name.
-    private static final Pattern BRANCH = labelPattern("Branch(?: Name)?(?!\\s*Address)");
+    // consumed "Address Statement Details" as if it were the branch name. Extended to also reject
+    // "Branch Details" (a real PNB ONE section header) the same way, for the same reason.
+    //
+    // F23 (extraction-coverage-audit.md real-corpus follow-up): "Code" added as a second label
+    // suffix alongside "Name" -- several real statements (CBI, HDFC, Sanjay SBI, canara) label
+    // this field "Branch Code:" rather than "Branch Name:"; without it, "Code" (and its colon)
+    // fell into the captured value instead of being consumed as part of the label.
+    //
+    // (?![A-Za-z]) directly after "Branch" is load-bearing, not decorative -- same technique as
+    // ACCOUNT_NUMBER's "No" guard above. Without it, bare "Branch" matches as a literal PREFIX of
+    // any longer word: confirmed on a real Axis Bank credit-card statement, where a boilerplate
+    // "Branches /Loan Centres..." footer sentence was captured whole as the branch name, and on a
+    // real Kotak statement, where a garbled, no-separator line ("BRANCHHYDAPIN.../16:02") matched
+    // the same way. A plain \b would not help here since "Branch" immediately followed by "es" or
+    // by any other letter has no word boundary to exploit in the first place.
+    //
+    // Two more real-pipeline-only defects, found by re-running this fix through the ACTUAL
+    // PdfTableLocator-produced lines (not just a pdftotext -layout replay, which joins columns
+    // differently and hid both of these):
+    //
+    // "Email"/"Phone" added to the exclusion group alongside "Address"/"Details": a real SBI
+    // statement has a footer contact block where "Branch" is a MODIFIER for a different field --
+    // "Branch Email ID: <address> :" and "Branch Phone: <number>" -- not the branch-name field
+    // itself. Without excluding these, the bare "Branch" label matched and swallowed the rest of
+    // either line as if it were the branch name. (The same statement's real "Branch Code"/"Branch
+    // Name" lines have their label and value split across a different column-join shape entirely
+    // -- e.g. a leading colon before the label -- which this fix does not attempt; that's a
+    // structural label/value-reordering problem, not a vocabulary gap, deliberately out of scope
+    // here the same way BOB/HSBC's tabular account-number shape was deferred out of F21.)
+    //
+    // (?-i:B) requires a literal uppercase "B", overriding this pattern's own case-insensitivity
+    // for just that one letter: a real Axis Bank statement wraps one boilerplate sentence across
+    // two physical lines, and the second line ("branch /loan centre)") starts with the bare word
+    // "branch" purely because of where the sentence happened to wrap -- not because it's a label.
+    // Every genuine label in this corpus is capitalized ("Branch"/"BRANCH"); a lowercase "branch"
+    // starting a line is corpus-observed evidence of exactly this kind of accidental wrap, never a
+    // real field.
+    private static final Pattern BRANCH = labelPattern(
+            "(?-i:B)ranch(?![A-Za-z])(?: Name| Code)?(?!\\s*(?:Address|Details|Email|Phone))");
     private static final Pattern IFSC = labelPattern("IFSC(?: Code)?");
     // "Billing Period" is the same field under a different name -- a real HDFC credit-card
     // statement labels it that way and no other. Purely additive: it only adds matches.

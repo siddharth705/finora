@@ -164,4 +164,23 @@ describe('LearningQueue', () => {
 
     await waitFor(() => expect(screen.getByText(/42 event\(s\) queued for retry/)).toBeInTheDocument());
   });
+
+  /** The shared Pagination component this page now uses (swapped in for a hand-rolled prev/next
+   *  pair) drives its "next page" request off the SAME `page` state the query itself reads --
+   *  proving the wiring survived the swap, not just that Pagination renders. */
+  it('requests the next page of the queue when Pagination is clicked', async () => {
+    mockAuth(['LEARNING_QUEUE_MANAGE']);
+    vi.mocked(adminLearningQueueApi.list).mockResolvedValue({
+      content: [failedEvent], page: 0, size: 25, totalElements: 30, totalPages: 2,
+    });
+    renderPage();
+
+    await waitFor(() => expect(screen.getByText('SWIGGY')).toBeInTheDocument());
+    expect(screen.getByText('Page 1 of 2')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Next page' }));
+
+    await waitFor(() => expect(adminLearningQueueApi.list)
+      .toHaveBeenCalledWith({ status: 'FAILED', page: 1, size: 25 }));
+  });
 });

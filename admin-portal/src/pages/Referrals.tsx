@@ -4,9 +4,12 @@ import { Users as UsersIcon } from 'lucide-react';
 import { AdminLayout } from '../components/AdminLayout';
 import { RequirePermission } from '../components/ProtectedRoute';
 import { DataTable, type DataTableColumn } from '../components/DataTable';
+import { Pagination } from '../components/Pagination';
 import { useNotify } from '../context/NotificationContext';
 import { adminReferralsApi } from '../api/endpoints';
 import type { AdminReferralSummaryDto } from '../types';
+
+const PAGE_SIZE = 20;
 
 function errorMessage(err: any, fallback: string) {
   return err?.response?.data?.message ?? fallback;
@@ -46,9 +49,10 @@ function ReferralsContent() {
   const queryClient = useQueryClient();
   const notify = useNotify();
   const [amounts, setAmounts] = useState<Record<string, string>>({});
+  const [page, setPage] = useState(0);
   const { data, isLoading } = useQuery({
-    queryKey: ['admin-referrals'],
-    queryFn: () => adminReferralsApi.list(),
+    queryKey: ['admin-referrals', page],
+    queryFn: () => adminReferralsApi.list(page, PAGE_SIZE),
   });
 
   const creditMutation = useMutation({
@@ -113,11 +117,20 @@ function ReferralsContent() {
       </p>
       <DataTable
         columns={columns}
-        rows={data}
+        rows={data?.content ?? []}
         keyFor={(r) => r.referralId}
         loading={isLoading}
         emptyMessage="No referrals yet."
       />
+      {data && (
+        <Pagination
+          page={page}
+          totalPages={data.totalPages}
+          totalElements={data.totalElements}
+          pageSize={PAGE_SIZE}
+          onPageChange={setPage}
+        />
+      )}
     </div>
   );
 }

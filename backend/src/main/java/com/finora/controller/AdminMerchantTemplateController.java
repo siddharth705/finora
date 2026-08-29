@@ -1,6 +1,7 @@
 package com.finora.controller;
 
 import com.finora.dto.ApiResponse;
+import com.finora.dto.PagedResponse;
 import com.finora.integrations.google.merchant.MerchantTemplate;
 import com.finora.integrations.google.merchant.MerchantTemplateAdminService;
 import com.finora.integrations.google.merchant.MerchantTemplateTestRunner;
@@ -76,8 +77,10 @@ public class AdminMerchantTemplateController {
     public record ViolationDto(String field, String reason) {}
 
     @GetMapping
-    public ApiResponse<List<MerchantTemplateDto>> list() {
-        return ApiResponse.ok(service.listAll().stream().map(this::toDto).toList());
+    public ApiResponse<PagedResponse<MerchantTemplateDto>> list(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        return ApiResponse.ok(PagedResponse.of(service.listAll(page, size).map(this::toDto)));
     }
 
     @PostMapping
