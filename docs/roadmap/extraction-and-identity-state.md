@@ -25,6 +25,7 @@ This is a state file, not a plan. It records what is true, what was decided, and
 | F21 (vocabulary) | Recognized `Account No` / `Account No.` / `A/c` abbreviations — 4 real documents, 4 banks | PR #551 |
 | F21 (banner) | Recognized product-banner account numbers (`SAVINGS ACCOUNT - <number>`) — BOB | PR #559 |
 | CC continuity measurement | Corrected the "100% identity failure" claim to its real state | PR #535 |
+| F21 (statement period) | Recovered statement period on 4 more credit cards — 1/10 sections → 5/10 | PR #559 |
 | Corpus-diff workflow | Established `CorpusProbe` sweep + golden-output snapshot as the regression bar for extraction changes | PR #559 |
 
 ### The credit-card identity picture, corrected twice
@@ -261,7 +262,67 @@ defensible for five of six issuers; below it, no observed mask qualifies and sup
 signals (Phase 4) become mandatory rather than optional. SBI qualifies at no tolerance
 considered.
 
-## Scoped and ready — statement-period extraction gap
+## Statement-period extraction gap — IMPLEMENTED for 5 of 8 (PR #559)
+
+**Outcome: statement period went from 1 of 10 sections to 5 of 10** — AU, HDFC, ICICI, Kotak,
+SBI. Verified on the real corpus, not on fixtures.
+
+Three documents were **wrongly scoped below as metadata-layer** and are not. Axis, IndusInd
+and HSBC CC never carry their period into `auxiliaryText` at all: IndusInd's `Statement Period`
+label line survives but its value does not (the following line is unrelated ATM text), and Axis
+and HSBC have no label line in the extractor's input whatsoever. No pattern in
+`PdfMetadataExtractor` can reach a value that is not in its input. **Re-scoped as locator-layer
+work — see below.**
+
+Two of the seven fixes were also *wrong as scoped*, and the real documents corrected them:
+
+- **HDFC** states its range **before** a `Billing Period` trailing label. The scoping assumed
+  label-then-value; the idealised fixture passed while the real document still failed.
+- **SBI** prefixes its label with unrelated text (`for Statement Period: …`), which
+  `labelPattern`'s `^\s*` anchor rejects outright. Not a format problem at all.
+
+Same lesson as the geometry investigation earlier the same day: what the pipeline receives is
+not what the document looks like. Fixtures derived from a rendering are a hypothesis, not
+evidence.
+
+### Implementation notes worth keeping
+
+- The 2-digit-year format went into a **period-scoped** format list, not the shared
+  `DATE_FORMATS`, per the hazard recorded below. That array decides every date field in the
+  class.
+- Case-insensitivity was applied to **every** format rather than the one that needed it. It
+  cannot introduce a wrong parse — only admit spellings already meant to match.
+- The sentence branch deliberately does **not** consume its line. On AU that same line carries
+  the card's last 4 digits, so consuming it took the period and silently lost the account
+  identity. The hazard was recorded in this file and then walked into anyway; an existing test
+  caught it.
+
+Verified: full suite green apart from a known unrelated flake; golden corpus unchanged; real
+27-document sweep diffed against `origin/main` shows no account-number result altered.
+
+## Re-scoped — statement period for Axis, IndusInd, HSBC CC (locator-layer)
+
+Not a `PdfMetadataExtractor` gap. For these three the period never reaches the metadata
+extractor's input, so the work is in `PdfTableLocator` — deciding what survives into
+`auxiliaryText` — or upstream of it.
+
+| Document | What reaches `auxiliaryText` | Likely cause |
+|---|---|---|
+| IndusInd | `Statement Period` label alone; next line is unrelated ATM text | the value row is consumed as table data, or bucketed away from its label |
+| Axis | no period line at all | label/value both consumed before auxiliary text is built |
+| HSBC CC | no period line at all | document is `LAYOUT_UNSUPPORTED` with zero rows; a broader failure |
+
+**Priority note.** HSBC CC should not be pursued for this field alone — it stages zero rows,
+so recovering its period yields an identity signal for a statement that imports nothing. Its
+ticket is the layout. Axis and IndusInd both parse completely otherwise, so they are the two
+worth investigating.
+
+**Do not start this by reading the PDF.** The first step is the probe that settled every
+similar question in this workstream: dump what `auxiliaryText` actually contains near the
+label, and compare against the raw `PositionedText` runs. That distinguishes "the locator
+dropped it" from "row grouping never formed it" before any design is attempted.
+
+## Originally scoped (superseded by the two sections above) — statement-period extraction gap
 
 **F-number not yet assigned.** It belongs to the out-of-tree `extraction-coverage-audit.md`
 sequence (F1, F21, F22, F23 are known to exist). Assign the next free number *from that file*,
@@ -323,8 +384,10 @@ Seven sub-gaps, addressable independently:
 2. **Trailing-content tolerance** — extract dates from the captured span rather than requiring
    each split half to parse whole (SBI).
 3. **Vocabulary — label** — `Billing Period` alongside `Statement Period` (HDFC).
-4. **Grid layout** — Axis, IndusInd, HSBC place the value off the label's line; the grid path
-   already exists for due date and credit limit.
+4. ~~**Grid layout** — Axis, IndusInd, HSBC place the value off the label's line; the grid path
+   already exists for due date and credit limit.~~ **Wrong.** A grid lookahead was implemented
+   and shipped, but it cannot help these three: their period never reaches `auxiliaryText`, so
+   there is nothing on any following line to look ahead to. Re-scoped as locator-layer above.
 5. **Month-name case-insensitivity** — HSBC prints `JUN`. A `parseCaseInsensitive()` builder,
    or normalising before parse. Smallest fix here and recovers a document entirely.
 6. **Range separator** — accept `-` / `–` alongside `to` (AU).
