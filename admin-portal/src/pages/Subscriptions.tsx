@@ -1,8 +1,10 @@
+import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Users as UsersIcon } from 'lucide-react';
 import { AdminLayout } from '../components/AdminLayout';
 import { RequirePermission } from '../components/ProtectedRoute';
 import { DataTable, type DataTableColumn } from '../components/DataTable';
+import { Pagination } from '../components/Pagination';
 import { useNotify } from '../context/NotificationContext';
 import { adminSubscriptionsApi } from '../api/endpoints';
 import type { SubscriptionSummaryDto } from '../types';
@@ -15,17 +17,20 @@ function errorMessage(err: any, fallback: string) {
 // can revert a manually-granted Plus/Premium, not just move upward.
 const PLAN_CODES = ['FREE', 'PLUS', 'PREMIUM'];
 
+const PAGE_SIZE = 20;
+
 /**
  * D-28 PR4-A. Manual plan changes are, for now, the only way anyone reaches Plus/Premium -- no
  * payment gateway exists yet (proposal §10). "Admin manual override" is a fixed reason: refining
  * the actual reason-capture UX is a later product decision, not a blocker for this first cut.
  */
 function SubscriptionsContent() {
+  const [page, setPage] = useState(0);
   const queryClient = useQueryClient();
   const notify = useNotify();
   const { data, isLoading } = useQuery({
-    queryKey: ['admin-subscriptions'],
-    queryFn: () => adminSubscriptionsApi.list(),
+    queryKey: ['admin-subscriptions', page],
+    queryFn: () => adminSubscriptionsApi.list(page, PAGE_SIZE),
   });
 
   const changePlanMutation = useMutation({
@@ -82,11 +87,20 @@ function SubscriptionsContent() {
       </p>
       <DataTable
         columns={columns}
-        rows={data}
+        rows={data?.content ?? []}
         keyFor={(s) => s.subscriptionId}
         loading={isLoading}
         emptyMessage="No subscriptions yet."
       />
+      {data && (
+        <Pagination
+          page={page}
+          totalPages={data.totalPages}
+          totalElements={data.totalElements}
+          pageSize={PAGE_SIZE}
+          onPageChange={setPage}
+        />
+      )}
     </div>
   );
 }
