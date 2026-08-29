@@ -111,6 +111,39 @@ class ProductIdentityResolverTest {
         assertThat(found.resolution()).isEqualTo(ProductIdentityResolver.Resolution.NEW);
     }
 
+    /**
+     * Closes the gap PdfMetadataExtractorTest's own PNB tests leave open: those prove extraction
+     * succeeds in isolation, not that two INDEPENDENT extractions of PNB's "Statement of Account"
+     * line -- one at account-creation time, one from a later statement -- actually resolve to the
+     * SAME account rather than a second one. This is the real regression the production incident
+     * exposed: PDF -> PdfMetadataExtractor -> ProductIdentity -> ProductIdentityResolver -> match,
+     * exercised end-to-end rather than asserting on hand-typed identity values.
+     */
+    @Test
+    void aSecondPnbStatementImport_extractsTheSameAccountNumberAndMatchesTheExistingAccount() {
+        var extractor = new com.finora.imports.pdf.PdfMetadataExtractor();
+
+        // First import: a January PNB statement is what created the account originally.
+        var firstStatement = extractor.extract(List.of(
+                "Statement of Account:98765432101234 For Period: 01/01/2026 to 31/01/2026")); // synthetic-ok
+        Account existing = account("PNB", FinancialProductType.SAVINGS,
+                firstStatement.accountNumberFullForHashingOnly(), firstStatement.accountNumberMasked());
+        when(accountRepository.findByUserId(userId)).thenReturn(List.of(existing));
+
+        // Second import: a later PNB statement for the same real account, extracted independently
+        // (a fresh extractor run against different statement text, not a reused value).
+        var secondStatement = extractor.extract(List.of(
+                "Statement of Account:98765432101234 For Period: 01/02/2026 to 28/02/2026")); // synthetic-ok
+        var discovered = ProductIdentity.of("PNB", FinancialProductType.SAVINGS,
+                secondStatement.accountNumberFullForHashingOnly(), secondStatement.accountNumberMasked());
+
+        var found = resolver.resolve(userId, discovered);
+
+        assertThat(found.resolution()).isEqualTo(ProductIdentityResolver.Resolution.MATCHED);
+        assertThat(found.account()).isSameAs(existing);
+        assertThat(found.mayImportWithoutAsking()).isTrue();
+    }
+
     @Test
     void anAccountPredatingTheProductTypeColumnStillMatchesOnItsAccountType() {
         // V49 backfills product_type, but a hand-created account can still have it null. Falling
