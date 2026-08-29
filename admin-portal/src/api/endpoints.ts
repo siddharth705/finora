@@ -169,7 +169,8 @@ export const banksApi = {
 };
 
 export const adminBanksApi = {
-  list: () => api.get<BankDto[]>('/admin/banks').then((r) => r.data),
+  list: (page: number, size: number) =>
+    api.get<PagedResponse<BankDto>>('/admin/banks', { params: { page, size } }).then((r) => r.data),
   create: (request: CreateBankRequest) =>
     api.post<BankDto>('/admin/banks', request).then((r) => r.data),
   update: (id: string, request: UpdateBankRequest) =>
