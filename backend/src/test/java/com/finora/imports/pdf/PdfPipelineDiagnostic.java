@@ -1,5 +1,7 @@
 package com.finora.imports.pdf;
 
+import com.finora.imports.TestAccountRepositories;
+
 import com.finora.dto.ImportDto.StagedAccountSection;
 import com.finora.imports.CsvParser;
 import com.finora.imports.DuplicateDetector;
@@ -512,7 +514,7 @@ class PdfPipelineDiagnostic {
         when(categorizationService.suggestReadOnly(any(), any(), any(), any(), any(), any()))
                 .thenReturn(new CategorizationService.Suggestion("Uncategorized", "default", null, null, null));
         TransactionRepository transactionRepository = mock(TransactionRepository.class);
-        when(transactionRepository.findPotentialDuplicatesByUser(any(), any(), any(), any())).thenReturn(List.of());
-        return new TransactionNormalizer(categorizationService, new DuplicateDetector(transactionRepository), com.finora.imports.TestRuleEngines.empty());
+        when(transactionRepository.findPotentialDuplicatesByUserAndAccountIdIn(any(), any(), any(), any(), any())).thenReturn(List.of());
+        return new TransactionNormalizer(categorizationService, new DuplicateDetector(transactionRepository, TestAccountRepositories.anyLive()), com.finora.imports.TestRuleEngines.empty());
     }
 }

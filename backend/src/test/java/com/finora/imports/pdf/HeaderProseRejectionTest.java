@@ -1,5 +1,7 @@
 package com.finora.imports.pdf;
 
+import com.finora.imports.TestAccountRepositories;
+
 import com.finora.dto.ImportDto.StagedAccountSection;
 import com.finora.imports.DuplicateDetector;
 import com.finora.imports.TestRuleEngines;
@@ -343,9 +345,9 @@ class HeaderProseRejectionTest {
         when(categorizationService.suggestReadOnly(any(), any(), any(), any(), any(), any()))
                 .thenReturn(new CategorizationService.Suggestion("Uncategorized", "default", null, null, null));
         TransactionRepository transactionRepository = mock(TransactionRepository.class);
-        when(transactionRepository.findPotentialDuplicatesByUser(any(), any(), any(), any())).thenReturn(List.of());
+        when(transactionRepository.findPotentialDuplicatesByUserAndAccountIdIn(any(), any(), any(), any(), any())).thenReturn(List.of());
         TransactionNormalizer normalizer = new TransactionNormalizer(categorizationService,
-                new DuplicateDetector(transactionRepository), TestRuleEngines.empty());
+                new DuplicateDetector(transactionRepository, TestAccountRepositories.anyLive()), TestRuleEngines.empty());
         return new PdfPreviewGenerator(new TraceAcquirer(trace), new PdfTableLocator(), new PdfMetadataExtractor(),
                 normalizer, com.finora.imports.product.ProductDiscovery.standard(),
                 new com.finora.imports.product.ProductAttributeExtractor(),

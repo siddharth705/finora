@@ -1,5 +1,7 @@
 package com.finora.imports.evidence;
 
+import com.finora.imports.TestAccountRepositories;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
@@ -78,8 +80,8 @@ class ClosingBalanceCircularFinancialValidationTest {
         when(categorizationService.suggestReadOnly(any(), any(), any(), any(), any(), any()))
                 .thenReturn(new CategorizationService.Suggestion("Uncategorized", "default", null, null, null));
         TransactionRepository transactionRepository = mock(TransactionRepository.class);
-        when(transactionRepository.findPotentialDuplicatesByUser(any(), any(), any(), any())).thenReturn(List.of());
-        DuplicateDetector duplicateDetector = new DuplicateDetector(transactionRepository);
+        when(transactionRepository.findPotentialDuplicatesByUserAndAccountIdIn(any(), any(), any(), any(), any())).thenReturn(List.of());
+        DuplicateDetector duplicateDetector = new DuplicateDetector(transactionRepository, TestAccountRepositories.anyLive());
         TransactionNormalizer transactionNormalizer =
                 new TransactionNormalizer(categorizationService, duplicateDetector, TestRuleEngines.empty());
 

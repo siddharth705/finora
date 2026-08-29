@@ -41,36 +41,42 @@ function MerchantReviewContent() {
     queryFn: () => adminMerchantReviewApi.queue({ page, size: PAGE_SIZE }),
   });
 
-  const refresh = () => {
+  // Deleting/approving the last row(s) on a page beyond the first would otherwise leave the
+  // admin stranded on a now-empty page -- back off to the previous one so the list they land on
+  // actually has something in it, same as Pagination.tsx never rendering "Page 2 of 1".
+  const refresh = (removedCount = 1) => {
+    setPage((p) => (p > 0 && (queue.data?.content.length ?? 0) <= removedCount ? p - 1 : p));
     void queryClient.invalidateQueries({ queryKey: ['merchant-review'] });
     setSelected(null);
   };
 
   const approve = useMutation({
     mutationFn: (row: MerchantReviewItem) => adminMerchantReviewApi.approve(row.userId, row.id),
-    onSuccess: refresh,
+    onSuccess: () => refresh(),
   });
 
   const approveAll = useMutation({
     mutationFn: (userId: string) => adminMerchantReviewApi.approveAll(userId),
-    onSuccess: refresh,
+    // approveAll can clear every row on the page belonging to this user, not just one.
+    onSuccess: (_data, userId) =>
+      refresh(queue.data?.content.filter((row) => row.userId === userId).length ?? 1),
   });
 
   const rename = useMutation({
     mutationFn: (vars: { row: MerchantReviewItem; name: string }) =>
       adminMerchantReviewApi.rename(vars.row.userId, vars.row.id, vars.name),
-    onSuccess: refresh,
+    onSuccess: () => refresh(),
   });
 
   const discard = useMutation({
     mutationFn: (row: MerchantReviewItem) => adminMerchantReviewApi.discard(row.userId, row.id),
-    onSuccess: refresh,
+    onSuccess: () => refresh(),
   });
 
   const merge = useMutation({
     mutationFn: (vars: { row: MerchantReviewItem; into: string }) =>
       adminMerchantReviewApi.merge(vars.row.userId, vars.row.id, vars.into),
-    onSuccess: refresh,
+    onSuccess: () => refresh(),
   });
 
   const columns: DataTableColumn<MerchantReviewItem>[] = [
