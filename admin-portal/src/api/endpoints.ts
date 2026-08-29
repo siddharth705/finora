@@ -272,7 +272,8 @@ export const adminDashboardApi = {
 // D-28 PR4-A. SUBSCRIPTION_MANAGEMENT_VIEW/_MANAGE-gated (V99) -- its own permission, not folded
 // into PLATFORM_STATS_VIEW, same reasoning as PLATFORM_ANALYTICS_VIEW's own separation.
 export const adminSubscriptionsApi = {
-  list: () => api.get<SubscriptionSummaryDto[]>('/admin/subscriptions').then((r) => r.data),
+  list: (page: number, size: number) =>
+    api.get<PagedResponse<SubscriptionSummaryDto>>('/admin/subscriptions', { params: { page, size } }).then((r) => r.data),
   changePlan: (userId: string, planCode: string, reason: string) =>
     api.put(`/admin/subscriptions/${userId}/plan`, { planCode, reason }),
 };
