@@ -868,7 +868,7 @@ class DashboardServiceTest {
         AccountRepository accountRepositoryWithCard = mock(AccountRepository.class);
         when(accountRepositoryWithCard.findByUserId(any())).thenReturn(List.of(savings, card));
         DashboardService serviceWithCard = new DashboardService(accountRepositoryWithCard, transactionRepository,
-                categoryRepository, budgetRepository, userRepository, statementImportRepository);
+                categoryRepository, budgetRepository, userRepository, statementImportRepository, transactionGraphService);
 
         List<Transaction> txns = new java.util.ArrayList<>();
         for (int i = 0; i < 10; i++) {
