@@ -48,9 +48,9 @@ public class PdfMetadataExtractor {
     // labelPattern's own doc comment) -- "Name" is a generic single word that is a substring of
     // many unrelated compound labels ("Branch Name", "Company Name", "Nominee Name", ...) that
     // have nothing to do with the account holder. Found via a real HSBC statement whose own
-    // "Branch Name : POWAI BRANCH" line matched this alternative mid-line once labelPattern
-    // started allowing a label to appear after other content, extracting the BRANCH's value as
-    // the account holder's name instead. "Account Holder"/"Customer Name" stay safe in both
+    // "Branch Name : <branch>" line matched this alternative mid-line once labelPattern started
+    // allowing a label to appear after other content, extracting the BRANCH's value as the
+    // account holder's name instead. "Account Holder"/"Customer Name" stay safe in both
     // branches: both are unambiguous multi-word phrases with no other real-world compound label
     // known to contain either as a sub-phrase. midLineLabel therefore omits bare "Name" entirely
     // rather than trying to guard it with a lookbehind against every compound label that could
