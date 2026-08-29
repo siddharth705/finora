@@ -82,6 +82,16 @@ class ReconciliationServiceTest {
         t.setTxnType(type);
         t.setDescription(description);
         t.setReconciliationStatus(Transaction.ReconciliationStatus.OK);
+        // Registers this transaction's account as live by default -- see liveAccounts' own comment.
+        // The CC_PAYMENT pass's own liveness check (both the statement side via ccStatement() and
+        // the payment side here) needs every test's account to resolve as live unless a test is
+        // specifically exercising the deleted-account case, which removes it after this call.
+        if (liveAccounts.stream().noneMatch(a -> a.getId().equals(accountId))) {
+            Account account = new Account();
+            ReflectionTestUtils.setField(account, "id", accountId);
+            account.setUserId(userId);
+            liveAccounts.add(account);
+        }
         return t;
     }
 
@@ -1233,6 +1243,47 @@ class ReconciliationServiceTest {
                 .linkAll(org.mockito.ArgumentMatchers.anyList());
         org.mockito.Mockito.verify(transactionRepository, org.mockito.Mockito.never())
                 .findByStatementImportId(org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void reconcileForUser_ignoresAPaymentCandidate_onADeletedAccount() {
+        // Mirror-image of the deleted-CARD-account case above: reconcileForImport's `all` is
+        // deliberately account-unscoped (see that method's own doc comment), so a stray payment
+        // sitting on a deleted SAVINGS account could otherwise win the closest-to-due-date
+        // tiebreak over the real, live payment -- reproducing the exact double-count bug this
+        // whole pass exists to prevent, just via a dead-account payment outcompeting a live one
+        // instead of a coincidental due-date collision. reconcileForUser's own scoping wouldn't
+        // normally let a dead-account transaction into `all` at all, so this stubs
+        // findByUserIdAndAccountIdIn directly (as every other CC test does) to simulate what
+        // reconcileForImport's unscoped candidate list can actually contain.
+        UUID cardAccountId = UUID.randomUUID();
+        UUID deadSavingsAccountId = UUID.randomUUID();
+        UUID liveSavingsAccountId = UUID.randomUUID();
+        com.finora.entity.StatementImport statement =
+                ccStatement(UUID.randomUUID(), cardAccountId, new BigDecimal("2500.00"), LocalDate.of(2026, 7, 15));
+        Transaction deadAccountPayment = txn(UUID.randomUUID(), deadSavingsAccountId, LocalDate.of(2026, 7, 15),
+                new BigDecimal("2500.00"), Transaction.Type.EXPENSE, "STRAY PAYMENT", Instant.parse("2026-07-15T10:00:00Z"));
+        // The dead-account payment lands EXACTLY on the due date -- the closer of the two -- so
+        // without the liveness filter it would win the min-comparator tiebreak outright.
+        liveAccounts.removeIf(a -> a.getId().equals(deadSavingsAccountId));
+        Transaction realPayment = txn(UUID.randomUUID(), liveSavingsAccountId, LocalDate.of(2026, 7, 14),
+                new BigDecimal("2500.00"), Transaction.Type.EXPENSE, "CREDIT CARD PAYMENT",
+                Instant.parse("2026-07-14T10:00:00Z"));
+        Transaction charge = txn(UUID.randomUUID(), cardAccountId, LocalDate.of(2026, 6, 20),
+                new BigDecimal("2500.00"), Transaction.Type.EXPENSE, "AMAZON", Instant.parse("2026-06-20T10:00:00Z"));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any()))
+                .thenReturn(List.of(deadAccountPayment, realPayment, charge));
+        when(statementImportRepository.findByUserIdAndTotalAmountDueIsNotNull(userId)).thenReturn(List.of(statement));
+        when(transactionRepository.findByStatementImportId(statement.getId())).thenReturn(List.of(charge));
+
+        reconciliationService.reconcileForUser(userId);
+
+        List<TransactionGraphService.PendingEdge> ccEdges = capturePendingEdges().stream()
+                .filter(e -> e.relationshipType() == TransactionRelationship.RelationshipType.CC_PAYMENT).toList();
+        assertThat(ccEdges)
+                .as("only the real, live payment can settle the charge -- a dead-account payment must never win")
+                .hasSize(1);
+        assertThat(ccEdges.get(0).fromTransactionId()).isEqualTo(realPayment.getId());
     }
 
     @Test
