@@ -273,8 +273,15 @@ Phase 4 measured statement period as populated in 1 of 10 credit-card sections a
 that it could not distinguish *absent from the document* from *present but unextracted*. That
 was checked directly against the documents' text.
 
-**It is an extraction gap.** Six of eight credit-card documents print a statement or billing
-period; one already works; five fail for identified, separate reasons.
+**It is an extraction gap, in every case.** All eight credit-card documents print a statement
+or billing period. One already works; **seven** fail for identified, separate reasons.
+
+> **Corrected 2026-08-29, same day.** An earlier revision of this section claimed AU and HSBC
+> CC printed no period and recorded them as genuine absence. That was wrong, and the error was
+> methodological rather than analytical: the survey grep was truncated with `head -4`, and
+> absence was concluded from truncated output. Both documents do print a period — AU inside a
+> sentence, HSBC in a boxed grid — and both are recoverable. Never conclude absence from a
+> truncated search.
 
 | Document | Prints a period | Failure | Class |
 |---|---|---|---|
@@ -283,9 +290,9 @@ period; one already works; five fail for identified, separate reasons.
 | IndusInd | yes, label present | value placement | layout |
 | HDFC | yes, **`Billing Period`** | label absent from vocabulary | vocabulary |
 | ICICI | yes, `Statement period : <Month> d, yyyy to …` | `MMMM d, yyyy` absent from `DATE_FORMATS` | date format |
-| SBI | yes, `Statement Period: d MMM yy to d MMM yy   <trailing>` | `d MMM yy` absent **and** trailing content on the line | format + parse |
-| AU | **no** — statement *date* only | n/a | genuine absence |
-| HSBC CC | **no** — prose mentions only | n/a | genuine absence |
+| SBI | yes, `Statement Period: d MMM yy to d MMM yy   <trailing>` | `d MMM yy` absent **and** trailing content | format + parse |
+| **HSBC CC** | yes, `Statement period` box over `d MMM yyyy To d MMM yyyy` | **uppercase month** (`JUN`) fails a case-sensitive `MMM`; label not on the value's line | case + layout |
+| **AU** | yes, `Statement for your credit card ending with <last4> (d MMM - d MMM yyyy)` | separator is `-` not `to`; **start date carries no year**; label is a sentence | separator + year + vocabulary |
 
 ### Mechanism, verified empirically
 
@@ -300,20 +307,41 @@ field stays null. Tested against the real printed values and the real `DATE_FORM
 
 SBI therefore has two independent gaps; fixing trailing content alone does not recover it.
 
+Re-tested for the two documents the earlier revision wrongly excluded:
+
+- HSBC `24 JUN 2026` — **fails**; the same value as `24 Jun 2026` **parses**. The entire
+  difference is month-name case: `ofPattern("d MMM yyyy")` is case-sensitive by default.
+- AU end `18 Apr 2026` — parses. AU start `19 Mar` — **fails**, no year.
+- AU `19 Mar - 18 Apr 2026` split on `\s+to\s+` yields **1 part**, not 2: the range separator
+  is a hyphen, so `parsePeriod` never even attempts two dates.
+
 ### Scope
 
-Four sub-gaps, addressable independently:
+Seven sub-gaps, addressable independently:
 
 1. **Date formats** — `MMMM d, yyyy` (ICICI) and a 2-digit-year form (SBI).
 2. **Trailing-content tolerance** — extract dates from the captured span rather than requiring
-   each split half to parse whole.
-3. **Vocabulary** — `Billing Period` alongside `Statement Period`.
-4. **Grid layout** — Axis and IndusInd place the value off the label's line; the grid path
+   each split half to parse whole (SBI).
+3. **Vocabulary — label** — `Billing Period` alongside `Statement Period` (HDFC).
+4. **Grid layout** — Axis, IndusInd, HSBC place the value off the label's line; the grid path
    already exists for due date and credit limit.
+5. **Month-name case-insensitivity** — HSBC prints `JUN`. A `parseCaseInsensitive()` builder,
+   or normalising before parse. Smallest fix here and recovers a document entirely.
+6. **Range separator** — accept `-` / `–` alongside `to` (AU).
+7. **Year inference** — AU states the year only on the end date (`19 Mar - 18 Apr 2026`).
 
-**Out of scope:** AU and HSBC CC. Neither prints a period, so no extraction change reaches
-them. Inferring a period from a statement date plus a cycle length would be *deriving* a value
-the document never stated — against this codebase's standing discipline.
+**Sub-gap 7 carries a real correctness trap.** Copying the end date's year onto the start is
+wrong whenever the range crosses a year boundary: `19 Dec - 18 Jan 2026` has a start in
+**2025**, and naive copying dates it a year late. Infer the start year, then check the
+resulting start is before the end; if not, subtract a year. This is inference from a range the
+document does state, not derivation of a value it never stated — the distinction that keeps it
+inside this codebase's discipline.
+
+**Nothing is out of scope on absence grounds.** All eight documents state a period.
+
+One incidental note for whoever implements this: AU's period sits on the *same line* as its
+card last-4, which `CARD_ENDING_DIGITS` already matches. The line is already being processed
+for a different field.
 
 ### Principal hazard
 
@@ -326,7 +354,8 @@ array.
 
 ### Acceptance
 
-Statement period populated for Axis, IndusInd, HDFC, ICICI, SBI; full suite green; golden
+Statement period populated for all seven currently-failing documents (Axis, IndusInd, HDFC,
+ICICI, SBI, HSBC CC, AU); full suite green; golden
 corpus diff shows only the intended documents changing; real-corpus sweep diffed against the
 merge target.
 
