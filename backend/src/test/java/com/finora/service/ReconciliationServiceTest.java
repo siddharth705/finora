@@ -1918,4 +1918,76 @@ class ReconciliationServiceTest {
         org.mockito.Mockito.verify(transactionGraphService).linkAll(captor.capture());
         return captor.getValue();
     }
+
+    // --- Investment transfers (roadmap Phase 4, scoped down after checking the real bank-
+    // statement corpus -- see ReconciliationService's investment-transfer pass for why this is a
+    // category-driven exclusion with no graph edge, unlike every other pass in this file) ---
+
+    @Test
+    void reconcileForUser_excludesAnInvestmentOutflow_fromCashFlowByReconciliationStatus() {
+        UUID savingsAccount = UUID.randomUUID();
+        Transaction sip = txn(UUID.randomUUID(), savingsAccount, LocalDate.of(2026, 6, 6),
+                new BigDecimal("3000.00"), Transaction.Type.EXPENSE, "UPI-GROWW INVEST TECH", Instant.now());
+
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(sip));
+
+        reconciliationService.reconcileForUser(userId);
+
+        assertThat(sip.getReconciliationStatus()).isEqualTo(Transaction.ReconciliationStatus.INVESTMENT_TRANSFER);
+        assertThat(sip.isTransfer()).isFalse(); // no counterpart transaction -- never claimed by the TRANSFER pass
+        assertThat(sip.getReconciliationExplanation()).containsEntry("type", "INVESTMENT_TRANSFER");
+        // No graph edge: there is no counterpart transaction in Finora to link to (see the pass's
+        // own comment) -- pendingEdges stays empty and linkAll is never called for this alone.
+        org.mockito.Mockito.verify(transactionGraphService, org.mockito.Mockito.never())
+                .linkAll(org.mockito.ArgumentMatchers.anyList());
+    }
+
+    @Test
+    void reconcileForUser_doesNotReclassifyAnInvestmentOutflow_thatWasAlreadyClaimedAsATransfer() {
+        // If the user also tracks the receiving INVESTMENT account in Finora, the existing TRANSFER
+        // pass already pairs the two legs -- a real, higher-fidelity match this pass must not
+        // override with a lesser, edge-free classification.
+        UUID savingsAccount = UUID.randomUUID();
+        UUID investmentAccount = UUID.randomUUID();
+        Transaction debit = txn(UUID.randomUUID(), savingsAccount, LocalDate.of(2026, 6, 6),
+                new BigDecimal("3000.00"), Transaction.Type.EXPENSE, "Payment to GROWW investment account", Instant.now());
+        Transaction credit = txn(UUID.randomUUID(), investmentAccount, LocalDate.of(2026, 6, 7),
+                new BigDecimal("3000.00"), Transaction.Type.INCOME, "Payment received", Instant.now());
+
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(debit, credit));
+
+        reconciliationService.reconcileForUser(userId);
+
+        assertThat(debit.isTransfer()).isTrue();
+        assertThat(debit.getReconciliationStatus()).isEqualTo(Transaction.ReconciliationStatus.TRANSFER);
+    }
+
+    @Test
+    void reconcileForUser_leavesANonInvestmentExpense_atOk() {
+        UUID account = UUID.randomUUID();
+        Transaction groceries = txn(UUID.randomUUID(), account, LocalDate.of(2026, 6, 6),
+                new BigDecimal("1200.00"), Transaction.Type.EXPENSE, "BIGBASKET ORDER", Instant.now());
+
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(groceries));
+
+        reconciliationService.reconcileForUser(userId);
+
+        assertThat(groceries.getReconciliationStatus()).isEqualTo(Transaction.ReconciliationStatus.OK);
+    }
+
+    @Test
+    void reconcileForUser_doesNotTreatAnInvestmentCreditRow_asAnOutflow() {
+        // Only EXPENSE rows are candidate investment outflows -- a dividend/credit row landing in
+        // the Investments category by keyword coincidence is income, not spend, and has nothing to
+        // exclude from cash flow.
+        UUID account = UUID.randomUUID();
+        Transaction dividend = txn(UUID.randomUUID(), account, LocalDate.of(2026, 6, 6),
+                new BigDecimal("10.00"), Transaction.Type.INCOME, "ACH C- NSDL FINDIV", Instant.now());
+
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(dividend));
+
+        reconciliationService.reconcileForUser(userId);
+
+        assertThat(dividend.getReconciliationStatus()).isEqualTo(Transaction.ReconciliationStatus.OK);
+    }
 }

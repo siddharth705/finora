@@ -249,7 +249,7 @@ public class ReconciliationService {
         // fresh on every read -- this is a different, complementary number: how much did the
         // most recent run actually do).
         int newDuplicates = 0, newTransfers = 0, newRefunds = 0, newReversals = 0, newGmailMatches = 0,
-                newCcPaymentMatches = 0;
+                newCcPaymentMatches = 0, newInvestmentTransfers = 0;
 
         // Every row the passes below touch, written once at the end instead of one save() per
         // match. A large first import can flag hundreds of duplicates, and each save() was its own
@@ -434,6 +434,33 @@ public class ReconciliationService {
                     break;
                 }
             }
+        }
+
+        // 2b) Investment transfers -- roadmap Phase 4's "investment... detection" item, scoped
+        // down after checking this project's own real bank-statement corpus rather than building
+        // all six enum-only relationship types speculatively (docs/proposals/
+        // reconciliation-evolution-roadmap-proposal.md Part 10 explicitly defers all six until
+        // "actual usage data ... shows which of the six users actually need first"). Every real
+        // investment outflow in that corpus (UPI-GROWW INVEST TECH, UPI-ICCLGROWW-GROWW-BSE...)
+        // was a single-entry savings-side debit with no matching credit-side Transaction anywhere
+        // in Finora -- the user never imports the broker's own statement. A transaction_relationships
+        // edge needs a real Transaction on both ends (see that entity's own doc comment), so this
+        // deliberately does NOT write one; it reuses CategoryRules' existing "Investments" category
+        // (already recognizes Groww/Zerodha/mutual fund/SIP/etc, no new keyword list duplicated
+        // here) to exclude these rows from cash flow, the same way TRANSFER already is.
+        //
+        // Reads `candidates` (not `all`): those objects were already mutated in place by the
+        // transfer pass above, so `t.isTransfer()` here reflects this run's own transfer matches,
+        // not just ones from a prior run -- same reasoning the refund pass below applies to the
+        // same list.
+        for (Transaction t : candidates) {
+            if (t.getTxnType() != Transaction.Type.EXPENSE) continue;
+            if (t.isTransfer() || t.getReconciliationStatus() != Transaction.ReconciliationStatus.OK) continue;
+            if (!"Investments".equals(CategoryRules.suggestCategory(t.getDescription()))) continue;
+            t.setReconciliationStatus(Transaction.ReconciliationStatus.INVESTMENT_TRANSFER);
+            t.setReconciliationExplanation(ReconciliationExplanation.investmentTransfer(t));
+            dirty.add(t);
+            newInvestmentTransfers++;
         }
 
         // 3) Refunds -- re-filters candidates fresh (not reusing the list above) because step 2
@@ -826,6 +853,7 @@ public class ReconciliationService {
             details.put("transfersMatched", newTransfers);
             details.put("refundsMatched", newRefunds);
             details.put("reversalsMatched", newReversals);
+            details.put("investmentTransfersFound", newInvestmentTransfers);
             details.put("gmailMatchesFound", newGmailMatches);
             details.put("ccPaymentMatchesFound", newCcPaymentMatches);
             details.put("staleEdgesRejected", staleEdgesRejected);

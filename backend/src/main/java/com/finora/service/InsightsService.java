@@ -180,7 +180,14 @@ public class InsightsService {
         List<Transaction> all = liveAccountIds.isEmpty() ? List.of()
                 : transactionRepository.findByUserIdAndAccountIdIn(userId, liveAccountIds);
         RefundNetting refunds = RefundNetting.from(all);
-        List<Transaction> txns = RefundNetting.reportable(all, transactionGraphService.ccPaymentFromTransactionIds(all)).stream()
+        // excludingInvestmentTransfers applies here (unlike DashboardService/ReportService, which
+        // keep a separate category-breakdown list): every number this whole method produces --
+        // the headline "total spend" sentence, the category movers, the top-merchant callout -- is
+        // itself framed as "spending", and an Investments-tagged SIP appearing as "your biggest
+        // category" or a spend-trend mover would contradict the very point of this exclusion. See
+        // RefundNetting.excludingInvestmentTransfers's own comment on the narrower, budget-safe cut.
+        List<Transaction> txns = RefundNetting.excludingInvestmentTransfers(
+                        RefundNetting.reportable(all, transactionGraphService.ccPaymentFromTransactionIds(all))).stream()
                 .filter(t -> t.getTxnType() == Transaction.Type.EXPENSE)
                 .toList();
 

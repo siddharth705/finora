@@ -134,6 +134,23 @@ final class ReconciliationExplanation {
         return envelope("REVERSAL", purchase.getId(), reason);
     }
 
+    /**
+     * Why this expense was excluded from spend totals as money moving into savings/investment
+     * rather than consumption. {@link CategoryRules}'s existing "Investments" category (Groww,
+     * Zerodha, mutual fund, SIP, ...) is the only signal here -- unlike every other explanation in
+     * this class, there is no counterpart transaction to name: the real-world pattern this covers
+     * (a UPI payment to an external broker) has no matching "money arrived" row anywhere in Finora,
+     * since the user never imports the broker's own statement. No confidence to score either, for
+     * the same reason -- there is nothing to score a pairing against, the same "deterministic, no
+     * scored confidence" precedent {@code CategoryRules}-based merchant normalization already set.
+     */
+    static Map<String, Object> investmentTransfer(Transaction t) {
+        Map<String, Object> reason = new LinkedHashMap<>();
+        reason.put("category", "Investments");
+        reason.put("amount", t.getAmount().toPlainString());
+        return envelope("INVESTMENT_TRANSFER", null, reason);
+    }
+
     private static Map<String, Object> envelope(String type, UUID matchedTransaction,
                                                 Map<String, Object> reason) {
         Map<String, Object> explanation = new LinkedHashMap<>();
