@@ -261,6 +261,82 @@ defensible for five of six issuers; below it, no observed mask qualifies and sup
 signals (Phase 4) become mandatory rather than optional. SBI qualifies at no tolerance
 considered.
 
+## Scoped and ready — statement-period extraction gap
+
+**F-number not yet assigned.** It belongs to the out-of-tree `extraction-coverage-audit.md`
+sequence (F1, F21, F22, F23 are known to exist). Assign the next free number *from that file*,
+not by guessing — parallel sessions on this repo have collided on shared numbering before.
+
+### Finding
+
+Phase 4 measured statement period as populated in 1 of 10 credit-card sections and flagged
+that it could not distinguish *absent from the document* from *present but unextracted*. That
+was checked directly against the documents' text.
+
+**It is an extraction gap.** Six of eight credit-card documents print a statement or billing
+period; one already works; five fail for identified, separate reasons.
+
+| Document | Prints a period | Failure | Class |
+|---|---|---|---|
+| Kotak | yes | — works today | — |
+| Axis | yes, `Statement Period` as a grid header | value not on the label's line | layout |
+| IndusInd | yes, label present | value placement | layout |
+| HDFC | yes, **`Billing Period`** | label absent from vocabulary | vocabulary |
+| ICICI | yes, `Statement period : <Month> d, yyyy to …` | `MMMM d, yyyy` absent from `DATE_FORMATS` | date format |
+| SBI | yes, `Statement Period: d MMM yy to d MMM yy   <trailing>` | `d MMM yy` absent **and** trailing content on the line | format + parse |
+| AU | **no** — statement *date* only | n/a | genuine absence |
+| HSBC CC | **no** — prose mentions only | n/a | genuine absence |
+
+### Mechanism, verified empirically
+
+`parsePeriod` (PdfMetadataExtractor) splits on `\s+to\s+` and calls `LocalDate.parse` on each
+half, which requires the **entire string** to match a format. Both dates must parse or the
+field stays null. Tested against the real printed values and the real `DATE_FORMATS` list:
+
+- ICICI start (`<FullMonth> d, yyyy`) — fails; the list has `MMM`, not `MMMM`
+- SBI end with trailing content — fails
+- SBI end with trailing content removed — **still fails**; 2-digit year, list has only `yyyy`
+- Control (`d MMM, yyyy`) — parses, confirming the test harness
+
+SBI therefore has two independent gaps; fixing trailing content alone does not recover it.
+
+### Scope
+
+Four sub-gaps, addressable independently:
+
+1. **Date formats** — `MMMM d, yyyy` (ICICI) and a 2-digit-year form (SBI).
+2. **Trailing-content tolerance** — extract dates from the captured span rather than requiring
+   each split half to parse whole.
+3. **Vocabulary** — `Billing Period` alongside `Statement Period`.
+4. **Grid layout** — Axis and IndusInd place the value off the label's line; the grid path
+   already exists for due date and credit limit.
+
+**Out of scope:** AU and HSBC CC. Neither prints a period, so no extraction change reaches
+them. Inferring a period from a statement date plus a cycle length would be *deriving* a value
+the document never stated — against this codebase's standing discipline.
+
+### Principal hazard
+
+`DATE_FORMATS` is a **shared, ordered** array used by every date field in the class, not just
+the period. A 2-digit-year format is inherently ambiguous and, placed early, could shadow a
+correct parse for an unrelated field on an unrelated document. Sub-gap 1 is the smallest
+change here and carries the largest blast radius. Treat the golden-output corpus as the gate,
+and consider scoping the lenient format to period parsing rather than adding it to the shared
+array.
+
+### Acceptance
+
+Statement period populated for Axis, IndusInd, HDFC, ICICI, SBI; full suite green; golden
+corpus diff shows only the intended documents changing; real-corpus sweep diffed against the
+merge target.
+
+### Why it matters beyond coverage
+
+Statement period is the strongest *available* supplementary identity signal (Phase 4). But
+note two limits recorded there: only the **cycle day** is stable across months (~1.4 digits),
+and it is **not independent of payment due date** — both derive from the same billing cycle,
+so they must be counted once, not twice.
+
 ## Candidate work, not yet scheduled
 
 - **Extraction-loss ledger.** Per field, record why a value was not produced — absent from
