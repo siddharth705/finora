@@ -14,6 +14,7 @@ import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -575,12 +576,23 @@ public class ReconciliationService {
         List<StatementImport> ccStatements = statementImportRepository.findByUserIdAndTotalAmountDueIsNotNull(userId);
         if (!ccStatements.isEmpty()) {
             int[] ccMatchesThisRun = {0};
+            // Two cards can coincidentally share a due date and a printed balance (the roadmap's
+            // own "same issuer, same due date, same amount" edge case) -- without tracking which
+            // payment transactions this RUN has already attributed, each statement is matched
+            // independently against the full `all` list, and the SAME real payment could be
+            // claimed by more than one statement, attributing one real payment as if it settled
+            // two different bills. First statement processed wins; later ones fall through to
+            // "no candidate" for that payment, same as if it had genuinely already been spent
+            // elsewhere. A real issuer/last-4 disambiguation (roadmap Part 4) would pick the
+            // RIGHT winner instead of just AN exclusive one -- this only guarantees exclusivity.
+            Set<UUID> claimedPaymentIds = new HashSet<>();
             for (StatementImport statement : ccStatements) {
                 if (statement.getTotalAmountDue() == null || statement.getPaymentDueDate() == null) continue;
 
                 List<Transaction> paymentCandidates = all.stream()
                         .filter(t -> t.getTxnType() == Transaction.Type.EXPENSE)
                         .filter(t -> !t.isTransfer())
+                        .filter(t -> !claimedPaymentIds.contains(t.getId()))
                         .filter(t -> !t.getAccountId().equals(statement.getAccountId()))
                         .filter(t -> t.getAmount().compareTo(statement.getTotalAmountDue()) == 0)
                         .filter(t -> Math.abs(ChronoUnit.DAYS.between(t.getTxnDate(), statement.getPaymentDueDate()))
@@ -601,7 +613,8 @@ public class ReconciliationService {
                 // would be a nonsensical "this payment settles this refund" claim.
                 List<Transaction> settledCharges = transactionRepository.findByStatementImportId(statement.getId())
                         .stream().filter(t -> t.getTxnType() == Transaction.Type.EXPENSE).toList();
-                if (settledCharges.isEmpty()) continue; // nothing on the card side to point the edge at
+                if (settledCharges.isEmpty()) continue; // nothing on the card side to point the edge at -- payment stays unclaimed
+                claimedPaymentIds.add(payment.getId());
 
                 long daysFromDue = Math.abs(ChronoUnit.DAYS.between(payment.getTxnDate(), statement.getPaymentDueDate()));
                 // MERCHANT_AND_AMOUNT, not EXACT: amount matches exactly (no delta), but there is a

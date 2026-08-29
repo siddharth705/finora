@@ -1088,6 +1088,75 @@ class ReconciliationServiceTest {
     }
 
     @Test
+    void reconcileForUser_doesNotAttributeTheSamePaymentToTwoDifferentStatements() {
+        // Two cards, same issuer coincidence: same totalAmountDue and paymentDueDate. Only ONE
+        // real savings-side payment transaction exists -- it can settle at most one of these two
+        // bills, never both. Without cross-statement dedup, each statement is matched
+        // independently against the full `all` list and both would claim the same payment,
+        // silently attributing one real ₹2500 payment as if it settled ₹5000 of card debt.
+        UUID cardAccountA = UUID.randomUUID();
+        UUID cardAccountB = UUID.randomUUID();
+        UUID savingsAccountId = UUID.randomUUID();
+        com.finora.entity.StatementImport statementA =
+                ccStatement(UUID.randomUUID(), cardAccountA, new BigDecimal("2500.00"), LocalDate.of(2026, 7, 15));
+        com.finora.entity.StatementImport statementB =
+                ccStatement(UUID.randomUUID(), cardAccountB, new BigDecimal("2500.00"), LocalDate.of(2026, 7, 15));
+        Transaction payment = txn(UUID.randomUUID(), savingsAccountId, LocalDate.of(2026, 7, 14),
+                new BigDecimal("2500.00"), Transaction.Type.EXPENSE, "CREDIT CARD PAYMENT",
+                Instant.parse("2026-07-14T10:00:00Z"));
+        Transaction chargeA = txn(UUID.randomUUID(), cardAccountA, LocalDate.of(2026, 6, 20),
+                new BigDecimal("2500.00"), Transaction.Type.EXPENSE, "AMAZON", Instant.parse("2026-06-20T10:00:00Z"));
+        Transaction chargeB = txn(UUID.randomUUID(), cardAccountB, LocalDate.of(2026, 6, 21),
+                new BigDecimal("2500.00"), Transaction.Type.EXPENSE, "FLIPKART", Instant.parse("2026-06-21T10:00:00Z"));
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(payment, chargeA, chargeB));
+        when(statementImportRepository.findByUserIdAndTotalAmountDueIsNotNull(userId))
+                .thenReturn(List.of(statementA, statementB));
+        when(transactionRepository.findByStatementImportId(statementA.getId())).thenReturn(List.of(chargeA));
+        when(transactionRepository.findByStatementImportId(statementB.getId())).thenReturn(List.of(chargeB));
+
+        reconciliationService.reconcileForUser(userId);
+
+        List<TransactionGraphService.PendingEdge> ccEdges = capturePendingEdges().stream()
+                .filter(e -> e.relationshipType() == TransactionRelationship.RelationshipType.CC_PAYMENT).toList();
+        assertThat(ccEdges)
+                .as("the one real payment settles only one statement, not both")
+                .hasSize(1);
+    }
+
+    @Test
+    void reconcileForUser_doesNotClaimAPayment_forAStatementWithNoSettledCharges() {
+        // A statement with no settled charges to link to (see the test right after this one)
+        // must NOT still mark the payment as claimed -- otherwise a genuinely settleable later
+        // statement with the same amount/due-date coincidence would be starved of a payment it
+        // could legitimately use, purely because an earlier, edge-less statement "used it up"
+        // without ever writing anything.
+        UUID cardAccountA = UUID.randomUUID();
+        UUID cardAccountB = UUID.randomUUID();
+        UUID savingsAccountId = UUID.randomUUID();
+        com.finora.entity.StatementImport emptyStatement =
+                ccStatement(UUID.randomUUID(), cardAccountA, new BigDecimal("2500.00"), LocalDate.of(2026, 7, 15));
+        com.finora.entity.StatementImport realStatement =
+                ccStatement(UUID.randomUUID(), cardAccountB, new BigDecimal("2500.00"), LocalDate.of(2026, 7, 15));
+        Transaction payment = txn(UUID.randomUUID(), savingsAccountId, LocalDate.of(2026, 7, 14),
+                new BigDecimal("2500.00"), Transaction.Type.EXPENSE, "CREDIT CARD PAYMENT",
+                Instant.parse("2026-07-14T10:00:00Z"));
+        Transaction charge = txn(UUID.randomUUID(), cardAccountB, LocalDate.of(2026, 6, 20),
+                new BigDecimal("2500.00"), Transaction.Type.EXPENSE, "AMAZON", Instant.parse("2026-06-20T10:00:00Z"));
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(payment, charge));
+        when(statementImportRepository.findByUserIdAndTotalAmountDueIsNotNull(userId))
+                .thenReturn(List.of(emptyStatement, realStatement));
+        when(transactionRepository.findByStatementImportId(emptyStatement.getId())).thenReturn(List.of());
+        when(transactionRepository.findByStatementImportId(realStatement.getId())).thenReturn(List.of(charge));
+
+        reconciliationService.reconcileForUser(userId);
+
+        List<TransactionGraphService.PendingEdge> ccEdges = capturePendingEdges().stream()
+                .filter(e -> e.relationshipType() == TransactionRelationship.RelationshipType.CC_PAYMENT).toList();
+        assertThat(ccEdges).hasSize(1);
+        assertThat(ccEdges.get(0).toTransactionId()).isEqualTo(charge.getId());
+    }
+
+    @Test
     void reconcileForUser_writesNoEdge_whenTheStatementHasNoSettledChargesToLinkTo() {
         UUID cardAccountId = UUID.randomUUID();
         UUID savingsAccountId = UUID.randomUUID();
