@@ -15,7 +15,10 @@ interface GoogleAccountsId {
   }): void;
   renderButton(
     parent: HTMLElement,
-    options: { theme?: string; size?: string; width?: string | number; text?: string; shape?: string }
+    options: {
+      theme?: string; size?: string; width?: string | number; text?: string; shape?: string;
+      logo_alignment?: 'left' | 'center';
+    }
   ): void;
 }
 

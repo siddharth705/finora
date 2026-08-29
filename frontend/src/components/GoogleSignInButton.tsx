@@ -64,6 +64,10 @@ export function GoogleSignInButton({ text, onCredential, onError }: GoogleSignIn
             size: 'large',
             width: String(measuredWidth),
             text,
+            // Google defaults to a left-pinned logo with the text centered in the remaining
+            // space; AppleSignInButton centers its icon+text as one unit. 'center' is the closest
+            // GIS gets to matching that without abandoning Google's own rendered button.
+            logo_alignment: 'center',
           });
           setReady(true);
         };

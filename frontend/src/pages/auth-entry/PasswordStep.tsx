@@ -6,6 +6,7 @@ import { PasswordInput } from '../../components/PasswordInput';
 import { ReactivateAccountPrompt } from '../../components/ReactivateAccountPrompt';
 import { GoogleSignInButton } from '../../components/GoogleSignInButton';
 import { AppleSignInButton } from '../../components/AppleSignInButton';
+import { AuthDivider } from './AuthDivider';
 import { SESSION_ENDED_REASON_KEY } from '../../api/client';
 import { AUTH_ACCOUNT_DEACTIVATED } from '../../api/errorCodes';
 import { safeStorage } from '../../lib/safeStorage';
@@ -143,11 +144,7 @@ export function PasswordStep({ identifier: initialIdentifier, banner, onSuccess,
         {!loading && <ArrowRight size={15} />}
       </button>
 
-      <div className="flex items-center gap-3 my-5">
-        <div className="flex-1 h-px bg-border" />
-        <span className="text-xs text-muted">OR</span>
-        <div className="flex-1 h-px bg-border" />
-      </div>
+      <AuthDivider />
 
       <GoogleSignInButton text="signin_with" onCredential={handleGoogleCredential} onError={setError} />
       <div className="mt-3">

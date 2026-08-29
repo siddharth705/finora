@@ -71,7 +71,7 @@ describe('GoogleSignInButton', () => {
 
     expect(renderButton).toHaveBeenCalledWith(
       expect.any(HTMLElement),
-      expect.objectContaining({ text: 'signup_with', theme: 'outline', width: '288' }),
+      expect.objectContaining({ text: 'signup_with', theme: 'outline', width: '288', logo_alignment: 'center' }),
     );
   });
 

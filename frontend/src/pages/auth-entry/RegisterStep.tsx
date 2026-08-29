@@ -6,6 +6,7 @@ import { PasswordInput } from '../../components/PasswordInput';
 import { GoogleSignInButton } from '../../components/GoogleSignInButton';
 import { AppleSignInButton } from '../../components/AppleSignInButton';
 import { ReactivateAccountPrompt } from '../../components/ReactivateAccountPrompt';
+import { AuthDivider } from './AuthDivider';
 import { AUTH_ACCOUNT_DEACTIVATED } from '../../api/errorCodes';
 
 function passwordStrength(pw: string): { score: number; label: string; color: string } {
@@ -296,11 +297,7 @@ export function RegisterStep({ prefill, referralCode, onSuccess, onAccountExists
         {!loading && <ArrowRight size={15} />}
       </button>
 
-      <div className="flex items-center gap-3 my-5">
-        <div className="flex-1 h-px bg-border" />
-        <span className="text-xs text-muted">OR</span>
-        <div className="flex-1 h-px bg-border" />
-      </div>
+      <AuthDivider />
 
       <GoogleSignInButton text="signup_with" onCredential={handleGoogleCredential} onError={setError} />
       <div className="mt-3">
