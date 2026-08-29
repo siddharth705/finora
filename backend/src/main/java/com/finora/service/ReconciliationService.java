@@ -699,7 +699,11 @@ public class ReconciliationService {
                 if (last4 != null) cardLast4ByAccountId.put(s.getAccountId(), last4);
             }
             for (StatementImport statement : ccStatements) {
-                if (statement.getTotalAmountDue() == null || statement.getPaymentDueDate() == null) continue;
+                // signum() <= 0 guards the ratio division just below from a zero divisor -- a
+                // statement with nothing owed (already paid off, or a $0 print) has no payment to
+                // find in the first place.
+                if (statement.getTotalAmountDue() == null || statement.getTotalAmountDue().signum() <= 0
+                        || statement.getPaymentDueDate() == null) continue;
 
                 String thisCardLast4 = cardLast4ByAccountId.get(statement.getAccountId());
                 List<Transaction> paymentCandidates = all.stream()
@@ -708,7 +712,20 @@ public class ReconciliationService {
                         .filter(t -> !claimedPaymentIds.contains(t.getId()))
                         .filter(t -> liveAccountIds.contains(t.getAccountId()))
                         .filter(t -> !t.getAccountId().equals(statement.getAccountId()))
-                        .filter(t -> t.getAmount().compareTo(statement.getTotalAmountDue()) == 0)
+                        // Roadmap Part 4's partial-payment/overpayment cases -- was an exact-amount
+                        // match only, so a real user paying just the minimum due (or clearing an
+                        // old balance on top of this one) matched nothing at all, and BOTH the
+                        // payment and the full unpaid statement balance were double-counted as real
+                        // spend. A ratio window, not a fixed rupee tolerance (unlike TRANSFER's
+                        // TRANSFER_AMOUNT_TOLERANCE): a statement's own total sets the only scale
+                        // that makes "how big a partial payment is plausible" mean anything -- see
+                        // CC_PAYMENT_MIN_PARTIAL_RATIO/CC_PAYMENT_MAX_OVERPAYMENT_RATIO's own doc
+                        // comments for why those two specific bounds.
+                        .filter(t -> {
+                            BigDecimal ratio = t.getAmount().divide(statement.getTotalAmountDue(), 4, java.math.RoundingMode.HALF_UP);
+                            return ratio.compareTo(ReconciliationPolicy.CC_PAYMENT_MIN_PARTIAL_RATIO) >= 0
+                                    && ratio.compareTo(ReconciliationPolicy.CC_PAYMENT_MAX_OVERPAYMENT_RATIO) <= 0;
+                        })
                         .filter(t -> Math.abs(ChronoUnit.DAYS.between(t.getTxnDate(), statement.getPaymentDueDate()))
                                 <= ReconciliationPolicy.CC_PAYMENT_DUE_DATE_WINDOW_DAYS)
                         // A candidate whose OWN description names a DIFFERENT known card is
@@ -728,14 +745,18 @@ public class ReconciliationService {
 
                 // A candidate whose description names THIS card wins outright over one that
                 // doesn't, even if the non-matching one is closer to the due date -- real
-                // evidence beats a coincidence. Among candidates tied on that (most commonly:
-                // neither has an identifiable fragment at all, the common case per last4CandidatesIn's
-                // own doc comment), closest to the printed due date wins, same tiebreak shape as
-                // the other passes above.
+                // evidence beats a coincidence. Failing that, an EXACT-amount candidate beats a
+                // partial/overpaid one -- the common, unambiguous case should never lose to a
+                // same-window partial/over candidate just because it happens to sit a day closer
+                // to the due date. Among whatever's left tied on both (most commonly: neither has
+                // an identifiable last-4 fragment, and both are exact matches, or both are
+                // partial/over by coincidence), closest to the printed due date wins, same
+                // tiebreak shape as the other passes above.
                 Transaction payment = paymentCandidates.stream()
                         .min(Comparator
                                 .comparing((Transaction t) -> thisCardLast4 == null
                                         || !last4CandidatesIn(t.getDescription()).contains(thisCardLast4))
+                                .thenComparing((Transaction t) -> t.getAmount().compareTo(statement.getTotalAmountDue()) != 0)
                                 .thenComparingLong(t -> Math.abs(ChronoUnit.DAYS.between(t.getTxnDate(), statement.getPaymentDueDate()))))
                         .orElseThrow();
                 boolean matchedByLast4 = thisCardLast4 != null
@@ -753,16 +774,33 @@ public class ReconciliationService {
                 long daysFromDue = Math.abs(ChronoUnit.DAYS.between(payment.getTxnDate(), statement.getPaymentDueDate()));
                 // EXACT, not MERCHANT_AND_AMOUNT, when the payment's own description names this
                 // specific card -- real positive evidence, not just amount+date proximity (see
-                // matchedByLast4 above). MERCHANT_AND_AMOUNT otherwise, unchanged: amount matches
-                // exactly (no delta), but there is a real date window to decay across, same
-                // reasoning the TRANSFER pass gives for reusing this tier for a non-merchant,
+                // matchedByLast4 above). MERCHANT_AND_AMOUNT otherwise, unchanged reasoning: the
+                // TRANSFER pass's own precedent for reusing this tier for a non-merchant,
                 // structural signal. Status stays CANDIDATE regardless either way -- see this
                 // pass's own comment above on why AUTO_CONFIRMED is out of scope for this slice;
-                // a last-4 match narrows WHICH card, it doesn't yet change that verdict.
+                // neither a last-4 match nor an exact amount changes that verdict.
                 ConfidenceScorer.MatchType matchType = matchedByLast4
                         ? ConfidenceScorer.MatchType.EXACT : ConfidenceScorer.MatchType.MERCHANT_AND_AMOUNT;
+                // The real gap between what was paid and what was owed, not the zero this pass
+                // hardcoded before partial/overpayment matching existed -- ConfidenceScorer's own
+                // amountFactor already scores a partial/overpaid match lower than an exact one
+                // (floored at 0.5, never below); this just wires the real number in instead of
+                // pretending every match is exact. matchedAmount is the STATEMENT's total, not the
+                // payment's own amount -- amountFactor's own doc comment: it's "how much was there
+                // to account for" that anchors the ratio, the same reasoning a partial refund's
+                // delta is measured against the original expense, not the smaller amount refunded.
+                BigDecimal amountDelta = payment.getAmount().subtract(statement.getTotalAmountDue()).abs();
                 int ccConfidence = ConfidenceScorer.score(matchType,
-                        payment.getAmount(), BigDecimal.ZERO, daysFromDue, ReconciliationPolicy.CC_PAYMENT_DUE_DATE_WINDOW_DAYS);
+                        statement.getTotalAmountDue(), amountDelta, daysFromDue, ReconciliationPolicy.CC_PAYMENT_DUE_DATE_WINDOW_DAYS);
+                // FULL / PARTIAL / OVERPAID for the explainability trail (roadmap Part 4) -- this
+                // pass doesn't attempt per-charge pro-rated netting the roadmap's original design
+                // sketched (the shipped v1 slice nets by excluding the PAYMENT transaction from
+                // cash flow entirely, not by partially discounting each charge -- see
+                // RefundNetting/ccPaymentFromTransactionIds), so a partial payment still links to
+                // every settled charge below, same as a full one; this field is what tells a
+                // reader of the graph that the link doesn't mean "the whole bill was paid."
+                String paymentStatus = amountDelta.signum() == 0 ? "FULL"
+                        : payment.getAmount().compareTo(statement.getTotalAmountDue()) < 0 ? "PARTIAL" : "OVERPAID";
                 Map<String, Object> explanation = new java.util.LinkedHashMap<>();
                 explanation.put("type", "CC_PAYMENT_MATCH");
                 explanation.put("statementImportId", statement.getId().toString());
@@ -770,6 +808,7 @@ public class ReconciliationService {
                 explanation.put("paymentDueDate", statement.getPaymentDueDate().toString());
                 explanation.put("daysFromDueDate", daysFromDue);
                 explanation.put("matchedByLast4", matchedByLast4);
+                explanation.put("paymentStatus", paymentStatus);
                 for (Transaction charge : settledCharges) {
                     if (charge.getId().equals(payment.getId())) continue; // a payment cannot settle itself
                     pendingEdges.add(new TransactionGraphService.PendingEdge(userId, payment.getId(), charge.getId(),

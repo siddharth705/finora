@@ -1190,6 +1190,138 @@ class ReconciliationServiceTest {
                 .findByStatementImportId(org.mockito.ArgumentMatchers.any());
     }
 
+    // --- Partial payment / overpayment (roadmap Part 4) -- was exact-amount-only, so a real user
+    // paying just the minimum due, or clearing an old balance on top of this one, matched nothing
+    // at all: both the payment AND the full unpaid statement balance were double-counted as real
+    // spend. See ReconciliationPolicy.CC_PAYMENT_MIN_PARTIAL_RATIO/MAX_OVERPAYMENT_RATIO for the
+    // bounds. ---
+
+    @Test
+    void reconcileForUser_matchesAPartialPayment_atTheMinimumDueRatioFloor() {
+        // 5% of 2500.00 = 125.00, exactly CC_PAYMENT_MIN_PARTIAL_RATIO's own floor -- a plausible
+        // minimum-due-only payment, not an exact settlement.
+        UUID cardAccountId = UUID.randomUUID();
+        UUID savingsAccountId = UUID.randomUUID();
+        com.finora.entity.StatementImport statement =
+                ccStatement(UUID.randomUUID(), cardAccountId, new BigDecimal("2500.00"), LocalDate.of(2026, 7, 15));
+        Transaction minimumDuePayment = txn(UUID.randomUUID(), savingsAccountId, LocalDate.of(2026, 7, 14),
+                new BigDecimal("125.00"), Transaction.Type.EXPENSE, "CREDIT CARD PAYMENT",
+                Instant.parse("2026-07-14T10:00:00Z"));
+        Transaction charge = txn(UUID.randomUUID(), cardAccountId, LocalDate.of(2026, 6, 20),
+                new BigDecimal("1500.00"), Transaction.Type.EXPENSE, "AMAZON", Instant.parse("2026-06-20T10:00:00Z"));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(minimumDuePayment));
+        when(statementImportRepository.findByUserIdAndTotalAmountDueIsNotNull(userId)).thenReturn(List.of(statement));
+        when(transactionRepository.findByStatementImportId(statement.getId())).thenReturn(List.of(charge));
+
+        reconciliationService.reconcileForUser(userId);
+
+        List<TransactionGraphService.PendingEdge> ccEdges = capturePendingEdges().stream()
+                .filter(e -> e.relationshipType() == TransactionRelationship.RelationshipType.CC_PAYMENT).toList();
+        assertThat(ccEdges).hasSize(1);
+        assertThat(ccEdges.get(0).fromTransactionId()).isEqualTo(minimumDuePayment.getId());
+        assertThat(ccEdges.get(0).explanation()).containsEntry("paymentStatus", "PARTIAL");
+        // amountFactor = 1 - (2375/2500) = 0.05, floored at 0.5 per ConfidenceScorer's own comment
+        // -- MERCHANT_AND_AMOUNT(0.90) * 0.5 * dateDecay(1,10)=0.97 -> round(90*0.5*0.97) = 44.
+        assertThat(ccEdges.get(0).confidence()).isEqualTo(44);
+    }
+
+    @Test
+    void reconcileForUser_ignoresAPayment_belowTheMinimumPartialRatio() {
+        UUID cardAccountId = UUID.randomUUID();
+        UUID savingsAccountId = UUID.randomUUID();
+        com.finora.entity.StatementImport statement =
+                ccStatement(UUID.randomUUID(), cardAccountId, new BigDecimal("2500.00"), LocalDate.of(2026, 7, 15));
+        // 4.99% of 2500.00 -- just under the 5% floor.
+        Transaction tooSmallPayment = txn(UUID.randomUUID(), savingsAccountId, LocalDate.of(2026, 7, 14),
+                new BigDecimal("124.00"), Transaction.Type.EXPENSE, "SOME OTHER EXPENSE",
+                Instant.parse("2026-07-14T10:00:00Z"));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(tooSmallPayment));
+        when(statementImportRepository.findByUserIdAndTotalAmountDueIsNotNull(userId)).thenReturn(List.of(statement));
+
+        reconciliationService.reconcileForUser(userId);
+
+        org.mockito.Mockito.verify(transactionGraphService, org.mockito.Mockito.never())
+                .linkAll(org.mockito.ArgumentMatchers.anyList());
+    }
+
+    @Test
+    void reconcileForUser_matchesAnOverpayment_upToTheMaxRatioCeiling() {
+        // 2.5x of 2500.00 = 6250.00, exactly CC_PAYMENT_MAX_OVERPAYMENT_RATIO's own ceiling --
+        // plausible if this payment also cleared an old balance.
+        UUID cardAccountId = UUID.randomUUID();
+        UUID savingsAccountId = UUID.randomUUID();
+        com.finora.entity.StatementImport statement =
+                ccStatement(UUID.randomUUID(), cardAccountId, new BigDecimal("2500.00"), LocalDate.of(2026, 7, 15));
+        Transaction overpayment = txn(UUID.randomUUID(), savingsAccountId, LocalDate.of(2026, 7, 14),
+                new BigDecimal("6250.00"), Transaction.Type.EXPENSE, "CREDIT CARD PAYMENT",
+                Instant.parse("2026-07-14T10:00:00Z"));
+        Transaction charge = txn(UUID.randomUUID(), cardAccountId, LocalDate.of(2026, 6, 20),
+                new BigDecimal("1500.00"), Transaction.Type.EXPENSE, "AMAZON", Instant.parse("2026-06-20T10:00:00Z"));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(overpayment));
+        when(statementImportRepository.findByUserIdAndTotalAmountDueIsNotNull(userId)).thenReturn(List.of(statement));
+        when(transactionRepository.findByStatementImportId(statement.getId())).thenReturn(List.of(charge));
+
+        reconciliationService.reconcileForUser(userId);
+
+        List<TransactionGraphService.PendingEdge> ccEdges = capturePendingEdges().stream()
+                .filter(e -> e.relationshipType() == TransactionRelationship.RelationshipType.CC_PAYMENT).toList();
+        assertThat(ccEdges).hasSize(1);
+        assertThat(ccEdges.get(0).fromTransactionId()).isEqualTo(overpayment.getId());
+        assertThat(ccEdges.get(0).explanation()).containsEntry("paymentStatus", "OVERPAID");
+    }
+
+    @Test
+    void reconcileForUser_ignoresAPayment_aboveTheMaxOverpaymentRatio() {
+        UUID cardAccountId = UUID.randomUUID();
+        UUID savingsAccountId = UUID.randomUUID();
+        com.finora.entity.StatementImport statement =
+                ccStatement(UUID.randomUUID(), cardAccountId, new BigDecimal("2500.00"), LocalDate.of(2026, 7, 15));
+        // 2.51x of 2500.00 -- just over the 2.5x ceiling.
+        Transaction tooLargePayment = txn(UUID.randomUUID(), savingsAccountId, LocalDate.of(2026, 7, 14),
+                new BigDecimal("6275.00"), Transaction.Type.EXPENSE, "SOME UNRELATED LARGE PAYMENT",
+                Instant.parse("2026-07-14T10:00:00Z"));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(tooLargePayment));
+        when(statementImportRepository.findByUserIdAndTotalAmountDueIsNotNull(userId)).thenReturn(List.of(statement));
+
+        reconciliationService.reconcileForUser(userId);
+
+        org.mockito.Mockito.verify(transactionGraphService, org.mockito.Mockito.never())
+                .linkAll(org.mockito.ArgumentMatchers.anyList());
+    }
+
+    @Test
+    void reconcileForUser_prefersAnExactMatch_overACloserByDatePartialPayment() {
+        // The partial payment is dated EXACTLY on the due date (closest possible); the exact
+        // payment is one day off. The plain due-date tiebreak would pick the partial one --
+        // exactness must override that, the same way a last-4 match overrides date proximity.
+        UUID cardAccountId = UUID.randomUUID();
+        UUID savingsAccountId = UUID.randomUUID();
+        com.finora.entity.StatementImport statement =
+                ccStatement(UUID.randomUUID(), cardAccountId, new BigDecimal("2500.00"), LocalDate.of(2026, 7, 15));
+        Transaction partialPayment = txn(UUID.randomUUID(), savingsAccountId, LocalDate.of(2026, 7, 15),
+                new BigDecimal("500.00"), Transaction.Type.EXPENSE, "CREDIT CARD PAYMENT",
+                Instant.parse("2026-07-15T10:00:00Z"));
+        Transaction exactPayment = txn(UUID.randomUUID(), savingsAccountId, LocalDate.of(2026, 7, 14),
+                new BigDecimal("2500.00"), Transaction.Type.EXPENSE, "CREDIT CARD PAYMENT",
+                Instant.parse("2026-07-14T10:00:00Z"));
+        Transaction charge = txn(UUID.randomUUID(), cardAccountId, LocalDate.of(2026, 6, 20),
+                new BigDecimal("1500.00"), Transaction.Type.EXPENSE, "AMAZON", Instant.parse("2026-06-20T10:00:00Z"));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any()))
+                .thenReturn(List.of(partialPayment, exactPayment));
+        when(statementImportRepository.findByUserIdAndTotalAmountDueIsNotNull(userId)).thenReturn(List.of(statement));
+        when(transactionRepository.findByStatementImportId(statement.getId())).thenReturn(List.of(charge));
+
+        reconciliationService.reconcileForUser(userId);
+
+        List<TransactionGraphService.PendingEdge> ccEdges = capturePendingEdges().stream()
+                .filter(e -> e.relationshipType() == TransactionRelationship.RelationshipType.CC_PAYMENT).toList();
+        assertThat(ccEdges).hasSize(1);
+        assertThat(ccEdges.get(0).fromTransactionId())
+                .as("the exact match wins despite being a day further from the due date")
+                .isEqualTo(exactPayment.getId());
+        assertThat(ccEdges.get(0).explanation()).containsEntry("paymentStatus", "FULL");
+    }
+
     @Test
     void reconcileForUser_excludesIncomeTypeRows_fromTheStatementsSettledCharges() {
         UUID cardAccountId = UUID.randomUUID();
