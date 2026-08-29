@@ -31,19 +31,19 @@ const SRC = join(__dirname);
 const ALLOWED = [
   'pages/landing/',   // marketing scope + the dashboard illustration's chart colours
   'theme-tokens.test.ts',
-  // Dashboard's Recent Transactions row renders a per-transaction category swatch from
-  // CategoryPalette.COLORS -- the backend's own fixed, closed set of 9 categorical hex values
-  // (see CategoryPalette.java). One of those 9 (blue, #2563eb) happens to collide with this
-  // file's banned literal list because it was ALSO the old brand primary before the
-  // graphite/paper rebrand -- coincidence of value, not a brand-token bypass. Same reasoning as
-  // the chart-series exemption above: a categorical swatch set needs literal colours by nature,
-  // and this one in particular must byte-for-byte match the backend's copy, not a rebrand-able
-  // token.
-  'pages/Dashboard.tsx',
-  // Same collision as pages/Dashboard.tsx above, one file earlier in the chain: this test's
-  // mocked `categoriesApi.options()` response must mirror the real backend's CategoryPalette.COLORS
-  // byte-for-byte (id 'blue' -> '#2563eb') for the test to mean anything, not a hardcoded brand
-  // reference that should track a rebrand.
+  // Dashboard's Recent Transactions row, and every category picker's colour swatch, renders from
+  // CategoryPalette.COLORS -- the backend's own fixed, closed set of 9 categorical hex values (see
+  // CategoryPalette.java), shared here via lib/categoryIcons.ts so it's declared once, not per
+  // consumer. One of those 9 (blue, #2563eb) happens to collide with this file's banned literal
+  // list because it was ALSO the old brand primary before the graphite/paper rebrand -- coincidence
+  // of value, not a brand-token bypass. Same reasoning as the chart-series exemption above: a
+  // categorical swatch set needs literal colours by nature, and this one in particular must
+  // byte-for-byte match the backend's copy, not a rebrand-able token.
+  'lib/categoryIcons.ts',
+  // Same collision as lib/categoryIcons.ts above: this test's mocked `categoriesApi.options()`
+  // response must mirror the real backend's CategoryPalette.COLORS byte-for-byte (id 'blue' ->
+  // '#2563eb') for the test to mean anything, not a hardcoded brand reference that should track a
+  // rebrand.
   'components/CategoryCreateEditPanel.test.tsx',
 ];
 
