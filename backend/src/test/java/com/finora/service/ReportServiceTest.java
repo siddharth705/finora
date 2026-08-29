@@ -11,6 +11,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -29,7 +30,9 @@ class ReportServiceTest {
         transactionRepository = mock(TransactionRepository.class);
         CategoryRepository categoryRepository = mock(CategoryRepository.class);
         when(categoryRepository.findByUserId(any())).thenReturn(List.of());
-        reportService = new ReportService(transactionRepository, categoryRepository);
+        TransactionGraphService transactionGraphService = mock(TransactionGraphService.class);
+        when(transactionGraphService.ccPaymentFromTransactionIds(any())).thenReturn(Set.of());
+        reportService = new ReportService(transactionRepository, categoryRepository, transactionGraphService);
     }
 
     private Transaction txn(BigDecimal amount, Transaction.Type type, Transaction.ReconciliationStatus status) {

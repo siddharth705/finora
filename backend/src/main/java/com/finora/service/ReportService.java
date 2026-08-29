@@ -21,10 +21,13 @@ public class ReportService {
 
     private final TransactionRepository transactionRepository;
     private final CategoryRepository categoryRepository;
+    private final TransactionGraphService transactionGraphService;
 
-    public ReportService(TransactionRepository transactionRepository, CategoryRepository categoryRepository) {
+    public ReportService(TransactionRepository transactionRepository, CategoryRepository categoryRepository,
+                          TransactionGraphService transactionGraphService) {
         this.transactionRepository = transactionRepository;
         this.categoryRepository = categoryRepository;
+        this.transactionGraphService = transactionGraphService;
     }
 
     @Transactional(readOnly = true)
@@ -49,8 +52,9 @@ public class ReportService {
         // is most of them.
         RefundNetting refunds = RefundNetting.from(transactionRepository.findByUserIdAndReconciliationStatusIn(
                 userId, java.util.List.of(Transaction.ReconciliationStatus.REFUND, Transaction.ReconciliationStatus.REVERSAL)));
+        List<Transaction> monthTxns = transactionRepository.findByUserIdAndTxnDateBetween(userId, from, to);
         List<Transaction> txns = RefundNetting.reportable(
-                transactionRepository.findByUserIdAndTxnDateBetween(userId, from, to));
+                monthTxns, transactionGraphService.ccPaymentFromTransactionIds(monthTxns));
 
         BigDecimal income = txns.stream().filter(t -> t.getTxnType() == Transaction.Type.INCOME)
                 .map(refunds::reportableAmount).reduce(BigDecimal.ZERO, BigDecimal::add);
