@@ -854,7 +854,11 @@ export default function Dashboard() {
               <p className="text-xs text-muted mb-3">Get personalized insights to improve your financial health.</p>
               <ul className="space-y-2">
                 {[
-                  'Upload or import more transactions to get AI-powered insights.',
+                  // Bug fix: this used to say "get AI-powered insights", contradicting the honest
+                  // "rule-based statistics, not an LLM assistant" framing the Insights page and
+                  // mobile screen both state plainly -- someone who only ever saw this Dashboard
+                  // card would come away with the wrong idea about what the feature actually is.
+                  'Upload or import more transactions to see spending insights.',
                   'Track your spending to identify patterns and save more.',
                   'Set budgets to stay in control of your finances.',
                 ].map((tip) => (
