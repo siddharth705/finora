@@ -2,8 +2,10 @@ import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { Pencil, Trash2, X, ChevronLeft, ChevronRight, HelpCircle } from 'lucide-react';
-import { transactionsApi, categoriesApi, type TransactionFilters, type UpdateTransactionPayload, type TransactionExplanation } from '../api/endpoints';
+import { transactionsApi, type TransactionFilters, type UpdateTransactionPayload, type TransactionExplanation } from '../api/endpoints';
 import { AskOnceCard } from '../components/AskOnceCard';
+import { CategoryCombobox } from '../components/CategoryCombobox';
+import { CategoryCreateEditPanel } from '../components/CategoryCreateEditPanel';
 import { MerchantGroupReviewCard } from '../components/MerchantGroupReviewCard';
 import { MerchantLogo } from '../components/MerchantLogo';
 import type { Transaction } from '../types';
@@ -354,23 +356,11 @@ function EditTransactionModal({
   const [amount, setAmount] = useState(String(transaction.amount));
   const [type, setType] = useState<'INCOME' | 'EXPENSE'>(transaction.type);
   const [category, setCategory] = useState(transaction.categoryName);
+  const [creatingCategory, setCreatingCategory] = useState<string | null>(null);
   const [notes, setNotes] = useState(transaction.notes ?? '');
   const [tagsInput, setTagsInput] = useState((transaction.tags ?? []).join(', '));
-  const [categories, setCategories] = useState<string[]>([]);
-  const [categoriesFailed, setCategoriesFailed] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    // Bug fix: this was `.catch(() => {})`, which left the dropdown empty and made "the request
-    // failed" look exactly like "you have no categories" -- and the user's only recourse for an
-    // apparently-empty list is to go create categories that already exist. The edit modal still
-    // opens and still saves (the current category is preserved by the option below), so this is a
-    // notice rather than a blocker.
-    categoriesApi.list()
-      .then((cats) => setCategories(cats.map((c) => c.name)))
-      .catch(() => setCategoriesFailed(true));
-  }, []);
 
   async function save() {
     setSaving(true);
@@ -439,14 +429,20 @@ function EditTransactionModal({
             </div>
             <div>
               <label htmlFor="edit-txn-category" className="block text-[11px] uppercase text-muted mb-1">Category</label>
-              <select id="edit-txn-category" value={category} onChange={(e) => setCategory(e.target.value)} className="bg-card text-ink border border-border rounded-lg px-3 py-2 text-sm w-full">
-                {!categories.includes(category) && <option value={category}>{category}</option>}
-                {categories.map((c) => <option key={c} value={c}>{c}</option>)}
-              </select>
-              {categoriesFailed && (
-                <p className="text-[11px] text-warning mt-1">
-                  Couldn't load your categories — only the current one is shown.
-                </p>
+              {creatingCategory !== null ? (
+                <CategoryCreateEditPanel
+                  mode="create"
+                  initialName={creatingCategory}
+                  onSaved={(c) => { setCategory(c.name); setCreatingCategory(null); }}
+                  onCancel={() => setCreatingCategory(null)}
+                />
+              ) : (
+                <CategoryCombobox
+                  inputId="edit-txn-category"
+                  value={category}
+                  onChange={setCategory}
+                  onCreateNew={setCreatingCategory}
+                />
               )}
             </div>
             <div className="col-span-2">

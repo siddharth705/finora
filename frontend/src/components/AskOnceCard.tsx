@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { HelpCircle, Check, ChevronLeft, ChevronRight } from 'lucide-react';
-import { transactionsApi, categoriesApi } from '../api/endpoints';
+import { transactionsApi } from '../api/endpoints';
+import { CategoryCombobox } from './CategoryCombobox';
+import { CategoryCreateEditPanel } from './CategoryCreateEditPanel';
 import type { Transaction } from '../types';
 
 const PAGE_SIZE = 10;
@@ -21,22 +23,20 @@ function fmt(n: number) {
 export function AskOnceCard() {
   const queryClient = useQueryClient();
   const [items, setItems] = useState<Transaction[]>([]);
-  const [categories, setCategories] = useState<string[]>([]);
   const [picks, setPicks] = useState<Record<string, string>>({});
+  const [creatingFor, setCreatingFor] = useState<string | null>(null);
+  const [pendingText, setPendingText] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
   function load() {
     setLoading(true);
-    Promise.all([transactionsApi.needsReview(), categoriesApi.list()])
-      .then(([txns, cats]) => {
-        setItems(txns);
-        setCategories(cats.map((c) => c.name));
-      })
-      // A failed fetch here just leaves items/categories at their default [] -- the widget
-      // already renders nothing when items.length === 0, so this "no card" fallback for a
-      // Dashboard nice-to-have is preferable to surfacing an error banner for it.
+    transactionsApi.needsReview()
+      .then(setItems)
+      // A failed fetch here just leaves items at its default [] -- the widget already renders
+      // nothing when items.length === 0, so this "no card" fallback for a Dashboard nice-to-have
+      // is preferable to surfacing an error banner for it.
       .catch(() => {})
       .finally(() => setLoading(false));
   }
@@ -122,14 +122,22 @@ export function AskOnceCard() {
               <p className="text-sm font-medium text-ink truncate">{t.description || t.merchant}</p>
               <p className="text-[11px] text-muted">{t.date} · {fmt(t.amount)}</p>
             </div>
-            <select
-              value={picks[t.id] ?? ''}
-              onChange={(e) => setPicks((p) => ({ ...p, [t.id]: e.target.value }))}
-              className="bg-card text-ink border border-border rounded-lg px-2.5 py-1.5 text-xs flex-shrink-0"
-            >
-              <option value="" disabled>Choose category…</option>
-              {categories.map((c) => <option key={c} value={c}>{c}</option>)}
-            </select>
+            <div className="flex-shrink-0 w-40">
+              {creatingFor === t.id ? (
+                <CategoryCreateEditPanel
+                  mode="create"
+                  initialName={pendingText[t.id] ?? ''}
+                  onSaved={(c) => { setPicks((p) => ({ ...p, [t.id]: c.name })); setCreatingFor(null); }}
+                  onCancel={() => setCreatingFor(null)}
+                />
+              ) : (
+                <CategoryCombobox
+                  value={picks[t.id] ?? ''}
+                  onChange={(name) => setPicks((p) => ({ ...p, [t.id]: name }))}
+                  onCreateNew={(text) => { setPendingText((p) => ({ ...p, [t.id]: text })); setCreatingFor(t.id); }}
+                />
+              )}
+            </div>
             <button
               onClick={() => resolve(t.id)}
               disabled={!picks[t.id]}

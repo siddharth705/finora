@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Users, Check } from 'lucide-react';
-import { transactionsApi, categoriesApi } from '../api/endpoints';
+import { transactionsApi } from '../api/endpoints';
+import { CategoryCombobox } from './CategoryCombobox';
+import { CategoryCreateEditPanel } from './CategoryCreateEditPanel';
 import type { MerchantGroup } from '../types';
 
 /**
@@ -15,19 +17,17 @@ import type { MerchantGroup } from '../types';
 export function MerchantGroupReviewCard() {
   const queryClient = useQueryClient();
   const [groups, setGroups] = useState<MerchantGroup[]>([]);
-  const [categories, setCategories] = useState<string[]>([]);
   const [picks, setPicks] = useState<Record<string, string>>({});
+  const [creatingFor, setCreatingFor] = useState<string | null>(null);
+  const [pendingText, setPendingText] = useState<Record<string, string>>({});
   const [applying, setApplying] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   function load() {
     setLoading(true);
-    Promise.all([transactionsApi.groupsNeedsReview(), categoriesApi.list()])
-      .then(([g, cats]) => {
-        setGroups(g);
-        setCategories(cats.map((c) => c.name));
-      })
+    transactionsApi.groupsNeedsReview()
+      .then(setGroups)
       .catch(() => {})
       .finally(() => setLoading(false));
   }
@@ -72,14 +72,22 @@ export function MerchantGroupReviewCard() {
               <p className="text-sm font-medium text-ink truncate">{g.merchantName}</p>
               <p className="text-[11px] text-muted">{g.transactionIds.length} transactions</p>
             </div>
-            <select
-              value={picks[g.merchantId] ?? ''}
-              onChange={(e) => setPicks((p) => ({ ...p, [g.merchantId]: e.target.value }))}
-              className="bg-card text-ink border border-border rounded-lg px-2.5 py-1.5 text-xs flex-shrink-0"
-            >
-              <option value="" disabled>Choose category…</option>
-              {categories.map((c) => <option key={c} value={c}>{c}</option>)}
-            </select>
+            <div className="flex-shrink-0 w-40">
+              {creatingFor === g.merchantId ? (
+                <CategoryCreateEditPanel
+                  mode="create"
+                  initialName={pendingText[g.merchantId] ?? ''}
+                  onSaved={(c) => { setPicks((p) => ({ ...p, [g.merchantId]: c.name })); setCreatingFor(null); }}
+                  onCancel={() => setCreatingFor(null)}
+                />
+              ) : (
+                <CategoryCombobox
+                  value={picks[g.merchantId] ?? ''}
+                  onChange={(name) => setPicks((p) => ({ ...p, [g.merchantId]: name }))}
+                  onCreateNew={(text) => { setPendingText((p) => ({ ...p, [g.merchantId]: text })); setCreatingFor(g.merchantId); }}
+                />
+              )}
+            </div>
             <button
               onClick={() => apply(g)}
               disabled={!picks[g.merchantId] || applying === g.merchantId}
