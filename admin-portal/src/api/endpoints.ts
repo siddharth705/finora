@@ -279,7 +279,8 @@ export const adminSubscriptionsApi = {
 
 // D-28 PR4-C. REFERRAL_MANAGEMENT_VIEW/_MANAGE-gated (V101), same split as adminSubscriptionsApi.
 export const adminReferralsApi = {
-  list: () => api.get<AdminReferralSummaryDto[]>('/admin/referrals').then((r) => r.data),
+  list: (page: number, size: number) =>
+    api.get<PagedResponse<AdminReferralSummaryDto>>('/admin/referrals', { params: { page, size } }).then((r) => r.data),
   creditReward: (referralId: string, amount: number, reason: string) =>
     api.post(`/admin/referrals/${referralId}/credit`, { amount, reason }),
 };
