@@ -15,9 +15,25 @@ vi.mock('../lib/googleIdentity', () => ({
   loadGoogleIdentityServices: vi.fn(),
 }));
 
+// jsdom implements neither ResizeObserver nor real layout, so a real one would never fire and
+// getBoundingClientRect() would always read 0. This stub records the callback per observed
+// element and lets each test fire it with whatever contentRect.width it wants to simulate --
+// closest thing to controlling "what the browser measured" without a real layout engine.
+let resizeCallbacks: Map<Element, ResizeObserverCallback>;
+function fireResize(el: Element, width: number) {
+  resizeCallbacks.get(el)?.([{ contentRect: { width } } as ResizeObserverEntry], {} as ResizeObserver);
+}
+
 beforeEach(() => {
   vi.mocked(isGoogleLoginConfigured).mockReset();
   vi.mocked(loadGoogleIdentityServices).mockReset();
+  resizeCallbacks = new Map();
+  vi.stubGlobal('ResizeObserver', class {
+    constructor(private callback: ResizeObserverCallback) {}
+    observe(el: Element) { resizeCallbacks.set(el, this.callback); }
+    unobserve(el: Element) { resizeCallbacks.delete(el); }
+    disconnect() { resizeCallbacks.clear(); }
+  });
 });
 
 afterEach(() => {
@@ -36,19 +52,61 @@ describe('GoogleSignInButton', () => {
     expect(loadGoogleIdentityServices).not.toHaveBeenCalled();
   });
 
-  it('initializes GIS with the configured client id and renders the button', async () => {
+  it('initializes GIS with the configured client id and renders the button at the observed width', async () => {
     vi.stubEnv('VITE_GOOGLE_LOGIN_CLIENT_ID', 'test-client-id.apps.googleusercontent.com');
     vi.mocked(isGoogleLoginConfigured).mockReturnValue(true);
     const initialize = vi.fn();
     const renderButton = vi.fn();
     vi.mocked(loadGoogleIdentityServices).mockResolvedValue({ initialize, renderButton } as any);
 
-    render(<GoogleSignInButton text="signup_with" onCredential={vi.fn()} onError={vi.fn()} />);
+    const { container } = render(<GoogleSignInButton text="signup_with" onCredential={vi.fn()} onError={vi.fn()} />);
 
     await waitFor(() => expect(initialize).toHaveBeenCalledWith(
       expect.objectContaining({ client_id: 'test-client-id.apps.googleusercontent.com' })
     ));
-    expect(renderButton).toHaveBeenCalledWith(expect.any(HTMLElement), expect.objectContaining({ text: 'signup_with' }));
+
+    // Real ResizeObserver fires once as soon as observe() is called, reporting whatever width the
+    // browser actually settled on -- this simulates that first callback.
+    fireResize(container.querySelector('[aria-busy]')!, 288);
+
+    expect(renderButton).toHaveBeenCalledWith(
+      expect.any(HTMLElement),
+      expect.objectContaining({ text: 'signup_with', theme: 'outline', width: '288', logo_alignment: 'center' }),
+    );
+  });
+
+  it('re-renders at the new width when the container is resized', async () => {
+    vi.stubEnv('VITE_GOOGLE_LOGIN_CLIENT_ID', 'test-client-id.apps.googleusercontent.com');
+    vi.mocked(isGoogleLoginConfigured).mockReturnValue(true);
+    const initialize = vi.fn();
+    const renderButton = vi.fn();
+    vi.mocked(loadGoogleIdentityServices).mockResolvedValue({ initialize, renderButton } as any);
+
+    const { container } = render(<GoogleSignInButton text="signin_with" onCredential={vi.fn()} onError={vi.fn()} />);
+    await waitFor(() => expect(initialize).toHaveBeenCalled());
+    const target = container.querySelector('[aria-busy]')!;
+
+    // Simulates exactly the production bug this fix closes: an early, too-narrow measurement
+    // (the container hadn't finished laying out yet) followed by the real, settled width.
+    fireResize(target, 107);
+    fireResize(target, 304);
+
+    expect(renderButton).toHaveBeenLastCalledWith(expect.any(HTMLElement), expect.objectContaining({ width: '304' }));
+  });
+
+  it('caps the rendered width at 400px, matching GIS documented max', async () => {
+    vi.stubEnv('VITE_GOOGLE_LOGIN_CLIENT_ID', 'test-client-id.apps.googleusercontent.com');
+    vi.mocked(isGoogleLoginConfigured).mockReturnValue(true);
+    const initialize = vi.fn();
+    const renderButton = vi.fn();
+    vi.mocked(loadGoogleIdentityServices).mockResolvedValue({ initialize, renderButton } as any);
+
+    const { container } = render(<GoogleSignInButton text="signin_with" onCredential={vi.fn()} onError={vi.fn()} />);
+    await waitFor(() => expect(initialize).toHaveBeenCalled());
+
+    fireResize(container.querySelector('[aria-busy]')!, 900);
+
+    expect(renderButton).toHaveBeenCalledWith(expect.any(HTMLElement), expect.objectContaining({ width: '400' }));
   });
 
   it('hands the credential straight to onCredential when Google calls back', async () => {
