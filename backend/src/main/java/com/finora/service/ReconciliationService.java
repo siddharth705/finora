@@ -275,43 +275,56 @@ public class ReconciliationService {
             if (t.getIsDuplicateOf() != null) continue; // already resolved by a prior run
             byDuplicateKey.computeIfAbsent(duplicateKey(t), k -> new java.util.ArrayList<>()).add(t);
         }
-        for (List<Transaction> group : byDuplicateKey.values()) {
-            if (group.size() < 2) continue;
-            // Canonical selection: higher SourceTrust wins outright (Phase 1 of the reconciliation
-            // roadmap); creation order is only the tiebreak between two rows from the same source,
-            // which is what this comparison degrades to when SourceTrust can't distinguish them --
-            // exactly the behavior this pass had before source trust existed.
-            Transaction canonical = group.stream()
-                    .min(Comparator.<Transaction>comparingInt(t -> -SourceTrust.of(t.getSource()))
-                            .thenComparing(Transaction::getCreatedAt))
-                    .orElseThrow();
-            for (Transaction t : group) {
-                if (t == canonical || t.getIsDuplicateOf() != null) continue;
-                // A human already ruled on this row and said it is a real, separate transaction.
-                // Nothing this pass can observe outranks that: it sees identical date, amount and
-                // description and cannot distinguish "the same statement uploaded twice" from "two
-                // metro fares on one day", which is why it needs to be told rather than left to
-                // infer. Marking it anyway is what made the ledger and the dashboard disagree by
-                // exactly the rows the user had asked for -- see V65.
-                //
-                // Checked here, inside the marking loop, rather than by excluding these rows from
-                // the grouping above: a confirmed row still belongs in its group so it can serve as
-                // `canonical`, and so a THIRD, genuinely accidental copy still gets flagged against
-                // it. Skipping the mark is the whole of the change; skipping the row is not.
-                if (t.getNotDuplicateConfirmedAt() != null) continue;
-                t.setIsDuplicateOf(canonical.getId());
-                t.setReconciliationStatus(Transaction.ReconciliationStatus.DUPLICATE);
-                Map<String, Object> explanation = ReconciliationExplanation.duplicate(canonical.getId());
-                t.setReconciliationExplanation(explanation);
-                dirty.add(t);
-                newDuplicates++;
-                // Exact composite-key match: no amount delta, no date window to decay across.
-                int duplicateConfidence = ConfidenceScorer.score(ConfidenceScorer.MatchType.EXACT,
-                        t.getAmount(), BigDecimal.ZERO, 0, 0);
-                pendingEdges.add(new TransactionGraphService.PendingEdge(userId, t.getId(), canonical.getId(),
-                        TransactionRelationship.RelationshipType.DUPLICATE, t.getAmount(), duplicateConfidence,
-                        SourceTrust.of(t.getSource()), statusFor(duplicateConfidence),
-                        TransactionRelationship.DetectionMethod.RULE_ENGINE, explanation));
+        for (List<Transaction> coarseGroup : byDuplicateKey.values()) {
+            if (coarseGroup.size() < 2) continue;
+            for (List<Transaction> group : splitByDiscriminator(coarseGroup)) {
+                if (group.size() < 2) continue;
+                // Canonical selection: higher SourceTrust wins outright (Phase 1 of the reconciliation
+                // roadmap); creation order is only the tiebreak between two rows from the same source,
+                // which is what this comparison degrades to when SourceTrust can't distinguish them --
+                // exactly the behavior this pass had before source trust existed.
+                Transaction canonical = group.stream()
+                        .min(Comparator.<Transaction>comparingInt(t -> -SourceTrust.of(t.getSource()))
+                                .thenComparing(Transaction::getCreatedAt))
+                        .orElseThrow();
+                for (Transaction t : group) {
+                    if (t == canonical || t.getIsDuplicateOf() != null) continue;
+                    // A human already ruled on this row and said it is a real, separate transaction.
+                    // Nothing this pass can observe outranks that: it sees identical date, amount and
+                    // description and cannot distinguish "the same statement uploaded twice" from "two
+                    // metro fares on one day", which is why it needs to be told rather than left to
+                    // infer. Marking it anyway is what made the ledger and the dashboard disagree by
+                    // exactly the rows the user had asked for -- see V65.
+                    //
+                    // Checked here, inside the marking loop, rather than by excluding these rows from
+                    // the grouping above: a confirmed row still belongs in its group so it can serve as
+                    // `canonical`, and so a THIRD, genuinely accidental copy still gets flagged against
+                    // it. Skipping the mark is the whole of the change; skipping the row is not.
+                    if (t.getNotDuplicateConfirmedAt() != null) continue;
+                    t.setIsDuplicateOf(canonical.getId());
+                    t.setReconciliationStatus(Transaction.ReconciliationStatus.DUPLICATE);
+                    // t and canonical are members of the same splitByDiscriminator sub-group, so
+                    // when that group was split by balance/reference, EVERY member (both of these
+                    // included) shares the identical value by construction -- a direct pairwise
+                    // comparison here is equivalent to asking "was this group split by X" without
+                    // splitByDiscriminator needing to report its own provenance back to callers.
+                    boolean sameBalance = t.getBalanceAfter() != null && canonical.getBalanceAfter() != null
+                            && t.getBalanceAfter().compareTo(canonical.getBalanceAfter()) == 0;
+                    boolean sameReferenceNumber = t.getReferenceNumber() != null && canonical.getReferenceNumber() != null
+                            && t.getReferenceNumber().equals(canonical.getReferenceNumber());
+                    Map<String, Object> explanation = ReconciliationExplanation.duplicate(
+                            canonical.getId(), sameBalance, sameReferenceNumber);
+                    t.setReconciliationExplanation(explanation);
+                    dirty.add(t);
+                    newDuplicates++;
+                    // Exact composite-key match: no amount delta, no date window to decay across.
+                    int duplicateConfidence = ConfidenceScorer.score(ConfidenceScorer.MatchType.EXACT,
+                            t.getAmount(), BigDecimal.ZERO, 0, 0);
+                    pendingEdges.add(new TransactionGraphService.PendingEdge(userId, t.getId(), canonical.getId(),
+                            TransactionRelationship.RelationshipType.DUPLICATE, t.getAmount(), duplicateConfidence,
+                            SourceTrust.of(t.getSource()), statusFor(duplicateConfidence),
+                            TransactionRelationship.DetectionMethod.RULE_ENGINE, explanation));
+                }
             }
         }
 
@@ -1021,6 +1034,52 @@ public class ReconciliationService {
         if (t.getDescription() == null) return "no-desc-" + t.getId();
         return t.getAccountId() + "|" + t.getTxnDate() + "|"
                 + t.getAmount().stripTrailingZeros().toPlainString() + "|" + t.getDescription();
+    }
+
+    /**
+     * Bug fix. Same account+date+amount+description is not always the same transaction: a bank
+     * can legitimately present several separate transactions on one day that share all four --
+     * confirmed against two independent real statements (a PNB savings account with four ACH
+     * mandate debits, and an HDFC savings account with four mutual-fund SIP installments), both
+     * distinguished in the statement only by a declining running balance or a per-row reference
+     * number. Grouping every one of them as a single duplicate cluster silently dropped the real
+     * ones from every total.
+     *
+     * <p>Splits a {@code duplicateKey}-matched group by {@code balanceAfter} (the stronger
+     * signal -- present whenever the statement prints a running balance, true for nearly every
+     * savings-account import) or, failing that, {@code referenceNumber} (covers statements with a
+     * per-row reference but no balance column, most commonly credit-card statements). Both are
+     * best-effort, nullable staging-time extractions already carried on {@link Transaction} (see
+     * its own doc comment) -- this does not change what is captured, only uses what was already
+     * there.
+     *
+     * <p><b>Only splits when EVERY member of the group carries the discriminator.</b> Not "when
+     * present" -- a group is split by a field only when every row in it has a value for that
+     * field, never partially. A Gmail receipt import never captures a balance or reference
+     * number; a later bank-statement import of that SAME real transaction does. Splitting
+     * whenever either side merely lacks the value (rather than when the two sides actively
+     * disagree) would leave that genuine duplicate unmatched -- silently double-counting it in
+     * income/expense totals and the account balance, a worse failure than the false-positive
+     * grouping this method exists to fix. A group with incomplete discriminator data is left
+     * exactly as it was before this method existed: one cluster, matching everything else this
+     * pass already did.
+     */
+    private static List<List<Transaction>> splitByDiscriminator(List<Transaction> group) {
+        if (group.stream().allMatch(t -> t.getBalanceAfter() != null)) {
+            return groupBy(group, t -> "bal:" + t.getBalanceAfter().stripTrailingZeros().toPlainString());
+        }
+        if (group.stream().allMatch(t -> t.getReferenceNumber() != null && !t.getReferenceNumber().isBlank())) {
+            return groupBy(group, t -> "ref:" + t.getReferenceNumber());
+        }
+        return List.of(group);
+    }
+
+    private static List<List<Transaction>> groupBy(List<Transaction> group, java.util.function.Function<Transaction, String> keyFn) {
+        Map<String, List<Transaction>> byKey = new HashMap<>();
+        for (Transaction t : group) {
+            byKey.computeIfAbsent(keyFn.apply(t), k -> new java.util.ArrayList<>()).add(t);
+        }
+        return new java.util.ArrayList<>(byKey.values());
     }
 
     // --- Date-windowed candidate lookup -------------------------------------------------------

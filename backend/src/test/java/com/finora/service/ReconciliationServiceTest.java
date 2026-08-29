@@ -14,6 +14,7 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -166,6 +167,11 @@ class ReconciliationServiceTest {
         assertThat(original.getIsDuplicateOf()).isNull();
         assertThat(duplicate.getIsDuplicateOf()).isEqualTo(original.getId());
         assertThat(duplicate.getReconciliationStatus()).isEqualTo(Transaction.ReconciliationStatus.DUPLICATE);
+        // Neither row has a balance or reference number, so the match never needed either
+        // signal -- the explanation must not claim a check that never ran.
+        @SuppressWarnings("unchecked")
+        Map<String, Object> reason = (Map<String, Object>) duplicate.getReconciliationExplanation().get("reason");
+        assertThat(reason).doesNotContainKeys("sameBalance", "sameReferenceNumber");
     }
 
     /**
@@ -251,6 +257,127 @@ class ReconciliationServiceTest {
         reconciliationService.reconcileForUser(userId);
 
         assertThat(duplicate.getIsDuplicateOf()).isEqualTo(original.getId());
+    }
+
+    // --- Batch-processed same-day/same-amount/same-description rows are not one duplicate group.
+    // Real bug: a PNB statement with four separate ACH mandate debits of ₹500 each on the same
+    // day, identical description ("ACH/INDIAN CLEARING CORP/30473", no per-row reference number
+    // printed), distinguished ONLY by their declining running balance. The old key (account+date+
+    // amount+description) grouped all four as one duplicate cluster and silently dropped three
+    // real transactions from every total. A second, independent real statement (HDFC, four SIP
+    // installments to the same mutual fund on one day, same amount, same narration) reproduces the
+    // identical collision -- confirming this is a general class of bug, not one bank's quirk. ---
+
+    @Test
+    void reconcileForUser_doesNotFlagAsDuplicate_whenBalanceAfterDiffers_evenWithIdenticalDateAmountDescription() {
+        UUID accountId = UUID.randomUUID();
+        LocalDate date = LocalDate.of(2026, 7, 28);
+
+        Transaction first = txn(UUID.randomUUID(), accountId, date, new BigDecimal("500.00"),
+                Transaction.Type.EXPENSE, "ACH/INDIAN CLEARING CORP/30473", Instant.parse("2026-08-01T10:00:00Z"));
+        first.setBalanceAfter(new BigDecimal("9575.86"));
+        Transaction second = txn(UUID.randomUUID(), accountId, date, new BigDecimal("500.00"),
+                Transaction.Type.EXPENSE, "ACH/INDIAN CLEARING CORP/30473", Instant.parse("2026-08-01T10:00:01Z"));
+        second.setBalanceAfter(new BigDecimal("9075.86"));
+        Transaction third = txn(UUID.randomUUID(), accountId, date, new BigDecimal("500.00"),
+                Transaction.Type.EXPENSE, "ACH/INDIAN CLEARING CORP/30473", Instant.parse("2026-08-01T10:00:02Z"));
+        third.setBalanceAfter(new BigDecimal("8575.86"));
+        Transaction fourth = txn(UUID.randomUUID(), accountId, date, new BigDecimal("500.00"),
+                Transaction.Type.EXPENSE, "ACH/INDIAN CLEARING CORP/30473", Instant.parse("2026-08-01T10:00:03Z"));
+        fourth.setBalanceAfter(new BigDecimal("8075.86"));
+
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any()))
+                .thenReturn(List.of(first, second, third, fourth));
+
+        reconciliationService.reconcileForUser(userId);
+
+        assertThat(first.getIsDuplicateOf()).isNull();
+        assertThat(second.getIsDuplicateOf()).isNull();
+        assertThat(third.getIsDuplicateOf()).isNull();
+        assertThat(fourth.getIsDuplicateOf()).isNull();
+    }
+
+    @Test
+    void reconcileForUser_stillFlagsAsDuplicate_whenBalanceAfterAlsoMatches() {
+        // The true re-import case must not regress: the same statement uploaded twice produces
+        // identical balanceAfter both times, and must still collapse to one duplicate group.
+        UUID accountId = UUID.randomUUID();
+        LocalDate date = LocalDate.of(2026, 7, 28);
+
+        Transaction original = txn(UUID.randomUUID(), accountId, date, new BigDecimal("500.00"),
+                Transaction.Type.EXPENSE, "ACH/INDIAN CLEARING CORP/30473", Instant.parse("2026-08-01T10:00:00Z"));
+        original.setBalanceAfter(new BigDecimal("9575.86"));
+        Transaction reimported = txn(UUID.randomUUID(), accountId, date, new BigDecimal("500.00"),
+                Transaction.Type.EXPENSE, "ACH/INDIAN CLEARING CORP/30473", Instant.parse("2026-08-02T10:00:00Z"));
+        reimported.setBalanceAfter(new BigDecimal("9575.86"));
+
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any()))
+                .thenReturn(List.of(original, reimported));
+
+        reconciliationService.reconcileForUser(userId);
+
+        assertThat(reimported.getIsDuplicateOf()).isEqualTo(original.getId());
+        @SuppressWarnings("unchecked")
+        Map<String, Object> reason = (Map<String, Object>) reimported.getReconciliationExplanation().get("reason");
+        assertThat(reason)
+                .as("the group needed splitting by balance to reach this pairing -- the evidence should say so")
+                .containsEntry("sameBalance", true);
+    }
+
+    @Test
+    void reconcileForUser_doesNotFlagAsDuplicate_whenReferenceNumberDiffers_andNeitherHasABalance() {
+        // Credit-card-style statements often print a per-row reference/auth code but no running
+        // balance column -- the reference number is the only available discriminator there.
+        UUID accountId = UUID.randomUUID();
+        LocalDate date = LocalDate.of(2026, 7, 27);
+
+        Transaction first = txn(UUID.randomUUID(), accountId, date, new BigDecimal("2500.00"),
+                Transaction.Type.EXPENSE, "NET PAYIN TO NSE MF A/C -11111111111111-",
+                Instant.parse("2026-08-01T10:00:00Z"));
+        first.setReferenceNumber("0000000000000001");
+        Transaction second = txn(UUID.randomUUID(), accountId, date, new BigDecimal("2500.00"),
+                Transaction.Type.EXPENSE, "NET PAYIN TO NSE MF A/C -11111111111111-",
+                Instant.parse("2026-08-01T10:00:01Z"));
+        second.setReferenceNumber("0000000000000002");
+
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any()))
+                .thenReturn(List.of(first, second));
+
+        reconciliationService.reconcileForUser(userId);
+
+        assertThat(first.getIsDuplicateOf()).isNull();
+        assertThat(second.getIsDuplicateOf()).isNull();
+    }
+
+    @Test
+    void reconcileForUser_stillFlagsAsDuplicate_whenOnlyOneSideHasABalance() {
+        // Regression guard for the balance/reference discriminator above: a Gmail receipt import
+        // never captures a running balance, but a later bank-statement import of the SAME real
+        // transaction does. Splitting the duplicate key whenever either side merely LACKS the
+        // discriminator (rather than when the two sides actively disagree) would silently double
+        // this transaction into income/expense totals and the account balance -- worse than the
+        // bug this discriminator was added to fix.
+        UUID accountId = UUID.randomUUID();
+        LocalDate date = LocalDate.of(2026, 7, 10);
+
+        Transaction gmailReceipt = txn(UUID.randomUUID(), accountId, date, new BigDecimal("499.00"),
+                Transaction.Type.EXPENSE, "AMAZON ORDER 4471", Instant.parse("2026-07-10T09:00:00Z"));
+        gmailReceipt.setSource(Transaction.Source.GMAIL_IMPORT);
+        // No balanceAfter, no referenceNumber -- Gmail receipts never carry either.
+
+        Transaction bankStatement = txn(UUID.randomUUID(), accountId, date, new BigDecimal("499.00"),
+                Transaction.Type.EXPENSE, "AMAZON ORDER 4471", Instant.parse("2026-07-10T18:00:00Z"));
+        bankStatement.setSource(Transaction.Source.CSV_IMPORT);
+        bankStatement.setBalanceAfter(new BigDecimal("12345.67"));
+
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any()))
+                .thenReturn(List.of(gmailReceipt, bankStatement));
+
+        reconciliationService.reconcileForUser(userId);
+
+        assertThat(gmailReceipt.getIsDuplicateOf())
+                .as("still the same real transaction -- one side simply has no balance to compare")
+                .isEqualTo(bankStatement.getId());
     }
 
     @Test

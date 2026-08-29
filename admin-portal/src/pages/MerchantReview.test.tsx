@@ -201,4 +201,65 @@ describe('MerchantReview', () => {
 
     await waitFor(() => expect(adminMerchantReviewApi.queue).toHaveBeenCalledWith({ page: 1, size: 25 }));
   });
+
+  /** Bug fix: approving the only guess on a page beyond the first used to leave the admin
+   *  stranded looking at an empty table with no obvious way back -- Pagination still pointed at
+   *  the now-nonexistent page. Confirms the page backs off automatically instead. */
+  it('backs off to the previous page after approving the last guess on a later page', async () => {
+    mockAuth(['MERCHANT_REVIEW']);
+    vi.mocked(adminMerchantReviewApi.queue).mockResolvedValueOnce(
+      { content: [guessOnTheLedger], page: 0, size: 25, totalElements: 26, totalPages: 2 }
+    );
+    const user = userEvent.setup();
+
+    renderPage();
+    await waitFor(() => expect(screen.getByText('AMZNMKTPLACE')).toBeInTheDocument());
+
+    vi.mocked(adminMerchantReviewApi.queue).mockResolvedValueOnce({
+      content: [guessWithNoHistory], page: 1, size: 25, totalElements: 26, totalPages: 2,
+    });
+    await user.click(screen.getByRole('button', { name: 'Next page' }));
+    await waitFor(() => expect(screen.getByText('SWIGGYORDR9182')).toBeInTheDocument());
+
+    vi.mocked(adminMerchantReviewApi.approve).mockResolvedValue({
+      ...guessWithNoHistory, lifecycleStatus: 'APPROVED',
+    });
+    vi.mocked(adminMerchantReviewApi.queue).mockResolvedValue(queueOf(guessOnTheLedger));
+    await user.click(screen.getByRole('button', { name: 'Approve' }));
+
+    await waitFor(() => expect(adminMerchantReviewApi.queue).toHaveBeenLastCalledWith({ page: 0, size: 25 }));
+  });
+
+  /** Bug fix, wider case: "approve all for this account" can clear every remaining row on a page
+   *  at once, not just one -- the back-off has to reason about how many rows would be left, not
+   *  just whether there was exactly one. */
+  it('backs off to the previous page after approve-all clears every guess on a later page', async () => {
+    mockAuth(['MERCHANT_REVIEW']);
+    const secondUserGuess: MerchantReviewItem = {
+      ...guessOnTheLedger,
+      id: 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee',
+      canonicalName: 'ZOMATO',
+    };
+    vi.mocked(adminMerchantReviewApi.queue).mockResolvedValueOnce(
+      { content: [guessOnTheLedger], page: 0, size: 25, totalElements: 27, totalPages: 2 }
+    );
+    const user = userEvent.setup();
+
+    renderPage();
+    await waitFor(() => expect(screen.getByText('AMZNMKTPLACE')).toBeInTheDocument());
+
+    vi.mocked(adminMerchantReviewApi.queue).mockResolvedValueOnce({
+      content: [guessWithNoHistory, secondUserGuess],
+      page: 1, size: 25, totalElements: 27, totalPages: 2,
+    });
+    await user.click(screen.getByRole('button', { name: 'Next page' }));
+    await waitFor(() => expect(screen.getByText('SWIGGYORDR9182')).toBeInTheDocument());
+    await user.click(screen.getAllByRole('button', { name: 'Review' })[0]);
+
+    vi.mocked(adminMerchantReviewApi.approveAll).mockResolvedValue(undefined as any);
+    vi.mocked(adminMerchantReviewApi.queue).mockResolvedValue(queueOf(guessOnTheLedger));
+    await user.click(screen.getByRole('button', { name: 'Approve all for this account' }));
+
+    await waitFor(() => expect(adminMerchantReviewApi.queue).toHaveBeenLastCalledWith({ page: 0, size: 25 }));
+  });
 });

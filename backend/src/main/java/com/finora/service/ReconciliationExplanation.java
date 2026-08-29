@@ -47,13 +47,25 @@ final class ReconciliationExplanation {
      * true — they are recorded anyway rather than left implied, because "which fields had to match"
      * is exactly what someone disputing a duplicate needs to see, and because the key's definition
      * has changed before (see {@code duplicateKey}'s own comment on scale and null handling).
+     *
+     * @param sameBalance         whether this row's running balance also matched the original's --
+     *                            only true when {@code ReconciliationService.splitByDiscriminator}
+     *                            needed the account+date+amount+description group split by balance
+     *                            to reach this pairing (most same-day duplicates never need it, so
+     *                            this is {@code false} far more often than not) — omitted from the
+     *                            evidence entirely rather than recorded {@code false}, since "not
+     *                            checked" and "checked and different" are not the same fact and a
+     *                            reviewer should not read the absence of one signal as the other
+     * @param sameReferenceNumber same reasoning, for the reference-number fallback discriminator
      */
-    static Map<String, Object> duplicate(UUID originalId) {
+    static Map<String, Object> duplicate(UUID originalId, boolean sameBalance, boolean sameReferenceNumber) {
         Map<String, Object> reason = new LinkedHashMap<>();
         reason.put("sameAccount", true);
         reason.put("sameDate", true);
         reason.put("sameAmount", true);
         reason.put("sameDescription", true);
+        if (sameBalance) reason.put("sameBalance", true);
+        if (sameReferenceNumber) reason.put("sameReferenceNumber", true);
         return envelope("DUPLICATE", originalId, reason);
     }
 
