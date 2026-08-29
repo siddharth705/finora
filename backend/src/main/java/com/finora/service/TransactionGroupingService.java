@@ -44,16 +44,17 @@ public class TransactionGroupingService {
 
     public record MerchantGroup(UUID merchantId, String merchantName, List<UUID> transactionIds) {}
 
-    // Scoped to live account ids, not just userId -- same fix as TransactionService.needsReview
-    // (PR #529's pattern): a deleted account's transactions never get their own `deleted_at` set,
-    // by design, for the 7-day retention window, so a plain userId query kept surfacing them here
-    // forever, well after the account itself was gone.
+    // Deleted-account leak (see DashboardService.summarize for the original fix): a deleted
+    // account's transactions deliberately keep deleted_at unset, so the unscoped finder would
+    // keep surfacing them in this grouping forever, not just during
+    // StatementImportService's 7-day grace window. This is a separate call site from
+    // TransactionService.needsReview -- not called through it -- so it needs its own scoping.
     public List<MerchantGroup> groupNeedsReviewByMerchant(UUID userId) {
-        List<UUID> liveAccountIds = accountRepository.findByUserId(userId).stream().map(Account::getId).toList();
-        if (liveAccountIds.isEmpty()) return List.of();
-
-        List<Transaction> candidates = transactionRepository
-                .findByUserIdAndAccountIdInAndNeedsCategoryReviewTrueOrderByTxnDateDesc(userId, liveAccountIds);
+        List<UUID> liveAccountIds = accountRepository.findByUserId(userId).stream()
+                .map(Account::getId).toList();
+        List<Transaction> candidates = liveAccountIds.isEmpty() ? List.of()
+                : transactionRepository.findByUserIdAndNeedsCategoryReviewTrueAndAccountIdInOrderByTxnDateDesc(
+                        userId, liveAccountIds);
 
         Map<UUID, List<UUID>> idsByMerchant = new LinkedHashMap<>();
         for (Transaction t : candidates) {

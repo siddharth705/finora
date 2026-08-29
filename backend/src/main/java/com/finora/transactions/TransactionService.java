@@ -109,6 +109,13 @@ public class TransactionService {
         // the way every other paginated endpoint in this codebase does (see PageBounds).
         int safeSize = com.finora.util.PageBounds.safeSize(f.size() > 0 ? f.size() : 20);
         int safePage = com.finora.util.PageBounds.safePage(f.page());
+        // Deleted-account leak (see DashboardService.summarize for the original fix): when the
+        // caller didn't ask for one specific account, the "all accounts" search must still exclude
+        // a deleted account's transactions, which deliberately keep deleted_at unset -- see the
+        // repository query's own doc comment for why this is only consulted when f.accountId() is
+        // null (an explicit accountId is trusted as-is, unchanged from before).
+        List<UUID> liveAccountIds = accountRepository.findByUserId(userId).stream()
+                .map(Account::getId).toList();
         var page = transactionRepository.search(
                 userId, f.accountId(), f.categoryId(),
                 com.finora.util.EnumParsing.parseIfPresent(Transaction.Type.class, f.type(), "type"),
@@ -117,7 +124,7 @@ public class TransactionService {
                 // literal percent signs ("2.5% CASHBACK"), and an unescaped one turned an exact
                 // search into a prefix search silently. Only the repository term is escaped:
                 // bankManagementService.search() above matches in memory with contains().
-                com.finora.util.LikePatterns.escape(f.keyword()), bankIdsParam,
+                com.finora.util.LikePatterns.escape(f.keyword()), bankIdsParam, liveAccountIds,
                 PageRequest.of(safePage, safeSize, sort)
         );
         Map<UUID, String> namesById = categoryNamesById(userId);
@@ -570,18 +577,19 @@ public class TransactionService {
     /** Backs the "Ask Once, Learn Forever" review queue — every transaction the engine wasn't
      *  confident about, waiting on exactly one user decision each.
      *
-     *  <p>Scoped to live account ids, not just userId — a deleted account's transactions never get
-     *  their own {@code deleted_at} set (by design, for the 7-day retention window), so a plain
-     *  userId query kept surfacing them here forever, well after the account itself was gone. Same
-     *  fix as DashboardService's PR #529. */
+     *  <p>Deleted-account leak (see DashboardService.summarize for the original fix): a deleted
+     *  account's transactions deliberately keep deleted_at unset, so the unscoped finder would
+     *  keep surfacing them in this review queue forever, not just during
+     *  StatementImportService's 7-day grace window. */
     @Transactional(readOnly = true)
     public List<TransactionDto> needsReview(UUID userId) {
-        List<UUID> liveAccountIds = accountRepository.findByUserId(userId).stream().map(Account::getId).toList();
-        if (liveAccountIds.isEmpty()) return List.of();
         Map<UUID, String> namesById = categoryNamesById(userId);
-        return transactionRepository
-                .findByUserIdAndAccountIdInAndNeedsCategoryReviewTrueOrderByTxnDateDesc(userId, liveAccountIds)
-                .stream()
+        List<UUID> liveAccountIds = accountRepository.findByUserId(userId).stream()
+                .map(Account::getId).toList();
+        List<Transaction> needsReview = liveAccountIds.isEmpty() ? List.of()
+                : transactionRepository.findByUserIdAndNeedsCategoryReviewTrueAndAccountIdInOrderByTxnDateDesc(
+                        userId, liveAccountIds);
+        return needsReview.stream()
                 .map(t -> TransactionDto.from(t, namesById.getOrDefault(t.getCategoryId(), "Uncategorized")))
                 .toList();
     }

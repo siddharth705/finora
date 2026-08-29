@@ -4,6 +4,7 @@ import com.finora.entity.Budget;
 import com.finora.entity.Category;
 import com.finora.entity.Transaction;
 import com.finora.entity.User;
+import com.finora.repository.AccountRepository;
 import com.finora.repository.BudgetRepository;
 import com.finora.repository.CategoryRepository;
 import com.finora.repository.TransactionRepository;
@@ -29,16 +30,19 @@ public class BudgetService {
     private final BudgetRepository budgetRepository;
     private final CategoryRepository categoryRepository;
     private final TransactionRepository transactionRepository;
+    private final AccountRepository accountRepository;
     private final UserRepository userRepository;
     private final AuditService auditService;
     private final TransactionGraphService transactionGraphService;
 
     public BudgetService(BudgetRepository budgetRepository, CategoryRepository categoryRepository,
-                          TransactionRepository transactionRepository, UserRepository userRepository,
+                          TransactionRepository transactionRepository, AccountRepository accountRepository,
+                          UserRepository userRepository,
                           AuditService auditService, TransactionGraphService transactionGraphService) {
         this.budgetRepository = budgetRepository;
         this.categoryRepository = categoryRepository;
         this.transactionRepository = transactionRepository;
+        this.accountRepository = accountRepository;
         this.userRepository = userRepository;
         this.transactionGraphService = transactionGraphService;
         this.auditService = auditService;
@@ -73,7 +77,9 @@ public class BudgetService {
         // fixed to net it. RefundNetting.reportable() drops the income leg (same as the old
         // filter's job); reportableAmount() nets any matched refund/reversal off the expense.
         RefundNetting refunds = refundsFor(userId);
-        List<Transaction> monthTxns = transactionRepository.findByUserIdAndTxnDateBetween(userId, from, to);
+        List<UUID> liveAccountIds = liveAccountIds(userId);
+        List<Transaction> monthTxns = liveAccountIds.isEmpty() ? List.of()
+                : transactionRepository.findByUserIdAndTxnDateBetweenAndAccountIdIn(userId, from, to, liveAccountIds);
         Map<UUID, BigDecimal> spendByCategory = RefundNetting.reportable(
                         monthTxns, transactionGraphService.ccPaymentFromTransactionIds(monthTxns)).stream()
                 .filter(t -> t.getTxnType() == Transaction.Type.EXPENSE && t.getCategoryId() != null)
@@ -163,7 +169,9 @@ public class BudgetService {
         LocalDate from = thisMonth.atDay(1);
         LocalDate to = thisMonth.atEndOfMonth();
         RefundNetting refunds = refundsFor(userId);
-        List<Transaction> monthTxns = transactionRepository.findByUserIdAndTxnDateBetween(userId, from, to);
+        List<UUID> liveAccountIds = liveAccountIds(userId);
+        List<Transaction> monthTxns = liveAccountIds.isEmpty() ? List.of()
+                : transactionRepository.findByUserIdAndTxnDateBetweenAndAccountIdIn(userId, from, to, liveAccountIds);
         return RefundNetting.reportable(monthTxns, transactionGraphService.ccPaymentFromTransactionIds(monthTxns)).stream()
                 .filter(t -> t.getTxnType() == Transaction.Type.EXPENSE && categoryId.equals(t.getCategoryId()))
                 .map(refunds::reportableAmount)
@@ -179,8 +187,19 @@ public class BudgetService {
      * comment for why this table specifically was the one known-remaining gap.
      */
     private RefundNetting refundsFor(UUID userId) {
-        return RefundNetting.from(transactionRepository.findByUserIdAndReconciliationStatusIn(
-                userId, List.of(Transaction.ReconciliationStatus.REFUND, Transaction.ReconciliationStatus.REVERSAL)));
+        List<UUID> liveAccountIds = liveAccountIds(userId);
+        if (liveAccountIds.isEmpty()) return RefundNetting.from(List.of());
+        return RefundNetting.from(transactionRepository.findByUserIdAndReconciliationStatusInAndAccountIdIn(
+                userId, List.of(Transaction.ReconciliationStatus.REFUND, Transaction.ReconciliationStatus.REVERSAL),
+                liveAccountIds));
+    }
+
+    /** Deleted-account leak (see DashboardService.summarize for the original fix): a deleted
+     *  account's transactions deliberately keep deleted_at unset, so findByUserId-rooted queries
+     *  alone would keep feeding this service a deleted account's rows forever, not just during
+     *  StatementImportService's 7-day grace window. */
+    private List<UUID> liveAccountIds(UUID userId) {
+        return accountRepository.findByUserId(userId).stream().map(com.finora.entity.Account::getId).toList();
     }
 
     /** Delegates to {@link com.finora.util.UserZone} -- one of four hand-copied implementations,

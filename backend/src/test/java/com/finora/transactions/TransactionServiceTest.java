@@ -1197,7 +1197,7 @@ class TransactionServiceTest {
     @Test
     void search_withAKeywordMatchingABankName_resolvesAndPassesThatBanksIdToTheRepository() {
         Page<Transaction> emptyPage = new PageImpl<>(List.of());
-        when(transactionRepository.search(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(Pageable.class)))
+        when(transactionRepository.search(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(Pageable.class)))
                 .thenReturn(emptyPage);
 
         var filter = new TransactionDto.FilterRequest(null, null, null, null, null, null, null,
@@ -1207,7 +1207,7 @@ class TransactionServiceTest {
         @SuppressWarnings("unchecked")
         ArgumentCaptor<List<String>> bankIdsCaptor = ArgumentCaptor.forClass(List.class);
         verify(transactionRepository).search(any(), any(), any(), any(), any(), any(), any(), any(), any(),
-                bankIdsCaptor.capture(), any(Pageable.class));
+                bankIdsCaptor.capture(), any(), any(Pageable.class));
 
         assertThat(bankIdsCaptor.getValue()).containsExactly("PNB");
     }
@@ -1218,7 +1218,7 @@ class TransactionServiceTest {
         // TransactionService always passes a non-empty placeholder instead (see its own
         // NO_BANK_MATCH_SENTINEL comment) so the repository never has to reason about that case.
         Page<Transaction> emptyPage = new PageImpl<>(List.of());
-        when(transactionRepository.search(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(Pageable.class)))
+        when(transactionRepository.search(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(Pageable.class)))
                 .thenReturn(emptyPage);
 
         var filter = new TransactionDto.FilterRequest(null, null, null, null, null, null, null,
@@ -1228,7 +1228,7 @@ class TransactionServiceTest {
         @SuppressWarnings("unchecked")
         ArgumentCaptor<List<String>> bankIdsCaptor = ArgumentCaptor.forClass(List.class);
         verify(transactionRepository).search(any(), any(), any(), any(), any(), any(), any(), any(), any(),
-                bankIdsCaptor.capture(), any(Pageable.class));
+                bankIdsCaptor.capture(), any(), any(Pageable.class));
 
         assertThat(bankIdsCaptor.getValue()).isNotEmpty();
         assertThat(bankIdsCaptor.getValue()).doesNotContain("PNB", "SBI", "HDFC");
@@ -1247,7 +1247,7 @@ class TransactionServiceTest {
         // 2 transactions on this page, but 45 total across the full result set at size 10 --
         // exactly the distinction a bare `.size()` on the returned list could never make.
         Page<Transaction> page = new PageImpl<>(pageContent, org.springframework.data.domain.PageRequest.of(0, 10), 45);
-        when(transactionRepository.search(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(Pageable.class)))
+        when(transactionRepository.search(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(Pageable.class)))
                 .thenReturn(page);
 
         var filter = new TransactionDto.FilterRequest(null, null, null, null, null, null, null, null, 0, 10, null, null);
@@ -1271,14 +1271,14 @@ class TransactionServiceTest {
      */
     @Test
     void search_withAnUnrecognisedSortDir_fallsBackToDescendingRatherThanThrowing() {
-        when(transactionRepository.search(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(Pageable.class)))
+        when(transactionRepository.search(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(Pageable.class)))
                 .thenReturn(new PageImpl<>(List.of()));
 
         var filter = new TransactionDto.FilterRequest(null, null, null, null, null, null, null, null, 0, 20, null, "bogus");
         transactionService.search(userId, filter);
 
         ArgumentCaptor<Pageable> pageableCaptor = ArgumentCaptor.forClass(Pageable.class);
-        verify(transactionRepository).search(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), pageableCaptor.capture());
+        verify(transactionRepository).search(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), pageableCaptor.capture());
         Sort.Order order = pageableCaptor.getValue().getSort().getOrderFor("txnDate");
         assertThat(order)
                 .as("an unrecognised sortDir must still produce a real sort, not fail the search")
@@ -1288,41 +1288,49 @@ class TransactionServiceTest {
                 .isEqualTo(Sort.Direction.DESC);
     }
 
-    /**
-     * Regression test for the deleted-account leak: {@code Transaction.deleted_at} is only set
-     * when a transaction itself is removed, never when its owning account is (by design, for the
-     * account's 7-day retention window) -- so a needsReview() query scoped by userId alone kept
-     * surfacing a deleted account's review backlog forever. Same fix DashboardService got in
-     * PR #529, applied here: scope to the user's live account ids.
-     */
+    // --- Deleted-account leak (see DashboardService.summarize for the original fix): a deleted
+    // account's transactions deliberately keep deleted_at unset, so search() (when no specific
+    // accountId is requested) and needsReview() must scope their fetch to exactly the user's live
+    // account ids, not just their userId. ---
+
     @Test
-    void needsReview_excludesTransactionsBelongingToADeletedAccount() {
-        UUID liveAccountId = UUID.randomUUID();
-        when(accountRepository.findByUserId(userId)).thenReturn(List.of(account(liveAccountId, Account.Type.SAVINGS, BigDecimal.ZERO)));
+    void search_passesTheUsersLiveAccountIds_tookTheRepository() {
+        Account liveAccount = account(UUID.randomUUID(), Account.Type.SAVINGS, BigDecimal.ZERO);
+        when(accountRepository.findByUserId(userId)).thenReturn(List.of(liveAccount));
+        when(transactionRepository.search(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of()));
 
-        Transaction fromLiveAccount = ownedTransaction(UUID.randomUUID(), userId);
-        fromLiveAccount.setAccountId(liveAccountId);
-        fromLiveAccount.setNeedsCategoryReview(true);
+        var filter = new TransactionDto.FilterRequest(null, null, null, null, null, null, null, null, 0, 20, null, null);
+        transactionService.search(userId, filter);
 
-        when(transactionRepository.findByUserIdAndAccountIdInAndNeedsCategoryReviewTrueOrderByTxnDateDesc(
-                eq(userId), eq(List.of(liveAccountId))))
-                .thenReturn(List.of(fromLiveAccount));
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<UUID>> liveAccountIdsCaptor = ArgumentCaptor.forClass(List.class);
+        verify(transactionRepository).search(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
+                liveAccountIdsCaptor.capture(), any(Pageable.class));
 
-        List<TransactionDto> result = transactionService.needsReview(userId);
-
-        assertThat(result).hasSize(1);
-        // The deleted account's own backlog was never asked for -- the repository call above is
-        // the only stub, so a broader (userId-only) query would return an empty, unstubbed list.
-        verify(transactionRepository, never()).findByUserIdAndNeedsCategoryReviewTrueOrderByTxnDateDesc(any());
+        assertThat(liveAccountIdsCaptor.getValue()).containsExactly(liveAccount.getId());
     }
 
     @Test
-    void needsReview_returnsEmptyAndSkipsTheQueryOnceTheUserHasNoLiveAccountsLeft() {
+    void needsReview_scopesTransactionFetch_toExactlyTheLiveAccountIds() {
+        Account liveAccount = account(UUID.randomUUID(), Account.Type.SAVINGS, BigDecimal.ZERO);
+        when(accountRepository.findByUserId(userId)).thenReturn(List.of(liveAccount));
+        when(transactionRepository.findByUserIdAndNeedsCategoryReviewTrueAndAccountIdInOrderByTxnDateDesc(eq(userId), any()))
+                .thenReturn(List.of());
+
+        transactionService.needsReview(userId);
+
+        verify(transactionRepository).findByUserIdAndNeedsCategoryReviewTrueAndAccountIdInOrderByTxnDateDesc(
+                userId, List.of(liveAccount.getId()));
+    }
+
+    @Test
+    void needsReview_withNoLiveAccounts_shortCircuits_withoutQueryingTransactions() {
         when(accountRepository.findByUserId(userId)).thenReturn(List.of());
 
-        List<TransactionDto> result = transactionService.needsReview(userId);
+        assertThat(transactionService.needsReview(userId)).isEmpty();
 
-        assertThat(result).isEmpty();
-        verifyNoInteractions(transactionRepository);
+        verify(transactionRepository, never())
+                .findByUserIdAndNeedsCategoryReviewTrueAndAccountIdInOrderByTxnDateDesc(any(), any());
     }
 }
