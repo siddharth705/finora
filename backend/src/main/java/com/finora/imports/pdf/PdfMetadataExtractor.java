@@ -43,7 +43,21 @@ public class PdfMetadataExtractor {
     // own "\s*:?\s*" allows zero separator before the captured value -- "Account Holder"/
     // "Customer Name" are unambiguous enough as multi-word phrases not to need the same guard.
     private static final Pattern ACCOUNT_HOLDER = labelPattern("(?:Account Holder(?: Name)?|Customer Name|Name\\b)");
-    private static final Pattern ACCOUNT_NUMBER = labelPattern("Account Number");
+    // F21 (extraction-coverage-audit.md real-corpus follow-up): several real statements never say
+    // "Account Number" at all -- they abbreviate to "Account No"/"Account No.", confirmed on 4
+    // real documents across 4 banks (HDFC, Standard Chartered, Kotak, IOB), all using this exact
+    // "Label: Value" line shape, none needing the value-before-label shape
+    // ACCOUNT_NUMBER_TRAILING_LABEL handles. The negative lookahead after "No\.?" is load-bearing,
+    // not decorative: without it, "Account Nominee: <name>" -- a genuine, realistic nomination-
+    // section field, not a contrived edge case -- would also match, since "No" is a literal prefix
+    // of "Nominee" and this call site accepts whatever firstGroup captures with no further
+    // validation (unlike CARD_NUMBER_LABEL's looksLikeCardOrAccountNumber check). A plain \b would
+    // NOT work here: "No." followed by whitespace has no word boundary between them (both are
+    // non-word characters), which would break the "No." form this fix exists for. Otherwise purely
+    // additive -- it only adds new matches, it cannot regress a document already matching the
+    // literal "Account Number" phrase. Canara's own abbreviation ("A/c", inline mid-sentence) is a
+    // structurally different shape -- deliberately not folded in here, see that finding's own note.
+    private static final Pattern ACCOUNT_NUMBER = labelPattern("Account\\s*(?:No\\.?(?![A-Za-z])|Number)");
     // Bug fix: verified against a real Union Bank of India statement -- its "Branch Address" line
     // is a two-column SECTION HEADER ("Branch Address" | "Statement Details" side by side, same
     // pattern as an earlier "Your Details" | "Account Details" header higher up the page), not a

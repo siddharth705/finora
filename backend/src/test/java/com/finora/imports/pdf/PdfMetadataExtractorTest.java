@@ -43,6 +43,66 @@ class PdfMetadataExtractorTest {
     }
 
     /**
+     * F21 (extraction-coverage-audit.md, real-corpus follow-up): several real statements never
+     * say "Account Number" at all -- they abbreviate to "Account No" or "Account No.", a shape
+     * ACCOUNT_NUMBER's literal "Account Number" text had no tolerance for. Confirmed on 4 real
+     * documents across 4 banks this way. Genericized per the Synthetic Fixture Policy -- the shape
+     * being tested is the abbreviation itself, not any bank's specific formatting.
+     */
+    @Test
+    void extract_recognizesAnAccountNumber_labelledAccountNo() {
+        var metadata = extractor.extract(List.of("Account No     : 500123456789")); // synthetic-ok
+
+        assertThat(metadata.accountNumberMasked()).endsWith("6789");
+    }
+
+    @Test
+    void extract_recognizesAnAccountNumber_labelledAccountNoWithATrailingPeriod() {
+        var metadata = extractor.extract(List.of("Account No. 200987654321")); // synthetic-ok
+
+        assertThat(metadata.accountNumberMasked()).endsWith("4321");
+    }
+
+    /**
+     * The widened label must not regress the exact phrase it already handled -- this is the same
+     * fixture as extract_stillHandlesTheOrdinaryLabelThenValueShape above, isolated to just this
+     * field so a future change to ACCOUNT_NUMBER specifically is caught here too.
+     */
+    @Test
+    void extract_stillRecognizesTheFullPhrase_accountNumber() {
+        var metadata = extractor.extract(List.of("Account Number: 000123456789")); // synthetic-ok
+
+        assertThat(metadata.accountNumberMasked()).endsWith("6789");
+    }
+
+    /**
+     * ACCOUNT_NUMBER is line-anchored (labelPattern's own "^\s*" prefix) -- widening its label
+     * vocabulary must not turn it into an unanchored search. A line that merely CONTAINS the
+     * abbreviated phrase, without starting with it, must not match; this is what keeps the F21 fix
+     * from reopening the exact class of false-positive F22 fixed for the card-number family.
+     */
+    @Test
+    void extract_doesNotMatchAccountNo_whenItIsNotAtTheStartOfTheLine() {
+        var metadata = extractor.extract(List.of("Please quote your Account No. 500123456789 when calling.")); // synthetic-ok
+
+        assertThat(metadata.accountNumberMasked()).isNull();
+    }
+
+    /**
+     * The "No" abbreviation must not match as a bare prefix of a longer word. "Account Nominee" is
+     * a genuine, realistic nomination-section field label -- not a contrived edge case -- and
+     * without a boundary guard after "No", it would be captured as if "minee: <name>" were an
+     * account number, since this call site accepts whatever is captured with no further
+     * validation. Caught in self-review before this fix shipped.
+     */
+    @Test
+    void extract_doesNotMatchAccountNo_whenNoIsAPrefixOfALongerWord() {
+        var metadata = extractor.extract(List.of("Account Nominee: JOHN DOE")); // synthetic-ok
+
+        assertThat(metadata.accountNumberMasked()).isNull();
+    }
+
+    /**
      * Phase 1C: real credit-card statements speak of a CARD number, not an "Account Number" --
      * verified against real HDFC and Kotak statements, neither of which ever uses the phrase
      * ACCOUNT_NUMBER above looks for at all. The masked value is stored EXACTLY as printed (no
