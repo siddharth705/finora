@@ -1290,6 +1290,56 @@ class ReconciliationServiceTest {
     }
 
     @Test
+    void reconcileForUser_doesNotLetAnEarlierStatementsPartialWindowSteal_aPaymentThatIsExactForALaterOne() {
+        // Real cross-statement collision the widened ratio window creates: a payment can now be a
+        // PLAUSIBLE candidate (partial or overpaid) for a statement whose total is completely
+        // unrelated to it, not just one it coincidentally shares an exact amount with. Card A's
+        // due (1000.00) is processed first (earlier due date); the payment (2500.00) sits exactly
+        // at A's 2.5x overpayment ceiling, so a naive per-statement search would let A claim it as
+        // an "overpayment" -- even though it is EXACTLY card B's own total, processed second. An
+        // exact match anywhere must never lose a payment to a same-window partial/over candidate
+        // for a DIFFERENT statement, the same way it never loses to one for the SAME statement
+        // (see the due-date-tiebreak test above) -- exact claims must be resolved globally, before
+        // any partial/overpayment search runs at all.
+        UUID cardAccountA = UUID.randomUUID();
+        UUID cardAccountB = UUID.randomUUID();
+        UUID savingsAccountId = UUID.randomUUID();
+        com.finora.entity.StatementImport statementA =
+                ccStatement(UUID.randomUUID(), cardAccountA, new BigDecimal("1000.00"), LocalDate.of(2026, 7, 10));
+        com.finora.entity.StatementImport statementB =
+                ccStatement(UUID.randomUUID(), cardAccountB, new BigDecimal("2500.00"), LocalDate.of(2026, 7, 20));
+        // Dated 5 days from EACH due date -- deliberately not closer to one than the other, so the
+        // due-date tiebreak alone cannot be what saves this test.
+        Transaction payment = txn(UUID.randomUUID(), savingsAccountId, LocalDate.of(2026, 7, 15),
+                new BigDecimal("2500.00"), Transaction.Type.EXPENSE, "CREDIT CARD PAYMENT",
+                Instant.parse("2026-07-15T10:00:00Z"));
+        // Card A has a genuine, unrelated charge of its own -- without this, A's own
+        // settledCharges lookup returns empty and A self-excludes before the real bug can
+        // manifest, which is exactly why this fixture matters: a card with no charges at all
+        // isn't the realistic case this test needs to prove.
+        Transaction chargeA = txn(UUID.randomUUID(), cardAccountA, LocalDate.of(2026, 6, 15),
+                new BigDecimal("1000.00"), Transaction.Type.EXPENSE, "GROCERIES", Instant.parse("2026-06-15T10:00:00Z"));
+        Transaction chargeB = txn(UUID.randomUUID(), cardAccountB, LocalDate.of(2026, 6, 20),
+                new BigDecimal("2500.00"), Transaction.Type.EXPENSE, "AMAZON", Instant.parse("2026-06-20T10:00:00Z"));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any()))
+                .thenReturn(List.of(payment, chargeA, chargeB));
+        when(statementImportRepository.findByUserIdAndTotalAmountDueIsNotNull(userId))
+                .thenReturn(List.of(statementA, statementB));
+        when(transactionRepository.findByStatementImportId(statementA.getId())).thenReturn(List.of(chargeA));
+        when(transactionRepository.findByStatementImportId(statementB.getId())).thenReturn(List.of(chargeB));
+
+        reconciliationService.reconcileForUser(userId);
+
+        List<TransactionGraphService.PendingEdge> ccEdges = capturePendingEdges().stream()
+                .filter(e -> e.relationshipType() == TransactionRelationship.RelationshipType.CC_PAYMENT).toList();
+        assertThat(ccEdges)
+                .as("the payment settles the card it's exactly right for, not the one it merely falls within range of")
+                .hasSize(1);
+        assertThat(ccEdges.get(0).toTransactionId()).isEqualTo(chargeB.getId());
+        assertThat(ccEdges.get(0).explanation()).containsEntry("paymentStatus", "FULL");
+    }
+
+    @Test
     void reconcileForUser_prefersAnExactMatch_overACloserByDatePartialPayment() {
         // The partial payment is dated EXACTLY on the due date (closest possible); the exact
         // payment is one day off. The plain due-date tiebreak would pick the partial one --
