@@ -18,7 +18,7 @@ import type { DashboardSummary } from '../types';
 vi.mock('../api/endpoints', () => ({
   dashboardApi: { summary: vi.fn(), journey: vi.fn() },
   accountsApi: { list: vi.fn() },
-  transactionsApi: { search: vi.fn(), create: vi.fn() },
+  transactionsApi: { search: vi.fn(), create: vi.fn(), confirmNotDuplicate: vi.fn() },
   categoriesApi: { list: vi.fn() },
   goalsApi: { list: vi.fn() },
   insightsApi: { get: vi.fn() },
@@ -69,6 +69,23 @@ function summary(overrides: Partial<DashboardSummary> = {}): DashboardSummary {
     categoryReviewSpendAmount: 0,
     categoryReviewTransactionCount: 0,
     categoryReviewSpendWarningThresholdPct: 20,
+    // Defaults to no gate firing (the deltas above are null because this fixture doesn't set them,
+    // not because anything was withheld) so existing tests keep seeing a plain muted "—" with no
+    // "Why?" toggle, matching how they rendered before this field existed.
+    comparisonGateReason: null,
+    comparisonGateMinTransactions: 3,
+    // Defaults to no movers (the delta above is null in this fixture, so there's nothing to
+    // explain) so existing tests keep seeing a plain "Why?"-free delta line.
+    expenseCategoryMovers: [],
+    // Defaults to nothing detected so existing tests, none of which cares about this card, keep
+    // rendering exactly as they did before this field existed.
+    duplicateTransactionCount: 0,
+    detectedDuplicates: [],
+    // Defaults to null (below the floor) so existing tests, none of which cares about this card,
+    // keep rendering exactly as they did before this field existed.
+    categorizationConfidenceScore: null,
+    categorizationConfidenceTransactionCount: 0,
+    categorizationConfidenceMinTransactions: 5,
     ...overrides,
   };
 }
@@ -388,6 +405,385 @@ describe('Dashboard — Limited History Banner', () => {
 
     await screen.findByText('No transactions yet'); // Recent Transactions' own per-section empty state
     expect(screen.queryByText('Limited financial history')).not.toBeInTheDocument();
+  });
+});
+
+describe('Dashboard — Next Actions', () => {
+  beforeEach(() => {
+    vi.mocked(dashboardApi.summary).mockReset().mockResolvedValue(summary());
+    vi.mocked(dashboardApi.journey).mockReset().mockResolvedValue({ milestones: [] });
+    vi.mocked(accountsApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(transactionsApi.search).mockReset().mockResolvedValue({
+      content: [], page: 0, size: 4, totalElements: 12, totalPages: 3,
+    });
+    vi.mocked(goalsApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(insightsApi.get).mockReset().mockResolvedValue({ sentences: [], movers: [] });
+    vi.mocked(userApi.get).mockReset().mockResolvedValue({
+      email: 'amy@example.test', fullName: 'Amy Santiago', lowBalanceThreshold: 2000,
+      theme: 'system', timezone: 'Asia/Kolkata', phoneNumber: '+919876500000',
+      phoneVerified: true, createdAt: '2026-01-01T00:00:00Z', passwordChangedAt: null, signInMethod: 'PASSWORD',
+    });
+    vi.mocked(budgetsApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(reportsApi.availableMonths).mockReset().mockResolvedValue(['2026-08']);
+    vi.mocked(reportsApi.forMonth).mockReset().mockResolvedValue({
+      month: '2026-08', income: 80000, expense: 45000, categories: [],
+    });
+    vi.mocked(recurringApi.list).mockReset().mockResolvedValue([]);
+  });
+
+  it('lists every notification the backend already computed', async () => {
+    vi.mocked(dashboardApi.summary).mockResolvedValue(summary({
+      notifications: [
+        'HDFC Credit Card payment of 5000.00 is due in 3 day(s).',
+        'Groceries spending of 6000.00 has reached your monthly budget of 5000.00.',
+      ],
+    }));
+    renderDashboard();
+
+    expect(await screen.findByText('Next Actions')).toBeInTheDocument();
+    expect(screen.getByText('HDFC Credit Card payment of 5000.00 is due in 3 day(s).')).toBeInTheDocument();
+    expect(screen.getByText('Groceries spending of 6000.00 has reached your monthly budget of 5000.00.')).toBeInTheDocument();
+  });
+
+  it('shows a positive empty state rather than an empty card when nothing needs attention', async () => {
+    vi.mocked(dashboardApi.summary).mockResolvedValue(summary({ notifications: [] }));
+    renderDashboard();
+
+    expect(await screen.findByText('Next Actions')).toBeInTheDocument();
+    expect(screen.getByText('Nothing needs your attention right now.')).toBeInTheDocument();
+  });
+
+  it('stays hidden for a zero-transaction account -- nothing has been computed here yet', async () => {
+    vi.mocked(transactionsApi.search).mockResolvedValue({
+      content: [], page: 0, size: 4, totalElements: 0, totalPages: 0,
+    });
+    vi.mocked(dashboardApi.summary).mockResolvedValue(summary({
+      notifications: ['This should never render while the account is empty.'],
+    }));
+    renderDashboard();
+
+    await screen.findByText('No transactions yet'); // Recent Transactions' own per-section empty state
+    expect(screen.queryByText('Next Actions')).not.toBeInTheDocument();
+  });
+});
+
+describe('Dashboard — Detected Issues', () => {
+  beforeEach(() => {
+    vi.mocked(dashboardApi.summary).mockReset().mockResolvedValue(summary());
+    vi.mocked(dashboardApi.journey).mockReset().mockResolvedValue({ milestones: [] });
+    vi.mocked(accountsApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(transactionsApi.search).mockReset().mockResolvedValue({
+      content: [], page: 0, size: 4, totalElements: 12, totalPages: 3,
+    });
+    vi.mocked(transactionsApi.confirmNotDuplicate).mockReset();
+    vi.mocked(goalsApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(insightsApi.get).mockReset().mockResolvedValue({ sentences: [], movers: [] });
+    vi.mocked(userApi.get).mockReset().mockResolvedValue({
+      email: 'amy@example.test', fullName: 'Amy Santiago', lowBalanceThreshold: 2000,
+      theme: 'system', timezone: 'Asia/Kolkata', phoneNumber: '+919876500000',
+      phoneVerified: true, createdAt: '2026-01-01T00:00:00Z', passwordChangedAt: null, signInMethod: 'PASSWORD',
+    });
+    vi.mocked(budgetsApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(reportsApi.availableMonths).mockReset().mockResolvedValue([]);
+    vi.mocked(reportsApi.forMonth).mockReset();
+    vi.mocked(recurringApi.list).mockReset().mockResolvedValue([]);
+  });
+
+  it('stays hidden when nothing was detected', async () => {
+    vi.mocked(dashboardApi.summary).mockResolvedValue(summary({ duplicateTransactionCount: 0 }));
+    renderDashboard();
+
+    await screen.findByText('Financial Health Score');
+    expect(screen.queryByText('Detected Issues')).not.toBeInTheDocument();
+  });
+
+  it('lists a detected duplicate with a "Not a duplicate" action', async () => {
+    vi.mocked(dashboardApi.summary).mockResolvedValue(summary({
+      duplicateTransactionCount: 1,
+      detectedDuplicates: [
+        { transactionId: 'txn-1', date: '2026-07-10', merchant: 'Swiggy', amount: 500 },
+      ],
+    }));
+    renderDashboard();
+
+    expect(await screen.findByText('Detected Issues')).toBeInTheDocument();
+    expect(screen.getByText(
+      'We found 1 transaction that looks like a duplicate and excluded it from your totals.'
+    )).toBeInTheDocument();
+    expect(screen.getByText('Swiggy')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Not a duplicate' })).toBeInTheDocument();
+  });
+
+  it('uses plural wording for more than one detected duplicate', async () => {
+    vi.mocked(dashboardApi.summary).mockResolvedValue(summary({
+      duplicateTransactionCount: 2,
+      detectedDuplicates: [
+        { transactionId: 'txn-1', date: '2026-07-10', merchant: 'Swiggy', amount: 500 },
+        { transactionId: 'txn-2', date: '2026-07-09', merchant: 'Zomato', amount: 300 },
+      ],
+    }));
+    renderDashboard();
+
+    expect(await screen.findByText(
+      'We found 2 transactions that look like duplicates and excluded them from your totals.'
+    )).toBeInTheDocument();
+  });
+
+  it('notes how many more exist beyond the capped display list', async () => {
+    vi.mocked(dashboardApi.summary).mockResolvedValue(summary({
+      duplicateTransactionCount: 8,
+      detectedDuplicates: [
+        { transactionId: 'txn-1', date: '2026-07-10', merchant: 'Swiggy', amount: 500 },
+      ],
+    }));
+    renderDashboard();
+
+    expect(await screen.findByText('and 7 more')).toBeInTheDocument();
+  });
+
+  it('calls confirmNotDuplicate and refreshes the summary when clicked', async () => {
+    vi.mocked(dashboardApi.summary).mockResolvedValue(summary({
+      duplicateTransactionCount: 1,
+      detectedDuplicates: [
+        { transactionId: 'txn-1', date: '2026-07-10', merchant: 'Swiggy', amount: 500 },
+      ],
+    }));
+    vi.mocked(transactionsApi.confirmNotDuplicate).mockResolvedValue({} as any);
+    renderDashboard();
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Not a duplicate' }));
+
+    expect(transactionsApi.confirmNotDuplicate).toHaveBeenCalledWith('txn-1');
+    await waitFor(() => expect(dashboardApi.summary).toHaveBeenCalledTimes(2));
+  });
+
+  it('shows an inline error and re-enables the button when the confirm call fails', async () => {
+    vi.mocked(dashboardApi.summary).mockResolvedValue(summary({
+      duplicateTransactionCount: 1,
+      detectedDuplicates: [
+        { transactionId: 'txn-1', date: '2026-07-10', merchant: 'Swiggy', amount: 500 },
+      ],
+    }));
+    vi.mocked(transactionsApi.confirmNotDuplicate).mockRejectedValue(new Error('network error'));
+    renderDashboard();
+
+    const button = await screen.findByRole('button', { name: 'Not a duplicate' });
+    await userEvent.click(button);
+
+    expect(await screen.findByText("Couldn't update this transaction. Please try again.")).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Not a duplicate' })).not.toBeDisabled();
+  });
+});
+
+describe('Dashboard — Categorization Confidence', () => {
+  beforeEach(() => {
+    vi.mocked(dashboardApi.summary).mockReset().mockResolvedValue(summary());
+    vi.mocked(dashboardApi.journey).mockReset().mockResolvedValue({ milestones: [] });
+    vi.mocked(accountsApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(transactionsApi.search).mockReset().mockResolvedValue({
+      content: [], page: 0, size: 4, totalElements: 12, totalPages: 3,
+    });
+    vi.mocked(goalsApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(insightsApi.get).mockReset().mockResolvedValue({ sentences: [], movers: [] });
+    vi.mocked(userApi.get).mockReset().mockResolvedValue({
+      email: 'amy@example.test', fullName: 'Amy Santiago', lowBalanceThreshold: 2000,
+      theme: 'system', timezone: 'Asia/Kolkata', phoneNumber: '+919876500000',
+      phoneVerified: true, createdAt: '2026-01-01T00:00:00Z', passwordChangedAt: null, signInMethod: 'PASSWORD',
+    });
+    vi.mocked(budgetsApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(reportsApi.availableMonths).mockReset().mockResolvedValue([]);
+    vi.mocked(reportsApi.forMonth).mockReset();
+    vi.mocked(recurringApi.list).mockReset().mockResolvedValue([]);
+  });
+
+  it('stays hidden below the minimum-transactions floor', async () => {
+    vi.mocked(dashboardApi.summary).mockResolvedValue(summary({
+      categorizationConfidenceScore: null, categorizationConfidenceTransactionCount: 2,
+    }));
+    renderDashboard();
+
+    await screen.findByText('Financial Health Score');
+    expect(screen.queryByText('Categorization Confidence')).not.toBeInTheDocument();
+  });
+
+  it('shows the score, label and transaction count once past the floor', async () => {
+    vi.mocked(dashboardApi.summary).mockResolvedValue(summary({
+      categorizationConfidenceScore: 84, categorizationConfidenceTransactionCount: 12,
+      reportingMonthIsCurrent: true,
+    }));
+    renderDashboard();
+
+    const heading = await screen.findByText('Categorization Confidence');
+    const card = within(heading.closest('div.bg-card') as HTMLElement);
+    expect(card.getByText('84')).toBeInTheDocument();
+    expect(card.getByText('Excellent')).toBeInTheDocument();
+    expect(card.getByText('Based on 12 automatically categorized transactions this month.')).toBeInTheDocument();
+  });
+
+  it('uses singular wording for exactly one categorized transaction', async () => {
+    vi.mocked(dashboardApi.summary).mockResolvedValue(summary({
+      categorizationConfidenceScore: 70, categorizationConfidenceTransactionCount: 1,
+      categorizationConfidenceMinTransactions: 1,
+    }));
+    renderDashboard();
+
+    expect(await screen.findByText('Based on 1 automatically categorized transaction this month.')).toBeInTheDocument();
+  });
+
+  it('colors a low score as "Needs Attention", not "Excellent"', async () => {
+    vi.mocked(dashboardApi.summary).mockResolvedValue(summary({
+      categorizationConfidenceScore: 35, categorizationConfidenceTransactionCount: 10,
+    }));
+    renderDashboard();
+
+    expect(await screen.findByText('Categorization Confidence')).toBeInTheDocument();
+    expect(screen.getByText('Needs Attention')).toBeInTheDocument();
+  });
+
+  it('stays hidden for a zero-transaction account, same as Financial Health Score', async () => {
+    vi.mocked(transactionsApi.search).mockResolvedValue({
+      content: [], page: 0, size: 4, totalElements: 0, totalPages: 0,
+    });
+    vi.mocked(dashboardApi.summary).mockResolvedValue(summary({
+      categorizationConfidenceScore: 90, categorizationConfidenceTransactionCount: 10,
+    }));
+    renderDashboard();
+
+    await screen.findByText('No transactions yet'); // Recent Transactions' own per-section empty state
+    expect(screen.queryByText('Categorization Confidence')).not.toBeInTheDocument();
+  });
+});
+
+describe('Dashboard — comparison gate "Why?" disclosure', () => {
+  beforeEach(() => {
+    vi.mocked(dashboardApi.summary).mockReset();
+    vi.mocked(dashboardApi.journey).mockReset().mockResolvedValue({ milestones: [] });
+    vi.mocked(accountsApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(transactionsApi.search).mockReset().mockResolvedValue({
+      content: [], page: 0, size: 4, totalElements: 12, totalPages: 3,
+    });
+    vi.mocked(goalsApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(insightsApi.get).mockReset().mockResolvedValue({ sentences: [], movers: [] });
+    vi.mocked(userApi.get).mockReset().mockResolvedValue({
+      email: 'amy@example.test', fullName: 'Amy Santiago', lowBalanceThreshold: 2000,
+      theme: 'system', timezone: 'Asia/Kolkata', phoneNumber: '+919876500000',
+      phoneVerified: true, createdAt: '2026-01-01T00:00:00Z', passwordChangedAt: null, signInMethod: 'PASSWORD',
+    });
+    vi.mocked(budgetsApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(reportsApi.availableMonths).mockReset().mockResolvedValue([]);
+    vi.mocked(reportsApi.forMonth).mockReset();
+    vi.mocked(recurringApi.list).mockReset().mockResolvedValue([]);
+  });
+
+  it('shows a "Why?" toggle on Income/Expenses/Net Savings, but not Balance/Savings Rate, for a partial-boundary prior month', async () => {
+    vi.mocked(dashboardApi.summary).mockResolvedValue(summary({
+      incomeDeltaPct: null, expenseDeltaPct: null, netDeltaPct: null,
+      comparisonGateReason: 'PARTIAL_PRIOR_MONTH', comparisonGateMinTransactions: 3,
+    }));
+    renderDashboard();
+
+    await screen.findByText('Financial Health Score'); // wait for the dashboard to finish loading
+    expect(screen.getAllByRole('button', { name: 'Why?' })).toHaveLength(3);
+  });
+
+  it('explains a too-few-transactions gate with the real threshold, not a hardcoded number', async () => {
+    vi.mocked(dashboardApi.summary).mockResolvedValue(summary({
+      incomeDeltaPct: null, expenseDeltaPct: null, netDeltaPct: null,
+      comparisonGateReason: 'TOO_FEW_PRIOR_TRANSACTIONS', comparisonGateMinTransactions: 5,
+    }));
+    renderDashboard();
+
+    const [whyButton] = await screen.findAllByRole('button', { name: 'Why?' });
+    await userEvent.click(whyButton);
+
+    expect(screen.getAllByText(
+      'Last month has fewer than 5 transactions, too few to compare reliably.'
+    ).length).toBeGreaterThan(0);
+  });
+
+  it('renders no "Why?" toggle at all when the deltas are real numbers, even with an unrelated stale gate reason', async () => {
+    vi.mocked(dashboardApi.summary).mockResolvedValue(summary({
+      incomeDeltaPct: 12.3, expenseDeltaPct: -4.1, netDeltaPct: 8.0,
+      comparisonGateReason: null,
+    }));
+    renderDashboard();
+
+    await screen.findByText('Financial Health Score');
+    expect(screen.queryByRole('button', { name: 'Why?' })).not.toBeInTheDocument();
+  });
+
+  it('renders no "Why?" toggle for a null delta that is simply a genuinely-zero prior amount, not a gate', async () => {
+    vi.mocked(dashboardApi.summary).mockResolvedValue(summary({
+      incomeDeltaPct: null, expenseDeltaPct: null, netDeltaPct: null,
+      comparisonGateReason: null,
+    }));
+    renderDashboard();
+
+    await screen.findByText('Financial Health Score');
+    expect(screen.queryByRole('button', { name: 'Why?' })).not.toBeInTheDocument();
+  });
+});
+
+describe('Dashboard — expense category movers "Why?" disclosure', () => {
+  beforeEach(() => {
+    vi.mocked(dashboardApi.summary).mockReset();
+    vi.mocked(dashboardApi.journey).mockReset().mockResolvedValue({ milestones: [] });
+    vi.mocked(accountsApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(transactionsApi.search).mockReset().mockResolvedValue({
+      content: [], page: 0, size: 4, totalElements: 12, totalPages: 3,
+    });
+    vi.mocked(goalsApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(insightsApi.get).mockReset().mockResolvedValue({ sentences: [], movers: [] });
+    vi.mocked(userApi.get).mockReset().mockResolvedValue({
+      email: 'amy@example.test', fullName: 'Amy Santiago', lowBalanceThreshold: 2000,
+      theme: 'system', timezone: 'Asia/Kolkata', phoneNumber: '+919876500000',
+      phoneVerified: true, createdAt: '2026-01-01T00:00:00Z', passwordChangedAt: null, signInMethod: 'PASSWORD',
+    });
+    vi.mocked(budgetsApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(reportsApi.availableMonths).mockReset().mockResolvedValue([]);
+    vi.mocked(reportsApi.forMonth).mockReset();
+    vi.mocked(recurringApi.list).mockReset().mockResolvedValue([]);
+  });
+
+  it('shows a "Why?" toggle on Total Expenses with real category movers, revealing each on click', async () => {
+    vi.mocked(dashboardApi.summary).mockResolvedValue(summary({
+      expenseDeltaPct: 60,
+      expenseCategoryMovers: [
+        { category: 'Dining', currentAmount: 8000, priorAmount: 5000, pctChange: 60 },
+        { category: 'Travel', currentAmount: 2000, priorAmount: 1000, pctChange: 100 },
+      ],
+    }));
+    renderDashboard();
+
+    const whyButton = await screen.findByRole('button', { name: 'Why?' });
+    expect(screen.queryByText(/Dining/)).not.toBeInTheDocument();
+
+    await userEvent.click(whyButton);
+    expect(screen.getByText('Dining: ₹8,000 vs ₹5,000 (+60%)')).toBeInTheDocument();
+    expect(screen.getByText('Travel: ₹2,000 vs ₹1,000 (+100%)')).toBeInTheDocument();
+  });
+
+  it('renders no "Why?" toggle on Total Expenses when the delta is real but no category moved', async () => {
+    vi.mocked(dashboardApi.summary).mockResolvedValue(summary({
+      expenseDeltaPct: 5, expenseCategoryMovers: [],
+    }));
+    renderDashboard();
+
+    await screen.findByText('Financial Health Score');
+    expect(screen.queryByRole('button', { name: 'Why?' })).not.toBeInTheDocument();
+  });
+
+  it('labels a brand-new category as "new this month" rather than a percentage, when it has no prior spend', async () => {
+    vi.mocked(dashboardApi.summary).mockResolvedValue(summary({
+      expenseDeltaPct: 20,
+      expenseCategoryMovers: [
+        { category: 'Electronics', currentAmount: 15000, priorAmount: 0, pctChange: null },
+      ],
+    }));
+    renderDashboard();
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Why?' }));
+    expect(screen.getByText('Electronics: ₹15,000 vs ₹0 (new this month)')).toBeInTheDocument();
   });
 });
 

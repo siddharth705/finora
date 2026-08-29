@@ -138,6 +138,59 @@ export interface DashboardSummary {
   categoryReviewSpendAmount: number;
   categoryReviewTransactionCount: number;
   categoryReviewSpendWarningThresholdPct: number;
+  /**
+   * Why incomeDeltaPct/expenseDeltaPct/netDeltaPct came back null when a real percentage might be
+   * expected -- 'PARTIAL_PRIOR_MONTH' (the prior calendar month is really just the ragged edge of
+   * the same continuous statement window the current month came from) or
+   * 'TOO_FEW_PRIOR_TRANSACTIONS' (a real, full prior month, but too few of its own transactions to
+   * trust as a ratio's denominator). Null whenever the deltas are real numbers, or null for a
+   * self-explanatory reason (no prior period at all, or a genuinely zero prior amount) that
+   * doesn't need a "Why?" disclosure. All three deltas share one gate, so there's nothing to say
+   * per-metric that isn't already said once here.
+   */
+  comparisonGateReason: 'PARTIAL_PRIOR_MONTH' | 'TOO_FEW_PRIOR_TRANSACTIONS' | null;
+  comparisonGateMinTransactions: number;
+  /**
+   * The categories behind a real (non-null) expenseDeltaPct -- e.g. "Dining ₹8,000 vs ₹5,000
+   * (+60%)" instead of leaving "expenses are up 12%" unexplained. Built from the SAME
+   * currentMonth/priorMonth comparison expenseDeltaPct itself comes from, not Insights' own
+   * rolling 3-month-average movers -- a different prior-period definition that would disagree
+   * with the number it's meant to explain. Always empty when expenseDeltaPct is null.
+   */
+  expenseCategoryMovers: CategoryMover[];
+  /**
+   * Detected Issues. ReconciliationService's own duplicate pass already silently excludes a row
+   * from every total above the moment it runs (Transaction.isDuplicateOf) -- until now nothing
+   * told the user it happened. transactionsApi.confirmNotDuplicate (BH-027) already existed to
+   * let a human overrule that guess; it simply had no caller anywhere in the product.
+   * duplicateTransactionCount is the TRUE, uncapped total; detectedDuplicates is the capped,
+   * newest-first list the card actually renders.
+   */
+  duplicateTransactionCount: number;
+  detectedDuplicates: DetectedDuplicate[];
+  /**
+   * Categorization Confidence. How sure the categorization engine was, on average (0-100), about
+   * the categories it assigned this month -- a positive, ongoing data-quality signal, distinct
+   * from categoryReviewWarning (which only fires when spend is badly miscategorized). Null below
+   * categorizationConfidenceMinTransactions engine-decided transactions this month.
+   */
+  categorizationConfidenceScore: number | null;
+  categorizationConfidenceTransactionCount: number;
+  categorizationConfidenceMinTransactions: number;
+}
+
+export interface CategoryMover {
+  category: string;
+  currentAmount: number;
+  priorAmount: number;
+  pctChange: number | null;
+}
+
+export interface DetectedDuplicate {
+  transactionId: string;
+  date: string;
+  merchant: string;
+  amount: number;
 }
 
 // D-25 PR3-B/C. `type` is one of ACCOUNT_CREATED/FIRST_IMPORT/FIRST_BUDGET/FIRST_GOAL/
@@ -223,6 +276,11 @@ export interface StagedRow {
   // from the source document, not a guess). Distinct from `confidence` above (Gmail-receipt
   // extraction reliability) and `merchantConfidence` (merchant-identity resolution).
   categoryConfidence: number | null;
+  // 1-based position within its section as originally parsed, or null for a client/import path
+  // that predates this field. Echoed back unchanged in the confirm request so it lands on
+  // Transaction.sourceRowPosition -- the only thing the admin Import Row Trace (Founder
+  // Operations Dashboard) reads it for. No UI consumes it here.
+  rowPosition: number | null;
 }
 
 export interface MerchantGroup {

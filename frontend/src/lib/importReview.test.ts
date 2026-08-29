@@ -217,6 +217,7 @@ describe('toConfirmedRows', () => {
     const rows = [
       row('METRO FARE', false, {
         ruleId: 'rule-1', referenceNumber: 'REF/9981', balanceAfter: 1200.5, categoryConfidence: 70,
+        rowPosition: 3,
       }),
     ];
 
@@ -233,6 +234,7 @@ describe('toConfirmedRows', () => {
       referenceNumber: 'REF/9981',
       balanceAfter: 1200.5,
       categoryConfidence: 70,
+      rowPosition: 3,
     });
   });
 });

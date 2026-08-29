@@ -710,6 +710,73 @@ export interface ReconciliationExplorerTrace {
   classification: ReconciliationExplorerClassification;
 }
 
+/* ── Import Row Trace ──────────────────────────────────────────────────────────────────────────
+ * One import, row by row (AdminImportRowTraceController) -- scoped to successfully-imported rows
+ * only; a dropped or excluded-by-user row stays aggregate-only, same as ImportTrace's existing
+ * verification findings. Mirrors backend ImportRowTraceDto exactly.
+ */
+
+export interface ImportRowOutcome {
+  rowPosition: number;
+  transactionId: string;
+  description: string | null;
+  amount: number;
+  txnDate: string;
+}
+
+/** rows is empty (not missing) when this import predates row-position tracking, or was confirmed
+ *  by a client that predates echoing it -- "no position data available" is a real, statable
+ *  answer, not an error. */
+export interface ImportRowTrace {
+  statementImportId: string;
+  rows: ImportRowOutcome[];
+}
+
+/* ── Insight Explorer ──────────────────────────────────────────────────────────────────────────
+ * One user's dashboard insights, traced back to the transaction set and formula that produced
+ * each number (AdminInsightsExplorerController). Mirrors backend InsightsExplorerDto exactly.
+ */
+
+/** rawAmount and reportableAmount differ when a refund was netted off this expense -- the gap
+ *  between the two IS the trace for that transaction. */
+export interface InsightsExplorerTracedTransaction {
+  transactionId: string;
+  description: string | null;
+  rawAmount: number;
+  reportableAmount: number;
+  txnDate: string;
+}
+
+export interface InsightsExplorerTotalSpend {
+  amount: number;
+  categoryCount: number;
+  transactions: InsightsExplorerTracedTransaction[];
+}
+
+export interface InsightsExplorerTopCategory {
+  category: string;
+  amount: number;
+  transactions: InsightsExplorerTracedTransaction[];
+}
+
+export interface InsightsExplorerTopMerchant {
+  merchant: string;
+  amount: number;
+  transactions: InsightsExplorerTracedTransaction[];
+}
+
+/** reportingMonth and every number are null when the user has no reportable expense
+ *  transactions at all -- the same state the user-facing dashboard answers with its own
+ *  "upload or add transactions" sentence, not a lookup failure. */
+export interface InsightsExplorerTrace {
+  userId: string;
+  reportingMonth: string | null;
+  reportingMonthIsCurrent: boolean;
+  totalSpend: InsightsExplorerTotalSpend | null;
+  topCategory: InsightsExplorerTopCategory | null;
+  topMerchant: InsightsExplorerTopMerchant | null;
+}
+
 interface WorkspaceHealthDto {
   rulesEnabled: boolean;
   merchantLearningActive: boolean;

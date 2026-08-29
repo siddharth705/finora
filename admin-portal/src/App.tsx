@@ -31,6 +31,7 @@ const LearningQueue = lazy(() => import('./pages/LearningQueue'));
 const MerchantReview = lazy(() => import('./pages/MerchantReview'));
 const ReconciliationMonitor = lazy(() => import('./pages/ReconciliationMonitor'));
 const ReconciliationExplorer = lazy(() => import('./pages/ReconciliationExplorer'));
+const InsightsExplorer = lazy(() => import('./pages/InsightsExplorer'));
 const PlatformAnalytics = lazy(() => import('./pages/PlatformAnalytics'));
 const Subscriptions = lazy(() => import('./pages/Subscriptions'));
 const Referrals = lazy(() => import('./pages/Referrals'));
@@ -41,6 +42,7 @@ const Diagnostics = lazy(() => import('./pages/Diagnostics'));
 const LayoutIntelligence = lazy(() => import('./pages/LayoutIntelligence'));
 const LayoutStudio = lazy(() => import('./pages/LayoutStudio'));
 const ImportTrace = lazy(() => import('./pages/ImportTrace'));
+const ImportRowTrace = lazy(() => import('./pages/ImportRowTrace'));
 const Settings = lazy(() => import('./pages/Settings'));
 
 const queryClient = new QueryClient({
@@ -91,6 +93,7 @@ export default function App() {
               <Route path="/learning-queue" element={<ProtectedRoute><LearningQueue /></ProtectedRoute>} />
               <Route path="/reconciliation" element={<ProtectedRoute><ReconciliationMonitor /></ProtectedRoute>} />
               <Route path="/reconciliation-explorer" element={<ProtectedRoute><ReconciliationExplorer /></ProtectedRoute>} />
+              <Route path="/insights-explorer" element={<ProtectedRoute><InsightsExplorer /></ProtectedRoute>} />
               <Route path="/analytics" element={<ProtectedRoute><PlatformAnalytics /></ProtectedRoute>} />
               <Route path="/subscriptions" element={<ProtectedRoute><Subscriptions /></ProtectedRoute>} />
               <Route path="/referrals" element={<ProtectedRoute><Referrals /></ProtectedRoute>} />
@@ -101,6 +104,7 @@ export default function App() {
               <Route path="/layout-intelligence" element={<ProtectedRoute><LayoutIntelligence /></ProtectedRoute>} />
               <Route path="/layout-studio" element={<ProtectedRoute><LayoutStudio /></ProtectedRoute>} />
               <Route path="/import-trace" element={<ProtectedRoute><ImportTrace /></ProtectedRoute>} />
+              <Route path="/import-row-trace" element={<ProtectedRoute><ImportRowTrace /></ProtectedRoute>} />
               <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
 
               {/* Same bug, same fix as the user app's App.tsx: with no catch-all, any unmatched

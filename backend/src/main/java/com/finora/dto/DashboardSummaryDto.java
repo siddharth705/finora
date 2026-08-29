@@ -1,8 +1,10 @@
 package com.finora.dto;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 public record DashboardSummaryDto(
         BigDecimal currentBalance,
@@ -81,5 +83,74 @@ public record DashboardSummaryDto(
         double categoryReviewSpendPct,
         BigDecimal categoryReviewSpendAmount,
         int categoryReviewTransactionCount,
-        double categoryReviewSpendWarningThresholdPct
-) {}
+        double categoryReviewSpendWarningThresholdPct,
+
+        /*
+         * Why incomeDeltaPct/expenseDeltaPct/netDeltaPct came back null when the user might expect
+         * a number -- one of "PARTIAL_PRIOR_MONTH" (the prior calendar month is really just the
+         * ragged edge of the same continuous statement window the current month came from, not a
+         * genuine separate month -- see DashboardService.isPartialBoundaryMonth) or
+         * "TOO_FEW_PRIOR_TRANSACTIONS" (a real, full prior month, but with fewer than
+         * comparisonGateMinTransactions transactions of its own, so a stray row or two could still
+         * dominate the ratio). Null whenever the three deltas are either real numbers or null for an
+         * unrelated, self-explanatory reason (no prior period at all, or a genuinely zero prior
+         * amount) that doesn't need a "Why?" disclosure. All three deltas share one gate/reason:
+         * DashboardService computes a single priorMonthReliable boolean and applies it to all three,
+         * so there's nothing to say per-metric that isn't already said once here. Mirrors how
+         * limitedHistoryMonthFloor/categoryReviewSpendWarningThresholdPct already avoid the client
+         * hardcoding a threshold.
+         */
+        String comparisonGateReason,
+        int comparisonGateMinTransactions,
+
+        /*
+         * The categories behind a real (non-null) expenseDeltaPct -- e.g. "Dining ₹8,000 vs ₹5,000
+         * (+60%)" instead of leaving "expenses are up 12%" with no explanation of which categories
+         * moved. Built from the SAME currentMonth/priorMonth spendByCategory comparison
+         * expenseDeltaPct itself comes from (DashboardService.categoryMovers), NOT
+         * InsightsService's rolling 3-month-average movers -- a different prior-period definition
+         * that would make this list disagree with the number it's meant to explain. Always empty
+         * when expenseDeltaPct is null: there's nothing to explain about a number that isn't being
+         * shown (comparisonGateReason above already covers why not). Ranked by rupee contribution
+         * to the delta and capped at 3, largest first.
+         */
+        List<CategoryMover> expenseCategoryMovers,
+
+        /*
+         * Detected Issues. ReconciliationService's own duplicate pass (see Transaction.
+         * isDuplicateOf/ReconciliationStatus.DUPLICATE) already silently excludes a row from every
+         * total above the moment it runs -- RefundNetting.reportable() drops anything with
+         * isDuplicateOf set -- and until now nothing told the user it happened.
+         * TransactionService.confirmNotDuplicate (BH-027, "no, these really are two separate
+         * transactions") already existed to let a human overrule that guess; it simply had no
+         * caller anywhere in the product. This doesn't compute a new verdict -- it surfaces the one
+         * already sitting on the row, the same "thin, presentation-only read" reasoning
+         * TransactionExplanationService's own doc comment gives for "Why this category?".
+         * duplicateTransactionCount is the TRUE, uncapped total so the client can say "N found"
+         * without hardcoding DashboardService.DETECTED_DUPLICATES_DISPLAY_LIMIT, mirroring how
+         * limitedHistoryMonthFloor already avoids a hardcoded threshold; detectedDuplicates is the
+         * capped, newest-first list the card actually renders.
+         */
+        int duplicateTransactionCount,
+        List<DetectedDuplicate> detectedDuplicates,
+
+        /*
+         * Categorization Confidence. How sure the categorization ENGINE was, on average (0-100,
+         * same scale as Transaction.decisionConfidence), about the categories it assigned THIS
+         * MONTH -- a positive, ongoing data-quality signal, distinct from categoryReviewWarning
+         * above (which only fires when spend is badly miscategorized). Null below
+         * categorizationConfidenceMinTransactions decisioned transactions this month (an average of
+         * one or two decisions reads as confident or shaky by chance, not by anything real about
+         * the engine) -- mirrors how healthScoreAvailable gates the health score below its own
+         * floor. categorizationConfidenceTransactionCount/categorizationConfidenceMinTransactions
+         * are included so the client never hardcodes the floor, same as
+         * healthScoreTransactionCount/healthScoreMinTransactions already do.
+         */
+        Integer categorizationConfidenceScore,
+        int categorizationConfidenceTransactionCount,
+        int categorizationConfidenceMinTransactions
+) {
+    public record CategoryMover(String category, BigDecimal currentAmount, BigDecimal priorAmount, Double pctChange) {}
+
+    public record DetectedDuplicate(UUID transactionId, LocalDate date, String merchant, BigDecimal amount) {}
+}

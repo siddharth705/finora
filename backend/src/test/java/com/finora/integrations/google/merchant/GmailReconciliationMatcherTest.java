@@ -114,6 +114,56 @@ class GmailReconciliationMatcherTest {
                 userId, new BigDecimal("1299.00"), LocalDate.of(2026, 8, 7), LocalDate.of(2026, 8, 13));
     }
 
+    // --- findMatchAmongTransactions: ReconciliationService's post-confirm sibling of findMatch ---
+
+    @Test
+    @DisplayName("a counterparty-name Gmail description matches an abbreviated bank description of the same brand")
+    void counterpartyNameMatchesAnAbbreviatedBankDescription() {
+        // Unlike findMatch's domain string ("amazon.in"), a confirmed Gmail transaction's own
+        // description is whatever descriptionFor(receipt) chose -- here a plain counterparty name,
+        // which brandTokenOf's dot-splitting would mishandle. findMatchAmongTransactions must not
+        // depend on that assumption.
+        Transaction gmailTxn = transaction("Amazon", LocalDate.of(2026, 8, 10));
+        gmailTxn.setSource(Transaction.Source.GMAIL_IMPORT);
+        Transaction bankTxn = transaction("AMZN MKTPLACE 4521", LocalDate.of(2026, 8, 9));
+
+        Optional<Transaction> match = matcher.findMatchAmongTransactions(gmailTxn, List.of(bankTxn));
+
+        assertThat(match).contains(bankTxn);
+    }
+
+    @Test
+    @DisplayName("an unrelated candidate is not a match")
+    void findMatchAmongTransactions_unrelatedCandidateDoesNotMatch() {
+        Transaction gmailTxn = transaction("Amazon", LocalDate.of(2026, 8, 10));
+        gmailTxn.setSource(Transaction.Source.GMAIL_IMPORT);
+        Transaction bankTxn = transaction("SWIGGY ORDER 9182", LocalDate.of(2026, 8, 10));
+
+        assertThat(matcher.findMatchAmongTransactions(gmailTxn, List.of(bankTxn))).isEmpty();
+    }
+
+    @Test
+    @DisplayName("no candidates at all is not a match")
+    void findMatchAmongTransactions_noCandidatesIsNotAMatch() {
+        Transaction gmailTxn = transaction("Amazon", LocalDate.of(2026, 8, 10));
+        gmailTxn.setSource(Transaction.Source.GMAIL_IMPORT);
+
+        assertThat(matcher.findMatchAmongTransactions(gmailTxn, List.of())).isEmpty();
+    }
+
+    @Test
+    @DisplayName("among several candidates that both clear the threshold, the closer merchant-name match wins")
+    void findMatchAmongTransactions_bestSimilarityWinsAmongSeveralCandidates() {
+        Transaction gmailTxn = transaction("Amazon", LocalDate.of(2026, 8, 10));
+        gmailTxn.setSource(Transaction.Source.GMAIL_IMPORT);
+        Transaction weakMatch = transaction("AMZN REFUND", LocalDate.of(2026, 8, 8));
+        Transaction strongMatch = transaction("AMAZON.IN PURCHASE", LocalDate.of(2026, 8, 9));
+
+        Optional<Transaction> match = matcher.findMatchAmongTransactions(gmailTxn, List.of(weakMatch, strongMatch));
+
+        assertThat(match).contains(strongMatch);
+    }
+
     private Transaction transaction(String description, LocalDate date) {
         Transaction t = new Transaction();
         org.springframework.test.util.ReflectionTestUtils.setField(t, "id", UUID.randomUUID());

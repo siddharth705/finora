@@ -69,6 +69,28 @@ public class DashboardService {
         Map<UUID, Category> categoriesById = categoryRepository.findByUserId(userId).stream()
                 .collect(Collectors.toMap(Category::getId, c -> c));
 
+        // Detected Issues. ReconciliationService's own duplicate pass silently excludes a row from
+        // every total above the moment isDuplicateOf is set (see RefundNetting.reportable) -- and
+        // until now nothing told the user it happened. TransactionService.confirmNotDuplicate
+        // (BH-027) already exists to let a human overrule the engine's guess ("no, these really are
+        // two separate transactions") -- it simply had no caller anywhere in the product. This
+        // doesn't compute a new verdict, just finally surfaces the one already sitting on the row.
+        // Newest first; duplicateTransactionCount is the TRUE total (uncapped) so the client can
+        // say "N found" without hardcoding DETECTED_DUPLICATES_DISPLAY_LIMIT, mirroring how
+        // limitedHistoryMonthFloor already avoids a hardcoded threshold.
+        List<Transaction> duplicates = all.stream()
+                .filter(t -> t.getReconciliationStatus() == Transaction.ReconciliationStatus.DUPLICATE)
+                .sorted(Comparator.comparing(Transaction::getTxnDate).reversed())
+                .toList();
+        List<DashboardSummaryDto.DetectedDuplicate> detectedDuplicates = duplicates.stream()
+                .limit(DETECTED_DUPLICATES_DISPLAY_LIMIT)
+                .map(t -> new DashboardSummaryDto.DetectedDuplicate(t.getId(), t.getTxnDate(),
+                        Optional.ofNullable(t.getMerchant()).filter(s -> !s.isBlank())
+                                .or(() -> Optional.ofNullable(t.getDescription()).filter(s -> !s.isBlank()))
+                                .orElse("Unknown"),
+                        t.getAmount()))
+                .toList();
+
         BigDecimal liquid = sumBalances(accounts, Account.Type.SAVINGS).add(sumBalances(accounts, Account.Type.WALLET));
         BigDecimal investments = sumBalances(accounts, Account.Type.INVESTMENT);
         BigDecimal liabilities = sumBalances(accounts, Account.Type.CREDIT_CARD);
@@ -109,12 +131,14 @@ public class DashboardService {
         // history is one ~30-day window straddling Jun 26 -- Jul 26 gets a "priorMonth" of June that
         // is really 5 leftover days of the SAME import, not last month's real spending -- dividing
         // pct()'s delta against that near-empty sliver is exactly how a genuine steady spender saw
-        // a reported "928.8%" income swing. isReliablePriorMonth requires prior to be both a FULL
+        // a reported "928.8%" income swing. priorMonthGateReason requires prior to be both a FULL
         // calendar month (not the ragged edge of the overall imported date range) and to carry
         // enough of its own transactions that one or two stray rows can't dominate the ratio --
         // below either bar, the comparison isn't wrong, it's just not a comparison, and pct() below
         // says so with null (which MetricCard already renders as a muted "--" rather than a number).
-        boolean priorMonthReliable = isReliablePriorMonth(active, priorMonth);
+        String comparisonGateReason = priorMonthGateReason(active, priorMonth);
+        boolean priorMonthReliable = comparisonGateReason == null;
+        Double expenseDeltaPct = pct(expenseCur, expensePrior, priorMonthReliable);
 
         BigDecimal savingsRate = incomeCur.compareTo(BigDecimal.ZERO) > 0
                 ? netCur.divide(incomeCur, 4, RoundingMode.HALF_UP).multiply(BigDecimal.valueOf(100))
@@ -128,6 +152,18 @@ public class DashboardService {
                 .collect(Collectors.groupingBy(
                         t -> categoriesById.getOrDefault(t.getCategoryId(), unknownCategory()).getName(),
                         Collectors.reducing(BigDecimal.ZERO, refunds::reportableAmount, BigDecimal::add)));
+
+        // Which categories are actually behind a real (non-gated) Total Expenses delta -- e.g.
+        // "Dining spend rose 42%" instead of leaving "expenses are up 12%" unexplained. Deliberately
+        // built from the SAME currentMonth/priorMonth spendByCategory maps expenseDeltaPct itself
+        // comes from, not InsightsService's rolling 3-month average (a different prior-period
+        // definition) -- a category breakdown computed on a different comparison than the number
+        // it's explaining would be a fresh instance of the class of bug Comparison Gating exists to
+        // prevent. Empty whenever expenseDeltaPct itself is null: there's nothing to explain about a
+        // number that isn't being shown, and #490's "Why?" disclosure already covers that case.
+        List<DashboardSummaryDto.CategoryMover> expenseCategoryMovers = expenseDeltaPct != null
+                ? categoryMovers(spendByCategory, categorySpendForMonth(active, priorMonth, categoriesById, refunds))
+                : List.of();
 
         // "Other" (CategorizationService/CategoryRules's literal fallback name when nothing matched
         // a rule, keyword, or learned pattern) is a REAL, resolvable category -- not the same thing
@@ -156,6 +192,27 @@ public class DashboardService {
                 ? categoryReviewSpend.divide(totalMonthlySpend, 6, RoundingMode.HALF_UP).doubleValue() * 100
                 : 0;
         boolean categoryReviewWarning = categoryReviewSpendPct >= CATEGORY_REVIEW_SPEND_WARNING_THRESHOLD_PCT;
+
+        // Categorization Confidence: how sure the categorization ENGINE was, on average, about the
+        // categories it assigned this month -- a positive, ongoing data-quality signal, distinct
+        // from categoryReviewWarning above (which only fires when spend is BADLY miscategorized).
+        // decisionConfidence is null for MANUAL/FILE_PROVIDED transactions (an explicit human/file
+        // choice, not a guess -- see the field's own doc comment) and for anything that predates
+        // Transaction Intelligence Phase B, so both are excluded from the average rather than
+        // silently counted as some default score. Scoped to BOTH income and expense this month
+        // (categorization isn't spend-only), unlike categoryReviewSpend above which is deliberately
+        // EXPENSE-only. Gated below MIN_TRANSACTIONS_FOR_CONFIDENCE_SCORE for the same reason
+        // healthScoreAvailable gates the health score: an average of one or two decisions reads as
+        // confident or shaky by chance, not by anything real about the categorization engine.
+        List<Integer> currentMonthConfidenceScores = active.stream()
+                .filter(t -> Objects.equals(YearMonth.from(t.getTxnDate()).toString(), currentMonth))
+                .map(Transaction::getDecisionConfidence)
+                .filter(Objects::nonNull)
+                .toList();
+        int categorizationConfidenceTransactionCount = currentMonthConfidenceScores.size();
+        Integer categorizationConfidenceScore = categorizationConfidenceTransactionCount >= MIN_TRANSACTIONS_FOR_CONFIDENCE_SCORE
+                ? (int) Math.round(currentMonthConfidenceScores.stream().mapToInt(Integer::intValue).average().orElse(0))
+                : null;
 
         // Same current-month EXPENSE figures as spendByCategory above, just keyed by category id
         // (rather than display name) so they can be joined against Budget.categoryId below --
@@ -216,7 +273,7 @@ public class DashboardService {
         return new DashboardSummaryDto(
                 liquid, totalAssets, liabilities, netWorth,
                 incomeCur, expenseCur, netCur, savingsRate,
-                pct(incomeCur, incomePrior, priorMonthReliable), pct(expenseCur, expensePrior, priorMonthReliable),
+                pct(incomeCur, incomePrior, priorMonthReliable), expenseDeltaPct,
                 pct(netCur, netPrior, priorMonthReliable),
                 health.score(), health.label(), health.breakdown(),
                 health.available(), health.transactionCount(), health.minTransactions(),
@@ -226,7 +283,11 @@ public class DashboardService {
                 period.month(), period.isCurrent(),
                 limitedHistory, months.size(), LIMITED_HISTORY_MONTH_FLOOR, statementCount, accounts.size(),
                 categoryReviewWarning, categoryReviewSpendPct, categoryReviewSpend,
-                categoryReviewTransactionCount, CATEGORY_REVIEW_SPEND_WARNING_THRESHOLD_PCT
+                categoryReviewTransactionCount, CATEGORY_REVIEW_SPEND_WARNING_THRESHOLD_PCT,
+                comparisonGateReason, MIN_TRANSACTIONS_FOR_DELTA_COMPARISON,
+                expenseCategoryMovers,
+                duplicates.size(), detectedDuplicates,
+                categorizationConfidenceScore, categorizationConfidenceTransactionCount, MIN_TRANSACTIONS_FOR_CONFIDENCE_SCORE
         );
     }
 
@@ -285,29 +346,84 @@ public class DashboardService {
                 .multiply(BigDecimal.valueOf(100)).doubleValue();
     }
 
+    /** Same current-month-EXPENSE-by-category grouping spendByCategory (in summarize()) uses,
+     *  parameterized by month so it can be called again for priorMonth to back
+     *  expenseCategoryMovers. */
+    private Map<String, BigDecimal> categorySpendForMonth(List<Transaction> active, String month,
+                                                            Map<UUID, Category> categoriesById, RefundNetting refunds) {
+        if (month == null) return Map.of();
+        return active.stream()
+                .filter(t -> t.getTxnType() == Transaction.Type.EXPENSE
+                        && Objects.equals(YearMonth.from(t.getTxnDate()).toString(), month))
+                .collect(Collectors.groupingBy(
+                        t -> categoriesById.getOrDefault(t.getCategoryId(), unknownCategory()).getName(),
+                        Collectors.reducing(BigDecimal.ZERO, refunds::reportableAmount, BigDecimal::add)));
+    }
+
+    /** The categories behind an expense delta, ranked by rupee contribution rather than percentage:
+     *  a category going from ₹50 to ₹500 is a 900% swing but a smaller real contributor to
+     *  expenseDeltaPct than one going from ₹5,000 to ₹8,000 (60%), and rupees are what
+     *  expenseDeltaPct's own numerator is made of. Unchanged categories are dropped rather than
+     *  shown at 0% -- nothing to explain there. */
+    private List<DashboardSummaryDto.CategoryMover> categoryMovers(Map<String, BigDecimal> currentByCat,
+                                                                     Map<String, BigDecimal> priorByCat) {
+        Set<String> categories = new HashSet<>(currentByCat.keySet());
+        categories.addAll(priorByCat.keySet());
+        return categories.stream()
+                .map(cat -> {
+                    BigDecimal current = currentByCat.getOrDefault(cat, BigDecimal.ZERO);
+                    BigDecimal prior = priorByCat.getOrDefault(cat, BigDecimal.ZERO);
+                    Double pctChange = prior.compareTo(BigDecimal.ZERO) > 0
+                            ? current.subtract(prior).divide(prior, 6, RoundingMode.HALF_UP)
+                                    .multiply(BigDecimal.valueOf(100)).doubleValue()
+                            : null;
+                    return new DashboardSummaryDto.CategoryMover(cat, current, prior, pctChange);
+                })
+                .filter(m -> m.currentAmount().compareTo(m.priorAmount()) != 0)
+                .sorted(Comparator.comparing(
+                        (DashboardSummaryDto.CategoryMover m) -> m.currentAmount().subtract(m.priorAmount()).abs())
+                        .reversed())
+                .limit(3)
+                .toList();
+    }
+
     // A calendar month at least MIN_TRANSACTIONS_FOR_DELTA_COMPARISON transactions is required to
     // be trusted as a delta's denominator -- low enough that a real, if quiet, month still gets a
     // real percentage, high enough that one or two stray rows can't single-handedly produce a
     // triple-digit swing the way they did for the bug this constant exists to prevent.
     static final int MIN_TRANSACTIONS_FOR_DELTA_COMPARISON = 3;
 
-    /** True when `month` is trustworthy as a delta's denominator: a FULL calendar month (not the
-     *  ragged edge of the overall imported date range -- see the comment at this method's call
-     *  site) carrying at least {@link #MIN_TRANSACTIONS_FOR_DELTA_COMPARISON} transactions of its
-     *  own. */
-    private boolean isReliablePriorMonth(List<Transaction> active, String month) {
-        if (month == null) return false;
+    /** Why `month` isn't trustworthy as a delta's denominator, or null when it is: a FULL calendar
+     *  month (not the ragged edge of the overall imported date range -- see the comment at this
+     *  method's call site) carrying at least {@link #MIN_TRANSACTIONS_FOR_DELTA_COMPARISON}
+     *  transactions of its own. The reason string is returned to the client (see
+     *  DashboardSummaryDto.comparisonGateReason) so a nulled-out delta can explain itself instead
+     *  of just vanishing into a muted "—". */
+    private String priorMonthGateReason(List<Transaction> active, String month) {
+        if (month == null) return null;
         LocalDate earliestTxnDate = active.stream().map(Transaction::getTxnDate).min(Comparator.naturalOrder()).orElse(null);
         LocalDate latestTxnDate = active.stream().map(Transaction::getTxnDate).max(Comparator.naturalOrder()).orElse(null);
-        if (earliestTxnDate == null || latestTxnDate == null) return false;
-        boolean isEarliestBucket = month.equals(YearMonth.from(earliestTxnDate).toString());
-        boolean isLatestBucket = month.equals(YearMonth.from(latestTxnDate).toString());
-        if (isEarliestBucket && earliestTxnDate.getDayOfMonth() != 1) return false;
-        if (isLatestBucket && latestTxnDate.getDayOfMonth() != YearMonth.from(latestTxnDate).lengthOfMonth()) return false;
+        if (earliestTxnDate == null || latestTxnDate == null) return null;
+        if (isPartialBoundaryMonth(month, earliestTxnDate, latestTxnDate)) return "PARTIAL_PRIOR_MONTH";
 
         long monthTxnCount = active.stream()
                 .filter(t -> YearMonth.from(t.getTxnDate()).toString().equals(month)).count();
-        return monthTxnCount >= MIN_TRANSACTIONS_FOR_DELTA_COMPARISON;
+        return monthTxnCount < MIN_TRANSACTIONS_FOR_DELTA_COMPARISON ? "TOO_FEW_PRIOR_TRANSACTIONS" : null;
+    }
+
+    /** True when `month` is the ragged near or far edge of the user's whole imported date range --
+     *  i.e. it's the calendar-month bucket containing `earliestTxnDate` but doesn't start on the
+     *  1st, or the bucket containing `latestTxnDate` but doesn't run through month-end. A bucket
+     *  like this holds a partial slice of a continuous statement window, not a genuine full month,
+     *  so it can't be trusted for either a month-over-month delta or a consistency/cash-flow
+     *  average -- both {@link #priorMonthGateReason} and {@link #computeHealthScore} exclude it via
+     *  this shared check. */
+    private boolean isPartialBoundaryMonth(String month, LocalDate earliestTxnDate, LocalDate latestTxnDate) {
+        boolean isEarliestBucket = earliestTxnDate != null && month.equals(YearMonth.from(earliestTxnDate).toString());
+        boolean isLatestBucket = latestTxnDate != null && month.equals(YearMonth.from(latestTxnDate).toString());
+        if (isEarliestBucket && earliestTxnDate.getDayOfMonth() != 1) return true;
+        if (isLatestBucket && latestTxnDate.getDayOfMonth() != YearMonth.from(latestTxnDate).lengthOfMonth()) return true;
+        return false;
     }
 
     // D-25 PR3-A. Owner's choice among the proposal's own options (transaction count vs. time
@@ -315,6 +431,18 @@ public class DashboardService {
     // RefundNetting-reportable list every other figure in this method is already computed from,
     // so "10 transactions" means the same 10 a user would see on the Ledger, not some other count.
     static final int MIN_TRANSACTIONS_FOR_HEALTH_SCORE = 10;
+
+    // A card, not a full ledger view -- capped the same way expenseCategoryMovers is, so a user
+    // with dozens of duplicates from one bad re-import isn't shown a wall of rows. Unlike that
+    // ranking-by-magnitude cap, this one is just "most recent first, stop at 5": there's no
+    // meaningful way to rank duplicates by importance, only by how long they've been sitting
+    // unreviewed.
+    static final int DETECTED_DUPLICATES_DISPLAY_LIMIT = 5;
+
+    // Lower than MIN_TRANSACTIONS_FOR_HEALTH_SCORE deliberately: this is a single average, not a
+    // multi-component composite, so it needs less data to say something real. Still high enough
+    // that one lucky or unlucky guess can't swing the whole number.
+    static final int MIN_TRANSACTIONS_FOR_CONFIDENCE_SCORE = 5;
 
     private record HealthResult(Integer score, String label, Map<String, Double> breakdown,
                                  boolean available, int transactionCount, int minTransactions) {}
@@ -361,12 +489,7 @@ public class DashboardService {
         List<BigDecimal> fullMonthlyIncome = new ArrayList<>();
         for (int i = 0; i < last6.size(); i++) {
             String m = last6.get(i);
-            boolean partialStart = i == 0 && earliestTxnDate != null
-                    && m.equals(YearMonth.from(earliestTxnDate).toString()) && earliestTxnDate.getDayOfMonth() != 1;
-            boolean partialEnd = i == last6.size() - 1 && latestTxnDate != null
-                    && m.equals(YearMonth.from(latestTxnDate).toString())
-                    && latestTxnDate.getDayOfMonth() != YearMonth.from(latestTxnDate).lengthOfMonth();
-            if (partialStart || partialEnd) continue;
+            if (isPartialBoundaryMonth(m, earliestTxnDate, latestTxnDate)) continue;
             fullMonthlyExpense.add(monthlyExpense.get(i));
             fullMonthlyIncome.add(monthlyIncome.get(i));
         }

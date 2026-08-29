@@ -206,6 +206,7 @@ class DashboardServiceTest {
         assertThat(summary.incomeDeltaPct()).isNull();
         assertThat(summary.expenseDeltaPct()).isNull();
         assertThat(summary.netDeltaPct()).isNull();
+        assertThat(summary.comparisonGateReason()).isEqualTo("PARTIAL_PRIOR_MONTH");
     }
 
     @Test
@@ -226,6 +227,8 @@ class DashboardServiceTest {
         DashboardSummaryDto summary = dashboardService.summarize(userId);
 
         assertThat(summary.incomeDeltaPct()).isNull();
+        assertThat(summary.comparisonGateReason()).isEqualTo("TOO_FEW_PRIOR_TRANSACTIONS");
+        assertThat(summary.comparisonGateMinTransactions()).isEqualTo(DashboardService.MIN_TRANSACTIONS_FOR_DELTA_COMPARISON);
     }
 
     @Test
@@ -247,6 +250,7 @@ class DashboardServiceTest {
         // June: 30 * 100 = 3000. July: 31 * 200 = 6200. (6200-3000)/3000 * 100 ~= 106.67%.
         assertThat(summary.incomeDeltaPct()).isNotNull();
         assertThat(summary.incomeDeltaPct()).isCloseTo(106.67, org.assertj.core.data.Offset.offset(0.5));
+        assertThat(summary.comparisonGateReason()).isNull();
     }
 
     @Test
@@ -268,6 +272,289 @@ class DashboardServiceTest {
         DashboardSummaryDto summary = dashboardService.summarize(userId);
 
         assertThat(summary.incomeDeltaPct()).isNull();
+        // The prior month itself is perfectly reliable -- it's genuinely, legitimately zero income,
+        // not a thin-data artifact -- so this null shouldn't carry a gate reason a "Why?" disclosure
+        // would show; the amount being zero is self-explanatory.
+        assertThat(summary.comparisonGateReason()).isNull();
+    }
+
+    private UUID category(String name) {
+        UUID id = UUID.randomUUID();
+        Category category = new Category();
+        ReflectionTestUtils.setField(category, "id", id);
+        category.setUserId(userId);
+        category.setName(name);
+        List<Category> existing = new java.util.ArrayList<>(categoryRepository.findByUserId(userId));
+        existing.add(category);
+        when(categoryRepository.findByUserId(any())).thenReturn(existing);
+        return id;
+    }
+
+    @Test
+    @DisplayName("expense category movers: explains a real delta with the categories that moved, dropping unchanged ones")
+    void summarize_explainsARealExpenseDelta_withTheCategoriesThatMoved() {
+        UUID diningId = category("Dining");
+        UUID groceriesId = category("Groceries");
+
+        List<Transaction> txns = new java.util.ArrayList<>();
+        // June (prior month): Dining 5000, Groceries 3000, plus an INCOME row so the prior month
+        // clears MIN_TRANSACTIONS_FOR_DELTA_COMPARISON (3) and the delta isn't gated.
+        Transaction diningJune = txn(new BigDecimal("5000.00"), Transaction.Type.EXPENSE, LocalDate.of(2026, 6, 1), Transaction.ReconciliationStatus.OK);
+        diningJune.setCategoryId(diningId);
+        Transaction groceriesJune = txn(new BigDecimal("3000.00"), Transaction.Type.EXPENSE, LocalDate.of(2026, 6, 10), Transaction.ReconciliationStatus.OK);
+        groceriesJune.setCategoryId(groceriesId);
+        Transaction incomeJune = txn(new BigDecimal("50000.00"), Transaction.Type.INCOME, LocalDate.of(2026, 6, 20), Transaction.ReconciliationStatus.OK);
+        txns.add(diningJune);
+        txns.add(groceriesJune);
+        txns.add(incomeJune);
+
+        // July (current month): Dining rose to 8000; Groceries stayed exactly 3000 -- unchanged,
+        // so it must not appear in the movers even though it's a real category with real spend.
+        Transaction diningJuly = txn(new BigDecimal("8000.00"), Transaction.Type.EXPENSE, LocalDate.of(2026, 7, 1), Transaction.ReconciliationStatus.OK);
+        diningJuly.setCategoryId(diningId);
+        Transaction groceriesJuly = txn(new BigDecimal("3000.00"), Transaction.Type.EXPENSE, LocalDate.of(2026, 7, 10), Transaction.ReconciliationStatus.OK);
+        groceriesJuly.setCategoryId(groceriesId);
+        txns.add(diningJuly);
+        txns.add(groceriesJuly);
+        when(transactionRepository.findByUserId(userId)).thenReturn(txns);
+
+        DashboardSummaryDto summary = dashboardService.summarize(userId);
+
+        assertThat(summary.expenseDeltaPct()).isNotNull();
+        assertThat(summary.expenseCategoryMovers()).hasSize(1);
+        DashboardSummaryDto.CategoryMover mover = summary.expenseCategoryMovers().get(0);
+        assertThat(mover.category()).isEqualTo("Dining");
+        assertThat(mover.currentAmount()).isEqualByComparingTo("8000.00");
+        assertThat(mover.priorAmount()).isEqualByComparingTo("5000.00");
+        assertThat(mover.pctChange()).isCloseTo(60.0, org.assertj.core.data.Offset.offset(0.01));
+    }
+
+    @Test
+    @DisplayName("expense category movers: ranks by rupee contribution, not percentage")
+    void summarize_ranksCategoryMovers_byRupeeContributionNotPercentage() {
+        // Small category, huge % swing (Coffee: 50 -> 500, +900%) vs. a bigger category with a
+        // smaller % swing (Rent: 20000 -> 24000, +20%) -- Rent contributed more real rupees to
+        // the delta and must be ranked first despite the smaller percentage.
+        UUID coffeeId = category("Coffee");
+        UUID rentId = category("Rent");
+
+        List<Transaction> txns = new java.util.ArrayList<>();
+        Transaction coffeeJune = txn(new BigDecimal("50.00"), Transaction.Type.EXPENSE, LocalDate.of(2026, 6, 1), Transaction.ReconciliationStatus.OK);
+        coffeeJune.setCategoryId(coffeeId);
+        Transaction rentJune = txn(new BigDecimal("20000.00"), Transaction.Type.EXPENSE, LocalDate.of(2026, 6, 2), Transaction.ReconciliationStatus.OK);
+        rentJune.setCategoryId(rentId);
+        for (LocalDate d = LocalDate.of(2026, 6, 3); !d.isAfter(LocalDate.of(2026, 6, 30)); d = d.plusDays(1)) {
+            txns.add(txn(new BigDecimal("10.00"), Transaction.Type.INCOME, d, Transaction.ReconciliationStatus.OK));
+        }
+        txns.add(coffeeJune);
+        txns.add(rentJune);
+
+        Transaction coffeeJuly = txn(new BigDecimal("500.00"), Transaction.Type.EXPENSE, LocalDate.of(2026, 7, 1), Transaction.ReconciliationStatus.OK);
+        coffeeJuly.setCategoryId(coffeeId);
+        Transaction rentJuly = txn(new BigDecimal("24000.00"), Transaction.Type.EXPENSE, LocalDate.of(2026, 7, 2), Transaction.ReconciliationStatus.OK);
+        rentJuly.setCategoryId(rentId);
+        for (LocalDate d = LocalDate.of(2026, 7, 3); !d.isAfter(LocalDate.of(2026, 7, 31)); d = d.plusDays(1)) {
+            txns.add(txn(new BigDecimal("10.00"), Transaction.Type.INCOME, d, Transaction.ReconciliationStatus.OK));
+        }
+        txns.add(coffeeJuly);
+        txns.add(rentJuly);
+        when(transactionRepository.findByUserId(userId)).thenReturn(txns);
+
+        DashboardSummaryDto summary = dashboardService.summarize(userId);
+
+        assertThat(summary.expenseCategoryMovers()).extracting(DashboardSummaryDto.CategoryMover::category)
+                .containsExactly("Rent", "Coffee");
+    }
+
+    @Test
+    @DisplayName("expense category movers: caps at 3, keeping the largest rupee movers")
+    void summarize_capsCategoryMoversAtThree() {
+        UUID aId = category("A");
+        UUID bId = category("B");
+        UUID cId = category("C");
+        UUID dId = category("D");
+        UUID[] ids = {aId, bId, cId, dId};
+
+        List<Transaction> txns = new java.util.ArrayList<>();
+        LocalDate juneDate = LocalDate.of(2026, 6, 1);
+        for (int i = 0; i < ids.length; i++) {
+            Transaction t = txn(new BigDecimal("100.00"), Transaction.Type.EXPENSE, juneDate.plusDays(i), Transaction.ReconciliationStatus.OK);
+            t.setCategoryId(ids[i]);
+            txns.add(t);
+        }
+        txns.add(txn(new BigDecimal("1.00"), Transaction.Type.INCOME, LocalDate.of(2026, 6, 10), Transaction.ReconciliationStatus.OK));
+
+        // July: D moves the most (+1000), C next (+500), B next (+200), A least (+50) -- the top 3
+        // by rupee delta should be D, C, B, largest first; A dropped for being the smallest mover.
+        BigDecimal[] julyAmounts = {new BigDecimal("150.00"), new BigDecimal("300.00"), new BigDecimal("600.00"), new BigDecimal("1100.00")};
+        LocalDate julyDate = LocalDate.of(2026, 7, 1);
+        for (int i = 0; i < ids.length; i++) {
+            Transaction t = txn(julyAmounts[i], Transaction.Type.EXPENSE, julyDate.plusDays(i), Transaction.ReconciliationStatus.OK);
+            t.setCategoryId(ids[i]);
+            txns.add(t);
+        }
+        when(transactionRepository.findByUserId(userId)).thenReturn(txns);
+
+        DashboardSummaryDto summary = dashboardService.summarize(userId);
+
+        assertThat(summary.expenseCategoryMovers()).hasSize(3);
+        assertThat(summary.expenseCategoryMovers()).extracting(DashboardSummaryDto.CategoryMover::category)
+                .containsExactly("D", "C", "B");
+    }
+
+    @Test
+    @DisplayName("expense category movers: empty when the delta itself is gated -- nothing to explain about a hidden number")
+    void summarize_hasNoCategoryMovers_whenTheExpenseDeltaIsGated() {
+        // Same partial-boundary setup as the comparison-gating tests above.
+        List<Transaction> txns = new java.util.ArrayList<>();
+        for (LocalDate d = LocalDate.of(2026, 6, 26); !d.isAfter(LocalDate.of(2026, 6, 30)); d = d.plusDays(1)) {
+            txns.add(txn(new BigDecimal("500.00"), Transaction.Type.EXPENSE, d, Transaction.ReconciliationStatus.OK));
+        }
+        for (LocalDate d = LocalDate.of(2026, 7, 1); !d.isAfter(LocalDate.of(2026, 7, 26)); d = d.plusDays(1)) {
+            txns.add(txn(new BigDecimal("1200.00"), Transaction.Type.EXPENSE, d, Transaction.ReconciliationStatus.OK));
+        }
+        when(transactionRepository.findByUserId(userId)).thenReturn(txns);
+
+        DashboardSummaryDto summary = dashboardService.summarize(userId);
+
+        assertThat(summary.expenseDeltaPct()).isNull();
+        assertThat(summary.expenseCategoryMovers()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("detected issues: lists a transaction the reconciliation engine already flagged as a duplicate")
+    void summarize_listsADetectedDuplicate() {
+        Transaction canonical = txn(new BigDecimal("500.00"), Transaction.Type.EXPENSE,
+                LocalDate.of(2026, 7, 10), Transaction.ReconciliationStatus.OK);
+        Transaction duplicate = txn(new BigDecimal("500.00"), Transaction.Type.EXPENSE,
+                LocalDate.of(2026, 7, 10), Transaction.ReconciliationStatus.DUPLICATE);
+        duplicate.setIsDuplicateOf(canonical.getId());
+        duplicate.setMerchant("Swiggy");
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(canonical, duplicate));
+
+        DashboardSummaryDto summary = dashboardService.summarize(userId);
+
+        assertThat(summary.duplicateTransactionCount()).isEqualTo(1);
+        assertThat(summary.detectedDuplicates()).hasSize(1);
+        DashboardSummaryDto.DetectedDuplicate found = summary.detectedDuplicates().get(0);
+        assertThat(found.merchant()).isEqualTo("Swiggy");
+        assertThat(found.amount()).isEqualByComparingTo("500.00");
+        assertThat(found.date()).isEqualTo(LocalDate.of(2026, 7, 10));
+    }
+
+    @Test
+    @DisplayName("detected issues: a flagged duplicate is excluded from monthlyExpense, same as the ledger already treats it")
+    void summarize_excludesADetectedDuplicateFromTotals() {
+        Transaction real = txn(new BigDecimal("500.00"), Transaction.Type.EXPENSE,
+                LocalDate.of(2026, 7, 10), Transaction.ReconciliationStatus.OK);
+        Transaction duplicate = txn(new BigDecimal("500.00"), Transaction.Type.EXPENSE,
+                LocalDate.of(2026, 7, 10), Transaction.ReconciliationStatus.DUPLICATE);
+        duplicate.setIsDuplicateOf(UUID.randomUUID());
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(real, duplicate));
+
+        DashboardSummaryDto summary = dashboardService.summarize(userId);
+
+        // 500, not 1000 -- the duplicate never counted, exactly as RefundNetting.reportable()
+        // already excluded it before this feature existed. This feature only makes that visible.
+        assertThat(summary.monthlyExpense()).isEqualByComparingTo("500.00");
+        assertThat(summary.duplicateTransactionCount()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("detected issues: caps the display list at DETECTED_DUPLICATES_DISPLAY_LIMIT but reports the true total count")
+    void summarize_capsDetectedDuplicatesDisplay_butReportsTheTrueCount() {
+        List<Transaction> txns = new java.util.ArrayList<>();
+        for (int i = 0; i < DashboardService.DETECTED_DUPLICATES_DISPLAY_LIMIT + 3; i++) {
+            Transaction d = txn(new BigDecimal("10.00"), Transaction.Type.EXPENSE,
+                    LocalDate.of(2026, 7, 1).plusDays(i), Transaction.ReconciliationStatus.DUPLICATE);
+            d.setIsDuplicateOf(UUID.randomUUID());
+            txns.add(d);
+        }
+        when(transactionRepository.findByUserId(userId)).thenReturn(txns);
+
+        DashboardSummaryDto summary = dashboardService.summarize(userId);
+
+        assertThat(summary.duplicateTransactionCount()).isEqualTo(DashboardService.DETECTED_DUPLICATES_DISPLAY_LIMIT + 3);
+        assertThat(summary.detectedDuplicates()).hasSize(DashboardService.DETECTED_DUPLICATES_DISPLAY_LIMIT);
+        // Newest first.
+        assertThat(summary.detectedDuplicates().get(0).date()).isEqualTo(LocalDate.of(2026, 7, 1).plusDays(DashboardService.DETECTED_DUPLICATES_DISPLAY_LIMIT + 2));
+    }
+
+    @Test
+    @DisplayName("detected issues: empty when the reconciliation engine hasn't flagged anything")
+    void summarize_reportsNoDetectedDuplicates_whenNoneAreFlagged() {
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(
+                txn(new BigDecimal("500.00"), Transaction.Type.EXPENSE, LocalDate.of(2026, 7, 10), Transaction.ReconciliationStatus.OK)
+        ));
+
+        DashboardSummaryDto summary = dashboardService.summarize(userId);
+
+        assertThat(summary.duplicateTransactionCount()).isEqualTo(0);
+        assertThat(summary.detectedDuplicates()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("categorization confidence: averages this month's engine-decided transactions once past the floor")
+    void summarize_averagesCategorizationConfidence_pastTheFloor() {
+        List<Transaction> txns = new java.util.ArrayList<>();
+        int[] confidences = {60, 70, 80, 90, 100}; // average 80, exactly MIN_TRANSACTIONS_FOR_CONFIDENCE_SCORE (5) rows
+        for (int i = 0; i < confidences.length; i++) {
+            Transaction t = txn(new BigDecimal("100.00"), Transaction.Type.EXPENSE,
+                    LocalDate.of(2026, 7, 1 + i), Transaction.ReconciliationStatus.OK);
+            t.setDecisionConfidence(confidences[i]);
+            txns.add(t);
+        }
+        when(transactionRepository.findByUserId(userId)).thenReturn(txns);
+
+        DashboardSummaryDto summary = dashboardService.summarize(userId);
+
+        assertThat(summary.categorizationConfidenceScore()).isEqualTo(80);
+        assertThat(summary.categorizationConfidenceTransactionCount()).isEqualTo(5);
+        assertThat(summary.categorizationConfidenceMinTransactions()).isEqualTo(DashboardService.MIN_TRANSACTIONS_FOR_CONFIDENCE_SCORE);
+    }
+
+    @Test
+    @DisplayName("categorization confidence: null below the minimum-transactions floor, not a misleadingly small average")
+    void summarize_reportsNoCategorizationConfidence_belowTheFloor() {
+        List<Transaction> txns = new java.util.ArrayList<>();
+        for (int i = 0; i < DashboardService.MIN_TRANSACTIONS_FOR_CONFIDENCE_SCORE - 1; i++) {
+            Transaction t = txn(new BigDecimal("100.00"), Transaction.Type.EXPENSE,
+                    LocalDate.of(2026, 7, 1 + i), Transaction.ReconciliationStatus.OK);
+            t.setDecisionConfidence(50);
+            txns.add(t);
+        }
+        when(transactionRepository.findByUserId(userId)).thenReturn(txns);
+
+        DashboardSummaryDto summary = dashboardService.summarize(userId);
+
+        assertThat(summary.categorizationConfidenceScore()).isNull();
+        assertThat(summary.categorizationConfidenceTransactionCount()).isEqualTo(DashboardService.MIN_TRANSACTIONS_FOR_CONFIDENCE_SCORE - 1);
+    }
+
+    @Test
+    @DisplayName("categorization confidence: MANUAL/FILE_PROVIDED transactions (null decisionConfidence) don't count toward the floor or the average")
+    void summarize_excludesTransactionsWithNoDecisionConfidence() {
+        List<Transaction> txns = new java.util.ArrayList<>();
+        // 5 engine-decided (clears the floor) plus 3 MANUAL entries with no confidence at all --
+        // the manual ones must neither drag the average toward zero nor count toward the floor.
+        for (int i = 0; i < 5; i++) {
+            Transaction t = txn(new BigDecimal("100.00"), Transaction.Type.EXPENSE,
+                    LocalDate.of(2026, 7, 1 + i), Transaction.ReconciliationStatus.OK);
+            t.setDecisionConfidence(90);
+            txns.add(t);
+        }
+        for (int i = 0; i < 3; i++) {
+            Transaction manual = txn(new BigDecimal("50.00"), Transaction.Type.EXPENSE,
+                    LocalDate.of(2026, 7, 10 + i), Transaction.ReconciliationStatus.OK);
+            // decisionConfidence left null, as it always is for MANUAL/FILE_PROVIDED.
+            txns.add(manual);
+        }
+        when(transactionRepository.findByUserId(userId)).thenReturn(txns);
+
+        DashboardSummaryDto summary = dashboardService.summarize(userId);
+
+        assertThat(summary.categorizationConfidenceScore()).isEqualTo(90);
+        assertThat(summary.categorizationConfidenceTransactionCount()).isEqualTo(5);
     }
 
     @Test

@@ -8,7 +8,7 @@ import {
 import {
   Wallet, ArrowDownCircle, ArrowUpCircle, PieChart,
   ShoppingBag, Sparkles, Plus, PiggyBank, TrendingUp, TrendingDown, Target, ShieldCheck, Repeat,
-  UploadCloud, Receipt, LineChart as LineChartIcon, Mail, AlertTriangle,
+  UploadCloud, Receipt, LineChart as LineChartIcon, Mail, AlertTriangle, ListChecks, Copy, BadgeCheck,
   Tag, Home, ShoppingCart, Utensils, Car, Zap, HeartPulse, Film, Percent, Users, Landmark, Shield,
   GraduationCap, RefreshCw, Plane, Gift, PawPrint, Sofa, Banknote, Briefcase,
 } from 'lucide-react';
@@ -74,6 +74,16 @@ function healthItemBarColor(score: number): string {
   return 'bg-danger';
 }
 
+// Same 80/60/40 cutoffs and label vocabulary as the health score above (Excellent/Good/Fair/Needs
+// Attention), reused rather than invented fresh -- Categorization Confidence is on the same 0-100
+// scale, and a second vocabulary for the same range would just be one more thing to learn.
+function scoreLabel(score: number): string {
+  if (score >= 80) return 'Excellent';
+  if (score >= 60) return 'Good';
+  if (score >= 40) return 'Fair';
+  return 'Needs Attention';
+}
+
 // Maps the curated icon-token vocabulary CategoryPalette.ICONS defines server-side to already-
 // imported lucide-react components -- lucide-react components can't be looked up by string name
 // at runtime without importing every one, so this is a small closed map instead. Every default
@@ -137,6 +147,29 @@ export default function Dashboard() {
     () => Object.fromEntries((categoriesQ.data ?? []).map((c) => [c.id, c])),
     [categoriesQ.data],
   );
+
+  const [confirmingDuplicateId, setConfirmingDuplicateId] = useState<string | null>(null);
+  const [duplicateConfirmError, setDuplicateConfirmError] = useState<string | null>(null);
+
+  // BH-027's own service-layer doc comment: "the user asked for this row to count, so it counts
+  // now." transactionsApi.confirmNotDuplicate already existed and already worked -- this is the
+  // first UI anywhere in the product that calls it. dashboard-summary is invalidated so the card
+  // (and every KPI the reinstated transaction now counts toward) reflects the change immediately;
+  // recent-transactions/transactions too, since the row itself just changed status.
+  async function handleConfirmNotDuplicate(transactionId: string) {
+    setConfirmingDuplicateId(transactionId);
+    setDuplicateConfirmError(null);
+    try {
+      await transactionsApi.confirmNotDuplicate(transactionId);
+      void queryClient.invalidateQueries({ queryKey: ['dashboard-summary'] });
+      void queryClient.invalidateQueries({ queryKey: ['recent-transactions'] });
+      void queryClient.invalidateQueries({ queryKey: ['transactions'] });
+    } catch {
+      setDuplicateConfirmError("Couldn't update this transaction. Please try again.");
+    } finally {
+      setConfirmingDuplicateId(null);
+    }
+  }
 
   function onTransactionAdded() {
     setShowAddModal(false);
@@ -234,11 +267,31 @@ export default function Dashboard() {
   const totalSpend = categoryEntries.reduce((s, [, v]) => s + v, 0);
   const donutColors = ['#3b82f6', '#16a34a', '#f59e0b', '#8b5cf6', '#ef4444', '#94a3b8'];
 
+  // incomeDeltaPct/expenseDeltaPct/netDeltaPct share one gate on the backend (DashboardService
+  // computes a single priorMonthReliable boolean and applies it to all three), so there's one
+  // reason to explain, not three -- computed once here and handed to whichever of the three KPI
+  // cards below actually has a nulled-out delta to explain. Balance/Savings Rate never carry a
+  // gate reason: their "—" is "this KPI has no delta concept at all", not a withheld comparison.
+  const comparisonGateReasonText = summary.comparisonGateReason === 'PARTIAL_PRIOR_MONTH'
+    ? "Last month's data only covers part of the month, so comparing it wouldn't be a fair like-for-like."
+    : summary.comparisonGateReason === 'TOO_FEW_PRIOR_TRANSACTIONS'
+      ? `Last month has fewer than ${summary.comparisonGateMinTransactions} transactions, too few to compare reliably.`
+      : null;
+
+  // The categories actually behind a real Total Expenses delta -- e.g. "expenses up 12%" alone
+  // never says WHY; DashboardService.expenseCategoryMovers already ranked the real contributors,
+  // this just renders each into one line. Empty whenever expenseDeltaPct is null (nothing to
+  // explain about a hidden number -- comparisonGateReasonText above already covers that case).
+  const expenseMoverLines = summary.expenseCategoryMovers.map((m) => {
+    const pctText = m.pctChange === null ? `new ${periodLabel}` : `${m.pctChange >= 0 ? '+' : ''}${m.pctChange.toFixed(0)}%`;
+    return `${m.category}: ${fmt(m.currentAmount)} vs ${fmt(m.priorAmount)} (${pctText})`;
+  });
+
   const kpis = [
     { label: 'Total Balance', value: fmt(summary.currentBalance), delta: null as number | null, icon: Wallet, iconBg: 'bg-blue-100', iconColor: 'text-blue-600' },
-    { label: 'Total Income', value: fmt(summary.monthlyIncome), delta: summary.incomeDeltaPct, icon: ArrowDownCircle, iconBg: 'bg-green-100', iconColor: 'text-green-600' },
-    { label: 'Total Expenses', value: fmt(summary.monthlyExpense), delta: summary.expenseDeltaPct, icon: ArrowUpCircle, iconBg: 'bg-red-100', iconColor: 'text-red-600', invertDelta: true },
-    { label: 'Net Savings', value: fmt(summary.netCashFlow), delta: summary.netDeltaPct, icon: PiggyBank, iconBg: 'bg-primary-light', iconColor: 'text-primary' },
+    { label: 'Total Income', value: fmt(summary.monthlyIncome), delta: summary.incomeDeltaPct, icon: ArrowDownCircle, iconBg: 'bg-green-100', iconColor: 'text-green-600', gateReasonText: comparisonGateReasonText },
+    { label: 'Total Expenses', value: fmt(summary.monthlyExpense), delta: summary.expenseDeltaPct, icon: ArrowUpCircle, iconBg: 'bg-red-100', iconColor: 'text-red-600', invertDelta: true, gateReasonText: comparisonGateReasonText, moverLines: expenseMoverLines },
+    { label: 'Net Savings', value: fmt(summary.netCashFlow), delta: summary.netDeltaPct, icon: PiggyBank, iconBg: 'bg-primary-light', iconColor: 'text-primary', gateReasonText: comparisonGateReasonText },
     { label: 'Savings Rate', value: summary.savingsRatePct.toFixed(0) + '%', delta: null as number | null, icon: PieChart, iconBg: 'bg-purple-100', iconColor: 'text-purple-600' },
   ];
 
@@ -295,6 +348,8 @@ export default function Dashboard() {
             delta={k.delta}
             deltaLabel={deltaLabel}
             invertDelta={k.invertDelta}
+            gateReasonText={k.gateReasonText}
+            moverLines={k.moverLines}
           />
         ))}
       </div>
@@ -365,6 +420,120 @@ export default function Dashboard() {
               </div>
             </div>
           </div>
+        )}
+      </FinoraCard>
+      )}
+
+      {/* Categorization Confidence -- how sure the categorization engine was, on average, about
+          the categories it assigned this month. A positive, ongoing data-quality signal, distinct
+          from the category-review warning below (which only fires when spend is badly
+          miscategorized) -- this can read "Excellent" in the very same month that warning fires,
+          if a small number of genuinely low-confidence transactions sit alongside a lot of
+          high-confidence ones. Hidden below categorizationConfidenceMinTransactions
+          engine-decided transactions this month (server-side floor, same reasoning as
+          healthScoreAvailable above): an average of one or two decisions isn't a real reading. */}
+      {!isEmpty && summary.categorizationConfidenceScore !== null && (
+      <FinoraCard padding="lg" className="mb-6">
+        <div className="flex items-center gap-2 mb-3">
+          <div className="w-8 h-8 rounded-full bg-primary-light flex items-center justify-center">
+            <BadgeCheck size={15} className="text-primary" />
+          </div>
+          <h2 className="font-semibold text-ink">Categorization Confidence</h2>
+        </div>
+        <div className="flex items-baseline gap-2">
+          <p className={`text-4xl font-bold ${healthColor(scoreLabel(summary.categorizationConfidenceScore))}`}>
+            {summary.categorizationConfidenceScore}
+          </p>
+          <p className="text-xs text-muted">out of 100</p>
+        </div>
+        <p className={`text-sm font-medium mt-1 ${healthColor(scoreLabel(summary.categorizationConfidenceScore))}`}>
+          {scoreLabel(summary.categorizationConfidenceScore)}
+        </p>
+        <p className="text-xs text-muted mt-2">
+          Based on {summary.categorizationConfidenceTransactionCount} automatically categorized transaction
+          {summary.categorizationConfidenceTransactionCount === 1 ? '' : 's'} {periodLabel}.
+        </p>
+      </FinoraCard>
+      )}
+
+      {/* Next Actions -- summary.notifications (DashboardService.buildNotifications: credit-card
+          payments due soon, low-balance warnings, budget-threshold alerts) has always been
+          computed and sent on every dashboard load, but was only ever rendered in TopBar's
+          bell-icon dropdown -- easy to miss entirely if a user doesn't happen to open it. This
+          surfaces the SAME list, unchanged, directly on the page it's actually about, rather
+          than computing anything new. Hidden while isEmpty, same reasoning as Financial Health
+          Score above: a brand-new account has nothing computed here to act on yet. */}
+      {!isEmpty && (
+      <FinoraCard padding="lg" className="mb-6">
+        <div className="flex items-center gap-2 mb-4">
+          <div className="w-8 h-8 rounded-full bg-primary-light flex items-center justify-center">
+            <ListChecks size={15} className="text-primary" />
+          </div>
+          <h2 className="font-semibold text-ink">Next Actions</h2>
+        </div>
+        {summary.notifications.length === 0 ? (
+          <p className="text-sm text-muted">Nothing needs your attention right now.</p>
+        ) : (
+          <ul className="space-y-2.5">
+            {summary.notifications.map((n, i) => (
+              <li key={i} className="flex items-start gap-2.5">
+                <AlertTriangle size={14} className="text-warning flex-shrink-0 mt-0.5" />
+                <span className="text-sm text-ink">{n}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </FinoraCard>
+      )}
+
+      {/* Detected Issues -- ReconciliationService's own duplicate pass already silently excludes
+          a row from every total above the moment it runs (Transaction.isDuplicateOf), and until
+          now nothing told the user it happened. transactionsApi.confirmNotDuplicate (BH-027,
+          "no, these really are two separate transactions") already existed on the backend to let
+          a human overrule that guess -- it simply had no caller anywhere in the product. Shown
+          only when something was actually flagged (unlike Next Actions above, which stays visible
+          with a positive empty state): this is a conditional alert like Limited History and the
+          category-review warning, not a standing destination worth checking when empty. */}
+      {summary.duplicateTransactionCount > 0 && (
+      <FinoraCard padding="lg" className="mb-6">
+        <div className="flex items-center gap-2 mb-1">
+          <div className="w-8 h-8 rounded-full bg-warning-bg flex items-center justify-center">
+            <Copy size={15} className="text-warning" />
+          </div>
+          <h2 className="font-semibold text-ink">Detected Issues</h2>
+        </div>
+        <p className="text-xs text-muted mb-4 ml-10">
+          {summary.duplicateTransactionCount === 1
+            ? "We found 1 transaction that looks like a duplicate and excluded it from your totals."
+            : `We found ${summary.duplicateTransactionCount} transactions that look like duplicates and excluded them from your totals.`}
+        </p>
+        {duplicateConfirmError && (
+          <p className="text-danger text-xs mb-3">{duplicateConfirmError}</p>
+        )}
+        <ul className="divide-y divide-border">
+          {summary.detectedDuplicates.map((d) => (
+            <li key={d.transactionId} className="flex items-center justify-between gap-3 py-2.5">
+              <div className="min-w-0">
+                <p className="text-sm text-ink truncate">{d.merchant}</p>
+                <p className="text-xs text-muted">
+                  {new Date(d.date + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })} · {fmt(d.amount)}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => void handleConfirmNotDuplicate(d.transactionId)}
+                disabled={confirmingDuplicateId === d.transactionId}
+                className="text-xs text-primary font-medium flex-shrink-0 disabled:opacity-50"
+              >
+                {confirmingDuplicateId === d.transactionId ? 'Confirming…' : 'Not a duplicate'}
+              </button>
+            </li>
+          ))}
+        </ul>
+        {summary.duplicateTransactionCount > summary.detectedDuplicates.length && (
+          <p className="text-xs text-muted mt-2.5">
+            and {summary.duplicateTransactionCount - summary.detectedDuplicates.length} more
+          </p>
         )}
       </FinoraCard>
       )}
