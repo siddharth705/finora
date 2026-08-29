@@ -70,6 +70,17 @@ public interface TransactionRepository extends JpaRepository<Transaction, UUID> 
 
     List<Transaction> findByUserId(UUID userId);
 
+    /** Like {@link #findByUserId}, but scoped to a specific set of accounts -- for a caller that
+     *  must exclude soft-deleted accounts' transactions rather than every transaction the user has
+     *  ever owned (see DashboardService's own doc comment on why {@code findByUserId} alone is
+     *  wrong for a dashboard total: {@code Transaction.deleted_at} is set when a TRANSACTION is
+     *  removed, not when its owning ACCOUNT is -- deleting an account never touches this column, so
+     *  {@code findByUserId} keeps returning a soft-deleted account's rows for good, not just during
+     *  its retention window). Pass the caller's own live account ids (e.g.
+     *  {@code accountRepository.findByUserId(userId)}, which already applies that filter) rather
+     *  than re-deriving it here. */
+    List<Transaction> findByUserIdAndAccountIdIn(UUID userId, java.util.Collection<UUID> accountIds);
+
     // Backs the admin User detail view's "N transactions" stat (AdminUserService.getUser).
     long countByUserId(UUID userId);
 

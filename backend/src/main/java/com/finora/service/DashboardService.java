@@ -56,6 +56,18 @@ public class DashboardService {
     @Transactional(readOnly = true)
     public DashboardSummaryDto summarize(UUID userId) {
         List<Account> accounts = accountRepository.findByUserId(userId);
+        // Soft-deleting an account never touches its transactions'/statements' own deleted_at
+        // (that column means "this transaction/statement itself was removed", not "its account
+        // was") -- by design, since Statement History deliberately keeps a deleted account's
+        // statements visible for a 7-day grace window (see StatementImportService's
+        // DELETED_ACCOUNT_RETENTION). But that means findByUserId/countByUserId alone keep
+        // returning a deleted account's rows FOREVER, not just during the window -- confirmed in
+        // production: a dashboard showing "0 accounts" alongside non-zero income/expenses/statement
+        // counts, because accounts (line above) already filters deleted accounts out (via
+        // Account's own @SQLRestriction) while the transaction/statement queries below did not.
+        // Scoping both to this same live-account id set is what keeps every number on this screen
+        // consistent with the "0 accounts" the account list itself already reports.
+        List<UUID> liveAccountIds = accounts.stream().map(Account::getId).toList();
         // BH-005. This filter used to be written out here and again, identically, in
         // ReportService -- and both copies were one-sided. A REFUND-status row is the INCOME leg of
         // a reconciled refund, so dropping it is right; the EXPENSE it reverses was left counted in
@@ -66,7 +78,8 @@ public class DashboardService {
         // purchase, which is the only treatment correct for a PARTIAL refund too. Every amount read
         // out of `active` below goes through reportableAmount for that reason -- summing
         // Transaction::getAmount directly is what the bug was.
-        List<Transaction> all = transactionRepository.findByUserId(userId);
+        List<Transaction> all = liveAccountIds.isEmpty() ? List.of()
+                : transactionRepository.findByUserIdAndAccountIdIn(userId, liveAccountIds);
         RefundNetting refunds = RefundNetting.from(all);
         List<Transaction> active = RefundNetting.reportable(all, transactionGraphService.ccPaymentFromTransactionIds(all));
         Map<UUID, Category> categoriesById = categoryRepository.findByUserId(userId).stream()
@@ -270,7 +283,8 @@ public class DashboardService {
         // Spend Consistency/Cash Flow Stability, and the pct() deltas below dividing against an
         // effectively-empty prior month). Surfacing the raw counts here lets the client show why,
         // instead of a user having to guess "why does my score look bad" on their own.
-        int statementCount = (int) statementImportRepository.countByUserId(userId);
+        int statementCount = liveAccountIds.isEmpty() ? 0
+                : (int) statementImportRepository.countByUserIdAndAccountIdIn(userId, liveAccountIds);
         boolean limitedHistory = months.size() < LIMITED_HISTORY_MONTH_FLOOR;
 
         return new DashboardSummaryDto(
