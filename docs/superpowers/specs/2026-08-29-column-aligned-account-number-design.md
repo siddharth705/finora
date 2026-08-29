@@ -1,7 +1,30 @@
 # Column-Aligned Account Number Extraction — Design
 
 **Date:** 2026-08-29
-**Status:** Approved design, not yet implemented
+**Status:** PARKED — design approved, then invalidated by its own motivating evidence.
+Not implemented, and should not be implemented on the justification below.
+
+> **Why parked (2026-08-29).** This design rests on the premise that BOB and HSBC print
+> their account number *only* inside a multi-column table. Direct measurement of both
+> documents showed that premise is false: BOB prints it on 7 ordinary text lines
+> (including a `SAVINGS ACCOUNT - <number>` banner) and HSBC on 2, all label-adjacent and
+> reachable by a text tier.
+>
+> A `CorpusProbe` run then confirmed both currently extract `accountNumberMasked: null`,
+> but for reasons this design does not address:
+>
+> - **BOB** parses completely otherwise — 53 rows, `PARSED_COMPLETE`, balance chain
+>   `VERIFIED`. A genuine single-field gap, but a *label-vocabulary* one.
+> - **HSBC** is `LAYOUT_UNSUPPORTED` with **zero rows extracted**. Its account number is
+>   moot; resolving it would attach an identifier to an account with no transactions.
+>
+> So the stated cost/benefit ("one field on 2 of 26 documents") was itself too generous:
+> it is one field on **one** document, whose value is present in plain text.
+>
+> The analysis below remains accurate and reusable — the `lineOf` findings, the rejection
+> of both original fix shapes, the HSBC card-number hazard, and the measured overlap
+> geometry. Revive this design only on evidence of a genuinely table-only account-number
+> source. See the Measured Geometry appendix for data worth keeping either way.
 **Origin:** Gap found while implementing F21 (account-number label vocabulary) from the
 extraction coverage audit.
 
@@ -313,3 +336,57 @@ approved on that basis. The justification for building it rather than accepting 
 that the additive-channel approach carries near-zero regression surface — no existing string
 is reformatted, no existing resolution path changes — and that the geometry channel is
 reusable if table-bound extraction turns out to be more common than two documents suggest.
+
+---
+
+## Appendix: Measured Geometry (2026-08-29)
+
+Recorded because it answers a question that would otherwise be re-litigated, and because it
+survives this design being parked.
+
+A design review asked whether strict span overlap would misfire on near-boundary geometry —
+whether an extracted header cell slightly narrower than expected could sit at, say,
+`100..150` against a value at `151..210` and miss by a hair. Both documents were measured
+directly (word bounding boxes, coordinates in points).
+
+**BOB, nominee table.** Header (`ACCOUNT` + `NUMBER`) spans `[211.016, 282.806]`; the value
+spans `[211.016, 271.076]`. Left edges agree to six decimal places and the value lies wholly
+inside the header span. Not a boundary case.
+
+**HSBC, portfolio table.** Header (`Account` + `Number`) spans `[258.000, 317.688]`; the
+value spans `[261.120, 319.824]`.
+
+The HSBC measurement is the useful one, and it cuts against the intuition that prompted the
+question. The value **overhangs the header's right edge by 2.1pt** while still overlapping it
+by roughly 56.6pt. Strict overlap therefore holds comfortably and needs no tolerance —
+but an implementation testing **containment** rather than **overlap** would pass BOB and fail
+HSBC. That is the trap worth a named test, and it is the opposite failure mode from the
+tolerance-widening risk the review anticipated.
+
+Conclusion: the overlap definition in step 2 is correct as written. The empirical risk that
+motivated the question does not exist in the real corpus.
+
+## Appendix: Probe Results (2026-08-29)
+
+`CorpusProbe`, both files, current `main`. Values omitted deliberately; shapes and outcomes
+only.
+
+| | BOB | HSBC |
+|---|---|---|
+| `accountNumberMasked` | null | null |
+| Rows extracted | 53 | **0** |
+| Classification | `PARSED_COMPLETE` | `LAYOUT_UNSUPPORTED` |
+| Balance chain | `VERIFIED` | `NOT_APPLICABLE` |
+| Detected product | UNKNOWN (conf. 0.552) | UNKNOWN (conf. 0.441) |
+
+One mechanism finding worth carrying forward to whatever fixes BOB: `PdfTableLocator`
+recorded `REPEATED_ACCOUNT_BANNER:SUCCESS` for BOB, meaning it *did* recognize the
+account banner carrying the number. On that path (PdfTableLocator.java:970-977) a repeated
+banner line is discarded without being added to `pendingAuxiliary` — the code's own comment
+states it is "discarded with NO other trace at all."
+
+BOB repeats its banner once per page across 3 pages, so at minimum the later occurrences
+never reach `PdfMetadataExtractor`. Whether the *first* occurrence survives into
+`auxiliaryText` is unverified and is the first thing a text-tier fix must establish: if it
+does, the fix is a pattern addition; if it does not, the value never reaches the extractor at
+all and the fix belongs in the locator's banner handling instead.
