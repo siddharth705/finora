@@ -7,6 +7,7 @@ import { FormPanel } from '../components/FormPanel';
 import { DataTable, type DataTableColumn } from '../components/DataTable';
 import { EntityDrawer, type EntityDrawerTab } from '../components/EntityDrawer';
 import { ConfirmDialog } from '../components/ConfirmDialog';
+import { Pagination } from '../components/Pagination';
 import { adminBanksApi } from '../api/endpoints';
 import { isSafeHttpUrl } from '../lib/safeUrl';
 import type { BankDto, CreateBankRequest, UpdateBankRequest } from '../types';
@@ -14,6 +15,8 @@ import type { BankDto, CreateBankRequest, UpdateBankRequest } from '../types';
 const BLANK_FORM: CreateBankRequest = {
   id: '', officialName: '', shortName: '', colorHex: '#64748B', initials: '', category: '', websiteUrl: '', ifscPrefix: '',
 };
+
+const PAGE_SIZE = 20;
 
 /** Create form for a new custom bank -- unchanged from before Phase 4. Editing an existing bank
  *  now happens inside EntityDrawer's Summary tab (see BankSummaryTab below), not here -- this
@@ -379,10 +382,11 @@ function BanksContent() {
   // its internal `editing` state resets to false -- otherwise a save would leave the tab sitting
   // in edit mode even though the drawer is now showing the freshly-updated read view underneath.
   const [saveVersion, setSaveVersion] = useState(0);
+  const [page, setPage] = useState(0);
 
   const { data: banks, isLoading } = useQuery({
-    queryKey: ['admin-banks'],
-    queryFn: () => adminBanksApi.list(),
+    queryKey: ['admin-banks', page],
+    queryFn: () => adminBanksApi.list(page, PAGE_SIZE),
   });
 
   function invalidate() {
@@ -518,11 +522,20 @@ function BanksContent() {
 
       <DataTable
         columns={columns}
-        rows={banks}
+        rows={banks?.content ?? []}
         keyFor={(bank) => bank.id}
         loading={isLoading}
         emptyMessage="No custom banks added yet."
       />
+      {banks && (
+        <Pagination
+          page={page}
+          totalPages={banks.totalPages}
+          totalElements={banks.totalElements}
+          pageSize={PAGE_SIZE}
+          onPageChange={setPage}
+        />
+      )}
       {deleteMutation.isError && (
         <p className="text-sm text-danger">
           {(deleteMutation.error as any)?.response?.data?.message ?? 'Could not delete this bank — it may still be in use by an account.'}

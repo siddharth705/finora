@@ -4,8 +4,11 @@ import com.finora.exception.ApiException;
 import com.finora.integrations.google.TrustedSenderDomain;
 import com.finora.integrations.google.TrustedSenderDomainRepository;
 import com.finora.service.AuditService;
+import com.finora.util.PageBounds;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -64,9 +67,13 @@ public class MerchantTemplateAdminService {
         return trustedSenders.findByDomain(domain).filter(TrustedSenderDomain::isActive).isPresent();
     }
 
+    /** Admin Portal, Merchant Templates list. Was an unconditional fetch-all -- V103 alone seeded
+     *  50 rows on top of whatever admins hand-author afterward, same reasoning as every other
+     *  page in this pagination rollout. */
     @Transactional(readOnly = true)
-    public List<MerchantTemplate> listAll() {
-        return templates.findAllByOrderByMerchantNameAscMerchantDomainAsc();
+    public Page<MerchantTemplate> listAll(int page, int size) {
+        return templates.findAllByOrderByMerchantNameAscMerchantDomainAsc(
+                PageRequest.of(PageBounds.safePage(page), PageBounds.safeSize(size)));
     }
 
     @Transactional(readOnly = true)
