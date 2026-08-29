@@ -62,12 +62,14 @@ public class AnalyticsService {
     // ZoneId access at all, which is why merchantTrend() and learningGrowth() were computing
     // months in the server's zone and in hardcoded UTC respectively. See UserZone.
     private final UserRepository userRepository;
+    private final TransactionGraphService transactionGraphService;
 
     public AnalyticsService(TransactionRepository transactionRepository, MerchantRepository merchantRepository,
                              MerchantCategoryLearningRepository learningRepository,
                              MerchantLearningAuditRepository learningAuditRepository,
                              CategoryRepository categoryRepository, StatementImportRepository statementImportRepository,
-                             ConfidenceEngine confidenceEngine, UserRepository userRepository) {
+                             ConfidenceEngine confidenceEngine, UserRepository userRepository,
+                             TransactionGraphService transactionGraphService) {
         this.transactionRepository = transactionRepository;
         this.merchantRepository = merchantRepository;
         this.learningRepository = learningRepository;
@@ -76,6 +78,7 @@ public class AnalyticsService {
         this.statementImportRepository = statementImportRepository;
         this.confidenceEngine = confidenceEngine;
         this.userRepository = userRepository;
+        this.transactionGraphService = transactionGraphService;
     }
 
     /** Top merchants by total EXPENSE spend for the given month (all-time if month is null). */
@@ -263,7 +266,8 @@ public class AnalyticsService {
         if (month != null) {
             return activeExpenseTransactions(userId, month.atDay(1), month.atEndOfMonth());
         }
-        return RefundNetting.reportable(transactionRepository.findByUserId(userId)).stream()
+        List<Transaction> all = transactionRepository.findByUserId(userId);
+        return RefundNetting.reportable(all, transactionGraphService.ccPaymentFromTransactionIds(all)).stream()
                 .filter(t -> t.getTxnType() == Transaction.Type.EXPENSE)
                 .toList();
     }
@@ -274,7 +278,8 @@ public class AnalyticsService {
      * follow-up above, by the single-month case of the other overload too.
      */
     private List<Transaction> activeExpenseTransactions(UUID userId, LocalDate from, LocalDate to) {
-        return RefundNetting.reportable(transactionRepository.findByUserIdAndTxnDateBetween(userId, from, to)).stream()
+        List<Transaction> rangeTxns = transactionRepository.findByUserIdAndTxnDateBetween(userId, from, to);
+        return RefundNetting.reportable(rangeTxns, transactionGraphService.ccPaymentFromTransactionIds(rangeTxns)).stream()
                 .filter(t -> t.getTxnType() == Transaction.Type.EXPENSE)
                 .toList();
     }
