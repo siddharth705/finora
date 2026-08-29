@@ -99,7 +99,7 @@ class ImportServiceShadowEvidenceIsolationTest {
             return si;
         });
 
-        DuplicateDetector duplicateDetector = new DuplicateDetector(transactionRepository);
+        DuplicateDetector duplicateDetector = new DuplicateDetector(transactionRepository, TestAccountRepositories.anyLive());
         TransactionNormalizer normalizer = new TransactionNormalizer(categorizationService, duplicateDetector,
                 TestRuleEngines.empty());
         PreviewGenerator previewGenerator = new PreviewGenerator(new CsvParser(), normalizer,

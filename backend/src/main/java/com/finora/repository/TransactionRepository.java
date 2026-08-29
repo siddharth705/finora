@@ -234,6 +234,21 @@ public interface TransactionRepository extends JpaRepository<Transaction, UUID> 
             @Param("userId") UUID userId, @Param("date") LocalDate date,
             @Param("amount") BigDecimal amount, @Param("description") String description);
 
+    /** Like {@link #findPotentialDuplicatesByUser}, scoped to a set of live account ids --
+     *  excludes a soft-deleted account's transactions, which the unscoped version would keep
+     *  matching against forever (see {@link #findByUserIdAndAccountIdIn}'s own doc comment).
+     *  Pass the caller's own live account ids rather than re-deriving them here. */
+    @Query("""
+        SELECT t FROM Transaction t
+        WHERE t.userId = :userId AND t.txnDate = :date
+          AND t.amount = :amount AND t.description = :description
+          AND t.accountId IN :accountIds
+        """)
+    List<Transaction> findPotentialDuplicatesByUserAndAccountIdIn(
+            @Param("userId") UUID userId, @Param("date") LocalDate date,
+            @Param("amount") BigDecimal amount, @Param("description") String description,
+            @Param("accountIds") java.util.Collection<UUID> accountIds);
+
     /**
      * Candidate bank-side transactions for C6.4's cross-source reconciliation: same user, same
      * amount, txn date within a window around a Gmail receipt's date. Description is deliberately
@@ -258,6 +273,24 @@ public interface TransactionRepository extends JpaRepository<Transaction, UUID> 
     List<Transaction> findCandidatesForGmailReconciliation(
             @Param("userId") UUID userId, @Param("amount") BigDecimal amount,
             @Param("startDate") LocalDate startDate, @Param("endDate") LocalDate endDate);
+
+    /** Like {@link #findCandidatesForGmailReconciliation}, scoped to a set of live account ids --
+     *  excludes a soft-deleted account's transactions, which the unscoped version would keep
+     *  matching against forever (see {@link #findByUserIdAndAccountIdIn}'s own doc comment).
+     *  Pass the caller's own live account ids rather than re-deriving them here. */
+    @Query("""
+        SELECT t FROM Transaction t
+        WHERE t.userId = :userId AND t.amount = :amount
+          AND t.txnDate BETWEEN :startDate AND :endDate
+          AND t.txnType = com.finora.entity.Transaction.Type.EXPENSE
+          AND t.source <> com.finora.entity.Transaction.Source.GMAIL_IMPORT
+          AND t.accountId IN :accountIds
+        ORDER BY t.txnDate
+        """)
+    List<Transaction> findCandidatesForGmailReconciliationAndAccountIdIn(
+            @Param("userId") UUID userId, @Param("amount") BigDecimal amount,
+            @Param("startDate") LocalDate startDate, @Param("endDate") LocalDate endDate,
+            @Param("accountIds") java.util.Collection<UUID> accountIds);
 
     /** Backs "View Imported Transactions" and "Delete Statement Import" — every transaction a
      *  given confirmed CSV import produced. See StatementImportService. */

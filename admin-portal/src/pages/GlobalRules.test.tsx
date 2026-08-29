@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -7,6 +7,7 @@ import GlobalRules from './GlobalRules';
 import { useAdminAuth } from '../context/AdminAuthContext';
 import { mockAdminAuthState } from '../test/mockAdminAuth';
 import { adminRulesApi } from '../api/endpoints';
+import type { RuleDto } from '../types';
 
 // AdminLayout now renders ThemeToggle (dark-mode support), which calls useTheme() --
 // same reason adminSearchApi is stubbed below for GlobalSearch: a real ThemeProvider isn't
@@ -176,5 +177,38 @@ describe('GlobalRules', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Next page' }));
 
     await waitFor(() => expect(adminRulesApi.list).toHaveBeenCalledWith(1, 20));
+  });
+
+  /** Bug fix: deleting the only rule on a page beyond the first used to leave the admin
+   *  stranded looking at an empty table with no obvious way back -- Pagination still pointed at
+   *  the now-nonexistent page. Confirms the page backs off automatically instead. */
+  it('backs off to the previous page after deleting the last rule on a later page', async () => {
+    mockAuth(['RULE_MANAGE']);
+    vi.mocked(adminRulesApi.delete).mockResolvedValue(undefined as any);
+    const netflixRule: RuleDto = {
+      id: 'rule-1', scope: 'GLOBAL', field: 'DESCRIPTION', operator: 'CONTAINS', comparisonValue: 'Netflix',
+      actionType: 'MARK_SUBSCRIPTION', actionValue: null, priority: 100, enabled: true, matchCount: 3, lastMatchedAt: null,
+    };
+    vi.mocked(adminRulesApi.list).mockResolvedValueOnce({
+      content: [netflixRule], page: 0, size: 20, totalElements: 21, totalPages: 2,
+    });
+    const user = userEvent.setup();
+
+    renderPage();
+    await waitFor(() => expect(screen.getByText(/Netflix/)).toBeInTheDocument());
+
+    vi.mocked(adminRulesApi.list).mockResolvedValueOnce({
+      content: [{ ...netflixRule, id: 'rule-2', comparisonValue: 'Spotify' }],
+      page: 1, size: 20, totalElements: 21, totalPages: 2,
+    });
+    await user.click(screen.getByRole('button', { name: 'Next page' }));
+    await waitFor(() => expect(screen.getByText(/Spotify/)).toBeInTheDocument());
+
+    vi.mocked(adminRulesApi.list).mockResolvedValueOnce(pageOf(netflixRule));
+    await user.click(screen.getByTitle('Delete'));
+    const dialog = await screen.findByRole('dialog');
+    await user.click(within(dialog).getByRole('button', { name: 'Delete' }));
+
+    await waitFor(() => expect(adminRulesApi.list).toHaveBeenLastCalledWith(0, 20));
   });
 });
