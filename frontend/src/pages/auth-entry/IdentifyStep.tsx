@@ -5,6 +5,7 @@ import { useAuth } from '../../context/AuthContext';
 import { GoogleSignInButton } from '../../components/GoogleSignInButton';
 import { AppleSignInButton } from '../../components/AppleSignInButton';
 import { ReactivateAccountPrompt } from '../../components/ReactivateAccountPrompt';
+import { AuthDivider } from './AuthDivider';
 import { AUTH_ACCOUNT_DEACTIVATED } from '../../api/errorCodes';
 
 // Matches RegisterStep's own EMAIL_PATTERN -- used here only to decide which of Register's two
@@ -132,11 +133,7 @@ export function IdentifyStep({ onExists, onContinue, onSuccess }: IdentifyStepPr
         {loading ? 'Continuing…' : 'Continue'}
       </button>
 
-      <div className="flex items-center gap-3 my-5">
-        <div className="flex-1 h-px bg-border" />
-        <span className="text-xs text-muted">OR</span>
-        <div className="flex-1 h-px bg-border" />
-      </div>
+      <AuthDivider />
 
       <GoogleSignInButton text="signin_with" onCredential={handleGoogleCredential} onError={setError} />
       <div className="mt-3">
