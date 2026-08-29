@@ -205,7 +205,12 @@ public class AnalyticsService {
         // Metadata projection, not the entity-returning finder: see
         // StatementImportRepository.StatementMetadata's own doc comment for the rest of that
         // finder's removal.
-        List<StatementMetadata> imports = statementImportRepository.findMetadataByUserIdOrderByImportedAtDesc(userId);
+        // Deleted-account leak: same reasoning as activeExpenseTransactions above -- a deleted
+        // account's statements deliberately keep deleted_at unset, so the unscoped finder would
+        // keep counting them here forever.
+        List<UUID> liveAccountIds = liveAccountIds(userId);
+        List<StatementMetadata> imports = liveAccountIds.isEmpty() ? List.of()
+                : statementImportRepository.findMetadataByUserIdAndAccountIdInOrderByImportedAtDesc(userId, liveAccountIds);
         int totalTransactionsImported = imports.stream().mapToInt(StatementMetadata::getTransactionsImported).sum();
         int totalTransactionsSkipped = imports.stream().mapToInt(StatementMetadata::getTransactionsSkipped).sum();
         var lastImportedAt = imports.isEmpty() ? null : imports.get(0).getImportedAt(); // already ordered desc
@@ -274,8 +279,7 @@ public class AnalyticsService {
         // account's transactions deliberately keep deleted_at unset, so findByUserId alone would
         // keep counting them here forever, not just during StatementImportService's 7-day grace
         // window.
-        List<UUID> liveAccountIds = accountRepository.findByUserId(userId).stream()
-                .map(com.finora.entity.Account::getId).toList();
+        List<UUID> liveAccountIds = liveAccountIds(userId);
         List<Transaction> all = liveAccountIds.isEmpty() ? List.of()
                 : transactionRepository.findByUserIdAndAccountIdIn(userId, liveAccountIds);
         return RefundNetting.reportable(all, transactionGraphService.ccPaymentFromTransactionIds(all)).stream()
@@ -289,7 +293,12 @@ public class AnalyticsService {
      * follow-up above, by the single-month case of the other overload too.
      */
     private List<Transaction> activeExpenseTransactions(UUID userId, LocalDate from, LocalDate to) {
-        List<Transaction> rangeTxns = transactionRepository.findByUserIdAndTxnDateBetween(userId, from, to);
+        // Deleted-account leak: same reasoning as the all-time overload above -- a deleted
+        // account's transactions deliberately keep deleted_at unset, so findByUserId-rooted queries
+        // alone would keep feeding this window a deleted account's rows forever.
+        List<UUID> liveAccountIds = liveAccountIds(userId);
+        List<Transaction> rangeTxns = liveAccountIds.isEmpty() ? List.of()
+                : transactionRepository.findByUserIdAndTxnDateBetweenAndAccountIdIn(userId, from, to, liveAccountIds);
         return RefundNetting.reportable(rangeTxns, transactionGraphService.ccPaymentFromTransactionIds(rangeTxns)).stream()
                 .filter(t -> t.getTxnType() == Transaction.Type.EXPENSE)
                 .toList();
@@ -297,8 +306,19 @@ public class AnalyticsService {
 
     /** The offsets for the same user, so a refunded purchase contributes what it actually cost. */
     private RefundNetting refundsFor(UUID userId) {
-        return RefundNetting.from(transactionRepository.findByUserIdAndReconciliationStatusIn(
-                userId, java.util.List.of(Transaction.ReconciliationStatus.REFUND, Transaction.ReconciliationStatus.REVERSAL)));
+        List<UUID> liveAccountIds = liveAccountIds(userId);
+        if (liveAccountIds.isEmpty()) return RefundNetting.from(List.of());
+        return RefundNetting.from(transactionRepository.findByUserIdAndReconciliationStatusInAndAccountIdIn(
+                userId, java.util.List.of(Transaction.ReconciliationStatus.REFUND, Transaction.ReconciliationStatus.REVERSAL),
+                liveAccountIds));
+    }
+
+    /** Deleted-account leak (see DashboardService.summarize for the original fix): a deleted
+     *  account's transactions/statements deliberately keep deleted_at unset, so findByUserId-rooted
+     *  queries alone would keep feeding this service a deleted account's rows forever, not just
+     *  during StatementImportService's 7-day grace window. */
+    private List<UUID> liveAccountIds(UUID userId) {
+        return accountRepository.findByUserId(userId).stream().map(com.finora.entity.Account::getId).toList();
     }
 
     private Map<UUID, String> merchantNamesFor(UUID userId) {

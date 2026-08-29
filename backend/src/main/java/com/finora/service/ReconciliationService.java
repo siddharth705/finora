@@ -147,7 +147,13 @@ public class ReconciliationService {
         }
         LocalDate from = earliestImported.minusDays(ReconciliationPolicy.CANDIDATE_WINDOW_DAYS);
         LocalDate to = latestImported.plusDays(ReconciliationPolicy.CANDIDATE_WINDOW_DAYS);
-        List<Transaction> candidates = transactionRepository.findByUserIdAndTxnDateBetween(userId, from, to);
+        // Deleted-account leak (see reconcileForUser above for the original fix): a deleted
+        // account's transactions deliberately keep deleted_at unset, so the unscoped finder would
+        // keep re-matching them against a still-live account's rows forever.
+        List<UUID> liveAccountIds = accountRepository.findByUserId(userId).stream()
+                .map(com.finora.entity.Account::getId).toList();
+        List<Transaction> candidates = liveAccountIds.isEmpty() ? List.of()
+                : transactionRepository.findByUserIdAndTxnDateBetweenAndAccountIdIn(userId, from, to, liveAccountIds);
         // candidatesLoaded, NOT transactionsProcessed. The unbounded path's field means "how many
         // transactions this user has", and a scaling trend built on it would silently change
         // meaning the day an import started reporting a window instead. Two names, two meanings,

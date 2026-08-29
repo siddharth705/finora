@@ -119,6 +119,32 @@ class ReconciliationServiceTest {
                 .findByUserIdAndAccountIdIn(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
     }
 
+    @Test
+    void reconcileForImport_scopesTransactionFetch_toExactlyTheLiveAccountIds() {
+        when(transactionRepository.findByUserIdAndTxnDateBetweenAndAccountIdIn(eq(userId), any(), any(), any()))
+                .thenReturn(List.of());
+
+        reconciliationService.reconcileForImport(userId, LocalDate.of(2026, 7, 1), LocalDate.of(2026, 7, 31));
+
+        verify(transactionRepository).findByUserIdAndTxnDateBetweenAndAccountIdIn(
+                eq(userId), any(), any(), eq(List.of(liveAccount.getId())));
+    }
+
+    @Test
+    void reconcileForImport_withNoLiveAccounts_shortCircuits_withoutQueryingTransactions() {
+        when(accountRepository.findByUserId(userId)).thenReturn(List.of());
+
+        reconciliationService.reconcileForImport(userId, LocalDate.of(2026, 7, 1), LocalDate.of(2026, 7, 31));
+
+        verify(transactionRepository, org.mockito.Mockito.never())
+                .findByUserIdAndTxnDateBetweenAndAccountIdIn(any(), any(), any(), any());
+    }
+
+    // reconcileForUser's CC_PAYMENT pass scopes to live accounts by filtering ccStatements
+    // in-memory (see reconcileForUser_skipsAStatement_whoseCardAccountHasBeenDeleted below), not
+    // via a dedicated *AndAccountIdIn query -- so there's no separate "exact query scoping" test
+    // for it here, unlike the transaction-fetch tests above.
+
     // --- Duplicates (in-memory grouping, replacing the old per-transaction
     // findPotentialDuplicates() query -- see ReconciliationService's class comment) ---
 
