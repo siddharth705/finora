@@ -1100,4 +1100,50 @@ class PdfMetadataExtractorTest {
 
         assertThat(metadata.accountNumberMasked()).isNull();
     }
+
+    /**
+     * labelPattern's mid-line branch (added for the lineOf X-ordering fix, 2026-08-29 -- see
+     * PdfTableLocator.lineOf's own doc comment) lets a label appear after other chain-merged
+     * content on the same physical row, not only at the line's own start. Modeled on the real HDFC
+     * shape that motivated it (an address fragment sitting genuinely further left on the page than
+     * "Account No :", so a correctly x-ordered join puts it first on the line) -- genericized per
+     * the Synthetic Fixture Policy, no value from any real document appears here.
+     */
+    @Test
+    void extract_recognizesAnAccountNumber_afterAChainMergedLeftwardNeighborOnTheSameLine() {
+        var metadata = extractor.extract(List.of(
+                "SOME CITY STATE Account No : 111122223333444 SOME PLAN NAME")); // synthetic-ok
+
+        assertThat(metadata.accountNumberMasked()).endsWith("3444");
+    }
+
+    /**
+     * A chain-merged row can legitimately hold TWO label:value pairs back to back (modeled on a
+     * real IFSC-then-MICR letterhead shape, genericized per the Synthetic Fixture Policy -- no
+     * value from any real document appears here). The captured value must stop before the second
+     * pair's own "label :" rather than swallowing it whole -- see labelPattern's own doc comment
+     * for why the capture is non-greedy with a lookahead boundary, not just greedy to end of line.
+     */
+    @Test
+    void extract_stopsTheCapturedValueBeforeASecondChainMergedLabelOnTheSameLine() {
+        var metadata = extractor.extract(List.of("IFSC Code : ABCD0XXXXXX MICR : 888877776")); // synthetic-ok
+
+        assertThat(metadata.ifscCode()).isEqualTo("ABCD0XXXXXX");
+    }
+
+    /**
+     * ACCOUNT_HOLDER's bare "Name" alternative is deliberately excluded from labelPattern's
+     * mid-line branch (unlike its other alternatives, "Account Holder"/"Customer Name") because
+     * "Name" is a generic single word that is a substring of many unrelated compound labels.
+     * Modeled on a real HSBC shape ("Branch Name : <branch>", chain-merged onto its own row --
+     * genericized per the Synthetic Fixture Policy, no value from any real document appears here):
+     * without the exclusion, the branch value would be stolen as the account holder's name instead.
+     */
+    @Test
+    void extract_doesNotStealABranchNameValueAsTheAccountHolder_whenChainMergedOnOneLine() {
+        var metadata = extractor.extract(List.of("Branch Name : SOME TOWN BRANCH")); // synthetic-ok
+
+        assertThat(metadata.accountHolderName()).isNull();
+        assertThat(metadata.branchName()).isEqualTo("SOME TOWN BRANCH");
+    }
 }
