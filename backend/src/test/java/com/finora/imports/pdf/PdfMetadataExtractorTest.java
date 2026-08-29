@@ -746,6 +746,35 @@ class PdfMetadataExtractorTest {
     }
 
     @Test
+    void extract_doesNotMisreadAnAddressContinuationLine_asTheAccountHolderName() {
+        // Bug fix: verified against three real HDFC savings statements. A postal address wraps
+        // across unlabeled continuation lines after "Address :", and a place name on one of those
+        // lines ("Bhandarkar Road", genericized here) shape-matches LEADING_NAME_LINE exactly as
+        // well as a real name -- 2-4 capitalized words, no digits, no punctuation. Without this
+        // guard, the address fragment was captured as the account holder and the real name (further
+        // down the document) was silently blocked by the accountHolderName == null guard.
+        var metadata = extractor.extract(List.of(
+                "Address : Ground Floor, Some Building",
+                "Bhandarkar Road"));
+
+        assertThat(metadata.accountHolderName()).isNull();
+    }
+
+    @Test
+    void extract_resumesLeadingNameLineMatching_onceTheAddressBlockEndsAtAColonBearingLine() {
+        // The continuation guard must not swallow a genuine name that happens to sit right after
+        // the address block ends -- "City :" (or any colon-bearing line) is corpus-observed to
+        // always close the run in this shape.
+        var metadata = extractor.extract(List.of(
+                "Address : Ground Floor, Some Building",
+                "Bhandarkar Road",
+                "City : Pune 411004",
+                "JOHN DOE"));
+
+        assertThat(metadata.accountHolderName()).isEqualTo("JOHN DOE");
+    }
+
+    @Test
     void extract_prefersAnExplicitlyLabeledHolderName_overTheLeadingLineFallback() {
         var metadata = extractor.extract(List.of("Account Holder Name: JANE ROE"));
 
