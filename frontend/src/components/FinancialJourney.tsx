@@ -31,10 +31,11 @@ export function journeyDateLabel(iso: string): string {
  * progress narrative, not core data.
  *
  * <p>Hidden once every milestone is complete -- an onboarding checklist that stays on the
- * dashboard forever after there's nothing left to onboard onto is clutter, not progress. Computed
- * live from the same milestones every render, same as everything else here: if a user later
- * deletes their only statement import, FIRST_IMPORT reverts to incomplete and this card
- * reappears, which is correct -- there is again something to complete.
+ * dashboard forever after there's nothing left to onboard onto is clutter, not progress. Every
+ * milestone but ACCOUNT_CREATED is a PERMANENT behavioral fact once reached (see
+ * FinancialJourneyService's own class doc on the backend): deleting the statement/budget/goal
+ * that first completed a milestone does not un-tick it, so this card also does not reappear once
+ * every milestone shows complete -- there is nothing left for the user to be reminded to do.
  */
 export function FinancialJourney() {
   const { data } = useQuery({ queryKey: ['financial-journey'], queryFn: () => dashboardApi.journey() });
