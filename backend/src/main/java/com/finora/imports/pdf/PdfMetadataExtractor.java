@@ -43,13 +43,64 @@ public class PdfMetadataExtractor {
     // own "\s*:?\s*" allows zero separator before the captured value -- "Account Holder"/
     // "Customer Name" are unambiguous enough as multi-word phrases not to need the same guard.
     private static final Pattern ACCOUNT_HOLDER = labelPattern("(?:Account Holder(?: Name)?|Customer Name|Name\\b)");
-    private static final Pattern ACCOUNT_NUMBER = labelPattern("Account Number");
+    // F21 (extraction-coverage-audit.md real-corpus follow-up): several real statements never say
+    // "Account Number" at all -- they abbreviate to "Account No"/"Account No.", confirmed on 4
+    // real documents across 4 banks (HDFC, Standard Chartered, Kotak, IOB), all using this exact
+    // "Label: Value" line shape, none needing the value-before-label shape
+    // ACCOUNT_NUMBER_TRAILING_LABEL handles. The negative lookahead after "No\.?" is load-bearing,
+    // not decorative: without it, "Account Nominee: <name>" -- a genuine, realistic nomination-
+    // section field, not a contrived edge case -- would also match, since "No" is a literal prefix
+    // of "Nominee" and this call site accepts whatever firstGroup captures with no further
+    // validation (unlike CARD_NUMBER_LABEL's looksLikeCardOrAccountNumber check). A plain \b would
+    // NOT work here: "No." followed by whitespace has no word boundary between them (both are
+    // non-word characters), which would break the "No." form this fix exists for. Otherwise purely
+    // additive -- it only adds new matches, it cannot regress a document already matching the
+    // literal "Account Number" phrase. Canara's own abbreviation ("A/c", inline mid-sentence) is a
+    // structurally different shape -- deliberately not folded in here, see that finding's own note.
+    private static final Pattern ACCOUNT_NUMBER = labelPattern("Account\\s*(?:No\\.?(?![A-Za-z])|Number)");
     // Bug fix: verified against a real Union Bank of India statement -- its "Branch Address" line
     // is a two-column SECTION HEADER ("Branch Address" | "Statement Details" side by side, same
     // pattern as an earlier "Your Details" | "Account Details" header higher up the page), not a
     // genuine "Branch: <name>" field -- without the negative lookahead, the bare "Branch" match
-    // consumed "Address Statement Details" as if it were the branch name.
-    private static final Pattern BRANCH = labelPattern("Branch(?: Name)?(?!\\s*Address)");
+    // consumed "Address Statement Details" as if it were the branch name. Extended to also reject
+    // "Branch Details" (a real PNB ONE section header) the same way, for the same reason.
+    //
+    // F23 (extraction-coverage-audit.md real-corpus follow-up): "Code" added as a second label
+    // suffix alongside "Name" -- several real statements (CBI, HDFC, Sanjay SBI, canara) label
+    // this field "Branch Code:" rather than "Branch Name:"; without it, "Code" (and its colon)
+    // fell into the captured value instead of being consumed as part of the label.
+    //
+    // (?![A-Za-z]) directly after "Branch" is load-bearing, not decorative -- same technique as
+    // ACCOUNT_NUMBER's "No" guard above. Without it, bare "Branch" matches as a literal PREFIX of
+    // any longer word: confirmed on a real Axis Bank credit-card statement, where a boilerplate
+    // "Branches /Loan Centres..." footer sentence was captured whole as the branch name, and on a
+    // real Kotak statement, where a garbled, no-separator line ("BRANCHHYDAPIN.../16:02") matched
+    // the same way. A plain \b would not help here since "Branch" immediately followed by "es" or
+    // by any other letter has no word boundary to exploit in the first place.
+    //
+    // Two more real-pipeline-only defects, found by re-running this fix through the ACTUAL
+    // PdfTableLocator-produced lines (not just a pdftotext -layout replay, which joins columns
+    // differently and hid both of these):
+    //
+    // "Email"/"Phone" added to the exclusion group alongside "Address"/"Details": a real SBI
+    // statement has a footer contact block where "Branch" is a MODIFIER for a different field --
+    // "Branch Email ID: <address> :" and "Branch Phone: <number>" -- not the branch-name field
+    // itself. Without excluding these, the bare "Branch" label matched and swallowed the rest of
+    // either line as if it were the branch name. (The same statement's real "Branch Code"/"Branch
+    // Name" lines have their label and value split across a different column-join shape entirely
+    // -- e.g. a leading colon before the label -- which this fix does not attempt; that's a
+    // structural label/value-reordering problem, not a vocabulary gap, deliberately out of scope
+    // here the same way BOB/HSBC's tabular account-number shape was deferred out of F21.)
+    //
+    // (?-i:B) requires a literal uppercase "B", overriding this pattern's own case-insensitivity
+    // for just that one letter: a real Axis Bank statement wraps one boilerplate sentence across
+    // two physical lines, and the second line ("branch /loan centre)") starts with the bare word
+    // "branch" purely because of where the sentence happened to wrap -- not because it's a label.
+    // Every genuine label in this corpus is capitalized ("Branch"/"BRANCH"); a lowercase "branch"
+    // starting a line is corpus-observed evidence of exactly this kind of accidental wrap, never a
+    // real field.
+    private static final Pattern BRANCH = labelPattern(
+            "(?-i:B)ranch(?![A-Za-z])(?: Name| Code)?(?!\\s*(?:Address|Details|Email|Phone))");
     private static final Pattern IFSC = labelPattern("IFSC(?: Code)?");
     private static final Pattern STATEMENT_PERIOD = labelPattern("Statement Period");
     private static final Pattern CREDIT_LIMIT = labelPattern("(?:Total )?Credit Limit(?: \\(Including Cash\\))?");
@@ -132,6 +183,21 @@ public class PdfMetadataExtractor {
     // keeps this simple enough to verify by eye and to test.
     private static final String CARD_NUMBER_VALUE_SRC = "[\\dXx*]{2,}(?:[\\s-][\\dXx*]{2,})*";
     private static final Pattern CARD_NUMBER_VALUE = Pattern.compile(CARD_NUMBER_VALUE_SRC);
+
+    // A_C_ACCOUNT_NUMBER_SAME_LINE: a real canara statement's own account-number field never says
+    // "Account"/"Account Number"/"Card Number" at all -- it states the number inline as
+    // "Statement for A/c <value> for the period ...", using the common Indian-banking shorthand
+    // "A/c" for "account" (verified against a real canara statement, whose own value is already
+    // masked at the source -- structurally nine mask characters then the last 4 visible digits,
+    // not a plain digit run). Reuses CARD_NUMBER_VALUE_SRC's shape (mask characters and digits
+    // both allowed), not STATEMENT_OF_ACCOUNT_SAME_LINE's plain-\d{6,20}-only pattern, since that
+    // pattern would reject this masked value outright. Declared here, after CARD_NUMBER_VALUE_SRC,
+    // rather than grouped with STATEMENT_OF_ACCOUNT_SAME_LINE above (which it is otherwise the
+    // same family as) purely because Java requires the referenced constant to already be declared.
+    // Unanchored (find(), not matches()) since "for the period ..." always trails the value on the
+    // same line -- same shape STATEMENT_OF_ACCOUNT_SAME_LINE already uses for PNB's own wording.
+    private static final Pattern A_C_ACCOUNT_NUMBER_SAME_LINE =
+            Pattern.compile("(?i)\\bA/c\\s*:?\\s*(" + CARD_NUMBER_VALUE_SRC + ")\\b");
 
     // CARD_NUMBER_TRAILING_LABEL: the same "value before its label" shape as
     // ACCOUNT_NUMBER_TRAILING_LABEL, but tolerant of text AFTER the label too -- verified against
@@ -531,6 +597,21 @@ public class PdfMetadataExtractor {
                     if (ctx != null) ctx.record("GRID_METADATA_FALLBACK");
                 }
                 continue;
+            }
+            // A_C_ACCOUNT_NUMBER_SAME_LINE (see that constant's own doc comment -- the real canara
+            // shape neither ACCOUNT_NUMBER nor STATEMENT_OF_ACCOUNT_SAME_LINE covers). Validated
+            // with looksLikeCardOrAccountNumber/normalizeCardOrAccountNumberValue, the same guard
+            // the card-number family already uses for a masked-or-unmasked value, since this
+            // pattern's value may already be masked at the source.
+            if (accountNumberMasked == null) {
+                Matcher aC = A_C_ACCOUNT_NUMBER_SAME_LINE.matcher(line);
+                if (aC.find() && looksLikeCardOrAccountNumber(aC.group(1))) {
+                    String[] normalized = normalizeCardOrAccountNumberValue(aC.group(1));
+                    accountNumberMasked = normalized[0];
+                    accountNumberFull = normalized[1];
+                    if (ctx != null) ctx.record("GRID_METADATA_FALLBACK");
+                    continue;
+                }
             }
             // CARD_NUMBER_TRAILING_LABEL (see that constant's own doc comment -- the real HDFC
             // shape this exists for). Tried before the same-line-anywhere fallback below since a

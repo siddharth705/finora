@@ -169,7 +169,8 @@ export const banksApi = {
 };
 
 export const adminBanksApi = {
-  list: () => api.get<BankDto[]>('/admin/banks').then((r) => r.data),
+  list: (page: number, size: number) =>
+    api.get<PagedResponse<BankDto>>('/admin/banks', { params: { page, size } }).then((r) => r.data),
   create: (request: CreateBankRequest) =>
     api.post<BankDto>('/admin/banks', request).then((r) => r.data),
   update: (id: string, request: UpdateBankRequest) =>
@@ -200,7 +201,8 @@ export const adminTransactionsApi = {
 };
 
 export const adminRulesApi = {
-  list: () => api.get<RuleDto[]>('/admin/rules').then((r) => r.data),
+  list: (page: number, size: number) =>
+    api.get<PagedResponse<RuleDto>>('/admin/rules', { params: { page, size } }).then((r) => r.data),
   create: (request: CreateRuleRequest) =>
     api.post<RuleDto>('/admin/rules', request).then((r) => r.data),
   update: (id: string, request: UpdateRuleRequest) =>
@@ -272,14 +274,16 @@ export const adminDashboardApi = {
 // D-28 PR4-A. SUBSCRIPTION_MANAGEMENT_VIEW/_MANAGE-gated (V99) -- its own permission, not folded
 // into PLATFORM_STATS_VIEW, same reasoning as PLATFORM_ANALYTICS_VIEW's own separation.
 export const adminSubscriptionsApi = {
-  list: () => api.get<SubscriptionSummaryDto[]>('/admin/subscriptions').then((r) => r.data),
+  list: (page: number, size: number) =>
+    api.get<PagedResponse<SubscriptionSummaryDto>>('/admin/subscriptions', { params: { page, size } }).then((r) => r.data),
   changePlan: (userId: string, planCode: string, reason: string) =>
     api.put(`/admin/subscriptions/${userId}/plan`, { planCode, reason }),
 };
 
 // D-28 PR4-C. REFERRAL_MANAGEMENT_VIEW/_MANAGE-gated (V101), same split as adminSubscriptionsApi.
 export const adminReferralsApi = {
-  list: () => api.get<AdminReferralSummaryDto[]>('/admin/referrals').then((r) => r.data),
+  list: (page: number, size: number) =>
+    api.get<PagedResponse<AdminReferralSummaryDto>>('/admin/referrals', { params: { page, size } }).then((r) => r.data),
   creditReward: (referralId: string, amount: number, reason: string) =>
     api.post(`/admin/referrals/${referralId}/credit`, { amount, reason }),
 };
@@ -364,7 +368,8 @@ export const adminMerchantsApi = {
  *  class doc for why. New templates come back disabled; activate is a separate call, always
  *  taken only after a successful test (see MerchantTemplates.tsx's own TestTemplatePanel). */
 export const adminMerchantTemplatesApi = {
-  list: () => api.get<MerchantTemplateDto[]>('/admin/merchant-templates').then((r) => r.data),
+  list: (page: number, size: number) =>
+    api.get<PagedResponse<MerchantTemplateDto>>('/admin/merchant-templates', { params: { page, size } }).then((r) => r.data),
   create: (request: CreateMerchantTemplateRequest) =>
     api.post<MerchantTemplateDto>('/admin/merchant-templates', request).then((r) => r.data),
   update: (id: string, request: UpdateMerchantTemplateRequest) =>

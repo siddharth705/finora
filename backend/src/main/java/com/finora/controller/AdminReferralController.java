@@ -1,6 +1,7 @@
 package com.finora.controller;
 
 import com.finora.dto.ApiResponse;
+import com.finora.dto.PagedResponse;
 import com.finora.dto.ReferralDtos.AdminReferralSummaryDto;
 import com.finora.dto.ReferralDtos.CreditReferralRewardRequest;
 import com.finora.security.CurrentUser;
@@ -9,7 +10,6 @@ import jakarta.validation.Valid;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.List;
 import java.util.UUID;
 
 /** D-28 PR4-C. Admin Portal, Referral dashboard (proposal §6) -- read access and reward crediting
@@ -29,8 +29,10 @@ public class AdminReferralController {
 
     @GetMapping
     @PreAuthorize("hasAuthority('REFERRAL_MANAGEMENT_VIEW')")
-    public ApiResponse<List<AdminReferralSummaryDto>> list() {
-        return ApiResponse.ok(referralService.listAll());
+    public ApiResponse<PagedResponse<AdminReferralSummaryDto>> list(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        return ApiResponse.ok(referralService.listAll(page, size));
     }
 
     @PostMapping("/{referralId}/credit")

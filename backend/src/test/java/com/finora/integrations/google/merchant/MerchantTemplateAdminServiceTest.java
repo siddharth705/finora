@@ -7,6 +7,9 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.List;
@@ -68,6 +71,20 @@ class MerchantTemplateAdminServiceTest {
         entry.setEnabled(enabled);
         when(templates.findById(entry.getId())).thenReturn(Optional.of(entry));
         return entry;
+    }
+
+    /** Admin Portal, Merchant Templates list -- was an unconditional fetch-all (V103 alone seeds
+     *  50 rows). PageBounds.safePage/safeSize clamp before the query, same reasoning every other
+     *  admin list page's identical clamp test gives. */
+    @Test
+    void listAll_clampsAnOutOfRangePageAndSize() {
+        when(templates.findAllByOrderByMerchantNameAscMerchantDomainAsc(PageRequest.of(0, 100)))
+                .thenReturn(new PageImpl<>(List.of()));
+
+        Page<MerchantTemplate> result = service.listAll(-5, 500);
+
+        assertThat(result.getContent()).isEmpty();
+        verify(templates).findAllByOrderByMerchantNameAscMerchantDomainAsc(PageRequest.of(0, 100));
     }
 
     @Test
