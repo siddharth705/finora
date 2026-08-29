@@ -1262,40 +1262,62 @@ class ReconciliationServiceTest {
                 Instant.parse("2026-07-14T10:00:00Z"));
         when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(payment));
         when(statementImportRepository.findByUserIdAndTotalAmountDueIsNotNull(userId)).thenReturn(List.of(statement));
-        when(transactionRepository.findByStatementImportId(statement.getId())).thenReturn(List.of());
 
         reconciliationService.reconcileForUser(userId);
 
         org.mockito.Mockito.verify(transactionGraphService, org.mockito.Mockito.never())
                 .linkAll(org.mockito.ArgumentMatchers.anyList());
+        org.mockito.Mockito.verify(transactionRepository, org.mockito.Mockito.never())
+                .findByStatementImportId(org.mockito.ArgumentMatchers.any());
     }
 
+    // --- General retroactive edge cleanup (docs/proposals/reconciliation-evolution-roadmap-
+    // proposal.md, Part 3's supersession gap) -- runs once per reconcile() call, regardless of
+    // relationship type. AccountService.delete() rejects graph edges for every account deleted
+    // from now on; this is the retroactive half for data written before that existed. Whether the
+    // rejection call actually clears every relationship TYPE correctly is TransactionGraphServiceTest's
+    // own job (see rejectEdgesTouchingTransactions_rejectsEveryLiveEdge_regardlessOfType there) --
+    // these tests only cover that reconcile() correctly identifies which transactions belong to a
+    // dead account and delegates to it. ---
+
     @Test
-    void reconcileForUser_rejectsAnyPreExistingEdge_touchingADeletedCardAccountsCharges() {
+    void reconcileForUser_rejectsExistingEdges_touchingATransactionOnADeletedAccount() {
         // Retroactive half of the fix: an account deleted BEFORE AccountService.delete's own
-        // edge-rejection existed can still have a live CC_PAYMENT edge in the graph pointing at
-        // its now-invisible charges. This pass runs on essentially every transaction edit, so it
-        // self-heals that the next time it runs for the affected user.
-        UUID cardAccountId = UUID.randomUUID();
-        UUID savingsAccountId = UUID.randomUUID();
-        com.finora.entity.StatementImport statement =
-                ccStatement(UUID.randomUUID(), cardAccountId, new BigDecimal("2500.00"), LocalDate.of(2026, 7, 15));
-        Transaction payment = txn(UUID.randomUUID(), savingsAccountId, LocalDate.of(2026, 7, 14),
-                new BigDecimal("2500.00"), Transaction.Type.EXPENSE, "CREDIT CARD PAYMENT",
-                Instant.parse("2026-07-14T10:00:00Z"));
-        Transaction staleCharge = txn(UUID.randomUUID(), cardAccountId, LocalDate.of(2026, 6, 20),
-                new BigDecimal("2500.00"), Transaction.Type.EXPENSE, "AMAZON", Instant.parse("2026-06-20T10:00:00Z"));
-        // Delete the card account LAST -- txn()'s own auto-registration would otherwise re-add it
-        // to liveAccounts when staleCharge is created above.
-        liveAccounts.removeIf(a -> a.getId().equals(cardAccountId));
-        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(payment));
-        when(statementImportRepository.findByUserIdAndTotalAmountDueIsNotNull(userId)).thenReturn(List.of(statement));
-        when(transactionRepository.findByStatementImportId(statement.getId())).thenReturn(List.of(staleCharge));
+        // edge-rejection existed -- or deleted through any path that skipped it -- can still have
+        // a live edge of ANY relationship type in the graph pointing at its now-invisible
+        // transactions. This pass runs on essentially every transaction edit, so it self-heals
+        // that the next time it runs for the affected user, regardless of which pass originally
+        // wrote the edge.
+        UUID deadAccountId = UUID.randomUUID();
+        Transaction liveTxn = txn(UUID.randomUUID(), liveAccount.getId(), LocalDate.of(2026, 7, 14),
+                new BigDecimal("2500.00"), Transaction.Type.EXPENSE, "GROCERIES", Instant.parse("2026-07-14T10:00:00Z"));
+        Transaction staleTxn = txn(UUID.randomUUID(), deadAccountId, LocalDate.of(2026, 6, 20),
+                new BigDecimal("500.00"), Transaction.Type.EXPENSE, "OLD CARD SPEND", Instant.parse("2026-06-20T10:00:00Z"));
+        // Delete the account LAST -- txn()'s own auto-registration would otherwise re-add it to
+        // liveAccounts when staleTxn is created above.
+        liveAccounts.removeIf(a -> a.getId().equals(deadAccountId));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(liveTxn));
+        // The unscoped fetch this cleanup uses to see the dead account's transactions at all --
+        // findByUserIdAndAccountIdIn above deliberately can't, since it's scoped to live accounts.
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(liveTxn, staleTxn));
 
         reconciliationService.reconcileForUser(userId);
 
         org.mockito.Mockito.verify(transactionGraphService)
-                .rejectEdgesTouchingTransactions(List.of(staleCharge.getId()));
+                .rejectEdgesTouchingTransactions(List.of(staleTxn.getId()));
+    }
+
+    @Test
+    void reconcileForUser_doesNotCallRejection_whenNoTransactionIsOnADeadAccount() {
+        Transaction liveTxn = txn(UUID.randomUUID(), liveAccount.getId(), LocalDate.of(2026, 7, 14),
+                new BigDecimal("2500.00"), Transaction.Type.EXPENSE, "GROCERIES", Instant.parse("2026-07-14T10:00:00Z"));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(liveTxn));
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(liveTxn));
+
+        reconciliationService.reconcileForUser(userId);
+
+        org.mockito.Mockito.verify(transactionGraphService, org.mockito.Mockito.never())
+                .rejectEdgesTouchingTransactions(any());
     }
 
     @Test
