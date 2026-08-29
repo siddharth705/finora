@@ -164,12 +164,6 @@ public interface StatementImportRepository extends JpaRepository<StatementImport
      *  with no new column. Backs {@code ReconciliationService}'s CC_PAYMENT pass (roadmap Phase 3). */
     List<StatementImport> findByUserIdAndTotalAmountDueIsNotNull(UUID userId);
 
-    /** Like {@link #findByUserIdAndTotalAmountDueIsNotNull}, scoped to a set of live account ids --
-     *  excludes a soft-deleted account's statements, which the unscoped finder would keep matching
-     *  against forever (see {@link #countByUserIdAndAccountIdIn}'s own doc comment). */
-    List<StatementImport> findByUserIdAndTotalAmountDueIsNotNullAndAccountIdIn(
-            UUID userId, java.util.Collection<UUID> accountIds);
-
     /**
      * The {@code id}/{@code activatedCapabilitiesJson}/{@code unparseableSummaryJson} columns
      * {@code CapabilityCoverageService.forUser} actually reads, deliberately excluding {@code
