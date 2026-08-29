@@ -339,6 +339,37 @@ class ReconciliationServiceTest {
     }
 
     @Test
+    void reconcileForUser_stillFlagsAsDuplicate_whenOnlyOneSideHasABalance() {
+        // Regression guard for the balance/reference discriminator above: a Gmail receipt import
+        // never captures a running balance, but a later bank-statement import of the SAME real
+        // transaction does. Splitting the duplicate key whenever either side merely LACKS the
+        // discriminator (rather than when the two sides actively disagree) would silently double
+        // this transaction into income/expense totals and the account balance -- worse than the
+        // bug this discriminator was added to fix.
+        UUID accountId = UUID.randomUUID();
+        LocalDate date = LocalDate.of(2026, 7, 10);
+
+        Transaction gmailReceipt = txn(UUID.randomUUID(), accountId, date, new BigDecimal("499.00"),
+                Transaction.Type.EXPENSE, "AMAZON ORDER 4471", Instant.parse("2026-07-10T09:00:00Z"));
+        gmailReceipt.setSource(Transaction.Source.GMAIL_IMPORT);
+        // No balanceAfter, no referenceNumber -- Gmail receipts never carry either.
+
+        Transaction bankStatement = txn(UUID.randomUUID(), accountId, date, new BigDecimal("499.00"),
+                Transaction.Type.EXPENSE, "AMAZON ORDER 4471", Instant.parse("2026-07-10T18:00:00Z"));
+        bankStatement.setSource(Transaction.Source.CSV_IMPORT);
+        bankStatement.setBalanceAfter(new BigDecimal("12345.67"));
+
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any()))
+                .thenReturn(List.of(gmailReceipt, bankStatement));
+
+        reconciliationService.reconcileForUser(userId);
+
+        assertThat(gmailReceipt.getIsDuplicateOf())
+                .as("still the same real transaction -- one side simply has no balance to compare")
+                .isEqualTo(bankStatement.getId());
+    }
+
+    @Test
     void reconcileForUser_neverGroupsTwoNullDescriptionTransactionsAsDuplicatesOfEachOther() {
         // Faithful to the original query's SQL semantics: `t.description = :description` with a
         // null bind parameter is never true, not even against another null row. Two
