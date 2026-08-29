@@ -8,10 +8,12 @@ import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.UUID;
 
@@ -240,5 +242,83 @@ class StatementImportRepositoryIT extends AbstractIntegrationTest {
         entityManager.clear();
 
         assertThat(statementImportRepository.findEarliestImportedAtEverEpochMillis(UUID.randomUUID())).isNull();
+    }
+
+    // --- findPriorStatementClosingBalanceForAccount: real-Postgres coverage for the query behind
+    // OpeningBalanceCarryForward. Every caller of it (ImportService.persistSection) is otherwise
+    // only proven against a mocked repository (ImportServiceOpeningBalanceCarryForwardTest) -- a
+    // mock proves the service calls the repository correctly, not that the JPQL itself (the
+    // ORDER BY/Pageable-as-LIMIT-1 shape in particular) is syntactically and semantically correct
+    // against real Postgres. This is that proof. ---
+
+    private StatementImport saveStatementWithPeriod(LocalDate periodStart, LocalDate periodEnd,
+                                                      BigDecimal closingBalance, Instant importedAt) {
+        StatementImport s = saveStatement(null, null);
+        s.setStatementPeriodStart(periodStart);
+        s.setStatementPeriodEnd(periodEnd);
+        s.setClosingBalance(closingBalance);
+        s.setImportedAt(importedAt);
+        return statementImportRepository.save(s);
+    }
+
+    @Test
+    @Transactional
+    void findPriorStatementClosingBalanceForAccount_findsThePriorStatementsClose_bySharedBoundaryDate() {
+        // The PNB repro this query exists for: June's period end (30/06) is July's period start
+        // (30/06) -- inclusive on both statements' boundary.
+        saveStatementWithPeriod(LocalDate.of(2026, 5, 31), LocalDate.of(2026, 6, 30),
+                new BigDecimal("35354.97"), Instant.parse("2026-07-01T00:00:00Z"));
+        entityManager.flush();
+        entityManager.clear();
+
+        List<BigDecimal> result = statementImportRepository.findPriorStatementClosingBalanceForAccount(
+                userId, accountId, LocalDate.of(2026, 6, 30), PageRequest.of(0, 1));
+
+        assertThat(result).containsExactly(new BigDecimal("35354.97"));
+    }
+
+    @Test
+    @Transactional
+    void findPriorStatementClosingBalanceForAccount_ordersByPeriodEndThenImportedAt_mostRecentFirst() {
+        saveStatementWithPeriod(LocalDate.of(2026, 4, 30), LocalDate.of(2026, 5, 31),
+                new BigDecimal("10000.00"), Instant.parse("2026-06-01T00:00:00Z"));
+        saveStatementWithPeriod(LocalDate.of(2026, 5, 31), LocalDate.of(2026, 6, 30),
+                new BigDecimal("35354.97"), Instant.parse("2026-07-01T00:00:00Z"));
+        entityManager.flush();
+        entityManager.clear();
+
+        List<BigDecimal> result = statementImportRepository.findPriorStatementClosingBalanceForAccount(
+                userId, accountId, LocalDate.of(2026, 7, 31), PageRequest.of(0, 1));
+
+        assertThat(result).containsExactly(new BigDecimal("35354.97"));
+    }
+
+    @Test
+    @Transactional
+    void findPriorStatementClosingBalanceForAccount_empty_whenNoPriorStatementExists() {
+        saveStatementWithPeriod(LocalDate.of(2026, 6, 30), LocalDate.of(2026, 7, 31),
+                new BigDecimal("7025.86"), Instant.parse("2026-08-01T00:00:00Z"));
+        entityManager.flush();
+        entityManager.clear();
+
+        // No statement on file ends on or before 30/05 -- the only one saved starts after it.
+        List<BigDecimal> result = statementImportRepository.findPriorStatementClosingBalanceForAccount(
+                userId, accountId, LocalDate.of(2026, 5, 30), PageRequest.of(0, 1));
+
+        assertThat(result).isEmpty();
+    }
+
+    @Test
+    @Transactional
+    void findPriorStatementClosingBalanceForAccount_empty_whenPriorStatementStatesNoClosingBalance() {
+        saveStatementWithPeriod(LocalDate.of(2026, 5, 31), LocalDate.of(2026, 6, 30), null,
+                Instant.parse("2026-07-01T00:00:00Z"));
+        entityManager.flush();
+        entityManager.clear();
+
+        List<BigDecimal> result = statementImportRepository.findPriorStatementClosingBalanceForAccount(
+                userId, accountId, LocalDate.of(2026, 6, 30), PageRequest.of(0, 1));
+
+        assertThat(result).isEmpty();
     }
 }
