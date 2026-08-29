@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Pencil, Trash2 } from 'lucide-react';
+import { ChevronDown, Pencil, Plus, Trash2 } from 'lucide-react';
 import { categoriesApi, type CategoryOption } from '../api/endpoints';
 import { similarityRatio } from '../lib/similarity';
 import { CategoryCreateEditPanel } from './CategoryCreateEditPanel';
@@ -55,30 +55,29 @@ export function CategoryCombobox({
   const categoriesQ = useQuery({ queryKey: ['categories'], queryFn: () => categoriesApi.list(), retry: false });
   const categories = useMemo(() => categoriesQ.data ?? [], [categoriesQ.data]);
 
-  const [query, setQuery] = useState(value);
+  // `query` is the popover's own search text now, not a mirror of `value` — the trigger button
+  // shows the selection, so there is no field for typed-but-unselected text to strand itself in
+  // (the bug the old click-outside reset below used to guard against).
+  const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
   const [panel, setPanel] = useState<Panel | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    setQuery(value);
-  }, [value]);
+  const searchRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const onClickOutside = (e: MouseEvent) => {
       if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
         setOpen(false);
-        // Bug fix: this used to close the dropdown and leave whatever the user had typed sitting
-        // in the input, even though nothing was selected and onChange never fired. Inside a form
-        // — Ledger's edit modal — the user saw "Fuel" in the category field and saved, believing
-        // that is what they saved; the old category went in instead. Typed-but-unselected text is
-        // not a selection, so the field goes back to showing the actual value.
-        setQuery(value);
+        setQuery('');
       }
     };
     document.addEventListener('mousedown', onClickOutside);
     return () => document.removeEventListener('mousedown', onClickOutside);
-  }, [value]);
+  }, []);
+
+  useEffect(() => {
+    if (open) searchRef.current?.focus();
+  }, [open]);
 
   const pool = useMemo(
     () => categories.filter((c) => c.id !== excludeCategoryId),
@@ -107,12 +106,15 @@ export function CategoryCombobox({
       .map((s) => s.category);
   }, [pool, trimmedQuery, exactMatches.length]);
 
-  const showCreateRow = trimmedQuery.length > 0 && !exactNameMatch;
+  // Always offered (unless it'd duplicate an exact match) rather than only once the user has
+  // typed something new-worthy — a persistent "+ New category" row is the whole point of the
+  // popover redesign: creating a category should be discoverable without knowing to type first.
+  const showCreateRow = !exactNameMatch;
 
   const select = (category: CategoryOption) => {
     onChange(category.name);
     onSelect?.(category);
-    setQuery(category.name);
+    setQuery('');
     setOpen(false);
   };
 
@@ -120,6 +122,7 @@ export function CategoryCombobox({
     setOpen(false);
     if (onCreateNew) onCreateNew(trimmedQuery);
     else setPanel({ kind: 'create', name: trimmedQuery });
+    setQuery('');
   };
 
   const openPanel = (next: Panel) => {
@@ -162,18 +165,21 @@ export function CategoryCombobox({
 
   return (
     <div ref={containerRef} className="relative">
-      <input
+      {/* A button, not a text field: the old plain <input> looked like ordinary typing, giving no
+          hint that it opened a list or could create a category. This reads as "click me to pick"
+          on sight, and the value on display can never be confused with unsaved typed text. */}
+      <button
         id={inputId}
+        type="button"
         role="combobox"
+        aria-haspopup="listbox"
         aria-expanded={open}
-        className="bg-card text-ink border border-border rounded-lg px-3 py-2 text-sm w-full"
-        value={query}
-        onFocus={() => setOpen(true)}
-        onChange={(e) => {
-          setQuery(e.target.value);
-          setOpen(true);
-        }}
-      />
+        className="w-full flex items-center justify-between gap-2 bg-card border border-border rounded-lg px-3 py-2 text-sm text-left"
+        onClick={() => setOpen((o) => !o)}
+      >
+        <span className={`truncate ${value ? 'text-ink' : 'text-muted'}`}>{value || 'Choose category'}</span>
+        <ChevronDown size={14} className="text-muted flex-shrink-0" />
+      </button>
       {/* A failed fetch used to be indistinguishable from "you have no categories" — an empty
           dropdown either way — which invites the user to create categories they already have.
           Lives here rather than in each of the three consumers so all of them get it. */}
@@ -183,7 +189,17 @@ export function CategoryCombobox({
         </p>
       )}
       {open && (
-        <div className="absolute z-10 mt-1 w-full bg-card border border-border rounded-lg shadow-lg max-h-64 overflow-y-auto">
+        <div className="absolute z-10 mt-1 w-full bg-card border border-border rounded-lg shadow-lg max-h-72 overflow-y-auto">
+          <div className="p-2 border-b border-border sticky top-0 bg-card">
+            <input
+              ref={searchRef}
+              aria-label="Search categories"
+              placeholder="Search categories"
+              className="bg-card text-ink border border-border rounded-lg px-2.5 py-1.5 text-sm w-full"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+          </div>
           {exactMatches.map((c) => (
             <div key={c.id} className="group flex items-center hover:bg-sidebar-hover">
               <button
@@ -236,10 +252,11 @@ export function CategoryCombobox({
           {showCreateRow && (
             <button
               type="button"
-              className="w-full text-left px-3 py-2 text-sm font-medium text-primary hover:bg-sidebar-hover border-t border-border"
+              className="w-full flex items-center gap-1.5 text-left px-3 py-2 text-sm font-medium text-primary bg-primary-light hover:bg-primary-light/70 border-t border-border sticky bottom-0"
               onClick={create}
             >
-              Create "{trimmedQuery}"
+              <Plus size={14} />
+              {trimmedQuery ? `Create "${trimmedQuery}"` : 'New category'}
             </button>
           )}
         </div>

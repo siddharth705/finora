@@ -98,7 +98,7 @@ describe('CategoryDeleteDialog', () => {
 
     const combobox = await screen.findByRole('combobox');
     await user.click(combobox);
-    await user.type(combobox, 'Subscriptions');
+    await user.type(await screen.findByPlaceholderText('Search categories'), 'Subscriptions');
 
     await user.click(await screen.findByText('Create "Subscriptions"'));
     const nameInput = await screen.findByPlaceholderText('Category name');
@@ -140,7 +140,7 @@ describe('CategoryDeleteDialog', () => {
 
     const combobox = await screen.findByRole('combobox');
     await user.click(combobox);
-    await user.type(combobox, CATEGORY.name);
+    await user.type(await screen.findByPlaceholderText('Search categories'), CATEGORY.name);
 
     await waitFor(() => {
       expect(screen.queryByText(`Create "${CATEGORY.name}"`)).not.toBeInTheDocument();
