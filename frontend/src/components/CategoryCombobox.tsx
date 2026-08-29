@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Pencil, Trash2 } from 'lucide-react';
+import { ChevronDown, Pencil, Plus, Trash2 } from 'lucide-react';
 import { categoriesApi, type CategoryOption } from '../api/endpoints';
 import { similarityRatio } from '../lib/similarity';
 import { CategoryCreateEditPanel } from './CategoryCreateEditPanel';
@@ -55,30 +55,61 @@ export function CategoryCombobox({
   const categoriesQ = useQuery({ queryKey: ['categories'], queryFn: () => categoriesApi.list(), retry: false });
   const categories = useMemo(() => categoriesQ.data ?? [], [categoriesQ.data]);
 
-  const [query, setQuery] = useState(value);
+  // `query` is the popover's own search text now, not a mirror of `value` — the trigger button
+  // shows the selection, so there is no field for typed-but-unselected text to strand itself in
+  // (the bug the old click-outside reset below used to guard against).
+  const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
   const [panel, setPanel] = useState<Panel | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
 
-  useEffect(() => {
-    setQuery(value);
-  }, [value]);
+  // A plain <input> never lost focus when its dropdown closed -- the field was the thing that
+  // stayed focused. The button+popover swap breaks that: the popover (and whatever inside it had
+  // focus) unmounts on close, and without this, focus falls back to <body>, stranding keyboard and
+  // screen-reader users. Every JS-initiated close below returns focus to the trigger explicitly;
+  // a close caused by clicking elsewhere is left alone since the user's focus already moved there.
+  const closeAndRefocus = () => {
+    setOpen(false);
+    setQuery('');
+    triggerRef.current?.focus();
+  };
 
   useEffect(() => {
     const onClickOutside = (e: MouseEvent) => {
       if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
         setOpen(false);
-        // Bug fix: this used to close the dropdown and leave whatever the user had typed sitting
-        // in the input, even though nothing was selected and onChange never fired. Inside a form
-        // — Ledger's edit modal — the user saw "Fuel" in the category field and saved, believing
-        // that is what they saved; the old category went in instead. Typed-but-unselected text is
-        // not a selection, so the field goes back to showing the actual value.
-        setQuery(value);
+        setQuery('');
       }
     };
     document.addEventListener('mousedown', onClickOutside);
     return () => document.removeEventListener('mousedown', onClickOutside);
-  }, [value]);
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    if (searchRef.current) searchRef.current.focus();
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        closeAndRefocus();
+      }
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [open]);
+
+  // Unlike closeAndRefocus, calling triggerRef.current?.focus() at the point `panel` is cleared
+  // is too early -- the trigger button doesn't exist in the DOM yet while an edit/create/delete
+  // panel is showing (they're a totally different render branch, not an overlay), so the ref is
+  // still null in the same tick. Waiting for the effect below to run after the trigger has
+  // actually (re)mounted is what makes the focus land.
+  const prevPanelRef = useRef<Panel | null>(null);
+  useEffect(() => {
+    if (prevPanelRef.current && !panel) triggerRef.current?.focus();
+    prevPanelRef.current = panel;
+  }, [panel]);
 
   const pool = useMemo(
     () => categories.filter((c) => c.id !== excludeCategoryId),
@@ -107,19 +138,22 @@ export function CategoryCombobox({
       .map((s) => s.category);
   }, [pool, trimmedQuery, exactMatches.length]);
 
-  const showCreateRow = trimmedQuery.length > 0 && !exactNameMatch;
+  // Always offered (unless it'd duplicate an exact match) rather than only once the user has
+  // typed something new-worthy — a persistent "+ New category" row is the whole point of the
+  // popover redesign: creating a category should be discoverable without knowing to type first.
+  const showCreateRow = !exactNameMatch;
 
   const select = (category: CategoryOption) => {
     onChange(category.name);
     onSelect?.(category);
-    setQuery(category.name);
-    setOpen(false);
+    closeAndRefocus();
   };
 
   const create = () => {
     setOpen(false);
     if (onCreateNew) onCreateNew(trimmedQuery);
     else setPanel({ kind: 'create', name: trimmedQuery });
+    setQuery('');
   };
 
   const openPanel = (next: Panel) => {
@@ -138,7 +172,8 @@ export function CategoryCombobox({
         initialColor={isEdit ? panel.category.color : undefined}
         onSaved={(saved) => {
           // A rename has to follow through to the field's own value, or the parent keeps holding
-          // a category name that no longer exists.
+          // a category name that no longer exists. Either branch must still dismiss the panel --
+          // select() only closes the popover/query state, never `panel` itself.
           if (!isEdit || panel.category.name === value) select(saved);
           setPanel(null);
         }}
@@ -162,18 +197,22 @@ export function CategoryCombobox({
 
   return (
     <div ref={containerRef} className="relative">
-      <input
+      {/* A button, not a text field: the old plain <input> looked like ordinary typing, giving no
+          hint that it opened a list or could create a category. This reads as "click me to pick"
+          on sight, and the value on display can never be confused with unsaved typed text. */}
+      <button
+        ref={triggerRef}
         id={inputId}
+        type="button"
         role="combobox"
+        aria-haspopup="listbox"
         aria-expanded={open}
-        className="bg-card text-ink border border-border rounded-lg px-3 py-2 text-sm w-full"
-        value={query}
-        onFocus={() => setOpen(true)}
-        onChange={(e) => {
-          setQuery(e.target.value);
-          setOpen(true);
-        }}
-      />
+        className="w-full flex items-center justify-between gap-2 bg-card border border-border rounded-lg px-3 py-2 text-sm text-left"
+        onClick={() => setOpen((o) => !o)}
+      >
+        <span className={`truncate ${value ? 'text-ink' : 'text-muted'}`}>{value || 'Choose category'}</span>
+        <ChevronDown size={14} className="text-muted flex-shrink-0" />
+      </button>
       {/* A failed fetch used to be indistinguishable from "you have no categories" — an empty
           dropdown either way — which invites the user to create categories they already have.
           Lives here rather than in each of the three consumers so all of them get it. */}
@@ -183,7 +222,17 @@ export function CategoryCombobox({
         </p>
       )}
       {open && (
-        <div className="absolute z-10 mt-1 w-full bg-card border border-border rounded-lg shadow-lg max-h-64 overflow-y-auto">
+        <div className="absolute z-10 mt-1 w-full bg-card border border-border rounded-lg shadow-lg max-h-72 overflow-y-auto">
+          <div className="p-2 border-b border-border sticky top-0 bg-card">
+            <input
+              ref={searchRef}
+              aria-label="Search categories"
+              placeholder="Search categories"
+              className="bg-card text-ink border border-border rounded-lg px-2.5 py-1.5 text-sm w-full"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+          </div>
           {exactMatches.map((c) => (
             <div key={c.id} className="group flex items-center hover:bg-sidebar-hover">
               <button
@@ -236,10 +285,11 @@ export function CategoryCombobox({
           {showCreateRow && (
             <button
               type="button"
-              className="w-full text-left px-3 py-2 text-sm font-medium text-primary hover:bg-sidebar-hover border-t border-border"
+              className="w-full flex items-center gap-1.5 text-left px-3 py-2 text-sm font-medium text-primary bg-primary-light hover:bg-primary-light/70 border-t border-border sticky bottom-0"
               onClick={create}
             >
-              Create "{trimmedQuery}"
+              <Plus size={14} />
+              {trimmedQuery ? `Create "${trimmedQuery}"` : 'New category'}
             </button>
           )}
         </div>

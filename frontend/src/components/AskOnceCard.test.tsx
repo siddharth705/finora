@@ -156,6 +156,6 @@ describe('AskOnceCard resolve (optimistic)', () => {
     await user.click(screen.getByRole('button', { name: /confirm/i }));
 
     expect(await screen.findByText('Coffee Shop')).toBeInTheDocument();
-    expect(screen.getByRole('combobox')).toHaveValue('Transport');
+    expect(screen.getByRole('combobox')).toHaveTextContent('Transport');
   });
 });
