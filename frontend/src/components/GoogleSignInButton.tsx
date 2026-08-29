@@ -48,7 +48,13 @@ export function GoogleSignInButton({ text, onCredential, onError }: GoogleSignIn
         // https://developers.google.com/identity/gsi/web/reference/js-reference#width
         const measuredWidth = Math.min(Math.round(containerRef.current.getBoundingClientRect().width), 400);
         accountsId.renderButton(containerRef.current, {
-          theme: 'outline',
+          // 'filled_black' rather than the default 'outline' so this sits next to
+          // AppleSignInButton's solid-black custom button without a white-vs-black mismatch --
+          // GIS only exposes 'outline' / 'filled_blue' / 'filled_black' as theme options, so this
+          // is the closest visual match achievable without abandoning Google's own rendered button
+          // for a fully custom one (which would also mean losing their built-in "Sign in as
+          // <name>" returning-user shortcut this renders when a session is remembered).
+          theme: 'filled_black',
           size: 'large',
           width: String(measuredWidth),
           text,
