@@ -82,6 +82,13 @@ public class DashboardService {
                 : transactionRepository.findByUserIdAndAccountIdIn(userId, liveAccountIds);
         RefundNetting refunds = RefundNetting.from(all);
         List<Transaction> active = RefundNetting.reportable(all, transactionGraphService.ccPaymentFromTransactionIds(all));
+        // A further, narrower cut ON TOP of `active` -- for cross-category totals (income,
+        // expense, savings rate, health score) only. Deliberately not folded into `active` itself:
+        // `active` also feeds every category-level map below (spendByCategory, spendByCategoryId,
+        // ...), and an Investments-categorized SIP is still a real, budgetable category -- it
+        // should keep showing up there, and only disappear from the cross-category sum a SIP was
+        // never really part of. See RefundNetting.excludingInvestmentTransfers's own doc comment.
+        List<Transaction> activeForTotals = RefundNetting.excludingInvestmentTransfers(active);
         Map<UUID, Category> categoriesById = categoryRepository.findByUserId(userId).stream()
                 .collect(Collectors.toMap(Category::getId, c -> c));
 
@@ -133,10 +140,10 @@ public class DashboardService {
         // "vs last month". See ReportingPeriod.priorMonth.
         String priorMonth = period.priorMonth();
 
-        BigDecimal incomeCur = sumForMonth(active, currentMonth, Transaction.Type.INCOME, refunds);
-        BigDecimal expenseCur = sumForMonth(active, currentMonth, Transaction.Type.EXPENSE, refunds);
-        BigDecimal incomePrior = sumForMonth(active, priorMonth, Transaction.Type.INCOME, refunds);
-        BigDecimal expensePrior = sumForMonth(active, priorMonth, Transaction.Type.EXPENSE, refunds);
+        BigDecimal incomeCur = sumForMonth(activeForTotals, currentMonth, Transaction.Type.INCOME, refunds);
+        BigDecimal expenseCur = sumForMonth(activeForTotals, currentMonth, Transaction.Type.EXPENSE, refunds);
+        BigDecimal incomePrior = sumForMonth(activeForTotals, priorMonth, Transaction.Type.INCOME, refunds);
+        BigDecimal expensePrior = sumForMonth(activeForTotals, priorMonth, Transaction.Type.EXPENSE, refunds);
         BigDecimal netCur = incomeCur.subtract(expenseCur);
         BigDecimal netPrior = incomePrior.subtract(expensePrior);
 
@@ -152,7 +159,7 @@ public class DashboardService {
         // enough of its own transactions that one or two stray rows can't dominate the ratio --
         // below either bar, the comparison isn't wrong, it's just not a comparison, and pct() below
         // says so with null (which MetricCard already renders as a muted "--" rather than a number).
-        String comparisonGateReason = priorMonthGateReason(active, priorMonth);
+        String comparisonGateReason = priorMonthGateReason(activeForTotals, priorMonth);
         boolean priorMonthReliable = comparisonGateReason == null;
         Double expenseDeltaPct = pct(expenseCur, expensePrior, priorMonthReliable);
 
@@ -160,7 +167,7 @@ public class DashboardService {
                 ? netCur.divide(incomeCur, 4, RoundingMode.HALF_UP).multiply(BigDecimal.valueOf(100))
                 : BigDecimal.ZERO;
 
-        var health = computeHealthScore(accounts, active, months, liquid, refunds);
+        var health = computeHealthScore(accounts, activeForTotals, months, liquid, refunds);
 
         Map<String, BigDecimal> spendByCategory = active.stream()
                 .filter(t -> t.getTxnType() == Transaction.Type.EXPENSE
