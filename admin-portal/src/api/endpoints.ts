@@ -200,7 +200,8 @@ export const adminTransactionsApi = {
 };
 
 export const adminRulesApi = {
-  list: () => api.get<RuleDto[]>('/admin/rules').then((r) => r.data),
+  list: (page: number, size: number) =>
+    api.get<PagedResponse<RuleDto>>('/admin/rules', { params: { page, size } }).then((r) => r.data),
   create: (request: CreateRuleRequest) =>
     api.post<RuleDto>('/admin/rules', request).then((r) => r.data),
   update: (id: string, request: UpdateRuleRequest) =>
