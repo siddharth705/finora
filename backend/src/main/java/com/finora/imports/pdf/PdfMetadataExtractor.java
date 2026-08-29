@@ -562,7 +562,8 @@ public class PdfMetadataExtractor {
                 Matcher cardLabel = CARD_NUMBER_LABEL.matcher(line);
                 if (cardLabel.find()) {
                     String sameLineValue = firstMatchAfter(line, cardLabel.end(), CARD_NUMBER_VALUE, null);
-                    if (sameLineValue != null && looksLikeCardOrAccountNumber(sameLineValue)) {
+                    if (sameLineValue != null && looksLikeCardOrAccountNumber(sameLineValue)
+                            && noInterveningProse(line, cardLabel.end(), sameLineValue)) {
                         String[] normalized = normalizeCardOrAccountNumberValue(sameLineValue);
                         accountNumberMasked = normalized[0];
                         accountNumberFull = normalized[1];
@@ -700,6 +701,27 @@ public class PdfMetadataExtractor {
             }
         }
         return null;
+    }
+
+    /** F22 (extraction-coverage-audit.md real-corpus follow-up): CARD_NUMBER_LABEL's own unanchored
+     *  match -- needed for Kotak's leading-text case (see this method's callers' own doc comments)
+     *  -- also fires on an incidental "card number" mention buried mid-sentence in unrelated prose,
+     *  and firstMatchAfter's same-line search had no bound on how far past the label it would look:
+     *  an unrelated digit run appearing later in the same sentence (a phone number, an unrelated
+     *  reference code) was captured as the card number. Confirmed on two real statements this way
+     *  -- one where the label sat inside a sentence about the number's own digit count, another
+     *  inside an SMS-instruction sentence whose only digit run was a customer-service phone number.
+     *
+     *  <p>A genuine "Label value" or "Label: value" separator is only ever whitespace, a colon, or
+     *  a dash -- real intervening prose always contains a letter. This mirrors the same-shaped fix
+     *  already applied to the multi-line grid fallback (see labelIsLastContentOnLine at this
+     *  method's own call site) -- "the label was merely mentioned in passing" needs the same guard
+     *  on both paths, just expressed differently since one searches forward on the same line and
+     *  the other searches the following lines. */
+    private static boolean noInterveningProse(String line, int fromIndex, String value) {
+        int valueStart = line.indexOf(value, fromIndex);
+        if (valueStart < 0) return false; // defensive; caller already found this exact substring
+        return line.substring(fromIndex, valueStart).chars().noneMatch(Character::isLetter);
     }
 
     /** Whether a CARD_NUMBER_VALUE-shaped candidate is actually identifying, not noise picked up
