@@ -275,7 +275,7 @@ public class DashboardService {
                 incomeCur, expenseCur, netCur, savingsRate,
                 pct(incomeCur, incomePrior, priorMonthReliable), expenseDeltaPct,
                 pct(netCur, netPrior, priorMonthReliable),
-                health.score(), health.label(), health.breakdown(),
+                health.score(), health.label(), health.breakdown(), health.breakdownDetail(),
                 health.available(), health.transactionCount(), health.minTransactions(),
                 spendByCategory, notifications,
                 // Which month everything above actually describes. Without these the client had no
@@ -445,6 +445,7 @@ public class DashboardService {
     static final int MIN_TRANSACTIONS_FOR_CONFIDENCE_SCORE = 5;
 
     private record HealthResult(Integer score, String label, Map<String, Double> breakdown,
+                                 Map<String, String> breakdownDetail,
                                  boolean available, int transactionCount, int minTransactions) {}
 
     /** Weighted composite: savings rate 25%, debt utilization 20%, emergency fund 25%,
@@ -461,7 +462,7 @@ public class DashboardService {
                                              List<String> months, BigDecimal liquid,
                                              RefundNetting refunds) {
         if (active.size() < MIN_TRANSACTIONS_FOR_HEALTH_SCORE) {
-            return new HealthResult(null, null, Map.of(), false, active.size(), MIN_TRANSACTIONS_FOR_HEALTH_SCORE);
+            return new HealthResult(null, null, Map.of(), Map.of(), false, active.size(), MIN_TRANSACTIONS_FOR_HEALTH_SCORE);
         }
         List<String> last6 = months.size() > 6 ? months.subList(months.size() - 6, months.size()) : months;
 
@@ -543,7 +544,36 @@ public class DashboardService {
         breakdown.put("Spend Consistency", consistencyScore);
         breakdown.put("Cash Flow Stability", cashFlowScore);
 
-        return new HealthResult(overall, label, breakdown, true, active.size(), MIN_TRANSACTIONS_FOR_HEALTH_SCORE);
+        // Each bar above shows a NORMALIZED 0-100 score, not the real quantity it was computed
+        // from -- "Savings Rate: 62" is clamp(savingsRate, 0, 30) / 30 * 100, not 62% actually
+        // saved. Every other number on this Dashboard (deltas, category movers, duplicates) got a
+        // "Why?" explaining itself; the health score's own breakdown never did. These are that --
+        // the real figure behind each bar, not a new computation, so the two can never disagree.
+        Map<String, String> breakdownDetail = new LinkedHashMap<>();
+        // Deliberately NOT "...this month..." -- savingsRate here is built from the SAME
+        // reportingMonth bucket every other KPI on this response uses, but reportingMonth is not
+        // always the actual current calendar month (see reportingMonthIsCurrent), and this string
+        // is composed server-side where scripts/check-reporting-period-labels.py -- which only
+        // scans frontend .tsx files -- can't catch a hardcoded period claim. Every other entry in
+        // this map already avoids asserting a period for the same reason; this one now matches.
+        breakdownDetail.put("Savings Rate", String.format(Locale.ENGLISH,
+                "Your savings rate was %.1f%%.", savingsRate));
+        breakdownDetail.put("Debt Score", cards.isEmpty()
+                ? "You have no credit cards on file."
+                : String.format(Locale.ENGLISH, "Your average credit utilization is %.0f%% across %d card%s.",
+                        avgUtil * 100, cards.size(), cards.size() == 1 ? "" : "s"));
+        breakdownDetail.put("Emergency Fund", avgExpense.compareTo(BigDecimal.ZERO) > 0
+                ? String.format(Locale.ENGLISH, "Your liquid savings would cover %.1f months of expenses.", monthsCovered)
+                : "You don't have enough recorded expenses yet to measure this against your savings.");
+        breakdownDetail.put("Spend Consistency", fullMonthlyExpense.size() > 1
+                ? String.format(Locale.ENGLISH, "Your monthly spending has varied by about %.0f%% around its average recently.", cv * 100)
+                : "Not enough full calendar months of spending yet to measure how consistent it is.");
+        breakdownDetail.put("Cash Flow Stability", fullMonthlyExpense.isEmpty()
+                ? "Not enough full calendar months of data yet to measure this."
+                : String.format(Locale.ENGLISH, "%d of the last %d full month%s had income meeting or exceeding expenses.",
+                        positiveMonths, fullMonthlyExpense.size(), fullMonthlyExpense.size() == 1 ? "" : "s"));
+
+        return new HealthResult(overall, label, breakdown, breakdownDetail, true, active.size(), MIN_TRANSACTIONS_FOR_HEALTH_SCORE);
     }
 
     private long countNonNegativeMonths(List<BigDecimal> income, List<BigDecimal> expense) {
