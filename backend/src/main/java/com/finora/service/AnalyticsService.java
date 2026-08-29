@@ -4,6 +4,7 @@ import com.finora.dto.AnalyticsDto;
 import com.finora.entity.MerchantCategoryLearning;
 import com.finora.entity.MerchantLearningAudit;
 import com.finora.entity.Transaction;
+import com.finora.repository.AccountRepository;
 import com.finora.repository.CategoryRepository;
 import com.finora.repository.MerchantCategoryLearningRepository;
 import com.finora.repository.MerchantLearningAuditRepository;
@@ -52,6 +53,7 @@ public class AnalyticsService {
     private static final int TREND_MONTHS = 6;
 
     private final TransactionRepository transactionRepository;
+    private final AccountRepository accountRepository;
     private final MerchantRepository merchantRepository;
     private final MerchantCategoryLearningRepository learningRepository;
     private final MerchantLearningAuditRepository learningAuditRepository;
@@ -64,13 +66,15 @@ public class AnalyticsService {
     private final UserRepository userRepository;
     private final TransactionGraphService transactionGraphService;
 
-    public AnalyticsService(TransactionRepository transactionRepository, MerchantRepository merchantRepository,
+    public AnalyticsService(TransactionRepository transactionRepository, AccountRepository accountRepository,
+                             MerchantRepository merchantRepository,
                              MerchantCategoryLearningRepository learningRepository,
                              MerchantLearningAuditRepository learningAuditRepository,
                              CategoryRepository categoryRepository, StatementImportRepository statementImportRepository,
                              ConfidenceEngine confidenceEngine, UserRepository userRepository,
                              TransactionGraphService transactionGraphService) {
         this.transactionRepository = transactionRepository;
+        this.accountRepository = accountRepository;
         this.merchantRepository = merchantRepository;
         this.learningRepository = learningRepository;
         this.learningAuditRepository = learningAuditRepository;
@@ -266,7 +270,14 @@ public class AnalyticsService {
         if (month != null) {
             return activeExpenseTransactions(userId, month.atDay(1), month.atEndOfMonth());
         }
-        List<Transaction> all = transactionRepository.findByUserId(userId);
+        // Deleted-account leak (see DashboardService.summarize for the original fix): a deleted
+        // account's transactions deliberately keep deleted_at unset, so findByUserId alone would
+        // keep counting them here forever, not just during StatementImportService's 7-day grace
+        // window.
+        List<UUID> liveAccountIds = accountRepository.findByUserId(userId).stream()
+                .map(com.finora.entity.Account::getId).toList();
+        List<Transaction> all = liveAccountIds.isEmpty() ? List.of()
+                : transactionRepository.findByUserIdAndAccountIdIn(userId, liveAccountIds);
         return RefundNetting.reportable(all, transactionGraphService.ccPaymentFromTransactionIds(all)).stream()
                 .filter(t -> t.getTxnType() == Transaction.Type.EXPENSE)
                 .toList();

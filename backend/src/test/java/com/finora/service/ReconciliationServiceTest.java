@@ -1,7 +1,9 @@
 package com.finora.service;
 
+import com.finora.entity.Account;
 import com.finora.entity.Transaction;
 import com.finora.entity.TransactionRelationship;
+import com.finora.repository.AccountRepository;
 import com.finora.repository.TransactionRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -14,12 +16,16 @@ import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class ReconciliationServiceTest {
 
     private TransactionRepository transactionRepository;
+    private AccountRepository accountRepository;
     private RelationshipService relationshipService;
     private AuditService auditService;
     private TransactionGraphService transactionGraphService;
@@ -27,10 +33,12 @@ class ReconciliationServiceTest {
     private com.finora.repository.StatementImportRepository statementImportRepository;
     private ReconciliationService reconciliationService;
     private final UUID userId = UUID.randomUUID();
+    private Account liveAccount;
 
     @BeforeEach
     void setUp() {
         transactionRepository = mock(TransactionRepository.class);
+        accountRepository = mock(AccountRepository.class);
         // Unstubbed -- Mockito's default boolean/List return is false/empty, so every existing
         // test here (none of which are about relationship-assisted matching -- see the dedicated
         // relationship tests below) preserves the original plain amount+date+"payment"-heuristic
@@ -46,7 +54,12 @@ class ReconciliationServiceTest {
         // every existing test here sees zero credit-card statements and is unaffected by the new
         // CC_PAYMENT pass. The dedicated CC-payment tests below stub it.
         statementImportRepository = mock(com.finora.repository.StatementImportRepository.class);
-        reconciliationService = new ReconciliationService(transactionRepository, relationshipService, auditService,
+        liveAccount = new Account();
+        ReflectionTestUtils.setField(liveAccount, "id", UUID.randomUUID());
+        liveAccount.setUserId(userId);
+        when(accountRepository.findByUserId(userId)).thenReturn(List.of(liveAccount));
+
+        reconciliationService = new ReconciliationService(transactionRepository, accountRepository, relationshipService, auditService,
                 transactionGraphService, gmailReconciliationMatcher, statementImportRepository);
     }
 
@@ -65,6 +78,30 @@ class ReconciliationServiceTest {
         return t;
     }
 
+    // --- Deleted-account leak (see DashboardService.summarize for the original fix): a deleted
+    // account's transactions deliberately keep deleted_at unset (StatementImportService's 7-day
+    // DELETED_ACCOUNT_RETENTION), so reconcileForUser must scope its transaction fetch to exactly
+    // the user's live account ids, not just their userId. ---
+
+    @Test
+    void reconcileForUser_scopesTransactionFetch_toExactlyTheLiveAccountIds() {
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of());
+
+        reconciliationService.reconcileForUser(userId);
+
+        verify(transactionRepository).findByUserIdAndAccountIdIn(userId, List.of(liveAccount.getId()));
+    }
+
+    @Test
+    void reconcileForUser_withNoLiveAccounts_shortCircuits_withoutQueryingTransactions() {
+        when(accountRepository.findByUserId(userId)).thenReturn(List.of());
+
+        reconciliationService.reconcileForUser(userId);
+
+        verify(transactionRepository, org.mockito.Mockito.never())
+                .findByUserIdAndAccountIdIn(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+    }
+
     // --- Duplicates (in-memory grouping, replacing the old per-transaction
     // findPotentialDuplicates() query -- see ReconciliationService's class comment) ---
 
@@ -78,7 +115,7 @@ class ReconciliationServiceTest {
         Transaction duplicate = txn(UUID.randomUUID(), accountId, date, new BigDecimal("486.00"),
                 Transaction.Type.EXPENSE, "SWIGGY*ORDR9182 BLR", Instant.parse("2026-07-10T10:05:00Z"));
 
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(original, duplicate));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(original, duplicate));
 
         reconciliationService.reconcileForUser(userId);
 
@@ -105,7 +142,7 @@ class ReconciliationServiceTest {
                 Transaction.Type.EXPENSE, "AMAZON ORDER 4471", Instant.parse("2026-07-10T18:00:00Z"));
         bankStatement.setSource(Transaction.Source.CSV_IMPORT);
 
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(gmailReceipt, bankStatement));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(gmailReceipt, bankStatement));
 
         reconciliationService.reconcileForUser(userId);
 
@@ -128,7 +165,7 @@ class ReconciliationServiceTest {
                 Transaction.Type.EXPENSE, "AMAZON ORDER 4471", Instant.parse("2026-07-10T18:00:00Z"));
         later.setSource(Transaction.Source.CSV_IMPORT);
 
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(earlier, later));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(earlier, later));
 
         reconciliationService.reconcileForUser(userId);
 
@@ -144,7 +181,7 @@ class ReconciliationServiceTest {
         Transaction b = txn(UUID.randomUUID(), accountId, LocalDate.of(2026, 7, 11), new BigDecimal("612.00"),
                 Transaction.Type.EXPENSE, "ZOMATO ORDER 771", Instant.parse("2026-07-11T10:00:00Z"));
 
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(a, b));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(a, b));
 
         reconciliationService.reconcileForUser(userId);
 
@@ -165,7 +202,7 @@ class ReconciliationServiceTest {
         Transaction duplicate = txn(UUID.randomUUID(), accountId, date, new BigDecimal("486.0"),
                 Transaction.Type.EXPENSE, "SWIGGY*ORDR9182 BLR", Instant.parse("2026-07-10T10:05:00Z"));
 
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(original, duplicate));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(original, duplicate));
 
         reconciliationService.reconcileForUser(userId);
 
@@ -185,7 +222,7 @@ class ReconciliationServiceTest {
         Transaction b = txn(UUID.randomUUID(), accountId, date, new BigDecimal("100.00"),
                 Transaction.Type.EXPENSE, null, Instant.parse("2026-07-10T10:05:00Z"));
 
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(a, b));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(a, b));
 
         reconciliationService.reconcileForUser(userId);
 
@@ -205,7 +242,7 @@ class ReconciliationServiceTest {
         Transaction creditOnCard = txn(UUID.randomUUID(), cardAccount, LocalDate.of(2026, 7, 11),
                 new BigDecimal("18500.00"), Transaction.Type.INCOME, "Payment Received - Thank You", Instant.now());
 
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(debitFromSavings, creditOnCard));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(debitFromSavings, creditOnCard));
 
         reconciliationService.reconcileForUser(userId);
 
@@ -226,7 +263,7 @@ class ReconciliationServiceTest {
         Transaction credit = txn(UUID.randomUUID(), cardAccount, LocalDate.of(2026, 7, 20),
                 new BigDecimal("18500.00"), Transaction.Type.INCOME, "Payment received", Instant.now());
 
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(debit, credit));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(debit, credit));
 
         reconciliationService.reconcileForUser(userId);
 
@@ -242,7 +279,7 @@ class ReconciliationServiceTest {
         Transaction credit = txn(UUID.randomUUID(), accountId, LocalDate.of(2026, 7, 11),
                 new BigDecimal("500.00"), Transaction.Type.INCOME, "Payment received", Instant.now());
 
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(debit, credit));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(debit, credit));
 
         reconciliationService.reconcileForUser(userId);
 
@@ -264,7 +301,7 @@ class ReconciliationServiceTest {
         Transaction unrelatedExpense = txn(UUID.randomUUID(), otherAccount, LocalDate.of(2026, 7, 2),
                 new BigDecimal("75000.00"), Transaction.Type.EXPENSE, "Payment to landlord", Instant.now());
 
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(salaryCredit, unrelatedExpense));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(salaryCredit, unrelatedExpense));
 
         reconciliationService.reconcileForUser(userId);
 
@@ -287,7 +324,7 @@ class ReconciliationServiceTest {
         Transaction credit = txn(UUID.randomUUID(), cardAccount, LocalDate.of(2026, 7, 8), // 7 days apart -- beyond the default 4-day window
                 new BigDecimal("18500.00"), Transaction.Type.INCOME, "Payment received", Instant.now());
 
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(debit, credit));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(debit, credit));
         when(relationshipService.ownAccountIdentifierValues(userId)).thenReturn(List.of("4802"));
 
         reconciliationService.reconcileForUser(userId);
@@ -306,7 +343,7 @@ class ReconciliationServiceTest {
         Transaction credit = txn(UUID.randomUUID(), cardAccount, LocalDate.of(2026, 7, 20), // 19 days apart -- beyond even the widened window
                 new BigDecimal("18500.00"), Transaction.Type.INCOME, "Payment received", Instant.now());
 
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(debit, credit));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(debit, credit));
         when(relationshipService.ownAccountIdentifierValues(userId)).thenReturn(List.of("4802"));
 
         reconciliationService.reconcileForUser(userId);
@@ -328,7 +365,7 @@ class ReconciliationServiceTest {
         Transaction credit = txn(UUID.randomUUID(), otherAccount, LocalDate.of(2026, 7, 11),
                 new BigDecimal("5000.00"), Transaction.Type.INCOME, "UPI CREDIT RECEIVED", Instant.now());
 
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(debit, credit));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(debit, credit));
         when(relationshipService.ownAccountIdentifierValues(userId)).thenReturn(List.of("4802"));
 
         reconciliationService.reconcileForUser(userId);
@@ -348,7 +385,7 @@ class ReconciliationServiceTest {
         Transaction refund = txn(UUID.randomUUID(), accountId, LocalDate.of(2026, 7, 9),
                 new BigDecimal("2499.00"), Transaction.Type.INCOME, "AMAZON REFUND 4471", Instant.now());
 
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(purchase, refund));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(purchase, refund));
 
         reconciliationService.reconcileForUser(userId);
 
@@ -365,7 +402,7 @@ class ReconciliationServiceTest {
         Transaction reversal = txn(UUID.randomUUID(), accountId, LocalDate.of(2026, 7, 2),
                 new BigDecimal("1200.00"), Transaction.Type.INCOME, "PAYMENT REVERSAL NEFT XYZ", Instant.now());
 
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(purchase, reversal));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(purchase, reversal));
 
         reconciliationService.reconcileForUser(userId);
 
@@ -382,7 +419,7 @@ class ReconciliationServiceTest {
         Transaction refund = txn(UUID.randomUUID(), accountId, LocalDate.of(2026, 7, 5),
                 new BigDecimal("899.00"), Transaction.Type.INCOME, "MYNTRA RETURN REFUND 552", Instant.now());
 
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(purchase, refund));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(purchase, refund));
 
         reconciliationService.reconcileForUser(userId);
 
@@ -400,7 +437,7 @@ class ReconciliationServiceTest {
                 new BigDecimal("500.00"), Transaction.Type.INCOME, "SWIGGY CREDIT ADJ", Instant.now());
         partialCredit.setMerchant("swiggy ordr");
 
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(purchase, partialCredit));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(purchase, partialCredit));
 
         reconciliationService.reconcileForUser(userId);
 
@@ -418,7 +455,7 @@ class ReconciliationServiceTest {
         Transaction refund = txn(UUID.randomUUID(), accountB, LocalDate.of(2026, 7, 9),
                 new BigDecimal("2499.00"), Transaction.Type.INCOME, "AMAZON REFUND 4471", Instant.now());
 
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(purchase, refund));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(purchase, refund));
 
         reconciliationService.reconcileForUser(userId);
 
@@ -435,7 +472,7 @@ class ReconciliationServiceTest {
         Transaction credit = txn(UUID.randomUUID(), accountId, LocalDate.of(2026, 7, 5),
                 new BigDecimal("1500.00"), Transaction.Type.INCOME, "AMAZON REFUND 55", Instant.now());
 
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(purchase, credit));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(purchase, credit));
 
         reconciliationService.reconcileForUser(userId);
 
@@ -452,7 +489,7 @@ class ReconciliationServiceTest {
         Transaction refund = txn(UUID.randomUUID(), accountId, LocalDate.of(2026, 7, 20), // > 180 days later
                 new BigDecimal("2499.00"), Transaction.Type.INCOME, "AMAZON REFUND 4471", Instant.now());
 
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(purchase, refund));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(purchase, refund));
 
         reconciliationService.reconcileForUser(userId);
 
@@ -474,7 +511,7 @@ class ReconciliationServiceTest {
                 new BigDecimal("999.00"), Transaction.Type.INCOME, "AMAZON REFUND", Instant.now());
         refund.setMerchant("amazon order");
 
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(earlierPartialMatch, exactMatch, refund));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(earlierPartialMatch, exactMatch, refund));
 
         reconciliationService.reconcileForUser(userId);
 
@@ -490,7 +527,7 @@ class ReconciliationServiceTest {
         Transaction unrelatedIncome = txn(UUID.randomUUID(), accountId, LocalDate.of(2026, 7, 5),
                 new BigDecimal("2499.00"), Transaction.Type.INCOME, "FREELANCE PAYOUT", Instant.now());
 
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(purchase, unrelatedIncome));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(purchase, unrelatedIncome));
 
         reconciliationService.reconcileForUser(userId);
 
@@ -519,7 +556,7 @@ class ReconciliationServiceTest {
                 new BigDecimal("500.00"), Transaction.Type.INCOME, "ACME PAYOUT", Instant.now());
         unrelatedPayout.setMerchant("acme store");
 
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(purchase, refund, unrelatedPayout));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(purchase, refund, unrelatedPayout));
 
         reconciliationService.reconcileForUser(userId);
 
@@ -555,7 +592,7 @@ class ReconciliationServiceTest {
                 new BigDecimal("500.00"), Transaction.Type.INCOME, "ACME PAYOUT", Instant.now());
         newIncome.setMerchant("acme store");
 
-        when(transactionRepository.findByUserId(userId))
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any()))
                 .thenReturn(List.of(purchase, alreadyRefunded, newIncome));
 
         reconciliationService.reconcileForUser(userId);
@@ -578,7 +615,7 @@ class ReconciliationServiceTest {
         Transaction duplicate = txn(UUID.randomUUID(), accountId, date, new BigDecimal("486.00"),
                 Transaction.Type.EXPENSE, "SWIGGY*ORDR9182 BLR", Instant.parse("2026-07-10T10:05:00Z"));
 
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(original, duplicate));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(original, duplicate));
 
         reconciliationService.reconcileForUser(userId);
 
@@ -605,7 +642,7 @@ class ReconciliationServiceTest {
         Transaction credit = txn(UUID.randomUUID(), accountB, LocalDate.of(2026, 7, 11), new BigDecimal("5000.00"),
                 Transaction.Type.INCOME, "CREDIT FROM CHECKING", Instant.now());
 
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(payment, credit));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(payment, credit));
 
         reconciliationService.reconcileForUser(userId);
 
@@ -638,7 +675,7 @@ class ReconciliationServiceTest {
     void reconcileForUser_writesNoAuditRow_whenTheRunReclassifiedNothing() {
         Transaction lone = txn(UUID.randomUUID(), UUID.randomUUID(), LocalDate.of(2026, 7, 10),
                 new BigDecimal("100.00"), Transaction.Type.EXPENSE, "ONE-OFF PURCHASE", Instant.now());
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(lone));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(lone));
 
         reconciliationService.reconcileForUser(userId);
 
@@ -661,7 +698,7 @@ class ReconciliationServiceTest {
                 Transaction.Type.EXPENSE, "SWIGGY*ORDR9182 BLR", Instant.parse("2026-07-10T10:00:00Z"));
         Transaction duplicate = txn(UUID.randomUUID(), accountId, date, new BigDecimal("486.00"),
                 Transaction.Type.EXPENSE, "SWIGGY*ORDR9182 BLR", Instant.parse("2026-07-10T10:05:00Z"));
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(original, duplicate));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(original, duplicate));
 
         reconciliationService.reconcileForUser(userId);
 
@@ -691,7 +728,7 @@ class ReconciliationServiceTest {
                 Transaction.Type.EXPENSE, "SWIGGY*ORDR9182 BLR", Instant.parse("2026-07-10T10:00:00Z"));
         Transaction duplicate = txn(UUID.randomUUID(), accountId, date, new BigDecimal("486.00"),
                 Transaction.Type.EXPENSE, "SWIGGY*ORDR9182 BLR", Instant.parse("2026-07-10T10:05:00Z"));
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(original, duplicate));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(original, duplicate));
 
         reconciliationService.reconcileForUser(userId);
 
@@ -718,7 +755,7 @@ class ReconciliationServiceTest {
                 Transaction.Type.EXPENSE, "CC PAYMENT XXXX1234", Instant.parse("2026-07-10T10:00:00Z"));
         Transaction credit = txn(UUID.randomUUID(), creditCard, date, new BigDecimal("5000.00"),
                 Transaction.Type.INCOME, "PAYMENT RECEIVED", Instant.parse("2026-07-10T10:05:00Z"));
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(payment, credit));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(payment, credit));
 
         reconciliationService.reconcileForUser(userId);
 
@@ -757,7 +794,7 @@ class ReconciliationServiceTest {
         Transaction credit = txn(UUID.randomUUID(), creditCard, LocalDate.of(2026, 7, 5),
                 new BigDecimal("5000.00"), Transaction.Type.INCOME, "PAYMENT RECEIVED",
                 Instant.parse("2026-07-05T10:00:00Z"));
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(payment, credit));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(payment, credit));
 
         reconciliationService.reconcileForUser(userId);
 
@@ -781,7 +818,7 @@ class ReconciliationServiceTest {
         Transaction refund = txn(UUID.randomUUID(), accountId, LocalDate.of(2026, 7, 5),
                 new BigDecimal("999.00"), Transaction.Type.INCOME, "AMAZON REFUND 1122",
                 Instant.parse("2026-07-05T10:00:00Z"));
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(purchase, refund));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(purchase, refund));
 
         reconciliationService.reconcileForUser(userId);
 
@@ -807,7 +844,7 @@ class ReconciliationServiceTest {
         Transaction reversal = txn(UUID.randomUUID(), accountId, LocalDate.of(2026, 7, 3),
                 new BigDecimal("500.00"), Transaction.Type.INCOME, "PAYMENT REVERSED 1122",
                 Instant.parse("2026-07-03T10:00:00Z"));
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(purchase, reversal));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(purchase, reversal));
 
         reconciliationService.reconcileForUser(userId);
 
@@ -839,7 +876,7 @@ class ReconciliationServiceTest {
         Transaction refund = txn(UUID.randomUUID(), accountId, LocalDate.of(2026, 12, 20),
                 new BigDecimal("100.00"), Transaction.Type.INCOME, "AMAZON REFUND 1122",
                 Instant.parse("2026-12-20T10:00:00Z"));
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(purchase, refund));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(purchase, refund));
 
         reconciliationService.reconcileForUser(userId);
 
@@ -863,7 +900,7 @@ class ReconciliationServiceTest {
                 new BigDecimal("499.00"), Transaction.Type.EXPENSE, "Amazon",
                 Instant.parse("2026-07-11T09:00:00Z"));
         gmailTxn.setSource(Transaction.Source.GMAIL_IMPORT);
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(bankTxn, gmailTxn));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(bankTxn, gmailTxn));
         when(gmailReconciliationMatcher.findMatchAmongTransactions(gmailTxn, List.of(bankTxn)))
                 .thenReturn(java.util.Optional.of(bankTxn));
 
@@ -899,7 +936,7 @@ class ReconciliationServiceTest {
                 new BigDecimal("499.00"), Transaction.Type.EXPENSE, "Amazon",
                 Instant.parse("2026-07-11T09:00:00Z"));
         gmailTxn.setSource(Transaction.Source.GMAIL_IMPORT);
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(bankTxn, gmailTxn));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(bankTxn, gmailTxn));
         when(gmailReconciliationMatcher.findMatchAmongTransactions(gmailTxn, List.of(bankTxn)))
                 .thenReturn(java.util.Optional.of(bankTxn));
 
@@ -918,7 +955,7 @@ class ReconciliationServiceTest {
         Transaction gmailTxn = txn(UUID.randomUUID(), accountId, LocalDate.of(2026, 7, 11),
                 new BigDecimal("499.00"), Transaction.Type.EXPENSE, "Amazon", Instant.parse("2026-07-11T09:00:00Z"));
         gmailTxn.setSource(Transaction.Source.GMAIL_IMPORT);
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(bankTxn, gmailTxn));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(bankTxn, gmailTxn));
 
         reconciliationService.reconcileForUser(userId);
 
@@ -943,7 +980,7 @@ class ReconciliationServiceTest {
                 new BigDecimal("499.00"), Transaction.Type.EXPENSE, "Amazon",
                 Instant.parse("2026-07-11T09:00:00Z"));
         gmailTxn.setSource(Transaction.Source.GMAIL_IMPORT);
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(bankTxn, gmailTxn));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(bankTxn, gmailTxn));
         when(gmailReconciliationMatcher.findMatchAmongTransactions(gmailTxn, List.of(bankTxn)))
                 .thenReturn(java.util.Optional.of(bankTxn));
         // Simulates linkAll's real behavior: the edge it's handed is genuinely new, so it comes
@@ -992,7 +1029,7 @@ class ReconciliationServiceTest {
                 new BigDecimal("1500.00"), Transaction.Type.EXPENSE, "AMAZON", Instant.parse("2026-06-20T10:00:00Z"));
         Transaction charge2 = txn(UUID.randomUUID(), cardAccountId, LocalDate.of(2026, 6, 25),
                 new BigDecimal("1000.00"), Transaction.Type.EXPENSE, "SWIGGY", Instant.parse("2026-06-25T10:00:00Z"));
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(payment, charge1, charge2));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(payment, charge1, charge2));
         when(statementImportRepository.findByUserIdAndTotalAmountDueIsNotNull(userId)).thenReturn(List.of(statement));
         when(transactionRepository.findByStatementImportId(statement.getId())).thenReturn(List.of(charge1, charge2));
 
@@ -1027,7 +1064,7 @@ class ReconciliationServiceTest {
         payment.setTransfer(true); // already claimed by an earlier pass this same run
         Transaction charge = txn(UUID.randomUUID(), cardAccountId, LocalDate.of(2026, 6, 20),
                 new BigDecimal("1500.00"), Transaction.Type.EXPENSE, "AMAZON", Instant.parse("2026-06-20T10:00:00Z"));
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(payment, charge));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(payment, charge));
         when(statementImportRepository.findByUserIdAndTotalAmountDueIsNotNull(userId)).thenReturn(List.of(statement));
 
         reconciliationService.reconcileForUser(userId);
@@ -1045,7 +1082,7 @@ class ReconciliationServiceTest {
         // Right amount, but a month past the payment window -- not a candidate.
         Transaction farPayment = txn(UUID.randomUUID(), savingsAccountId, LocalDate.of(2026, 8, 20),
                 new BigDecimal("2500.00"), Transaction.Type.EXPENSE, "PAYMENT", Instant.parse("2026-08-20T10:00:00Z"));
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(farPayment));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(farPayment));
         when(statementImportRepository.findByUserIdAndTotalAmountDueIsNotNull(userId)).thenReturn(List.of(statement));
 
         reconciliationService.reconcileForUser(userId);
@@ -1074,7 +1111,7 @@ class ReconciliationServiceTest {
         // INCOME row against `charge` and add an unrelated REFUND edge to the same captured list.
         Transaction credit = txn(UUID.randomUUID(), cardAccountId, LocalDate.of(2026, 6, 22),
                 new BigDecimal("200.00"), Transaction.Type.INCOME, "CASHBACK", Instant.parse("2026-06-22T10:00:00Z"));
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(payment, charge, credit));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(payment, charge, credit));
         when(statementImportRepository.findByUserIdAndTotalAmountDueIsNotNull(userId)).thenReturn(List.of(statement));
         when(transactionRepository.findByStatementImportId(statement.getId())).thenReturn(List.of(charge, credit));
 
@@ -1096,7 +1133,7 @@ class ReconciliationServiceTest {
         Transaction payment = txn(UUID.randomUUID(), savingsAccountId, LocalDate.of(2026, 7, 14),
                 new BigDecimal("2500.00"), Transaction.Type.EXPENSE, "CREDIT CARD PAYMENT",
                 Instant.parse("2026-07-14T10:00:00Z"));
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(payment));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(payment));
         when(statementImportRepository.findByUserIdAndTotalAmountDueIsNotNull(userId)).thenReturn(List.of(statement));
         when(transactionRepository.findByStatementImportId(statement.getId())).thenReturn(List.of());
 

@@ -3,6 +3,7 @@ package com.finora.service;
 import com.finora.entity.StatementImport;
 import com.finora.entity.Transaction;
 import com.finora.entity.TransactionRelationship;
+import com.finora.repository.AccountRepository;
 import com.finora.repository.TransactionRepository;
 import com.finora.util.CategoryRules;
 import org.slf4j.Logger;
@@ -65,17 +66,20 @@ public class ReconciliationService {
     private static final int NEEDS_REVIEW_THRESHOLD = 80;
 
     private final TransactionRepository transactionRepository;
+    private final AccountRepository accountRepository;
     private final RelationshipService relationshipService;
     private final AuditService auditService;
     private final TransactionGraphService transactionGraphService;
     private final com.finora.integrations.google.merchant.GmailReconciliationMatcher gmailReconciliationMatcher;
     private final com.finora.repository.StatementImportRepository statementImportRepository;
 
-    public ReconciliationService(TransactionRepository transactionRepository, RelationshipService relationshipService,
+    public ReconciliationService(TransactionRepository transactionRepository, AccountRepository accountRepository,
+                                  RelationshipService relationshipService,
                                   AuditService auditService, TransactionGraphService transactionGraphService,
                                   com.finora.integrations.google.merchant.GmailReconciliationMatcher gmailReconciliationMatcher,
                                   com.finora.repository.StatementImportRepository statementImportRepository) {
         this.transactionRepository = transactionRepository;
+        this.accountRepository = accountRepository;
         this.relationshipService = relationshipService;
         this.auditService = auditService;
         this.transactionGraphService = transactionGraphService;
@@ -98,7 +102,14 @@ public class ReconciliationService {
      *    routinely differs entirely from the original purchase's.
      */
     public void reconcileForUser(UUID userId) {
-        List<Transaction> all = transactionRepository.findByUserId(userId);
+        // Deleted-account leak (see DashboardService.summarize for the original fix): a deleted
+        // account's transactions deliberately keep deleted_at unset, so findByUserId alone would
+        // keep re-matching them against a still-live account's rows forever, not just during
+        // StatementImportService's 7-day grace window.
+        List<UUID> liveAccountIds = accountRepository.findByUserId(userId).stream()
+                .map(com.finora.entity.Account::getId).toList();
+        List<Transaction> all = liveAccountIds.isEmpty() ? List.of()
+                : transactionRepository.findByUserIdAndAccountIdIn(userId, liveAccountIds);
         // alwaysRecord=false: this is the per-edit path. See reconcile()'s emission block.
         reconcile(userId, all, Map.of("transactionsProcessed", all.size()), false);
     }
