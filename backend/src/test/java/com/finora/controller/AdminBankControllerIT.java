@@ -220,7 +220,7 @@ class AdminBankControllerIT extends AbstractIntegrationTest {
     private JsonNode list(HttpHeaders headers) throws Exception {
         ResponseEntity<String> response = restTemplate.exchange(
                 "/api/v1/admin/banks", HttpMethod.GET, new HttpEntity<>(headers), String.class);
-        return mapper.readTree(response.getBody()).get("data");
+        return mapper.readTree(response.getBody()).get("data").get("content");
     }
 
     private boolean containsBankId(JsonNode list, String bankId) {
