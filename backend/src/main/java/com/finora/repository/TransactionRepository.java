@@ -93,6 +93,15 @@ public interface TransactionRepository extends JpaRepository<Transaction, UUID> 
 
     List<Transaction> findByUserIdAndNeedsCategoryReviewTrueOrderByTxnDateDesc(UUID userId);
 
+    /** Like {@link #findByUserIdAndNeedsCategoryReviewTrueOrderByTxnDateDesc}, but scoped to a
+     *  specific set of accounts -- same reason {@link #findByUserIdAndAccountIdIn} exists next to
+     *  {@link #findByUserId}: a deleted account's transactions never get their own
+     *  {@code deleted_at} set (by design, for the 7-day retention window), so the userId-only query
+     *  kept surfacing them on the needs-review queue forever, well past account deletion. Pass the
+     *  caller's own live account ids. */
+    List<Transaction> findByUserIdAndAccountIdInAndNeedsCategoryReviewTrueOrderByTxnDateDesc(
+            UUID userId, java.util.Collection<UUID> accountIds);
+
     /**
      * SEC-06 (docs/quality/bug-reports/2026-08-19-security-review-findings.md) -- the idempotency
      * check TransactionService.create() runs before inserting a new row. See V97's migration

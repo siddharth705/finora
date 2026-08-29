@@ -1,7 +1,9 @@
 package com.finora.service;
 
+import com.finora.entity.Account;
 import com.finora.entity.Merchant;
 import com.finora.entity.Transaction;
+import com.finora.repository.AccountRepository;
 import com.finora.repository.MerchantRepository;
 import com.finora.repository.TransactionRepository;
 import org.junit.jupiter.api.Test;
@@ -16,11 +18,14 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 class TransactionGroupingServiceTest {
 
     private final UUID userId = UUID.randomUUID();
+    private final UUID accountId = UUID.randomUUID();
+    private final List<UUID> liveAccountIds = List.of(accountId);
 
     private Transaction txnFor(UUID merchantId) {
         Transaction t = new Transaction();
@@ -38,19 +43,35 @@ class TransactionGroupingServiceTest {
         return merchant;
     }
 
+    private Account liveAccount() {
+        Account account = new Account();
+        org.springframework.test.util.ReflectionTestUtils.setField(account, "id", accountId);
+        return account;
+    }
+
+    /** Stubs {@code accountRepository.findByUserId} to return the one live account every other
+     *  test in this file assumes, so each test only has to stub the transaction/merchant query it
+     *  actually cares about. */
+    private AccountRepository accountRepositoryWithOneLiveAccount() {
+        AccountRepository accountRepository = mock(AccountRepository.class);
+        when(accountRepository.findByUserId(userId)).thenReturn(List.of(liveAccount()));
+        return accountRepository;
+    }
+
     @Test
     void groupsTransactionsByMerchant_excludingGroupsOfOne() {
         UUID swiggyId = UUID.randomUUID();
         UUID uniqueShopId = UUID.randomUUID();
 
         TransactionRepository transactionRepository = mock(TransactionRepository.class);
-        when(transactionRepository.findByUserIdAndNeedsCategoryReviewTrueOrderByTxnDateDesc(userId))
+        when(transactionRepository.findByUserIdAndAccountIdInAndNeedsCategoryReviewTrueOrderByTxnDateDesc(userId, liveAccountIds))
                 .thenReturn(List.of(txnFor(swiggyId), txnFor(swiggyId), txnFor(uniqueShopId)));
 
         MerchantRepository merchantRepository = mock(MerchantRepository.class);
         when(merchantRepository.findByUserId(userId)).thenReturn(List.of(merchantOf(swiggyId, "SWIGGY")));
 
-        TransactionGroupingService service = new TransactionGroupingService(transactionRepository, merchantRepository);
+        TransactionGroupingService service = new TransactionGroupingService(
+                transactionRepository, merchantRepository, accountRepositoryWithOneLiveAccount());
         List<TransactionGroupingService.MerchantGroup> groups = service.groupNeedsReviewByMerchant(userId);
 
         assertThat(groups).hasSize(1);
@@ -72,7 +93,7 @@ class TransactionGroupingServiceTest {
         UUID zomatoId = UUID.randomUUID();
 
         TransactionRepository transactionRepository = mock(TransactionRepository.class);
-        when(transactionRepository.findByUserIdAndNeedsCategoryReviewTrueOrderByTxnDateDesc(userId))
+        when(transactionRepository.findByUserIdAndAccountIdInAndNeedsCategoryReviewTrueOrderByTxnDateDesc(userId, liveAccountIds))
                 .thenReturn(List.of(txnFor(swiggyId), txnFor(swiggyId), txnFor(uberId), txnFor(uberId),
                         txnFor(zomatoId), txnFor(zomatoId)));
 
@@ -80,7 +101,8 @@ class TransactionGroupingServiceTest {
         when(merchantRepository.findByUserId(userId)).thenReturn(List.of(
                 merchantOf(swiggyId, "SWIGGY"), merchantOf(uberId, "UBER"), merchantOf(zomatoId, "ZOMATO")));
 
-        TransactionGroupingService service = new TransactionGroupingService(transactionRepository, merchantRepository);
+        TransactionGroupingService service = new TransactionGroupingService(
+                transactionRepository, merchantRepository, accountRepositoryWithOneLiveAccount());
         List<TransactionGroupingService.MerchantGroup> groups = service.groupNeedsReviewByMerchant(userId);
 
         assertThat(groups).hasSize(3);
@@ -98,13 +120,14 @@ class TransactionGroupingServiceTest {
         UUID danglingId = UUID.randomUUID();
 
         TransactionRepository transactionRepository = mock(TransactionRepository.class);
-        when(transactionRepository.findByUserIdAndNeedsCategoryReviewTrueOrderByTxnDateDesc(userId))
+        when(transactionRepository.findByUserIdAndAccountIdInAndNeedsCategoryReviewTrueOrderByTxnDateDesc(userId, liveAccountIds))
                 .thenReturn(List.of(txnFor(danglingId), txnFor(danglingId)));
 
         MerchantRepository merchantRepository = mock(MerchantRepository.class);
         when(merchantRepository.findByUserId(userId)).thenReturn(List.of());
 
-        TransactionGroupingService service = new TransactionGroupingService(transactionRepository, merchantRepository);
+        TransactionGroupingService service = new TransactionGroupingService(
+                transactionRepository, merchantRepository, accountRepositoryWithOneLiveAccount());
         List<TransactionGroupingService.MerchantGroup> groups = service.groupNeedsReviewByMerchant(userId);
 
         assertThat(groups).isEmpty();
@@ -114,11 +137,12 @@ class TransactionGroupingServiceTest {
     void excludesTransactionsWithNoMerchantIdentity() {
         TransactionRepository transactionRepository = mock(TransactionRepository.class);
         Transaction noMerchant = txnFor(null);
-        when(transactionRepository.findByUserIdAndNeedsCategoryReviewTrueOrderByTxnDateDesc(userId))
+        when(transactionRepository.findByUserIdAndAccountIdInAndNeedsCategoryReviewTrueOrderByTxnDateDesc(userId, liveAccountIds))
                 .thenReturn(List.of(noMerchant, noMerchant));
         MerchantRepository merchantRepository = mock(MerchantRepository.class);
 
-        TransactionGroupingService service = new TransactionGroupingService(transactionRepository, merchantRepository);
+        TransactionGroupingService service = new TransactionGroupingService(
+                transactionRepository, merchantRepository, accountRepositoryWithOneLiveAccount());
         List<TransactionGroupingService.MerchantGroup> groups = service.groupNeedsReviewByMerchant(userId);
 
         assertThat(groups).isEmpty();
@@ -139,13 +163,14 @@ class TransactionGroupingServiceTest {
         Transaction another = txnFor(swiggyId);
 
         TransactionRepository transactionRepository = mock(TransactionRepository.class);
-        when(transactionRepository.findByUserIdAndNeedsCategoryReviewTrueOrderByTxnDateDesc(userId))
+        when(transactionRepository.findByUserIdAndAccountIdInAndNeedsCategoryReviewTrueOrderByTxnDateDesc(userId, liveAccountIds))
                 .thenReturn(List.of(original, duplicate, another));
 
         MerchantRepository merchantRepository = mock(MerchantRepository.class);
         when(merchantRepository.findByUserId(userId)).thenReturn(List.of(merchantOf(swiggyId, "SWIGGY")));
 
-        TransactionGroupingService service = new TransactionGroupingService(transactionRepository, merchantRepository);
+        TransactionGroupingService service = new TransactionGroupingService(
+                transactionRepository, merchantRepository, accountRepositoryWithOneLiveAccount());
         List<TransactionGroupingService.MerchantGroup> groups = service.groupNeedsReviewByMerchant(userId);
 
         assertThat(groups).hasSize(1);
@@ -158,18 +183,41 @@ class TransactionGroupingServiceTest {
         UUID uberId = UUID.randomUUID();
 
         TransactionRepository transactionRepository = mock(TransactionRepository.class);
-        when(transactionRepository.findByUserIdAndNeedsCategoryReviewTrueOrderByTxnDateDesc(userId))
+        when(transactionRepository.findByUserIdAndAccountIdInAndNeedsCategoryReviewTrueOrderByTxnDateDesc(userId, liveAccountIds))
                 .thenReturn(List.of(txnFor(uberId), txnFor(uberId), txnFor(swiggyId), txnFor(swiggyId), txnFor(swiggyId)));
 
         MerchantRepository merchantRepository = mock(MerchantRepository.class);
         when(merchantRepository.findByUserId(userId)).thenReturn(List.of(
                 merchantOf(swiggyId, "SWIGGY"), merchantOf(uberId, "UBER")));
 
-        TransactionGroupingService service = new TransactionGroupingService(transactionRepository, merchantRepository);
+        TransactionGroupingService service = new TransactionGroupingService(
+                transactionRepository, merchantRepository, accountRepositoryWithOneLiveAccount());
         List<TransactionGroupingService.MerchantGroup> groups = service.groupNeedsReviewByMerchant(userId);
 
         assertThat(groups).hasSize(2);
         assertThat(groups.get(0).merchantName()).isEqualTo("SWIGGY");
         assertThat(groups.get(1).merchantName()).isEqualTo("UBER");
+    }
+
+    /**
+     * Regression test for the deleted-account leak: once a user's last account is deleted,
+     * {@code accountRepository.findByUserId} returns nothing live, and this must short-circuit to
+     * an empty result without ever querying transactions -- not keep surfacing a deleted account's
+     * needs-review backlog forever. Same fix DashboardService got in PR #529, applied here.
+     */
+    @Test
+    void returnsNoGroupsAndSkipsTheTransactionQueryOnceTheUserHasNoLiveAccounts() {
+        AccountRepository accountRepository = mock(AccountRepository.class);
+        when(accountRepository.findByUserId(userId)).thenReturn(List.of());
+
+        TransactionRepository transactionRepository = mock(TransactionRepository.class);
+        MerchantRepository merchantRepository = mock(MerchantRepository.class);
+
+        TransactionGroupingService service = new TransactionGroupingService(
+                transactionRepository, merchantRepository, accountRepository);
+        List<TransactionGroupingService.MerchantGroup> groups = service.groupNeedsReviewByMerchant(userId);
+
+        assertThat(groups).isEmpty();
+        verifyNoInteractions(transactionRepository);
     }
 }

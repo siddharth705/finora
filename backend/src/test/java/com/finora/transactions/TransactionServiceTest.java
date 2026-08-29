@@ -1287,4 +1287,42 @@ class TransactionServiceTest {
                 .as("and the fallback must be the documented default, not an arbitrary one")
                 .isEqualTo(Sort.Direction.DESC);
     }
+
+    /**
+     * Regression test for the deleted-account leak: {@code Transaction.deleted_at} is only set
+     * when a transaction itself is removed, never when its owning account is (by design, for the
+     * account's 7-day retention window) -- so a needsReview() query scoped by userId alone kept
+     * surfacing a deleted account's review backlog forever. Same fix DashboardService got in
+     * PR #529, applied here: scope to the user's live account ids.
+     */
+    @Test
+    void needsReview_excludesTransactionsBelongingToADeletedAccount() {
+        UUID liveAccountId = UUID.randomUUID();
+        when(accountRepository.findByUserId(userId)).thenReturn(List.of(account(liveAccountId, Account.Type.SAVINGS, BigDecimal.ZERO)));
+
+        Transaction fromLiveAccount = ownedTransaction(UUID.randomUUID(), userId);
+        fromLiveAccount.setAccountId(liveAccountId);
+        fromLiveAccount.setNeedsCategoryReview(true);
+
+        when(transactionRepository.findByUserIdAndAccountIdInAndNeedsCategoryReviewTrueOrderByTxnDateDesc(
+                eq(userId), eq(List.of(liveAccountId))))
+                .thenReturn(List.of(fromLiveAccount));
+
+        List<TransactionDto> result = transactionService.needsReview(userId);
+
+        assertThat(result).hasSize(1);
+        // The deleted account's own backlog was never asked for -- the repository call above is
+        // the only stub, so a broader (userId-only) query would return an empty, unstubbed list.
+        verify(transactionRepository, never()).findByUserIdAndNeedsCategoryReviewTrueOrderByTxnDateDesc(any());
+    }
+
+    @Test
+    void needsReview_returnsEmptyAndSkipsTheQueryOnceTheUserHasNoLiveAccountsLeft() {
+        when(accountRepository.findByUserId(userId)).thenReturn(List.of());
+
+        List<TransactionDto> result = transactionService.needsReview(userId);
+
+        assertThat(result).isEmpty();
+        verifyNoInteractions(transactionRepository);
+    }
 }

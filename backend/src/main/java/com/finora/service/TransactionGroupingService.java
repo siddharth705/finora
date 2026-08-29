@@ -1,7 +1,9 @@
 package com.finora.service;
 
+import com.finora.entity.Account;
 import com.finora.entity.Merchant;
 import com.finora.entity.Transaction;
+import com.finora.repository.AccountRepository;
 import com.finora.repository.MerchantRepository;
 import com.finora.repository.TransactionRepository;
 import org.springframework.stereotype.Service;
@@ -30,18 +32,28 @@ public class TransactionGroupingService {
 
     private final TransactionRepository transactionRepository;
     private final MerchantRepository merchantRepository;
+    private final AccountRepository accountRepository;
 
     public TransactionGroupingService(TransactionRepository transactionRepository,
-                                       MerchantRepository merchantRepository) {
+                                       MerchantRepository merchantRepository,
+                                       AccountRepository accountRepository) {
         this.transactionRepository = transactionRepository;
         this.merchantRepository = merchantRepository;
+        this.accountRepository = accountRepository;
     }
 
     public record MerchantGroup(UUID merchantId, String merchantName, List<UUID> transactionIds) {}
 
+    // Scoped to live account ids, not just userId -- same fix as TransactionService.needsReview
+    // (PR #529's pattern): a deleted account's transactions never get their own `deleted_at` set,
+    // by design, for the 7-day retention window, so a plain userId query kept surfacing them here
+    // forever, well after the account itself was gone.
     public List<MerchantGroup> groupNeedsReviewByMerchant(UUID userId) {
-        List<Transaction> candidates =
-                transactionRepository.findByUserIdAndNeedsCategoryReviewTrueOrderByTxnDateDesc(userId);
+        List<UUID> liveAccountIds = accountRepository.findByUserId(userId).stream().map(Account::getId).toList();
+        if (liveAccountIds.isEmpty()) return List.of();
+
+        List<Transaction> candidates = transactionRepository
+                .findByUserIdAndAccountIdInAndNeedsCategoryReviewTrueOrderByTxnDateDesc(userId, liveAccountIds);
 
         Map<UUID, List<UUID>> idsByMerchant = new LinkedHashMap<>();
         for (Transaction t : candidates) {

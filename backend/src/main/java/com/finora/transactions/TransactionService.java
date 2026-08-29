@@ -568,11 +568,20 @@ public class TransactionService {
     }
 
     /** Backs the "Ask Once, Learn Forever" review queue — every transaction the engine wasn't
-     *  confident about, waiting on exactly one user decision each. */
+     *  confident about, waiting on exactly one user decision each.
+     *
+     *  <p>Scoped to live account ids, not just userId — a deleted account's transactions never get
+     *  their own {@code deleted_at} set (by design, for the 7-day retention window), so a plain
+     *  userId query kept surfacing them here forever, well after the account itself was gone. Same
+     *  fix as DashboardService's PR #529. */
     @Transactional(readOnly = true)
     public List<TransactionDto> needsReview(UUID userId) {
+        List<UUID> liveAccountIds = accountRepository.findByUserId(userId).stream().map(Account::getId).toList();
+        if (liveAccountIds.isEmpty()) return List.of();
         Map<UUID, String> namesById = categoryNamesById(userId);
-        return transactionRepository.findByUserIdAndNeedsCategoryReviewTrueOrderByTxnDateDesc(userId).stream()
+        return transactionRepository
+                .findByUserIdAndAccountIdInAndNeedsCategoryReviewTrueOrderByTxnDateDesc(userId, liveAccountIds)
+                .stream()
                 .map(t -> TransactionDto.from(t, namesById.getOrDefault(t.getCategoryId(), "Uncategorized")))
                 .toList();
     }
