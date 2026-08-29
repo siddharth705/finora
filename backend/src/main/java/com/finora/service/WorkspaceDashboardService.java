@@ -73,7 +73,15 @@ public class WorkspaceDashboardService {
 
     @Transactional(readOnly = true)
     public WorkspaceSummaryDto summarize(UUID userId) {
-        List<Transaction> transactions = transactionRepository.findByUserId(userId);
+        // Soft-deleting an account never touches its transactions'/statements' own deleted_at (see
+        // StatementImportService.DELETED_ACCOUNT_RETENTION) -- scoping both queries below to this
+        // same live-account id set keeps a deleted account's rows from feeding these totals forever
+        // instead of just during that 7-day grace window. See DashboardService.summarize for the
+        // original fix this mirrors.
+        List<com.finora.entity.Account> accounts = accountRepository.findByUserId(userId);
+        List<UUID> liveAccountIds = accounts.stream().map(com.finora.entity.Account::getId).toList();
+        List<Transaction> transactions = liveAccountIds.isEmpty() ? List.of()
+                : transactionRepository.findByUserIdAndAccountIdIn(userId, liveAccountIds);
         List<Merchant> merchants = merchantRepository.findByUserId(userId);
 
         // One bulk query grouped in-memory, not one findByUserIdAndMerchantId call per merchant --
@@ -90,7 +98,7 @@ public class WorkspaceDashboardService {
 
         return new WorkspaceSummaryDto(
                 totalTransactions,
-                accountRepository.findByUserId(userId).size(),
+                accounts.size(),
                 merchants.size(),
                 learnedMerchants,
                 activeRules,
@@ -99,7 +107,8 @@ public class WorkspaceDashboardService {
                 // (or even a fileContent-free projection): see
                 // StatementImportRepository.StatementMetadata's own doc comment for the rest of
                 // that finder's removal.
-                statementImportRepository.countByUserId(userId),
+                liveAccountIds.isEmpty() ? 0L
+                        : statementImportRepository.countByUserIdAndAccountIdIn(userId, liveAccountIds),
                 categorizationAccuracy,
                 confidenceDistribution(merchants, pairsByMerchant),
                 countByStatus(transactions, Transaction.ReconciliationStatus.DUPLICATE),

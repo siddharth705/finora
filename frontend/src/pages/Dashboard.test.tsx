@@ -50,6 +50,9 @@ function summary(overrides: Partial<DashboardSummary> = {}): DashboardSummary {
       'Spend Consistency': 50,
       'Cash Flow Stability': 80,
     },
+    // Defaults to no "Why?" toggles rendering (existing tests, none of which cares about this)
+    // so they keep rendering exactly as they did before this field existed.
+    healthBreakdownDetail: {},
     healthScoreAvailable: true,
     healthScoreTransactionCount: 12,
     healthScoreMinTransactions: 10,
@@ -208,6 +211,56 @@ describe('Dashboard — Financial Health Score', () => {
     // also a KPI tile label elsewhere on the page, same reason the breakdown test above scopes.
     expect(card.queryByText('out of 100')).not.toBeInTheDocument();
     expect(card.queryByText('Savings Rate')).not.toBeInTheDocument();
+  });
+
+  it('shows a "Why?" toggle next to a breakdown row that has a detail explanation, revealing it on click', async () => {
+    // Real chart data + a userEvent interaction together crash jsdom's Chart.js mock (a known,
+    // unrelated limitation -- see the category-movers/detected-duplicates describe blocks for the
+    // same workaround): nulling the chart data here avoids mounting a second live canvas.
+    vi.mocked(reportsApi.availableMonths).mockResolvedValue([]);
+    vi.mocked(dashboardApi.summary).mockResolvedValue(summary({
+      healthBreakdownDetail: { 'Savings Rate': 'Your savings rate was 18.5%.' },
+    }));
+    renderDashboard();
+
+    const heading = await screen.findByText('Financial Health Score');
+    const card = within(heading.closest('div.bg-card') as HTMLElement);
+    expect(card.getByRole('button', { name: 'Why?' })).toBeInTheDocument();
+    expect(card.queryByText('Your savings rate was 18.5%.')).not.toBeInTheDocument();
+
+    await userEvent.click(card.getByRole('button', { name: 'Why?' }));
+    expect(card.getByText('Your savings rate was 18.5%.')).toBeInTheDocument();
+    expect(card.getByRole('button', { name: 'Hide' })).toBeInTheDocument();
+  });
+
+  it('renders no "Why?" toggle on a breakdown row that has no detail explanation', async () => {
+    // Default fixture's healthBreakdownDetail is {} -- no row has a matching entry.
+    renderDashboard();
+
+    await screen.findByText('Financial Health Score');
+    expect(screen.queryByRole('button', { name: 'Why?' })).not.toBeInTheDocument();
+  });
+
+  it('only expands one breakdown row at a time', async () => {
+    vi.mocked(reportsApi.availableMonths).mockResolvedValue([]);
+    vi.mocked(dashboardApi.summary).mockResolvedValue(summary({
+      healthBreakdownDetail: {
+        'Savings Rate': 'Your savings rate was 18.5%.',
+        'Debt Score': 'You have no credit cards on file.',
+      },
+    }));
+    renderDashboard();
+
+    const heading = await screen.findByText('Financial Health Score');
+    const card = within(heading.closest('div.bg-card') as HTMLElement);
+    const [savingsWhy, debtWhy] = card.getAllByRole('button', { name: 'Why?' });
+
+    await userEvent.click(savingsWhy);
+    expect(card.getByText('Your savings rate was 18.5%.')).toBeInTheDocument();
+
+    await userEvent.click(debtWhy);
+    expect(card.queryByText('Your savings rate was 18.5%.')).not.toBeInTheDocument();
+    expect(card.getByText('You have no credit cards on file.')).toBeInTheDocument();
   });
 });
 

@@ -4,6 +4,7 @@ import com.finora.dto.InsightsDto;
 import com.finora.entity.Budget;
 import com.finora.entity.Category;
 import com.finora.entity.Transaction;
+import com.finora.repository.AccountRepository;
 import com.finora.repository.BudgetRepository;
 import com.finora.repository.CategoryRepository;
 import com.finora.repository.TransactionRepository;
@@ -32,6 +33,7 @@ import java.util.Locale;
 public class InsightsService {
 
     private final TransactionRepository transactionRepository;
+    private final AccountRepository accountRepository;
     private final CategoryRepository categoryRepository;
     private final BudgetRepository budgetRepository;
     /** Only so "this month" can be resolved against the user's own calendar -- see build(). Every
@@ -41,10 +43,12 @@ public class InsightsService {
     private final UserRepository userRepository;
     private final TransactionGraphService transactionGraphService;
 
-    public InsightsService(TransactionRepository transactionRepository, CategoryRepository categoryRepository,
+    public InsightsService(TransactionRepository transactionRepository, AccountRepository accountRepository,
+                            CategoryRepository categoryRepository,
                             BudgetRepository budgetRepository, UserRepository userRepository,
                             TransactionGraphService transactionGraphService) {
         this.transactionRepository = transactionRepository;
+        this.accountRepository = accountRepository;
         this.categoryRepository = categoryRepository;
         this.budgetRepository = budgetRepository;
         this.userRepository = userRepository;
@@ -167,7 +171,14 @@ public class InsightsService {
      * be exactly the kind of drift this trace exists to catch, not avoid.
      */
     Optional<Pipeline> pipeline(UUID userId) {
-        List<Transaction> all = transactionRepository.findByUserId(userId);
+        // Deleted-account leak (see DashboardService.summarize for the original fix): a deleted
+        // account's transactions deliberately keep deleted_at unset, so findByUserId alone would
+        // keep feeding these insights forever, not just during StatementImportService's 7-day
+        // grace window.
+        List<UUID> liveAccountIds = accountRepository.findByUserId(userId).stream()
+                .map(com.finora.entity.Account::getId).toList();
+        List<Transaction> all = liveAccountIds.isEmpty() ? List.of()
+                : transactionRepository.findByUserIdAndAccountIdIn(userId, liveAccountIds);
         RefundNetting refunds = RefundNetting.from(all);
         List<Transaction> txns = RefundNetting.reportable(all, transactionGraphService.ccPaymentFromTransactionIds(all)).stream()
                 .filter(t -> t.getTxnType() == Transaction.Type.EXPENSE)

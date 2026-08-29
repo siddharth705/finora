@@ -128,6 +128,11 @@ export default function Dashboard() {
 
   const [confirmingDuplicateId, setConfirmingDuplicateId] = useState<string | null>(null);
   const [duplicateConfirmError, setDuplicateConfirmError] = useState<string | null>(null);
+  // Which ONE Financial Health Score breakdown row (if any) has its "Why?" detail expanded --
+  // same single-open-at-a-time simplicity as the rest of this page's disclosures, just tracked by
+  // component name here rather than each row owning its own state, since these five rows are
+  // rendered inline rather than as their own component.
+  const [expandedHealthDetail, setExpandedHealthDetail] = useState<string | null>(null);
 
   // BH-027's own service-layer doc comment: "the user asked for this row to count, so it counts
   // now." transactionsApi.confirmNotDuplicate already existed and already worked -- this is the
@@ -358,20 +363,39 @@ export default function Dashboard() {
               <p className={`text-sm font-medium mt-1 ${healthColor(summary.healthLabel!)}`}>{summary.healthLabel}</p>
             </div>
             <div className="space-y-2.5">
-              {Object.entries(summary.healthBreakdown).map(([name, score]) => (
-                <div key={name}>
-                  <div className="flex justify-between items-baseline mb-1">
-                    <span className="text-xs text-ink">{name}</span>
-                    <span className="text-xs text-muted">{Math.round(score)}%</span>
+              {Object.entries(summary.healthBreakdown).map(([name, score]) => {
+                const detail = summary.healthBreakdownDetail[name];
+                const isExpanded = expandedHealthDetail === name;
+                return (
+                  <div key={name}>
+                    <div className="flex justify-between items-baseline mb-1">
+                      <span className="text-xs text-ink">
+                        {name}
+                        {detail && (
+                          <button
+                            type="button"
+                            onClick={() => setExpandedHealthDetail((cur) => (cur === name ? null : name))}
+                            aria-expanded={isExpanded}
+                            className="ml-1.5 text-primary underline underline-offset-2 font-normal"
+                          >
+                            {isExpanded ? 'Hide' : 'Why?'}
+                          </button>
+                        )}
+                      </span>
+                      <span className="text-xs text-muted">{Math.round(score)}%</span>
+                    </div>
+                    <div className="h-1.5 bg-bg rounded-full overflow-hidden">
+                      <div
+                        className={`h-full rounded-full ${healthItemBarColor(score)}`}
+                        style={{ width: `${Math.max(0, Math.min(100, score))}%` }}
+                      />
+                    </div>
+                    {detail && isExpanded && (
+                      <p className="text-[11px] text-muted mt-1">{detail}</p>
+                    )}
                   </div>
-                  <div className="h-1.5 bg-bg rounded-full overflow-hidden">
-                    <div
-                      className={`h-full rounded-full ${healthItemBarColor(score)}`}
-                      style={{ width: `${Math.max(0, Math.min(100, score))}%` }}
-                    />
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         ) : (

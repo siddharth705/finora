@@ -847,6 +847,7 @@ class DashboardServiceTest {
         assertThat(summary.healthScore()).isNull();
         assertThat(summary.healthLabel()).isNull();
         assertThat(summary.healthBreakdown()).isEmpty();
+        assertThat(summary.healthBreakdownDetail()).isEmpty();
         assertThat(summary.healthScoreTransactionCount()).isEqualTo(9);
         assertThat(summary.healthScoreMinTransactions()).isEqualTo(10);
     }
@@ -868,6 +869,89 @@ class DashboardServiceTest {
         assertThat(summary.healthLabel()).isNotNull();
         assertThat(summary.healthBreakdown()).isNotEmpty();
         assertThat(summary.healthScoreTransactionCount()).isEqualTo(10);
+    }
+
+    @Test
+    @DisplayName("health breakdown detail: reports the REAL savings rate, not the clamped 0-100 bar score behind it")
+    void summarize_reportsTheRealSavingsRate_behindTheClampedBar() {
+        // Income 50000, expense 40000 -> a real savings rate of 20%. savingsRateScore itself would
+        // be clamp(20, 0, 30) / 30 * 100 = 66.7 -- a different number from the 20% actually saved,
+        // which is exactly the gap this detail text exists to close.
+        LocalDate july = LocalDate.of(2026, 7, 15);
+        List<Transaction> txns = new java.util.ArrayList<>();
+        txns.add(txn(new BigDecimal("50000.00"), Transaction.Type.INCOME, july, Transaction.ReconciliationStatus.OK));
+        txns.add(txn(new BigDecimal("40000.00"), Transaction.Type.EXPENSE, july, Transaction.ReconciliationStatus.OK));
+        // Zero-amount padding, purely to clear MIN_TRANSACTIONS_FOR_HEALTH_SCORE (10) without
+        // perturbing the clean 50000/40000 = 20% savings rate the assertions below depend on.
+        for (int i = 0; i < 8; i++) {
+            txns.add(txn(BigDecimal.ZERO, Transaction.Type.EXPENSE, july, Transaction.ReconciliationStatus.OK));
+        }
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(txns);
+
+        DashboardSummaryDto summary = dashboardService.summarize(userId);
+
+        assertThat(summary.healthBreakdown().get("Savings Rate")).isCloseTo(66.7, org.assertj.core.data.Offset.offset(0.5));
+        assertThat(summary.healthBreakdownDetail().get("Savings Rate"))
+                .isEqualTo("Your savings rate was 20.0%.");
+    }
+
+    @Test
+    @DisplayName("health breakdown detail: distinguishes \"no credit cards\" from \"cards with real utilization\"")
+    void summarize_debtScoreDetail_distinguishesNoCardsFromRealUtilization() {
+        Account card = new Account();
+        ReflectionTestUtils.setField(card, "id", UUID.randomUUID());
+        card.setUserId(userId);
+        card.setAccountType(Account.Type.CREDIT_CARD);
+        card.setBalance(new BigDecimal("25000.00"));
+        card.setCreditLimit(new BigDecimal("100000.00"));
+
+        AccountRepository accountRepositoryWithCard = mock(AccountRepository.class);
+        when(accountRepositoryWithCard.findByUserId(any())).thenReturn(List.of(savings, card));
+        DashboardService serviceWithCard = new DashboardService(accountRepositoryWithCard, transactionRepository,
+                categoryRepository, budgetRepository, userRepository, statementImportRepository, transactionGraphService);
+
+        List<Transaction> txns = new java.util.ArrayList<>();
+        for (int i = 0; i < 10; i++) {
+            txns.add(txn(new BigDecimal("500.00"), Transaction.Type.INCOME,
+                    LocalDate.of(2026, 7, 1 + i), Transaction.ReconciliationStatus.OK));
+        }
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(txns);
+
+        // With a card: 25000/100000 = 25% utilization.
+        DashboardSummaryDto withCard = serviceWithCard.summarize(userId);
+        assertThat(withCard.healthBreakdownDetail().get("Debt Score"))
+                .isEqualTo("Your average credit utilization is 25% across 1 card.");
+
+        // Without any credit card at all (setUp()'s default: just the SAVINGS account) -- must read
+        // as "no cards", not silently as "0% utilization" (which would misleadingly imply cards
+        // that are simply paid off).
+        DashboardSummaryDto withoutCard = dashboardService.summarize(userId);
+        assertThat(withoutCard.healthBreakdownDetail().get("Debt Score"))
+                .isEqualTo("You have no credit cards on file.");
+    }
+
+    @Test
+    @DisplayName("health breakdown detail: reports real months-of-expenses-covered and the real cash-flow-positive month count")
+    void summarize_reportsRealEmergencyFundAndCashFlowDetail() {
+        // Two full calendar months (June, July), liquid savings fixed by setUp() at 100000.
+        // June: income 100 < expense 500/day*30 -- cash-flow negative. July: income 200 > expense
+        // 100/day*31 -- cash-flow positive. So exactly 1 of 2 full months is cash-flow positive.
+        List<Transaction> txns = new java.util.ArrayList<>();
+        for (LocalDate d = LocalDate.of(2026, 6, 1); !d.isAfter(LocalDate.of(2026, 6, 30)); d = d.plusDays(1)) {
+            txns.add(txn(new BigDecimal("500.00"), Transaction.Type.EXPENSE, d, Transaction.ReconciliationStatus.OK));
+            txns.add(txn(new BigDecimal("100.00"), Transaction.Type.INCOME, d, Transaction.ReconciliationStatus.OK));
+        }
+        for (LocalDate d = LocalDate.of(2026, 7, 1); !d.isAfter(LocalDate.of(2026, 7, 31)); d = d.plusDays(1)) {
+            txns.add(txn(new BigDecimal("100.00"), Transaction.Type.EXPENSE, d, Transaction.ReconciliationStatus.OK));
+            txns.add(txn(new BigDecimal("200.00"), Transaction.Type.INCOME, d, Transaction.ReconciliationStatus.OK));
+        }
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(txns);
+
+        DashboardSummaryDto summary = dashboardService.summarize(userId);
+
+        assertThat(summary.healthBreakdownDetail().get("Emergency Fund")).contains("months of expenses");
+        assertThat(summary.healthBreakdownDetail().get("Cash Flow Stability"))
+                .isEqualTo("1 of the last 2 full months had income meeting or exceeding expenses.");
     }
 
     @Test
