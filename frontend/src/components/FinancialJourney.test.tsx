@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { FinancialJourney, journeyDateLabel } from './FinancialJourney';
 import { dashboardApi } from '../api/endpoints';
@@ -109,12 +110,42 @@ describe('FinancialJourney', () => {
     vi.useRealTimers();
   });
 
-  it('reflects every milestone done as a fully completed journey', async () => {
+  it('renders nothing once every milestone is complete -- an onboarding checklist with nothing left to onboard onto is clutter', async () => {
     vi.mocked(dashboardApi.journey).mockResolvedValue(journey({
       milestones: journey().milestones.map((m) => ({ ...m, completed: true, completedAt: m.completedAt ?? '2026-08-10T00:00:00Z' })),
     }));
+    const { container } = renderJourney();
+    // Wait for the query to actually resolve before asserting the DOM stayed empty -- otherwise
+    // this would trivially pass by checking too early, before the response even arrived.
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it('shows the milestone list expanded by default', async () => {
+    vi.mocked(dashboardApi.journey).mockResolvedValue(journey());
     renderJourney();
 
-    expect(await screen.findByText('5 of 5 complete')).toBeInTheDocument();
+    expect(await screen.findByText('Account created')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Your Financial Journey/ })).toHaveAttribute('aria-expanded', 'true');
+  });
+
+  it('collapses the milestone list on click, and expands it again on a second click', async () => {
+    const user = userEvent.setup();
+    vi.mocked(dashboardApi.journey).mockResolvedValue(journey());
+    renderJourney();
+
+    const toggle = await screen.findByRole('button', { name: /Your Financial Journey/ });
+    await user.click(toggle);
+
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByText('Account created')).not.toBeInTheDocument();
+    // The header itself, and the completion count, must stay visible while collapsed.
+    expect(screen.getByText('Your Financial Journey')).toBeInTheDocument();
+    expect(screen.getByText('2 of 5 complete')).toBeInTheDocument();
+
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByText('Account created')).toBeInTheDocument();
   });
 });

@@ -109,6 +109,13 @@ public class TransactionService {
         // the way every other paginated endpoint in this codebase does (see PageBounds).
         int safeSize = com.finora.util.PageBounds.safeSize(f.size() > 0 ? f.size() : 20);
         int safePage = com.finora.util.PageBounds.safePage(f.page());
+        // Deleted-account leak (see DashboardService.summarize for the original fix): when the
+        // caller didn't ask for one specific account, the "all accounts" search must still exclude
+        // a deleted account's transactions, which deliberately keep deleted_at unset -- see the
+        // repository query's own doc comment for why this is only consulted when f.accountId() is
+        // null (an explicit accountId is trusted as-is, unchanged from before).
+        List<UUID> liveAccountIds = accountRepository.findByUserId(userId).stream()
+                .map(Account::getId).toList();
         var page = transactionRepository.search(
                 userId, f.accountId(), f.categoryId(),
                 com.finora.util.EnumParsing.parseIfPresent(Transaction.Type.class, f.type(), "type"),
@@ -117,7 +124,7 @@ public class TransactionService {
                 // literal percent signs ("2.5% CASHBACK"), and an unescaped one turned an exact
                 // search into a prefix search silently. Only the repository term is escaped:
                 // bankManagementService.search() above matches in memory with contains().
-                com.finora.util.LikePatterns.escape(f.keyword()), bankIdsParam,
+                com.finora.util.LikePatterns.escape(f.keyword()), bankIdsParam, liveAccountIds,
                 PageRequest.of(safePage, safeSize, sort)
         );
         Map<UUID, String> namesById = categoryNamesById(userId);
@@ -572,7 +579,16 @@ public class TransactionService {
     @Transactional(readOnly = true)
     public List<TransactionDto> needsReview(UUID userId) {
         Map<UUID, String> namesById = categoryNamesById(userId);
-        return transactionRepository.findByUserIdAndNeedsCategoryReviewTrueOrderByTxnDateDesc(userId).stream()
+        // Deleted-account leak (see DashboardService.summarize for the original fix): a deleted
+        // account's transactions deliberately keep deleted_at unset, so the unscoped finder would
+        // keep surfacing them in this review queue forever, not just during
+        // StatementImportService's 7-day grace window.
+        List<UUID> liveAccountIds = accountRepository.findByUserId(userId).stream()
+                .map(Account::getId).toList();
+        List<Transaction> needsReview = liveAccountIds.isEmpty() ? List.of()
+                : transactionRepository.findByUserIdAndNeedsCategoryReviewTrueAndAccountIdInOrderByTxnDateDesc(
+                        userId, liveAccountIds);
+        return needsReview.stream()
                 .map(t -> TransactionDto.from(t, namesById.getOrDefault(t.getCategoryId(), "Uncategorized")))
                 .toList();
     }
