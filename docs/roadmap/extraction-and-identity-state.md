@@ -27,19 +27,33 @@ This is a state file, not a plan. It records what is true, what was decided, and
 | CC continuity measurement | Corrected the "100% identity failure" claim to its real state | PR #535 |
 | Corpus-diff workflow | Established `CorpusProbe` sweep + golden-output snapshot as the regression bar for extraction changes | PR #559 |
 
-### The credit-card identity picture, corrected
+### The credit-card identity picture, corrected twice
 
-The workstream opened on a claim of "100% credit-card identity failure." Measurement showed
-otherwise:
+The workstream opened on a claim of "100% credit-card identity failure." PR #535 measured
+that as wrong and reported 0/7 `EXACT`, 5/7 `PROBABLE`, 2/7 previously-false matches.
 
-| Tier | Real state |
-|---|---|
-| `EXACT` continuity | 0 / 7 |
-| `PROBABLE` continuity | 5 / 7 |
-| Bad matches caused by F22 | 2 / 7 (since fixed) |
+Those figures were **re-derived from the corpus on 2026-08-29** by running
+`ProductIdentityCorpusProbe` at both `08847148` (#535 itself) and current `main`. Output was
+identical at both commits, so nothing has drifted since — but the reported figures do not
+match the corpus:
+
+| | Reported (#535) | Measured |
+|---|---|---|
+| Credit-card documents | 7 | **8** |
+| `EXACT` continuity | 0 | **0** — confirmed |
+| `PROBABLE` continuity | 5 | **6** |
+| `NONE` | 2 | 2 (HSBC CC, ICICI CC) |
+
+The reported numbers reproduce exactly if **AU Credit card is excluded** from the
+denominator — its mask comes from `CARD_ENDING_DIGITS_IDENTITY`, a prose sentence rather
+than a card-number label, so it was scoped out rather than miscounted. AU is nonetheless a
+real data point, and one of the two most informative for the collision question below.
+
+`0 EXACT` is confirmed unambiguously: every section in every document reports
+`strongKey=(none -- no usable number extracted)`.
 
 That reframed the strategic question from *"build identity"* to *"is auto-resolution worth
-the collision risk?"* — which is still open, and is the next item below.
+the collision risk?"* — still open, and the next item below.
 
 ## Deferred, with reasons
 
@@ -105,6 +119,39 @@ evidence exists. Three questions the study must answer:
 
 Question 3 is load-bearing: if mask structure varies by issuer, a single global `EXACT`
 policy is wrong whatever the aggregate collision rate turns out to be.
+
+### Preliminary findings from the corpus (2026-08-29)
+
+Measured while re-deriving the baseline above. **Question 3 already has an answer, and it is
+yes.** Mask structures observed, one document per issuer, digits redacted:
+
+| Issuer | Structure | Visible digits |
+|---|---|---|
+| Axis, HDFC | `######XXXXXX####` | 10 |
+| IndusInd, Kotak | `####XXXXXXXX####` | 8 |
+| AU | `••••####` | 4 |
+| **SBI** | `XXXX XXXX XXXX XX##` | **2** |
+
+**Visible is not discriminating.** The leading 4–6 digits are the BIN — issuer and product
+identifiers, identical across every card of that product. They discriminate issuers, not
+customers, and the identity key already carries bank separately, so they contribute nothing.
+Strip them and the real discriminating power is:
+
+- Axis, HDFC, IndusInd, Kotak, AU — **4 digits** (1 in 10,000 within a bank)
+- SBI — **2 digits** (**1 in 100** within a bank)
+
+That makes question 2 well-posed: a collision requires same bank, same product type, same
+trailing digits.
+
+**Implication for the study's output.** The deliverable is probably not a yes/no on `EXACT`,
+but a **per-issuer entropy floor** — promote only when surviving discriminating digits clear
+a threshold, which SBI fails and the others may pass. The current code cannot express this:
+it stores a masked string and compares equality, with no notion of how much entropy
+survived.
+
+**Limits of this evidence.** Eight documents, one card per issuer. This establishes mask
+*structure* per issuer, not collision *rate*, and a single statement cannot prove an issuer
+always masks the same way. The study still needs to be run.
 
 ## Candidate work, not yet scheduled
 
