@@ -106,6 +106,34 @@ public class PdfMetadataExtractor {
             Pattern.compile("(?i)^\\s*Statement\\s+of\\s+Account\\s*:?\\s*$");
     private static final Pattern ACCOUNT_NUMBER_DIGITS = Pattern.compile("\\d{6,20}");
 
+    // The account PRODUCTS a statement names when it banners its own identity ("SAVINGS ACCOUNT -
+    // <number>") rather than labelling a field. Held as one shared constant, not inlined, because
+    // this vocabulary is the thing that drifts: the same words already appear inside
+    // PdfTableLocator.SECTION_MARKER, and this class deliberately cannot import from that one (see
+    // LocatedSection's doc comment -- the locator must not depend on what a section MEANS), so a
+    // second copy here is unavoidable. A THIRD copy inlined into a pattern below would not be.
+    //
+    // Seeded from exactly the five products SECTION_MARKER already proves against real documents.
+    // Deliberately NOT broadened to plausible-but-unevidenced variants ("SALARY ACCOUNT", "NRE
+    // ACCOUNT"): the same evidence-before-capability discipline every other pattern in this class
+    // follows. Adding one when a real statement demands it is a one-word change, in one place.
+    private static final String ACCOUNT_PRODUCT_LABELS = "SAVINGS|CURRENT|CREDIT\\s+CARD|DEPOSIT|LOAN";
+
+    // ACCOUNT_PRODUCT_BANNER: a real BOB savings statement states its account number ONLY in a
+    // per-page product banner -- it never prints the phrase "Account Number" anywhere in the
+    // document, so every labelled pattern above misses it. PdfTableLocator already recognises this
+    // exact shape and keeps the first such banner in the section's auxiliary text (the repeats it
+    // discards; see its REPEATED_ACCOUNT_BANNER path), so the line has always reached this class
+    // and simply matched nothing here.
+    //
+    // Two details come from the real line's measured shape rather than from guessing. The holder's
+    // name PRECEDES the banner on the same line, so this is used with find(), not matches() --
+    // hence no leading anchor. And the flattened line carries more than one space before the
+    // hyphen, so the separator is whitespace-tolerant on both sides. The trailing \b keeps a
+    // longer digit run from being captured as a truncated prefix.
+    private static final Pattern ACCOUNT_PRODUCT_BANNER = Pattern.compile(
+            "(?i)\\b(?:" + ACCOUNT_PRODUCT_LABELS + ")\\s+ACCOUNT\\b\\s*-\\s*(\\d{6,20})\\b");
+
     // CARD_NUMBER_LABEL: the label vocabulary a real credit-card statement's own masked-number
     // field actually uses -- verified against real HDFC and Kotak statements, neither of which
     // ever says "Account Number" at all (a card issuer speaks of a CARD number, even though it
@@ -613,6 +641,20 @@ public class PdfMetadataExtractor {
                 if (cardEndingMatch.find()) {
                     accountNumberMasked = "••••" + cardEndingMatch.group(1);
                     if (ctx != null) ctx.record("CARD_ENDING_DIGITS_IDENTITY");
+                    continue;
+                }
+            }
+            // ACCOUNT_PRODUCT_BANNER (see that constant's own doc comment) -- deliberately LAST of
+            // the account-number tiers. A banner names the product first and the number second, so
+            // it is the weakest evidence of the lot: any document that stated its number a labelled
+            // way has already resolved above and never reaches here. That ordering is what makes
+            // this tier purely additive -- it can fill a null, never change a resolved value.
+            if (accountNumberMasked == null) {
+                Matcher bannerMatch = ACCOUNT_PRODUCT_BANNER.matcher(line);
+                if (bannerMatch.find()) {
+                    accountNumberFull = bannerMatch.group(1);
+                    accountNumberMasked = com.finora.imports.CsvParser.maskAccountNumber(accountNumberFull);
+                    if (ctx != null) ctx.record("ACCOUNT_PRODUCT_BANNER_IDENTITY");
                     continue;
                 }
             }

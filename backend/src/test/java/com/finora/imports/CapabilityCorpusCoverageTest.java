@@ -216,6 +216,16 @@ class CapabilityCorpusCoverageTest {
                         + "preserved for a trace to exercise this, which the Synthetic Fixture Policy "
                         + "requires be synthesized, not preserved. Covered instead by "
                         + "PdfMetadataExtractorTest's fully hand-synthesized fixtures.");
+        DECLARED_WITHOUT_A_TRACE.put("ACCOUNT_PRODUCT_BANNER_IDENTITY",
+                "no trace CAN cover it here, for a different reason than the entries above: "
+                        + "capabilitiesTheCorpusExercises drives PdfTableLocator.locateAll only, and "
+                        + "never runs PdfMetadataExtractor, so no metadata-extractor capability can "
+                        + "ever be recorded through this harness regardless of the corpus. This one "
+                        + "is genuinely exercised by a committed trace -- the "
+                        + "bob-repeated-account-banner golden snapshot asserts the account number it "
+                        + "resolves -- so unlike CARD_ENDING_DIGITS_IDENTITY above, the gap is in "
+                        + "this harness's reach, not in the corpus. Widening it to run the metadata "
+                        + "extractor would let both entries be deleted.");
         // BLANK_COLUMN_NAME_QUALIFIED and RECOVERED_MISSING_DESCRIPTION_COLUMN are deliberately
         // NOT listed here: the already-committed sbi-credit-card-statement trace turns out to
         // exercise both for real (its own "( ` )" blank-currency cell, and a genuine missing-

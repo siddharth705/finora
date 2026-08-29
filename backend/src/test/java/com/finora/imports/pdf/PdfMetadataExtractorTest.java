@@ -35,6 +35,62 @@ class PdfMetadataExtractorTest {
         assertThat(metadata.ifscCode()).isEqualTo("SBIN0001234");
     }
 
+    /**
+     * ACCOUNT_PRODUCT_BANNER. A real BOB savings statement never prints the phrase "Account
+     * Number" anywhere: its account identity lives only in a per-page product banner that names
+     * the product and states the number after a hyphen, with the holder's name leading the same
+     * line. {@code PdfTableLocator} already recognises this exact shape (SECTION_MARKER plus
+     * ACCOUNT_NUMBER_IN_MARKER) and keeps the first such banner in the section's auxiliary text --
+     * verified directly against the real document -- so the line reaches this class unchanged and
+     * simply matched nothing here.
+     *
+     * <p>Two details are load-bearing and both come from the real line's measured shape: the
+     * holder name PRECEDES the banner, so this pattern must find() rather than match a whole
+     * line; and the flattened line carries more than one space before the hyphen, so the
+     * separator must be whitespace-tolerant.
+     *
+     * <p>Digits here are altered, never the real document's -- the geometry and token order are
+     * what this test exercises, and the real value has no business in the repository.
+     */
+    @Test
+    void extract_recognizesAnAccountNumber_fromAProductBannerNamingTheAccountType() {
+        // Only the token ORDER and the doubled space before the hyphen are corpus-derived.
+        var metadata = extractor.extract(
+                List.of("ANANYA VERMA SAVINGS ACCOUNT  - 41870200031276")); // synthetic-ok: invented value and name
+
+        assertThat(metadata.accountNumberMasked()).endsWith("1276");
+    }
+
+    /** The same banner shape for a product other than savings, proving the tier keys off the
+     *  shared ACCOUNT_PRODUCT_LABELS vocabulary rather than one hardcoded word. */
+    @Test
+    void extract_recognizesAProductBannerAccountNumber_forANonSavingsProduct() {
+        var metadata = extractor.extract(
+                List.of("CURRENT ACCOUNT - 90441200556613")); // synthetic-ok: invented, no corpus document supplied it
+
+        assertThat(metadata.accountNumberMasked()).endsWith("6613");
+    }
+
+    /** A banner with no number states a product, not an identity -- it must not resolve, and must
+     *  not leave a partial or fabricated value behind. */
+    @Test
+    void extract_doesNotResolveAnAccountNumber_fromAProductBannerCarryingNoDigits() {
+        var metadata = extractor.extract(List.of("SAVINGS ACCOUNT - PREMIUM TIER"));
+
+        assertThat(metadata.accountNumberMasked()).isNull();
+    }
+
+    /** Precedence: the banner tier is last, so a document that already stated its number the
+     *  ordinary way keeps that value even when a banner is also present. */
+    @Test
+    void extract_prefersAnExplicitAccountNumberLabel_overAProductBannerOnAnotherLine() {
+        var metadata = extractor.extract(List.of(
+                "Account Number: 000123456789", // synthetic-ok: reuses this file's existing placeholder
+                "ANANYA VERMA SAVINGS ACCOUNT  - 41870200031276")); // synthetic-ok: invented, as above
+
+        assertThat(metadata.accountNumberMasked()).endsWith("6789");
+    }
+
     @Test
     void extract_recognizesAnAccountNumber_whenTheValuePrecedesItsLabelOnTheSameLine() {
         var metadata = extractor.extract(List.of("100200300400599 Account Number"));

@@ -120,6 +120,13 @@ public class CapabilityCoverageService {
             // AU statement once INFERRED_TWO_LINE_DATE_BLOCK stopped discarding the auxiliary text
             // this reads. See PdfMetadataExtractor.CARD_ENDING_DIGITS.
             "CARD_ENDING_DIGITS_IDENTITY",
+            // An account's identity stated only in a per-page product banner ("SAVINGS ACCOUNT -
+            // <number>") on a document that never prints the phrase "Account Number" at all --
+            // found on a real BOB savings statement, whose number reached the extractor all along
+            // (PdfTableLocator keeps the first such banner in auxiliary text and discards only the
+            // per-page repeats) and simply matched no pattern here. See
+            // PdfMetadataExtractor.ACCOUNT_PRODUCT_BANNER.
+            "ACCOUNT_PRODUCT_BANNER_IDENTITY",
             // A header cell whose printed text is real but normalizes to blank (a bare currency
             // unit like "(INR)") -- found on a real ICICI savings e-statement whose Balance column
             // heading is invisible to every downstream recognizer as a result. See
