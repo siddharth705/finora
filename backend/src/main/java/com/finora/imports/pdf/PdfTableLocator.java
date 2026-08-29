@@ -3930,9 +3930,24 @@ public class PdfTableLocator {
         return lines;
     }
 
+    /** Joins a row's members left-to-right by x -- NOT in whatever order {@link #groupIntoRows}'
+     *  Y-primary sort happened to leave them in. Row membership (which runs share a physical line)
+     *  is decided entirely by groupIntoRows and is correct; this method only decides read order
+     *  within an already-correct row. Sorts a defensive copy (stable, so genuinely tied x -- e.g.
+     *  overlapping/stacked glyphs -- keeps its prior relative order rather than being reshuffled)
+     *  so callers holding the original row list see no side effect.
+     *
+     *  <p>Found via a real SBI branch-code field whose colon ran a hair below its label's y --
+     *  common sub-point baseline jitter between punctuation and letters/digits on the same printed
+     *  line -- which Y-primary sort placed before the label despite x making the true order
+     *  unambiguous. Corpus-wide measurement (2026-08-29, real 27-doc corpus) found this affects
+     *  22/27 documents and 7.9% of all physical rows, including transaction-shaped rows in at
+     *  least one document previously believed clean -- not a rare edge case. */
     private String lineOf(List<PositionedText> row) {
+        List<PositionedText> ordered = new ArrayList<>(row);
+        ordered.sort(Comparator.comparing(PositionedText::x));
         StringBuilder line = new StringBuilder();
-        for (PositionedText t : row) {
+        for (PositionedText t : ordered) {
             if (!line.isEmpty()) line.append(' ');
             line.append(t.text());
         }
