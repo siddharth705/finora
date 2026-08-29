@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { authApi } from '../api/endpoints';
 import { setSessionCallbacks } from '../api/client';
@@ -82,15 +82,41 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  // Clears in-memory state only. Used by the API client's session-expiry callback, which has
-  // already cleared storage itself -- re-clearing it here would be redundant work on a path
-  // that's already handling a failure.
-  function clearLocalState() {
+  /**
+   * The single authenticated -> unauthenticated transition, and therefore where the cache is
+   * cleared. Every exit converges here: `logout()` calls it directly, and the API client's
+   * `clearSessionAndRedirect()` reaches it through the `onSessionExpired` callback registered
+   * below -- the path taken by a refresh the server rejects, a missing refresh token, and any
+   * forced expiry.
+   *
+   * The clear used to live in `logout()`, which covered exactly half of it. Signing out cleared
+   * the cache; a session EXPIRING did not. The financial query keys carry no user identity --
+   * ['dashboard-summary'], ['transactions'], ['accounts'] are the same keys for everybody -- and
+   * React Query serves cached data synchronously on mount before refetching. So a user who was
+   * ejected rather than choosing to leave stayed cached, and the next person to sign in on the
+   * device was rendered their balances first. Nobody chooses an expiry, which made the unprotected
+   * path the more likely of the two, and it lands on Login looking exactly like a clean sign-out.
+   *
+   * Keeping the clear at the convergence point rather than at each caller makes the invariant
+   * structural -- auth state becoming unauthenticated clears the financial cache -- so a future
+   * exit path inherits it instead of depending on whoever adds it remembering to.
+   *
+   * clear(), not a list of keys to remove: an allow-list goes stale the first time a screen adds a
+   * query, and the failure mode of forgetting one is leaking someone's money.
+   *
+   * useCallback, because the effect below registers this once and would otherwise pin render #1's
+   * closure over `queryClient`. That is correct today only because useQueryClient() returns a
+   * stable instance for the life of the provider -- correct by accident, and the accident ends
+   * with a clear running against a client nobody reads from. Declaring the dependency makes the
+   * registration re-run if that ever stops holding.
+   */
+  const clearLocalState = useCallback(() => {
     setToken(null);
     setEmail(null);
     setFullName(null);
     setPhoneVerifiedState(false);
-  }
+    queryClient.clear();
+  }, [queryClient]);
 
   // The API client can't import navigation or this context (it's imported BY both), so it calls
   // back into here instead. Driving auth state is enough to redirect: RootNavigator picks its
@@ -101,7 +127,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       onSessionExpired: clearLocalState,
       onPhoneVerificationRequired: () => setPhoneVerifiedState(false),
     });
-  }, []);
+  }, [clearLocalState]);
 
   async function persist(data: {
     token: string;
@@ -177,18 +203,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // whether or not the network call lands.
     clearLocalState();
 
-    /**
-     * Then the cache, and this is not housekeeping. The financial query keys carry no user
-     * identity -- ['dashboard-summary'], ['transactions'], ['accounts'] are the same keys for
-     * everybody -- and React Query serves cached data synchronously on mount before refetching.
-     * Leaving it populated means the next person to sign in on this device sees the PREVIOUS
-     * person's balances render first and then change. On a shared or handed-over phone that is a
-     * disclosure, and it is invisible to any test that only checks tokens.
-     *
-     * clear(), not a list of keys to remove: an allow-list goes stale the first time a screen adds
-     * a query, and the failure mode of forgetting one is leaking someone's money.
-     */
-    queryClient.clear();
+    // The cache goes with it -- cleared by clearLocalState() above rather than here, so that a
+    // session which expires gets the same guarantee as one that is signed out of. See its comment.
     void (async () => {
       // Best-effort: revoke the refresh token server-side so it can't be reused even if someone
       // captured it. Read before removal, since removal would otherwise race this read.
