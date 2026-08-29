@@ -1,8 +1,11 @@
 package com.finora.service;
 
+import com.finora.dto.PagedResponse;
+import com.finora.dto.ReferralDtos.AdminReferralSummaryDto;
 import com.finora.dto.ReferralDtos.MyReferralsDto;
 import com.finora.entity.Referral;
 import com.finora.entity.ReferralCode;
+import com.finora.entity.User;
 import com.finora.exception.ApiException;
 import com.finora.repository.ReferralCodeRepository;
 import com.finora.repository.ReferralRepository;
@@ -11,6 +14,8 @@ import com.finora.repository.UserRepository;
 import com.finora.repository.WalletLedgerRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.math.BigDecimal;
@@ -252,5 +257,44 @@ class ReferralServiceTest {
 
         assertThat(dto.referrals()).isEmpty();
         assertThat(dto.walletBalance()).isEqualByComparingTo(BigDecimal.ZERO);
+    }
+
+    /** Admin Portal, Referral dashboard -- was an unconditional findAll across the whole table
+     *  (see listAll's own doc comment for why that scaled with the user base). Proves the paged
+     *  query result joins correctly against both the referrer and referred user. */
+    @Test
+    void listAll_joinsAReferralWithBothTheReferrerAndReferredUser() {
+        Referral referral = referralWith(Referral.STATUS_SUBSCRIBED);
+        when(referralRepository.findAllByOrderByCreatedAtDesc(PageRequest.of(0, 20)))
+                .thenReturn(new PageImpl<>(List.of(referral)));
+        User referrer = new User();
+        ReflectionTestUtils.setField(referrer, "id", referrerId);
+        referrer.setEmail("referrer@example.com");
+        referrer.setFullName("Referrer Person");
+        User referred = new User();
+        ReflectionTestUtils.setField(referred, "id", referredId);
+        referred.setEmail("referred@example.com");
+        referred.setFullName("Referred Person");
+        when(userRepository.findAllById(any())).thenReturn(List.of(referrer, referred));
+
+        PagedResponse<AdminReferralSummaryDto> result = service.listAll(0, 20);
+
+        assertThat(result.content()).hasSize(1);
+        assertThat(result.content().get(0).referrerEmail()).isEqualTo("referrer@example.com");
+        assertThat(result.content().get(0).referredEmail()).isEqualTo("referred@example.com");
+    }
+
+    /** PageBounds.safePage/safeSize clamp before the query -- same reasoning as
+     *  SubscriptionServiceTest's identical clamp test. */
+    @Test
+    void listAll_clampsAnOutOfRangePageAndSize() {
+        when(referralRepository.findAllByOrderByCreatedAtDesc(PageRequest.of(0, 100)))
+                .thenReturn(new PageImpl<>(List.of()));
+        when(userRepository.findAllById(any())).thenReturn(List.of());
+
+        PagedResponse<AdminReferralSummaryDto> result = service.listAll(-5, 500);
+
+        assertThat(result.content()).isEmpty();
+        verify(referralRepository).findAllByOrderByCreatedAtDesc(PageRequest.of(0, 100));
     }
 }
