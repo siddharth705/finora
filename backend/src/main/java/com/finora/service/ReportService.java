@@ -67,10 +67,14 @@ public class ReportService {
                 : transactionRepository.findByUserIdAndTxnDateBetweenAndAccountIdIn(userId, from, to, liveAccountIds);
         List<Transaction> txns = RefundNetting.reportable(
                 monthTxns, transactionGraphService.ccPaymentFromTransactionIds(monthTxns));
+        // Narrower than `txns` -- see RefundNetting.excludingInvestmentTransfers's own comment.
+        // Only the cross-category income/expense totals below use this; `byCategory` keeps reading
+        // `txns` so an Investments line still shows up in the report's own category table.
+        List<Transaction> txnsForTotals = RefundNetting.excludingInvestmentTransfers(txns);
 
-        BigDecimal income = txns.stream().filter(t -> t.getTxnType() == Transaction.Type.INCOME)
+        BigDecimal income = txnsForTotals.stream().filter(t -> t.getTxnType() == Transaction.Type.INCOME)
                 .map(refunds::reportableAmount).reduce(BigDecimal.ZERO, BigDecimal::add);
-        BigDecimal expense = txns.stream().filter(t -> t.getTxnType() == Transaction.Type.EXPENSE)
+        BigDecimal expense = txnsForTotals.stream().filter(t -> t.getTxnType() == Transaction.Type.EXPENSE)
                 .map(refunds::reportableAmount).reduce(BigDecimal.ZERO, BigDecimal::add);
 
         Map<String, BigDecimal> byCategory = txns.stream()
