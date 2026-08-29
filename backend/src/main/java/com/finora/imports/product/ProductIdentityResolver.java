@@ -2,6 +2,8 @@ package com.finora.imports.product;
 
 import com.finora.entity.Account;
 import com.finora.repository.AccountRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -23,6 +25,8 @@ import java.util.UUID;
  */
 @Service
 public class ProductIdentityResolver {
+
+    private static final Logger log = LoggerFactory.getLogger(ProductIdentityResolver.class);
 
     private final AccountRepository accountRepository;
 
@@ -66,13 +70,22 @@ public class ProductIdentityResolver {
         for (Account account : accountRepository.findByUserId(userId)) {
             ProductIdentity stored = ProductIdentity.stored(
                     account.getBankId(), typeOf(account),
-                    account.getProductIdentityHash(), account.getAccountNumberMasked());
+                    account.getProductIdentityHash(), account.getAccountNumberMasked())
+                    .withWeakSignals(account.getIfscCode(), account.getAccountHolderName());
             switch (discovered.matches(stored)) {
                 case EXACT -> exact.add(account);
                 case PROBABLE -> probable.add(account);
                 case NONE -> { }
             }
         }
+
+        // Distinguishes the two ways a PROBABLE below can have been reached, for the reason text
+        // and the audit log -- see ProductIdentity's own "When there is no number at all" doc
+        // section. Only possible when discovered itself has neither a strong key nor masked digits
+        // (matches() requires that before the IFSC+holder fallback ever fires on this side), so this
+        // check alone is enough to tell which path produced the result without threading a reason
+        // back out of matches() itself.
+        boolean viaWeakSignalFallback = discovered.strongKey() == null && discovered.maskedNumber() == null;
 
         // Two accounts sharing a strong key should be impossible, but "should be impossible" is not
         // a reason to pick one arbitrarily and import a statement into it. Duplicates can already
@@ -88,16 +101,36 @@ public class ProductIdentityResolver {
                             + "they may be duplicates created before product identity was recorded");
         }
         if (probable.size() == 1) {
-            return new ProductMatch(Resolution.PROBABLE, probable.get(0), probable,
-                    "an existing " + typeOf(probable.get(0)) + " at the same institution ends in the "
-                            + "same digits, but the statement gave no full number to confirm it");
+            if (viaWeakSignalFallback) logWeakSignalMatch(discovered, probable);
+            String reason = viaWeakSignalFallback
+                    ? "no account number could be extracted from this statement, but an existing "
+                            + typeOf(probable.get(0)) + " at the same institution shares its IFSC "
+                            + "code and account holder name"
+                    : "an existing " + typeOf(probable.get(0)) + " at the same institution ends in "
+                            + "the same digits, but the statement gave no full number to confirm it";
+            return new ProductMatch(Resolution.PROBABLE, probable.get(0), probable, reason);
         }
         if (probable.size() > 1) {
-            return new ProductMatch(Resolution.PROBABLE, null, probable,
-                    probable.size() + " existing accounts could be this product; "
-                            + "the statement gave no full number to tell them apart");
+            if (viaWeakSignalFallback) logWeakSignalMatch(discovered, probable);
+            String reason = viaWeakSignalFallback
+                    ? probable.size() + " existing accounts share this institution's IFSC code and "
+                            + "account holder name; the statement gave no account number to tell "
+                            + "them apart"
+                    : probable.size() + " existing accounts could be this product; "
+                            + "the statement gave no full number to tell them apart";
+            return new ProductMatch(Resolution.PROBABLE, null, probable, reason);
         }
         return new ProductMatch(Resolution.NEW, null, List.of(), "no existing product matches");
+    }
+
+    /** Audit trail for the IFSC+holder fallback specifically -- this is the exact "why did the
+     *  resolver say PROBABLE" question a support investigation needs answered, and it is not
+     *  answerable from the reason string alone once several PROBABLE accounts print similar text. */
+    private void logWeakSignalMatch(ProductIdentity discovered, List<Account> candidates) {
+        log.info("PROBABLE match via IFSC+holder fallback: bank={} ifsc={} holder={} accountIds={} "
+                        + "reason=account_number_missing",
+                discovered.institutionId(), discovered.ifscCode(), discovered.accountHolderName(),
+                candidates.stream().map(Account::getId).toList());
     }
 
     /** An account's product type, falling back to its coarse account type for rows created before

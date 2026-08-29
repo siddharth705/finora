@@ -30,6 +30,16 @@ class ProductIdentityResolverTest {
         return a;
     }
 
+    /** An account with no account number at all (neither full nor masked) -- only the weak
+     *  fallback signals -- for exercising the IFSC+holder-name PROBABLE path. */
+    private Account accountWithWeakSignalsOnly(String bankId, FinancialProductType type,
+                                               String ifscCode, String accountHolderName) {
+        Account a = account(bankId, type, null, null);
+        a.setIfscCode(ifscCode);
+        a.setAccountHolderName(accountHolderName);
+        return a;
+    }
+
     @BeforeEach
     void noAccountsByDefault() {
         when(accountRepository.findByUserId(any())).thenReturn(List.of());
@@ -107,6 +117,71 @@ class ProductIdentityResolverTest {
 
         var found = resolver.resolve(userId,
                 ProductIdentity.of("HDFC", FinancialProductType.FIXED_DEPOSIT, "40000000000004", "1234"));
+
+        assertThat(found.resolution()).isEqualTo(ProductIdentityResolver.Resolution.NEW);
+    }
+
+    // IFSC + account holder name fallback -- the actual regression the PNB incident exposed: when
+    // extraction finds no account number at all (no full number, not even masked), "we have some
+    // evidence" (same bank, same IFSC, same holder) and "we have none" both used to resolve to NEW.
+
+    @Test
+    void noAccountNumberAtAll_butMatchingIfscAndHolder_isProbableNotNew() {
+        Account existing = accountWithWeakSignalsOnly("PNB", FinancialProductType.SAVINGS,
+                "PUNB0XXXXXX", "JOHN DOE"); // synthetic-ok
+        when(accountRepository.findByUserId(userId)).thenReturn(List.of(existing));
+
+        var discovered = ProductIdentity.of("PNB", FinancialProductType.SAVINGS, null, null)
+                .withWeakSignals("PUNB0XXXXXX", "JOHN DOE"); // synthetic-ok
+
+        var found = resolver.resolve(userId, discovered);
+
+        assertThat(found.resolution()).isEqualTo(ProductIdentityResolver.Resolution.PROBABLE);
+        assertThat(found.account()).isSameAs(existing);
+        assertThat(found.mayImportWithoutAsking()).isFalse();
+        assertThat(found.reason()).contains("IFSC").contains("account holder name");
+    }
+
+    @Test
+    void sameBankOnly_withNoIfscOrHolderOverlap_isNewNotProbable() {
+        Account existing = accountWithWeakSignalsOnly("PNB", FinancialProductType.SAVINGS,
+                "PUNB0XXXXXX", "JOHN DOE"); // synthetic-ok
+        when(accountRepository.findByUserId(userId)).thenReturn(List.of(existing));
+
+        var discovered = ProductIdentity.of("PNB", FinancialProductType.SAVINGS, null, null)
+                .withWeakSignals("PUNB0YYYYYY", "SOMEONE ELSE"); // synthetic-ok
+
+        var found = resolver.resolve(userId, discovered);
+
+        assertThat(found.resolution()).isEqualTo(ProductIdentityResolver.Resolution.NEW);
+    }
+
+    @Test
+    void sameIfscOnly_withNoHolderNameMatch_isNewNotProbable() {
+        // A branch's IFSC is shared by every customer at that branch -- far too weak on its own.
+        Account existing = accountWithWeakSignalsOnly("PNB", FinancialProductType.SAVINGS,
+                "PUNB0XXXXXX", "JOHN DOE"); // synthetic-ok
+        when(accountRepository.findByUserId(userId)).thenReturn(List.of(existing));
+
+        var discovered = ProductIdentity.of("PNB", FinancialProductType.SAVINGS, null, null)
+                .withWeakSignals("PUNB0XXXXXX", "SOMEONE ELSE"); // synthetic-ok
+
+        var found = resolver.resolve(userId, discovered);
+
+        assertThat(found.resolution()).isEqualTo(ProductIdentityResolver.Resolution.NEW);
+    }
+
+    @Test
+    void sameHolderNameOnly_withNoIfscMatch_isNewNotProbable() {
+        // A holder name alone is shared by every account that person holds -- too weak on its own.
+        Account existing = accountWithWeakSignalsOnly("PNB", FinancialProductType.SAVINGS,
+                "PUNB0XXXXXX", "JOHN DOE"); // synthetic-ok
+        when(accountRepository.findByUserId(userId)).thenReturn(List.of(existing));
+
+        var discovered = ProductIdentity.of("PNB", FinancialProductType.SAVINGS, null, null)
+                .withWeakSignals("PUNB0YYYYYY", "JOHN DOE"); // synthetic-ok
+
+        var found = resolver.resolve(userId, discovered);
 
         assertThat(found.resolution()).isEqualTo(ProductIdentityResolver.Resolution.NEW);
     }
