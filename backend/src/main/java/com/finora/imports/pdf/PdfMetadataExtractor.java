@@ -89,6 +89,23 @@ public class PdfMetadataExtractor {
     private static final Pattern ACCOUNT_NUMBER_TRAILING_LABEL =
             Pattern.compile("(?i)^(\\d{6,20})\\s+Account\\s*Number\\s*$");
 
+    // STATEMENT_OF_ACCOUNT_SAME_LINE: PNB's own account-number field never says "Account Number"
+    // at all -- it states the number inline in a "Statement of Account:<number> For Period: ..."
+    // line (verified against a real PNB savings statement; see
+    // pnb-savings-ledger-validation.trace). Same optional-colon, whitespace-tolerant separator
+    // every other label in this class already allows (see labelPattern) -- unanchored (find(),
+    // not matches()) since "For Period: ..." always trails the value on the same line.
+    private static final Pattern STATEMENT_OF_ACCOUNT_SAME_LINE =
+            Pattern.compile("(?i)Statement\\s+of\\s+Account\\s*:?\\s*(\\d{6,20})\\b");
+    // Multiline variant: PDF text extraction sometimes breaks the label and its value onto
+    // separate lines (the same genuine shape ACCOUNT_NUMBER_TRAILING_LABEL/CARD_NUMBER_LABEL's
+    // own multi-line grid fallback already handle for their own labels) -- label alone on its
+    // line (nothing else follows, same discipline as CARD_NUMBER_LABEL's labelIsLastContentOnLine
+    // check), value on one of the next few lines.
+    private static final Pattern STATEMENT_OF_ACCOUNT_LABEL_ONLY =
+            Pattern.compile("(?i)^\\s*Statement\\s+of\\s+Account\\s*:?\\s*$");
+    private static final Pattern ACCOUNT_NUMBER_DIGITS = Pattern.compile("\\d{6,20}");
+
     // CARD_NUMBER_LABEL: the label vocabulary a real credit-card statement's own masked-number
     // field actually uses -- verified against real HDFC and Kotak statements, neither of which
     // ever says "Account Number" at all (a card issuer speaks of a CARD number, even though it
@@ -492,6 +509,28 @@ public class PdfMetadataExtractor {
                     if (ctx != null) ctx.record("GRID_METADATA_TRAILING_LABEL");
                     continue;
                 }
+            }
+            // STATEMENT_OF_ACCOUNT_SAME_LINE/_LABEL_ONLY (see those constants' own doc comments --
+            // the real PNB shape neither ACCOUNT_NUMBER nor ACCOUNT_NUMBER_TRAILING_LABEL covers).
+            // Same-line first, since it's the more specific match once the label has actually been
+            // found on this line at all.
+            if (accountNumberMasked == null) {
+                Matcher stmtOfAccount = STATEMENT_OF_ACCOUNT_SAME_LINE.matcher(line);
+                if (stmtOfAccount.find()) {
+                    accountNumberFull = stmtOfAccount.group(1);
+                    accountNumberMasked = com.finora.imports.CsvParser.maskAccountNumber(stmtOfAccount.group(1));
+                    if (ctx != null) ctx.record("GRID_METADATA_TRAILING_LABEL");
+                    continue;
+                }
+            }
+            if (accountNumberMasked == null && STATEMENT_OF_ACCOUNT_LABEL_ONLY.matcher(line).matches()) {
+                String value = findGridValue(preTableLines, i, ACCOUNT_NUMBER_DIGITS, null);
+                if (value != null) {
+                    accountNumberFull = value;
+                    accountNumberMasked = com.finora.imports.CsvParser.maskAccountNumber(value);
+                    if (ctx != null) ctx.record("GRID_METADATA_FALLBACK");
+                }
+                continue;
             }
             // CARD_NUMBER_TRAILING_LABEL (see that constant's own doc comment -- the real HDFC
             // shape this exists for). Tried before the same-line-anywhere fallback below since a

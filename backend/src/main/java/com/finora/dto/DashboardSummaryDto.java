@@ -1,8 +1,10 @@
 package com.finora.dto;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 public record DashboardSummaryDto(
         BigDecimal currentBalance,
@@ -112,7 +114,43 @@ public record DashboardSummaryDto(
          * shown (comparisonGateReason above already covers why not). Ranked by rupee contribution
          * to the delta and capped at 3, largest first.
          */
-        List<CategoryMover> expenseCategoryMovers
+        List<CategoryMover> expenseCategoryMovers,
+
+        /*
+         * Detected Issues. ReconciliationService's own duplicate pass (see Transaction.
+         * isDuplicateOf/ReconciliationStatus.DUPLICATE) already silently excludes a row from every
+         * total above the moment it runs -- RefundNetting.reportable() drops anything with
+         * isDuplicateOf set -- and until now nothing told the user it happened.
+         * TransactionService.confirmNotDuplicate (BH-027, "no, these really are two separate
+         * transactions") already existed to let a human overrule that guess; it simply had no
+         * caller anywhere in the product. This doesn't compute a new verdict -- it surfaces the one
+         * already sitting on the row, the same "thin, presentation-only read" reasoning
+         * TransactionExplanationService's own doc comment gives for "Why this category?".
+         * duplicateTransactionCount is the TRUE, uncapped total so the client can say "N found"
+         * without hardcoding DashboardService.DETECTED_DUPLICATES_DISPLAY_LIMIT, mirroring how
+         * limitedHistoryMonthFloor already avoids a hardcoded threshold; detectedDuplicates is the
+         * capped, newest-first list the card actually renders.
+         */
+        int duplicateTransactionCount,
+        List<DetectedDuplicate> detectedDuplicates,
+
+        /*
+         * Categorization Confidence. How sure the categorization ENGINE was, on average (0-100,
+         * same scale as Transaction.decisionConfidence), about the categories it assigned THIS
+         * MONTH -- a positive, ongoing data-quality signal, distinct from categoryReviewWarning
+         * above (which only fires when spend is badly miscategorized). Null below
+         * categorizationConfidenceMinTransactions decisioned transactions this month (an average of
+         * one or two decisions reads as confident or shaky by chance, not by anything real about
+         * the engine) -- mirrors how healthScoreAvailable gates the health score below its own
+         * floor. categorizationConfidenceTransactionCount/categorizationConfidenceMinTransactions
+         * are included so the client never hardcodes the floor, same as
+         * healthScoreTransactionCount/healthScoreMinTransactions already do.
+         */
+        Integer categorizationConfidenceScore,
+        int categorizationConfidenceTransactionCount,
+        int categorizationConfidenceMinTransactions
 ) {
     public record CategoryMover(String category, BigDecimal currentAmount, BigDecimal priorAmount, Double pctChange) {}
+
+    public record DetectedDuplicate(UUID transactionId, LocalDate date, String merchant, BigDecimal amount) {}
 }

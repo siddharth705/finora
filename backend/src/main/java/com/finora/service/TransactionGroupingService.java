@@ -46,6 +46,10 @@ public class TransactionGroupingService {
         Map<UUID, List<UUID>> idsByMerchant = new LinkedHashMap<>();
         for (Transaction t : candidates) {
             if (t.getMerchantId() == null) continue;
+            // A transaction already flagged as a duplicate shouldn't inflate the group's count or be
+            // bulk-categorized alongside its canonical counterpart -- it's resolved separately via
+            // the duplicate-review flow, not this one.
+            if (t.getReconciliationStatus() == Transaction.ReconciliationStatus.DUPLICATE) continue;
             idsByMerchant.computeIfAbsent(t.getMerchantId(), k -> new ArrayList<>()).add(t.getId());
         }
 

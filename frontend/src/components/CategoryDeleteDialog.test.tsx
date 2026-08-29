@@ -1,0 +1,168 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import type { ReactElement } from 'react';
+import { CategoryDeleteDialog } from './CategoryDeleteDialog';
+import { categoriesApi } from '../api/endpoints';
+
+vi.mock('../api/endpoints', () => ({
+  categoriesApi: { usage: vi.fn(), delete: vi.fn(), list: vi.fn(), create: vi.fn(), options: vi.fn() },
+}));
+
+const CATEGORY = { id: '1', name: 'Mutual Fund SIP', isSystem: false, icon: 'tag', color: 'gray' };
+
+// Both this component and the one it renders read/invalidate the shared ['categories'] react-query
+// cache, so a provider is required. Fresh client per render keeps tests isolated.
+function renderWithClient(ui: ReactElement) {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(<QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>);
+}
+
+describe('CategoryDeleteDialog', () => {
+  beforeEach(() => {
+    vi.mocked(categoriesApi.list).mockResolvedValue([
+      CATEGORY,
+      { id: '2', name: 'SIP', isSystem: false, icon: 'tag', color: 'gray' },
+    ]);
+  });
+
+  it('shows the usage summary before allowing delete', async () => {
+    vi.mocked(categoriesApi.usage).mockResolvedValue({ transactionCount: 12, hasBudget: true, ruleCount: 1, learningRowCount: 3 });
+    renderWithClient(<CategoryDeleteDialog category={CATEGORY} onDeleted={vi.fn()} onCancel={vi.fn()} />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/12/)).toBeInTheDocument();
+      expect(screen.getByText(/1 budget/i)).toBeInTheDocument();
+      expect(screen.getByText(/1 rule/i)).toBeInTheDocument();
+      expect(screen.getByText(/3 learned merchants/i)).toBeInTheDocument();
+    });
+  });
+
+  // Adversarial review, finding 2. Learning rows were not part of hasDependents, so a category
+  // whose only dependent was Learning Engine training data offered no reassignment picker and let
+  // Delete through with no target -- the backend then cascaded that training data away silently.
+  it('requires a reassignment target when the only dependent is learned merchant data', async () => {
+    vi.mocked(categoriesApi.usage).mockResolvedValue({
+      transactionCount: 0, hasBudget: false, ruleCount: 0, learningRowCount: 4,
+    });
+    renderWithClient(<CategoryDeleteDialog category={CATEGORY} onDeleted={vi.fn()} onCancel={vi.fn()} />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/4 learned merchants/i)).toBeInTheDocument();
+    });
+    expect(screen.getByRole('combobox')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /delete/i })).toBeDisabled();
+  });
+
+  it('disables the confirm button until a reassignment target is picked, when there are dependents', async () => {
+    vi.mocked(categoriesApi.usage).mockResolvedValue({ transactionCount: 5, hasBudget: false, ruleCount: 0, learningRowCount: 0 });
+    renderWithClient(<CategoryDeleteDialog category={CATEGORY} onDeleted={vi.fn()} onCancel={vi.fn()} />);
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /delete/i })).toBeDisabled();
+    });
+  });
+
+  it('allows immediate delete with no target when there are zero dependents', async () => {
+    const user = userEvent.setup();
+    vi.mocked(categoriesApi.usage).mockResolvedValue({ transactionCount: 0, hasBudget: false, ruleCount: 0, learningRowCount: 0 });
+    vi.mocked(categoriesApi.delete).mockResolvedValue({} as any);
+    const onDeleted = vi.fn();
+    renderWithClient(<CategoryDeleteDialog category={CATEGORY} onDeleted={onDeleted} onCancel={vi.fn()} />);
+
+    const deleteButton = await screen.findByRole('button', { name: /delete/i });
+    await waitFor(() => expect(deleteButton).toBeEnabled());
+    await user.click(deleteButton);
+
+    await waitFor(() => {
+      expect(categoriesApi.delete).toHaveBeenCalledWith('1', undefined);
+      expect(onDeleted).toHaveBeenCalled();
+    });
+  });
+
+  // Final-branch review, parked finding 2. Creating a brand-new target category from inside this
+  // dialog's own picker used to resolve name -> id against the shared ['categories'] cache, which
+  // hadn't refetched yet at the moment of creation -- targetId stayed undefined and Delete stayed
+  // disabled forever even though a target had genuinely been picked.
+  it('enables delete and reassigns to the real id after creating a new target category inline', async () => {
+    const user = userEvent.setup();
+    vi.mocked(categoriesApi.usage).mockResolvedValue({ transactionCount: 5, hasBudget: false, ruleCount: 0, learningRowCount: 0 });
+    vi.mocked(categoriesApi.options).mockResolvedValue({ icons: [], colors: [] });
+    vi.mocked(categoriesApi.create).mockResolvedValue({
+      id: '3', name: 'Subscriptions', isSystem: false, icon: 'tag', color: 'gray',
+    });
+    vi.mocked(categoriesApi.delete).mockResolvedValue({} as any);
+    const onDeleted = vi.fn();
+    renderWithClient(<CategoryDeleteDialog category={CATEGORY} onDeleted={onDeleted} onCancel={vi.fn()} />);
+
+    const combobox = await screen.findByRole('combobox');
+    await user.click(combobox);
+    await user.type(combobox, 'Subscriptions');
+
+    await user.click(await screen.findByText('Create "Subscriptions"'));
+    const nameInput = await screen.findByPlaceholderText('Category name');
+    expect(nameInput).toHaveValue('Subscriptions');
+    await user.click(screen.getByText('Save'));
+
+    const deleteButton = await screen.findByRole('button', { name: /delete/i });
+    await waitFor(() => expect(deleteButton).toBeEnabled());
+
+    await user.click(deleteButton);
+
+    await waitFor(() => {
+      expect(categoriesApi.delete).toHaveBeenCalledWith('1', '3');
+      expect(onDeleted).toHaveBeenCalled();
+    });
+  });
+
+  // Adversarial review, minor 4. A failed usage fetch left usage null, which is exactly what
+  // "still loading" looks like: Delete stayed disabled forever with nothing explaining why.
+  it('shows a visible notice when the usage fetch fails', async () => {
+    vi.mocked(categoriesApi.usage).mockRejectedValue(new Error('network'));
+    renderWithClient(<CategoryDeleteDialog category={CATEGORY} onDeleted={vi.fn()} onCancel={vi.fn()} />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/couldn't check what this category is used for/i)).toBeInTheDocument();
+    });
+    expect(screen.getByRole('button', { name: /delete/i })).toBeDisabled();
+  });
+
+  // Adversarial review, minor 5. exactNameMatch was computed over the excludeCategoryId-filtered
+  // pool, so typing the name of the very category being deleted found no match and offered
+  // "+ Create" for a category that plainly already exists -- which 409s on click.
+  it('does not offer to create a category whose name is the excluded one', async () => {
+    const user = userEvent.setup();
+    vi.mocked(categoriesApi.usage).mockResolvedValue({
+      transactionCount: 5, hasBudget: false, ruleCount: 0, learningRowCount: 0,
+    });
+    renderWithClient(<CategoryDeleteDialog category={CATEGORY} onDeleted={vi.fn()} onCancel={vi.fn()} />);
+
+    const combobox = await screen.findByRole('combobox');
+    await user.click(combobox);
+    await user.type(combobox, CATEGORY.name);
+
+    await waitFor(() => {
+      expect(screen.queryByText(`Create "${CATEGORY.name}"`)).not.toBeInTheDocument();
+    });
+  });
+
+  it('shows an error and does not call onDeleted when delete fails', async () => {
+    const user = userEvent.setup();
+    vi.mocked(categoriesApi.usage).mockResolvedValue({ transactionCount: 0, hasBudget: false, ruleCount: 0, learningRowCount: 0 });
+    vi.mocked(categoriesApi.delete).mockRejectedValue({
+      response: { data: { message: 'A dependent was added to this category.' } },
+    });
+    const onDeleted = vi.fn();
+    renderWithClient(<CategoryDeleteDialog category={CATEGORY} onDeleted={onDeleted} onCancel={vi.fn()} />);
+
+    const deleteButton = await screen.findByRole('button', { name: /delete/i });
+    await waitFor(() => expect(deleteButton).toBeEnabled());
+    await user.click(deleteButton);
+
+    await waitFor(() => {
+      expect(screen.getByText(/a dependent was added to this category/i)).toBeInTheDocument();
+    });
+    expect(onDeleted).not.toHaveBeenCalled();
+  });
+});

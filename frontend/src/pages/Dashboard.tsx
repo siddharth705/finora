@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { Line, Doughnut } from 'react-chartjs-2';
@@ -7,8 +7,8 @@ import {
 } from 'chart.js';
 import {
   Wallet, ArrowDownCircle, ArrowUpCircle, PieChart,
-  ShoppingBag, Utensils, Car, Sparkles, Plus, PiggyBank, TrendingUp, TrendingDown, Target, ShieldCheck, Repeat,
-  UploadCloud, Receipt, LineChart as LineChartIcon, Mail, AlertTriangle, ListChecks,
+  ShoppingBag, Sparkles, Plus, PiggyBank, TrendingUp, TrendingDown, Target, ShieldCheck, Repeat,
+  UploadCloud, Receipt, LineChart as LineChartIcon, Mail, AlertTriangle, ListChecks, Copy, BadgeCheck,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { BankLogo } from '../components/BankLogo';
@@ -16,8 +16,10 @@ import { MerchantLogo } from '../components/MerchantLogo';
 import { AddTransactionModal } from '../components/AddTransactionModal';
 import { FinancialJourney } from '../components/FinancialJourney';
 import { FinoraCard, MetricCard, EmptyState, SectionHeader, QuickActionCard, ChartContainer, Badge, baseChartOptions } from '../design-system';
+import { ICON_COMPONENTS, COLOR_HEX } from '../lib/categoryIcons';
 import {
-  dashboardApi, accountsApi, transactionsApi, goalsApi, insightsApi, userApi, budgetsApi, reportsApi, recurringApi,
+  dashboardApi, accountsApi, transactionsApi, categoriesApi, goalsApi, insightsApi, userApi, budgetsApi, reportsApi, recurringApi,
+  type CategoryOption,
 } from '../api/endpoints';
 
 ChartJS.register(ArcElement, LineElement, PointElement, LinearScale, CategoryScale, Tooltip, Legend, Filler);
@@ -71,13 +73,15 @@ function healthItemBarColor(score: number): string {
   return 'bg-danger';
 }
 
-const CATEGORY_ICON: Record<string, any> = {
-  Dining: Utensils, Shopping: ShoppingBag, Transport: Car, Salary: ArrowDownCircle,
-};
-const CATEGORY_COLOR: Record<string, string> = {
-  Dining: '#ef4444', Shopping: '#f59e0b', Transport: '#111827', Salary: '#16a34a',
-};
-
+// Same 80/60/40 cutoffs and label vocabulary as the health score above (Excellent/Good/Fair/Needs
+// Attention), reused rather than invented fresh -- Categorization Confidence is on the same 0-100
+// scale, and a second vocabulary for the same range would just be one more thing to learn.
+function scoreLabel(score: number): string {
+  if (score >= 80) return 'Excellent';
+  if (score >= 60) return 'Good';
+  if (score >= 40) return 'Fair';
+  return 'Needs Attention';
+}
 
 type CashFlowRange = '3M' | '6M' | '12M';
 const RANGE_MONTHS: Record<CashFlowRange, number> = { '3M': 3, '6M': 6, '12M': 12 };
@@ -106,6 +110,44 @@ export default function Dashboard() {
   const queryClient = useQueryClient();
   const [cashFlowRange, setCashFlowRange] = useState<CashFlowRange>('6M');
   const [showAddModal, setShowAddModal] = useState(false);
+  // Recent Transactions' icon/color used to key off categoryName against a 4-entry hardcoded map
+  // (predates custom categories, and covered only 4 of the 25 default categories even before user-
+  // created ones existed). Looked up by categoryId instead so every category -- default or custom
+  // -- renders its own real, backend-assigned icon/color token.
+  //
+  // On the shared ['categories'] key rather than its own useState+useEffect: this page also
+  // renders AskOnceCard and MerchantGroupReviewCard, each of which mounts CategoryComboboxes
+  // reading the same key, so one fetch serves all of them. It also picks up react-query's error
+  // handling, replacing a bare .then() with no .catch() at all -- a rejected promise there was an
+  // unhandled rejection, and the icons simply fell back to the default forever with no signal.
+  const categoriesQ = useQuery({ queryKey: ['categories'], queryFn: () => categoriesApi.list(), retry: false });
+  const categoriesById: Record<string, CategoryOption> = useMemo(
+    () => Object.fromEntries((categoriesQ.data ?? []).map((c) => [c.id, c])),
+    [categoriesQ.data],
+  );
+
+  const [confirmingDuplicateId, setConfirmingDuplicateId] = useState<string | null>(null);
+  const [duplicateConfirmError, setDuplicateConfirmError] = useState<string | null>(null);
+
+  // BH-027's own service-layer doc comment: "the user asked for this row to count, so it counts
+  // now." transactionsApi.confirmNotDuplicate already existed and already worked -- this is the
+  // first UI anywhere in the product that calls it. dashboard-summary is invalidated so the card
+  // (and every KPI the reinstated transaction now counts toward) reflects the change immediately;
+  // recent-transactions/transactions too, since the row itself just changed status.
+  async function handleConfirmNotDuplicate(transactionId: string) {
+    setConfirmingDuplicateId(transactionId);
+    setDuplicateConfirmError(null);
+    try {
+      await transactionsApi.confirmNotDuplicate(transactionId);
+      void queryClient.invalidateQueries({ queryKey: ['dashboard-summary'] });
+      void queryClient.invalidateQueries({ queryKey: ['recent-transactions'] });
+      void queryClient.invalidateQueries({ queryKey: ['transactions'] });
+    } catch {
+      setDuplicateConfirmError("Couldn't update this transaction. Please try again.");
+    } finally {
+      setConfirmingDuplicateId(null);
+    }
+  }
 
   function onTransactionAdded() {
     setShowAddModal(false);
@@ -360,6 +402,38 @@ export default function Dashboard() {
       </FinoraCard>
       )}
 
+      {/* Categorization Confidence -- how sure the categorization engine was, on average, about
+          the categories it assigned this month. A positive, ongoing data-quality signal, distinct
+          from the category-review warning below (which only fires when spend is badly
+          miscategorized) -- this can read "Excellent" in the very same month that warning fires,
+          if a small number of genuinely low-confidence transactions sit alongside a lot of
+          high-confidence ones. Hidden below categorizationConfidenceMinTransactions
+          engine-decided transactions this month (server-side floor, same reasoning as
+          healthScoreAvailable above): an average of one or two decisions isn't a real reading. */}
+      {!isEmpty && summary.categorizationConfidenceScore !== null && (
+      <FinoraCard padding="lg" className="mb-6">
+        <div className="flex items-center gap-2 mb-3">
+          <div className="w-8 h-8 rounded-full bg-primary-light flex items-center justify-center">
+            <BadgeCheck size={15} className="text-primary" />
+          </div>
+          <h2 className="font-semibold text-ink">Categorization Confidence</h2>
+        </div>
+        <div className="flex items-baseline gap-2">
+          <p className={`text-4xl font-bold ${healthColor(scoreLabel(summary.categorizationConfidenceScore))}`}>
+            {summary.categorizationConfidenceScore}
+          </p>
+          <p className="text-xs text-muted">out of 100</p>
+        </div>
+        <p className={`text-sm font-medium mt-1 ${healthColor(scoreLabel(summary.categorizationConfidenceScore))}`}>
+          {scoreLabel(summary.categorizationConfidenceScore)}
+        </p>
+        <p className="text-xs text-muted mt-2">
+          Based on {summary.categorizationConfidenceTransactionCount} automatically categorized transaction
+          {summary.categorizationConfidenceTransactionCount === 1 ? '' : 's'} {periodLabel}.
+        </p>
+      </FinoraCard>
+      )}
+
       {/* Next Actions -- summary.notifications (DashboardService.buildNotifications: credit-card
           payments due soon, low-balance warnings, budget-threshold alerts) has always been
           computed and sent on every dashboard load, but was only ever rendered in TopBar's
@@ -386,6 +460,58 @@ export default function Dashboard() {
               </li>
             ))}
           </ul>
+        )}
+      </FinoraCard>
+      )}
+
+      {/* Detected Issues -- ReconciliationService's own duplicate pass already silently excludes
+          a row from every total above the moment it runs (Transaction.isDuplicateOf), and until
+          now nothing told the user it happened. transactionsApi.confirmNotDuplicate (BH-027,
+          "no, these really are two separate transactions") already existed on the backend to let
+          a human overrule that guess -- it simply had no caller anywhere in the product. Shown
+          only when something was actually flagged (unlike Next Actions above, which stays visible
+          with a positive empty state): this is a conditional alert like Limited History and the
+          category-review warning, not a standing destination worth checking when empty. */}
+      {summary.duplicateTransactionCount > 0 && (
+      <FinoraCard padding="lg" className="mb-6">
+        <div className="flex items-center gap-2 mb-1">
+          <div className="w-8 h-8 rounded-full bg-warning-bg flex items-center justify-center">
+            <Copy size={15} className="text-warning" />
+          </div>
+          <h2 className="font-semibold text-ink">Detected Issues</h2>
+        </div>
+        <p className="text-xs text-muted mb-4 ml-10">
+          {summary.duplicateTransactionCount === 1
+            ? "We found 1 transaction that looks like a duplicate and excluded it from your totals."
+            : `We found ${summary.duplicateTransactionCount} transactions that look like duplicates and excluded them from your totals.`}
+        </p>
+        {duplicateConfirmError && (
+          <p className="text-danger text-xs mb-3">{duplicateConfirmError}</p>
+        )}
+        <ul className="divide-y divide-border">
+          {summary.detectedDuplicates.map((d) => (
+            <li key={d.transactionId} className="flex items-center justify-between gap-3 py-2.5">
+              <div className="min-w-0">
+                <p className="text-sm text-ink truncate">{d.merchant}</p>
+                <p className="text-xs text-muted">
+                  {new Date(d.date + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })} · {fmt(d.amount)}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => void handleConfirmNotDuplicate(d.transactionId)}
+                disabled={confirmingDuplicateId === d.transactionId}
+                className="text-xs text-primary font-medium flex-shrink-0 disabled:opacity-50"
+              >
+                {confirmingDuplicateId === d.transactionId ? 'Confirming…' : 'Not a duplicate'}
+              </button>
+            </li>
+          ))}
+        </ul>
+        {summary.duplicateTransactionCount > summary.detectedDuplicates.length && (
+          <p className="text-xs text-muted mt-2.5">
+            and {summary.duplicateTransactionCount - summary.detectedDuplicates.length} more
+          </p>
         )}
       </FinoraCard>
       )}
@@ -570,8 +696,9 @@ export default function Dashboard() {
                 }
               />
             ) : recentTxns.map((t) => {
-              const Icon = CATEGORY_ICON[t.categoryName] ?? ShoppingBag;
-              const color = t.type === 'INCOME' ? '#16a34a' : (CATEGORY_COLOR[t.categoryName] ?? '#262A33');
+              const cat = categoriesById[t.categoryId];
+              const Icon = ICON_COMPONENTS[cat?.icon ?? 'tag'] ?? ShoppingBag;
+              const color = t.type === 'INCOME' ? '#16a34a' : (COLOR_HEX[cat?.color ?? 'gray'] ?? '#262A33');
               return (
                 <div key={t.id} className="flex items-center gap-3">
                   <div className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0" style={{ background: color + '20' }}>

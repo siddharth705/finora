@@ -69,6 +69,28 @@ public class DashboardService {
         Map<UUID, Category> categoriesById = categoryRepository.findByUserId(userId).stream()
                 .collect(Collectors.toMap(Category::getId, c -> c));
 
+        // Detected Issues. ReconciliationService's own duplicate pass silently excludes a row from
+        // every total above the moment isDuplicateOf is set (see RefundNetting.reportable) -- and
+        // until now nothing told the user it happened. TransactionService.confirmNotDuplicate
+        // (BH-027) already exists to let a human overrule the engine's guess ("no, these really are
+        // two separate transactions") -- it simply had no caller anywhere in the product. This
+        // doesn't compute a new verdict, just finally surfaces the one already sitting on the row.
+        // Newest first; duplicateTransactionCount is the TRUE total (uncapped) so the client can
+        // say "N found" without hardcoding DETECTED_DUPLICATES_DISPLAY_LIMIT, mirroring how
+        // limitedHistoryMonthFloor already avoids a hardcoded threshold.
+        List<Transaction> duplicates = all.stream()
+                .filter(t -> t.getReconciliationStatus() == Transaction.ReconciliationStatus.DUPLICATE)
+                .sorted(Comparator.comparing(Transaction::getTxnDate).reversed())
+                .toList();
+        List<DashboardSummaryDto.DetectedDuplicate> detectedDuplicates = duplicates.stream()
+                .limit(DETECTED_DUPLICATES_DISPLAY_LIMIT)
+                .map(t -> new DashboardSummaryDto.DetectedDuplicate(t.getId(), t.getTxnDate(),
+                        Optional.ofNullable(t.getMerchant()).filter(s -> !s.isBlank())
+                                .or(() -> Optional.ofNullable(t.getDescription()).filter(s -> !s.isBlank()))
+                                .orElse("Unknown"),
+                        t.getAmount()))
+                .toList();
+
         BigDecimal liquid = sumBalances(accounts, Account.Type.SAVINGS).add(sumBalances(accounts, Account.Type.WALLET));
         BigDecimal investments = sumBalances(accounts, Account.Type.INVESTMENT);
         BigDecimal liabilities = sumBalances(accounts, Account.Type.CREDIT_CARD);
@@ -171,6 +193,27 @@ public class DashboardService {
                 : 0;
         boolean categoryReviewWarning = categoryReviewSpendPct >= CATEGORY_REVIEW_SPEND_WARNING_THRESHOLD_PCT;
 
+        // Categorization Confidence: how sure the categorization ENGINE was, on average, about the
+        // categories it assigned this month -- a positive, ongoing data-quality signal, distinct
+        // from categoryReviewWarning above (which only fires when spend is BADLY miscategorized).
+        // decisionConfidence is null for MANUAL/FILE_PROVIDED transactions (an explicit human/file
+        // choice, not a guess -- see the field's own doc comment) and for anything that predates
+        // Transaction Intelligence Phase B, so both are excluded from the average rather than
+        // silently counted as some default score. Scoped to BOTH income and expense this month
+        // (categorization isn't spend-only), unlike categoryReviewSpend above which is deliberately
+        // EXPENSE-only. Gated below MIN_TRANSACTIONS_FOR_CONFIDENCE_SCORE for the same reason
+        // healthScoreAvailable gates the health score: an average of one or two decisions reads as
+        // confident or shaky by chance, not by anything real about the categorization engine.
+        List<Integer> currentMonthConfidenceScores = active.stream()
+                .filter(t -> Objects.equals(YearMonth.from(t.getTxnDate()).toString(), currentMonth))
+                .map(Transaction::getDecisionConfidence)
+                .filter(Objects::nonNull)
+                .toList();
+        int categorizationConfidenceTransactionCount = currentMonthConfidenceScores.size();
+        Integer categorizationConfidenceScore = categorizationConfidenceTransactionCount >= MIN_TRANSACTIONS_FOR_CONFIDENCE_SCORE
+                ? (int) Math.round(currentMonthConfidenceScores.stream().mapToInt(Integer::intValue).average().orElse(0))
+                : null;
+
         // Same current-month EXPENSE figures as spendByCategory above, just keyed by category id
         // (rather than display name) so they can be joined against Budget.categoryId below --
         // mirrors BudgetService.listForUser()'s own spend-by-category computation, scoped to this
@@ -242,7 +285,9 @@ public class DashboardService {
                 categoryReviewWarning, categoryReviewSpendPct, categoryReviewSpend,
                 categoryReviewTransactionCount, CATEGORY_REVIEW_SPEND_WARNING_THRESHOLD_PCT,
                 comparisonGateReason, MIN_TRANSACTIONS_FOR_DELTA_COMPARISON,
-                expenseCategoryMovers
+                expenseCategoryMovers,
+                duplicates.size(), detectedDuplicates,
+                categorizationConfidenceScore, categorizationConfidenceTransactionCount, MIN_TRANSACTIONS_FOR_CONFIDENCE_SCORE
         );
     }
 
@@ -386,6 +431,18 @@ public class DashboardService {
     // RefundNetting-reportable list every other figure in this method is already computed from,
     // so "10 transactions" means the same 10 a user would see on the Ledger, not some other count.
     static final int MIN_TRANSACTIONS_FOR_HEALTH_SCORE = 10;
+
+    // A card, not a full ledger view -- capped the same way expenseCategoryMovers is, so a user
+    // with dozens of duplicates from one bad re-import isn't shown a wall of rows. Unlike that
+    // ranking-by-magnitude cap, this one is just "most recent first, stop at 5": there's no
+    // meaningful way to rank duplicates by importance, only by how long they've been sitting
+    // unreviewed.
+    static final int DETECTED_DUPLICATES_DISPLAY_LIMIT = 5;
+
+    // Lower than MIN_TRANSACTIONS_FOR_HEALTH_SCORE deliberately: this is a single average, not a
+    // multi-component composite, so it needs less data to say something real. Still high enough
+    // that one lucky or unlucky guess can't swing the whole number.
+    static final int MIN_TRANSACTIONS_FOR_CONFIDENCE_SCORE = 5;
 
     private record HealthResult(Integer score, String label, Map<String, Double> breakdown,
                                  boolean available, int transactionCount, int minTransactions) {}

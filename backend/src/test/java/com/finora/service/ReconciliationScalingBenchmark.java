@@ -97,7 +97,9 @@ class ReconciliationScalingBenchmark {
         TransactionRepository repository = mock(TransactionRepository.class);
         when(repository.findByUserId(any())).thenReturn(history);
         return new ReconciliationService(repository, mock(RelationshipService.class), mock(AuditService.class),
-                mock(TransactionGraphService.class));
+                mock(TransactionGraphService.class),
+                mock(com.finora.integrations.google.merchant.GmailReconciliationMatcher.class),
+                mock(com.finora.repository.StatementImportRepository.class));
     }
 
     private RecurringService recurringService(List<Transaction> history) {

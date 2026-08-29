@@ -158,6 +158,25 @@ export interface DashboardSummary {
    * with the number it's meant to explain. Always empty when expenseDeltaPct is null.
    */
   expenseCategoryMovers: CategoryMover[];
+  /**
+   * Detected Issues. ReconciliationService's own duplicate pass already silently excludes a row
+   * from every total above the moment it runs (Transaction.isDuplicateOf) -- until now nothing
+   * told the user it happened. transactionsApi.confirmNotDuplicate (BH-027) already existed to
+   * let a human overrule that guess; it simply had no caller anywhere in the product.
+   * duplicateTransactionCount is the TRUE, uncapped total; detectedDuplicates is the capped,
+   * newest-first list the card actually renders.
+   */
+  duplicateTransactionCount: number;
+  detectedDuplicates: DetectedDuplicate[];
+  /**
+   * Categorization Confidence. How sure the categorization engine was, on average (0-100), about
+   * the categories it assigned this month -- a positive, ongoing data-quality signal, distinct
+   * from categoryReviewWarning (which only fires when spend is badly miscategorized). Null below
+   * categorizationConfidenceMinTransactions engine-decided transactions this month.
+   */
+  categorizationConfidenceScore: number | null;
+  categorizationConfidenceTransactionCount: number;
+  categorizationConfidenceMinTransactions: number;
 }
 
 export interface CategoryMover {
@@ -165,6 +184,13 @@ export interface CategoryMover {
   currentAmount: number;
   priorAmount: number;
   pctChange: number | null;
+}
+
+export interface DetectedDuplicate {
+  transactionId: string;
+  date: string;
+  merchant: string;
+  amount: number;
 }
 
 // D-25 PR3-B/C. `type` is one of ACCOUNT_CREATED/FIRST_IMPORT/FIRST_BUDGET/FIRST_GOAL/
@@ -250,6 +276,11 @@ export interface StagedRow {
   // from the source document, not a guess). Distinct from `confidence` above (Gmail-receipt
   // extraction reliability) and `merchantConfidence` (merchant-identity resolution).
   categoryConfidence: number | null;
+  // 1-based position within its section as originally parsed, or null for a client/import path
+  // that predates this field. Echoed back unchanged in the confirm request so it lands on
+  // Transaction.sourceRowPosition -- the only thing the admin Import Row Trace (Founder
+  // Operations Dashboard) reads it for. No UI consumes it here.
+  rowPosition: number | null;
 }
 
 export interface MerchantGroup {

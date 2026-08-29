@@ -147,6 +147,17 @@ export interface DashboardSummary {
   // The categories behind a real (non-null) expenseDeltaPct (web only so far, same reason as
   // healthScore above). Always empty when expenseDeltaPct is null. Mirrors frontend/src/types/index.ts.
   expenseCategoryMovers: CategoryMover[];
+  // Detected Issues (web only so far, same reason as healthScore above). duplicateTransactionCount
+  // is the TRUE, uncapped total; detectedDuplicates is the capped, newest-first list.
+  // Mirrors frontend/src/types/index.ts.
+  duplicateTransactionCount: number;
+  detectedDuplicates: DetectedDuplicate[];
+  // Categorization Confidence (web only so far, same reason as healthScore above). Null below
+  // categorizationConfidenceMinTransactions engine-decided transactions this month.
+  // Mirrors frontend/src/types/index.ts.
+  categorizationConfidenceScore: number | null;
+  categorizationConfidenceTransactionCount: number;
+  categorizationConfidenceMinTransactions: number;
 }
 
 export interface CategoryMover {
@@ -154,6 +165,13 @@ export interface CategoryMover {
   currentAmount: number;
   priorAmount: number;
   pctChange: number | null;
+}
+
+export interface DetectedDuplicate {
+  transactionId: string;
+  date: string;
+  merchant: string;
+  amount: number;
 }
 
 export interface Budget {
@@ -213,6 +231,11 @@ export interface StagedRow {
    * judge that against, which is not a review.
    */
   duplicateMatch: DuplicateMatch | null;
+  // 1-based position within its section as originally parsed, or null for a client/import path
+  // that predates this field. Echoed back unchanged in the confirm request so it lands on
+  // Transaction.sourceRowPosition -- the only thing the admin Import Row Trace (Founder
+  // Operations Dashboard) reads it for. No UI here consumes it.
+  rowPosition: number | null;
 }
 
 /**

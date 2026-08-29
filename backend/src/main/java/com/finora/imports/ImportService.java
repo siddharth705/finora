@@ -909,6 +909,10 @@ public class ImportService {
             t.setDecisionSource(CategorizationService.decisionSourceFor(row.categorySource()));
             t.setDecisionRuleId(row.ruleId());
             t.setDecisionConfidence(row.categoryConfidence());
+            // Import Row Trace (Founder Operations Dashboard) -- see Transaction.sourceRowPosition's
+            // own doc comment. Null for a client that predates ConfirmedRow.rowPosition, same as
+            // every other "carried from staging" field above when an older client omits it.
+            t.setSourceRowPosition(row.rowPosition());
             // MARK_TRANSFER/MARK_INVESTMENT/ADD_TAG rules -- see
             // CategorizationService.applySideEffectRules's doc comment. A MARK_INVESTMENT match
             // returns the new Category -- reassigning `category` keeps the tally below (and any
@@ -1403,6 +1407,20 @@ public class ImportService {
             FinancialProductType product = productTypeOf(na);
             String accountType = product.accountType() != null
                     ? product.accountType().name() : na.accountType();
+
+            // Visibility into which banks' statements are failing account-number extraction --
+            // without an account number, ProductIdentity.stored above can never build a strong key
+            // (see its own hash() null-guard), so this account can never be matched to on a later
+            // re-import: every subsequent statement for the same real account silently becomes
+            // another new one instead. This is the earliest point that fact is known for certain
+            // (na.accountNumberMasked() is genuinely null, not just unresolved) and where the
+            // affected bank/session is still in scope to log.
+            if (na.accountNumberMasked() == null) {
+                log.warn("Account number extraction failed for bank={} session={} -- new account "
+                        + "created without an identity key, so it cannot be matched on re-import",
+                        na.bankId(), request.sessionId());
+            }
+
             AccountDto created = accountService.create(userId, new AccountDto.CreateRequest(
                     na.name(), accountType, na.openingBalance(), na.creditLimit(), na.dueDate(),
                     product.investmentKind(),

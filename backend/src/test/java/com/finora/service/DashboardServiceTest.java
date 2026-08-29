@@ -422,6 +422,142 @@ class DashboardServiceTest {
     }
 
     @Test
+    @DisplayName("detected issues: lists a transaction the reconciliation engine already flagged as a duplicate")
+    void summarize_listsADetectedDuplicate() {
+        Transaction canonical = txn(new BigDecimal("500.00"), Transaction.Type.EXPENSE,
+                LocalDate.of(2026, 7, 10), Transaction.ReconciliationStatus.OK);
+        Transaction duplicate = txn(new BigDecimal("500.00"), Transaction.Type.EXPENSE,
+                LocalDate.of(2026, 7, 10), Transaction.ReconciliationStatus.DUPLICATE);
+        duplicate.setIsDuplicateOf(canonical.getId());
+        duplicate.setMerchant("Swiggy");
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(canonical, duplicate));
+
+        DashboardSummaryDto summary = dashboardService.summarize(userId);
+
+        assertThat(summary.duplicateTransactionCount()).isEqualTo(1);
+        assertThat(summary.detectedDuplicates()).hasSize(1);
+        DashboardSummaryDto.DetectedDuplicate found = summary.detectedDuplicates().get(0);
+        assertThat(found.merchant()).isEqualTo("Swiggy");
+        assertThat(found.amount()).isEqualByComparingTo("500.00");
+        assertThat(found.date()).isEqualTo(LocalDate.of(2026, 7, 10));
+    }
+
+    @Test
+    @DisplayName("detected issues: a flagged duplicate is excluded from monthlyExpense, same as the ledger already treats it")
+    void summarize_excludesADetectedDuplicateFromTotals() {
+        Transaction real = txn(new BigDecimal("500.00"), Transaction.Type.EXPENSE,
+                LocalDate.of(2026, 7, 10), Transaction.ReconciliationStatus.OK);
+        Transaction duplicate = txn(new BigDecimal("500.00"), Transaction.Type.EXPENSE,
+                LocalDate.of(2026, 7, 10), Transaction.ReconciliationStatus.DUPLICATE);
+        duplicate.setIsDuplicateOf(UUID.randomUUID());
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(real, duplicate));
+
+        DashboardSummaryDto summary = dashboardService.summarize(userId);
+
+        // 500, not 1000 -- the duplicate never counted, exactly as RefundNetting.reportable()
+        // already excluded it before this feature existed. This feature only makes that visible.
+        assertThat(summary.monthlyExpense()).isEqualByComparingTo("500.00");
+        assertThat(summary.duplicateTransactionCount()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("detected issues: caps the display list at DETECTED_DUPLICATES_DISPLAY_LIMIT but reports the true total count")
+    void summarize_capsDetectedDuplicatesDisplay_butReportsTheTrueCount() {
+        List<Transaction> txns = new java.util.ArrayList<>();
+        for (int i = 0; i < DashboardService.DETECTED_DUPLICATES_DISPLAY_LIMIT + 3; i++) {
+            Transaction d = txn(new BigDecimal("10.00"), Transaction.Type.EXPENSE,
+                    LocalDate.of(2026, 7, 1).plusDays(i), Transaction.ReconciliationStatus.DUPLICATE);
+            d.setIsDuplicateOf(UUID.randomUUID());
+            txns.add(d);
+        }
+        when(transactionRepository.findByUserId(userId)).thenReturn(txns);
+
+        DashboardSummaryDto summary = dashboardService.summarize(userId);
+
+        assertThat(summary.duplicateTransactionCount()).isEqualTo(DashboardService.DETECTED_DUPLICATES_DISPLAY_LIMIT + 3);
+        assertThat(summary.detectedDuplicates()).hasSize(DashboardService.DETECTED_DUPLICATES_DISPLAY_LIMIT);
+        // Newest first.
+        assertThat(summary.detectedDuplicates().get(0).date()).isEqualTo(LocalDate.of(2026, 7, 1).plusDays(DashboardService.DETECTED_DUPLICATES_DISPLAY_LIMIT + 2));
+    }
+
+    @Test
+    @DisplayName("detected issues: empty when the reconciliation engine hasn't flagged anything")
+    void summarize_reportsNoDetectedDuplicates_whenNoneAreFlagged() {
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(
+                txn(new BigDecimal("500.00"), Transaction.Type.EXPENSE, LocalDate.of(2026, 7, 10), Transaction.ReconciliationStatus.OK)
+        ));
+
+        DashboardSummaryDto summary = dashboardService.summarize(userId);
+
+        assertThat(summary.duplicateTransactionCount()).isEqualTo(0);
+        assertThat(summary.detectedDuplicates()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("categorization confidence: averages this month's engine-decided transactions once past the floor")
+    void summarize_averagesCategorizationConfidence_pastTheFloor() {
+        List<Transaction> txns = new java.util.ArrayList<>();
+        int[] confidences = {60, 70, 80, 90, 100}; // average 80, exactly MIN_TRANSACTIONS_FOR_CONFIDENCE_SCORE (5) rows
+        for (int i = 0; i < confidences.length; i++) {
+            Transaction t = txn(new BigDecimal("100.00"), Transaction.Type.EXPENSE,
+                    LocalDate.of(2026, 7, 1 + i), Transaction.ReconciliationStatus.OK);
+            t.setDecisionConfidence(confidences[i]);
+            txns.add(t);
+        }
+        when(transactionRepository.findByUserId(userId)).thenReturn(txns);
+
+        DashboardSummaryDto summary = dashboardService.summarize(userId);
+
+        assertThat(summary.categorizationConfidenceScore()).isEqualTo(80);
+        assertThat(summary.categorizationConfidenceTransactionCount()).isEqualTo(5);
+        assertThat(summary.categorizationConfidenceMinTransactions()).isEqualTo(DashboardService.MIN_TRANSACTIONS_FOR_CONFIDENCE_SCORE);
+    }
+
+    @Test
+    @DisplayName("categorization confidence: null below the minimum-transactions floor, not a misleadingly small average")
+    void summarize_reportsNoCategorizationConfidence_belowTheFloor() {
+        List<Transaction> txns = new java.util.ArrayList<>();
+        for (int i = 0; i < DashboardService.MIN_TRANSACTIONS_FOR_CONFIDENCE_SCORE - 1; i++) {
+            Transaction t = txn(new BigDecimal("100.00"), Transaction.Type.EXPENSE,
+                    LocalDate.of(2026, 7, 1 + i), Transaction.ReconciliationStatus.OK);
+            t.setDecisionConfidence(50);
+            txns.add(t);
+        }
+        when(transactionRepository.findByUserId(userId)).thenReturn(txns);
+
+        DashboardSummaryDto summary = dashboardService.summarize(userId);
+
+        assertThat(summary.categorizationConfidenceScore()).isNull();
+        assertThat(summary.categorizationConfidenceTransactionCount()).isEqualTo(DashboardService.MIN_TRANSACTIONS_FOR_CONFIDENCE_SCORE - 1);
+    }
+
+    @Test
+    @DisplayName("categorization confidence: MANUAL/FILE_PROVIDED transactions (null decisionConfidence) don't count toward the floor or the average")
+    void summarize_excludesTransactionsWithNoDecisionConfidence() {
+        List<Transaction> txns = new java.util.ArrayList<>();
+        // 5 engine-decided (clears the floor) plus 3 MANUAL entries with no confidence at all --
+        // the manual ones must neither drag the average toward zero nor count toward the floor.
+        for (int i = 0; i < 5; i++) {
+            Transaction t = txn(new BigDecimal("100.00"), Transaction.Type.EXPENSE,
+                    LocalDate.of(2026, 7, 1 + i), Transaction.ReconciliationStatus.OK);
+            t.setDecisionConfidence(90);
+            txns.add(t);
+        }
+        for (int i = 0; i < 3; i++) {
+            Transaction manual = txn(new BigDecimal("50.00"), Transaction.Type.EXPENSE,
+                    LocalDate.of(2026, 7, 10 + i), Transaction.ReconciliationStatus.OK);
+            // decisionConfidence left null, as it always is for MANUAL/FILE_PROVIDED.
+            txns.add(manual);
+        }
+        when(transactionRepository.findByUserId(userId)).thenReturn(txns);
+
+        DashboardSummaryDto summary = dashboardService.summarize(userId);
+
+        assertThat(summary.categorizationConfidenceScore()).isEqualTo(90);
+        assertThat(summary.categorizationConfidenceTransactionCount()).isEqualTo(5);
+    }
+
+    @Test
     void summarize_flagsALiquidAccountBelowTheUsersLowBalanceThreshold() {
         // Override setUp()'s 100000 balance with one below the default 2000 threshold.
         savings.setBalance(new BigDecimal("500.00"));
