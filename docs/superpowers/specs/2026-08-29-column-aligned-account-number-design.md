@@ -116,8 +116,8 @@ two delegation levels away from the new code.
 
 Runs only when `accountNumberMasked == null` after every existing text-based tier.
 
-1. **Find header cells.** Scan rows for a cell matching the F21 `Account Number` label
-   vocabulary. Require the row to carry **at least 3 cells**.
+1. **Find header cells.** Scan rows for a cell matching the shared account-number label
+   vocabulary (see below). Require the row to carry **at least 3 cells**.
 
    This rejects HSBC's prose false positive — a disclaimer bullet reading
    `use your Account Number/PhoneBanking Number (PBN)...` is a single long run in a
@@ -130,6 +130,17 @@ Runs only when `accountNumberMasked == null` after every existing text-based tie
    Overlap, not `nearestColumn` (PdfTableLocator.java:3912): that helper is uncapped and
    will bind an arbitrarily distant cell — the mechanism behind the ICICI Savings header
    defect. Overlap is bounded and yields nothing when nothing lines up.
+
+   **Strict overlap, and deliberately not overlap-with-tolerance.** The obvious future
+   modification to this step is a tolerance window — ±5pt, or nearest overlapping column, or
+   center-distance ranking — most likely proposed the first time a document *nearly* aligns.
+   It should be rejected. Strict overlap is a bounded geometric test: the cell either
+   occupies the label's horizontal span or it does not, and "does not" is answerable without
+   ranking. Any tolerance converts it into a nearest-neighbour search, which reintroduces
+   precisely the class of distant-column misbinding that motivated this design, and does so
+   in the one place where a wrong answer is silently adopted as account identity. A document
+   that fails strict overlap should widen this feature's evidence base by being examined, not
+   widen this feature's matching region.
 
 3. **Shape test.** The value must match a separator-tolerant account shape,
    `\d[\d-]{3,}\d|\d{4,}` — reused from `PdfTableLocator.ACCOUNT_NUMBER_IN_MARKER`
@@ -150,6 +161,37 @@ Runs only when `accountNumberMasked == null` after every existing text-based tie
 The tier must never throw. Degenerate geometry — empty rows, a header in the last row with
 nothing below it — returns null. A metadata tier that throws would fail an import that
 succeeds today.
+
+#### Shared label vocabulary
+
+The geometry tier must not carry its own copy of the label vocabulary. If it did, a label
+added to a text tier by a later F21-style fix would be recognized line-wise but not
+column-wise, or the reverse — a drift that would surface as an inexplicable per-bank gap.
+
+There is currently no single source to reuse. The vocabulary is spread across five patterns
+that each bundle label text *with* positional structure: `ACCOUNT_NUMBER` (line 46),
+`ACCOUNT_NUMBER_TRAILING_LABEL` (89), `STATEMENT_OF_ACCOUNT_SAME_LINE` (98),
+`STATEMENT_OF_ACCOUNT_LABEL_ONLY` (105), and `CARD_NUMBER_LABEL` (110). The geometry tier
+needs the vocabulary *without* the positional structure, because in a table the position is
+geometric rather than textual.
+
+So: extract the label alternation into a shared constant — an account-number label
+vocabulary holding `Account Number` and `Statement of Account` — and have both the existing
+patterns and the geometry tier compose from it.
+
+Two constraints on that extraction:
+
+- **It must not change any compiled pattern.** Replacing the literal in
+  `labelPattern("Account Number")` with a constant of identical text yields an identical
+  compiled regex. Any rewrite that would alter a pattern's matching behavior is out of scope
+  here and belongs in its own change.
+- **`CARD_NUMBER_LABEL` is excluded.** It includes `Account Number` in its own alternation,
+  but it also carries card vocabulary, and feeding that to the geometry tier would surface
+  exactly the card values step 3 exists to reject. The shared constant is account-only.
+
+The geometry tier consumes the full account vocabulary rather than a `Account Number`-only
+subset. A label worth recognizing on a text line is equally valid on a header row, and
+consuming the full set is what makes the drift-prevention real rather than nominal.
 
 #### Why HSBC resolves
 
@@ -178,6 +220,16 @@ That is designed behavior; the `_AMBIGUOUS` telemetry below is what would surfac
 | Resolved | `COLUMN_ALIGNED_ACCOUNT_NUMBER` |
 | Two or more candidates, product did not discriminate | `COLUMN_ALIGNED_ACCOUNT_NUMBER_AMBIGUOUS` |
 | No candidate | nothing |
+| **Skipped — a text tier already populated `accountNumberMasked`** | **nothing** |
+
+The last row is a required acceptance criterion, not an implementation detail. The tier never
+runs when a text tier has already resolved the value, and it must record nothing in that
+case. Recording on a skipped run would produce metrics asserting
+`COLUMN_ALIGNED_ACCOUNT_NUMBER` for documents where a text tier produced the value and the
+geometry tier never participated — making the capability appear to carry documents it had no
+part in, and corrupting the only evidence available for deciding whether this feature earns
+its keep. The precedence test covers the extraction path; this covers the telemetry contract,
+and they are separately assertable.
 
 The ambiguous code distinguishes "no such table here" from "a table we could see and
 refused to guess at" — the signal that would later show whether the abstain rule is too
@@ -203,6 +255,8 @@ fixtures.
 | Ambiguity abstain | two candidates, no discriminating product | returns null |
 | Zero-width guard | header cell with `width == 0` | abstains, records nothing |
 | Precedence | a text tier already resolved the number | geometry tier never runs |
+| Precedence telemetry | as above, with a table present that *would* have matched | records nothing |
+| Vocabulary sharing | a label added to the shared constant | recognized by the geometry tier without further change |
 | Degenerate input | header in last row, nothing below | returns null, does not throw |
 
 **Fixture digits must be altered.** Structurally identical to the real documents — same
@@ -232,6 +286,12 @@ Agreed scope for this change:
 Not committed as tests — the PDFs live outside the repo. A full corpus field-by-field diff
 was considered and deliberately not required, on the grounds that the change is additive and
 last in the cascade.
+
+Note that the shared-vocabulary extraction is the one part of this change that touches
+existing code paths. It is constrained to be compiled-pattern-identical, and the 60+ existing
+`PdfMetadataExtractorTest` cases exercise those patterns directly — so the suite is a real
+check on that refactor rather than a formality. If any of them fail, the extraction changed
+behavior and is wrong.
 
 ## Out of scope
 
