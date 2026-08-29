@@ -42,7 +42,7 @@ describe('CategoryCombobox', () => {
     const user = userEvent.setup();
     renderWithClient(<CategoryCombobox value="" onChange={vi.fn()} />);
     await user.click(screen.getByRole('combobox'));
-    await user.type(screen.getByRole('combobox'), 'SIP');
+    await user.type(screen.getByPlaceholderText('Search categories'), 'SIP');
 
     await waitFor(() => {
       expect(screen.getByText('SIP')).toBeInTheDocument();
@@ -53,7 +53,7 @@ describe('CategoryCombobox', () => {
     const user = userEvent.setup();
     renderWithClient(<CategoryCombobox value="" onChange={vi.fn()} />);
     await user.click(screen.getByRole('combobox'));
-    await user.type(screen.getByRole('combobox'), 'S.I.P.');
+    await user.type(screen.getByPlaceholderText('Search categories'), 'S.I.P.');
 
     await waitFor(() => {
       expect(screen.getByText(/did you mean/i)).toBeInTheDocument();
@@ -61,11 +61,19 @@ describe('CategoryCombobox', () => {
     });
   });
 
-  it('shows the create row last, only for genuinely new text', async () => {
+  it('shows a persistent "New category" row before anything is typed', async () => {
     const user = userEvent.setup();
     renderWithClient(<CategoryCombobox value="" onChange={vi.fn()} />);
     await user.click(screen.getByRole('combobox'));
-    await user.type(screen.getByRole('combobox'), 'Freelance Income');
+
+    expect(screen.getByText('New category')).toBeInTheDocument();
+  });
+
+  it('switches the create row to the typed text once it no longer matches anything', async () => {
+    const user = userEvent.setup();
+    renderWithClient(<CategoryCombobox value="" onChange={vi.fn()} />);
+    await user.click(screen.getByRole('combobox'));
+    await user.type(screen.getByPlaceholderText('Search categories'), 'Freelance Income');
 
     await waitFor(() => {
       expect(screen.getByText('Create "Freelance Income"')).toBeInTheDocument();
@@ -76,18 +84,49 @@ describe('CategoryCombobox', () => {
     const user = userEvent.setup();
     renderWithClient(<CategoryCombobox value="" onChange={vi.fn()} />);
     await user.click(screen.getByRole('combobox'));
-    await user.type(screen.getByRole('combobox'), 'Groceries');
+    await user.type(screen.getByPlaceholderText('Search categories'), 'Groceries');
 
     await waitFor(() => {
       expect(screen.queryByText(/^Create "/)).not.toBeInTheDocument();
+      expect(screen.queryByText('New category')).not.toBeInTheDocument();
     });
   });
 
-  it('resyncs the displayed value when the value prop changes externally', async () => {
+  // The old plain <input> never lost focus when its dropdown closed. Swapping in a button+popover
+  // introduced a real regression: selecting a row unmounts the popover (and whatever inside it had
+  // focus), and without this, focus falls back to <body> -- a keyboard/screen-reader user loses
+  // their place after every pick.
+  it('returns focus to the trigger after picking a category', async () => {
+    const user = userEvent.setup();
+    renderWithClient(<CategoryCombobox value="" onChange={vi.fn()} />);
+    const trigger = screen.getByRole('combobox');
+    await user.click(trigger);
+    await user.click(await screen.findByText('SIP'));
+
+    expect(trigger).toHaveFocus();
+  });
+
+  it('closes on Escape and returns focus to the trigger, discarding any typed search text', async () => {
+    const user = userEvent.setup();
+    renderWithClient(<CategoryCombobox value="Groceries" onChange={vi.fn()} />);
+    const trigger = screen.getByRole('combobox');
+    await user.click(trigger);
+    await user.type(screen.getByPlaceholderText('Search categories'), 'Fuel');
+
+    await user.keyboard('{Escape}');
+
+    expect(screen.queryByPlaceholderText('Search categories')).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+
+    await user.click(trigger);
+    expect(screen.getByPlaceholderText('Search categories')).toHaveValue('');
+  });
+
+  it('resyncs the trigger label when the value prop changes externally', async () => {
     const { rerender } = renderWithClient(<CategoryCombobox value="Groceries" onChange={vi.fn()} />);
 
     await waitFor(() => {
-      expect(screen.getByRole('combobox')).toHaveValue('Groceries');
+      expect(screen.getByRole('combobox')).toHaveTextContent('Groceries');
     });
 
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -98,14 +137,16 @@ describe('CategoryCombobox', () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByRole('combobox')).toHaveValue('Investments');
+      expect(screen.getByRole('combobox')).toHaveTextContent('Investments');
     });
   });
 
-  // Final-branch review, finding 4. Typed-but-unselected text stayed in the input after the
-  // dropdown closed, so inside Ledger's edit modal the user saw "Fuel" in the field, saved, and
-  // got the old category -- the field was showing something that had never been selected.
-  it('discards typed-but-unselected text when the dropdown closes without a selection', async () => {
+  // The old plain-input version could leave typed-but-unselected text stranded in the field after
+  // the dropdown closed, so inside Ledger's edit modal the user saw "Fuel" in the field, saved,
+  // and got the old category. The trigger button design removes that failure mode structurally --
+  // the button only ever shows `value`, never the popover's own search text -- but the search
+  // text itself should still not survive a close-without-selecting into the next open.
+  it('does not let typed-but-unselected search text leak into the next open', async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
     renderWithClient(
@@ -116,16 +157,14 @@ describe('CategoryCombobox', () => {
     );
 
     await user.click(screen.getByRole('combobox'));
-    await user.clear(screen.getByRole('combobox'));
-    await user.type(screen.getByRole('combobox'), 'Fuel');
-    expect(screen.getByRole('combobox')).toHaveValue('Fuel');
-
+    await user.type(screen.getByPlaceholderText('Search categories'), 'Fuel');
     await user.click(screen.getByText('elsewhere'));
 
-    await waitFor(() => {
-      expect(screen.getByRole('combobox')).toHaveValue('Groceries');
-    });
+    expect(screen.getByRole('combobox')).toHaveTextContent('Groceries');
     expect(onChange).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole('combobox'));
+    expect(screen.getByPlaceholderText('Search categories')).toHaveValue('');
   });
 
   // Final-branch review, finding 7.
@@ -190,6 +229,11 @@ describe('CategoryCombobox', () => {
       // The renamed category was the field's own value, so the field follows the rename rather
       // than keeping a name that no longer exists.
       expect(onChange).toHaveBeenCalledWith('Monthly SIP');
+      // The rename path resolves through select(), which only clears the popover/search state --
+      // not the edit-panel state itself. Regression coverage for a bug caught in review: the panel
+      // has to be dismissed on this branch too, or the trigger button never comes back.
+      expect(screen.queryByPlaceholderText('Category name')).not.toBeInTheDocument();
+      expect(screen.getByRole('combobox')).toHaveFocus();
     });
 
     it('opens the delete dialog and drops the category from the list on confirm', async () => {

@@ -64,6 +64,7 @@ export function CategoryCreateEditPanel({
         maxLength={80}
         onChange={(e) => setName(e.target.value)}
         placeholder="Category name"
+        autoFocus
       />
       <div className="grid grid-cols-6 gap-1.5">
         {options.icons.map((i) => {

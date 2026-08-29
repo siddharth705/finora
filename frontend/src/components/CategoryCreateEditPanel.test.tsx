@@ -51,6 +51,18 @@ describe('CategoryCreateEditPanel', () => {
     expect(onSaved).toHaveBeenCalledWith({ id: '1', name: 'SIP', isSystem: false, icon: 'home', color: 'blue' });
   });
 
+  // This panel replaces CategoryCombobox's own trigger button in place when "+ New category" is
+  // picked, and it swaps in outside the combobox too (MerchantGroupReviewCard, AskOnceCard). Either
+  // way something that had focus a moment ago just unmounted, so the name field needs autoFocus or
+  // a keyboard user is dropped back to the top of the document with no field selected.
+  it('autofocuses the name field so keyboard entry can continue without an extra tab', () => {
+    renderWithClient(
+      <CategoryCreateEditPanel mode="create" initialName="" onSaved={vi.fn()} onCancel={vi.fn()} />,
+    );
+
+    expect(screen.getByPlaceholderText('Category name')).toHaveFocus();
+  });
+
   // Adversarial review, minor 3. A rename changes the category's display name on every
   // transaction row showing it, so ['transactions'] is as stale as ['categories'] afterwards --
   // CategoryDeleteDialog already invalidates both after a reassignment for the same reason.

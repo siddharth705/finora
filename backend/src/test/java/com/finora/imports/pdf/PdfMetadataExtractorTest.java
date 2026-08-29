@@ -173,6 +173,41 @@ class PdfMetadataExtractorTest {
     }
 
     /**
+     * F22 (extraction-coverage-audit.md, real-corpus follow-up): the same-line-anywhere fallback's
+     * unanchored {@code CARD_NUMBER_LABEL} match also fires on an incidental "card number" mention
+     * buried in unrelated instructional prose, and {@code firstMatchAfter}'s same-line search then
+     * had no bound on how far past the label it would look -- an unrelated digit run appearing
+     * later in the same sentence (a phone number, an unrelated code) was captured as if it were the
+     * card number. Confirmed on two real statements this way: one where the label sat inside a
+     * sentence about the number's own digit count, another inside an SMS-instruction sentence whose
+     * only digit run was a customer-service phone number. Genericized per the Synthetic Fixture
+     * Policy -- the shape being tested is "label mid-sentence, unrelated digits later on the same
+     * line," not either bank's specific wording.
+     */
+    @Test
+    void extract_doesNotMatchAnUnrelatedNumberOnTheSameLine_whenProseSeparatesTheLabelFromIt() {
+        var metadata = extractor.extract(List.of(
+                "Please quote your complete card number when calling. For help call 9876543210.")); // synthetic-ok
+
+        assertThat(metadata.accountNumberMasked()).isNull();
+    }
+
+    /**
+     * The positive counterpart to the test above, restated explicitly so the fix can't be
+     * over-tightened into rejecting Kotak's own real shape: a label immediately followed by its
+     * value (only whitespace between them) must still match, even with unrelated text BEFORE the
+     * label on the same line -- this is a restatement of
+     * {@link #extract_recognizesACardNumber_whenUnrelatedTextPrecedesTheLabelOnTheSameLine()},
+     * kept here so both tests are visible together during the F22 fix.
+     */
+    @Test
+    void extract_stillMatchesTheSameLineValue_whenOnlyWhitespaceSeparatesLabelFromValue() {
+        var metadata = extractor.extract(List.of("Primary Card Number XXXX XXXX XXXX 9012"));
+
+        assertThat(metadata.accountNumberMasked()).isEqualTo("XXXX XXXX XXXX 9012");
+    }
+
+    /**
      * The label identifies the field -- not the value's shape. A masked-looking number with no
      * recognized card/account-number label anywhere near it must never be picked up, however
      * identifier-shaped it looks; otherwise this would regress into exactly the "find any
