@@ -475,6 +475,23 @@ public class PdfMetadataExtractor {
     private static final Pattern LEADING_NAME_LINE = Pattern.compile(
             "^(?:(?i:mr|mrs|ms|dr|m/s)\\.?\\s+)?[A-Z][A-Za-z]*(?:\\s+[A-Z][A-Za-z]*){1,3}\\.?$");
     private static final int LEADING_NAME_LINE_SEARCH_WINDOW = 5;
+    // Bug fix: verified against three real HDFC savings statements. A multi-line postal address
+    // ("Address : GROUND FLOOR, ...", followed by one or two unlabeled continuation lines wrapping
+    // the rest of the value) commonly has a continuation line that shape-matches LEADING_NAME_LINE
+    // exactly -- 2-4 capitalized words, no digits, no punctuation -- because a place name ("Goregaon
+    // East Railway Station", "Bhandarkar Road") looks identical to a real name under this pattern.
+    // The real holder name sits further down the same document, past this false match, and the
+    // accountHolderName == null guard then permanently blocks it -- silently WRONG, not absent,
+    // exactly the failure class F22 already established is worse than F20's original "extraction
+    // fails" framing for this same field.
+    //
+    // ADDRESS_LABEL_LINE marks where a continuation run starts. Confirmed on all three documents:
+    // every continuation line has no colon at all, and the run reliably ends at the next
+    // colon-bearing line ("City : ..." in this corpus) -- so "no colon yet since the Address label"
+    // is a safe, corpus-validated proxy for "still inside the address value" without this class
+    // needing to actually parse or extract the address itself (F6: address has no field to extract
+    // into today; this guard only ever excludes candidacy, never captures the address as a value).
+    private static final Pattern ADDRESS_LABEL_LINE = Pattern.compile("(?i)^\\s*Address\\b");
     // "name" included defensively: with ACCOUNT_HOLDER now recognizing a bare "Name" label
     // (see its own doc comment), a document whose "Name" label line somehow reaches this
     // fallback anyway (e.g. a future layout where the label and value split across lines) must
@@ -583,8 +600,19 @@ public class PdfMetadataExtractor {
         // this kind of unrelated boilerplate, never something that should override an
         // already-found answer. Every GRID_*/TRAILING_LABEL fallback below already guarded its own
         // assignment this way -- these seven are now consistent with that, not exceptions to it.
+        boolean insideAddressContinuation = false;
         for (int i = 0; i < preTableLines.size(); i++) {
             String line = preTableLines.get(i);
+
+            // Updated unconditionally, before any field check below can `continue` past it --
+            // see ADDRESS_LABEL_LINE's own doc comment for why "no colon since the Address label"
+            // is what this tracks.
+            if (ADDRESS_LABEL_LINE.matcher(line).find()) {
+                insideAddressContinuation = true;
+            } else if (line.indexOf(':') >= 0) {
+                insideAddressContinuation = false;
+            }
+
             if (accountHolderName == null) {
                 String holder = firstGroup(ACCOUNT_HOLDER, line);
                 if (holder != null) { accountHolderName = holder; continue; }
@@ -921,9 +949,12 @@ public class PdfMetadataExtractor {
             // LEADING_NAME_LINE (see that constant's own doc comment) -- bounded to the first few
             // lines only, and only once every labeled shape above has already had its chance to
             // find a holder name a more reliable way. A candidate is rejected (silently, scanning
-            // continues to the next line within the window) if it names a known bank, or if it
-            // contains a generic statement-vocabulary word no real person is named after.
+            // continues to the next line within the window) if it names a known bank, if it
+            // contains a generic statement-vocabulary word no real person is named after, or if
+            // it's still inside an unlabeled address continuation (see ADDRESS_LABEL_LINE's own
+            // doc comment).
             if (accountHolderName == null && i < LEADING_NAME_LINE_SEARCH_WINDOW
+                    && !insideAddressContinuation
                     && LEADING_NAME_LINE.matcher(line.trim()).matches()
                     && containsNoLeadingTitleWord(line)
                     && BankRegistry.UNKNOWN_ID.equals(BankRegistry.detect("", List.of(line)).id())) {
