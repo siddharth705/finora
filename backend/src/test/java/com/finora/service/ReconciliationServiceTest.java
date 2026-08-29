@@ -321,13 +321,13 @@ class ReconciliationServiceTest {
         LocalDate date = LocalDate.of(2026, 7, 27);
 
         Transaction first = txn(UUID.randomUUID(), accountId, date, new BigDecimal("2500.00"),
-                Transaction.Type.EXPENSE, "NET PAYIN TO NSE MF A/C -57500001396612-",
+                Transaction.Type.EXPENSE, "NET PAYIN TO NSE MF A/C -11111111111111-",
                 Instant.parse("2026-08-01T10:00:00Z"));
-        first.setReferenceNumber("0000000775492991");
+        first.setReferenceNumber("0000000000000001");
         Transaction second = txn(UUID.randomUUID(), accountId, date, new BigDecimal("2500.00"),
-                Transaction.Type.EXPENSE, "NET PAYIN TO NSE MF A/C -57500001396612-",
+                Transaction.Type.EXPENSE, "NET PAYIN TO NSE MF A/C -11111111111111-",
                 Instant.parse("2026-08-01T10:00:01Z"));
-        second.setReferenceNumber("0000000775493090");
+        second.setReferenceNumber("0000000000000002");
 
         when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any()))
                 .thenReturn(List.of(first, second));
