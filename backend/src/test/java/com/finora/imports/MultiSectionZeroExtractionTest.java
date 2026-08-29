@@ -399,8 +399,8 @@ class MultiSectionZeroExtractionTest {
 
     private TransactionNormalizer normalizer(CategorizationService categorizationService) {
         TransactionRepository transactionRepository = mock(TransactionRepository.class);
-        when(transactionRepository.findPotentialDuplicatesByUser(any(), any(), any(), any())).thenReturn(List.of());
-        return new TransactionNormalizer(categorizationService, new DuplicateDetector(transactionRepository),
+        when(transactionRepository.findPotentialDuplicatesByUserAndAccountIdIn(any(), any(), any(), any(), any())).thenReturn(List.of());
+        return new TransactionNormalizer(categorizationService, new DuplicateDetector(transactionRepository, TestAccountRepositories.anyLive()),
                 TestRuleEngines.empty());
     }
 
@@ -444,8 +444,8 @@ class MultiSectionZeroExtractionTest {
         CategorizationService categorizationService = categorization();
         TransactionNormalizer transactionNormalizer = normalizer(categorizationService);
         TransactionRepository transactionRepository = mock(TransactionRepository.class);
-        when(transactionRepository.findPotentialDuplicatesByUser(any(), any(), any(), any())).thenReturn(List.of());
-        DuplicateDetector duplicateDetector = new DuplicateDetector(transactionRepository);
+        when(transactionRepository.findPotentialDuplicatesByUserAndAccountIdIn(any(), any(), any(), any(), any())).thenReturn(List.of());
+        DuplicateDetector duplicateDetector = new DuplicateDetector(transactionRepository, TestAccountRepositories.anyLive());
         AccountRepository accountRepository = mock(AccountRepository.class);
         ImportSessionService importSessionService = mock(ImportSessionService.class);
         when(importSessionService.createSession(any(), any(), any(), any(), any(), any(), any())).thenReturn(session());
