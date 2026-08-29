@@ -1390,7 +1390,8 @@ public class ImportService {
             // the user asked for: quietly importing into the wrong deposit corrupts two products
             // at once, which is worse than a duplicate the user can see and merge.
             ProductIdentity discovered = ProductIdentity.stored(
-                    na.bankId(), productTypeOf(na), na.productIdentityHash(), na.accountNumberMasked());
+                    na.bankId(), productTypeOf(na), na.productIdentityHash(), na.accountNumberMasked())
+                    .withWeakSignals(na.ifscCode(), na.accountHolderName());
             ProductIdentityResolver.ProductMatch match = productIdentityResolver.resolve(userId, discovered);
             if (match.mayImportWithoutAsking()) {
                 return match.account().getId();
