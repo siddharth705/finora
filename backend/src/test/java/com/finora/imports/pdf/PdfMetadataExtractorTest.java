@@ -736,11 +736,44 @@ class PdfMetadataExtractorTest {
 
     @Test
     void extract_doesNotApplyTheLeadingNameLineFallback_beyondTheSearchWindow() {
-        // Five filler lines that each contain a digit (so none of them shape-match
+        // Eight filler lines that each contain a digit (so none of them shape-match
         // LEADING_NAME_LINE themselves -- it requires letters-only words) push the real name to
-        // index 5, past LEADING_NAME_LINE_SEARCH_WINDOW (5, i.e. valid indices 0-4 only).
+        // index 8, past LEADING_NAME_LINE_SEARCH_WINDOW (8, i.e. valid indices 0-7 only).
         var metadata = extractor.extract(List.of(
-                "Line 1", "Line 2", "Line 3", "Line 4", "Line 5", "JOHN DOE"));
+                "Line 1", "Line 2", "Line 3", "Line 4", "Line 5", "Line 6", "Line 7", "Line 8",
+                "JOHN DOE"));
+
+        assertThat(metadata.accountHolderName()).isNull();
+    }
+
+    @Test
+    void extract_recognizesAnAccountHolderName_pastTheOldFiveLineWindow_withinTheWidenedWindow() {
+        // Slice B (F20 follow-up): verified against real HDFC statements, whose holder name sits
+        // at index 6 -- past the original 5-line window, but within the widened 8-line one.
+        var metadata = extractor.extract(List.of(
+                "Line 1", "Line 2", "Line 3", "Line 4", "Line 5", "Line 6", "JOHN DOE"));
+
+        assertThat(metadata.accountHolderName()).isEqualTo("JOHN DOE");
+    }
+
+    @Test
+    void extract_doesNotMisreadAGenericServicesBanner_asTheAccountHolderName() {
+        // Slice B: verified against a real SBI credit-card statement -- "VALUE ADDED SERVICES" is
+        // a section banner, not a name, but only became reachable once the window widened to 8.
+        var metadata = extractor.extract(List.of(
+                "Line 1", "Line 2", "Line 3", "Line 4", "Line 5", "Line 6",
+                "VALUE ADDED SERVICES"));
+
+        assertThat(metadata.accountHolderName()).isNull();
+    }
+
+    @Test
+    void extract_doesNotMisreadAnInterestAccruedLine_asTheAccountHolderName() {
+        // Pre-existing bug, found by the same real-corpus sweep that validated Slice B: a real
+        // Shivani_HDFC recurring-deposit section has "Interest Accrued" as a leading line in one
+        // of its sections, already reachable within the ORIGINAL 5-line window -- unrelated to the
+        // window widening itself.
+        var metadata = extractor.extract(List.of("Interest Accrued", "Some other line"));
 
         assertThat(metadata.accountHolderName()).isNull();
     }
