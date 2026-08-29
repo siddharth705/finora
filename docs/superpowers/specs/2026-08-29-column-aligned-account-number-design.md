@@ -386,8 +386,37 @@ account banner carrying the number. On that path (PdfTableLocator.java:970-977) 
 banner line is discarded without being added to `pendingAuxiliary` — the code's own comment
 states it is "discarded with NO other trace at all."
 
-BOB repeats its banner once per page across 3 pages, so at minimum the later occurrences
-never reach `PdfMetadataExtractor`. Whether the *first* occurrence survives into
-`auxiliaryText` is unverified and is the first thing a text-tier fix must establish: if it
-does, the fix is a pattern addition; if it does not, the value never reaches the extractor at
-all and the fix belongs in the locator's banner handling instead.
+BOB repeats its banner once per page across 3 pages, so the later occurrences never reach
+`PdfMetadataExtractor`. Whether the *first* occurrence survives was the one question left
+determining where a fix belongs — a pattern addition if it reaches the extractor, a
+locator-layer fix if it does not.
+
+**Resolved: it reaches the extractor.** A throwaway probe ran the real
+`PdfTextExtractor` → `PdfTableLocator.locateAll` path and inspected
+`LocatedSection.auxiliaryText()` directly, reporting counts and booleans only:
+
+| | BOB | HSBC |
+|---|---|---|
+| Account number present in raw runs | yes | yes |
+| **Present in `auxiliaryText`** | **yes** | **yes** |
+| Aux lines | 14 | 134 |
+| Aux lines carrying an account banner | 1 | 4 |
+| Banner **and** number on the same line | 1 | 2 |
+
+So for both documents the value is already in the text `PdfMetadataExtractor` receives, on a
+line that also carries a product banner. The locator is behaving correctly; exactly one of
+BOB's three banners survives, which is all a text tier needs.
+
+**Conclusion: this is a metadata-layer vocabulary gap, and nothing else.** Neither the
+geometry channel designed here nor any locator change is required for either motivating
+document. The missing pattern is the banner shape
+`(SAVINGS|CURRENT|CREDIT CARD|DEPOSIT|LOAN) ACCOUNT[ -]<number>` — which
+`PdfTableLocator` already recognises via `SECTION_MARKER` + `ACCOUNT_NUMBER_IN_MARKER`, and
+which `PdfMetadataExtractor` has no equivalent of, by the deliberate no-dependency boundary
+between the two classes. HSBC additionally needs separator tolerance, since every existing
+account-number pattern requires `\d{6,20}` and cannot match a hyphenated identifier.
+
+One caveat carried forward: HSBC's four located rows do not survive into staged output
+(`CorpusProbe` reports 0 rows, `LAYOUT_UNSUPPORTED`). Its account-number gap is therefore
+real but not independently worth fixing — closing it would identify an account that still has
+no transactions.
