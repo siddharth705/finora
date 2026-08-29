@@ -293,6 +293,11 @@ class HeaderProseRejectionTest {
         put("union-bank-savings-ledger-validation", 1);
         put("cbi-account-discrepancy-disclaimer-trailer", 1);
         put("pnb-one-account-discrepancy-disclaimer-trailer", 1);
+        // Captured for the 2026-08-29 lineOf X-ordering fix (docs/superpowers/specs/
+        // 2026-08-29-lineof-x-ordering-fix-design.md) -- its own content (transaction narration
+        // join order) is verified by TraceFixtureRegressionTest, not this class; listed here only
+        // so this inventory sweep accounts for it at all.
+        put("bob-transaction-row-x-ordering", 1);
     }};
 
     @Test
