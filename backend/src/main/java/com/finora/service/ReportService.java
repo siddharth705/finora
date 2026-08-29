@@ -3,6 +3,7 @@ package com.finora.service;
 import com.finora.dto.ReportDto;
 import com.finora.entity.Category;
 import com.finora.entity.Transaction;
+import com.finora.repository.AccountRepository;
 import com.finora.repository.CategoryRepository;
 import com.finora.repository.TransactionRepository;
 import org.springframework.stereotype.Service;
@@ -20,12 +21,14 @@ import java.util.stream.Collectors;
 public class ReportService {
 
     private final TransactionRepository transactionRepository;
+    private final AccountRepository accountRepository;
     private final CategoryRepository categoryRepository;
     private final TransactionGraphService transactionGraphService;
 
-    public ReportService(TransactionRepository transactionRepository, CategoryRepository categoryRepository,
-                          TransactionGraphService transactionGraphService) {
+    public ReportService(TransactionRepository transactionRepository, AccountRepository accountRepository,
+                          CategoryRepository categoryRepository, TransactionGraphService transactionGraphService) {
         this.transactionRepository = transactionRepository;
+        this.accountRepository = accountRepository;
         this.categoryRepository = categoryRepository;
         this.transactionGraphService = transactionGraphService;
     }
@@ -50,9 +53,18 @@ public class ReportService {
         // month's expenses are frequently outside the range this month was queried with -- netting
         // against only the in-window ones would leave every cross-month refund uncorrected, which
         // is most of them.
-        RefundNetting refunds = RefundNetting.from(transactionRepository.findByUserIdAndReconciliationStatusIn(
-                userId, java.util.List.of(Transaction.ReconciliationStatus.REFUND, Transaction.ReconciliationStatus.REVERSAL)));
-        List<Transaction> monthTxns = transactionRepository.findByUserIdAndTxnDateBetween(userId, from, to);
+        // Deleted-account leak (see DashboardService.summarize for the original fix): a deleted
+        // account's transactions deliberately keep deleted_at unset, so findByUserId-rooted queries
+        // alone would keep feeding this report a deleted account's rows forever, not just during
+        // StatementImportService's 7-day grace window.
+        List<UUID> liveAccountIds = accountRepository.findByUserId(userId).stream()
+                .map(com.finora.entity.Account::getId).toList();
+        RefundNetting refunds = liveAccountIds.isEmpty() ? RefundNetting.from(List.of())
+                : RefundNetting.from(transactionRepository.findByUserIdAndReconciliationStatusInAndAccountIdIn(
+                        userId, java.util.List.of(Transaction.ReconciliationStatus.REFUND, Transaction.ReconciliationStatus.REVERSAL),
+                        liveAccountIds));
+        List<Transaction> monthTxns = liveAccountIds.isEmpty() ? List.of()
+                : transactionRepository.findByUserIdAndTxnDateBetweenAndAccountIdIn(userId, from, to, liveAccountIds);
         List<Transaction> txns = RefundNetting.reportable(
                 monthTxns, transactionGraphService.ccPaymentFromTransactionIds(monthTxns));
 
@@ -89,7 +101,13 @@ public class ReportService {
      */
     @Transactional(readOnly = true)
     public List<String> availableMonths(UUID userId) {
-        return transactionRepository.findDistinctTransactionDates(userId).stream()
+        // Deleted-account leak: see forMonth() above for why findByUserId-rooted queries alone are
+        // wrong here -- a deleted account's transaction dates would otherwise keep populating this
+        // dropdown forever.
+        List<UUID> liveAccountIds = accountRepository.findByUserId(userId).stream()
+                .map(com.finora.entity.Account::getId).toList();
+        if (liveAccountIds.isEmpty()) return List.of();
+        return transactionRepository.findDistinctTransactionDates(userId, liveAccountIds).stream()
                 .map(date -> YearMonth.from(date).toString())
                 .distinct().sorted().toList();
     }

@@ -84,6 +84,12 @@ public interface TransactionRepository extends JpaRepository<Transaction, UUID> 
     // Backs the admin User detail view's "N transactions" stat (AdminUserService.getUser).
     long countByUserId(UUID userId);
 
+    /** Like {@link #countByUserId}, but scoped to a specific set of accounts -- excludes a
+     *  soft-deleted account's rows, which {@code countByUserId} alone would keep counting forever
+     *  (see {@link #findByUserIdAndAccountIdIn}'s own doc comment). Pass the caller's own live
+     *  account ids rather than re-deriving them here. */
+    long countByUserIdAndAccountIdIn(UUID userId, java.util.Collection<UUID> accountIds);
+
     // Platform-wide (no userId scoping) -- backs the Admin Dashboard's Needs Attention section.
     // Both fields already existed for per-transaction purposes (see TransactionNormalizer /
     // ImportRuleLearningService for needsCategoryReview, DuplicateDetector for isDuplicateOf);
@@ -92,6 +98,13 @@ public interface TransactionRepository extends JpaRepository<Transaction, UUID> 
     long countByIsDuplicateOfIsNotNull();
 
     List<Transaction> findByUserIdAndNeedsCategoryReviewTrueOrderByTxnDateDesc(UUID userId);
+
+    /** Like {@link #findByUserIdAndNeedsCategoryReviewTrueOrderByTxnDateDesc}, scoped to a set of
+     *  live account ids -- excludes a soft-deleted account's rows, which otherwise keep surfacing
+     *  in the "Ask Once" review queue forever (see {@link #findByUserIdAndAccountIdIn}'s own doc
+     *  comment for why {@code findByUserId} alone is wrong here). */
+    List<Transaction> findByUserIdAndNeedsCategoryReviewTrueAndAccountIdInOrderByTxnDateDesc(
+            UUID userId, java.util.Collection<UUID> accountIds);
 
     /**
      * SEC-06 (docs/quality/bug-reports/2026-08-19-security-review-findings.md) -- the idempotency
@@ -117,6 +130,12 @@ public interface TransactionRepository extends JpaRepository<Transaction, UUID> 
 
     List<Transaction> findByUserIdAndTxnDateBetween(UUID userId, LocalDate from, LocalDate to);
 
+    /** Like {@link #findByUserIdAndTxnDateBetween}, scoped to a set of live account ids -- excludes
+     *  a soft-deleted account's rows, which {@code findByUserIdAndTxnDateBetween} alone would keep
+     *  returning forever (see {@link #findByUserIdAndAccountIdIn}'s own doc comment). */
+    List<Transaction> findByUserIdAndTxnDateBetweenAndAccountIdIn(
+            UUID userId, LocalDate from, LocalDate to, java.util.Collection<UUID> accountIds);
+
     /**
      * Backs the Ledger page's multi-filter search. All filter params are optional (nullable) —
      * pass null to skip that condition. This mirrors the client-side filter engine 1:1 so the
@@ -139,10 +158,20 @@ public interface TransactionRepository extends JpaRepository<Transaction, UUID> 
      * chain ends up mattering for a given row, and an empty list correctly evaluates that
      * sub-clause to false rather than matching everything.
      */
+    /**
+     * Deleted-account leak (see {@link #findByUserIdAndAccountIdIn}'s own doc comment): when the
+     * caller didn't ask for one specific account (:accountId IS NULL), the result must still be
+     * scoped to the user's live accounts, or a soft-deleted account's transactions surface in the
+     * Ledger's default "all accounts" search forever. When :accountId IS supplied, that explicit
+     * filter is trusted as-is (unchanged from before) and :liveAccountIds is not consulted --
+     * TransactionService.getOwnedAccount-style ownership checks elsewhere already gate which
+     * accountId values a caller can pass in the first place.
+     */
     @Query("""
         SELECT t FROM Transaction t
         WHERE t.userId = :userId
           AND (:accountId IS NULL OR t.accountId = :accountId)
+          AND (:accountId IS NOT NULL OR t.accountId IN :liveAccountIds)
           AND (:categoryId IS NULL OR t.categoryId = :categoryId)
           AND (:type IS NULL OR t.txnType = :type)
           AND (:dateFrom IS NULL OR t.txnDate >= :dateFrom)
@@ -175,6 +204,7 @@ public interface TransactionRepository extends JpaRepository<Transaction, UUID> 
             @Param("amountMax") BigDecimal amountMax,
             @Param("keyword") String keyword,
             @Param("bankIds") List<String> bankIds,
+            @Param("liveAccountIds") List<UUID> liveAccountIds,
             Pageable pageable
     );
 
@@ -238,6 +268,12 @@ public interface TransactionRepository extends JpaRepository<Transaction, UUID> 
      *  step 2), and available for a future merchant-detail "recent transactions" view. */
     List<Transaction> findByUserIdAndMerchantId(UUID userId, UUID merchantId);
 
+    /** Like {@link #findByUserIdAndMerchantId}, scoped to a set of live account ids -- excludes a
+     *  soft-deleted account's rows, which {@code findByUserIdAndMerchantId} alone would keep
+     *  returning forever (see {@link #findByUserIdAndAccountIdIn}'s own doc comment). */
+    List<Transaction> findByUserIdAndMerchantIdAndAccountIdIn(
+            UUID userId, UUID merchantId, java.util.Collection<UUID> accountIds);
+
     /** Used when deleting a statement: any surviving transaction whose duplicate/transfer
      *  pairing pointed at one of the transactions being removed needs its reconciliation flags
      *  reset, or it'd be left referencing a row that no longer visibly exists. */
@@ -285,6 +321,17 @@ public interface TransactionRepository extends JpaRepository<Transaction, UUID> 
            """)
     List<LocalDate> findDistinctTransactionDates(@Param("userId") UUID userId);
 
+    /** Like {@link #findDistinctTransactionDates}, scoped to a set of live account ids -- excludes
+     *  a soft-deleted account's dates, which {@code findDistinctTransactionDates} alone would keep
+     *  surfacing in the Reports month dropdown forever (see {@link #findByUserIdAndAccountIdIn}'s
+     *  own doc comment). */
+    @Query("""
+           SELECT DISTINCT t.txnDate FROM Transaction t
+            WHERE t.userId = :userId AND t.accountId IN :accountIds
+           """)
+    List<LocalDate> findDistinctTransactionDates(@Param("userId") UUID userId,
+                                                   @Param("accountIds") java.util.Collection<UUID> accountIds);
+
     /**
      * Every refund leg this user has, whenever it landed.
      *
@@ -312,6 +359,14 @@ public interface TransactionRepository extends JpaRepository<Transaction, UUID> 
      */
     List<Transaction> findByUserIdAndReconciliationStatusIn(
             UUID userId, java.util.Collection<Transaction.ReconciliationStatus> statuses);
+
+    /** Like {@link #findByUserIdAndReconciliationStatusIn}, scoped to a set of live account ids --
+     *  excludes a soft-deleted account's rows, which {@code findByUserIdAndReconciliationStatusIn}
+     *  alone would keep returning forever (see {@link #findByUserIdAndAccountIdIn}'s own doc
+     *  comment). */
+    List<Transaction> findByUserIdAndReconciliationStatusInAndAccountIdIn(
+            UUID userId, java.util.Collection<Transaction.ReconciliationStatus> statuses,
+            java.util.Collection<UUID> accountIds);
 
     // Admin Portal, Reconciliation Monitor module -- platform-wide breakdown of every
     // reconciliation outcome, one grouped COUNT query rather than loading every transaction into

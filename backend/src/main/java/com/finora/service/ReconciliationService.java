@@ -147,7 +147,13 @@ public class ReconciliationService {
         }
         LocalDate from = earliestImported.minusDays(ReconciliationPolicy.CANDIDATE_WINDOW_DAYS);
         LocalDate to = latestImported.plusDays(ReconciliationPolicy.CANDIDATE_WINDOW_DAYS);
-        List<Transaction> candidates = transactionRepository.findByUserIdAndTxnDateBetween(userId, from, to);
+        // Deleted-account leak (see reconcileForUser above for the original fix): a deleted
+        // account's transactions deliberately keep deleted_at unset, so the unscoped finder would
+        // keep re-matching them against a still-live account's rows forever.
+        List<UUID> liveAccountIds = accountRepository.findByUserId(userId).stream()
+                .map(com.finora.entity.Account::getId).toList();
+        List<Transaction> candidates = liveAccountIds.isEmpty() ? List.of()
+                : transactionRepository.findByUserIdAndTxnDateBetweenAndAccountIdIn(userId, from, to, liveAccountIds);
         // candidatesLoaded, NOT transactionsProcessed. The unbounded path's field means "how many
         // transactions this user has", and a scaling trend built on it would silently change
         // meaning the day an import started reporting a window instead. Two names, two meanings,
@@ -584,7 +590,13 @@ public class ReconciliationService {
         // every one of them on every run is cheap, and windowing it correctly would mean a second
         // date axis (statement period vs. payment date) this v1 slice doesn't need yet. Accepted
         // simplification, not an oversight; revisit if SLOW_RUN_WARN_MS ever fires because of it.
-        List<StatementImport> ccStatements = statementImportRepository.findByUserIdAndTotalAmountDueIsNotNull(userId);
+        // Deleted-account leak (see reconcileForUser above for the original fix): a deleted
+        // account's statements deliberately keep deleted_at unset, so the unscoped finder would
+        // keep matching them against this user's live payments forever.
+        List<UUID> ccLiveAccountIds = accountRepository.findByUserId(userId).stream()
+                .map(com.finora.entity.Account::getId).toList();
+        List<StatementImport> ccStatements = ccLiveAccountIds.isEmpty() ? List.of()
+                : statementImportRepository.findByUserIdAndTotalAmountDueIsNotNullAndAccountIdIn(userId, ccLiveAccountIds);
         if (!ccStatements.isEmpty()) {
             int[] ccMatchesThisRun = {0};
             // Two cards can coincidentally share a due date and a printed balance (the roadmap's
