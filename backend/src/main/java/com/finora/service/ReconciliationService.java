@@ -3,6 +3,7 @@ package com.finora.service;
 import com.finora.entity.StatementImport;
 import com.finora.entity.Transaction;
 import com.finora.entity.TransactionRelationship;
+import com.finora.repository.AccountRepository;
 import com.finora.repository.TransactionRepository;
 import com.finora.util.CategoryRules;
 import org.slf4j.Logger;
@@ -14,6 +15,7 @@ import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -65,17 +67,20 @@ public class ReconciliationService {
     private static final int NEEDS_REVIEW_THRESHOLD = 80;
 
     private final TransactionRepository transactionRepository;
+    private final AccountRepository accountRepository;
     private final RelationshipService relationshipService;
     private final AuditService auditService;
     private final TransactionGraphService transactionGraphService;
     private final com.finora.integrations.google.merchant.GmailReconciliationMatcher gmailReconciliationMatcher;
     private final com.finora.repository.StatementImportRepository statementImportRepository;
 
-    public ReconciliationService(TransactionRepository transactionRepository, RelationshipService relationshipService,
+    public ReconciliationService(TransactionRepository transactionRepository, AccountRepository accountRepository,
+                                  RelationshipService relationshipService,
                                   AuditService auditService, TransactionGraphService transactionGraphService,
                                   com.finora.integrations.google.merchant.GmailReconciliationMatcher gmailReconciliationMatcher,
                                   com.finora.repository.StatementImportRepository statementImportRepository) {
         this.transactionRepository = transactionRepository;
+        this.accountRepository = accountRepository;
         this.relationshipService = relationshipService;
         this.auditService = auditService;
         this.transactionGraphService = transactionGraphService;
@@ -98,7 +103,14 @@ public class ReconciliationService {
      *    routinely differs entirely from the original purchase's.
      */
     public void reconcileForUser(UUID userId) {
-        List<Transaction> all = transactionRepository.findByUserId(userId);
+        // Deleted-account leak (see DashboardService.summarize for the original fix): a deleted
+        // account's transactions deliberately keep deleted_at unset, so findByUserId alone would
+        // keep re-matching them against a still-live account's rows forever, not just during
+        // StatementImportService's 7-day grace window.
+        List<UUID> liveAccountIds = accountRepository.findByUserId(userId).stream()
+                .map(com.finora.entity.Account::getId).toList();
+        List<Transaction> all = liveAccountIds.isEmpty() ? List.of()
+                : transactionRepository.findByUserIdAndAccountIdIn(userId, liveAccountIds);
         // alwaysRecord=false: this is the per-edit path. See reconcile()'s emission block.
         reconcile(userId, all, Map.of("transactionsProcessed", all.size()), false);
     }
@@ -575,12 +587,23 @@ public class ReconciliationService {
         List<StatementImport> ccStatements = statementImportRepository.findByUserIdAndTotalAmountDueIsNotNull(userId);
         if (!ccStatements.isEmpty()) {
             int[] ccMatchesThisRun = {0};
+            // Two cards can coincidentally share a due date and a printed balance (the roadmap's
+            // own "same issuer, same due date, same amount" edge case) -- without tracking which
+            // payment transactions this RUN has already attributed, each statement is matched
+            // independently against the full `all` list, and the SAME real payment could be
+            // claimed by more than one statement, attributing one real payment as if it settled
+            // two different bills. First statement processed wins; later ones fall through to
+            // "no candidate" for that payment, same as if it had genuinely already been spent
+            // elsewhere. A real issuer/last-4 disambiguation (roadmap Part 4) would pick the
+            // RIGHT winner instead of just AN exclusive one -- this only guarantees exclusivity.
+            Set<UUID> claimedPaymentIds = new HashSet<>();
             for (StatementImport statement : ccStatements) {
                 if (statement.getTotalAmountDue() == null || statement.getPaymentDueDate() == null) continue;
 
                 List<Transaction> paymentCandidates = all.stream()
                         .filter(t -> t.getTxnType() == Transaction.Type.EXPENSE)
                         .filter(t -> !t.isTransfer())
+                        .filter(t -> !claimedPaymentIds.contains(t.getId()))
                         .filter(t -> !t.getAccountId().equals(statement.getAccountId()))
                         .filter(t -> t.getAmount().compareTo(statement.getTotalAmountDue()) == 0)
                         .filter(t -> Math.abs(ChronoUnit.DAYS.between(t.getTxnDate(), statement.getPaymentDueDate()))
@@ -601,7 +624,8 @@ public class ReconciliationService {
                 // would be a nonsensical "this payment settles this refund" claim.
                 List<Transaction> settledCharges = transactionRepository.findByStatementImportId(statement.getId())
                         .stream().filter(t -> t.getTxnType() == Transaction.Type.EXPENSE).toList();
-                if (settledCharges.isEmpty()) continue; // nothing on the card side to point the edge at
+                if (settledCharges.isEmpty()) continue; // nothing on the card side to point the edge at -- payment stays unclaimed
+                claimedPaymentIds.add(payment.getId());
 
                 long daysFromDue = Math.abs(ChronoUnit.DAYS.between(payment.getTxnDate(), statement.getPaymentDueDate()));
                 // MERCHANT_AND_AMOUNT, not EXACT: amount matches exactly (no delta), but there is a
