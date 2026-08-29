@@ -1,8 +1,9 @@
 package com.finora.integrations.google.merchant;
 
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 
-import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -20,6 +21,8 @@ public interface MerchantTemplateRepository extends JpaRepository<MerchantTempla
     Optional<MerchantTemplate> findByMerchantDomain(String merchantDomain);
 
     /** Every template, for the admin list view -- mirrors
-     *  {@code TrustedSenderDomainRepository.findAllByOrderByMerchantNameAscDomainAsc}. */
-    List<MerchantTemplate> findAllByOrderByMerchantNameAscMerchantDomainAsc();
+     *  {@code TrustedSenderDomainRepository.findAllByOrderByMerchantNameAscDomainAsc}. Paged: V103
+     *  alone seeded 50 rows, on top of whatever admins hand-author afterward, and this was still
+     *  an unconditional fetch-all before. */
+    Page<MerchantTemplate> findAllByOrderByMerchantNameAscMerchantDomainAsc(Pageable pageable);
 }
