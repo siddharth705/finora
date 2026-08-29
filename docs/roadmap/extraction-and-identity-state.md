@@ -120,38 +120,88 @@ evidence exists. Three questions the study must answer:
 Question 3 is load-bearing: if mask structure varies by issuer, a single global `EXACT`
 policy is wrong whatever the aggregate collision rate turns out to be.
 
-### Preliminary findings from the corpus (2026-08-29)
+### Study results — Phases 1 and 3 (2026-08-29)
 
-Measured while re-deriving the baseline above. **Question 3 already has an answer, and it is
-yes.** Mask structures observed, one document per issuer, digits redacted:
+Phase 1 (entropy census) and Phase 3 (risk model) were run. Phase 2 was resolved as a design
+decision rather than a measurement (see below). Phase 4 deliberately not started.
 
-| Issuer | Structure | Visible digits |
-|---|---|---|
-| Axis, HDFC | `######XXXXXX####` | 10 |
-| IndusInd, Kotak | `####XXXXXXXX####` | 8 |
-| AU | `••••####` | 4 |
-| **SBI** | `XXXX XXXX XXXX XX##` | **2** |
+#### Conclusion 1 — measured corpus outcome
 
-**Visible is not discriminating.** The leading 4–6 digits are the BIN — issuer and product
-identifiers, identical across every card of that product. They discriminate issuers, not
-customers, and the identity key already carries bank separately, so they contribute nothing.
-Strip them and the real discriminating power is:
+Mask structures vary widely; discriminating power does not. Each visible digit was mapped to
+its absolute card position and classified BIN (1–6), account (7–15), or Luhn check (16).
 
-- Axis, HDFC, IndusInd, Kotak, AU — **4 digits** (1 in 10,000 within a bank)
-- SBI — **2 digits** (**1 in 100** within a bank)
+| Issuer | Visible | BIN | Account | Check | **d_eff** |
+|---|---|---|---|---|---|
+| Axis | 10 | 6 | 3 | 1 | **4** |
+| HDFC | 10 | 6 | 3 | 1 | **4** |
+| IndusInd | 8 | 4 | 3 | 1 | **4** |
+| Kotak | 8 | 4 | 3 | 1 | **4** |
+| AU | 4 | 0 | 3 | 1 | **4** |
+| **SBI** | 2 | 0 | 1 | 1 | **2** |
 
-That makes question 2 well-posed: a collision requires same bank, same product type, same
-trailing digits.
+**Five issuers converge on `d_eff = 4` despite masks that look nothing alike.** Axis shows
+ten visible digits and AU shows four, yet they carry identical discriminating power:
+everything Axis reveals beyond the last four is BIN, which identifies the *product*, not the
+customer, and the identity key already carries bank separately. **Mask verbosity is
+cosmetic.**
 
-**Implication for the study's output.** The deliverable is probably not a yes/no on `EXACT`,
-but a **per-issuer entropy floor** — promote only when surviving discriminating digits clear
-a threshold, which SBI fails and the others may pass. The current code cannot express this:
-it stores a masked string and compares equality, with no notion of how much entropy
-survived.
+SBI sits at `d_eff = 2` — a **100× difference** from every other issuer measured. Treating
+SBI under the same rule as HDFC would be difficult to justify against these numbers.
 
-**Limits of this evidence.** Eight documents, one card per issuer. This establishes mask
-*structure* per issuer, not collision *rate*, and a single statement cannot prove an issuer
-always masks the same way. The study still needs to be run.
+#### Conclusion 2 — policy implication
+
+Any future `EXACT` promotion must be gated on **effective entropy, computed from the observed
+mask**, never on visible-digit count and never on an issuer table.
+
+This resolves Phase 2. Issuer tables were rejected: they assume issuer-wide consistency from
+n=1, need maintenance, break silently when a bank changes format, and cannot represent an
+issuer with several products. Runtime measurement needs only the observed mask — count
+visible positions, classify each by position — which is exactly the census logic above, so
+the study's Phase 1 *is* the implementation.
+
+The current code cannot express this at all: it stores a masked string and compares equality,
+with no representation of how much entropy survived. That is the first thing any `EXACT` work
+would have to change.
+
+#### Conclusion 3 — open question
+
+**Collision probabilities are modeled, not measured.** Under the assumption that surviving
+digits are approximately uniform and independent within a bank/product population,
+`P(false EXACT) ≈ C(k,2) × 10^-d` for a user holding *k* same-product cards:
+
+| d | k=2 | k=3 | k=5 |
+|---|---|---|---|
+| 4 | 1.0×10⁻⁴ | 3.0×10⁻⁴ | 1.0×10⁻³ |
+| 2 | 1.0×10⁻² | 3.0×10⁻² | 1.0×10⁻¹ |
+
+Required `d` to meet a given tolerance, against a corpus maximum of 4:
+
+| Tolerance | k=2 | k=3 | k=5 | Achievable? |
+|---|---|---|---|---|
+| 10⁻³ | 3 | 4 | 4 | yes, for `d_eff = 4` issuers |
+| 10⁻⁴ | 4 | 5 | 5 | only at k=2 |
+| 10⁻⁶ | 6 | 7 | 7 | no |
+
+**The uniformity assumption is the model's largest uncertainty, and the direction of its
+error is unknown.** Real issuers may allocate account numbers sequentially or in blocks. Two
+cards issued together with adjacent numbers differ in their trailing digits *by
+construction*, which would make these figures over-state risk; block allocation with
+recycling could produce repeats at a rate above uniform, which would make them under-state
+it. Both are plausible and nothing in the corpus distinguishes them. **Do not treat these as
+worst-case bounds in either direction.**
+
+Secondary limit: still n=1 statement per issuer, so this establishes mask structure per
+issuer, not that an issuer always masks this way. Runtime measurement makes that limit
+non-blocking rather than resolved.
+
+#### What the study settled
+
+The gating question is no longer *"can we extract enough of the card number?"* — it is
+**"what collision risk is Finora willing to accept for automatic identity resolution?"** The
+decision point sits entirely between 10⁻³ and 10⁻⁴. Above it, masked-card `EXACT` is
+defensible for five of six issuers; below it, no observed mask qualifies and supplementary
+signals (Phase 4) become mandatory rather than optional. SBI qualifies at no tolerance
+considered.
 
 ## Candidate work, not yet scheduled
 
