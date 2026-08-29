@@ -32,6 +32,27 @@ import java.util.Locale;
 @Service
 public class InsightsService {
 
+    /** Below this, month-to-month variance in a category is more likely to be ordinary noise
+     *  than a genuine trend worth surfacing -- gates both the mover sentences and the budget
+     *  recommendation. */
+    private static final double MOVER_SIGNIFICANCE_THRESHOLD_PCT = 15.0;
+
+    /** How many months of prior activity to average "recent average" against -- long enough to
+     *  smooth out one unusual month, short enough to still reflect recent habits rather than a
+     *  stale pattern from a year ago. */
+    private static final int PRIOR_MONTHS_WINDOW = 4;
+
+    /** How many category-mover sentences to include per report -- enough to be useful without
+     *  flooding the Dashboard's condensed preview, which shows only the first three sentences of
+     *  the whole list regardless of type. */
+    private static final int MAX_MOVER_SENTENCES = 3;
+
+    /** Grouping key for a transaction with neither a merchant nor a description. Excluded from
+     *  ever winning "top merchant" below: several unrelated blank-labeled transactions summing
+     *  past a real, identified merchant is a misleading answer to "who did you spend the most
+     *  with", not a genuine one. */
+    private static final String UNKNOWN_MERCHANT = "Unknown";
+
     private final TransactionRepository transactionRepository;
     private final AccountRepository accountRepository;
     private final CategoryRepository categoryRepository;
@@ -102,6 +123,21 @@ public class InsightsService {
                 .ifPresent(top -> sentences.add(String.format(Locale.ENGLISH,
                         "%s was your biggest category at \u20b9%,.0f.", top.getKey(), top.getValue())));
 
+        // Bug fix: a category with real spend but no prior-month history got pctChange == null
+        // (nothing to compute a % change from), and every mover-based sentence below filters on
+        // pctChange != null -- so a genuinely new spending pattern, often the most notable thing
+        // to say, was silently invisible everywhere. Only fires when there IS a prior-month
+        // baseline for something to be new against: with none (a user's very first month of
+        // data), every category would trivially satisfy pctChange == null, and flagging all of
+        // them as "new" would not be a meaningful observation, just the absence of history yet.
+        if (!priorMonths.isEmpty()) {
+            movers.stream()
+                    .filter(m -> m.pctChange() == null)
+                    .max(Comparator.comparing(InsightsDto.CategoryMover::current))
+                    .ifPresent(m -> sentences.add(String.format(Locale.ENGLISH,
+                            "%s is a new category this month, totaling \u20b9%,.0f.", m.category(), m.current())));
+        }
+
         // The one real "recommendation" in this list: a category trending up with no budget set
         // for it yet is exactly the situation Budgets exists to help with, and it's grounded in
         // the mover data computed above rather than invented. Placed right after the headline
@@ -112,7 +148,7 @@ public class InsightsService {
         Map<String, UUID> categoryIdByName = categoriesById.entrySet().stream()
                 .collect(Collectors.toMap(e -> e.getValue().getName(), Map.Entry::getKey, (a, b) -> a));
         movers.stream()
-                .filter(m -> m.pctChange() != null && m.pctChange() >= 15)
+                .filter(m -> m.pctChange() != null && m.pctChange() >= MOVER_SIGNIFICANCE_THRESHOLD_PCT)
                 .filter(m -> {
                     UUID categoryId = categoryIdByName.get(m.category());
                     return categoryId == null || !categoryIdsWithBudget.contains(categoryId);
@@ -121,12 +157,15 @@ public class InsightsService {
                 .ifPresent(m -> sentences.add(String.format(Locale.ENGLISH,
                         "Consider setting a budget for %s — it's trending up and doesn't have one yet.", m.category())));
 
-        movers.stream().filter(m -> m.pctChange() != null && Math.abs(m.pctChange()) >= 15).limit(3).forEach(m -> {
-            String dir = m.pctChange() > 0 ? "more" : "less";
-            sentences.add(String.format(Locale.ENGLISH,
-                    "%s spend was %.0f%% %s than your recent average (\u20b9%,.0f vs usual \u20b9%,.0f).",
-                    m.category(), Math.abs(m.pctChange()), dir, m.current(), m.priorAverage()));
-        });
+        movers.stream()
+                .filter(m -> m.pctChange() != null && Math.abs(m.pctChange()) >= MOVER_SIGNIFICANCE_THRESHOLD_PCT)
+                .limit(MAX_MOVER_SENTENCES)
+                .forEach(m -> {
+                    String dir = m.pctChange() > 0 ? "more" : "less";
+                    sentences.add(String.format(Locale.ENGLISH,
+                            "%s spend was %.0f%% %s than your recent average (\u20b9%,.0f vs usual \u20b9%,.0f).",
+                            m.category(), Math.abs(m.pctChange()), dir, m.current(), m.priorAverage()));
+                });
 
         // Bug fix: falling back from merchant to description still isn't guaranteed non-null --
         // description is optional on transaction creation (TransactionDto.CreateRequest has no
@@ -138,9 +177,17 @@ public class InsightsService {
                 .collect(Collectors.groupingBy(
                         t -> Optional.ofNullable(t.getMerchant()).filter(s -> !s.isBlank())
                                 .or(() -> Optional.ofNullable(t.getDescription()).filter(s -> !s.isBlank()))
-                                .orElse("Unknown"),
+                                .orElse(UNKNOWN_MERCHANT),
                         Collectors.reducing(BigDecimal.ZERO, refunds::reportableAmount, BigDecimal::add)));
-        merchantTotals.entrySet().stream().max(Map.Entry.comparingByValue())
+        // Bug fix: several unrelated transactions that merely lack a merchant/description all
+        // collapse into the same UNKNOWN_MERCHANT bucket and get summed together -- if that sum
+        // happened to be the largest, the sentence named a fabricated "merchant" (the literal
+        // word "Unknown") that never actually existed, rather than a real answer to "who did you
+        // spend the most with". Excluded outright; if nothing else has a real name this month,
+        // the sentence is omitted, not wrong.
+        merchantTotals.entrySet().stream()
+                .filter(e -> !UNKNOWN_MERCHANT.equals(e.getKey()))
+                .max(Map.Entry.comparingByValue())
                 .ifPresent(top -> sentences.add(String.format(Locale.ENGLISH,
                         "Your top merchant %s was \"%s\" at \u20b9%,.0f.", periodLabel, top.getKey(), top.getValue())));
 
@@ -203,7 +250,7 @@ public class InsightsService {
         boolean reportingMonthIsCurrent =
                 currentMonth.equals(YearMonth.now(UserZone.forUser(userRepository, userId)).toString());
         List<String> priorMonths = months.size() > 1
-                ? months.subList(Math.max(0, months.size() - 4), months.size() - 1)
+                ? months.subList(Math.max(0, months.size() - PRIOR_MONTHS_WINDOW), months.size() - 1)
                 : List.of();
 
         return Optional.of(new Pipeline(currentMonth, reportingMonthIsCurrent, priorMonths, txns, categoriesById, refunds));
