@@ -225,6 +225,20 @@ public interface StatementImportRepository extends JpaRepository<StatementImport
     @Query(value = "SELECT COUNT(DISTINCT user_id) FROM statement_imports", nativeQuery = true)
     long countDistinctUsersEverActivated();
 
+    /** {@code FinancialJourneyService}'s FIRST_IMPORT milestone: this ONE user's earliest
+     *  statement import ever, regardless of whether it (or every other import they've made) has
+     *  since been deleted. Same bypass, same "a milestone is a permanent behavioral fact once
+     *  reached" reasoning as {@link #countDistinctUsersEverActivated} just above -- a user who
+     *  deletes their only statement (to fix a bad import and re-upload, say) plainly did still
+     *  import a statement at some point, and the dashboard's own onboarding checklist must not
+     *  un-tick that. Epoch millis, not {@code Instant}: {@code findObjectsUnreferencedSince}
+     *  below explains why a native query here has no other reliable way to hand back a JDBC
+     *  timestamp column without naming FG-019's banned {@code java.sql.Timestamp}. Null when this
+     *  user has never imported a statement (a bare SQL {@code MIN} over zero rows). */
+    @Query(value = "SELECT (EXTRACT(EPOCH FROM MIN(imported_at)) * 1000)::bigint FROM statement_imports WHERE user_id = :userId",
+           nativeQuery = true)
+    Long findEarliestImportedAtEverEpochMillis(@Param("userId") UUID userId);
+
     @Query("SELECT COUNT(s) FROM StatementImport s WHERE s.importedAt >= :threshold AND s.transactionsSkipped > 0")
     long countWithSkippedRowsAfter(@Param("threshold") Instant threshold);
 
