@@ -886,7 +886,7 @@ class DashboardServiceTest {
         for (int i = 0; i < 8; i++) {
             txns.add(txn(BigDecimal.ZERO, Transaction.Type.EXPENSE, july, Transaction.ReconciliationStatus.OK));
         }
-        when(transactionRepository.findByUserId(userId)).thenReturn(txns);
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(txns);
 
         DashboardSummaryDto summary = dashboardService.summarize(userId);
 
@@ -915,7 +915,7 @@ class DashboardServiceTest {
             txns.add(txn(new BigDecimal("500.00"), Transaction.Type.INCOME,
                     LocalDate.of(2026, 7, 1 + i), Transaction.ReconciliationStatus.OK));
         }
-        when(transactionRepository.findByUserId(userId)).thenReturn(txns);
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(txns);
 
         // With a card: 25000/100000 = 25% utilization.
         DashboardSummaryDto withCard = serviceWithCard.summarize(userId);
@@ -945,7 +945,7 @@ class DashboardServiceTest {
             txns.add(txn(new BigDecimal("100.00"), Transaction.Type.EXPENSE, d, Transaction.ReconciliationStatus.OK));
             txns.add(txn(new BigDecimal("200.00"), Transaction.Type.INCOME, d, Transaction.ReconciliationStatus.OK));
         }
-        when(transactionRepository.findByUserId(userId)).thenReturn(txns);
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(txns);
 
         DashboardSummaryDto summary = dashboardService.summarize(userId);
 
