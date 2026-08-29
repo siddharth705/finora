@@ -19,9 +19,21 @@ import java.math.BigDecimal;
  *
  * <p>The account's own prior statement already recorded where the ledger stood at the end of its
  * period. When it exists, it is a stronger source of truth for "where did this new statement's
- * period begin" than anything re-derived from a single PDF's own rows -- the same "the ledger's
- * own history outranks a fresh guess" reasoning {@code ImportService.isMostRecentStatementForAccount}
- * already applies on the closing side.
+ * period begin" than a value re-derived from a single PDF's own rows THAT DOES NOT EVEN
+ * RECONCILE AGAINST THAT SAME PDF'S OWN TOTALS -- the same "the ledger's own history outranks a
+ * fresh guess" reasoning {@code ImportService.isMostRecentStatementForAccount} already applies on
+ * the closing side.
+ *
+ * <p><b>This class does not decide WHEN it should be consulted -- its caller does, deliberately.</b>
+ * {@link #resolve} always prefers the prior close whenever it disagrees with what it is handed; it
+ * has no way to tell a provably-wrong derivation (PNB's case) apart from a statement whose own
+ * opening balance is genuinely correct but differs from Finora's own history because of a real
+ * gap -- a statement the user never imported, during which the account moved. That distinction
+ * needs information this class does not have: whether the statement's OWN totals reconcile
+ * against its OWN claimed closing balance. {@code ImportService.persistSection} makes that check
+ * first (reusing {@link ClosingBalanceGuard}'s own arithmetic) and calls this class only when it
+ * fails -- so a statement whose own numbers already check out is never second-guessed by this
+ * class, no matter what it disagrees with.
  *
  * <p><b>Refusing to guess when there is nothing to carry forward.</b> With no prior statement (the
  * account's first import, or the target account has no earlier statement with a stated period and

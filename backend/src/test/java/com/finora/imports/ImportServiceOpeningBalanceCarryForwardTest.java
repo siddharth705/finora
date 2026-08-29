@@ -188,4 +188,42 @@ class ImportServiceOpeningBalanceCarryForwardTest {
                 .isEqualByComparingTo(new BigDecimal("35354.97"));
         assertThat(response.warnings()).noneMatch(w -> w.contains("carried forward"));
     }
+
+    @Test
+    void secondImport_keepsItsOwnOpeningBalance_whenItReconcilesAgainstItsOwnTotals_evenIfItDisagreesWithThePriorClose() throws Exception {
+        // A statement's own opening balance disagreeing with the prior statement's close is not
+        // always a defect to correct -- it can mean the user genuinely never imported an
+        // intermediate statement, and the bank's own printed figure already reflects everything
+        // that happened in between (a deposit here, say). That figure is still correct FOR THIS
+        // STATEMENT: it reconciles cleanly against this statement's own totals and claimed
+        // closing balance, which is what distinguishes it from PNB's case (wrong by construction,
+        // and provably so against ITS OWN totals). Carry-forward must never override a statement
+        // whose own arithmetic already checks out, no matter what Finora's own (necessarily
+        // incomplete) history says.
+        var juneRow = row(LocalDate.of(2026, 6, 30), "SALARY", new BigDecimal("35354.97"), "INCOME");
+        var juneRequest = new ConfirmRequest(null, List.of(juneRow), accountId, null,
+                BigDecimal.ZERO, new BigDecimal("35354.97"), null,
+                LocalDate.of(2026, 5, 31), LocalDate.of(2026, 6, 30), null, null);
+        importService.confirm(userId, dummyFile(), juneRequest);
+
+        when(statementImportRepository.findPriorStatementClosingBalanceForAccount(
+                eq(userId), eq(accountId), eq(LocalDate.of(2026, 6, 30)), any()))
+                .thenReturn(List.of(new BigDecimal("35354.97")));
+
+        // A cash deposit of 4,645.03 happened in a period the user never imported, so the July
+        // statement's own opening balance (40,000.00) is genuinely higher than June's close --
+        // and correctly reconciles against July's own single 5,000.00 expense to its own claimed
+        // closing balance of 35,000.00.
+        var julyRow = row(LocalDate.of(2026, 7, 5), "RENT", new BigDecimal("5000.00"), "EXPENSE");
+        var julyRequest = new ConfirmRequest(null, List.of(julyRow), accountId, null,
+                new BigDecimal("40000.00"), new BigDecimal("35000.00"), null,
+                LocalDate.of(2026, 6, 30), LocalDate.of(2026, 7, 31), null, null);
+
+        var response = importService.confirm(userId, dummyFile(), julyRequest);
+
+        assertThat(secondSavedStatementImport().getOpeningBalance())
+                .as("July's own opening balance reconciles against its own totals -- must not be overwritten")
+                .isEqualByComparingTo(new BigDecimal("40000.00"));
+        assertThat(response.warnings()).noneMatch(w -> w.contains("carried forward"));
+    }
 }

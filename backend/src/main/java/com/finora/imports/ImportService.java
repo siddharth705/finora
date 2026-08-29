@@ -1026,6 +1026,19 @@ public class ImportService {
         // simply the confirmed repro. See OpeningBalanceCarryForward's own comment for the full
         // reasoning.
         //
+        // Carry-forward is consulted only when this statement's OWN opening balance does not
+        // already reconcile against its own totals and claimed closing balance -- reusing the
+        // exact arithmetic ClosingBalanceGuard checks the closing balance with below, just run
+        // early and read for a different purpose. An opening balance that DOES reconcile is
+        // correct FOR THIS STATEMENT even when it disagrees with the account's prior statement:
+        // that disagreement can mean a real gap (a statement the user genuinely never imported,
+        // during which the account moved), not a defect, and Finora's own necessarily-incomplete
+        // history is not entitled to override a statement whose own printed numbers are
+        // internally consistent. PNB's case is the opposite: its derived opening balance is wrong
+        // by construction and provably does not reconcile against ITS OWN totals -- that
+        // provable failure, not a mere disagreement with the ledger, is what carry-forward exists
+        // to correct.
+        //
         // Only consulted when a period start was actually printed -- with none, there is no date
         // to look an earlier statement up by, and this leaves the derived/stated value exactly as
         // before rather than guessing. findPriorStatementClosingBalanceForAccount runs BEFORE this
@@ -1034,7 +1047,13 @@ public class ImportService {
         BigDecimal effectiveOpeningBalance = request.statementOpeningBalance();
         OpeningBalanceCarryForward.Decision openingBalanceDecision =
                 new OpeningBalanceCarryForward.Decision(effectiveOpeningBalance, false, null);
-        if (request.statementPeriodStart() != null) {
+        Account.Type accountTypeForOpeningBalanceCheck = accountRepository.findById(accountId)
+                .map(Account::getAccountType).orElse(null);
+        boolean ownOpeningBalanceAlreadyReconciles = ClosingBalanceGuard.assess(accountTypeForOpeningBalanceCheck,
+                        effectiveOpeningBalance, request.statementClosingBalance(),
+                        totalCredits, totalDebits, toInsert.size(), skipped)
+                .verdict() == ClosingBalanceGuard.Verdict.CORROBORATED;
+        if (!ownOpeningBalanceAlreadyReconciles && request.statementPeriodStart() != null) {
             List<BigDecimal> priorClosingBalance = statementImportRepository
                     .findPriorStatementClosingBalanceForAccount(userId, accountId,
                             request.statementPeriodStart(), PageRequest.of(0, 1));
