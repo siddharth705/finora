@@ -30,9 +30,15 @@ import type { Row } from '../../fixtures/statements';
  * fixture of genuinely unrecognisable descriptions therefore produces zero learning events, and
  * reads as a broken queue when it is a working one. See the explicit test at the end of this block.
  */
+// Not Swiggy/Uber: MerchantSeedService now seeds every new user with 34 curated brand merchants
+// (APPROVED, not TEMPORARY) at registration, including both of those, specifically so that a real
+// transaction naming them resolves to the seeded row instead of minting a guess -- which is exactly
+// the behaviour this file's "unknown" fixture needs to NOT trigger. Starbucks/Airtel are real
+// CategoryRules keywords (Dining, Utilities) that stay off the curated list, so the import still
+// resolves a confident category and queues learning, but the merchant identity is genuinely new.
 const UNKNOWN: Row[] = [
-  { date: '2026-06-03', description: 'SWIGGY ORDER 4471', amount: 640.0, type: 'DEBIT' },
-  { date: '2026-06-04', description: 'UBER TRIP 8891', amount: 300.0, type: 'DEBIT' },
+  { date: '2026-06-03', description: 'STARBUCKS COFFEE 2291', amount: 640.0, type: 'DEBIT' },
+  { date: '2026-06-04', description: 'AIRTEL RECHARGE 88817', amount: 300.0, type: 'DEBIT' },
 ];
 
 /** Descriptions nothing can categorise -- used only where "the engine had to guess" is the point. */
@@ -44,12 +50,14 @@ test.describe('Phase 9 — temporary merchant lifecycle', () => {
   test('an unknown merchant arrives as a guess, clearly marked as one', async ({ api, user }) => {
     await api.importStatement(UNKNOWN, { accountName: 'Primary' });
 
-    const merchants = await merchantsFor(user.id);
-    expect(merchants.length).toBeGreaterThanOrEqual(2);
+    // Scoped to TEMPORARY, not merchantsFor(user.id) as a whole -- every fresh user already has 34
+    // curated merchants from registration (MerchantSeedService), APPROVED by design, not guesses.
+    // The claim under test is about what THIS import produced, not about every row the user owns.
+    const guessed = (await merchantsFor(user.id)).filter((m) => m.lifecycle_status === 'TEMPORARY');
     expect(
-      merchants.every((m) => m.lifecycle_status === 'TEMPORARY'),
+      guessed.length,
       'a merchant the engine invented must not present itself as confirmed'
-    ).toBe(true);
+    ).toBeGreaterThanOrEqual(2);
   });
 
   test('learning is applied after the import commits, not during it', async ({ api, user }) => {
@@ -104,7 +112,7 @@ test.describe('Phase 9 — temporary merchant lifecycle', () => {
       // whichever row happens to come back first -- both merchants appear in `before`, so a
       // positional lookup would as often as not assert about the one that did not change.
       const merchants = await merchantsFor(user.id);
-      const repeated = merchants.find((m) => /swiggy/i.test(m.canonical_name))!;
+      const repeated = merchants.find((m) => /starbucks/i.test(m.canonical_name))!;
       const row = after.find((r) => r.merchant_id === repeated.id)!;
       expect(row.confirmation_count, 'a second sighting must strengthen what is already known')
         .toBeGreaterThan(1);
@@ -147,8 +155,10 @@ test.describe('Phase 9 — temporary merchant lifecycle', () => {
    */
   test('a merchant with transactions cannot be discarded', async ({ adminApi, api, user }) => {
     await api.importStatement(UNKNOWN, { accountName: 'Primary' });
+    // Not merchants[0] -- created_at ordering puts the 34 registration-seeded curated merchants
+    // first, and they have no transactions until something imports one of their own brand names.
     const merchants = await merchantsFor(user.id);
-    const withTransactions = merchants[0];
+    const withTransactions = merchants.find((m) => m.lifecycle_status === 'TEMPORARY')!;
 
     const response = await adminApi.deleteRaw(
       `/admin/merchant-review/users/${user.id}/merchants/${withTransactions.id}`
@@ -164,7 +174,9 @@ test.describe('Phase 9 — temporary merchant lifecycle', () => {
       await api.importStatement(UNKNOWN, { accountName: 'Primary' });
       await waitForLearningToSettle(user.id, learningEventsFor);
       const before = await learningRowsFor(user.id);
-      const merchant = (await merchantsFor(user.id))[0];
+      // Not [0] -- see the "cannot be discarded" test above for why created_at ordering picks a
+      // registration-seeded curated merchant instead of this import's guess.
+      const merchant = (await merchantsFor(user.id)).find((m) => m.lifecycle_status === 'TEMPORARY')!;
 
       const response = await adminApi.post(
         `/admin/merchant-review/users/${user.id}/merchants/${merchant.id}/approve`, {}
@@ -193,7 +205,9 @@ test.describe('Phase 9 — temporary merchant lifecycle', () => {
     await api.importStatement(UNKNOWN, { accountName: 'Primary' });
     await waitForLearningToSettle(user.id, learningEventsFor);
 
-    const merchants = await merchantsFor(user.id);
+    // Filtered to TEMPORARY, not the raw list -- see the "cannot be discarded" test above for why
+    // an unfiltered merchantsFor() no longer lines up with "the merchants this import created".
+    const merchants = (await merchantsFor(user.id)).filter((m) => m.lifecycle_status === 'TEMPORARY');
     const [absorbed, surviving] = merchants;
 
     // A merge target has to be approved first — you cannot fold one guess into another.
@@ -241,9 +255,10 @@ test.describe('Phase 9 — temporary merchant lifecycle', () => {
     await api.importStatement(UNCATEGORISABLE, { accountName: 'Primary' });
 
     // The merchant still exists (it has transactions attached) and is still marked as a guess.
-    const merchants = await merchantsFor(user.id);
-    expect(merchants.length).toBeGreaterThan(0);
-    expect(merchants.every((m) => m.lifecycle_status === 'TEMPORARY')).toBe(true);
+    // Scoped to TEMPORARY, not merchantsFor(user.id) as a whole -- see the first test in this
+    // file for why: every fresh user already owns 34 curated, APPROVED merchants from registration.
+    const guessed = (await merchantsFor(user.id)).filter((m) => m.lifecycle_status === 'TEMPORARY');
+    expect(guessed.length).toBeGreaterThan(0);
 
     // But nothing was learned from it, and nothing was queued to be.
     expect(await learningEventsFor(user.id), 'a guess must not enter the learning queue').toEqual([]);
@@ -260,7 +275,9 @@ test.describe('Phase 9 — temporary merchant lifecycle', () => {
   test('renaming corrects the guess without disturbing what it is attached to',
     async ({ adminApi, api, user }) => {
       await api.importStatement(UNKNOWN, { accountName: 'Primary' });
-      const merchant = (await merchantsFor(user.id))[0];
+      // Not [0] -- see the "cannot be discarded" test above for why created_at ordering picks a
+      // registration-seeded curated merchant instead of this import's guess.
+      const merchant = (await merchantsFor(user.id)).find((m) => m.lifecycle_status === 'TEMPORARY')!;
       const attached = await count(
         'select count(*) from transactions where merchant_id = $1', [merchant.id]
       );
@@ -320,13 +337,21 @@ test.describe('Phase 15 — data integrity', () => {
   });
 
   /** A merchant marked TEMPORARY that has no transactions and no aliases is a leak: something
-   *  created it and nothing is using it. Scoped to this user so other tests cannot make it noisy. */
+   *  created it and nothing is using it. Scoped to this user so other tests cannot make it noisy.
+   *
+   *  Scoped to lifecycle_status = 'TEMPORARY' in the query itself, not just in this comment --
+   *  MerchantSeedService now gives every new user 34 curated, APPROVED merchants at registration,
+   *  unattached until a real transaction first matches one of their names. That is the intended
+   *  shape of the catalog, not a leak: nothing "created" those as a guess, so their being unattached
+   *  proves nothing about whether a guess ever goes unclaimed. The TEMPORARY filter is what makes
+   *  this assertion mean what its own name says. */
   test('no merchant is created without something attaching to it', async ({ api, user }) => {
     await api.importStatement(UNKNOWN, { accountName: 'Primary' });
 
     const stranded = await query<{ canonical_name: string }>(
       `select m.canonical_name from merchants m
         where m.user_id = $1
+          and m.lifecycle_status = 'TEMPORARY'
           and not exists (select 1 from transactions t where t.merchant_id = m.id)
           and not exists (select 1 from merchant_aliases a where a.merchant_id = m.id)`,
       [user.id]
