@@ -100,7 +100,7 @@ class UserControllerIT extends AbstractIntegrationTest {
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(response.getHeaders().getContentType()).isEqualTo(MediaType.parseMediaType("application/zip"));
         String disposition = response.getHeaders().getFirst(HttpHeaders.CONTENT_DISPOSITION);
-        assertThat(disposition).contains("attachment").contains("finora-data-export-").contains(".zip");
+        assertThat(disposition).contains("attachment").contains("fynora-data-export-").contains(".zip");
 
         List<String> entryNames = new java.util.ArrayList<>();
         try (ZipInputStream zis = new ZipInputStream(new ByteArrayInputStream(response.getBody()))) {

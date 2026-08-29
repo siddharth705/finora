@@ -212,6 +212,34 @@ describe('Banks', () => {
     await waitFor(() => expect(adminBanksApi.delete).toHaveBeenCalledWith('hdfc-custom'));
   });
 
+  /** Bug fix: deleting the only bank on a page beyond the first used to leave the admin
+   *  stranded looking at an empty table with no obvious way back -- Pagination still pointed at
+   *  the now-nonexistent page. Confirms the page backs off automatically instead. */
+  it('backs off to the previous page after deleting the last bank on a later page', async () => {
+    mockAuth(['BANK_MANAGE']);
+    vi.mocked(adminBanksApi.list).mockResolvedValueOnce(
+      { content: [HDFC], page: 0, size: 20, totalElements: 21, totalPages: 2 }
+    );
+    vi.mocked(adminBanksApi.delete).mockResolvedValue(undefined as any);
+    const user = userEvent.setup();
+
+    renderPage();
+    await waitFor(() => expect(screen.getByText('HDFC Custom')).toBeInTheDocument());
+
+    vi.mocked(adminBanksApi.list).mockResolvedValueOnce({
+      content: [{ ...HDFC, id: 'iob-custom', shortName: 'IOB Custom' }],
+      page: 1, size: 20, totalElements: 21, totalPages: 2,
+    });
+    await user.click(screen.getByRole('button', { name: 'Next page' }));
+    await waitFor(() => expect(screen.getByText('IOB Custom')).toBeInTheDocument());
+
+    vi.mocked(adminBanksApi.list).mockResolvedValueOnce(pageOf(HDFC));
+    await user.click(screen.getByTitle('Delete'));
+    await user.click(await screen.findByRole('button', { name: 'Remove' }));
+
+    await waitFor(() => expect(adminBanksApi.list).toHaveBeenLastCalledWith(0, 20));
+  });
+
   it('creates a new bank via the Add bank form', async () => {
     mockAuth(['BANK_MANAGE']);
     vi.mocked(adminBanksApi.list).mockResolvedValue(pageOf());

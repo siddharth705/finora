@@ -77,7 +77,7 @@ class ImportServiceAskOnceTest {
                 .thenAnswer(inv -> inv.getArgument(1));
         reconciliationService = mock(ReconciliationService.class);
         recurringService = mock(RecurringService.class);
-        DuplicateDetector duplicateDetector = new DuplicateDetector(transactionRepository);
+        DuplicateDetector duplicateDetector = new DuplicateDetector(transactionRepository, TestAccountRepositories.anyLive());
         CsvParser csvParser = new CsvParser();
         TransactionNormalizer transactionNormalizer = new TransactionNormalizer(categorizationService, duplicateDetector, com.finora.imports.TestRuleEngines.empty());
         StatementValidator statementValidator = new StatementValidator(com.finora.imports.product.ProductDiscovery.standard());

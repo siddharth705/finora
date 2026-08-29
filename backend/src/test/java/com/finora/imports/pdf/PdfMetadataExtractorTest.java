@@ -35,6 +35,62 @@ class PdfMetadataExtractorTest {
         assertThat(metadata.ifscCode()).isEqualTo("SBIN0001234");
     }
 
+    /**
+     * ACCOUNT_PRODUCT_BANNER. A real BOB savings statement never prints the phrase "Account
+     * Number" anywhere: its account identity lives only in a per-page product banner that names
+     * the product and states the number after a hyphen, with the holder's name leading the same
+     * line. {@code PdfTableLocator} already recognises this exact shape (SECTION_MARKER plus
+     * ACCOUNT_NUMBER_IN_MARKER) and keeps the first such banner in the section's auxiliary text --
+     * verified directly against the real document -- so the line reaches this class unchanged and
+     * simply matched nothing here.
+     *
+     * <p>Two details are load-bearing and both come from the real line's measured shape: the
+     * holder name PRECEDES the banner, so this pattern must find() rather than match a whole
+     * line; and the flattened line carries more than one space before the hyphen, so the
+     * separator must be whitespace-tolerant.
+     *
+     * <p>Digits here are altered, never the real document's -- the geometry and token order are
+     * what this test exercises, and the real value has no business in the repository.
+     */
+    @Test
+    void extract_recognizesAnAccountNumber_fromAProductBannerNamingTheAccountType() {
+        // Only the token ORDER and the doubled space before the hyphen are corpus-derived.
+        var metadata = extractor.extract(
+                List.of("ANANYA VERMA SAVINGS ACCOUNT  - 41870200031276")); // synthetic-ok: invented value and name
+
+        assertThat(metadata.accountNumberMasked()).endsWith("1276");
+    }
+
+    /** The same banner shape for a product other than savings, proving the tier keys off the
+     *  shared ACCOUNT_PRODUCT_LABELS vocabulary rather than one hardcoded word. */
+    @Test
+    void extract_recognizesAProductBannerAccountNumber_forANonSavingsProduct() {
+        var metadata = extractor.extract(
+                List.of("CURRENT ACCOUNT - 90441200556613")); // synthetic-ok: invented, no corpus document supplied it
+
+        assertThat(metadata.accountNumberMasked()).endsWith("6613");
+    }
+
+    /** A banner with no number states a product, not an identity -- it must not resolve, and must
+     *  not leave a partial or fabricated value behind. */
+    @Test
+    void extract_doesNotResolveAnAccountNumber_fromAProductBannerCarryingNoDigits() {
+        var metadata = extractor.extract(List.of("SAVINGS ACCOUNT - PREMIUM TIER"));
+
+        assertThat(metadata.accountNumberMasked()).isNull();
+    }
+
+    /** Precedence: the banner tier is last, so a document that already stated its number the
+     *  ordinary way keeps that value even when a banner is also present. */
+    @Test
+    void extract_prefersAnExplicitAccountNumberLabel_overAProductBannerOnAnotherLine() {
+        var metadata = extractor.extract(List.of(
+                "Account Number: 000123456789", // synthetic-ok: reuses this file's existing placeholder
+                "ANANYA VERMA SAVINGS ACCOUNT  - 41870200031276")); // synthetic-ok: invented, as above
+
+        assertThat(metadata.accountNumberMasked()).endsWith("6789");
+    }
+
     @Test
     void extract_recognizesAnAccountNumber_whenTheValuePrecedesItsLabelOnTheSameLine() {
         var metadata = extractor.extract(List.of("100200300400599 Account Number"));
@@ -335,6 +391,121 @@ class PdfMetadataExtractorTest {
 
         assertThat(metadata.statementPeriodStart()).isEqualTo(java.time.LocalDate.of(2026, 5, 1));
         assertThat(metadata.statementPeriodEnd()).isEqualTo(java.time.LocalDate.of(2026, 7, 31));
+    }
+
+    // ===== Statement-period recovery (F-item: statement-period extraction gap) =====
+    //
+    // All eight real credit-card statements in the corpus print a statement or billing period;
+    // only one was extracted. Each test below is one measured failure mode. Dates are structural
+    // (the shape is the subject), never a real document's own period.
+
+    /** ICICI shape: a full month NAME. DATE_FORMATS carried only the abbreviated "MMM" form. */
+    @Test
+    void extract_recognizesAStatementPeriod_statedWithFullMonthNames() {
+        var metadata = extractor.extract(List.of("Statement period : June 12, 2026 to July 11, 2026"));
+
+        assertThat(metadata.statementPeriodStart()).isEqualTo(java.time.LocalDate.of(2026, 6, 12));
+        assertThat(metadata.statementPeriodEnd()).isEqualTo(java.time.LocalDate.of(2026, 7, 11));
+    }
+
+    /** SBI shape: a 2-digit year, AND unrelated trailing content sharing the line. Verified as two
+     *  independent gaps -- removing the trailing text alone still failed to parse. */
+    @Test
+    void extract_recognizesAStatementPeriod_withATwoDigitYearAndTrailingContentOnTheLine() {
+        var metadata = extractor.extract(List.of("Statement Period: 11 Jul 26 to 10 Aug 26   Amount"));
+
+        assertThat(metadata.statementPeriodStart()).isEqualTo(java.time.LocalDate.of(2026, 7, 11));
+        assertThat(metadata.statementPeriodEnd()).isEqualTo(java.time.LocalDate.of(2026, 8, 10));
+    }
+
+    /** HDFC shape: the field is labelled "Billing Period", a label the vocabulary never carried. */
+    @Test
+    void extract_recognizesABillingPeriod_asAStatementPeriod() {
+        var metadata = extractor.extract(List.of("Billing Period 15 Jun 2026 to 14 Jul 2026"));
+
+        assertThat(metadata.statementPeriodStart()).isEqualTo(java.time.LocalDate.of(2026, 6, 15));
+        assertThat(metadata.statementPeriodEnd()).isEqualTo(java.time.LocalDate.of(2026, 7, 14));
+    }
+
+    /** HSBC shape: an UPPERCASE month name. "24 JUN 2026" failed where "24 Jun 2026" parsed --
+     *  DateTimeFormatter is case-sensitive by default, and that alone lost the document. */
+    @Test
+    void extract_recognizesAStatementPeriod_withUppercaseMonthNames() {
+        var metadata = extractor.extract(List.of("Statement Period 24 JUN 2026 To 23 JUL 2026"));
+
+        assertThat(metadata.statementPeriodStart()).isEqualTo(java.time.LocalDate.of(2026, 6, 24));
+        assertThat(metadata.statementPeriodEnd()).isEqualTo(java.time.LocalDate.of(2026, 7, 23));
+    }
+
+    /** AU shape: the period is stated inside a sentence, hyphen-separated, and the START DATE
+     *  CARRIES NO YEAR -- so the year must be inferred from the end date. */
+    @Test
+    void extract_recognizesAStatementPeriod_fromAParenthesizedHyphenatedRangeInASentence() {
+        var metadata = extractor.extract(
+                List.of("Statement for your credit card ending with 6385 (19 Mar - 18 Apr 2026)")); // synthetic-ok
+
+        assertThat(metadata.statementPeriodStart()).isEqualTo(java.time.LocalDate.of(2026, 3, 19));
+        assertThat(metadata.statementPeriodEnd()).isEqualTo(java.time.LocalDate.of(2026, 4, 18));
+    }
+
+    /**
+     * The year-inference trap. When only the end date states a year and the range crosses a year
+     * boundary, copying that year onto the start dates it a YEAR LATE. A December-to-January
+     * period must start in the PRECEDING year. A wrong period corrupts an identity signal
+     * silently rather than failing loudly, which is why this case is asserted explicitly.
+     */
+    @Test
+    void extract_infersThePrecedingYear_whenAHyphenatedRangeCrossesAYearBoundary() {
+        var metadata = extractor.extract(
+                List.of("Statement for your credit card ending with 6385 (19 Dec - 18 Jan 2026)")); // synthetic-ok
+
+        assertThat(metadata.statementPeriodStart()).isEqualTo(java.time.LocalDate.of(2025, 12, 19));
+        assertThat(metadata.statementPeriodEnd()).isEqualTo(java.time.LocalDate.of(2026, 1, 18));
+    }
+
+    /** HDFC's REAL shape, as the extractor receives it: a hyphen-separated range that precedes a
+     *  "Billing Period" trailing label. The idealised "Billing Period <range>" fixture above
+     *  passed while the real document still failed -- the label trails its value here. */
+    @Test
+    void extract_recognizesABillingPeriod_whenTheHyphenatedRangePrecedesTheLabel() {
+        var metadata = extractor.extract(List.of("15 Jun, 2026 - 14 Jul, 2026 Billing Period"));
+
+        assertThat(metadata.statementPeriodStart()).isEqualTo(java.time.LocalDate.of(2026, 6, 15));
+        assertThat(metadata.statementPeriodEnd()).isEqualTo(java.time.LocalDate.of(2026, 7, 14));
+    }
+
+    /** SBI's REAL shape: unrelated text precedes the label ("for Statement Period: ..."), which
+     *  labelPattern's start-anchor rejects outright. */
+    @Test
+    void extract_recognizesAStatementPeriod_whenTextPrecedesTheLabelOnTheSameLine() {
+        var metadata = extractor.extract(List.of("for Statement Period: 11 Jul 26 to 10 Aug 26"));
+
+        assertThat(metadata.statementPeriodStart()).isEqualTo(java.time.LocalDate.of(2026, 7, 11));
+        assertThat(metadata.statementPeriodEnd()).isEqualTo(java.time.LocalDate.of(2026, 8, 10));
+    }
+
+    /** The guard on the unanchored form: prose mentioning a period must never become a field.
+     *  Safety comes from requiring a complete date range straight after the label, not from an
+     *  anchor -- so this asserts the prose case stays null. */
+    @Test
+    void extract_doesNotReadAProseMentionOfAPeriod_asAStatementPeriodField() {
+        var metadata = extractor.extract(List.of(
+                "Interest free credit period is up to 50 days from 01 Jun 2026 onwards."));
+
+        assertThat(metadata.statementPeriodStart()).isNull();
+        assertThat(metadata.statementPeriodEnd()).isNull();
+    }
+
+    /** Axis/IndusInd/HSBC shape: the label is a grid header and its value sits on a LATER line,
+     *  so no same-line pattern can reach it. */
+    @Test
+    void extract_recognizesAStatementPeriod_whenTheValueSitsOnALaterLineThanItsGridLabel() {
+        var metadata = extractor.extract(List.of(
+                "Statement Period                    Payment Due Date",
+                "01 Jun 2026 to 30 Jun 2026          20 Jul 2026"));
+
+        assertThat(metadata.statementPeriodStart()).isEqualTo(java.time.LocalDate.of(2026, 6, 1));
+        assertThat(metadata.statementPeriodEnd()).isEqualTo(java.time.LocalDate.of(2026, 6, 30));
     }
 
     @Test
@@ -928,5 +1099,51 @@ class PdfMetadataExtractorTest {
         var metadata = extractor.extract(List.of("A/c 12 opened on request")); // synthetic-ok
 
         assertThat(metadata.accountNumberMasked()).isNull();
+    }
+
+    /**
+     * labelPattern's mid-line branch (added for the lineOf X-ordering fix, 2026-08-29 -- see
+     * PdfTableLocator.lineOf's own doc comment) lets a label appear after other chain-merged
+     * content on the same physical row, not only at the line's own start. Modeled on the real HDFC
+     * shape that motivated it (an address fragment sitting genuinely further left on the page than
+     * "Account No :", so a correctly x-ordered join puts it first on the line) -- genericized per
+     * the Synthetic Fixture Policy, no value from any real document appears here.
+     */
+    @Test
+    void extract_recognizesAnAccountNumber_afterAChainMergedLeftwardNeighborOnTheSameLine() {
+        var metadata = extractor.extract(List.of(
+                "SOME CITY STATE Account No : 111122223333444 SOME PLAN NAME")); // synthetic-ok
+
+        assertThat(metadata.accountNumberMasked()).endsWith("3444");
+    }
+
+    /**
+     * A chain-merged row can legitimately hold TWO label:value pairs back to back (modeled on a
+     * real IFSC-then-MICR letterhead shape, genericized per the Synthetic Fixture Policy -- no
+     * value from any real document appears here). The captured value must stop before the second
+     * pair's own "label :" rather than swallowing it whole -- see labelPattern's own doc comment
+     * for why the capture is non-greedy with a lookahead boundary, not just greedy to end of line.
+     */
+    @Test
+    void extract_stopsTheCapturedValueBeforeASecondChainMergedLabelOnTheSameLine() {
+        var metadata = extractor.extract(List.of("IFSC Code : ABCD0XXXXXX MICR : 888877776")); // synthetic-ok
+
+        assertThat(metadata.ifscCode()).isEqualTo("ABCD0XXXXXX");
+    }
+
+    /**
+     * ACCOUNT_HOLDER's bare "Name" alternative is deliberately excluded from labelPattern's
+     * mid-line branch (unlike its other alternatives, "Account Holder"/"Customer Name") because
+     * "Name" is a generic single word that is a substring of many unrelated compound labels.
+     * Modeled on a real HSBC shape ("Branch Name : <branch>", chain-merged onto its own row --
+     * genericized per the Synthetic Fixture Policy, no value from any real document appears here):
+     * without the exclusion, the branch value would be stolen as the account holder's name instead.
+     */
+    @Test
+    void extract_doesNotStealABranchNameValueAsTheAccountHolder_whenChainMergedOnOneLine() {
+        var metadata = extractor.extract(List.of("Branch Name : SOME TOWN BRANCH")); // synthetic-ok
+
+        assertThat(metadata.accountHolderName()).isNull();
+        assertThat(metadata.branchName()).isEqualTo("SOME TOWN BRANCH");
     }
 }

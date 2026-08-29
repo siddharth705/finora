@@ -263,6 +263,10 @@ function GlobalRulesContent() {
   const deleteMutation = useMutation({
     mutationFn: (id: string) => adminRulesApi.delete(id),
     onSuccess: () => {
+      // Deleting the last row on a page beyond the first would otherwise leave the admin
+      // stranded on a now-empty page -- back off to the previous one so the list they land on
+      // actually has something in it, same as Pagination.tsx never rendering "Page 2 of 1".
+      setPage((p) => (p > 0 && (rules?.content.length ?? 0) <= 1 ? p - 1 : p));
       invalidate();
       notify.success('Rule deleted.');
     },

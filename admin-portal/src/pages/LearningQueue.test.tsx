@@ -183,4 +183,36 @@ describe('LearningQueue', () => {
     await waitFor(() => expect(adminLearningQueueApi.list)
       .toHaveBeenCalledWith({ status: 'FAILED', page: 1, size: 25 }));
   });
+
+  /** Bug fix: resolving the only FAILED event on a page beyond the first used to leave the admin
+   *  stranded looking at an empty table with no obvious way back -- Pagination still pointed at
+   *  the now-nonexistent page. A resolved event drops out of the FAILED filter, so the page has to
+   *  back off automatically instead. */
+  it('backs off to the previous page after resolving the last failed event on a later page', async () => {
+    mockAuth(['LEARNING_QUEUE_MANAGE']);
+    vi.mocked(adminLearningQueueApi.list).mockResolvedValueOnce({
+      content: [failedEvent], page: 0, size: 25, totalElements: 26, totalPages: 2,
+    });
+    const user = userEvent.setup();
+
+    renderPage();
+    await waitFor(() => expect(screen.getByText('SWIGGY')).toBeInTheDocument());
+
+    const secondFailedEvent = { ...failedEvent, id: '66666666-6666-6666-6666-666666666666', merchantName: 'UBER' };
+    vi.mocked(adminLearningQueueApi.list).mockResolvedValueOnce({
+      content: [secondFailedEvent], page: 1, size: 25, totalElements: 26, totalPages: 2,
+    });
+    await user.click(screen.getByRole('button', { name: 'Next page' }));
+    await waitFor(() => expect(screen.getByText('UBER')).toBeInTheDocument());
+    await user.click(screen.getByRole('button', { name: 'Details' }));
+
+    vi.mocked(adminLearningQueueApi.resolve).mockResolvedValue({ ...secondFailedEvent, status: 'RESOLVED', retryable: false });
+    vi.mocked(adminLearningQueueApi.list).mockResolvedValueOnce({
+      content: [failedEvent], page: 0, size: 25, totalElements: 25, totalPages: 1,
+    });
+    await user.click(screen.getByRole('button', { name: 'Mark resolved' }));
+
+    await waitFor(() => expect(adminLearningQueueApi.list)
+      .toHaveBeenLastCalledWith({ status: 'FAILED', page: 0, size: 25 }));
+  });
 });
