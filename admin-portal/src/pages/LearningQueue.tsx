@@ -82,6 +82,12 @@ function LearningQueueContent() {
     mutationFn: (eventId: string) => adminLearningQueueApi.resolve(eventId),
     onSuccess: (updated) => {
       setSelected(updated);
+      // A resolved event drops out of the current status filter (unless the filter is "All" or
+      // already "RESOLVED", where it stays visible). When it drops out, back off a page beyond
+      // the first that this was the last row on, so the admin doesn't land on a now-empty page.
+      if (status && updated.status !== status) {
+        setPage((p) => (p > 0 && (queue.data?.content.length ?? 0) <= 1 ? p - 1 : p));
+      }
       refreshAll();
     },
   });
