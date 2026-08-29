@@ -148,7 +148,7 @@ class AnalyticsServiceTest {
         // bound is what's actually requested. The June row here would never even be fetched now,
         // but keeping it in the stub still proves the July-only assertion holds either way.
         UUID amazon = UUID.randomUUID();
-        when(transactionRepository.findByUserIdAndTxnDateBetween(eq(userId), any(), any())).thenReturn(List.of(
+        when(transactionRepository.findByUserIdAndTxnDateBetweenAndAccountIdIn(eq(userId), any(), any(), any())).thenReturn(List.of(
                 expense(amazon, LocalDate.of(2026, 7, 15), new BigDecimal("500"))
         ));
         when(merchantRepository.findByUserId(userId)).thenReturn(List.of(merchant(amazon, "Amazon")));
@@ -170,7 +170,7 @@ class AnalyticsServiceTest {
 
         org.mockito.ArgumentCaptor<LocalDate> fromCaptor = org.mockito.ArgumentCaptor.forClass(LocalDate.class);
         org.mockito.ArgumentCaptor<LocalDate> toCaptor = org.mockito.ArgumentCaptor.forClass(LocalDate.class);
-        verify(transactionRepository).findByUserIdAndTxnDateBetween(eq(userId), fromCaptor.capture(), toCaptor.capture());
+        verify(transactionRepository).findByUserIdAndTxnDateBetweenAndAccountIdIn(eq(userId), fromCaptor.capture(), toCaptor.capture(), any());
 
         assertThat(fromCaptor.getValue()).isEqualTo(LocalDate.of(2026, 7, 1));
         assertThat(toCaptor.getValue()).isEqualTo(LocalDate.of(2026, 7, 31));
@@ -183,7 +183,7 @@ class AnalyticsServiceTest {
 
         verify(transactionRepository).findByUserIdAndAccountIdIn(userId, List.of(liveAccount.getId()));
         verify(transactionRepository, org.mockito.Mockito.never())
-                .findByUserIdAndTxnDateBetween(any(), any(), any());
+                .findByUserIdAndTxnDateBetweenAndAccountIdIn(any(), any(), any(), any());
     }
 
     @Test
@@ -204,7 +204,7 @@ class AnalyticsServiceTest {
         // findByUserIdAndTxnDateBetween instead of loading the user's whole history, so the stub
         // moves to that method -- see merchantTrend_queriesOnlyItsOwnWindow_notTheEntireHistory
         // below for the test that actually proves the window is what's requested.
-        when(transactionRepository.findByUserIdAndTxnDateBetween(eq(userId), any(), any())).thenReturn(List.of(
+        when(transactionRepository.findByUserIdAndTxnDateBetweenAndAccountIdIn(eq(userId), any(), any(), any())).thenReturn(List.of(
                 expense(amazon, LocalDate.of(2026, 7, 10), new BigDecimal("500"))
         ));
         when(merchantRepository.findByUserId(userId)).thenReturn(List.of(merchant(amazon, "Amazon")));
@@ -222,7 +222,7 @@ class AnalyticsServiceTest {
     void merchantTrend_sumsMultipleMerchantsWithinTheSameMonth() {
         UUID amazon = UUID.randomUUID();
         UUID swiggy = UUID.randomUUID();
-        when(transactionRepository.findByUserIdAndTxnDateBetween(eq(userId), any(), any())).thenReturn(List.of(
+        when(transactionRepository.findByUserIdAndTxnDateBetweenAndAccountIdIn(eq(userId), any(), any(), any())).thenReturn(List.of(
                 expense(amazon, LocalDate.of(2026, 7, 5), new BigDecimal("500")),
                 expense(swiggy, LocalDate.of(2026, 7, 20), new BigDecimal("300"))
         ));
@@ -244,10 +244,46 @@ class AnalyticsServiceTest {
 
         org.mockito.ArgumentCaptor<LocalDate> fromCaptor = org.mockito.ArgumentCaptor.forClass(LocalDate.class);
         org.mockito.ArgumentCaptor<LocalDate> toCaptor = org.mockito.ArgumentCaptor.forClass(LocalDate.class);
-        verify(transactionRepository).findByUserIdAndTxnDateBetween(eq(userId), fromCaptor.capture(), toCaptor.capture());
+        verify(transactionRepository).findByUserIdAndTxnDateBetweenAndAccountIdIn(eq(userId), fromCaptor.capture(), toCaptor.capture(), any());
 
         assertThat(fromCaptor.getValue()).isEqualTo(LocalDate.of(2026, 2, 1)); // 6 months back from July, inclusive
         assertThat(toCaptor.getValue()).isEqualTo(LocalDate.of(2026, 7, 31));
+    }
+
+    // --- Deleted-account leak (see DashboardService.summarize for the original fix): a deleted
+    // account's transactions deliberately keep deleted_at unset, so the date-bounded window (used
+    // by topMerchants(userId, month) and merchantTrend) and refundsFor must scope their fetches to
+    // exactly the user's live account ids, not just their userId. ---
+
+    @Test
+    void topMerchants_givenASpecificMonth_scopesTransactionFetch_toExactlyTheLiveAccountIds() {
+        analyticsService.topMerchants(userId, YearMonth.of(2026, 7));
+
+        verify(transactionRepository).findByUserIdAndTxnDateBetweenAndAccountIdIn(
+                eq(userId), any(), any(), eq(List.of(liveAccount.getId())));
+    }
+
+    @Test
+    void topMerchants_givenASpecificMonth_withNoLiveAccounts_shortCircuits_withoutQueryingTransactions() {
+        when(accountRepository.findByUserId(userId)).thenReturn(List.of());
+
+        assertThat(analyticsService.topMerchants(userId, YearMonth.of(2026, 7))).isEmpty();
+
+        verify(transactionRepository, org.mockito.Mockito.never())
+                .findByUserIdAndTxnDateBetweenAndAccountIdIn(any(), any(), any(), any());
+    }
+
+    @Test
+    void refundsFor_scopesTransactionFetch_toExactlyTheLiveAccountIds() {
+        UUID amazon = UUID.randomUUID();
+        Transaction purchase = expense(amazon, LocalDate.of(2026, 7, 1), new BigDecimal("1000"));
+        when(transactionRepository.findByUserIdAndTxnDateBetweenAndAccountIdIn(any(), any(), any(), any()))
+                .thenReturn(List.of(purchase));
+
+        analyticsService.topMerchants(userId, YearMonth.of(2026, 7));
+
+        verify(transactionRepository).findByUserIdAndReconciliationStatusInAndAccountIdIn(
+                eq(userId), any(), eq(List.of(liveAccount.getId())));
     }
 
     // --- categoryConfidence ---
@@ -350,8 +386,10 @@ class AnalyticsServiceTest {
     void importStatistics_sumsAcrossAllImports_lastImportedAtFromTheMostRecent() {
         StatementImportRepository.StatementMetadata older = statementImport(20, 2, Instant.parse("2026-01-01T00:00:00Z"));
         StatementImportRepository.StatementMetadata newer = statementImport(35, 1, Instant.parse("2026-06-01T00:00:00Z"));
-        // findMetadataByUserIdOrderByImportedAtDesc -- newest first, same as the real query's contract
-        when(statementImportRepository.findMetadataByUserIdOrderByImportedAtDesc(userId)).thenReturn(List.of(newer, older));
+        // findMetadataByUserIdAndAccountIdInOrderByImportedAtDesc -- newest first, same as the real
+        // query's contract (see the deleted-account leak tests below for the scoping itself)
+        when(statementImportRepository.findMetadataByUserIdAndAccountIdInOrderByImportedAtDesc(eq(userId), any()))
+                .thenReturn(List.of(newer, older));
 
         var result = analyticsService.importStatistics(userId);
 
@@ -363,12 +401,39 @@ class AnalyticsServiceTest {
 
     @Test
     void importStatistics_noImportsYet_lastImportedAtIsNull_notEpochZero() {
-        when(statementImportRepository.findMetadataByUserIdOrderByImportedAtDesc(userId)).thenReturn(List.of());
+        when(statementImportRepository.findMetadataByUserIdAndAccountIdInOrderByImportedAtDesc(eq(userId), any()))
+                .thenReturn(List.of());
 
         var result = analyticsService.importStatistics(userId);
 
         assertThat(result.totalStatements()).isZero();
         assertThat(result.lastImportedAt()).isNull();
+    }
+
+    // --- Deleted-account leak (see DashboardService.summarize for the original fix): a deleted
+    // account's statements deliberately keep deleted_at unset, so importStatistics must scope its
+    // fetch to exactly the user's live account ids, not just their userId. ---
+
+    @Test
+    void importStatistics_scopesStatementFetch_toExactlyTheLiveAccountIds() {
+        when(statementImportRepository.findMetadataByUserIdAndAccountIdInOrderByImportedAtDesc(eq(userId), any()))
+                .thenReturn(List.of());
+
+        analyticsService.importStatistics(userId);
+
+        verify(statementImportRepository).findMetadataByUserIdAndAccountIdInOrderByImportedAtDesc(
+                userId, List.of(liveAccount.getId()));
+    }
+
+    @Test
+    void importStatistics_withNoLiveAccounts_shortCircuits_withoutQueryingStatements() {
+        when(accountRepository.findByUserId(userId)).thenReturn(List.of());
+
+        var result = analyticsService.importStatistics(userId);
+
+        assertThat(result.totalStatements()).isZero();
+        verify(statementImportRepository, org.mockito.Mockito.never())
+                .findMetadataByUserIdAndAccountIdInOrderByImportedAtDesc(any(), any());
     }
 
     // --- learningGrowth ---
