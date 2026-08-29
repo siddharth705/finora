@@ -56,6 +56,18 @@ public class DashboardService {
     @Transactional(readOnly = true)
     public DashboardSummaryDto summarize(UUID userId) {
         List<Account> accounts = accountRepository.findByUserId(userId);
+        // Soft-deleting an account never touches its transactions'/statements' own deleted_at
+        // (that column means "this transaction/statement itself was removed", not "its account
+        // was") -- by design, since Statement History deliberately keeps a deleted account's
+        // statements visible for a 7-day grace window (see StatementImportService's
+        // DELETED_ACCOUNT_RETENTION). But that means findByUserId/countByUserId alone keep
+        // returning a deleted account's rows FOREVER, not just during the window -- confirmed in
+        // production: a dashboard showing "0 accounts" alongside non-zero income/expenses/statement
+        // counts, because accounts (line above) already filters deleted accounts out (via
+        // Account's own @SQLRestriction) while the transaction/statement queries below did not.
+        // Scoping both to this same live-account id set is what keeps every number on this screen
+        // consistent with the "0 accounts" the account list itself already reports.
+        List<UUID> liveAccountIds = accounts.stream().map(Account::getId).toList();
         // BH-005. This filter used to be written out here and again, identically, in
         // ReportService -- and both copies were one-sided. A REFUND-status row is the INCOME leg of
         // a reconciled refund, so dropping it is right; the EXPENSE it reverses was left counted in
@@ -66,7 +78,8 @@ public class DashboardService {
         // purchase, which is the only treatment correct for a PARTIAL refund too. Every amount read
         // out of `active` below goes through reportableAmount for that reason -- summing
         // Transaction::getAmount directly is what the bug was.
-        List<Transaction> all = transactionRepository.findByUserId(userId);
+        List<Transaction> all = liveAccountIds.isEmpty() ? List.of()
+                : transactionRepository.findByUserIdAndAccountIdIn(userId, liveAccountIds);
         RefundNetting refunds = RefundNetting.from(all);
         List<Transaction> active = RefundNetting.reportable(all, transactionGraphService.ccPaymentFromTransactionIds(all));
         Map<UUID, Category> categoriesById = categoryRepository.findByUserId(userId).stream()
@@ -270,7 +283,8 @@ public class DashboardService {
         // Spend Consistency/Cash Flow Stability, and the pct() deltas below dividing against an
         // effectively-empty prior month). Surfacing the raw counts here lets the client show why,
         // instead of a user having to guess "why does my score look bad" on their own.
-        int statementCount = (int) statementImportRepository.countByUserId(userId);
+        int statementCount = liveAccountIds.isEmpty() ? 0
+                : (int) statementImportRepository.countByUserIdAndAccountIdIn(userId, liveAccountIds);
         boolean limitedHistory = months.size() < LIMITED_HISTORY_MONTH_FLOOR;
 
         return new DashboardSummaryDto(
@@ -278,7 +292,7 @@ public class DashboardService {
                 incomeCur, expenseCur, netCur, savingsRate,
                 pct(incomeCur, incomePrior, priorMonthReliable), expenseDeltaPct,
                 pct(netCur, netPrior, priorMonthReliable),
-                health.score(), health.label(), health.breakdown(),
+                health.score(), health.label(), health.breakdown(), health.breakdownDetail(),
                 health.available(), health.transactionCount(), health.minTransactions(),
                 spendByCategory, notifications,
                 // Which month everything above actually describes. Without these the client had no
@@ -448,6 +462,7 @@ public class DashboardService {
     static final int MIN_TRANSACTIONS_FOR_CONFIDENCE_SCORE = 5;
 
     private record HealthResult(Integer score, String label, Map<String, Double> breakdown,
+                                 Map<String, String> breakdownDetail,
                                  boolean available, int transactionCount, int minTransactions) {}
 
     /** Weighted composite: savings rate 25%, debt utilization 20%, emergency fund 25%,
@@ -464,7 +479,7 @@ public class DashboardService {
                                              List<String> months, BigDecimal liquid,
                                              RefundNetting refunds) {
         if (active.size() < MIN_TRANSACTIONS_FOR_HEALTH_SCORE) {
-            return new HealthResult(null, null, Map.of(), false, active.size(), MIN_TRANSACTIONS_FOR_HEALTH_SCORE);
+            return new HealthResult(null, null, Map.of(), Map.of(), false, active.size(), MIN_TRANSACTIONS_FOR_HEALTH_SCORE);
         }
         List<String> last6 = months.size() > 6 ? months.subList(months.size() - 6, months.size()) : months;
 
@@ -546,7 +561,36 @@ public class DashboardService {
         breakdown.put("Spend Consistency", consistencyScore);
         breakdown.put("Cash Flow Stability", cashFlowScore);
 
-        return new HealthResult(overall, label, breakdown, true, active.size(), MIN_TRANSACTIONS_FOR_HEALTH_SCORE);
+        // Each bar above shows a NORMALIZED 0-100 score, not the real quantity it was computed
+        // from -- "Savings Rate: 62" is clamp(savingsRate, 0, 30) / 30 * 100, not 62% actually
+        // saved. Every other number on this Dashboard (deltas, category movers, duplicates) got a
+        // "Why?" explaining itself; the health score's own breakdown never did. These are that --
+        // the real figure behind each bar, not a new computation, so the two can never disagree.
+        Map<String, String> breakdownDetail = new LinkedHashMap<>();
+        // Deliberately NOT "...this month..." -- savingsRate here is built from the SAME
+        // reportingMonth bucket every other KPI on this response uses, but reportingMonth is not
+        // always the actual current calendar month (see reportingMonthIsCurrent), and this string
+        // is composed server-side where scripts/check-reporting-period-labels.py -- which only
+        // scans frontend .tsx files -- can't catch a hardcoded period claim. Every other entry in
+        // this map already avoids asserting a period for the same reason; this one now matches.
+        breakdownDetail.put("Savings Rate", String.format(Locale.ENGLISH,
+                "Your savings rate was %.1f%%.", savingsRate));
+        breakdownDetail.put("Debt Score", cards.isEmpty()
+                ? "You have no credit cards on file."
+                : String.format(Locale.ENGLISH, "Your average credit utilization is %.0f%% across %d card%s.",
+                        avgUtil * 100, cards.size(), cards.size() == 1 ? "" : "s"));
+        breakdownDetail.put("Emergency Fund", avgExpense.compareTo(BigDecimal.ZERO) > 0
+                ? String.format(Locale.ENGLISH, "Your liquid savings would cover %.1f months of expenses.", monthsCovered)
+                : "You don't have enough recorded expenses yet to measure this against your savings.");
+        breakdownDetail.put("Spend Consistency", fullMonthlyExpense.size() > 1
+                ? String.format(Locale.ENGLISH, "Your monthly spending has varied by about %.0f%% around its average recently.", cv * 100)
+                : "Not enough full calendar months of spending yet to measure how consistent it is.");
+        breakdownDetail.put("Cash Flow Stability", fullMonthlyExpense.isEmpty()
+                ? "Not enough full calendar months of data yet to measure this."
+                : String.format(Locale.ENGLISH, "%d of the last %d full month%s had income meeting or exceeding expenses.",
+                        positiveMonths, fullMonthlyExpense.size(), fullMonthlyExpense.size() == 1 ? "" : "s"));
+
+        return new HealthResult(overall, label, breakdown, breakdownDetail, true, active.size(), MIN_TRANSACTIONS_FOR_HEALTH_SCORE);
     }
 
     private long countNonNegativeMonths(List<BigDecimal> income, List<BigDecimal> expense) {

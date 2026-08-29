@@ -21,6 +21,21 @@ public record DashboardSummaryDto(
         Integer healthScore,
         String healthLabel,
         Map<String, Double> healthBreakdown,
+        /*
+         * The real quantity behind each entry in healthBreakdown, keyed by the same component
+         * name -- e.g. "Savings Rate" -> "Your savings rate was 18.5%." Each bar in
+         * healthBreakdown shows a NORMALIZED 0-100 score, not the number it was computed from
+         * ("Savings Rate: 62" is clamp(savingsRate, 0, 30) / 30 * 100, not 62% actually saved).
+         * Every other number on this Dashboard (deltas, category movers, duplicates) already gets
+         * a "Why?" explaining itself; this is that for the health score's own breakdown -- reading
+         * the same local values the score itself was computed from, not a second computation that
+         * could disagree with it. Empty exactly when healthBreakdown is (below
+         * healthScoreMinTransactions). Deliberately never asserts a period ("this month" etc.) in
+         * any of the five strings: they're composed server-side, where
+         * scripts/check-reporting-period-labels.py (which only scans frontend .tsx files) can't
+         * catch a hardcoded period claim going stale against reportingMonthIsCurrent.
+         */
+        Map<String, String> healthBreakdownDetail,
         // D-25 PR3-A: a score computed from a handful of transactions is a harsh first impression
         // that isn't actually wrong data, just too little of it. Below MIN_TRANSACTIONS_FOR_HEALTH_SCORE
         // (DashboardService), healthScore/healthLabel are null and healthBreakdown is empty -- the
