@@ -15,9 +15,13 @@ import type { Row } from '../../fixtures/statements';
  * that removes anything, which is why the refusal path gets as much attention as the happy path.
  */
 
+// Not Swiggy/Uber: MerchantSeedService now seeds every new user with 34 curated brand merchants
+// (APPROVED, not TEMPORARY) at registration, including both of those, so an import naming them
+// resolves to the seeded row instead of landing in the review queue this whole file exercises.
+// Starbucks/Airtel are real CategoryRules keywords (Dining, Utilities) that stay off that list.
 const GUESSES: Row[] = [
-  { date: '2026-06-03', description: 'SWIGGY ORDER 4471', amount: 486.0, type: 'DEBIT' },
-  { date: '2026-06-05', description: 'UBER TRIP 8891', amount: 240.0, type: 'DEBIT' },
+  { date: '2026-06-03', description: 'STARBUCKS COFFEE 2291', amount: 486.0, type: 'DEBIT' },
+  { date: '2026-06-05', description: 'AIRTEL RECHARGE 88817', amount: 240.0, type: 'DEBIT' },
 ];
 
 
@@ -168,7 +172,7 @@ test.describe('Phase 6 — merchant review center', () => {
     // to render first, which is not a contract and moved once already.
     const field = adminPage.getByLabel('Correct the name');
     await expect(field).toBeVisible({ timeout: 20_000 });
-    await field.fill('Swiggy (Food Delivery)');
+    await field.fill('Starbucks (Coffee Shop)');
 
     // The button is disabled until the name actually differs, so waiting for it to enable is
     // waiting for React to have taken the input -- not an arbitrary pause.
@@ -180,7 +184,7 @@ test.describe('Phase 6 — merchant review center', () => {
       .poll(async () => (await merchantsFor(user.id)).map((m) => m.canonical_name).join('|'), {
         timeout: 20_000,
       })
-      .toContain('Swiggy (Food Delivery)');
+      .toContain('Starbucks (Coffee Shop)');
   });
 
   /** Every operator action on someone else's data leaves a trace. An action with no audit entry is
