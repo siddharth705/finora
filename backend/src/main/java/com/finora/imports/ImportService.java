@@ -27,6 +27,7 @@ import com.finora.service.CategorizationService;
 import com.finora.service.RecurringService;
 import com.finora.service.ReconciliationService;
 import com.finora.util.CategoryRules;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -1010,7 +1011,42 @@ public class ImportService {
         // guess reconstructed from the rows.
         statementImport.setStatementPeriodStart(request.statementPeriodStart());
         statementImport.setStatementPeriodEnd(request.statementPeriodEnd());
-        statementImport.setOpeningBalance(request.statementOpeningBalance());
+
+        // Bug fix. BalanceSequenceResolver derives an opening balance purely from THIS statement's
+        // own printed rows, with no knowledge of the account's prior import history (by design --
+        // see its own class comment). A real PNB statement pair prints consecutive periods that
+        // share their boundary date -- "31-05-2026 to 30-06-2026" then "30-06-2026 to
+        // 31-07-2026" -- so the later statement's own earliest printed row is the tail end of the
+        // PREVIOUS period, re-printed, not the true start of this one. The resolver then derives
+        // the balance before that overlapping row instead of after it, wrong by exactly the
+        // overlapping day's net effect, even though the statement's own arithmetic is internally
+        // consistent. Nothing about the derivation is PNB-specific -- no statement format anywhere
+        // in this pipeline carries the account's prior import history, so any bank whose
+        // consecutive statements share (or gap across) a boundary date is equally exposed; PNB is
+        // simply the confirmed repro. See OpeningBalanceCarryForward's own comment for the full
+        // reasoning.
+        //
+        // Only consulted when a period start was actually printed -- with none, there is no date
+        // to look an earlier statement up by, and this leaves the derived/stated value exactly as
+        // before rather than guessing. findPriorStatementClosingBalanceForAccount runs BEFORE this
+        // statement is saved, so (unlike the closing-balance-side lookups below) there is no
+        // excludingId to pass -- there is no row yet to accidentally match against itself.
+        BigDecimal effectiveOpeningBalance = request.statementOpeningBalance();
+        OpeningBalanceCarryForward.Decision openingBalanceDecision =
+                new OpeningBalanceCarryForward.Decision(effectiveOpeningBalance, false, null);
+        if (request.statementPeriodStart() != null) {
+            List<BigDecimal> priorClosingBalance = statementImportRepository
+                    .findPriorStatementClosingBalanceForAccount(userId, accountId,
+                            request.statementPeriodStart(), PageRequest.of(0, 1));
+            openingBalanceDecision = OpeningBalanceCarryForward.resolve(effectiveOpeningBalance,
+                    priorClosingBalance.isEmpty() ? null : priorClosingBalance.get(0));
+            effectiveOpeningBalance = openingBalanceDecision.openingBalance();
+            if (openingBalanceDecision.carriedForward()) {
+                log.info("Carrying forward opening balance for account {}: {}",
+                        accountId, openingBalanceDecision.reason());
+            }
+        }
+        statementImport.setOpeningBalance(effectiveOpeningBalance);
         statementImport.setClosingBalance(request.statementClosingBalance());
         // Echoed from DetectedAccountInfo.totalAmountDue/paymentDueDate the same way the period
         // above is -- null for a CSV import or any non-credit-card statement, same as on
@@ -1119,9 +1155,15 @@ public class ImportService {
         // class comment documents. The type cannot go stale; the row can.
         Account.Type accountType = accountRepository.findById(accountId)
                 .map(Account::getAccountType).orElse(null);
+        // effectiveOpeningBalance, not request.statementOpeningBalance() -- the corroboration
+        // arithmetic below must be checked against the SAME opening balance this statement is
+        // actually being stored and shown with (see OpeningBalanceCarryForward above). Checking
+        // it against the request's raw, possibly-wrong-by-a-boundary-overlap figure would refuse
+        // a genuinely correct closing balance for the wrong reason, exactly reproducing Bug 1's
+        // arithmetic one step downstream.
         ClosingBalanceGuard.Decision balanceDecision = ClosingBalanceGuard.assess(
                 accountType,
-                request.statementOpeningBalance(), request.statementClosingBalance(),
+                effectiveOpeningBalance, request.statementClosingBalance(),
                 totalCredits, totalDebits, toInsert.size(), skipped);
         boolean closingBalanceIsAuthoritative = balanceDecision.mayOverwriteAccountBalance()
                 && isMostRecentStatementForAccount(userId, accountId, maxDate, savedImport.getId());
@@ -1180,8 +1222,8 @@ public class ImportService {
         return new PersistedSection(accountId, savedImport, saved, imported, skipped,
                 closingBalanceIsAuthoritative, balanceDecision, accountsCreated, productsCreated,
                 categoryTally, newMerchantsLearned, totalCredits, totalDebits,
-                request.statementOpeningBalance(), request.statementClosingBalance(),
-                minDate, maxDate, startedAtMs);
+                effectiveOpeningBalance, request.statementClosingBalance(),
+                minDate, maxDate, startedAtMs, openingBalanceDecision);
     }
 
     /**
@@ -1210,7 +1252,8 @@ public class ImportService {
             BigDecimal statementClosingBalance,
             LocalDate minDate,
             LocalDate maxDate,
-            long startedAtMs) {}
+            long startedAtMs,
+            OpeningBalanceCarryForward.Decision openingBalanceDecision) {}
 
     /**
      * What one section reports once reconciliation has run: what it found among this section's own
@@ -1284,6 +1327,13 @@ public class ImportService {
                 && balanceDecision.verdict() == ClosingBalanceGuard.Verdict.UNCORROBORATED) {
             warnings.add("This account's balance was updated from the imported transactions rather "
                     + "than from the statement's stated closing balance: " + balanceDecision.reason());
+        }
+        // Same "tell the user which of two figures they are looking at" reasoning as the block
+        // above, for the mirror-image field: the opening balance shown for this statement is not
+        // what this statement's own PDF stated or derived, because an earlier statement on file
+        // says otherwise -- see OpeningBalanceCarryForward.
+        if (section.openingBalanceDecision().carriedForward()) {
+            warnings.add(section.openingBalanceDecision().reason());
         }
 
         // Re-fetched (not the pre-import in-memory copy) so the summary reflects the balance

@@ -140,6 +140,40 @@ public interface StatementImportRepository extends JpaRepository<StatementImport
                                          @Param("accountId") UUID accountId,
                                          @Param("excludingId") UUID excludingId);
 
+    /**
+     * The closing balance of this account's chronologically previous statement -- the one whose
+     * own period ends on or before the statement now being confirmed begins -- for {@link
+     * com.finora.imports.OpeningBalanceCarryForward}. The mirror image of {@link
+     * #findLatestPeriodEndForAccount}: that one looks forward (is anything newer already on
+     * file, for the closing side); this one looks backward (is anything older already on file,
+     * for the opening side).
+     *
+     * <p>No {@code excludingId} parameter, unlike the two queries above -- this runs BEFORE the
+     * statement being confirmed is saved (see {@code ImportService.persistSection}, which sets
+     * the opening balance before it calls {@code statementImportRepository.save}), so there is no
+     * row yet to accidentally match against itself.
+     *
+     * <p>Ordered by period end, then by import time as the tiebreak for same-day statements
+     * (a composite multi-account statement, or a genuine re-import), so the result is
+     * deterministic rather than whatever order Postgres happens to return.
+     *
+     * @return empty when this account has no earlier statement with both a stated period end
+     *         at or before {@code newStatementStart} and a stated closing balance
+     */
+    @Query("""
+           SELECT si.closingBalance FROM StatementImport si
+            WHERE si.userId = :userId
+              AND si.accountId = :accountId
+              AND si.statementPeriodEnd IS NOT NULL
+              AND si.statementPeriodEnd <= :newStatementStart
+              AND si.closingBalance IS NOT NULL
+            ORDER BY si.statementPeriodEnd DESC, si.importedAt DESC
+           """)
+    List<BigDecimal> findPriorStatementClosingBalanceForAccount(@Param("userId") UUID userId,
+                                                                  @Param("accountId") UUID accountId,
+                                                                  @Param("newStatementStart") LocalDate newStatementStart,
+                                                                  Pageable pageable);
+
     /** {@code WorkspaceDashboardService.summarize}'s "N statements imported" tile only ever called
      *  {@code .size()} on the entity-returning finder's full result -- a database COUNT is
      *  strictly better than fetching (and projecting) any columns at all for that, {@code

@@ -951,10 +951,34 @@ public class ReconciliationService {
         return digitsOnly.length() >= 4 ? digitsOnly.substring(digitsOnly.length() - 4) : null;
     }
 
+    /**
+     * Bug fix. Same account+date+amount+description is not always the same transaction: a bank
+     * can legitimately present several separate transactions on one day that share all four --
+     * confirmed against two independent real statements (a PNB savings account with four ACH
+     * mandate debits, and an HDFC savings account with four mutual-fund SIP installments), both
+     * distinguished in the statement only by a declining running balance or a per-row reference
+     * number. The old key grouped all of them as one duplicate cluster and silently dropped the
+     * real ones from every total.
+     *
+     * <p>{@code balanceAfter} is the stronger signal (present whenever the statement prints a
+     * running balance, true for nearly every savings-account import) and is checked first;
+     * {@code referenceNumber} covers statements with a per-row reference but no balance column
+     * (credit-card statements, most commonly). Both are best-effort, nullable staging-time
+     * extractions already carried on {@link Transaction} (see its own doc comment) -- this does
+     * not change what is captured, only uses what was already there. When neither is available,
+     * the key is unchanged from before, so a genuine re-import (identical balance/reference on
+     * both passes, when either is present) still collapses to one duplicate exactly as it did.
+     */
     private String duplicateKey(Transaction t) {
         if (t.getDescription() == null) return "no-desc-" + t.getId();
-        return t.getAccountId() + "|" + t.getTxnDate() + "|"
+        String key = t.getAccountId() + "|" + t.getTxnDate() + "|"
                 + t.getAmount().stripTrailingZeros().toPlainString() + "|" + t.getDescription();
+        if (t.getBalanceAfter() != null) {
+            key += "|bal:" + t.getBalanceAfter().stripTrailingZeros().toPlainString();
+        } else if (t.getReferenceNumber() != null && !t.getReferenceNumber().isBlank()) {
+            key += "|ref:" + t.getReferenceNumber();
+        }
+        return key;
     }
 
     // --- Date-windowed candidate lookup -------------------------------------------------------
