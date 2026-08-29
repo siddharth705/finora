@@ -157,9 +157,27 @@ test.describe('Phase 6 — merchant review center', () => {
       const row = await reviewRowFor(adminPage, user.id, user.email);
       await row.getByRole('button', { name: /review/i }).click();
 
-      // Both merchants are TEMPORARY, so there is nothing legitimate to fold into. Folding a guess
-      // into another guess would launder one unverified name into a second one.
-      await expect(adminPage.getByText(/no other approved merchants/i)).toBeVisible();
+      // MerchantSeedService seeds every new user with a curated APPROVED catalog at registration,
+      // so this account genuinely has legitimate merge targets now -- the assertion that matters
+      // is narrower than "the list is empty": the sibling guess, still TEMPORARY and unconfirmed,
+      // must never be one of them. Folding a guess into another guess would launder one unverified
+      // name into a second one.
+      const heading = adminPage.getByRole('heading', { level: 2 });
+      await expect(heading).toBeVisible({ timeout: 20_000 });
+      const openedName = (await heading.textContent())?.trim();
+
+      const guesses = (await merchantsFor(user.id)).filter((m) => m.lifecycle_status === 'TEMPORARY');
+      const sibling = guesses.find((m) => m.canonical_name !== openedName);
+      expect(sibling, 'expected the other unconfirmed guess to still exist').toBeTruthy();
+
+      // Wait for the candidate list to actually finish loading before asserting on its contents.
+      await expect(adminPage.getByText(/loading candidates/i)).toHaveCount(0, { timeout: 20_000 });
+
+      // The seeded catalog means the list is genuinely non-empty now -- the empty-state copy is
+      // the cleanest signal that candidates actually loaded and there is something to check.
+      await expect(adminPage.getByText(/no other approved merchants/i)).not.toBeVisible();
+      await expect(adminPage.getByRole('button', { name: sibling!.canonical_name, exact: true }))
+        .toHaveCount(0);
     });
 
   test('renaming corrects the guess in place', async ({ adminPage, api, user }) => {
