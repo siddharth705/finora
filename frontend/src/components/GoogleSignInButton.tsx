@@ -31,6 +31,7 @@ export function GoogleSignInButton({ text, onCredential, onError }: GoogleSignIn
   useEffect(() => {
     if (!isGoogleLoginConfigured() || !containerRef.current) return;
     let cancelled = false;
+    let resizeObserver: ResizeObserver | null = null;
 
     loadGoogleIdentityServices()
       .then((accountsId) => {
@@ -41,25 +42,34 @@ export function GoogleSignInButton({ text, onCredential, onError }: GoogleSignIn
             void onCredentialRef.current(response.credential);
           },
         });
+
         // GIS requires a pixel value here, not a percentage -- '100%' produced a silent
         // "[GSI_LOGGER]: Provided button width is invalid" console warning in production and fell
-        // back to some GIS-internal default instead of actually filling the container. Measure the
-        // real rendered width and cap at Google's documented max of 400px:
-        // https://developers.google.com/identity/gsi/web/reference/js-reference#width
-        const measuredWidth = Math.min(Math.round(containerRef.current.getBoundingClientRect().width), 400);
-        accountsId.renderButton(containerRef.current, {
-          // 'filled_black' rather than the default 'outline' so this sits next to
-          // AppleSignInButton's solid-black custom button without a white-vs-black mismatch --
-          // GIS only exposes 'outline' / 'filled_blue' / 'filled_black' as theme options, so this
-          // is the closest visual match achievable without abandoning Google's own rendered button
-          // for a fully custom one (which would also mean losing their built-in "Sign in as
-          // <name>" returning-user shortcut this renders when a session is remembered).
-          theme: 'filled_black',
-          size: 'large',
-          width: String(measuredWidth),
-          text,
-        });
-        setReady(true);
+        // back to some GIS-internal default. A ONE-TIME measurement right when this promise
+        // resolves is a race: production showed a button locked at 107px next to a full-width
+        // Apple button, because the container's layout (grid columns, web fonts) hadn't finished
+        // settling yet at that instant. A ResizeObserver re-renders whenever the container's real,
+        // settled width changes, instead of trusting whatever width happened to be laid out first.
+        let lastWidth = 0;
+        const render = (entries: ResizeObserverEntry[]) => {
+          if (!containerRef.current) return;
+          const contentWidth = entries[0]?.contentRect.width ?? 0;
+          // Capped at Google's documented max: https://developers.google.com/identity/gsi/web/reference/js-reference#width
+          const measuredWidth = Math.min(Math.round(contentWidth), 400);
+          if (measuredWidth === 0 || measuredWidth === lastWidth) return;
+          lastWidth = measuredWidth;
+          containerRef.current.replaceChildren();
+          accountsId.renderButton(containerRef.current, {
+            theme: 'outline',
+            size: 'large',
+            width: String(measuredWidth),
+            text,
+          });
+          setReady(true);
+        };
+
+        resizeObserver = new ResizeObserver(render);
+        resizeObserver.observe(containerRef.current);
       })
       .catch(() => {
         if (!cancelled) onErrorRef.current('Sign in with Google is unavailable right now. Please try again later.');
@@ -67,6 +77,7 @@ export function GoogleSignInButton({ text, onCredential, onError }: GoogleSignIn
 
     return () => {
       cancelled = true;
+      resizeObserver?.disconnect();
     };
     // text intentionally omitted: Register.tsx and Login.tsx each mount their own instance with a
     // fixed text prop that never changes across that instance's lifetime.
