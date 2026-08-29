@@ -671,4 +671,48 @@ class PdfMetadataExtractorTest {
         // ("DUE DATE") and its value ("09 Aug, 2026") both sit within one ordinary window-scan.
         assertThat(metadata.paymentDueDate()).isEqualTo(java.time.LocalDate.of(2026, 8, 9));
     }
+
+    /**
+     * PNB never labels its account number "Account Number" at all -- it states the number inline
+     * in a "Statement of Account:&lt;number&gt; For Period: ..." line (verified against a real PNB
+     * savings statement; see {@code pnb-savings-ledger-validation.trace}, genericized here per the
+     * Synthetic Fixture Policy). Neither {@code ACCOUNT_NUMBER} nor
+     * {@code ACCOUNT_NUMBER_TRAILING_LABEL} recognize this shape, which is why account number
+     * extraction previously fell through to null for every PNB statement -- and, downstream, why
+     * ProductIdentityResolver could never match a later PNB re-import to the same account (it had
+     * neither a full nor a masked number to build a strong key from).
+     */
+    @Test
+    void extract_recognizesAPnbAccountNumber_fromTheStatementOfAccountLine() {
+        var metadata = extractor.extract(List.of(
+                "Statement of Account:12345678901234 For Period: 01/01/2026 to 31/01/2026")); // synthetic-ok
+
+        assertThat(metadata.accountNumberMasked()).isEqualTo("••••1234");
+        assertThat(metadata.accountNumberFullForHashingOnly()).isEqualTo("12345678901234"); // synthetic-ok
+    }
+
+    @Test
+    void extract_recognizesAPnbAccountNumber_toleratingExtraWhitespaceAroundTheColon() {
+        var metadata = extractor.extract(List.of(
+                "Statement of Account : 12345678901234 For Period :")); // synthetic-ok
+
+        assertThat(metadata.accountNumberMasked()).isEqualTo("••••1234");
+        assertThat(metadata.accountNumberFullForHashingOnly()).isEqualTo("12345678901234"); // synthetic-ok
+    }
+
+    /**
+     * PDF text extraction often introduces unexpected line breaks -- the label and its value can
+     * land on separate lines entirely, the same genuine multi-line-grid shape
+     * {@code findGridValue}'s other callers already handle for their own labels.
+     */
+    @Test
+    void extract_recognizesAPnbAccountNumber_whenTheLabelAndValueAreSplitAcrossLines() {
+        var metadata = extractor.extract(List.of(
+                "Statement of Account:",
+                "12345678901234", // synthetic-ok
+                "For Period:"));
+
+        assertThat(metadata.accountNumberMasked()).isEqualTo("••••1234");
+        assertThat(metadata.accountNumberFullForHashingOnly()).isEqualTo("12345678901234"); // synthetic-ok
+    }
 }
