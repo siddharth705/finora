@@ -1,6 +1,8 @@
 # Mobile ↔ Web Capability Parity Matrix
 
-**Baselined:** 2026-08-29 · **Evidence base:** `origin/main` @ `a6c96f29` (PR #506)
+**Baselined:** 2026-08-29 · **Evidence base:** full sweep against `origin/main` @ `a6c96f29` (PR #506)
+· **Re-checked** against `64986ec0` before merge — a targeted diff, not a repeat of the full sweep, which
+added one row (custom categories, §3.1). The gap widens on its own as web ships; see §9.
 **Owner decision recorded 2026-08-29:** mobile is intended to become a **full replacement** for the
 web application, not a companion experience. This document exists because that decision converts an
 open-ended gap into a bounded, prioritised backlog with a release criterion attached.
@@ -71,6 +73,7 @@ replacement-required · **P3** deferred / decision-gated.
 | Bulk delete / bulk recategorise | API only, both | ❌ | P3 | no UI on either platform — not a gap |
 | "Why this category?" explanation | `transactionsApi.explanation` | ❌ | P2 | |
 | Ask Once review queue | `AskOnceCard.tsx` | ❌ | P2 | `needsReview` declared on mobile, no caller |
+| **Custom categories** — create, edit, delete (with usage check + reassignment) | `categoriesApi.create/update/delete/usage` | ❌ | **P1** | Added to web by #494 *after* the sweep below; mobile `categoriesApi` still exposes `list` only |
 
 ### 3.2 Accounts
 
@@ -156,8 +159,8 @@ Two rows are excluded from the denominator: **app lock / screenshot guard / root
 no web equivalent — a bonus, not a parity row) and **bulk delete / recategorise** (absent on both
 platforms — not a gap).
 
-**49 parity capabilities: 21 shipped, 2 partial, 26 absent.** Counting a partial as a half, that is
-**~45% parity** — or 43% counting only what is fully shipped. Mobile additionally has 3 capabilities
+**50 parity capabilities: 21 shipped, 2 partial, 27 absent.** Counting a partial as a half, that is
+**~44% parity** — or 42% counting only what is fully shipped. Mobile additionally has 3 capabilities
 the web does not.
 
 This is lower than the ~60% figure quoted verbally on 2026-08-29 before the rows were counted; that
@@ -274,10 +277,10 @@ not. Discounted where mobile already has the primitives (`OptionPickerModal`, `D
 | Band | Items | Est. |
 |---|---|---|
 | **S** | In-app account deletion | 3–4 d |
-| **P1** | Add + edit + recategorise transaction; ledger filter set; accounts CRUD; async import jobs; multi-account confirm | 15–20 d |
+| **P1** | Add + edit + recategorise transaction; ledger filter set; custom category management; accounts CRUD; async import jobs; multi-account confirm | 17–23 d |
 | **P2** | Lifecycle (deactivate, export); explanation; Ask Once; import recovery + verification; Financial Journey; phone change; deep links; Gmail | 18–24 d |
 | **P3** | Billing, referrals, entitlements, presentation | 6–9 d, decision-gated |
-| | **Gate D total (S + P1 + P2)** | **36–48 d** |
+| | **Gate D total (S + P1 + P2)** | **38–51 d** |
 
 At the plan's single-contributor ~10 h/day baseline that is **6–9 weeks of engineering**, serial with
 release-readiness work rather than parallel to it — the same person cannot build accounts CRUD and
