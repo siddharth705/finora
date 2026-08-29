@@ -393,6 +393,121 @@ class PdfMetadataExtractorTest {
         assertThat(metadata.statementPeriodEnd()).isEqualTo(java.time.LocalDate.of(2026, 7, 31));
     }
 
+    // ===== Statement-period recovery (F-item: statement-period extraction gap) =====
+    //
+    // All eight real credit-card statements in the corpus print a statement or billing period;
+    // only one was extracted. Each test below is one measured failure mode. Dates are structural
+    // (the shape is the subject), never a real document's own period.
+
+    /** ICICI shape: a full month NAME. DATE_FORMATS carried only the abbreviated "MMM" form. */
+    @Test
+    void extract_recognizesAStatementPeriod_statedWithFullMonthNames() {
+        var metadata = extractor.extract(List.of("Statement period : June 12, 2026 to July 11, 2026"));
+
+        assertThat(metadata.statementPeriodStart()).isEqualTo(java.time.LocalDate.of(2026, 6, 12));
+        assertThat(metadata.statementPeriodEnd()).isEqualTo(java.time.LocalDate.of(2026, 7, 11));
+    }
+
+    /** SBI shape: a 2-digit year, AND unrelated trailing content sharing the line. Verified as two
+     *  independent gaps -- removing the trailing text alone still failed to parse. */
+    @Test
+    void extract_recognizesAStatementPeriod_withATwoDigitYearAndTrailingContentOnTheLine() {
+        var metadata = extractor.extract(List.of("Statement Period: 11 Jul 26 to 10 Aug 26   Amount"));
+
+        assertThat(metadata.statementPeriodStart()).isEqualTo(java.time.LocalDate.of(2026, 7, 11));
+        assertThat(metadata.statementPeriodEnd()).isEqualTo(java.time.LocalDate.of(2026, 8, 10));
+    }
+
+    /** HDFC shape: the field is labelled "Billing Period", a label the vocabulary never carried. */
+    @Test
+    void extract_recognizesABillingPeriod_asAStatementPeriod() {
+        var metadata = extractor.extract(List.of("Billing Period 15 Jun 2026 to 14 Jul 2026"));
+
+        assertThat(metadata.statementPeriodStart()).isEqualTo(java.time.LocalDate.of(2026, 6, 15));
+        assertThat(metadata.statementPeriodEnd()).isEqualTo(java.time.LocalDate.of(2026, 7, 14));
+    }
+
+    /** HSBC shape: an UPPERCASE month name. "24 JUN 2026" failed where "24 Jun 2026" parsed --
+     *  DateTimeFormatter is case-sensitive by default, and that alone lost the document. */
+    @Test
+    void extract_recognizesAStatementPeriod_withUppercaseMonthNames() {
+        var metadata = extractor.extract(List.of("Statement Period 24 JUN 2026 To 23 JUL 2026"));
+
+        assertThat(metadata.statementPeriodStart()).isEqualTo(java.time.LocalDate.of(2026, 6, 24));
+        assertThat(metadata.statementPeriodEnd()).isEqualTo(java.time.LocalDate.of(2026, 7, 23));
+    }
+
+    /** AU shape: the period is stated inside a sentence, hyphen-separated, and the START DATE
+     *  CARRIES NO YEAR -- so the year must be inferred from the end date. */
+    @Test
+    void extract_recognizesAStatementPeriod_fromAParenthesizedHyphenatedRangeInASentence() {
+        var metadata = extractor.extract(
+                List.of("Statement for your credit card ending with 6385 (19 Mar - 18 Apr 2026)")); // synthetic-ok
+
+        assertThat(metadata.statementPeriodStart()).isEqualTo(java.time.LocalDate.of(2026, 3, 19));
+        assertThat(metadata.statementPeriodEnd()).isEqualTo(java.time.LocalDate.of(2026, 4, 18));
+    }
+
+    /**
+     * The year-inference trap. When only the end date states a year and the range crosses a year
+     * boundary, copying that year onto the start dates it a YEAR LATE. A December-to-January
+     * period must start in the PRECEDING year. A wrong period corrupts an identity signal
+     * silently rather than failing loudly, which is why this case is asserted explicitly.
+     */
+    @Test
+    void extract_infersThePrecedingYear_whenAHyphenatedRangeCrossesAYearBoundary() {
+        var metadata = extractor.extract(
+                List.of("Statement for your credit card ending with 6385 (19 Dec - 18 Jan 2026)")); // synthetic-ok
+
+        assertThat(metadata.statementPeriodStart()).isEqualTo(java.time.LocalDate.of(2025, 12, 19));
+        assertThat(metadata.statementPeriodEnd()).isEqualTo(java.time.LocalDate.of(2026, 1, 18));
+    }
+
+    /** HDFC's REAL shape, as the extractor receives it: a hyphen-separated range that precedes a
+     *  "Billing Period" trailing label. The idealised "Billing Period <range>" fixture above
+     *  passed while the real document still failed -- the label trails its value here. */
+    @Test
+    void extract_recognizesABillingPeriod_whenTheHyphenatedRangePrecedesTheLabel() {
+        var metadata = extractor.extract(List.of("15 Jun, 2026 - 14 Jul, 2026 Billing Period"));
+
+        assertThat(metadata.statementPeriodStart()).isEqualTo(java.time.LocalDate.of(2026, 6, 15));
+        assertThat(metadata.statementPeriodEnd()).isEqualTo(java.time.LocalDate.of(2026, 7, 14));
+    }
+
+    /** SBI's REAL shape: unrelated text precedes the label ("for Statement Period: ..."), which
+     *  labelPattern's start-anchor rejects outright. */
+    @Test
+    void extract_recognizesAStatementPeriod_whenTextPrecedesTheLabelOnTheSameLine() {
+        var metadata = extractor.extract(List.of("for Statement Period: 11 Jul 26 to 10 Aug 26"));
+
+        assertThat(metadata.statementPeriodStart()).isEqualTo(java.time.LocalDate.of(2026, 7, 11));
+        assertThat(metadata.statementPeriodEnd()).isEqualTo(java.time.LocalDate.of(2026, 8, 10));
+    }
+
+    /** The guard on the unanchored form: prose mentioning a period must never become a field.
+     *  Safety comes from requiring a complete date range straight after the label, not from an
+     *  anchor -- so this asserts the prose case stays null. */
+    @Test
+    void extract_doesNotReadAProseMentionOfAPeriod_asAStatementPeriodField() {
+        var metadata = extractor.extract(List.of(
+                "Interest free credit period is up to 50 days from 01 Jun 2026 onwards."));
+
+        assertThat(metadata.statementPeriodStart()).isNull();
+        assertThat(metadata.statementPeriodEnd()).isNull();
+    }
+
+    /** Axis/IndusInd/HSBC shape: the label is a grid header and its value sits on a LATER line,
+     *  so no same-line pattern can reach it. */
+    @Test
+    void extract_recognizesAStatementPeriod_whenTheValueSitsOnALaterLineThanItsGridLabel() {
+        var metadata = extractor.extract(List.of(
+                "Statement Period                    Payment Due Date",
+                "01 Jun 2026 to 30 Jun 2026          20 Jul 2026"));
+
+        assertThat(metadata.statementPeriodStart()).isEqualTo(java.time.LocalDate.of(2026, 6, 1));
+        assertThat(metadata.statementPeriodEnd()).isEqualTo(java.time.LocalDate.of(2026, 6, 30));
+    }
+
     @Test
     void extract_doesNotMisreadATwoColumnSectionHeader_asABranchNameField() {
         // "Branch Address" here is a section header ("Branch Address" | "Statement Details" side

@@ -216,6 +216,14 @@ class CapabilityCorpusCoverageTest {
                         + "preserved for a trace to exercise this, which the Synthetic Fixture Policy "
                         + "requires be synthesized, not preserved. Covered instead by "
                         + "PdfMetadataExtractorTest's fully hand-synthesized fixtures.");
+        DECLARED_WITHOUT_A_TRACE.put("STATEMENT_PERIOD_IN_SENTENCE",
+                "no trace CAN cover it here, for the same reason as "
+                        + "ACCOUNT_PRODUCT_BANNER_IDENTITY below: capabilitiesTheCorpusExercises "
+                        + "drives PdfTableLocator.locateAll only and never runs "
+                        + "PdfMetadataExtractor, so no metadata-extractor capability can be "
+                        + "recorded through this harness. Covered instead by "
+                        + "PdfMetadataExtractorTest's fully hand-synthesized fixtures, including "
+                        + "the year-boundary case.");
         DECLARED_WITHOUT_A_TRACE.put("ACCOUNT_PRODUCT_BANNER_IDENTITY",
                 "no trace CAN cover it here, for a different reason than the entries above: "
                         + "capabilitiesTheCorpusExercises drives PdfTableLocator.locateAll only, and "

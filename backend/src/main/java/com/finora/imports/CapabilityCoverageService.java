@@ -127,6 +127,12 @@ public class CapabilityCoverageService {
             // per-page repeats) and simply matched no pattern here. See
             // PdfMetadataExtractor.ACCOUNT_PRODUCT_BANNER.
             "ACCOUNT_PRODUCT_BANNER_IDENTITY",
+            // A statement period stated inside an ordinary sentence rather than as a labelled
+            // field -- "Statement for your credit card ending with <last4> (19 Mar - 18 Apr 2026)"
+            // on a real AU Small Finance Bank statement, whose range is hyphen-separated and
+            // states its year only once, on the end date. See
+            // PdfMetadataExtractor.STATEMENT_PERIOD_IN_SENTENCE.
+            "STATEMENT_PERIOD_IN_SENTENCE",
             // A header cell whose printed text is real but normalizes to blank (a bare currency
             // unit like "(INR)") -- found on a real ICICI savings e-statement whose Balance column
             // heading is invisible to every downstream recognizer as a result. See
