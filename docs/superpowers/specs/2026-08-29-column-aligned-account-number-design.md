@@ -25,6 +25,7 @@ Not implemented, and should not be implemented on the justification below.
 > of both original fix shapes, the HSBC card-number hazard, and the measured overlap
 > geometry. Revive this design only on evidence of a genuinely table-only account-number
 > source. See the Measured Geometry appendix for data worth keeping either way.
+
 **Origin:** Gap found while implementing F21 (account-number label vocabulary) from the
 extraction coverage audit.
 
