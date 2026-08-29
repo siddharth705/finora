@@ -130,6 +130,12 @@ public interface StatementImportRepository extends JpaRepository<StatementImport
      *  finder's removal. */
     long countByUserId(UUID userId);
 
+    /** Same as {@link #countByUserId}, but scoped to a caller-supplied set of live account ids --
+     *  a deleted account's statements deliberately keep {@code deleted_at} unset (see
+     *  {@code StatementImportService.DELETED_ACCOUNT_RETENTION}), so {@code countByUserId} alone
+     *  would keep counting them forever, not just during that grace window. */
+    long countByUserIdAndAccountIdIn(UUID userId, java.util.Collection<UUID> accountIds);
+
     /** Every statement import that carries credit-card summary fields -- {@code totalAmountDue} is
      *  null for a non-credit-card statement and populated whenever {@code
      *  CreditCardSummaryExtractor} found a payment-summary panel (see {@code StatementImport

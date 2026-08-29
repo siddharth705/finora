@@ -1,6 +1,8 @@
 package com.finora.service;
 
+import com.finora.entity.Account;
 import com.finora.entity.Transaction;
+import com.finora.repository.AccountRepository;
 import com.finora.repository.TransactionRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -93,10 +95,30 @@ class ReconciliationScalingBenchmark {
         return history;
     }
 
+    // Deleted-account leak fix (see DashboardService.summarize for the original): reconcileForUser
+    // and detectForUser now scope their transaction fetch to the caller's live account ids, so the
+    // mocked AccountRepository here has to return "live" for every account id the synthetic
+    // history actually uses -- otherwise this benchmark would time an empty-input fast path
+    // instead of the real quadratic-comparison cost it exists to measure.
+    private AccountRepository accountRepositoryFor(List<Transaction> history) {
+        AccountRepository accountRepository = mock(AccountRepository.class);
+        List<Account> liveAccounts = history.stream().map(Transaction::getAccountId).distinct()
+                .map(accountId -> {
+                    Account a = new Account();
+                    ReflectionTestUtils.setField(a, "id", accountId);
+                    a.setUserId(userId);
+                    return a;
+                }).toList();
+        when(accountRepository.findByUserId(userId)).thenReturn(liveAccounts);
+        return accountRepository;
+    }
+
     private ReconciliationService reconciliationService(List<Transaction> history) {
         TransactionRepository repository = mock(TransactionRepository.class);
         when(repository.findByUserId(any())).thenReturn(history);
-        return new ReconciliationService(repository, mock(RelationshipService.class), mock(AuditService.class),
+        when(repository.findByUserIdAndAccountIdIn(any(), any())).thenReturn(history);
+        return new ReconciliationService(repository, accountRepositoryFor(history), mock(RelationshipService.class),
+                mock(AuditService.class),
                 mock(TransactionGraphService.class),
                 mock(com.finora.integrations.google.merchant.GmailReconciliationMatcher.class),
                 mock(com.finora.repository.StatementImportRepository.class));
@@ -105,8 +127,9 @@ class ReconciliationScalingBenchmark {
     private RecurringService recurringService(List<Transaction> history) {
         TransactionRepository repository = mock(TransactionRepository.class);
         when(repository.findByUserId(any())).thenReturn(history);
-        return new RecurringService(repository, mock(RuleEngineService.class), mock(AuditService.class),
-                mock(FeatureFlagService.class));
+        when(repository.findByUserIdAndAccountIdIn(any(), any())).thenReturn(history);
+        return new RecurringService(repository, accountRepositoryFor(history), mock(RuleEngineService.class),
+                mock(AuditService.class), mock(FeatureFlagService.class));
     }
 
     @Test

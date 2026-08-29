@@ -70,6 +70,12 @@ public interface TransactionRepository extends JpaRepository<Transaction, UUID> 
 
     List<Transaction> findByUserId(UUID userId);
 
+    /** Same as {@link #findByUserId}, but scoped to a caller-supplied set of live account ids --
+     *  a deleted account's transactions deliberately keep {@code deleted_at} unset (see
+     *  StatementImportService's DELETED_ACCOUNT_RETENTION), so {@code findByUserId} alone would
+     *  keep returning them forever, not just during that grace window. */
+    List<Transaction> findByUserIdAndAccountIdIn(UUID userId, java.util.Collection<UUID> accountIds);
+
     // Backs the admin User detail view's "N transactions" stat (AdminUserService.getUser).
     long countByUserId(UUID userId);
 

@@ -1,10 +1,12 @@
 package com.finora.service;
 
+import com.finora.entity.Account;
 import com.finora.entity.Category;
 import com.finora.entity.Merchant;
 import com.finora.entity.MerchantCategoryLearning;
 import com.finora.entity.MerchantLearningAudit;
 import com.finora.entity.Transaction;
+import com.finora.repository.AccountRepository;
 import com.finora.repository.CategoryRepository;
 import com.finora.repository.MerchantCategoryLearningRepository;
 import com.finora.repository.MerchantLearningAuditRepository;
@@ -36,6 +38,7 @@ import static org.mockito.Mockito.when;
 class AnalyticsServiceTest {
 
     private TransactionRepository transactionRepository;
+    private AccountRepository accountRepository;
     private UserRepository userRepository;
     private MerchantRepository merchantRepository;
     private MerchantCategoryLearningRepository learningRepository;
@@ -44,10 +47,12 @@ class AnalyticsServiceTest {
     private StatementImportRepository statementImportRepository;
     private AnalyticsService analyticsService;
     private final UUID userId = UUID.randomUUID();
+    private Account liveAccount;
 
     @BeforeEach
     void setUp() {
         transactionRepository = mock(TransactionRepository.class);
+        accountRepository = mock(AccountRepository.class);
         merchantRepository = mock(MerchantRepository.class);
         learningRepository = mock(MerchantCategoryLearningRepository.class);
         learningAuditRepository = mock(MerchantLearningAuditRepository.class);
@@ -62,7 +67,13 @@ class AnalyticsServiceTest {
         when(userRepository.findById(any())).thenReturn(Optional.empty());
         TransactionGraphService transactionGraphService = mock(TransactionGraphService.class);
         when(transactionGraphService.ccPaymentFromTransactionIds(any())).thenReturn(Set.of());
-        analyticsService = new AnalyticsService(transactionRepository, merchantRepository,
+
+        liveAccount = new Account();
+        ReflectionTestUtils.setField(liveAccount, "id", UUID.randomUUID());
+        liveAccount.setUserId(userId);
+        when(accountRepository.findByUserId(userId)).thenReturn(List.of(liveAccount));
+
+        analyticsService = new AnalyticsService(transactionRepository, accountRepository, merchantRepository,
                 learningRepository, learningAuditRepository, categoryRepository, statementImportRepository,
                 new ConfidenceEngine(), userRepository, transactionGraphService);
     }
@@ -93,7 +104,7 @@ class AnalyticsServiceTest {
     void topMerchants_ranksByTotalSpendDescending() {
         UUID amazon = UUID.randomUUID();
         UUID swiggy = UUID.randomUUID();
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(
                 expense(amazon, LocalDate.of(2026, 7, 1), new BigDecimal("5000")),
                 expense(swiggy, LocalDate.of(2026, 7, 2), new BigDecimal("400")),
                 expense(swiggy, LocalDate.of(2026, 7, 3), new BigDecimal("300"))
@@ -120,7 +131,7 @@ class AnalyticsServiceTest {
         Transaction duplicate = expense(amazon, LocalDate.of(2026, 7, 3), new BigDecimal("9000"));
         duplicate.setIsDuplicateOf(UUID.randomUUID());
 
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(real, transfer, duplicate));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(real, transfer, duplicate));
         when(merchantRepository.findByUserId(userId)).thenReturn(List.of(merchant(amazon, "Amazon")));
 
         var result = analyticsService.topMerchants(userId, null);
@@ -170,7 +181,7 @@ class AnalyticsServiceTest {
     void topMerchants_givenNoMonth_stillQueriesTheEntireHistory() {
         analyticsService.topMerchants(userId, null);
 
-        verify(transactionRepository).findByUserId(userId);
+        verify(transactionRepository).findByUserIdAndAccountIdIn(userId, List.of(liveAccount.getId()));
         verify(transactionRepository, org.mockito.Mockito.never())
                 .findByUserIdAndTxnDateBetween(any(), any(), any());
     }
@@ -178,7 +189,7 @@ class AnalyticsServiceTest {
     @Test
     void topMerchants_ignoresTransactionsWithNoResolvedMerchant() {
         Transaction noMerchant = expense(null, LocalDate.of(2026, 7, 1), new BigDecimal("1000"));
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(noMerchant));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(noMerchant));
         when(merchantRepository.findByUserId(userId)).thenReturn(List.of());
 
         assertThat(analyticsService.topMerchants(userId, null)).isEmpty();
@@ -315,7 +326,7 @@ class AnalyticsServiceTest {
         excludedTransfer.setCategoryId(shoppingId);
         excludedTransfer.setTransfer(true);
 
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(shoppingTxn, diningTxn, excludedTransfer));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(shoppingTxn, diningTxn, excludedTransfer));
 
         Category shopping = new Category();
         ReflectionTestUtils.setField(shopping, "id", shoppingId);

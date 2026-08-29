@@ -3,6 +3,7 @@ package com.finora.service;
 import com.finora.dto.RecurringDto;
 import com.finora.entity.CategoryRule;
 import com.finora.entity.Transaction;
+import com.finora.repository.AccountRepository;
 import com.finora.repository.TransactionRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -63,13 +64,16 @@ public class RecurringService {
     private static final int MIN_OCCURRENCES_FOR_A_PATTERN = 3;
 
     private final TransactionRepository transactionRepository;
+    private final AccountRepository accountRepository;
     private final RuleEngineService ruleEngineService;
     private final AuditService auditService;
     private final FeatureFlagService featureFlagService;
 
-    public RecurringService(TransactionRepository transactionRepository, RuleEngineService ruleEngineService,
+    public RecurringService(TransactionRepository transactionRepository, AccountRepository accountRepository,
+                             RuleEngineService ruleEngineService,
                              AuditService auditService, FeatureFlagService featureFlagService) {
         this.transactionRepository = transactionRepository;
+        this.accountRepository = accountRepository;
         this.ruleEngineService = ruleEngineService;
         this.auditService = auditService;
         this.featureFlagService = featureFlagService;
@@ -86,7 +90,14 @@ public class RecurringService {
             return List.of();
         }
 
-        List<Transaction> allTransactions = transactionRepository.findByUserId(userId);
+        // Deleted-account leak (see DashboardService.summarize for the original fix): a deleted
+        // account's transactions deliberately keep deleted_at unset, so findByUserId alone would
+        // keep detecting "recurring" patterns off them forever, not just during
+        // StatementImportService's 7-day grace window.
+        List<UUID> liveAccountIds = accountRepository.findByUserId(userId).stream()
+                .map(com.finora.entity.Account::getId).toList();
+        List<Transaction> allTransactions = liveAccountIds.isEmpty() ? List.of()
+                : transactionRepository.findByUserIdAndAccountIdIn(userId, liveAccountIds);
         List<Transaction> active = allTransactions.stream()
                 .filter(t -> t.getIsDuplicateOf() == null && !t.isTransfer() && t.getTxnType() == Transaction.Type.EXPENSE)
                 .toList();
