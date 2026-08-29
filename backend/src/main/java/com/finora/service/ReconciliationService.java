@@ -586,6 +586,34 @@ public class ReconciliationService {
         // simplification, not an oversight; revisit if SLOW_RUN_WARN_MS ever fires because of it.
         List<StatementImport> ccStatements = statementImportRepository.findByUserIdAndTotalAmountDueIsNotNull(userId);
         if (!ccStatements.isEmpty()) {
+            // Deleted-account leak, same shape as reconcileForUser's own fix above -- a deleted
+            // account's transactions deliberately keep deleted_at unset, so findByStatementImportId
+            // below would still return a dead card's charges forever, not just during
+            // StatementImportService's 7-day grace window. Unlike `all` (already scoped by
+            // reconcileForUser, but NOT by reconcileForImport -- see that method's own doc comment
+            // on why it deliberately leaves every account in scope), this statement lookup and the
+            // settledCharges lookup inside the loop both bypass account scoping entirely. Without
+            // this filter, a dead card's statement stays processed, a live savings-side payment
+            // gets claimed and excluded from cash flow to "settle" charges the user can no longer
+            // even see -- real, currently-visible expense money silently vanishing from reporting.
+            Set<UUID> liveAccountIds = accountRepository.findByUserId(userId).stream()
+                    .map(com.finora.entity.Account::getId).collect(java.util.stream.Collectors.toSet());
+            // Deterministic order for the claim-tracking below: findByUserIdAndTotalAmountDueIsNotNull
+            // carries no ORDER BY, so without this, which statement wins a same-due-date/same-amount
+            // coincidence (see claimedPaymentIds below) could vary run to run, writing a CC_PAYMENT
+            // edge to a different charge set each time -- and since nothing supersedes the earlier
+            // edge, contradictory live edges from one payment would accumulate across runs even
+            // though any single run stays internally consistent. Earliest due date first (settle
+            // the oldest bill first) is a reasonable tiebreak, not just an arbitrary stable one;
+            // statement id breaks a further tie on the same due date.
+            ccStatements = ccStatements.stream()
+                    .filter(s -> liveAccountIds.contains(s.getAccountId()))
+                    .sorted(Comparator.comparing(StatementImport::getPaymentDueDate,
+                                    Comparator.nullsLast(Comparator.naturalOrder()))
+                            .thenComparing(StatementImport::getId))
+                    .toList();
+        }
+        if (!ccStatements.isEmpty()) {
             int[] ccMatchesThisRun = {0};
             // Two cards can coincidentally share a due date and a printed balance (the roadmap's
             // own "same issuer, same due date, same amount" edge case) -- without tracking which

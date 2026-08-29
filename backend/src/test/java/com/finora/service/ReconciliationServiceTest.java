@@ -12,6 +12,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
@@ -34,6 +35,11 @@ class ReconciliationServiceTest {
     private ReconciliationService reconciliationService;
     private final UUID userId = UUID.randomUUID();
     private Account liveAccount;
+    // Backs accountRepository.findByUserId -- a List reference the CC-statement tests' ccStatement()
+    // helper appends a live card Account to, so a live-account-scoping check on the CC_PAYMENT pass
+    // (see ReconciliationService's own comment on that filter) sees the test's card account as live
+    // without every one of those tests having to stub this by hand.
+    private List<Account> liveAccounts;
 
     @BeforeEach
     void setUp() {
@@ -57,7 +63,8 @@ class ReconciliationServiceTest {
         liveAccount = new Account();
         ReflectionTestUtils.setField(liveAccount, "id", UUID.randomUUID());
         liveAccount.setUserId(userId);
-        when(accountRepository.findByUserId(userId)).thenReturn(List.of(liveAccount));
+        liveAccounts = new ArrayList<>(List.of(liveAccount));
+        when(accountRepository.findByUserId(userId)).thenAnswer(inv -> new ArrayList<>(liveAccounts));
 
         reconciliationService = new ReconciliationService(transactionRepository, accountRepository, relationshipService, auditService,
                 transactionGraphService, gmailReconciliationMatcher, statementImportRepository);
@@ -1012,6 +1019,14 @@ class ReconciliationServiceTest {
         s.setAccountId(cardAccountId);
         s.setTotalAmountDue(totalAmountDue);
         s.setPaymentDueDate(paymentDueDate);
+        // Registers this statement's card account as live by default -- see liveAccounts' own
+        // comment. A test exercising the deleted-account case removes it after calling this.
+        if (liveAccounts.stream().noneMatch(a -> a.getId().equals(cardAccountId))) {
+            Account card = new Account();
+            ReflectionTestUtils.setField(card, "id", cardAccountId);
+            card.setUserId(userId);
+            liveAccounts.add(card);
+        }
         return s;
     }
 
@@ -1191,6 +1206,73 @@ class ReconciliationServiceTest {
                 .filter(e -> e.relationshipType() == TransactionRelationship.RelationshipType.CC_PAYMENT).toList();
         assertThat(ccEdges).hasSize(1);
         assertThat(ccEdges.get(0).toTransactionId()).isEqualTo(charge.getId());
+    }
+
+    @Test
+    void reconcileForUser_skipsAStatement_whoseCardAccountHasBeenDeleted() {
+        // A deleted account's transactions deliberately keep deleted_at unset (see this pass's own
+        // comment) -- without live-account scoping here, a dead card's statement stays processed,
+        // its charges are still found via findByStatementImportId, and a real, currently-visible
+        // savings-side payment gets claimed and excluded from cash flow to "settle" spend the user
+        // can no longer even see.
+        UUID cardAccountId = UUID.randomUUID();
+        UUID savingsAccountId = UUID.randomUUID();
+        com.finora.entity.StatementImport statement =
+                ccStatement(UUID.randomUUID(), cardAccountId, new BigDecimal("2500.00"), LocalDate.of(2026, 7, 15));
+        // The card account was live a moment ago (ccStatement() registered it) -- now delete it.
+        liveAccounts.removeIf(a -> a.getId().equals(cardAccountId));
+        Transaction payment = txn(UUID.randomUUID(), savingsAccountId, LocalDate.of(2026, 7, 14),
+                new BigDecimal("2500.00"), Transaction.Type.EXPENSE, "CREDIT CARD PAYMENT",
+                Instant.parse("2026-07-14T10:00:00Z"));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(payment));
+        when(statementImportRepository.findByUserIdAndTotalAmountDueIsNotNull(userId)).thenReturn(List.of(statement));
+
+        reconciliationService.reconcileForUser(userId);
+
+        org.mockito.Mockito.verify(transactionGraphService, org.mockito.Mockito.never())
+                .linkAll(org.mockito.ArgumentMatchers.anyList());
+        org.mockito.Mockito.verify(transactionRepository, org.mockito.Mockito.never())
+                .findByStatementImportId(org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void reconcileForUser_picksTheEarlierDueDateStatement_whenTwoStatementsCoincidentallyCollide() {
+        // findByUserIdAndTotalAmountDueIsNotNull carries no ORDER BY, so the winner of a same-
+        // amount/same-due-date coincidence must not depend on whatever order the repository (real
+        // or, here, mocked) happens to return -- otherwise which charge set a payment settles could
+        // flip between runs, leaving contradictory CC_PAYMENT edges live at once. Returns the LATER
+        // statement first from the mock, deliberately, so this only passes if the pass sorts rather
+        // than trusting repository order.
+        UUID earlierCardAccount = UUID.randomUUID();
+        UUID laterCardAccount = UUID.randomUUID();
+        UUID savingsAccountId = UUID.randomUUID();
+        com.finora.entity.StatementImport laterStatement =
+                ccStatement(UUID.randomUUID(), laterCardAccount, new BigDecimal("2500.00"), LocalDate.of(2026, 7, 20));
+        com.finora.entity.StatementImport earlierStatement =
+                ccStatement(UUID.randomUUID(), earlierCardAccount, new BigDecimal("2500.00"), LocalDate.of(2026, 7, 10));
+        Transaction payment = txn(UUID.randomUUID(), savingsAccountId, LocalDate.of(2026, 7, 12),
+                new BigDecimal("2500.00"), Transaction.Type.EXPENSE, "CREDIT CARD PAYMENT",
+                Instant.parse("2026-07-12T10:00:00Z"));
+        Transaction earlierCharge = txn(UUID.randomUUID(), earlierCardAccount, LocalDate.of(2026, 6, 20),
+                new BigDecimal("2500.00"), Transaction.Type.EXPENSE, "AMAZON", Instant.parse("2026-06-20T10:00:00Z"));
+        Transaction laterCharge = txn(UUID.randomUUID(), laterCardAccount, LocalDate.of(2026, 6, 25),
+                new BigDecimal("2500.00"), Transaction.Type.EXPENSE, "FLIPKART", Instant.parse("2026-06-25T10:00:00Z"));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any()))
+                .thenReturn(List.of(payment, earlierCharge, laterCharge));
+        // Mock returns the LATER statement first -- the fix must not depend on this order.
+        when(statementImportRepository.findByUserIdAndTotalAmountDueIsNotNull(userId))
+                .thenReturn(List.of(laterStatement, earlierStatement));
+        when(transactionRepository.findByStatementImportId(earlierStatement.getId())).thenReturn(List.of(earlierCharge));
+        when(transactionRepository.findByStatementImportId(laterStatement.getId())).thenReturn(List.of(laterCharge));
+
+        reconciliationService.reconcileForUser(userId);
+
+        List<TransactionGraphService.PendingEdge> ccEdges = capturePendingEdges().stream()
+                .filter(e -> e.relationshipType() == TransactionRelationship.RelationshipType.CC_PAYMENT).toList();
+        assertThat(ccEdges)
+                .as("the earlier due-date statement claims the coincidental payment, regardless of repository order")
+                .hasSize(1);
+        assertThat(ccEdges.get(0).toTransactionId()).isEqualTo(earlierCharge.getId());
     }
 
     @Test
