@@ -106,7 +106,7 @@ class ImportServiceStorageDualWriteTest {
     /** Builds a fresh ImportService with every collaborator the same except statementContentService,
      *  which each test swaps to exercise one branch of the store()-present/absent split. */
     private ImportService importServiceWith(StatementContentService statementContentService) {
-        DuplicateDetector duplicateDetector = new DuplicateDetector(transactionRepository);
+        DuplicateDetector duplicateDetector = new DuplicateDetector(transactionRepository, TestAccountRepositories.anyLive());
         CsvParser csvParser = new CsvParser();
         TransactionNormalizer transactionNormalizer =
                 new TransactionNormalizer(categorizationService, duplicateDetector, TestRuleEngines.empty());

@@ -61,7 +61,7 @@ class ImportServiceSessionTest {
         RecurringService recurringService = mock(RecurringService.class);
         importSessionService = mock(ImportSessionService.class);
 
-        DuplicateDetector duplicateDetector = new DuplicateDetector(transactionRepository);
+        DuplicateDetector duplicateDetector = new DuplicateDetector(transactionRepository, TestAccountRepositories.anyLive());
         // Mockito's default answer for an unstubbed saveAll() returning a List is an EMPTY list,
         // not null -- confirm() does `int imported = saved.size()` off this return value, so
         // without this stub every confirm() silently reports 0 imported regardless of how many
