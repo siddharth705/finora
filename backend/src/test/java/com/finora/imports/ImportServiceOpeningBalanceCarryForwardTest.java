@@ -67,7 +67,7 @@ class ImportServiceOpeningBalanceCarryForwardTest {
                 .thenAnswer(inv -> inv.getArgument(1));
         ReconciliationService reconciliationService = mock(ReconciliationService.class);
         RecurringService recurringService = mock(RecurringService.class);
-        DuplicateDetector duplicateDetector = new DuplicateDetector(transactionRepository);
+        DuplicateDetector duplicateDetector = new DuplicateDetector(transactionRepository, accountRepository);
         CsvParser csvParser = new CsvParser();
         TransactionNormalizer transactionNormalizer = new TransactionNormalizer(categorizationService, duplicateDetector, com.finora.imports.TestRuleEngines.empty());
         StatementValidator statementValidator = new StatementValidator(com.finora.imports.product.ProductDiscovery.standard());
