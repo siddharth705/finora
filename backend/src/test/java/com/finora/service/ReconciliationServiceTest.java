@@ -14,6 +14,7 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -166,6 +167,11 @@ class ReconciliationServiceTest {
         assertThat(original.getIsDuplicateOf()).isNull();
         assertThat(duplicate.getIsDuplicateOf()).isEqualTo(original.getId());
         assertThat(duplicate.getReconciliationStatus()).isEqualTo(Transaction.ReconciliationStatus.DUPLICATE);
+        // Neither row has a balance or reference number, so the match never needed either
+        // signal -- the explanation must not claim a check that never ran.
+        @SuppressWarnings("unchecked")
+        Map<String, Object> reason = (Map<String, Object>) duplicate.getReconciliationExplanation().get("reason");
+        assertThat(reason).doesNotContainKeys("sameBalance", "sameReferenceNumber");
     }
 
     /**
@@ -311,6 +317,11 @@ class ReconciliationServiceTest {
         reconciliationService.reconcileForUser(userId);
 
         assertThat(reimported.getIsDuplicateOf()).isEqualTo(original.getId());
+        @SuppressWarnings("unchecked")
+        Map<String, Object> reason = (Map<String, Object>) reimported.getReconciliationExplanation().get("reason");
+        assertThat(reason)
+                .as("the group needed splitting by balance to reach this pairing -- the evidence should say so")
+                .containsEntry("sameBalance", true);
     }
 
     @Test

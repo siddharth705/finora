@@ -303,7 +303,17 @@ public class ReconciliationService {
                     if (t.getNotDuplicateConfirmedAt() != null) continue;
                     t.setIsDuplicateOf(canonical.getId());
                     t.setReconciliationStatus(Transaction.ReconciliationStatus.DUPLICATE);
-                    Map<String, Object> explanation = ReconciliationExplanation.duplicate(canonical.getId());
+                    // t and canonical are members of the same splitByDiscriminator sub-group, so
+                    // when that group was split by balance/reference, EVERY member (both of these
+                    // included) shares the identical value by construction -- a direct pairwise
+                    // comparison here is equivalent to asking "was this group split by X" without
+                    // splitByDiscriminator needing to report its own provenance back to callers.
+                    boolean sameBalance = t.getBalanceAfter() != null && canonical.getBalanceAfter() != null
+                            && t.getBalanceAfter().compareTo(canonical.getBalanceAfter()) == 0;
+                    boolean sameReferenceNumber = t.getReferenceNumber() != null && canonical.getReferenceNumber() != null
+                            && t.getReferenceNumber().equals(canonical.getReferenceNumber());
+                    Map<String, Object> explanation = ReconciliationExplanation.duplicate(
+                            canonical.getId(), sameBalance, sameReferenceNumber);
                     t.setReconciliationExplanation(explanation);
                     dirty.add(t);
                     newDuplicates++;
