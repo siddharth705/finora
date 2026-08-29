@@ -213,8 +213,14 @@ public class ReconciliationService {
         // narrowing this to run only when an account was actually just deleted (event-driven, the
         // way AccountService.delete's own forward-looking half already is) would remove the
         // per-call cost entirely, at the price of no longer self-healing data from before this fix.
-        Set<UUID> liveAccountIds = accountRepository.findByUserId(userId).stream()
+        List<com.finora.entity.Account> liveAccounts = accountRepository.findByUserId(userId);
+        Set<UUID> liveAccountIds = liveAccounts.stream()
                 .map(com.finora.entity.Account::getId).collect(java.util.stream.Collectors.toSet());
+        // Kept (not just the id set above) so the CC_PAYMENT pass below can read a card account's
+        // own accountNumberMasked for last-4 matching without a second accountRepository round
+        // trip -- see that pass's own comment.
+        Map<UUID, com.finora.entity.Account> accountsById = liveAccounts.stream()
+                .collect(java.util.stream.Collectors.toMap(com.finora.entity.Account::getId, a -> a));
         List<UUID> deadAccountTransactionIds = transactionRepository.findByUserId(userId).stream()
                 .filter(t -> !liveAccountIds.contains(t.getAccountId()))
                 .map(Transaction::getId)
@@ -617,9 +623,10 @@ public class ReconciliationService {
         // CANDIDATE ONLY, unconditionally -- deliberately does NOT call statusFor(confidence) the
         // way every earlier pass does. Two reasons, not one: first, the same correctness argument
         // as the Gmail pass above (a wrong match here would silently exclude or double-count real
-        // money, and this codebase has no CC-specific signal yet beyond amount+date proximity --
-        // no issuer check, no destination-account-type check); second, this pass runs AFTER the
-        // TRANSFER pass in this same method specifically so it can read `!isTransfer()` and skip
+        // money -- and even with the last-4 disambiguation below, this pass still has no
+        // destination-account-type check, and a last-4 match is real but bank-dependent evidence,
+        // not a guarantee, per last4CandidatesIn's own doc comment); second, this pass runs AFTER
+        // the TRANSFER pass in this same method specifically so it can read `!isTransfer()` and skip
         // anything TRANSFER already claimed -- a real credit-card bill payment is, today, already
         // caught by TRANSFER's generic "payment"-keyword/same-amount heuristic, so this pass only
         // ever sees the transactions TRANSFER left alone. AUTO_CONFIRMED status is not part of this
@@ -675,12 +682,26 @@ public class ReconciliationService {
             // claimed by more than one statement, attributing one real payment as if it settled
             // two different bills. First statement processed wins; later ones fall through to
             // "no candidate" for that payment, same as if it had genuinely already been spent
-            // elsewhere. A real issuer/last-4 disambiguation (roadmap Part 4) would pick the
-            // RIGHT winner instead of just AN exclusive one -- this only guarantees exclusivity.
+            // elsewhere. Real issuer/last-4 disambiguation (below) narrows this further where the
+            // evidence exists; where it doesn't, this due-date tiebreak is still what decides it.
             Set<UUID> claimedPaymentIds = new HashSet<>();
+            // Real card fragment matching (roadmap Part 4's "issuer-name + last-4-digit
+            // matching"), confirmed feasible against this project's own real bank-statement
+            // corpus rather than assumed -- see last4CandidatesIn's own doc comment for the ICICI
+            // example that proved it and the HDFC one that didn't. Built once per run, not per
+            // statement: every OTHER live card's last-4 needs to be known too, so a payment
+            // description naming a DIFFERENT card can be excluded as a candidate, not just
+            // deprioritized.
+            Map<UUID, String> cardLast4ByAccountId = new java.util.HashMap<>();
+            for (StatementImport s : ccStatements) {
+                com.finora.entity.Account cardAccount = accountsById.get(s.getAccountId());
+                String last4 = cardAccount == null ? null : last4Of(cardAccount.getAccountNumberMasked());
+                if (last4 != null) cardLast4ByAccountId.put(s.getAccountId(), last4);
+            }
             for (StatementImport statement : ccStatements) {
                 if (statement.getTotalAmountDue() == null || statement.getPaymentDueDate() == null) continue;
 
+                String thisCardLast4 = cardLast4ByAccountId.get(statement.getAccountId());
                 List<Transaction> paymentCandidates = all.stream()
                         .filter(t -> t.getTxnType() == Transaction.Type.EXPENSE)
                         .filter(t -> !t.isTransfer())
@@ -690,15 +711,35 @@ public class ReconciliationService {
                         .filter(t -> t.getAmount().compareTo(statement.getTotalAmountDue()) == 0)
                         .filter(t -> Math.abs(ChronoUnit.DAYS.between(t.getTxnDate(), statement.getPaymentDueDate()))
                                 <= ReconciliationPolicy.CC_PAYMENT_DUE_DATE_WINDOW_DAYS)
+                        // A candidate whose OWN description names a DIFFERENT known card is
+                        // excluded outright -- real evidence it belongs elsewhere, not just a
+                        // weaker candidate. A candidate with no identifiable fragment at all, or
+                        // one that matches THIS card, is unaffected here; see the tiebreak below
+                        // for how a match to THIS card is preferred among what's left.
+                        .filter(t -> {
+                            Set<String> descriptionLast4s = last4CandidatesIn(t.getDescription());
+                            if (descriptionLast4s.isEmpty() || descriptionLast4s.contains(thisCardLast4)) return true;
+                            return cardLast4ByAccountId.entrySet().stream()
+                                    .noneMatch(e -> !e.getKey().equals(statement.getAccountId())
+                                            && descriptionLast4s.contains(e.getValue()));
+                        })
                         .toList();
                 if (paymentCandidates.isEmpty()) continue;
 
-                // Closest to the printed due date wins when more than one same-amount candidate
-                // falls in the window -- same tiebreak shape as the other passes above.
+                // A candidate whose description names THIS card wins outright over one that
+                // doesn't, even if the non-matching one is closer to the due date -- real
+                // evidence beats a coincidence. Among candidates tied on that (most commonly:
+                // neither has an identifiable fragment at all, the common case per last4CandidatesIn's
+                // own doc comment), closest to the printed due date wins, same tiebreak shape as
+                // the other passes above.
                 Transaction payment = paymentCandidates.stream()
-                        .min(Comparator.comparingLong(t ->
-                                Math.abs(ChronoUnit.DAYS.between(t.getTxnDate(), statement.getPaymentDueDate()))))
+                        .min(Comparator
+                                .comparing((Transaction t) -> thisCardLast4 == null
+                                        || !last4CandidatesIn(t.getDescription()).contains(thisCardLast4))
+                                .thenComparingLong(t -> Math.abs(ChronoUnit.DAYS.between(t.getTxnDate(), statement.getPaymentDueDate()))))
                         .orElseThrow();
+                boolean matchedByLast4 = thisCardLast4 != null
+                        && last4CandidatesIn(payment.getDescription()).contains(thisCardLast4);
 
                 // EXPENSE only -- findByStatementImportId returns every transaction this statement's
                 // confirm wrote, which can include an INCOME-type row for a credit/refund printed on
@@ -710,10 +751,17 @@ public class ReconciliationService {
                 claimedPaymentIds.add(payment.getId());
 
                 long daysFromDue = Math.abs(ChronoUnit.DAYS.between(payment.getTxnDate(), statement.getPaymentDueDate()));
-                // MERCHANT_AND_AMOUNT, not EXACT: amount matches exactly (no delta), but there is a
-                // real date window to decay across, same reasoning the TRANSFER pass gives for
-                // reusing this tier for a non-merchant, structural signal.
-                int ccConfidence = ConfidenceScorer.score(ConfidenceScorer.MatchType.MERCHANT_AND_AMOUNT,
+                // EXACT, not MERCHANT_AND_AMOUNT, when the payment's own description names this
+                // specific card -- real positive evidence, not just amount+date proximity (see
+                // matchedByLast4 above). MERCHANT_AND_AMOUNT otherwise, unchanged: amount matches
+                // exactly (no delta), but there is a real date window to decay across, same
+                // reasoning the TRANSFER pass gives for reusing this tier for a non-merchant,
+                // structural signal. Status stays CANDIDATE regardless either way -- see this
+                // pass's own comment above on why AUTO_CONFIRMED is out of scope for this slice;
+                // a last-4 match narrows WHICH card, it doesn't yet change that verdict.
+                ConfidenceScorer.MatchType matchType = matchedByLast4
+                        ? ConfidenceScorer.MatchType.EXACT : ConfidenceScorer.MatchType.MERCHANT_AND_AMOUNT;
+                int ccConfidence = ConfidenceScorer.score(matchType,
                         payment.getAmount(), BigDecimal.ZERO, daysFromDue, ReconciliationPolicy.CC_PAYMENT_DUE_DATE_WINDOW_DAYS);
                 Map<String, Object> explanation = new java.util.LinkedHashMap<>();
                 explanation.put("type", "CC_PAYMENT_MATCH");
@@ -721,6 +769,7 @@ public class ReconciliationService {
                 explanation.put("totalAmountDue", statement.getTotalAmountDue().toPlainString());
                 explanation.put("paymentDueDate", statement.getPaymentDueDate().toString());
                 explanation.put("daysFromDueDate", daysFromDue);
+                explanation.put("matchedByLast4", matchedByLast4);
                 for (Transaction charge : settledCharges) {
                     if (charge.getId().equals(payment.getId())) continue; // a payment cannot settle itself
                     pendingEdges.add(new TransactionGraphService.PendingEdge(userId, payment.getId(), charge.getId(),
@@ -859,6 +908,47 @@ public class ReconciliationService {
         return confidence >= NEEDS_REVIEW_THRESHOLD
                 ? TransactionRelationship.Status.AUTO_CONFIRMED
                 : TransactionRelationship.Status.CANDIDATE;
+    }
+
+    private static final java.util.regex.Pattern DIGIT_RUN = java.util.regex.Pattern.compile("\\d{4,}");
+
+    /**
+     * Every trailing-4-digit window from each run of 4+ consecutive digits in {@code text} -- the
+     * shape a masked or reference-style card fragment takes in a real bank narration (roadmap
+     * Part 4's "issuer-name + last-4-digit matching", verified against this project's own real
+     * bank-statement corpus rather than assumed: an ICICI savings-side payment read
+     * "BIL/INFT/.../CC BillPay-5001/Self" and the paid card's own printed number was
+     * "5241XXXXXXXX5001" -- masking characters or a separator (hyphen, slash) already isolate the
+     * real last-4 at the right boundary, so no bank-specific parsing is needed. Not every bank's
+     * narration carries this (an HDFC sample's trailing digits did NOT match its own card's real
+     * last-4, evidently a payment reference number instead) -- and a pure reference number
+     * produces the identical shape with no way to tell it apart from a real card fragment by this
+     * alone. See the caller: only a match against a transaction's OWN known card counts as
+     * positive evidence; an unmatched candidate is treated as unknown, never as counter-evidence.
+     */
+    private static Set<String> last4CandidatesIn(String text) {
+        if (text == null || text.isBlank()) return Set.of();
+        Set<String> candidates = new HashSet<>();
+        java.util.regex.Matcher m = DIGIT_RUN.matcher(text);
+        while (m.find()) {
+            String run = m.group();
+            candidates.add(run.substring(run.length() - 4));
+        }
+        return candidates;
+    }
+
+    /**
+     * The real last four digits of a masked account number, however the source bank formats the
+     * mask -- "652925XXXXXX3123", "5241XXXXXXXX5001", "XXXX1234" all reduce correctly by simply
+     * discarding every non-digit character and keeping the last four: a masking character is
+     * never a digit, and every masked format this project has actually seen (PdfMetadataExtractor)
+     * ends in the genuine trailing digits, never in mask characters. Null if there aren't at least
+     * four digits to take -- an unmasked, malformed, or absent value.
+     */
+    private static String last4Of(String accountNumberMasked) {
+        if (accountNumberMasked == null) return null;
+        String digitsOnly = accountNumberMasked.replaceAll("[^0-9]", "");
+        return digitsOnly.length() >= 4 ? digitsOnly.substring(digitsOnly.length() - 4) : null;
     }
 
     private String duplicateKey(Transaction t) {
