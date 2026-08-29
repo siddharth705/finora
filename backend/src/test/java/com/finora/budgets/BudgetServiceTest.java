@@ -9,6 +9,7 @@ import com.finora.repository.CategoryRepository;
 import com.finora.repository.TransactionRepository;
 import com.finora.repository.UserRepository;
 import com.finora.service.AuditService;
+import com.finora.service.TransactionGraphService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -19,6 +20,7 @@ import java.time.YearMonth;
 import java.time.ZoneId;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -54,7 +56,10 @@ class BudgetServiceTest {
         categoryRepository = mock(CategoryRepository.class);
         transactionRepository = mock(TransactionRepository.class);
         userRepository = mock(UserRepository.class);
-        budgetService = new BudgetService(budgetRepository, categoryRepository, transactionRepository, userRepository, mock(AuditService.class));
+        TransactionGraphService transactionGraphService = mock(TransactionGraphService.class);
+        when(transactionGraphService.ccPaymentFromTransactionIds(any())).thenReturn(Set.of());
+        budgetService = new BudgetService(budgetRepository, categoryRepository, transactionRepository, userRepository,
+                mock(AuditService.class), transactionGraphService);
         when(userRepository.findById(any())).thenReturn(Optional.empty());
     }
 

@@ -10,6 +10,7 @@ import com.finora.repository.TransactionRepository;
 import com.finora.repository.UserRepository;
 import com.finora.service.AuditService;
 import com.finora.service.RefundNetting;
+import com.finora.service.TransactionGraphService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -30,14 +31,16 @@ public class BudgetService {
     private final TransactionRepository transactionRepository;
     private final UserRepository userRepository;
     private final AuditService auditService;
+    private final TransactionGraphService transactionGraphService;
 
     public BudgetService(BudgetRepository budgetRepository, CategoryRepository categoryRepository,
                           TransactionRepository transactionRepository, UserRepository userRepository,
-                          AuditService auditService) {
+                          AuditService auditService, TransactionGraphService transactionGraphService) {
         this.budgetRepository = budgetRepository;
         this.categoryRepository = categoryRepository;
         this.transactionRepository = transactionRepository;
         this.userRepository = userRepository;
+        this.transactionGraphService = transactionGraphService;
         this.auditService = auditService;
     }
 
@@ -70,8 +73,9 @@ public class BudgetService {
         // fixed to net it. RefundNetting.reportable() drops the income leg (same as the old
         // filter's job); reportableAmount() nets any matched refund/reversal off the expense.
         RefundNetting refunds = refundsFor(userId);
+        List<Transaction> monthTxns = transactionRepository.findByUserIdAndTxnDateBetween(userId, from, to);
         Map<UUID, BigDecimal> spendByCategory = RefundNetting.reportable(
-                        transactionRepository.findByUserIdAndTxnDateBetween(userId, from, to)).stream()
+                        monthTxns, transactionGraphService.ccPaymentFromTransactionIds(monthTxns)).stream()
                 .filter(t -> t.getTxnType() == Transaction.Type.EXPENSE && t.getCategoryId() != null)
                 .collect(Collectors.groupingBy(Transaction::getCategoryId,
                         Collectors.reducing(BigDecimal.ZERO, refunds::reportableAmount, BigDecimal::add)));
@@ -159,7 +163,8 @@ public class BudgetService {
         LocalDate from = thisMonth.atDay(1);
         LocalDate to = thisMonth.atEndOfMonth();
         RefundNetting refunds = refundsFor(userId);
-        return RefundNetting.reportable(transactionRepository.findByUserIdAndTxnDateBetween(userId, from, to)).stream()
+        List<Transaction> monthTxns = transactionRepository.findByUserIdAndTxnDateBetween(userId, from, to);
+        return RefundNetting.reportable(monthTxns, transactionGraphService.ccPaymentFromTransactionIds(monthTxns)).stream()
                 .filter(t -> t.getTxnType() == Transaction.Type.EXPENSE && categoryId.equals(t.getCategoryId()))
                 .map(refunds::reportableAmount)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);

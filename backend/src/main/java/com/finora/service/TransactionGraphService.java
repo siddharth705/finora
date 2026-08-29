@@ -1,5 +1,6 @@
 package com.finora.service;
 
+import com.finora.entity.Transaction;
 import com.finora.entity.TransactionRelationship;
 import com.finora.repository.TransactionRelationshipRepository;
 import org.springframework.stereotype.Service;
@@ -7,6 +8,7 @@ import org.springframework.stereotype.Service;
 import java.math.BigDecimal;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Deque;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -14,6 +16,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 /**
  * Reads and writes the transaction graph (docs/proposals/reconciliation-evolution-roadmap-
@@ -157,5 +160,27 @@ public class TransactionGraphService {
                 .orElseThrow(() -> new IllegalArgumentException("No such transaction relationship: " + edgeId));
         edge.setStatus(status);
         return repository.save(edge);
+    }
+
+    /**
+     * Which of {@code transactions} are the settling payment of a CC_PAYMENT edge -- i.e. a
+     * savings-side payment that already nets out the card charges it settles (PR #511), and would
+     * double the reported spend if also counted as its own expense (docs/proposals/reconciliation-
+     * evolution-roadmap-proposal.md, Part 4). REJECTED edges are excluded (a user or a later pass
+     * disagreed with the match) and so is any edge with a live {@code supersededBy} pointer; every
+     * other status -- CANDIDATE included -- counts. CANDIDATE is deliberately not held back for a
+     * higher-confidence bar here: unlike promoting an edge to AUTO_CONFIRMED (a ledger-facing
+     * verdict), this only changes a computed report total, is re-derived fresh on every read, and
+     * a wrong match costs one transiently mis-netted number rather than any persisted state.
+     */
+    public Set<UUID> ccPaymentFromTransactionIds(Collection<Transaction> transactions) {
+        if (transactions.isEmpty()) return Set.of();
+        List<UUID> transactionIds = transactions.stream().map(Transaction::getId).toList();
+        return repository.findByFromTransactionIdInAndRelationshipTypeAndStatusNotAndSupersededByIsNull(
+                        transactionIds, TransactionRelationship.RelationshipType.CC_PAYMENT,
+                        TransactionRelationship.Status.REJECTED)
+                .stream()
+                .map(TransactionRelationship::getFromTransactionId)
+                .collect(Collectors.toSet());
     }
 }

@@ -14,9 +14,11 @@ import org.springframework.test.util.ReflectionTestUtils;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -39,7 +41,10 @@ class InsightsServiceBudgetRecommendationTest {
         transactionRepository = mock(TransactionRepository.class);
         categoryRepository = mock(CategoryRepository.class);
         budgetRepository = mock(BudgetRepository.class);
-        insightsService = new InsightsService(transactionRepository, categoryRepository, budgetRepository, mock(UserRepository.class));
+        TransactionGraphService transactionGraphService = mock(TransactionGraphService.class);
+        when(transactionGraphService.ccPaymentFromTransactionIds(any())).thenReturn(Set.of());
+        insightsService = new InsightsService(transactionRepository, categoryRepository, budgetRepository,
+                mock(UserRepository.class), transactionGraphService);
 
         dining = new Category();
         ReflectionTestUtils.setField(dining, "id", UUID.randomUUID());

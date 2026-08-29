@@ -23,6 +23,7 @@ import java.time.LocalDate;
 import java.time.YearMonth;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -59,9 +60,11 @@ class AnalyticsServiceTest {
         // already assumed, without having to seed a user row.
         userRepository = mock(UserRepository.class);
         when(userRepository.findById(any())).thenReturn(Optional.empty());
+        TransactionGraphService transactionGraphService = mock(TransactionGraphService.class);
+        when(transactionGraphService.ccPaymentFromTransactionIds(any())).thenReturn(Set.of());
         analyticsService = new AnalyticsService(transactionRepository, merchantRepository,
                 learningRepository, learningAuditRepository, categoryRepository, statementImportRepository,
-                new ConfidenceEngine(), userRepository);
+                new ConfidenceEngine(), userRepository, transactionGraphService);
     }
 
     private Transaction expense(UUID merchantId, LocalDate date, BigDecimal amount) {

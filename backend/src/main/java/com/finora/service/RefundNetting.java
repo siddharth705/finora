@@ -7,6 +7,7 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -83,16 +84,38 @@ public final class RefundNetting {
     }
 
     /**
+     * The rows a report should count at all, with no graph awareness -- callers that have not
+     * (yet) looked up {@link TransactionGraphService#ccPaymentFromTransactionIds} get the same
+     * answer as before that existed. Prefer the two-argument overload wherever a
+     * {@link TransactionGraphService} is already reachable.
+     */
+    public static List<Transaction> reportable(Collection<Transaction> transactions) {
+        return reportable(transactions, Set.of());
+    }
+
+    /**
      * The rows a report should count at all.
      *
      * <p>The filter the two callers each wrote by hand, minus the asymmetry: duplicates and
      * transfers are not real activity, and a refund leg is money coming back rather than income.
      * The purchase it reverses <em>stays</em>, and {@link #reportableAmount} is what makes that
      * correct.
+     *
+     * <p>{@code ccPaymentFromTransactionIds} extends the same rule to the transaction graph
+     * (docs/proposals/reconciliation-evolution-roadmap-proposal.md, Part 4/10 "Net worth & cash
+     * flow, graph-aware"): a savings-side payment that settles a credit card statement is, like a
+     * transfer, money moving between the user's own accounts rather than new spend -- the card
+     * charges it settles are the real spend, and they stay counted. Without this, a #511
+     * CC_PAYMENT match settling several charges left the payment itself still counted as its own
+     * expense on top of them, exactly the double-counting Part 4 of the roadmap names as the
+     * concrete goal to avoid. See {@link TransactionGraphService#ccPaymentFromTransactionIds} for
+     * which edge statuses qualify.
      */
-    public static List<Transaction> reportable(Collection<Transaction> transactions) {
+    public static List<Transaction> reportable(Collection<Transaction> transactions,
+                                                 Set<UUID> ccPaymentFromTransactionIds) {
         return transactions.stream()
-                .filter(t -> t.getIsDuplicateOf() == null && !t.isTransfer() && !isRefundLeg(t))
+                .filter(t -> t.getIsDuplicateOf() == null && !t.isTransfer() && !isRefundLeg(t)
+                        && (t.getId() == null || !ccPaymentFromTransactionIds.contains(t.getId())))
                 .toList();
     }
 

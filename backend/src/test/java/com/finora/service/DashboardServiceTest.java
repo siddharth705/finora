@@ -20,6 +20,7 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -36,6 +37,7 @@ class DashboardServiceTest {
     private CategoryRepository categoryRepository;
     private UserRepository userRepository;
     private com.finora.repository.StatementImportRepository statementImportRepository;
+    private TransactionGraphService transactionGraphService;
     private DashboardService dashboardService;
     private final UUID userId = UUID.randomUUID();
     private Account savings;
@@ -48,6 +50,9 @@ class DashboardServiceTest {
         budgetRepository = mock(BudgetRepository.class);
         userRepository = mock(UserRepository.class);
         statementImportRepository = mock(com.finora.repository.StatementImportRepository.class);
+        transactionGraphService = mock(TransactionGraphService.class);
+        // No CC_PAYMENT edges by default -- tests that care override this explicitly.
+        when(transactionGraphService.ccPaymentFromTransactionIds(any())).thenReturn(Set.of());
 
         savings = new Account();
         ReflectionTestUtils.setField(savings, "id", UUID.randomUUID());
@@ -68,7 +73,7 @@ class DashboardServiceTest {
         when(statementImportRepository.countByUserId(any())).thenReturn(0L);
 
         dashboardService = new DashboardService(accountRepository, transactionRepository, categoryRepository,
-                budgetRepository, userRepository, statementImportRepository);
+                budgetRepository, userRepository, statementImportRepository, transactionGraphService);
     }
 
     private Transaction txn(BigDecimal amount, Transaction.Type type, LocalDate date, Transaction.ReconciliationStatus status) {
@@ -111,6 +116,25 @@ class DashboardServiceTest {
 
         assertThat(summary.monthlyIncome()).isEqualByComparingTo("50000.00");
         assertThat(summary.monthlyExpense()).isEqualByComparingTo("15000.00");
+    }
+
+    @Test
+    @DisplayName("a CC_PAYMENT-settling payment is excluded from monthlyExpense; the charges it settles stay counted")
+    void summarize_excludesCcPaymentSettlement_fromMonthlyExpense() {
+        // Reconciliation-evolution-roadmap-proposal.md Part 4's concrete goal: a card charge
+        // followed by its statement payment must net to the charge's amount, never both summed.
+        // ReconciliationService/PR #511 links the payment -> each settled charge as a CC_PAYMENT
+        // edge; this is the read side that must not double-count the payment leg.
+        LocalDate july = LocalDate.of(2026, 7, 15);
+        Transaction amazonCharge = txn(new BigDecimal("5000.00"), Transaction.Type.EXPENSE, july, Transaction.ReconciliationStatus.OK);
+        Transaction cardPayment = txn(new BigDecimal("5000.00"), Transaction.Type.EXPENSE, july, Transaction.ReconciliationStatus.OK);
+
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(amazonCharge, cardPayment));
+        when(transactionGraphService.ccPaymentFromTransactionIds(any())).thenReturn(Set.of(cardPayment.getId()));
+
+        DashboardSummaryDto summary = dashboardService.summarize(userId);
+
+        assertThat(summary.monthlyExpense()).isEqualByComparingTo("5000.00"); // charge counted once, payment netted out
     }
 
     @Test
@@ -586,7 +610,7 @@ class DashboardServiceTest {
         ReflectionTestUtils.setField(user, "id", userId);
         when(userRepository.findById(any())).thenReturn(Optional.of(user));
         dashboardService = new DashboardService(accountRepository, transactionRepository, categoryRepository,
-                budgetRepository, userRepository, statementImportRepository);
+                budgetRepository, userRepository, statementImportRepository, transactionGraphService);
         when(transactionRepository.findByUserId(userId)).thenReturn(List.of());
 
         DashboardSummaryDto summary = dashboardService.summarize(userId);
