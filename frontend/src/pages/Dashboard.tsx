@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { Line, Doughnut } from 'react-chartjs-2';
@@ -7,8 +7,10 @@ import {
 } from 'chart.js';
 import {
   Wallet, ArrowDownCircle, ArrowUpCircle, PieChart,
-  ShoppingBag, Utensils, Car, Sparkles, Plus, PiggyBank, TrendingUp, TrendingDown, Target, ShieldCheck, Repeat,
+  ShoppingBag, Sparkles, Plus, PiggyBank, TrendingUp, TrendingDown, Target, ShieldCheck, Repeat,
   UploadCloud, Receipt, LineChart as LineChartIcon, Mail, AlertTriangle, ListChecks, Copy, BadgeCheck,
+  Tag, Home, ShoppingCart, Utensils, Car, Zap, HeartPulse, Film, Percent, Users, Landmark, Shield,
+  GraduationCap, RefreshCw, Plane, Gift, PawPrint, Sofa, Banknote, Briefcase,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { BankLogo } from '../components/BankLogo';
@@ -17,7 +19,8 @@ import { AddTransactionModal } from '../components/AddTransactionModal';
 import { FinancialJourney } from '../components/FinancialJourney';
 import { FinoraCard, MetricCard, EmptyState, SectionHeader, QuickActionCard, ChartContainer, Badge, baseChartOptions } from '../design-system';
 import {
-  dashboardApi, accountsApi, transactionsApi, goalsApi, insightsApi, userApi, budgetsApi, reportsApi, recurringApi,
+  dashboardApi, accountsApi, transactionsApi, categoriesApi, goalsApi, insightsApi, userApi, budgetsApi, reportsApi, recurringApi,
+  type CategoryOption,
 } from '../api/endpoints';
 
 ChartJS.register(ArcElement, LineElement, PointElement, LinearScale, CategoryScale, Tooltip, Legend, Filler);
@@ -81,11 +84,24 @@ function scoreLabel(score: number): string {
   return 'Needs Attention';
 }
 
-const CATEGORY_ICON: Record<string, any> = {
-  Dining: Utensils, Shopping: ShoppingBag, Transport: Car, Salary: ArrowDownCircle,
+// Maps the curated icon-token vocabulary CategoryPalette.ICONS defines server-side to already-
+// imported lucide-react components -- lucide-react components can't be looked up by string name
+// at runtime without importing every one, so this is a small closed map instead. Every default
+// category (Task 1's migration) and every user-created one (Task 2's CategoryPalette validation)
+// draws its icon token from exactly this set, so nothing here should ever miss.
+const ICON_COMPONENTS: Record<string, any> = {
+  tag: Tag, home: Home, 'shopping-cart': ShoppingCart, utensils: Utensils, car: Car, zap: Zap,
+  'shopping-bag': ShoppingBag, 'heart-pulse': HeartPulse, film: Film, 'trending-up': TrendingUp,
+  percent: Percent, repeat: Repeat, users: Users, landmark: Landmark, shield: Shield,
+  'graduation-cap': GraduationCap, 'refresh-cw': RefreshCw, plane: Plane, gift: Gift,
+  'paw-print': PawPrint, sofa: Sofa, receipt: Receipt, banknote: Banknote, briefcase: Briefcase,
+  'arrow-down-circle': ArrowDownCircle,
 };
-const CATEGORY_COLOR: Record<string, string> = {
-  Dining: '#ef4444', Shopping: '#f59e0b', Transport: '#111827', Salary: '#16a34a',
+// Same 9 hex values as CategoryPalette.COLORS server-side -- the frontend keeps its own copy
+// since /categories (and /categories/options) return the color TOKEN, not a CSS-ready hex string.
+const COLOR_HEX: Record<string, string> = {
+  gray: '#6b7280', blue: '#2563eb', green: '#16a34a', red: '#dc2626', orange: '#ea580c',
+  yellow: '#d97706', purple: '#7c3aed', pink: '#db2777', teal: '#0d9488',
 };
 
 
@@ -116,6 +132,22 @@ export default function Dashboard() {
   const queryClient = useQueryClient();
   const [cashFlowRange, setCashFlowRange] = useState<CashFlowRange>('6M');
   const [showAddModal, setShowAddModal] = useState(false);
+  // Recent Transactions' icon/color used to key off categoryName against a 4-entry hardcoded map
+  // (predates custom categories, and covered only 4 of the 25 default categories even before user-
+  // created ones existed). Looked up by categoryId instead so every category -- default or custom
+  // -- renders its own real, backend-assigned icon/color token.
+  //
+  // On the shared ['categories'] key rather than its own useState+useEffect: this page also
+  // renders AskOnceCard and MerchantGroupReviewCard, each of which mounts CategoryComboboxes
+  // reading the same key, so one fetch serves all of them. It also picks up react-query's error
+  // handling, replacing a bare .then() with no .catch() at all -- a rejected promise there was an
+  // unhandled rejection, and the icons simply fell back to the default forever with no signal.
+  const categoriesQ = useQuery({ queryKey: ['categories'], queryFn: () => categoriesApi.list(), retry: false });
+  const categoriesById: Record<string, CategoryOption> = useMemo(
+    () => Object.fromEntries((categoriesQ.data ?? []).map((c) => [c.id, c])),
+    [categoriesQ.data],
+  );
+
   const [confirmingDuplicateId, setConfirmingDuplicateId] = useState<string | null>(null);
   const [duplicateConfirmError, setDuplicateConfirmError] = useState<string | null>(null);
 
@@ -686,8 +718,9 @@ export default function Dashboard() {
                 }
               />
             ) : recentTxns.map((t) => {
-              const Icon = CATEGORY_ICON[t.categoryName] ?? ShoppingBag;
-              const color = t.type === 'INCOME' ? '#16a34a' : (CATEGORY_COLOR[t.categoryName] ?? '#262A33');
+              const cat = categoriesById[t.categoryId];
+              const Icon = ICON_COMPONENTS[cat?.icon ?? 'tag'] ?? ShoppingBag;
+              const color = t.type === 'INCOME' ? '#16a34a' : (COLOR_HEX[cat?.color ?? 'gray'] ?? '#262A33');
               return (
                 <div key={t.id} className="flex items-center gap-3">
                   <div className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0" style={{ background: color + '20' }}>

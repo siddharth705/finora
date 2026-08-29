@@ -124,6 +124,34 @@ class TransactionGroupingServiceTest {
         assertThat(groups).isEmpty();
     }
 
+    /**
+     * Regression test: a transaction already flagged DUPLICATE must not inflate the group's count
+     * or be offered for bulk categorization -- it's resolved through the duplicate-review flow, not
+     * this one.
+     */
+    @Test
+    void excludesTransactionsAlreadyFlaggedAsDuplicate() {
+        UUID swiggyId = UUID.randomUUID();
+
+        Transaction original = txnFor(swiggyId);
+        Transaction duplicate = txnFor(swiggyId);
+        duplicate.setReconciliationStatus(Transaction.ReconciliationStatus.DUPLICATE);
+        Transaction another = txnFor(swiggyId);
+
+        TransactionRepository transactionRepository = mock(TransactionRepository.class);
+        when(transactionRepository.findByUserIdAndNeedsCategoryReviewTrueOrderByTxnDateDesc(userId))
+                .thenReturn(List.of(original, duplicate, another));
+
+        MerchantRepository merchantRepository = mock(MerchantRepository.class);
+        when(merchantRepository.findByUserId(userId)).thenReturn(List.of(merchantOf(swiggyId, "SWIGGY")));
+
+        TransactionGroupingService service = new TransactionGroupingService(transactionRepository, merchantRepository);
+        List<TransactionGroupingService.MerchantGroup> groups = service.groupNeedsReviewByMerchant(userId);
+
+        assertThat(groups).hasSize(1);
+        assertThat(groups.get(0).transactionIds()).hasSize(2);
+    }
+
     @Test
     void sortsLargestGroupFirst() {
         UUID swiggyId = UUID.randomUUID();

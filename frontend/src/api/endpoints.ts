@@ -630,9 +630,33 @@ export interface CategoryOption {
   id: string;
   name: string;
   isSystem: boolean;
+  icon: string;
+  color: string;
 }
+
+export interface CategoryOptions {
+  icons: { token: string; label: string }[];
+  colors: { token: string; label: string }[];
+}
+
 export const categoriesApi = {
   list: () => api.get<CategoryOption[]>('/categories').then((r) => r.data),
+  options: () => api.get<CategoryOptions>('/categories/options').then((r) => r.data),
+  create: (name: string, icon?: string, color?: string) =>
+    api.post<CategoryOption>('/categories', { name, icon, color }).then((r) => r.data),
+  update: (id: string, changes: { name?: string; icon?: string; color?: string }) =>
+    api.patch<CategoryOption>(`/categories/${id}`, changes).then((r) => r.data),
+  delete: (id: string, reassignTo?: string) =>
+    api.delete(`/categories/${id}`, { params: reassignTo ? { reassignTo } : undefined }),
+  usage: (id: string) =>
+    api.get<{
+      transactionCount: number;
+      hasBudget: boolean;
+      ruleCount: number;
+      learningRowCount: number;
+    }>(
+      `/categories/${id}/usage`,
+    ).then((r) => r.data),
 };
 
 export const dashboardApi = {

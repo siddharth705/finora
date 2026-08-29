@@ -8,7 +8,7 @@ import type { MerchantGroup } from '../types';
 
 vi.mock('../api/endpoints', () => ({
   transactionsApi: { groupsNeedsReview: vi.fn(), bulkRecategorize: vi.fn() },
-  categoriesApi: { list: vi.fn() },
+  categoriesApi: { list: vi.fn(), options: vi.fn(), create: vi.fn() },
 }));
 
 function group(merchantName: string, count: number): MerchantGroup {
@@ -30,7 +30,11 @@ function renderCard() {
 
 describe('MerchantGroupReviewCard', () => {
   beforeEach(() => {
-    vi.mocked(categoriesApi.list).mockResolvedValue([{ name: 'Food' }, { name: 'Transport' }] as any);
+    vi.mocked(categoriesApi.list).mockResolvedValue([
+      { id: 'cat-1', name: 'Food', isSystem: false, icon: 'tag', color: 'gray' },
+      { id: 'cat-2', name: 'Transport', isSystem: false, icon: 'tag', color: 'gray' },
+    ] as any);
+    vi.mocked(categoriesApi.options).mockResolvedValue({ icons: [], colors: [] } as any);
   });
 
   it('renders nothing when there are no groups', async () => {
@@ -58,7 +62,9 @@ describe('MerchantGroupReviewCard', () => {
     renderCard();
 
     await screen.findByText('SWIGGY');
-    await user.selectOptions(screen.getByRole('combobox'), 'Food');
+    const combobox = screen.getByRole('combobox');
+    await user.type(combobox, 'Food');
+    await user.click(await screen.findByText('Food'));
     await user.click(screen.getByRole('button', { name: /apply to 5 transactions/i }));
 
     await waitFor(() =>
@@ -73,9 +79,31 @@ describe('MerchantGroupReviewCard', () => {
     renderCard();
 
     await screen.findByText('SWIGGY');
-    await user.selectOptions(screen.getByRole('combobox'), 'Food');
+    const combobox = screen.getByRole('combobox');
+    await user.type(combobox, 'Food');
+    await user.click(await screen.findByText('Food'));
     await user.click(screen.getByRole('button', { name: /apply to 5 transactions/i }));
 
     await waitFor(() => expect(screen.queryByText('SWIGGY')).not.toBeInTheDocument());
+  });
+
+  it('keeps each group\'s category pick independent of the others', async () => {
+    vi.mocked(transactionsApi.groupsNeedsReview).mockResolvedValue([group('SWIGGY', 5), group('UBER', 3)]);
+    const user = userEvent.setup();
+    renderCard();
+
+    await screen.findByText('SWIGGY');
+    await screen.findByText('UBER');
+    const comboboxes = screen.getAllByRole('combobox');
+    expect(comboboxes).toHaveLength(2);
+
+    await user.type(comboboxes[0], 'Food');
+    await user.click(await screen.findByText('Food'));
+
+    // Only the SWIGGY row's combobox should reflect the pick -- the UBER row must stay untouched.
+    expect(screen.getAllByRole('combobox')[0]).toHaveValue('Food');
+    expect(screen.getAllByRole('combobox')[1]).toHaveValue('');
+    expect(screen.getByRole('button', { name: /apply to 3 transactions/i })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /apply to 5 transactions/i })).not.toBeDisabled();
   });
 });

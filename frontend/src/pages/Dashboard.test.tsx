@@ -111,6 +111,7 @@ describe('Dashboard — Financial Health Score', () => {
     // assertion below unless a test explicitly cares about it.
     vi.mocked(dashboardApi.journey).mockReset().mockResolvedValue({ milestones: [] });
     vi.mocked(accountsApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(categoriesApi.list).mockReset().mockResolvedValue([]);
     vi.mocked(transactionsApi.search).mockReset().mockResolvedValue({
       // totalElements > 0: this account has real history, matching every scenario these two
       // describe blocks actually test (a populated Health Score, real recurring items) -- 0 would
@@ -284,11 +285,64 @@ describe('Dashboard — Spending Breakdown category review warning', () => {
   });
 });
 
+// Task 14: Recent Transactions used to look up its icon/color from a 4-entry hardcoded map keyed
+// by category NAME (Dining/Shopping/Transport/Salary), falling back to a generic ShoppingBag/gray
+// for every other category -- including all 21 other default categories and any custom one a user
+// creates. This confirms the row now renders the real icon/color TOKEN the backend assigned via
+// categoryId, for a category that was never in that old 4-entry map.
+describe('Dashboard — Recent Transactions icon/color', () => {
+  beforeEach(() => {
+    vi.mocked(dashboardApi.summary).mockReset().mockResolvedValue(summary());
+    vi.mocked(dashboardApi.journey).mockReset().mockResolvedValue({ milestones: [] });
+    vi.mocked(accountsApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(categoriesApi.list).mockReset().mockResolvedValue([
+      { id: 'cat-pets', name: 'Pets', isSystem: true, icon: 'paw-print', color: 'teal' } as any,
+    ]);
+    vi.mocked(transactionsApi.search).mockReset().mockResolvedValue({
+      content: [
+        {
+          id: 'txn-1', accountId: 'acct-1', categoryId: 'cat-pets', categoryName: 'Pets',
+          date: '2026-08-20', description: 'Vet visit', merchant: 'Local Vet Clinic',
+          paymentMethod: 'UPI', amount: 1200, type: 'EXPENSE', tags: [], notes: null,
+          reconciliationStatus: 'OK', recurring: false, needsCategoryReview: false,
+          categoryManuallySet: false,
+        },
+      ],
+      page: 0, size: 4, totalElements: 1, totalPages: 1,
+    });
+    vi.mocked(goalsApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(insightsApi.get).mockReset().mockResolvedValue({ sentences: [], movers: [] });
+    vi.mocked(userApi.get).mockReset().mockResolvedValue({
+      email: 'amy@example.test', fullName: 'Amy Santiago', lowBalanceThreshold: 2000,
+      theme: 'system', timezone: 'Asia/Kolkata', phoneNumber: '+919876500000',
+      phoneVerified: true, createdAt: '2026-01-01T00:00:00Z', passwordChangedAt: null, signInMethod: 'PASSWORD',
+    });
+    vi.mocked(budgetsApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(reportsApi.availableMonths).mockReset().mockResolvedValue(['2026-08']);
+    vi.mocked(reportsApi.forMonth).mockReset().mockResolvedValue({
+      month: '2026-08', income: 80000, expense: 45000, categories: [],
+    });
+    vi.mocked(recurringApi.list).mockReset().mockResolvedValue([]);
+  });
+
+  it("renders the category's real backend icon/color token instead of the old hardcoded fallback", async () => {
+    renderDashboard();
+
+    const row = (await screen.findByText('Vet visit')).closest('.flex.items-center.gap-3') as HTMLElement;
+    // The teal token's real hex (CategoryPalette.COLORS / COLOR_HEX) rendered as `color + '20'`
+    // (12.5% alpha) -- jsdom normalizes the inline style's hex+alpha shorthand to rgba -- not the
+    // old generic '#262A33' fallback that every non-mapped category used to get.
+    const iconWrap = row.querySelector('div[style*="background"]') as HTMLElement;
+    expect(iconWrap.style.background).toBe('rgba(13, 148, 136, 0.125)');
+  });
+});
+
 describe('Dashboard — Limited History Banner', () => {
   beforeEach(() => {
     vi.mocked(dashboardApi.summary).mockReset().mockResolvedValue(summary());
     vi.mocked(dashboardApi.journey).mockReset().mockResolvedValue({ milestones: [] });
     vi.mocked(accountsApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(categoriesApi.list).mockReset().mockResolvedValue([]);
     vi.mocked(transactionsApi.search).mockReset().mockResolvedValue({
       content: [], page: 0, size: 4, totalElements: 12, totalPages: 3,
     });
@@ -741,6 +795,7 @@ describe('Dashboard — Subscriptions & Recurring Payments', () => {
     // assertion below unless a test explicitly cares about it.
     vi.mocked(dashboardApi.journey).mockReset().mockResolvedValue({ milestones: [] });
     vi.mocked(accountsApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(categoriesApi.list).mockReset().mockResolvedValue([]);
     vi.mocked(transactionsApi.search).mockReset().mockResolvedValue({
       // totalElements > 0: this account has real history, matching every scenario these two
       // describe blocks actually test (a populated Health Score, real recurring items) -- 0 would
@@ -1040,6 +1095,7 @@ describe('Dashboard — Your Financial Journey', () => {
       ],
     });
     vi.mocked(accountsApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(categoriesApi.list).mockReset().mockResolvedValue([]);
     vi.mocked(transactionsApi.search).mockReset().mockResolvedValue({
       content: [], page: 0, size: 4, totalElements: 0, totalPages: 0,
     });
