@@ -2,6 +2,7 @@ package com.finora.service;
 
 import com.finora.dto.MerchantDto;
 import com.finora.transactions.TransactionDto;
+import com.finora.entity.Account;
 import com.finora.entity.Category;
 import com.finora.entity.Merchant;
 import com.finora.entity.MerchantAlias;
@@ -9,6 +10,7 @@ import com.finora.entity.MerchantCategoryLearning;
 import com.finora.entity.MerchantLearningAudit;
 import com.finora.entity.Transaction;
 import com.finora.exception.ApiException;
+import com.finora.repository.AccountRepository;
 import com.finora.repository.CategoryRepository;
 import com.finora.repository.MerchantAliasRepository;
 import com.finora.repository.MerchantCategoryLearningRepository;
@@ -28,6 +30,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
@@ -52,6 +56,7 @@ class MerchantServiceTest {
     private MerchantLearningAuditRepository auditRepository;
     private CategoryRepository categoryRepository;
     private TransactionRepository transactionRepository;
+    private AccountRepository accountRepository;
     private AuditService auditService;
     private MerchantService service;
 
@@ -59,6 +64,7 @@ class MerchantServiceTest {
     private final UUID shoppingCategoryId = UUID.randomUUID();
     private final UUID electronicsCategoryId = UUID.randomUUID();
     private final UUID actingAdminId = UUID.randomUUID();
+    private Account liveAccount;
 
     private List<Merchant> merchants;
     private List<MerchantAlias> aliases;
@@ -74,10 +80,16 @@ class MerchantServiceTest {
         auditRepository = mock(MerchantLearningAuditRepository.class);
         categoryRepository = mock(CategoryRepository.class);
         transactionRepository = mock(TransactionRepository.class);
+        accountRepository = mock(AccountRepository.class);
         auditService = mock(AuditService.class);
         service = new MerchantService(merchantRepository, merchantAliasRepository, learningRepository,
-                auditRepository, categoryRepository, transactionRepository, new ConfidenceEngine(),
+                auditRepository, categoryRepository, transactionRepository, accountRepository, new ConfidenceEngine(),
                 auditService);
+
+        liveAccount = new Account();
+        ReflectionTestUtils.setField(liveAccount, "id", UUID.randomUUID());
+        liveAccount.setUserId(userId);
+        when(accountRepository.findByUserId(userId)).thenReturn(List.of(liveAccount));
 
         merchants = new ArrayList<>();
         aliases = new ArrayList<>();
@@ -141,6 +153,15 @@ class MerchantServiceTest {
         when(transactionRepository.findByUserIdAndMerchantId(any(), any())).thenAnswer(inv -> new ArrayList<>(transactions.stream()
                 .filter(t -> t.getUserId().equals(inv.getArgument(0)) && inv.getArgument(1).equals(t.getMerchantId()))
                 .toList()));
+        // transactionsFor() (Deleted-account leak fix) is scoped to live account ids -- mirrors
+        // findByUserIdAndMerchantId above, filtered further to accounts in the passed-in collection.
+        when(transactionRepository.findByUserIdAndMerchantIdAndAccountIdIn(any(), any(), any())).thenAnswer(inv -> {
+            java.util.Collection<UUID> accountIds = inv.getArgument(2);
+            return new ArrayList<>(transactions.stream()
+                    .filter(t -> t.getUserId().equals(inv.getArgument(0)) && inv.getArgument(1).equals(t.getMerchantId())
+                            && accountIds.contains(t.getAccountId()))
+                    .toList());
+        });
         when(transactionRepository.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
     }
 
@@ -188,6 +209,7 @@ class MerchantServiceTest {
         ReflectionTestUtils.setField(t, "id", UUID.randomUUID());
         t.setUserId(userId);
         t.setMerchantId(merchantId);
+        t.setAccountId(liveAccount.getId()); // a live account by default -- see the deleted-account leak tests below
         transactions.add(t);
         return t;
     }
@@ -258,6 +280,45 @@ class MerchantServiceTest {
         assertThat(result).extracting(TransactionDto::date).containsExactly(newer.getTxnDate(), older.getTxnDate());
         assertThat(result.get(0).categoryName()).isEqualTo("Electronics");
         assertThat(result.get(1).categoryName()).isEqualTo("Shopping");
+    }
+
+    // --- Deleted-account leak (see DashboardService.summarize for the original fix): a deleted
+    // account's transactions deliberately keep deleted_at unset, so transactionsFor must scope its
+    // transaction fetch to exactly the user's live account ids, not just their userId/merchantId. --
+
+    @Test
+    void transactionsFor_excludesTransactionsOnADeletedAccount() {
+        Merchant amazon = merchant("Amazon");
+        Transaction onLiveAccount = transaction(amazon.getId());
+        onLiveAccount.setTxnType(Transaction.Type.EXPENSE);
+        Transaction onDeletedAccount = transaction(amazon.getId());
+        onDeletedAccount.setAccountId(UUID.randomUUID()); // not in accountRepository.findByUserId's result
+        onDeletedAccount.setTxnType(Transaction.Type.EXPENSE);
+
+        List<TransactionDto> result = service.transactionsFor(userId, amazon.getId());
+
+        assertThat(result).extracting(TransactionDto::id).containsExactly(onLiveAccount.getId());
+    }
+
+    @Test
+    void transactionsFor_scopesTransactionFetch_toExactlyTheLiveAccountIds() {
+        Merchant amazon = merchant("Amazon");
+
+        service.transactionsFor(userId, amazon.getId());
+
+        verify(transactionRepository).findByUserIdAndMerchantIdAndAccountIdIn(
+                userId, amazon.getId(), List.of(liveAccount.getId()));
+    }
+
+    @Test
+    void transactionsFor_withNoLiveAccounts_shortCircuits_withoutQueryingTransactions() {
+        Merchant amazon = merchant("Amazon");
+        when(accountRepository.findByUserId(userId)).thenReturn(List.of());
+
+        List<TransactionDto> result = service.transactionsFor(userId, amazon.getId());
+
+        assertThat(result).isEmpty();
+        verify(transactionRepository, never()).findByUserIdAndMerchantIdAndAccountIdIn(any(), any(), any());
     }
 
     @Test
