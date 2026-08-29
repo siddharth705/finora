@@ -11,6 +11,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
@@ -172,5 +173,72 @@ class StatementImportRepositoryIT extends AbstractIntegrationTest {
         entityManager.clear();
 
         assertThat(statementImportRepository.findByUserIdAndTotalAmountDueIsNotNull(UUID.randomUUID())).isEmpty();
+    }
+
+    // --- findEarliestImportedAtEverEpochMillis: FinancialJourneyService's FIRST_IMPORT milestone,
+    // a permanent behavioral fact once reached (see that service's own class doc) -- proven here
+    // against real Postgres since a mocked-repository test can only prove the SERVICE calls this
+    // method correctly, not that the native EXTRACT(EPOCH FROM MIN(...)) SQL itself is correct ---
+
+    @Test
+    @Transactional
+    void findEarliestImportedAtEverEpochMillis_returnsNull_whenThisUserHasNeverImportedAnything() {
+        assertThat(statementImportRepository.findEarliestImportedAtEverEpochMillis(userId)).isNull();
+    }
+
+    @Test
+    @Transactional
+    void findEarliestImportedAtEverEpochMillis_picksTheEarliestAcrossSeveralImports() {
+        Instant earliest = Instant.parse("2026-06-01T00:00:00Z");
+        Instant later = Instant.parse("2026-08-01T00:00:00Z");
+        StatementImport first = saveStatement(null, null);
+        first.setImportedAt(later); // saved out of order on purpose: MIN must not just pick the first row
+        statementImportRepository.save(first);
+        StatementImport second = saveStatement(null, null);
+        second.setImportedAt(earliest);
+        statementImportRepository.save(second);
+        entityManager.flush();
+        entityManager.clear();
+
+        Long epochMillis = statementImportRepository.findEarliestImportedAtEverEpochMillis(userId);
+
+        assertThat(Instant.ofEpochMilli(epochMillis)).isEqualTo(earliest);
+    }
+
+    @Test
+    @Transactional
+    void findEarliestImportedAtEverEpochMillis_survivesTheOnlyStatementLaterBeingDeleted() {
+        // The whole point of this query: a soft-deleted row must still count, unlike every OTHER
+        // query on this entity (which the entity's own @SQLRestriction correctly hides deleted
+        // rows from). This is the one deliberate exception, and this test is what proves it.
+        Instant importedAt = Instant.parse("2026-06-01T00:00:00Z");
+        StatementImport statement = saveStatement(null, null);
+        statement.setImportedAt(importedAt);
+        statementImportRepository.save(statement);
+        entityManager.flush();
+        assertThat(statementImportRepository.findEarliestImportedAtEverEpochMillis(userId)).isNotNull();
+
+        statementImportRepository.delete(statement); // soft delete via @SQLDelete
+        entityManager.flush();
+        entityManager.clear();
+
+        // Ordinary, @SQLRestriction-respecting queries agree the statement is gone now...
+        assertThat(statementImportRepository.countByUserId(userId)).isZero();
+        // ...but the milestone the deleted statement already earned must not un-tick itself.
+        Long epochMillis = statementImportRepository.findEarliestImportedAtEverEpochMillis(userId);
+        assertThat(epochMillis).isNotNull();
+        assertThat(Instant.ofEpochMilli(epochMillis)).isEqualTo(importedAt);
+    }
+
+    @Test
+    @Transactional
+    void findEarliestImportedAtEverEpochMillis_scopedToOneUser() {
+        StatementImport statement = saveStatement(null, null);
+        statement.setImportedAt(Instant.parse("2026-06-01T00:00:00Z"));
+        statementImportRepository.save(statement);
+        entityManager.flush();
+        entityManager.clear();
+
+        assertThat(statementImportRepository.findEarliestImportedAtEverEpochMillis(UUID.randomUUID())).isNull();
     }
 }

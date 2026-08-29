@@ -24,6 +24,17 @@ public interface BudgetRepository extends JpaRepository<Budget, UUID> {
     @Query(value = "SELECT COUNT(DISTINCT user_id) FROM budgets", nativeQuery = true)
     long countDistinctUsersEverActivated();
 
+    /** {@code FinancialJourneyService}'s FIRST_BUDGET milestone: this ONE user's earliest budget
+     *  ever created, regardless of later deletion -- see {@link #countDistinctUsersEverActivated}'s
+     *  own doc comment just above for why. Epoch millis, not {@code Instant}: see
+     *  {@code StatementImportRepository.findObjectsUnreferencedSince}'s doc comment for why a
+     *  native query has no other reliable way to hand back a JDBC timestamp column without
+     *  naming FG-019's banned {@code java.sql.Timestamp}. Null when this user has never created
+     *  a budget. */
+    @Query(value = "SELECT (EXTRACT(EPOCH FROM MIN(created_at)) * 1000)::bigint FROM budgets WHERE user_id = :userId",
+           nativeQuery = true)
+    Long findEarliestCreatedAtEverEpochMillis(@Param("userId") UUID userId);
+
     /** AccountPurgeSweepService. Native, bypassing Hibernate's {@code @SQLDelete} entirely -- a
      *  derived/JPQL {@code deleteByUserId} on this entity would only soft-delete (set
      *  {@code deleted_at}), not purge, since {@code Budget extends BaseEntity}. Named
