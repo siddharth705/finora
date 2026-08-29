@@ -1,5 +1,6 @@
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Check, Sprout, PartyPopper } from 'lucide-react';
+import { Check, Sprout, PartyPopper, ChevronDown, ChevronRight } from 'lucide-react';
 import { dashboardApi } from '../api/endpoints';
 import { FinoraCard } from '../design-system';
 
@@ -30,6 +31,11 @@ export function journeyDateLabel(iso: string): string {
  */
 export function FinancialJourney() {
   const { data } = useQuery({ queryKey: ['financial-journey'], queryFn: () => dashboardApi.journey() });
+  // Expanded by default -- this is a primary onboarding widget, not a detail panel like
+  // VerificationPanel (which collapses by default because its detail is noise in the common
+  // case). Collapsing is purely a "get it out of my way" affordance for a returning user who
+  // has already seen the milestones, not the default first impression.
+  const [expanded, setExpanded] = useState(true);
   const milestones = data?.milestones ?? [];
   if (milestones.length === 0) return null;
 
@@ -38,7 +44,12 @@ export function FinancialJourney() {
 
   return (
     <FinoraCard padding="lg" className="mb-6">
-      <div className="flex items-center justify-between mb-5">
+      <button
+        type="button"
+        onClick={() => setExpanded((open) => !open)}
+        aria-expanded={expanded}
+        className={`w-full flex items-center justify-between text-left ${expanded ? 'mb-5' : ''}`}
+      >
         <div className="flex items-center gap-2">
           <div className="w-8 h-8 rounded-full bg-primary-light flex items-center justify-center">
             {allDone
@@ -47,10 +58,16 @@ export function FinancialJourney() {
           </div>
           <h2 className="font-semibold text-ink">Your Financial Journey</h2>
         </div>
-        <span className="text-xs font-medium text-muted bg-bg rounded-full px-2.5 py-1">
-          {completedCount} of {milestones.length} complete
-        </span>
-      </div>
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-medium text-muted bg-bg rounded-full px-2.5 py-1">
+            {completedCount} of {milestones.length} complete
+          </span>
+          {expanded
+            ? <ChevronDown size={16} className="text-muted flex-shrink-0" />
+            : <ChevronRight size={16} className="text-muted flex-shrink-0" />}
+        </div>
+      </button>
+      {expanded && (
       <ol>
         {milestones.map((m, i) => {
           const isLast = i === milestones.length - 1;
@@ -87,6 +104,7 @@ export function FinancialJourney() {
           );
         })}
       </ol>
+      )}
     </FinoraCard>
   );
 }

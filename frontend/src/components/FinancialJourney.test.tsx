@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { FinancialJourney, journeyDateLabel } from './FinancialJourney';
 import { dashboardApi } from '../api/endpoints';
@@ -116,5 +117,32 @@ describe('FinancialJourney', () => {
     renderJourney();
 
     expect(await screen.findByText('5 of 5 complete')).toBeInTheDocument();
+  });
+
+  it('shows the milestone list expanded by default', async () => {
+    vi.mocked(dashboardApi.journey).mockResolvedValue(journey());
+    renderJourney();
+
+    expect(await screen.findByText('Account created')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Your Financial Journey/ })).toHaveAttribute('aria-expanded', 'true');
+  });
+
+  it('collapses the milestone list on click, and expands it again on a second click', async () => {
+    const user = userEvent.setup();
+    vi.mocked(dashboardApi.journey).mockResolvedValue(journey());
+    renderJourney();
+
+    const toggle = await screen.findByRole('button', { name: /Your Financial Journey/ });
+    await user.click(toggle);
+
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByText('Account created')).not.toBeInTheDocument();
+    // The header itself, and the completion count, must stay visible while collapsed.
+    expect(screen.getByText('Your Financial Journey')).toBeInTheDocument();
+    expect(screen.getByText('2 of 5 complete')).toBeInTheDocument();
+
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByText('Account created')).toBeInTheDocument();
   });
 });
