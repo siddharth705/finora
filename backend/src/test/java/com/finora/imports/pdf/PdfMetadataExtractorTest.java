@@ -349,6 +349,91 @@ class PdfMetadataExtractorTest {
     }
 
     @Test
+    void extract_recognizesABranchCodeLabel_withAColon() {
+        // F23: verified against a real CBI statement -- "Branch Code:" isn't recognized as a label
+        // variant at all, so "Code" (and its colon) fell into the captured value instead of being
+        // consumed as part of the label.
+        var metadata = extractor.extract(List.of("Branch Code: 797")); // synthetic-ok
+
+        assertThat(metadata.branchName()).isEqualTo("797");
+    }
+
+    @Test
+    void extract_recognizesABranchCodeLabel_withWideColumnSpacing() {
+        // Verified against real HDFC/SBI statements, whose grid layout puts many spaces before the
+        // colon: "Branch Code          : 4566".
+        var metadata = extractor.extract(List.of("Branch Code          : 4566")); // synthetic-ok
+
+        assertThat(metadata.branchName()).isEqualTo("4566");
+    }
+
+    @Test
+    void extract_doesNotMatchBranch_whenItIsAPrefixOfALongerWord() {
+        // F23: verified against a real Axis Bank credit-card statement -- a boilerplate footer
+        // line ("Branches /Loan Centres (please visit ... to locate the nearest branch /loan
+        // centre)") isn't a "Branch: <value>" field at all. The bare "Branch" label used to match
+        // as a literal prefix of the plural "Branches", capturing the rest of the footer sentence
+        // as if it were the branch name.
+        var metadata = extractor.extract(
+                List.of("Branches /Loan Centres (please visit our website to locate the nearest branch)"));
+
+        assertThat(metadata.branchName()).isNull();
+    }
+
+    @Test
+    void extract_doesNotMatchBranch_whenItIsAPrefixOfAConcatenatedToken() {
+        // Found during a corpus-wide sweep beyond F23's originally-documented cases: a garbled
+        // line from a real Kotak statement ("BRANCHHYDAPIN1234/16:02") has no space or punctuation
+        // separating "BRANCH" from the rest of the token at all -- the same failure family as the
+        // "Branches" false match above, just without a real word boundary to exploit.
+        var metadata = extractor.extract(List.of("BRANCHHYDAPIN1234/16:02")); // synthetic-ok
+
+        assertThat(metadata.branchName()).isNull();
+    }
+
+    @Test
+    void extract_doesNotMisreadABranchDetailsSectionHeader_asABranchNameField() {
+        // F23: verified against a real PNB ONE statement -- "Branch Details" is a bare section
+        // header (no value on the same line), not a genuine "Branch: <name>" field. The header
+        // used to match first and permanently block the real "Branch Name:" value two lines below,
+        // via the branchName == null guard.
+        var metadata = extractor.extract(List.of(
+                "Branch Details",
+                "Customer Details",
+                "Branch Name:  JHANSI,SIPRI BAZAR"));
+
+        assertThat(metadata.branchName()).isEqualTo("JHANSI,SIPRI BAZAR");
+    }
+
+    @Test
+    void extract_doesNotMatchBranch_whenItModifiesADifferentFieldsLabel() {
+        // Found running this fix through the real compiled pipeline (not just the audit's text
+        // replay): a real SBI statement's footer contact block uses "Branch" as a MODIFIER for a
+        // different field -- "Branch Email ID: ... :" and "Branch Phone: ..." -- not the
+        // branch-name field itself. The bare "Branch" label used to match and swallow the rest of
+        // either line as if it were the branch name.
+        var metadata = extractor.extract(List.of(
+                "Branch Email ID example@example.com :",
+                "Branch Phone : 1234567890")); // synthetic-ok
+
+        assertThat(metadata.branchName()).isNull();
+    }
+
+    @Test
+    void extract_doesNotMatchBranch_whenALowercaseOccurrenceStartsAWrappedSentence() {
+        // Found running this fix through the real compiled pipeline: a real Axis Bank statement
+        // wraps one boilerplate sentence across two physical lines, and the second line starts
+        // with the bare word "branch" purely because of where the sentence happened to wrap, not
+        // because it's a label. Every genuine label in this corpus is capitalized; requiring a
+        // literal uppercase "B" rejects this without needing to understand sentence structure.
+        var metadata = extractor.extract(List.of(
+                "Branches /Loan Centres (please visit our website to locate the nearest",
+                "branch /loan centre)"));
+
+        assertThat(metadata.branchName()).isNull();
+    }
+
+    @Test
     void extract_recordsGridMetadataTrailingLabel_onDocumentContext_whenATrailingLabelLineMatches() {
         DocumentContext ctx = new DocumentContext("PDF", "PdfMetadataExtractor");
 
