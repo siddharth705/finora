@@ -42,7 +42,22 @@ public class PdfMetadataExtractor {
     // (an unrelated word that merely starts with "name") would also match, since labelPattern's
     // own "\s*:?\s*" allows zero separator before the captured value -- "Account Holder"/
     // "Customer Name" are unambiguous enough as multi-word phrases not to need the same guard.
-    private static final Pattern ACCOUNT_HOLDER = labelPattern("(?:Account Holder(?: Name)?|Customer Name|Name\\b)");
+    // Bug fix, 2026-08-29: the bare "Name\b" alternative is safe at the line's own start (a
+    // standalone "Name <value>" line, per the Canara e-passbook comment above) but NOT safe in
+    // labelPattern's mid-line branch (added the same day for the lineOf X-ordering fix, see
+    // labelPattern's own doc comment) -- "Name" is a generic single word that is a substring of
+    // many unrelated compound labels ("Branch Name", "Company Name", "Nominee Name", ...) that
+    // have nothing to do with the account holder. Found via a real HSBC statement whose own
+    // "Branch Name : POWAI BRANCH" line matched this alternative mid-line once labelPattern
+    // started allowing a label to appear after other content, extracting the BRANCH's value as
+    // the account holder's name instead. "Account Holder"/"Customer Name" stay safe in both
+    // branches: both are unambiguous multi-word phrases with no other real-world compound label
+    // known to contain either as a sub-phrase. midLineLabel therefore omits bare "Name" entirely
+    // rather than trying to guard it with a lookbehind against every compound label that could
+    // ever precede it -- an open-ended, unenumerable set.
+    private static final Pattern ACCOUNT_HOLDER = labelPattern(
+            "(?:Account Holder(?: Name)?|Customer Name|Name\\b)",
+            "(?:Account Holder(?: Name)?|Customer Name)");
     // F21 (extraction-coverage-audit.md real-corpus follow-up): several real statements never say
     // "Account Number" at all -- they abbreviate to "Account No"/"Account No.", confirmed on 4
     // real documents across 4 banks (HDFC, Standard Chartered, Kotak, IOB), all using this exact
@@ -325,8 +340,47 @@ public class PdfMetadataExtractor {
             "account", "statement", "card", "credit", "savings", "current", "passbook",
             "details", "summary", "bank", "name");
 
+    /** Matched with {@link Matcher#matches()} (whole-line), so this describes the ENTIRE line, not
+     *  just where the label sits. Two alternatives:
+     *  <ul>
+     *  <li>Label at the line's own start (optionally after whitespace), colon optional -- the
+     *  original, unchanged shape for a line that genuinely states just one field.
+     *  <li>Label anywhere later in the line, colon REQUIRED -- added 2026-08-29 for the
+     *  {@code PdfTableLocator.lineOf} X-ordering fix (docs/superpowers/specs/
+     *  2026-08-29-lineof-x-ordering-fix-design.md). Before that fix, {@code groupIntoRows}' Y-primary
+     *  sort sometimes accidentally placed a chain-merged field's label at the very start of the
+     *  joined line even though an unrelated field (e.g. an address fragment) sat further left on
+     *  the real page -- this anchor only matched by that accident. Once lineOf started joining
+     *  strictly left-to-right, a genuinely-leftward chain-merged neighbor could legitimately precede
+     *  the label, and the old anchor-only pattern stopped matching real documents it used to
+     *  extract correctly. The non-greedy {@code .*?} prefix picks the label's FIRST occurrence, and
+     *  the required colon (vs. the line-start branch's optional one) keeps a common label-shaped
+     *  word inside unrelated prose (e.g. a legal disclaimer mentioning "branch") from matching
+     *  without a real "Label :" pairing next to it.
+     *  </ul>
+     *
+     *  <p>Bug fix, found by the same corpus re-verification as the two-alternative change above: a
+     *  chain-merged row can legitimately hold TWO label:value pairs back to back on one physical
+     *  line (a real IFSC-then-MICR letterhead shape). The value capture used to be greedy to end of
+     *  line, so it swallowed the second pair's "label : value" text wholesale into the first
+     *  field's value once both pairs landed on the same joined line. The non-greedy capture now
+     *  stops as soon as it sees a later "&lt;word&gt; :" -- the shape of a second field starting --
+     *  and the trailing {@code .*$} still consumes the rest of the line so the overall
+     *  {@link Matcher#matches()} call keeps succeeding. A value with no later "word :" shape (the
+     *  overwhelmingly common case: nothing else chain-merged onto the same row) is unaffected --
+     *  the non-greedy group simply extends all the way to end of line as before. */
     private static Pattern labelPattern(String label) {
-        return Pattern.compile("(?i)^\\s*" + label + "\\s*:?\\s*(.+)$");
+        return labelPattern(label, label);
+    }
+
+    /** Same as {@link #labelPattern(String)}, but lets the line-start branch and the mid-line
+     *  branch recognize DIFFERENT label shapes -- for a label with a generic, single-word
+     *  alternative that is only unambiguous at the line's own start (see {@link #ACCOUNT_HOLDER}'s
+     *  own doc comment for why its bare "Name" needs exactly this split). {@code startLabel} feeds
+     *  the anchored branch, {@code midLineLabel} the colon-required mid-line branch. */
+    private static Pattern labelPattern(String startLabel, String midLineLabel) {
+        return Pattern.compile("(?i)^(?:\\s*" + startLabel + "\\s*:?\\s*|.*?\\b" + midLineLabel + "\\s*:\\s*)"
+                + "(.+?)(?=\\s+\\S+\\s*:\\s|$).*$");
     }
 
     /**
