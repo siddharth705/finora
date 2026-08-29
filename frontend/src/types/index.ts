@@ -98,6 +98,13 @@ export interface DashboardSummary {
   healthScore: number | null;
   healthLabel: string | null;
   healthBreakdown: Record<string, number>;
+  /**
+   * The real quantity behind each entry in healthBreakdown, keyed by the same component name --
+   * e.g. "Savings Rate" -> "Your savings rate was 18.5%." Each bar in healthBreakdown
+   * shows a NORMALIZED 0-100 score, not the number it was computed from. Empty exactly when
+   * healthBreakdown is (below healthScoreMinTransactions).
+   */
+  healthBreakdownDetail: Record<string, string>;
   healthScoreAvailable: boolean;
   healthScoreTransactionCount: number;
   healthScoreMinTransactions: number;
