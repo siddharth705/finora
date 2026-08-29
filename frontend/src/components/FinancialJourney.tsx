@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Check, Sprout, PartyPopper, ChevronDown, ChevronRight } from 'lucide-react';
+import { Check, Sprout, ChevronDown, ChevronRight } from 'lucide-react';
 import { dashboardApi } from '../api/endpoints';
 import { FinoraCard } from '../design-system';
 
@@ -24,10 +24,17 @@ export function journeyDateLabel(iso: string): string {
 
 /**
  * D-25 PR3-C. Unlike Financial Health Score (Dashboard.tsx's own card, hidden while isEmpty),
- * this is deliberately always rendered -- ACCOUNT_CREATED is true from the moment a user signs
- * up, so a brand-new account is exactly the case this is most useful for, not one to hide it in.
- * Fails quiet (renders nothing) while the query is loading or if it errors, rather than showing a
- * loading skeleton or error banner for what is a nice-to-have progress narrative, not core data.
+ * this is deliberately always rendered while onboarding is in progress -- ACCOUNT_CREATED is true
+ * from the moment a user signs up, so a brand-new account is exactly the case this is most useful
+ * for, not one to hide it in. Fails quiet (renders nothing) while the query is loading or if it
+ * errors, rather than showing a loading skeleton or error banner for what is a nice-to-have
+ * progress narrative, not core data.
+ *
+ * <p>Hidden once every milestone is complete -- an onboarding checklist that stays on the
+ * dashboard forever after there's nothing left to onboard onto is clutter, not progress. Computed
+ * live from the same milestones every render, same as everything else here: if a user later
+ * deletes their only statement import, FIRST_IMPORT reverts to incomplete and this card
+ * reappears, which is correct -- there is again something to complete.
  */
 export function FinancialJourney() {
   const { data } = useQuery({ queryKey: ['financial-journey'], queryFn: () => dashboardApi.journey() });
@@ -37,10 +44,11 @@ export function FinancialJourney() {
   // has already seen the milestones, not the default first impression.
   const [expanded, setExpanded] = useState(true);
   const milestones = data?.milestones ?? [];
-  if (milestones.length === 0) return null;
-
   const completedCount = milestones.filter((m) => m.completed).length;
-  const allDone = completedCount === milestones.length;
+  // Card is hidden entirely once every milestone is done (below), so by the time this renders
+  // there is always at least one incomplete milestone -- Sprout ("still growing") is the only
+  // icon this ever needs; PartyPopper's "all done" case never reaches render.
+  if (milestones.length === 0 || completedCount === milestones.length) return null;
 
   return (
     <FinoraCard padding="lg" className="mb-6">
@@ -52,9 +60,7 @@ export function FinancialJourney() {
       >
         <div className="flex items-center gap-2">
           <div className="w-8 h-8 rounded-full bg-primary-light flex items-center justify-center">
-            {allDone
-              ? <PartyPopper size={15} className="text-primary" />
-              : <Sprout size={15} className="text-primary" />}
+            <Sprout size={15} className="text-primary" />
           </div>
           <h2 className="font-semibold text-ink">Your Financial Journey</h2>
         </div>

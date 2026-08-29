@@ -110,13 +110,16 @@ describe('FinancialJourney', () => {
     vi.useRealTimers();
   });
 
-  it('reflects every milestone done as a fully completed journey', async () => {
+  it('renders nothing once every milestone is complete -- an onboarding checklist with nothing left to onboard onto is clutter', async () => {
     vi.mocked(dashboardApi.journey).mockResolvedValue(journey({
       milestones: journey().milestones.map((m) => ({ ...m, completed: true, completedAt: m.completedAt ?? '2026-08-10T00:00:00Z' })),
     }));
-    renderJourney();
+    const { container } = renderJourney();
+    // Wait for the query to actually resolve before asserting the DOM stayed empty -- otherwise
+    // this would trivially pass by checking too early, before the response even arrived.
+    await new Promise((r) => setTimeout(r, 0));
 
-    expect(await screen.findByText('5 of 5 complete')).toBeInTheDocument();
+    expect(container).toBeEmptyDOMElement();
   });
 
   it('shows the milestone list expanded by default', async () => {
