@@ -1236,13 +1236,40 @@ class ReconciliationServiceTest {
                 Instant.parse("2026-07-14T10:00:00Z"));
         when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(payment));
         when(statementImportRepository.findByUserIdAndTotalAmountDueIsNotNull(userId)).thenReturn(List.of(statement));
+        when(transactionRepository.findByStatementImportId(statement.getId())).thenReturn(List.of());
 
         reconciliationService.reconcileForUser(userId);
 
         org.mockito.Mockito.verify(transactionGraphService, org.mockito.Mockito.never())
                 .linkAll(org.mockito.ArgumentMatchers.anyList());
-        org.mockito.Mockito.verify(transactionRepository, org.mockito.Mockito.never())
-                .findByStatementImportId(org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void reconcileForUser_rejectsAnyPreExistingEdge_touchingADeletedCardAccountsCharges() {
+        // Retroactive half of the fix: an account deleted BEFORE AccountService.delete's own
+        // edge-rejection existed can still have a live CC_PAYMENT edge in the graph pointing at
+        // its now-invisible charges. This pass runs on essentially every transaction edit, so it
+        // self-heals that the next time it runs for the affected user.
+        UUID cardAccountId = UUID.randomUUID();
+        UUID savingsAccountId = UUID.randomUUID();
+        com.finora.entity.StatementImport statement =
+                ccStatement(UUID.randomUUID(), cardAccountId, new BigDecimal("2500.00"), LocalDate.of(2026, 7, 15));
+        Transaction payment = txn(UUID.randomUUID(), savingsAccountId, LocalDate.of(2026, 7, 14),
+                new BigDecimal("2500.00"), Transaction.Type.EXPENSE, "CREDIT CARD PAYMENT",
+                Instant.parse("2026-07-14T10:00:00Z"));
+        Transaction staleCharge = txn(UUID.randomUUID(), cardAccountId, LocalDate.of(2026, 6, 20),
+                new BigDecimal("2500.00"), Transaction.Type.EXPENSE, "AMAZON", Instant.parse("2026-06-20T10:00:00Z"));
+        // Delete the card account LAST -- txn()'s own auto-registration would otherwise re-add it
+        // to liveAccounts when staleCharge is created above.
+        liveAccounts.removeIf(a -> a.getId().equals(cardAccountId));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(payment));
+        when(statementImportRepository.findByUserIdAndTotalAmountDueIsNotNull(userId)).thenReturn(List.of(statement));
+        when(transactionRepository.findByStatementImportId(statement.getId())).thenReturn(List.of(staleCharge));
+
+        reconciliationService.reconcileForUser(userId);
+
+        org.mockito.Mockito.verify(transactionGraphService)
+                .rejectEdgesTouchingTransactions(List.of(staleCharge.getId()));
     }
 
     @Test

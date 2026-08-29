@@ -607,6 +607,21 @@ public class ReconciliationService {
                 : accountRepository.findByUserId(userId).stream()
                         .map(com.finora.entity.Account::getId).collect(java.util.stream.Collectors.toSet());
         if (!ccStatements.isEmpty()) {
+            // Retroactive half of the deleted-account fix above: AccountService.delete rejects
+            // graph edges for every account deleted from now on, but an account deleted BEFORE
+            // that existed can still have a live CC_PAYMENT edge sitting in the graph pointing at
+            // its now-invisible charges. This pass already fetches the dead statements, and it
+            // already runs on essentially every transaction edit for the user, so it's the cheap,
+            // naturally-recurring place to self-heal that -- rather than a one-off migration for a
+            // gap unlikely to have any real instances yet (this whole feature is new).
+            for (StatementImport dead : ccStatements) {
+                if (ccLiveAccountIds.contains(dead.getAccountId())) continue;
+                List<UUID> deadChargeIds = transactionRepository.findByStatementImportId(dead.getId())
+                        .stream().map(Transaction::getId).toList();
+                if (!deadChargeIds.isEmpty()) {
+                    transactionGraphService.rejectEdgesTouchingTransactions(deadChargeIds);
+                }
+            }
             // Deterministic order for the claim-tracking below: findByUserIdAndTotalAmountDueIsNotNull
             // carries no ORDER BY, so without this, which statement wins a same-due-date/same-amount
             // coincidence (see claimedPaymentIds below) could vary run to run, writing a CC_PAYMENT
