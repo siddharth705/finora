@@ -810,4 +810,38 @@ class PdfMetadataExtractorTest {
         assertThat(metadata.accountNumberMasked()).isEqualTo("••••1234");
         assertThat(metadata.accountNumberFullForHashingOnly()).isEqualTo("12345678901234"); // synthetic-ok
     }
+
+    /**
+     * A real canara statement's own account-number field never says "Account"/"Account Number" at
+     * all -- it states the number inline as "Statement for A/c &lt;value&gt; for the period ...",
+     * using the common Indian-banking shorthand "A/c" for "account". Unlike PNB's shape above, the
+     * value canara prints is already masked at the source, not a plain digit run -- verified
+     * against a real canara statement, genericized here per the Synthetic Fixture Policy.
+     */
+    @Test
+    void extract_recognizesACanaraAccountNumber_fromTheAcLine() {
+        var metadata = extractor.extract(List.of(
+                "Statement for A/c XXXXXXXXX1234 for the period 01-Jul-2026 to 31-Jul-2026")); // synthetic-ok
+
+        assertThat(metadata.accountNumberMasked()).isEqualTo("XXXXXXXXX1234");
+    }
+
+    @Test
+    void extract_recognizesACanaraAccountNumber_toleratingAColonAfterAc() {
+        var metadata = extractor.extract(List.of("A/c: XXXXXXXXX5678 for the period")); // synthetic-ok
+
+        assertThat(metadata.accountNumberMasked()).isEqualTo("XXXXXXXXX5678");
+    }
+
+    /**
+     * The same digit-count/trailing-digit floor every other card/account-number match already
+     * applies (looksLikeCardOrAccountNumber) -- a short, non-identifying token after "A/c" (e.g. a
+     * page or note reference) must not be picked up just because it happens to look mask-shaped.
+     */
+    @Test
+    void extract_doesNotMatchATooShortTokenAfterAc() {
+        var metadata = extractor.extract(List.of("A/c 12 opened on request")); // synthetic-ok
+
+        assertThat(metadata.accountNumberMasked()).isNull();
+    }
 }
