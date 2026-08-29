@@ -4,7 +4,7 @@ sections: 1
 [section 0]
   columns: [DATE, NARRATION, BALANCE]
   rows: 58
-  auxLines: 14
+  auxLines: 27
   accountNumberMasked: ••••9999
   accountHolderName: null
   ifscCode: null
