@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import {
   Animated, StyleSheet, type DimensionValue, type ViewStyle,
 } from 'react-native';
@@ -13,33 +13,48 @@ export interface ShimmerProps {
 }
 
 /**
- * The shared pulse every skeleton component in this folder is built from -- one Animated.Value
- * looping between two opacities over a theme-aware block (`c.border`, already correct in both
- * light and dark -- see src/theme/palette.ts). There is no react-native-reanimated or gradient
- * library in this project (confirmed: neither appears in package.json), so this uses core
- * `Animated` from 'react-native' with useNativeDriver: true -- opacity is a native-driver-safe
- * property, so this needs no new dependency.
+ * One Animated.Value and one Animated.loop, shared by every Shimmer instance in the app, rather
+ * than each instance running its own independent loop. A single loading shell can mount a couple
+ * dozen Shimmer instances at once (e.g. Dashboard's first paint, or 8 skeleton rows x 3 Shimmers
+ * each on Ledger) -- one shared driver means one JS->native-driver bridge call to start/stop
+ * instead of one per instance, and every shimmer on screen pulses in sync as a side effect.
+ * Ref-counted rather than always-on: the loop starts when the first Shimmer mounts and stops when
+ * the last one unmounts, so it never runs in the background once nothing is loading anywhere.
  */
+const sharedPulse = new Animated.Value(0.35);
+let activeShimmerCount = 0;
+let sharedLoop: Animated.CompositeAnimation | null = null;
+
+function acquireSharedLoop() {
+  activeShimmerCount += 1;
+  if (activeShimmerCount === 1) {
+    sharedLoop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(sharedPulse, { toValue: 1, duration: 700, useNativeDriver: true }),
+        Animated.timing(sharedPulse, { toValue: 0.35, duration: 700, useNativeDriver: true }),
+      ])
+    );
+    sharedLoop.start();
+  }
+}
+
+function releaseSharedLoop() {
+  activeShimmerCount -= 1;
+  if (activeShimmerCount === 0) {
+    sharedLoop?.stop();
+    sharedLoop = null;
+  }
+}
+
 export function Shimmer({
   width = '100%', height, borderRadius = radius.md, style, testID = 'shimmer-block',
 }: ShimmerProps) {
   const c = useTheme();
-  // useState's lazy initializer, not useRef(...).current -- this project's react-hooks/refs (React
-  // Compiler) lint rule forbids reading .current during render at all, including the common
-  // lazy-init idiom. useState's initializer runs exactly once and gives the same stable identity
-  // across renders without ever touching a ref.
-  const [pulse] = useState(() => new Animated.Value(0.35));
 
   useEffect(() => {
-    const loop = Animated.loop(
-      Animated.sequence([
-        Animated.timing(pulse, { toValue: 1, duration: 700, useNativeDriver: true }),
-        Animated.timing(pulse, { toValue: 0.35, duration: 700, useNativeDriver: true }),
-      ])
-    );
-    loop.start();
-    return () => loop.stop();
-  }, [pulse]);
+    acquireSharedLoop();
+    return () => releaseSharedLoop();
+  }, []);
 
   return (
     <Animated.View
@@ -48,7 +63,7 @@ export function Shimmer({
       // real value replaces it. Exposing it too would double-announce every field on first load.
       accessibilityElementsHidden
       importantForAccessibility="no-hide-descendants"
-      style={[styles.block, { width, height, borderRadius, backgroundColor: c.border, opacity: pulse }, style]}
+      style={[styles.block, { width, height, borderRadius, backgroundColor: c.border, opacity: sharedPulse }, style]}
     />
   );
 }
