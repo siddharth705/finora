@@ -149,6 +149,12 @@ const config: ExpoConfig = {
   plugins: [
     'expo-secure-store',
     'expo-sharing',
+    // No options, deliberately: this project has never set a custom splash image (no `"splash"`
+    // key existed before this either), so the plugin keeps generating the same icon-derived
+    // default it always has. Only reason it's listed at all is that App.tsx now calls
+    // SplashScreen.preventAutoHideAsync()/hideAsync() at runtime -- see App.tsx's own comment --
+    // and Expo's installer requires the plugin registered for that runtime API to be present.
+    'expo-splash-screen',
     '@react-native-community/datetimepicker',
     '@react-native-firebase/app',
     '@react-native-firebase/auth',

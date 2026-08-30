@@ -265,14 +265,21 @@ interface PdfStagingSessionResult {
 
 type ProgressCallback = (percent: number) => void;
 
+// timeout: 0 overrides client.ts's default 30s timeout -- a statement upload over a slow mobile
+// connection can legitimately take longer than that, and unlike an ordinary JSON call, this one
+// already gives the user live proof it's still working via onUploadProgress. Applies whether or
+// not a progress callback was actually passed, since the upload itself is what can be slow.
 function toUploadProgressConfig(onProgress?: ProgressCallback) {
-  return onProgress
-    ? {
-        onUploadProgress: (e: { loaded: number; total?: number }) => {
-          if (e.total) onProgress(Math.round((e.loaded / e.total) * 100));
-        },
-      }
-    : {};
+  return {
+    timeout: 0,
+    ...(onProgress
+      ? {
+          onUploadProgress: (e: { loaded: number; total?: number }) => {
+            if (e.total) onProgress(Math.round((e.loaded / e.total) * 100));
+          },
+        }
+      : {}),
+  };
 }
 
 // React Native's FormData has no web `File` type to append -- it accepts a plain
