@@ -13,6 +13,9 @@ jest.mock('../api/endpoints', () => ({
 jest.mock('../lib/haptics', () => ({
   hapticSuccess: jest.fn(),
   hapticWarning: jest.fn(),
+  // BudgetsScreen's category picker renders the real OptionPickerModal (Task 5), which now calls
+  // this too -- mocked here so pressing a category option doesn't throw.
+  hapticSelection: jest.fn(),
 }));
 
 const api = budgetsApi as jest.Mocked<typeof budgetsApi>;
