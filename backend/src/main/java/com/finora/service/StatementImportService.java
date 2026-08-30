@@ -425,8 +425,15 @@ public class StatementImportService {
             throw new ApiException(HttpStatus.BAD_REQUEST,
                     "A statement can only be superseded by a replacement for the same account.");
         }
-        if (!Objects.equals(original.getStatementPeriodStart(), replacement.getStatementPeriodStart())
-                || !Objects.equals(original.getStatementPeriodEnd(), replacement.getStatementPeriodEnd())) {
+        // original's own period is required to be non-null, not just equal to replacement's --
+        // Objects.equals(null, null) is true, and a CSV import (no printed period at all,
+        // StatementCoverageAnalyzer never places it on a timeline) is not "the same period" as
+        // another CSV import purely because neither one has one. CoverageWarnings can never
+        // legitimately produce a duplicateOfStatementId pointing at a null-period statement via the
+        // normal confirm flow, so this is guarding the endpoint itself against a direct call.
+        if (original.getStatementPeriodStart() == null || original.getStatementPeriodEnd() == null
+                || !original.getStatementPeriodStart().equals(replacement.getStatementPeriodStart())
+                || !original.getStatementPeriodEnd().equals(replacement.getStatementPeriodEnd())) {
             throw new ApiException(HttpStatus.BAD_REQUEST,
                     "A statement can only be superseded by a replacement covering the exact same period.");
         }

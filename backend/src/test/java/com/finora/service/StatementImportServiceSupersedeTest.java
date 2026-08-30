@@ -324,4 +324,24 @@ class StatementImportServiceSupersedeTest {
 
         assertThatThrownBy(() -> service.supersede(userId, oldId, newId)).isInstanceOf(ApiException.class);
     }
+
+    @Test
+    void rejectsTwoStatementsThatBothHaveNoPrintedPeriod() {
+        // Objects.equals(null, null) is true -- two CSV imports (no printed period at all) would
+        // otherwise pass the period-match check purely because neither one HAS a period to
+        // disagree about. CSV coverage is explicitly out of scope for this feature (the proposal's
+        // own §3/§7), and StatementCoverageAnalyzer never even considers a null-period statement --
+        // duplicateOfStatementId can never legitimately point at one via the normal UI flow, so this
+        // guards the endpoint itself against a client that calls it directly.
+        StatementImport old = statement(oldId, StatementImport.BalanceApplicationMode.NONE);
+        old.setStatementPeriodStart(null);
+        old.setStatementPeriodEnd(null);
+        StatementImport replacement = statement(newId, StatementImport.BalanceApplicationMode.ABSOLUTE);
+        replacement.setStatementPeriodStart(null);
+        replacement.setStatementPeriodEnd(null);
+        stub(old, replacement);
+
+        assertThatThrownBy(() -> service.supersede(userId, oldId, newId)).isInstanceOf(ApiException.class);
+        verify(statementImportRepository, never()).save(any());
+    }
 }
