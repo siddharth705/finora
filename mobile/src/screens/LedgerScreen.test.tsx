@@ -168,7 +168,7 @@ describe('a failure while paging', () => {
 describe('skeleton loading', () => {
   it('shows skeleton placeholder rows while the first page is loading, not a spinner', async () => {
     let resolveSearch: (value: unknown) => void = () => {};
-    transactions.search.mockReturnValue(new Promise((resolve) => { resolveSearch = resolve; }));
+    transactions.search.mockReturnValue(new Promise((resolve) => { resolveSearch = resolve as typeof resolveSearch; }));
 
     renderScreen();
 

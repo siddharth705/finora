@@ -347,7 +347,7 @@ describe('pull-to-refresh indicator', () => {
     // Summary resolves fast (still resolves via mockResolvedValue); accounts is held open on
     // purpose to prove the indicator has to track it too, not just summary.
     let resolveAccounts: (value: unknown) => void = () => {};
-    accounts.list.mockReturnValue(new Promise((resolve) => { resolveAccounts = resolve; }));
+    accounts.list.mockReturnValue(new Promise((resolve) => { resolveAccounts = resolve as typeof resolveAccounts; }));
 
     await act(async () => {
       void queryClient.invalidateQueries({ queryKey: ['dashboard-summary'] });
@@ -366,5 +366,48 @@ describe('pull-to-refresh indicator', () => {
     await waitFor(() => {
       expect(screen.UNSAFE_getByType(RefreshControl).props.refreshing).toBe(false);
     });
+  });
+});
+
+describe('the shell mounts before the network settles (dashboard shell capstone)', () => {
+  it('shows the greeting and section skeletons immediately, then swaps in real content once summary and recent transactions arrive', async () => {
+    let resolveSummary: (value: unknown) => void = () => {};
+    dashboard.summary.mockReturnValue(new Promise((resolve) => { resolveSummary = resolve as typeof resolveSummary; }));
+    let resolveTxns: (value: unknown) => void = () => {};
+    transactions.search.mockReturnValue(new Promise((resolve) => { resolveTxns = resolve as typeof resolveTxns; }));
+
+    renderScreen();
+
+    // The shell -- greeting and section headings -- is already on screen, not hidden behind a
+    // full-screen spinner.
+    expect(screen.getByText(/Good (morning|afternoon|evening|night)/)).toBeTruthy();
+    expect(screen.getByText('Cash Flow')).toBeTruthy();
+    expect(screen.getByText('Recent Transactions')).toBeTruthy();
+    expect(screen.getAllByTestId('shimmer-block', { hidden: true }).length).toBeGreaterThan(0);
+    expect(screen.queryByText('Total Balance')).toBeNull();
+
+    await act(async () => {
+      resolveSummary(emptySummary({ currentBalance: 4200 }));
+      resolveTxns({ content: [], page: 0, size: 5, totalElements: 0, totalPages: 0 });
+    });
+
+    expect(await screen.findByText('Total Balance')).toBeTruthy();
+    expect(screen.queryByTestId('shimmer-block', { hidden: true })).toBeNull();
+  });
+
+  it('skeletons Recent Transactions independently of the summary section', async () => {
+    dashboard.summary.mockResolvedValue(emptySummary());
+    let resolveTxns: (value: unknown) => void = () => {};
+    transactions.search.mockReturnValue(new Promise((resolve) => { resolveTxns = resolve as typeof resolveTxns; }));
+
+    renderScreen();
+
+    expect(await screen.findByText('Total Balance')).toBeTruthy();
+    // Summary has already settled, but the transactions section is still on its own skeleton.
+    expect(screen.getAllByTestId('skeleton-transaction-row', { hidden: true }).length).toBeGreaterThan(0);
+
+    await act(async () => resolveTxns({ content: [], page: 0, size: 5, totalElements: 0, totalPages: 0 }));
+
+    expect(await screen.findByText(/No transactions yet/i)).toBeTruthy();
   });
 });
