@@ -107,11 +107,41 @@ public class ImportDto {
              * the category came directly from the source file ({@code categorySource == "file"}),
              * which is a fact, not a guess.
              */
-            Integer categoryConfidence
+            Integer categoryConfidence,
+            /**
+             * This row's 1-based position within its section (page range for PDF, or line range
+             * for CSV) as originally parsed -- Founder Operations Dashboard, Import Explorer
+             * (docs/proposals/reconciliation-evolution-roadmap-proposal.md Part 9). Null for
+             * every caller that predates it, and for {@code GmailStagingBridge} (a receipt has no
+             * "row position" the way a statement line does). Set once, at the staging loop
+             * ({@code PreviewGenerator}/{@code PdfPreviewGenerator}) via {@link #withRowPosition}
+             * -- never by {@code TransactionNormalizer.normalize} itself, which has no visibility
+             * into where in the file the row it was handed came from.
+             */
+            Integer rowPosition
     ) {
+        /** The shape every caller used before {@code rowPosition} was added. Defaults null -- see
+         *  that field's own doc comment. */
+        public StagedRow(LocalDate date, String description, BigDecimal amount, String type,
+                          String suggestedCategory, String categorySource, UUID ruleId,
+                          boolean likelyDuplicate, String referenceNumber, BigDecimal balanceAfter,
+                          DuplicateMatch duplicateMatch, RowKind kind, Double confidence,
+                          String merchant, Double merchantConfidence, Integer categoryConfidence) {
+            this(date, description, amount, type, suggestedCategory, categorySource, ruleId,
+                    likelyDuplicate, referenceNumber, balanceAfter, duplicateMatch, kind, confidence,
+                    merchant, merchantConfidence, categoryConfidence, null);
+        }
+
+        /** A copy with {@code rowPosition} set -- see that field's own doc comment. */
+        public StagedRow withRowPosition(int rowPosition) {
+            return new StagedRow(date, description, amount, type, suggestedCategory, categorySource, ruleId,
+                    likelyDuplicate, referenceNumber, balanceAfter, duplicateMatch, kind, confidence,
+                    merchant, merchantConfidence, categoryConfidence, rowPosition);
+        }
+
         /** Pre-categoryConfidence arity (Transaction Intelligence Phase B). Kept so every existing
          *  construction of this 15-component shape -- production and test -- keeps compiling
-         *  unchanged. Defaults categoryConfidence to null. */
+         *  unchanged. Defaults categoryConfidence and rowPosition to null. */
         public StagedRow(LocalDate date, String description, BigDecimal amount, String type,
                           String suggestedCategory, String categorySource, UUID ruleId,
                           boolean likelyDuplicate, String referenceNumber, BigDecimal balanceAfter,
@@ -119,7 +149,7 @@ public class ImportDto {
                           String merchant, Double merchantConfidence) {
             this(date, description, amount, type, suggestedCategory, categorySource, ruleId,
                     likelyDuplicate, referenceNumber, balanceAfter, duplicateMatch, kind, confidence,
-                    merchant, merchantConfidence, null);
+                    merchant, merchantConfidence, null, null);
         }
 
         /**
@@ -449,12 +479,15 @@ public class ImportDto {
             BigDecimal statementOpeningBalance, BigDecimal statementClosingBalance,
             // Same round-trip, and same bug fix, as ConfirmRequest's own two trailing fields --
             // see that record's doc comment.
-            LocalDate statementPeriodStart, LocalDate statementPeriodEnd
+            LocalDate statementPeriodStart, LocalDate statementPeriodEnd,
+            // Same round-trip as ConfirmRequest's own trailing fields -- see that record's doc
+            // comment.
+            BigDecimal totalAmountDue, LocalDate paymentDueDate
     ) {
         /** Pre-existing arity -- see ConfirmRequest's own legacy constructor for why. */
         public SectionConfirm(List<ConfirmedRow> rows, UUID existingAccountId, NewAccountRequest newAccount,
                                BigDecimal statementOpeningBalance, BigDecimal statementClosingBalance) {
-            this(rows, existingAccountId, newAccount, statementOpeningBalance, statementClosingBalance, null, null);
+            this(rows, existingAccountId, newAccount, statementOpeningBalance, statementClosingBalance, null, null, null, null);
         }
     }
 
@@ -575,19 +608,38 @@ public class ImportDto {
             // already computed at staging time -- it silently re-derived the period from
             // minDate/maxDate of the confirmed rows alone, which is only ever a lower bound on the
             // statement's true period whenever a cycle has no activity near its own boundary dates.
-            // Null (from an older client, or a format/path with nothing printed to echo) falls back
-            // to that same minDate/maxDate derivation exactly as before -- see persistSection.
-            LocalDate statementPeriodStart, LocalDate statementPeriodEnd
+            // Bug fix: this used to fall back further, to that same minDate/maxDate derivation, when
+            // null (an older client, or a format/path with nothing printed to echo) -- persistSection
+            // no longer does that; a null here is stored as null, genuinely meaning "no period was
+            // ever printed" rather than a guess reconstructed from the confirmed rows. See
+            // persistSection's own comment.
+            LocalDate statementPeriodStart, LocalDate statementPeriodEnd,
+            // Same round-trip as statementPeriodStart/End, and the same reason: echoed from
+            // DetectedAccountInfo.totalAmountDue/paymentDueDate as staged, not re-derived.
+            // credit-card-statement-entity-design.md -- both null for a CSV import or any
+            // non-credit-card statement, same as on DetectedAccountInfo itself.
+            BigDecimal totalAmountDue, LocalDate paymentDueDate
     ) {
         /** Pre-existing arity. Kept so the many call sites that construct a request with no printed
          *  statement period to echo -- reimport's internal re-scoping, tests, Gmail's receipt-derived
-         *  confirms -- stay unchanged; both new fields default to null, which persistSection already
-         *  treats as "fall back to the confirmed rows' own date range". */
+         *  confirms -- stay unchanged; both new fields default to null, which persistSection stores
+         *  as null, genuinely meaning "no period was ever printed" rather than a guess reconstructed
+         *  from the confirmed rows' own date range. */
         public ConfirmRequest(UUID sessionId, List<ConfirmedRow> rows, UUID existingAccountId,
                                NewAccountRequest newAccount, BigDecimal statementOpeningBalance,
                                BigDecimal statementClosingBalance, String password) {
             this(sessionId, rows, existingAccountId, newAccount, statementOpeningBalance,
-                    statementClosingBalance, password, null, null);
+                    statementClosingBalance, password, null, null, null, null);
+        }
+
+        /** Same arity as the pre-existing period-echoing constructor above, for call sites that
+         *  echo the printed period but predate the credit-card fields. */
+        public ConfirmRequest(UUID sessionId, List<ConfirmedRow> rows, UUID existingAccountId,
+                               NewAccountRequest newAccount, BigDecimal statementOpeningBalance,
+                               BigDecimal statementClosingBalance, String password,
+                               LocalDate statementPeriodStart, LocalDate statementPeriodEnd) {
+            this(sessionId, rows, existingAccountId, newAccount, statementOpeningBalance,
+                    statementClosingBalance, password, statementPeriodStart, statementPeriodEnd, null, null);
         }
     }
 
@@ -667,15 +719,31 @@ public class ImportDto {
             /** Echoed from {@code StagedRow.categoryConfidence} unchanged by review -- see that
              *  field's own doc comment. Lands on {@code Transaction.decisionConfidence} at confirm
              *  time. */
-            Integer categoryConfidence
+            Integer categoryConfidence,
+            /** Echoed from {@code StagedRow.rowPosition} unchanged by review -- see that field's
+             *  own doc comment. Lands on {@code Transaction.sourceRowPosition} at confirm time
+             *  when {@code include} is true; recorded as an excluded-by-user outcome otherwise.
+             *  Null for a client that predates this field, same as every other "carried from
+             *  staging" field above when an older client omits it -- the Import Explorer just has
+             *  nothing to show for that row instead of a wrong answer. */
+            Integer rowPosition
     ) {
+        /** Pre-rowPosition arity (Founder Operations Dashboard, Import Explorer). */
+        public ConfirmedRow(LocalDate date, String description, BigDecimal amount, String type,
+                            String category, boolean include, String categorySource, UUID ruleId,
+                            boolean likelyDuplicate, String referenceNumber, BigDecimal balanceAfter,
+                            boolean confirmedNotDuplicate, Integer categoryConfidence) {
+            this(date, description, amount, type, category, include, categorySource, ruleId,
+                    likelyDuplicate, referenceNumber, balanceAfter, confirmedNotDuplicate, categoryConfidence, null);
+        }
+
         /** Pre-categoryConfidence arity (Transaction Intelligence Phase B). */
         public ConfirmedRow(LocalDate date, String description, BigDecimal amount, String type,
                             String category, boolean include, String categorySource, UUID ruleId,
                             boolean likelyDuplicate, String referenceNumber, BigDecimal balanceAfter,
                             boolean confirmedNotDuplicate) {
             this(date, description, amount, type, category, include, categorySource, ruleId,
-                    likelyDuplicate, referenceNumber, balanceAfter, confirmedNotDuplicate, null);
+                    likelyDuplicate, referenceNumber, balanceAfter, confirmedNotDuplicate, null, null);
         }
 
         /** Pre-WI5 arity. Kept so the many call sites that construct a row without a duplicate

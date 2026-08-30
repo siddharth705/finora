@@ -2,8 +2,9 @@ import { File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import { api, rawApi, type ApiEnvelope } from './client';
 import { encodeBase64 } from '../lib/base64';
+import { isOffline } from '../lib/apiError';
 import type {
-  Account, AccountStatementGroup, BankInfo, Budget, DashboardSummary, DetectedAccountInfo, Goal,
+  Account, AccountStatementGroup, Budget, DashboardSummary, DetectedAccountInfo, Goal,
   ImportSummary, ReimportResult, StagedAccountSection, StagedRow, StatementSummary, Transaction,
   WorkspaceSettings, UnparseableRow,
 } from '../types';
@@ -31,8 +32,8 @@ export const authApi = {
     api.post<AuthResponseDto>('/auth/login', { identifier, password }),
   // Identifier-first entry step (Phase 3B) -- resolves an email or mobile number to what the
   // client should show next, without a raw exists boolean. See frontend/src/api/endpoints.ts's
-  // own copy: nextAction is 'PASSWORD' | 'GOOGLE' | 'APPLE' for an existing account, or
-  // 'CONTINUE' when there isn't one yet.
+  // own copy: nextAction is 'EXISTS' for an existing account (Phase 7, resolved 2026-08-23: no
+  // longer distinguishes which sign-in method it uses), or 'CONTINUE' when there isn't one yet.
   identify: (identifier: string) =>
     api.post<{ nextAction: string }>('/auth/identify', { identifier }).then((r) => r.data),
   // D-23 Phase 2. idToken is the raw credential from @react-native-google-signin/google-signin --
@@ -91,10 +92,6 @@ export const accountsApi = {
   create: (body: AccountRequest) => api.post<Account>('/accounts', body).then((r) => r.data),
   update: (id: string, body: AccountRequest) => api.put<Account>(`/accounts/${id}`, body).then((r) => r.data),
   remove: (id: string) => api.delete(`/accounts/${id}`),
-};
-
-export const banksApi = {
-  list: (q?: string) => api.get<BankInfo[]>('/banks', { params: q ? { q } : undefined }).then((r) => r.data),
 };
 
 export interface TransactionFilters {
@@ -169,6 +166,8 @@ export interface ConfirmedRowPayload {
   likelyDuplicate: boolean;
   referenceNumber: string | null;
   balanceAfter: number | null;
+  /** Echoed from StagedRow.rowPosition unchanged -- see that field's own doc comment. */
+  rowPosition: number | null;
   /**
    * The user's ANSWER on the duplicate review screen, as opposed to `likelyDuplicate`, which is the
    * engine's GUESS. True only when the engine flagged the row and the person chose "Import anyway".
@@ -228,7 +227,7 @@ export interface ConfirmPayload {
   password?: string;
 }
 
-export interface SectionConfirmPayload {
+interface SectionConfirmPayload {
   rows: ConfirmedRowPayload[];
   existingAccountId: string | null;
   newAccount: NewAccountPayload | null;
@@ -285,16 +284,45 @@ export interface RNFile {
   type: string;
 }
 
+/**
+ * One retry, only for a genuine transport-layer failure (no response reached the client at all --
+ * see isOffline()'s own doc comment).
+ *
+ * The document picker (`pickStatement()` in lib/statementFile.ts) hands control to a separate OS
+ * activity and back. Verified against a real device, not assumed: the moment that activity
+ * returns, an upload started immediately can fail with axios's ERR_NETWORK even though the file is
+ * confirmed present on disk and every other endpoint reached from the same screen moments earlier
+ * or later succeeds -- the app's process is briefly resumed before the OS has finished restoring
+ * its network callback registration (visible in logcat as a ConnectivityService RemoteException
+ * for this app's own request package right after the picker activity exits). A fixed delay before
+ * every upload would tax the common case to paper over a one-off timing gap; retrying once, only
+ * on the specific error shape this gap produces, costs nothing when the gap isn't there and
+ * recovers when it is.
+ */
+async function stageWithRetry<T>(attempt: () => Promise<T>): Promise<T> {
+  try {
+    return await attempt();
+  } catch (e) {
+    if (!isOffline(e)) throw e;
+    return attempt();
+  }
+}
+
 export const importApi = {
+  // No explicit Content-Type header on either upload below: 'multipart/form-data' with no boundary
+  // is invalid HTTP (the multipart parser needs one), and axios only computes the correct
+  // boundary-included header when nothing has already set Content-Type. This was previously set by
+  // hand -- turned out to be a red herring for the real bug below (see stageWithRetry's own doc
+  // comment), but wrong regardless of that, since a manual header without a boundary can never be
+  // valid multipart.
   stageCsv: (file: RNFile, onProgress?: ProgressCallback) => {
     const form = new FormData();
     form.append('file', file as unknown as Blob);
-    return api
-      .post<{ sessionId: string; staging: StagingResult }>('/import/csv/stage', form, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-        ...toUploadProgressConfig(onProgress),
-      })
-      .then((r) => r.data);
+    return stageWithRetry(() =>
+      api
+        .post<{ sessionId: string; staging: StagingResult }>('/import/csv/stage', form, toUploadProgressConfig(onProgress))
+        .then((r) => r.data)
+    );
   },
   // `password` opens a protected statement (most Indian banks e-mail them that way). It rides in
   // the form body, never the query string, so it can't reach a server access log. Omitted when
@@ -304,12 +332,11 @@ export const importApi = {
     const form = new FormData();
     form.append('file', file as unknown as Blob);
     if (password) form.append('password', password);
-    return api
-      .post<PdfStagingSessionResult>('/import/pdf/stage', form, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-        ...toUploadProgressConfig(onProgress),
-      })
-      .then((r) => r.data);
+    return stageWithRetry(() =>
+      api
+        .post<PdfStagingSessionResult>('/import/pdf/stage', form, toUploadProgressConfig(onProgress))
+        .then((r) => r.data)
+    );
   },
   confirm: (payload: ConfirmPayload) =>
     api.post<ImportSummary>('/import/csv/confirm', payload).then((r) => r.data),
@@ -393,7 +420,7 @@ export const dashboardApi = {
   summary: () => api.get<DashboardSummary>('/dashboard/summary').then((r) => r.data),
 };
 
-export interface NetWorthSnapshotPoint {
+interface NetWorthSnapshotPoint {
   date: string;
   netWorth: number;
 }
@@ -408,7 +435,7 @@ export const networthApi = {
   saveSnapshot: () => api.post<NetWorthData>('/networth/snapshot').then((r) => r.data),
 };
 
-export interface CategoryMover {
+interface CategoryMover {
   category: string;
   current: number;
   priorAverage: number;

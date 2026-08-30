@@ -390,7 +390,7 @@ describe('Import — detected merchant on the review screen', () => {
 });
 
 /**
- * Premium Import Reliability v1, Sprint 1 item 1: the failure UX contract. Finora's own curated
+ * Premium Import Reliability v1, Sprint 1 item 1: the failure UX contract. Fynora's own curated
  * copy, not the server's `message`, is what a user reads for a code the contract owns -- see
  * importFailureMessages.ts. A code the contract does NOT own falls through to exactly today's
  * behaviour, unchanged (covered by the two generic-fallback tests above, not repeated here).
@@ -604,7 +604,7 @@ describe('Import — password-protected PDFs', () => {
 
     await user.upload(screen.getByTestId('statement-file-input'), pdfFile());
 
-    // It's the bank's password for one document, not a Finora credential -- saving it into the
+    // It's the bank's password for one document, not a Fynora credential -- saving it into the
     // user's vault alongside real logins would be wrong, and it changes every statement anyway.
     expect(screen.getByLabelText(/statement password/i)).toHaveAttribute('autocomplete', 'off');
   });
@@ -1832,7 +1832,7 @@ describe('Import — arriving to retry a failed sync import', () => {
     renderImportWithRetryState('bad-statement.pdf', null);
 
     await screen.findByTestId('statement-dropzone');
-    expect(screen.getByText(/Finora couldn't complete this import\./)).toBeInTheDocument();
+    expect(screen.getByText(/Fynora couldn't complete this import\./)).toBeInTheDocument();
   });
 
   it('does not stage or resume anything -- the person must still pick the file', async () => {

@@ -77,7 +77,7 @@ class ImportServiceAskOnceTest {
                 .thenAnswer(inv -> inv.getArgument(1));
         reconciliationService = mock(ReconciliationService.class);
         recurringService = mock(RecurringService.class);
-        DuplicateDetector duplicateDetector = new DuplicateDetector(transactionRepository);
+        DuplicateDetector duplicateDetector = new DuplicateDetector(transactionRepository, TestAccountRepositories.anyLive());
         CsvParser csvParser = new CsvParser();
         TransactionNormalizer transactionNormalizer = new TransactionNormalizer(categorizationService, duplicateDetector, com.finora.imports.TestRuleEngines.empty());
         StatementValidator statementValidator = new StatementValidator(com.finora.imports.product.ProductDiscovery.standard());
@@ -525,7 +525,14 @@ class ImportServiceAskOnceTest {
     }
 
     @Test
-    void confirm_fallsBackToTheConfirmedRowsDateRange_whenTheRequestCarriesNoStatementPeriod() throws Exception {
+    void confirm_leavesTheStatementPeriodNull_whenTheRequestCarriesNoStatementPeriod() throws Exception {
+        // Bug fix: this used to fall back to the confirmed rows' own min/max date -- which is only
+        // ever a LOWER bound on the statement's true period whenever a cycle has no activity near
+        // its own printed boundary dates. Confirmed wrong against a real Kotak Mahindra Bank
+        // credit-card statement, whose own earliest/latest transactions fall inside its printed
+        // period rather than at its edges (see PdfPreviewGenerator.buildDetectedAccountInfo's own
+        // comment, which had and removed the identical fallback). No genuine period was ever printed
+        // here (the request carries none), so this stays null rather than guessing one from the rows.
         var row1 = new ConfirmedRow(LocalDate.of(2026, 7, 10), "SWIGGY*ORDR9182 BLR",
                 BigDecimal.valueOf(486), "EXPENSE", "Dining", true, "rule", null, false, null, null);
         var row2 = new ConfirmedRow(LocalDate.of(2026, 7, 12), "ZOMATO ORDER",
@@ -536,8 +543,42 @@ class ImportServiceAskOnceTest {
 
         ArgumentCaptor<StatementImport> captor = ArgumentCaptor.forClass(StatementImport.class);
         verify(statementImportRepository).save(captor.capture());
-        assertThat(captor.getValue().getStatementPeriodStart()).isEqualTo(LocalDate.of(2026, 7, 10));
-        assertThat(captor.getValue().getStatementPeriodEnd()).isEqualTo(LocalDate.of(2026, 7, 12));
+        assertThat(captor.getValue().getStatementPeriodStart()).isNull();
+        assertThat(captor.getValue().getStatementPeriodEnd()).isNull();
+    }
+
+    @Test
+    void confirm_persistsTotalAmountDueAndPaymentDueDate_echoedFromTheRequest() throws Exception {
+        // Same round-trip as the statement-period fields above: DetectedAccountInfo.totalAmountDue/
+        // paymentDueDate (CreditCardSummaryExtractor / PdfMetadataExtractor at staging time) has
+        // nowhere to land at confirm without the request echoing it back -- see
+        // credit-card-statement-entity-design.md.
+        var row1 = new ConfirmedRow(LocalDate.of(2026, 7, 10), "SWIGGY*ORDR9182 BLR",
+                BigDecimal.valueOf(486), "EXPENSE", "Dining", true, "rule", null, false, null, null);
+        var request = new ConfirmRequest(null, List.of(row1), accountId, null, null, null, null,
+                LocalDate.of(2026, 7, 1), LocalDate.of(2026, 7, 31),
+                BigDecimal.valueOf(12450.75), LocalDate.of(2026, 8, 5));
+
+        importService.confirm(userId, dummyFile(), request);
+
+        ArgumentCaptor<StatementImport> captor = ArgumentCaptor.forClass(StatementImport.class);
+        verify(statementImportRepository).save(captor.capture());
+        assertThat(captor.getValue().getTotalAmountDue()).isEqualByComparingTo(BigDecimal.valueOf(12450.75));
+        assertThat(captor.getValue().getPaymentDueDate()).isEqualTo(LocalDate.of(2026, 8, 5));
+    }
+
+    @Test
+    void confirm_leavesTotalAmountDueAndPaymentDueDateNull_forANonCreditCardImport() throws Exception {
+        var row1 = new ConfirmedRow(LocalDate.of(2026, 7, 10), "SWIGGY*ORDR9182 BLR",
+                BigDecimal.valueOf(486), "EXPENSE", "Dining", true, "rule", null, false, null, null);
+        var request = new ConfirmRequest(null, List.of(row1), accountId, null, null, null, null);
+
+        importService.confirm(userId, dummyFile(), request);
+
+        ArgumentCaptor<StatementImport> captor = ArgumentCaptor.forClass(StatementImport.class);
+        verify(statementImportRepository).save(captor.capture());
+        assertThat(captor.getValue().getTotalAmountDue()).isNull();
+        assertThat(captor.getValue().getPaymentDueDate()).isNull();
     }
 
     @Test
@@ -621,8 +662,13 @@ class ImportServiceAskOnceTest {
     }
 
     /**
-     * Statement Import v2: opening/closing balance and statement period should be derivable
-     * whenever the file has a running-balance column, without needing the user to type anything.
+     * Statement Import v2: opening/closing balance should be derivable whenever the file has a
+     * running-balance column, without needing the user to type anything.
+     *
+     * <p>Bug fix: this test used to also assert the statement PERIOD was derived from the same two
+     * transaction dates -- exactly the "transaction range as a guessed period" fallback removed from
+     * StatementValidator.buildDetectedAccountInfo (see that method's own comment). This CSV prints no
+     * period anywhere, so the correct, honest answer is null, not the two transaction dates.
      */
     @Test
     void parseAndStage_derivesOpeningAndClosingBalance_fromARunningBalanceColumn() throws Exception {
@@ -642,8 +688,8 @@ class ImportServiceAskOnceTest {
 
         assertThat(response.detectedAccount().openingBalance()).isEqualByComparingTo("10000.00");
         assertThat(response.detectedAccount().closingBalance()).isEqualByComparingTo("11514.00");
-        assertThat(response.detectedAccount().statementPeriodStart()).isEqualTo(LocalDate.of(2026, 7, 10));
-        assertThat(response.detectedAccount().statementPeriodEnd()).isEqualTo(LocalDate.of(2026, 7, 12));
+        assertThat(response.detectedAccount().statementPeriodStart()).isNull();
+        assertThat(response.detectedAccount().statementPeriodEnd()).isNull();
     }
 
     @Test

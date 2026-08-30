@@ -15,8 +15,9 @@ vi.mock('../api/endpoints', () => ({
     needsReview: vi.fn(),
     explanation: vi.fn(),
     remove: vi.fn(),
+    update: vi.fn(),
   },
-  categoriesApi: { list: vi.fn() },
+  categoriesApi: { list: vi.fn(), options: vi.fn(), create: vi.fn() },
 }));
 
 // Real MerchantGroupReviewCard calls transactionsApi.groupsNeedsReview, which the mock above
@@ -90,7 +91,7 @@ describe('Ledger — Why this category?', () => {
     vi.mocked(transactionsApi.explanation).mockResolvedValue({
       decisionSource: 'LEARNED_PATTERN',
       summary: 'Categorized based on how you\'ve categorized "SWIGGY" before.',
-      evidence: ['Every time you confirm or correct a category, Finora remembers it for that merchant.'],
+      evidence: ['Every time you confirm or correct a category, Fynora remembers it for that merchant.'],
       confidence: 82,
     });
     renderLedger();
@@ -191,6 +192,75 @@ describe('Ledger — delete confirmation', () => {
 
     expect(transactionsApi.remove).not.toHaveBeenCalled();
     expect(screen.queryByText('Delete "AMAZON PAY"?')).not.toBeInTheDocument();
+  });
+});
+
+// Task 11: the edit modal's category field is now CategoryCombobox (Task 8) plus the inline
+// CategoryCreateEditPanel (Task 9) for "+ Create", replacing the old plain <select>.
+describe('Ledger — edit transaction category picker', () => {
+  beforeEach(() => {
+    vi.mocked(transactionsApi.search).mockReset().mockResolvedValue({
+      content: [txn()], page: 0, size: 10, totalElements: 1, totalPages: 1,
+    });
+    vi.mocked(transactionsApi.needsReview).mockReset().mockResolvedValue([]);
+    vi.mocked(transactionsApi.update).mockReset().mockResolvedValue(txn());
+    vi.mocked(categoriesApi.list).mockReset().mockResolvedValue([
+      { id: 'cat-1', name: 'Shopping', isSystem: false, icon: 'tag', color: 'gray' },
+      { id: 'cat-2', name: 'Groceries', isSystem: false, icon: 'tag', color: 'gray' },
+    ]);
+    vi.mocked(categoriesApi.options).mockReset().mockResolvedValue({ icons: [], colors: [] });
+    vi.mocked(categoriesApi.create).mockReset();
+  });
+
+  it('lets an existing category be picked from the combobox and saved', async () => {
+    const user = userEvent.setup();
+    renderLedger();
+
+    await user.click(await screen.findByTitle('Edit transaction'));
+    const combobox = (await screen.findAllByRole('combobox')).find((el) => el.tagName === 'BUTTON')!;
+    expect(combobox).toHaveTextContent('Shopping');
+
+    await user.click(combobox);
+    await user.type(await screen.findByPlaceholderText('Search categories'), 'Groceries');
+    await user.click(await screen.findByText('Groceries'));
+    expect(combobox).toHaveTextContent('Groceries');
+
+    await user.click(screen.getByRole('button', { name: /save changes/i }));
+
+    await waitFor(() => expect(transactionsApi.update).toHaveBeenCalledWith(
+      'txn-1',
+      expect.objectContaining({ categoryName: 'Groceries' }),
+    ));
+  });
+
+  it('opens the inline create panel for a brand-new category name and selects it once saved', async () => {
+    const user = userEvent.setup();
+    vi.mocked(categoriesApi.create).mockResolvedValue({
+      id: 'cat-3', name: 'Travel', isSystem: false, icon: 'tag', color: 'gray',
+    });
+    renderLedger();
+
+    await user.click(await screen.findByTitle('Edit transaction'));
+    const combobox = (await screen.findAllByRole('combobox')).find((el) => el.tagName === 'BUTTON')!;
+
+    await user.click(combobox);
+    await user.type(await screen.findByPlaceholderText('Search categories'), 'Travel');
+    await user.click(await screen.findByText('Create "Travel"'));
+
+    // The combobox is replaced by the inline create panel -- confirm the category combobox
+    // trigger is gone and the panel's own name input (prefilled with the typed text) has taken
+    // its place.
+    expect(combobox).not.toBeInTheDocument();
+    const nameInput = screen.getByPlaceholderText('Category name');
+    expect(nameInput).toHaveValue('Travel');
+
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => {
+      const restoredCombobox = screen.getAllByRole('combobox').find((el) => el.tagName === 'BUTTON')!;
+      expect(restoredCombobox).toHaveTextContent('Travel');
+    });
+    expect(categoriesApi.create).toHaveBeenCalledWith('Travel', 'tag', 'gray');
   });
 });
 

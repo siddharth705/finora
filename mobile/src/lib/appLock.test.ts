@@ -56,22 +56,22 @@ describe('isEnabled / setEnabled', () => {
 describe('authenticate', () => {
   it('resolves true only on a genuine successful result', async () => {
     mockedAuthenticateAsync.mockResolvedValueOnce({ success: true });
-    expect(await appLock.authenticate('Unlock Finora')).toBe(true);
+    expect(await appLock.authenticate('Unlock Fynora')).toBe(true);
   });
 
   it('collapses an unsuccessful result to false', async () => {
     mockedAuthenticateAsync.mockResolvedValueOnce({ success: false, error: 'authentication_failed' });
-    expect(await appLock.authenticate('Unlock Finora')).toBe(false);
+    expect(await appLock.authenticate('Unlock Fynora')).toBe(false);
   });
 
   it('fails closed to false if authenticateAsync itself throws', async () => {
     mockedAuthenticateAsync.mockRejectedValueOnce(new Error('hardware busy'));
-    expect(await appLock.authenticate('Unlock Finora')).toBe(false);
+    expect(await appLock.authenticate('Unlock Fynora')).toBe(false);
   });
 
   it('leaves the device passcode fallback enabled (does not set disableDeviceFallback)', async () => {
     mockedAuthenticateAsync.mockResolvedValueOnce({ success: true });
-    await appLock.authenticate('Unlock Finora');
+    await appLock.authenticate('Unlock Fynora');
 
     const call = mockedAuthenticateAsync.mock.calls[0][0];
     expect(call?.disableDeviceFallback).not.toBe(true);
@@ -96,7 +96,7 @@ describe('isAuthenticating / justFinishedAuthenticating', () => {
       () => new Promise((resolve) => { resolveAuth = resolve; })
     );
 
-    const pending = appLock.authenticate('Unlock Finora');
+    const pending = appLock.authenticate('Unlock Fynora');
     expect(appLock.isAuthenticating()).toBe(true);
 
     resolveAuth?.({ success: true });
@@ -107,7 +107,7 @@ describe('isAuthenticating / justFinishedAuthenticating', () => {
   it('reports justFinishedAuthenticating for windowMs after resolving, from either outcome', async () => {
     const nowSpy = jest.spyOn(Date, 'now').mockReturnValue(1_000_000);
     mockedAuthenticateAsync.mockResolvedValueOnce({ success: false, error: 'authentication_failed' });
-    await appLock.authenticate('Unlock Finora');
+    await appLock.authenticate('Unlock Fynora');
 
     nowSpy.mockReturnValue(1_000_000 + 200);
     expect(appLock.justFinishedAuthenticating(1500)).toBe(true);

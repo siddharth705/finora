@@ -11,7 +11,7 @@ import type { ConfirmationResult } from 'firebase/auth';
 const RECAPTCHA_CONTAINER_ID = 'reset-password-recaptcha';
 
 // Same heuristic as frontend/'s Register.tsx/ResetPassword.tsx -- kept identical so the meter
-// means the same thing wherever a password gets set anywhere in Finora, admin or not.
+// means the same thing wherever a password gets set anywhere in Fynora, admin or not.
 function passwordStrength(pw: string): { score: number; label: string; color: string } {
   let score = 0;
   if (pw.length >= 8) score++;
@@ -139,7 +139,7 @@ export default function ResetPassword() {
           <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-rose-400 to-[#15171C] flex items-center justify-center">
             <ShieldAlert size={18} className="text-white" strokeWidth={2.5} />
           </div>
-          <span className="font-extrabold tracking-wide text-xl text-ink">FINORA ADMIN</span>
+          <span className="font-extrabold tracking-wide text-xl text-ink">FYNORA ADMIN</span>
         </div>
 
         <div className="bg-card border border-border rounded-xl2 shadow-soft p-6">

@@ -1,5 +1,7 @@
 package com.finora.imports.pdf;
 
+import com.finora.imports.TestAccountRepositories;
+
 import com.finora.dto.ImportDto.StagedAccountSection;
 import com.finora.imports.DuplicateDetector;
 import com.finora.imports.TestRuleEngines;
@@ -287,9 +289,17 @@ class HeaderProseRejectionTest {
         put("hdfc-txn-date-narration-header", 1);
         put("hsbc-savings-ledger-validation", 1);
         put("icici-savings-ledger-validation", 1);
+        put("kotak-credit-card-category-sections-and-page-footer", 1);
         put("kotak-savings-ledger-validation", 1);
         put("pnb-savings-ledger-validation", 1);
         put("union-bank-savings-ledger-validation", 1);
+        put("cbi-account-discrepancy-disclaimer-trailer", 1);
+        put("pnb-one-account-discrepancy-disclaimer-trailer", 1);
+        // Captured for the 2026-08-29 lineOf X-ordering fix (docs/superpowers/specs/
+        // 2026-08-29-lineof-x-ordering-fix-design.md) -- its own content (transaction narration
+        // join order) is verified by TraceFixtureRegressionTest, not this class; listed here only
+        // so this inventory sweep accounts for it at all.
+        put("bob-transaction-row-x-ordering", 1);
     }};
 
     @Test
@@ -335,9 +345,9 @@ class HeaderProseRejectionTest {
         when(categorizationService.suggestReadOnly(any(), any(), any(), any(), any(), any()))
                 .thenReturn(new CategorizationService.Suggestion("Uncategorized", "default", null, null, null));
         TransactionRepository transactionRepository = mock(TransactionRepository.class);
-        when(transactionRepository.findPotentialDuplicatesByUser(any(), any(), any(), any())).thenReturn(List.of());
+        when(transactionRepository.findPotentialDuplicatesByUserAndAccountIdIn(any(), any(), any(), any(), any())).thenReturn(List.of());
         TransactionNormalizer normalizer = new TransactionNormalizer(categorizationService,
-                new DuplicateDetector(transactionRepository), TestRuleEngines.empty());
+                new DuplicateDetector(transactionRepository, TestAccountRepositories.anyLive()), TestRuleEngines.empty());
         return new PdfPreviewGenerator(new TraceAcquirer(trace), new PdfTableLocator(), new PdfMetadataExtractor(),
                 normalizer, com.finora.imports.product.ProductDiscovery.standard(),
                 new com.finora.imports.product.ProductAttributeExtractor(),

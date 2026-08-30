@@ -144,8 +144,15 @@ export default function ResetPassword() {
       await authApi.resetPassword(token, firebaseIdToken, password);
       setDone(true);
       setTimeout(() => {
-        void navigate('/login', {
-          state: { message: 'Password reset successfully. Please sign in using your new password.' },
+        // D-26 unified entry: skips straight to /auth's password step rather than the identify
+        // step, since this user just proved phone ownership for an account that definitely
+        // exists. No `identifier` to prefill with, though -- ResetPasswordResponse only ever
+        // carries a message, never the account's email.
+        void navigate('/auth', {
+          state: {
+            banner: 'Password reset successfully. Please sign in using your new password.',
+            skipToPassword: true,
+          },
         });
       }, 2000);
     } catch (err: any) {
@@ -162,7 +169,7 @@ export default function ResetPassword() {
           <span className="w-7 h-7 rounded-lg bg-gradient-to-br from-primary to-primary-dark flex items-center justify-center">
             <Sparkles size={14} className="text-on-primary" strokeWidth={2.5} />
           </span>
-          <span className="font-extrabold tracking-wide text-ink">FINORA</span>
+          <span className="font-extrabold tracking-wide text-ink">FYNORA</span>
         </div>
 
         {/* Anchor for Firebase's invisible reCAPTCHA -- rendered once, outside the phone/otp
@@ -224,7 +231,7 @@ export default function ResetPassword() {
             </button>
 
             <p className="text-sm mt-4 text-center">
-              <Link to="/login" className="text-primary font-medium">Back to sign in</Link>
+              <Link to="/auth" className="text-primary font-medium">Back to sign in</Link>
             </p>
           </form>
         ) : (
@@ -275,7 +282,7 @@ export default function ResetPassword() {
               minLength={8}
               maxLength={72}
               autoComplete="new-password"
-              className="w-full border border-border rounded-lg px-3 py-2.5 pr-10 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+              className="w-full border border-border rounded-lg px-3 py-2.5 pr-10 text-sm bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-primary/30"
             />
             {password.length > 0 && (
               <div className="mt-2 mb-1">
@@ -301,7 +308,7 @@ export default function ResetPassword() {
               onBlur={() => markTouched('confirm')}
               required
               autoComplete="new-password"
-              className="w-full border border-border rounded-lg px-3 py-2.5 pr-10 mb-1 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+              className="w-full border border-border rounded-lg px-3 py-2.5 pr-10 mb-1 text-sm bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-primary/30"
             />
             <p className="text-[11px] mb-4 h-3.5">
               {touched.confirm && !passwordsMatch && <span className="text-danger">Passwords don't match.</span>}
@@ -316,7 +323,7 @@ export default function ResetPassword() {
             </button>
 
             <p className="text-sm mt-4 text-center">
-              <Link to="/login" className="text-primary font-medium">Back to sign in</Link>
+              <Link to="/auth" className="text-primary font-medium">Back to sign in</Link>
             </p>
           </form>
         )}

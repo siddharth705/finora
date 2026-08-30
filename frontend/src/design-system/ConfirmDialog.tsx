@@ -3,7 +3,7 @@ import { useEffect } from 'react';
 /**
  * Replaces the browser's own native `confirm()` for destructive/discard actions across the app --
  * that dialog renders as unstyled OS/browser chrome (literally titled with the page's own origin,
- * e.g. "app.finoratech.info says"), which reads as broken rather than as part of the product.
+ * e.g. "app.fynora.net says"), which reads as broken rather than as part of the product.
  *
  * Not a global singleton or a hook-based imperative API: the caller owns the "what am I
  * confirming" state (typically `useState<T | null>`) and conditionally renders this component,

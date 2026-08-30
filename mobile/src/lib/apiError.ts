@@ -29,7 +29,7 @@ const FIREBASE_MESSAGES: Record<string, string> = {
     'This build can’t verify your device. Its Firebase setup is incomplete — see docs/engineering/mobile-setup.md.',
 };
 
-const OFFLINE_MESSAGE = "Can't reach Finora. Check your connection and try again.";
+const OFFLINE_MESSAGE = "Can't reach Fynora. Check your connection and try again.";
 const TIMEOUT_MESSAGE = 'That took too long. Check your connection and try again.';
 
 /** True when the request never got a response -- offline, DNS failure, connection refused. */

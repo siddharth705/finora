@@ -106,7 +106,11 @@ class ImportAccountBalanceIT extends AbstractIntegrationTest {
     }
 
     private ConfirmedRow row(String description, String amount, String type) {
-        return new ConfirmedRow(LocalDate.of(2026, 7, 10), description, new BigDecimal(amount), type,
+        return row(LocalDate.of(2026, 7, 10), description, amount, type);
+    }
+
+    private ConfirmedRow row(LocalDate date, String description, String amount, String type) {
+        return new ConfirmedRow(date, description, new BigDecimal(amount), type,
                 "Other", true, "rule", null, false, null, null, false);
     }
 
@@ -182,6 +186,45 @@ class ImportAccountBalanceIT extends AbstractIntegrationTest {
         assertThat(balanceOf(f))
                 .as("an unverifiable figure off the request body must never reach this column")
                 .isEqualByComparingTo("955.00");
+    }
+
+    // ---- a statement with no printed period must not be silently invisible to "is this the
+    // ---- account's most recent statement" ----
+
+    @Test
+    @DisplayName("a statement whose PDF printed no period does not lose its priority to an older, "
+            + "later-imported statement's stale closing balance")
+    void anUndatedStatementStillOutranksAnOlderOneImportedAfterIt() throws Exception {
+        Fixture f = fixture(Account.Type.SAVINGS, "1000.00");
+
+        // Statement A: the account's genuinely most recent activity (20 Jul), but its own PDF never
+        // printed a statement period -- statementPeriodStart/End round-trip as null, same as a real
+        // Kotak-shaped document with nothing printed. Its stated closing balance is corroborated, so
+        // it becomes authoritative (nothing else exists yet to compare it against).
+        importRows(f, new BigDecimal("1000.00"), new BigDecimal("1455.00"),
+                row(LocalDate.of(2026, 7, 20), "SALARY", "455.00", "INCOME"));
+        assertThat(balanceOf(f)).isEqualByComparingTo("1455.00");
+
+        // Statement B: an OLDER statement (5 Jul), imported second. Its own closing balance is also
+        // corroborated, so ClosingBalanceGuard alone would allow it to overwrite the account balance
+        // -- whether it actually may to is exactly what isMostRecentStatementForAccount decides.
+        //
+        // Bug fix: findLatestPeriodEndForAccount's SQL MAX() silently ignores A's null
+        // statementPeriodEnd, so before the fix this returned empty and isMostRecentStatementForAccount
+        // defaulted to true (the same default used for "this account has no other statements at
+        // all") -- treating B as the newest statement on file despite A being three weeks more
+        // recent, and overwriting the account balance with B's stale 1200.00. The fix disambiguates
+        // "no siblings" from "siblings exist but none states a period" via a COUNT query, so B is
+        // correctly refused authority and its own 200.00 ledger delta is applied on top of A's
+        // balance instead.
+        importRows(f, new BigDecimal("1000.00"), new BigDecimal("1200.00"),
+                row(LocalDate.of(2026, 7, 5), "OLD SALARY", "200.00", "INCOME"));
+
+        assertThat(balanceOf(f))
+                .as("B is genuinely older than A, so it must not overwrite A's already-applied "
+                        + "balance with its own stale closing figure -- only its ledger delta (+200) "
+                        + "applies on top of A's 1455.00")
+                .isEqualByComparingTo("1655.00");
     }
 
     // ---- symmetry ----

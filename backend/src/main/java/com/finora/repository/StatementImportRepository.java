@@ -53,6 +53,10 @@ public interface StatementImportRepository extends JpaRepository<StatementImport
         LocalDate getStatementPeriodEnd();
         BigDecimal getOpeningBalance();
         BigDecimal getClosingBalance();
+        // Credit-card statement entity, roadmap item 6 -- see StatementImport's own doc comment on
+        // these two fields. Null for a non-credit-card statement, same as on the entity.
+        BigDecimal getTotalAmountDue();
+        LocalDate getPaymentDueDate();
         int getTransactionsImported();
         int getTransactionsSkipped();
         Instant getImportedAt();
@@ -62,6 +66,7 @@ public interface StatementImportRepository extends JpaRepository<StatementImport
            SELECT s.id AS id, s.accountId AS accountId, s.fileName AS fileName,
                   s.statementPeriodStart AS statementPeriodStart, s.statementPeriodEnd AS statementPeriodEnd,
                   s.openingBalance AS openingBalance, s.closingBalance AS closingBalance,
+                  s.totalAmountDue AS totalAmountDue, s.paymentDueDate AS paymentDueDate,
                   s.transactionsImported AS transactionsImported, s.transactionsSkipped AS transactionsSkipped,
                   s.importedAt AS importedAt
              FROM StatementImport s
@@ -69,6 +74,48 @@ public interface StatementImportRepository extends JpaRepository<StatementImport
             ORDER BY s.importedAt DESC
            """)
     List<StatementMetadata> findMetadataByUserIdOrderByImportedAtDesc(@Param("userId") UUID userId);
+
+    /** Like {@link #findMetadataByUserIdOrderByImportedAtDesc}, scoped to a set of live account
+     *  ids -- excludes a soft-deleted account's statements, which the unscoped finder would keep
+     *  returning forever (see {@link #countByUserIdAndAccountIdIn}'s own doc comment). */
+    @Query("""
+           SELECT s.id AS id, s.accountId AS accountId, s.fileName AS fileName,
+                  s.statementPeriodStart AS statementPeriodStart, s.statementPeriodEnd AS statementPeriodEnd,
+                  s.openingBalance AS openingBalance, s.closingBalance AS closingBalance,
+                  s.totalAmountDue AS totalAmountDue, s.paymentDueDate AS paymentDueDate,
+                  s.transactionsImported AS transactionsImported, s.transactionsSkipped AS transactionsSkipped,
+                  s.importedAt AS importedAt
+             FROM StatementImport s
+            WHERE s.userId = :userId AND s.accountId IN :accountIds
+            ORDER BY s.importedAt DESC
+           """)
+    List<StatementMetadata> findMetadataByUserIdAndAccountIdInOrderByImportedAtDesc(
+            @Param("userId") UUID userId, @Param("accountIds") java.util.Collection<UUID> accountIds);
+
+    /**
+     * Every statement for one account that has a printed period -- the input
+     * {@code StatementCoverageAnalyzer} needs (see that class's own doc comment). Statements with
+     * no printed period (today, always a CSV import -- see the coverage proposal's §3/§7) are
+     * excluded rather than passed through with a null period, which the analyzer has nowhere to
+     * place on a timeline; CSV coverage is explicitly out of scope for this phase.
+     *
+     * <p>Ordered by period start so the analyzer's own sort is redundant defense, not the only
+     * ordering guarantee.
+     */
+    @Query("""
+           SELECT s.id AS id, s.accountId AS accountId, s.fileName AS fileName,
+                  s.statementPeriodStart AS statementPeriodStart, s.statementPeriodEnd AS statementPeriodEnd,
+                  s.openingBalance AS openingBalance, s.closingBalance AS closingBalance,
+                  s.totalAmountDue AS totalAmountDue, s.paymentDueDate AS paymentDueDate,
+                  s.transactionsImported AS transactionsImported, s.transactionsSkipped AS transactionsSkipped,
+                  s.importedAt AS importedAt
+             FROM StatementImport s
+            WHERE s.userId = :userId AND s.accountId = :accountId
+              AND s.statementPeriodStart IS NOT NULL AND s.statementPeriodEnd IS NOT NULL
+            ORDER BY s.statementPeriodStart
+           """)
+    List<StatementMetadata> findMetadataWithPeriodByUserIdAndAccountId(@Param("userId") UUID userId,
+                                                                        @Param("accountId") UUID accountId);
 
     /**
      * The latest statement period end already on file for this account, ignoring one row.
@@ -94,12 +141,87 @@ public interface StatementImportRepository extends JpaRepository<StatementImport
                                                                  @Param("accountId") UUID accountId,
                                                                  @Param("excludingId") UUID excludingId);
 
+    /**
+     * How many OTHER statements exist for this account, ignoring one row (same exclusion as {@link
+     * #findLatestPeriodEndForAccount}).
+     *
+     * <p>Bug fix: SQL {@code MAX()} silently ignores NULL rows, so once a statement can legitimately
+     * have a null {@code statementPeriodEnd} (an import whose PDF never printed a period, now that
+     * the transaction-range guess that used to guarantee a value has been removed -- see {@code
+     * ImportService.persistSection}'s own comment), {@code findLatestPeriodEndForAccount} returning
+     * empty stopped meaning only "this is the account's only statement" -- it now also means "other
+     * statements exist, but none of them states a period," which is a DIFFERENT, unsafe case to treat
+     * the same way. This lets {@code isMostRecentStatementForAccount} tell the two apart instead of
+     * defaulting to "most recent" (and authorizing a closing-balance overwrite) whenever an undated
+     * sibling is silently invisible to the aggregate.
+     */
+    @Query("""
+           SELECT COUNT(si) FROM StatementImport si
+            WHERE si.userId = :userId
+              AND si.accountId = :accountId
+              AND si.id <> :excludingId
+           """)
+    long countOtherStatementsForAccount(@Param("userId") UUID userId,
+                                         @Param("accountId") UUID accountId,
+                                         @Param("excludingId") UUID excludingId);
+
+    /**
+     * The closing balance of this account's chronologically previous statement -- the one whose
+     * own period ends on or before the statement now being confirmed begins -- for {@link
+     * com.finora.imports.OpeningBalanceCarryForward}. The mirror image of {@link
+     * #findLatestPeriodEndForAccount}: that one looks forward (is anything newer already on
+     * file, for the closing side); this one looks backward (is anything older already on file,
+     * for the opening side).
+     *
+     * <p>No {@code excludingId} parameter, unlike the two queries above -- this runs BEFORE the
+     * statement being confirmed is saved (see {@code ImportService.persistSection}, which sets
+     * the opening balance before it calls {@code statementImportRepository.save}), so there is no
+     * row yet to accidentally match against itself.
+     *
+     * <p>Ordered by period end, then by import time as the tiebreak for same-day statements
+     * (a composite multi-account statement, or a genuine re-import), so the result is
+     * deterministic rather than whatever order Postgres happens to return.
+     *
+     * @return empty when this account has no earlier statement with both a stated period end
+     *         at or before {@code newStatementStart} and a stated closing balance
+     */
+    @Query("""
+           SELECT si.closingBalance FROM StatementImport si
+            WHERE si.userId = :userId
+              AND si.accountId = :accountId
+              AND si.statementPeriodEnd IS NOT NULL
+              AND si.statementPeriodEnd <= :newStatementStart
+              AND si.closingBalance IS NOT NULL
+            ORDER BY si.statementPeriodEnd DESC, si.importedAt DESC
+           """)
+    List<BigDecimal> findPriorStatementClosingBalanceForAccount(@Param("userId") UUID userId,
+                                                                  @Param("accountId") UUID accountId,
+                                                                  @Param("newStatementStart") LocalDate newStatementStart,
+                                                                  Pageable pageable);
+
     /** {@code WorkspaceDashboardService.summarize}'s "N statements imported" tile only ever called
      *  {@code .size()} on the entity-returning finder's full result -- a database COUNT is
      *  strictly better than fetching (and projecting) any columns at all for that, {@code
      *  fileContent} included. See {@link StatementMetadata}'s own doc comment for the rest of that
      *  finder's removal. */
     long countByUserId(UUID userId);
+
+    /** Like {@link #countByUserId}, but scoped to a specific set of accounts -- for a caller that
+     *  must exclude soft-deleted accounts' statements. {@code StatementImport.deleted_at} is set
+     *  when a STATEMENT is removed, not when its owning ACCOUNT is (deleting an account never
+     *  touches this column, by design -- see {@code StatementImportService.listGroupedByAccount}'s
+     *  own 7-day retention window, which relies on the statement staying visible after its account
+     *  is gone). {@code countByUserId} alone therefore keeps counting a deleted account's
+     *  statements forever, not just during that window. Pass the caller's own live account ids
+     *  (e.g. {@code accountRepository.findByUserId(userId)}) rather than re-deriving them here. */
+    long countByUserIdAndAccountIdIn(UUID userId, java.util.Collection<UUID> accountIds);
+
+    /** Every statement import that carries credit-card summary fields -- {@code totalAmountDue} is
+     *  null for a non-credit-card statement and populated whenever {@code
+     *  CreditCardSummaryExtractor} found a payment-summary panel (see {@code StatementImport
+     *  .totalAmountDue}'s own doc comment), so this is the credit-card-statement filter for free,
+     *  with no new column. Backs {@code ReconciliationService}'s CC_PAYMENT pass (roadmap Phase 3). */
+    List<StatementImport> findByUserIdAndTotalAmountDueIsNotNull(UUID userId);
 
     /**
      * The {@code id}/{@code activatedCapabilitiesJson}/{@code unparseableSummaryJson} columns
@@ -155,6 +277,20 @@ public interface StatementImportRepository extends JpaRepository<StatementImport
      *  comment for why a growth milestone must survive the import later being deleted. */
     @Query(value = "SELECT COUNT(DISTINCT user_id) FROM statement_imports", nativeQuery = true)
     long countDistinctUsersEverActivated();
+
+    /** {@code FinancialJourneyService}'s FIRST_IMPORT milestone: this ONE user's earliest
+     *  statement import ever, regardless of whether it (or every other import they've made) has
+     *  since been deleted. Same bypass, same "a milestone is a permanent behavioral fact once
+     *  reached" reasoning as {@link #countDistinctUsersEverActivated} just above -- a user who
+     *  deletes their only statement (to fix a bad import and re-upload, say) plainly did still
+     *  import a statement at some point, and the dashboard's own onboarding checklist must not
+     *  un-tick that. Epoch millis, not {@code Instant}: {@code findObjectsUnreferencedSince}
+     *  below explains why a native query here has no other reliable way to hand back a JDBC
+     *  timestamp column without naming FG-019's banned {@code java.sql.Timestamp}. Null when this
+     *  user has never imported a statement (a bare SQL {@code MIN} over zero rows). */
+    @Query(value = "SELECT (EXTRACT(EPOCH FROM MIN(imported_at)) * 1000)::bigint FROM statement_imports WHERE user_id = :userId",
+           nativeQuery = true)
+    Long findEarliestImportedAtEverEpochMillis(@Param("userId") UUID userId);
 
     @Query("SELECT COUNT(s) FROM StatementImport s WHERE s.importedAt >= :threshold AND s.transactionsSkipped > 0")
     long countWithSkippedRowsAfter(@Param("threshold") Instant threshold);

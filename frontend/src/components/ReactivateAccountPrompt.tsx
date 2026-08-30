@@ -37,7 +37,7 @@ export function ReactivateAccountPrompt({ token, onCancel, onReactivated }: {
     <div className="bg-card rounded-xl2 p-8 w-full shadow-soft border border-border">
       <h2 className="text-2xl font-bold text-ink mb-1">Welcome back</h2>
       <p className="text-sm text-muted mb-6">
-        Your Finora account is deactivated. Sign in again to reactivate it — your data was
+        Your Fynora account is deactivated. Sign in again to reactivate it — your data was
         retained and nothing was lost.
       </p>
 

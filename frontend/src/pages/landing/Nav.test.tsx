@@ -18,7 +18,7 @@ describe('Nav', () => {
     expect(header.style.position).toBe('static');
     expect(header.style.background).not.toContain('255, 255, 255');
     expect(header.style.backdropFilter === 'none' || header.style.backdropFilter === '').toBe(true);
-    expect(screen.getByText('Finora')).toHaveStyle({ color: '#F8FAFC' });
+    expect(screen.getByText('Fynora')).toHaveStyle({ color: '#F8FAFC' });
   });
 
   it('renders the sticky, translucent-glass look when overHero is false', () => {
@@ -31,7 +31,7 @@ describe('Nav', () => {
     expect(header.style.position).toBe('sticky');
     expect(header.style.top).toBe('0px');
     expect(header.style.background).toContain('255, 255, 255');
-    expect(screen.getByText('Finora')).toHaveStyle({ color: '#0F172A' });
+    expect(screen.getByText('Fynora')).toHaveStyle({ color: '#0F172A' });
   });
 
   it('carries a hover class for desktop nav links, with no inline color to shadow it in the glass state', () => {

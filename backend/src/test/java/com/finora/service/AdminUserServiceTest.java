@@ -1,6 +1,7 @@
 package com.finora.service;
 
 import com.finora.dto.AdminDtos.AdminUpdateUserRequest;
+import com.finora.entity.Account;
 import com.finora.entity.User;
 import com.finora.exception.ApiException;
 import com.finora.repository.AccountRepository;
@@ -31,6 +32,8 @@ import static org.mockito.Mockito.*;
 class AdminUserServiceTest {
 
     private UserRepository userRepository;
+    private AccountRepository accountRepository;
+    private TransactionRepository transactionRepository;
     private AuditService auditService;
     private RefreshTokenService refreshTokenService;
     private AdminUserService adminUserService;
@@ -40,10 +43,12 @@ class AdminUserServiceTest {
     @BeforeEach
     void setUp() {
         userRepository = mock(UserRepository.class);
+        accountRepository = mock(AccountRepository.class);
+        transactionRepository = mock(TransactionRepository.class);
         auditService = mock(AuditService.class);
         refreshTokenService = mock(RefreshTokenService.class);
         adminUserService = new AdminUserService(
-                userRepository, mock(AccountRepository.class), mock(TransactionRepository.class), auditService,
+                userRepository, accountRepository, transactionRepository, auditService,
                 mock(AuthService.class), refreshTokenService);
     }
 
@@ -268,5 +273,39 @@ class AdminUserServiceTest {
         var metadata = org.mockito.ArgumentCaptor.forClass(Map.class);
         verify(auditService).record(eq(targetId), eq("USER_PROFILE_UPDATED_BY_ADMIN"), eq("User"), eq(targetId), metadata.capture());
         assertThat((List<String>) metadata.getValue().get("changedFields")).isEmpty();
+    }
+
+    // --- Deleted-account leak (see DashboardService.summarize for the original fix): a deleted
+    // account's transactions deliberately keep deleted_at unset, so getUser's transactionCount
+    // must be scoped to exactly the user's live account ids, not just their userId -- unlike
+    // accountCount, which is already correctly scoped via Account's own @SQLRestriction. ---
+
+    @Test
+    void getUser_scopesTransactionCount_toExactlyTheLiveAccountIds() {
+        User target = user(targetId, "ACTIVE");
+        when(userRepository.findById(targetId)).thenReturn(Optional.of(target));
+        Account liveAccount = new Account();
+        ReflectionTestUtils.setField(liveAccount, "id", UUID.randomUUID());
+        liveAccount.setUserId(targetId);
+        when(accountRepository.findByUserId(targetId)).thenReturn(List.of(liveAccount));
+        when(transactionRepository.countByUserIdAndAccountIdIn(eq(targetId), any())).thenReturn(7L);
+
+        var result = adminUserService.getUser(targetId);
+
+        assertThat(result.transactionCount()).isEqualTo(7L);
+        verify(transactionRepository).countByUserIdAndAccountIdIn(targetId, List.of(liveAccount.getId()));
+        verify(transactionRepository, never()).countByUserId(any());
+    }
+
+    @Test
+    void getUser_withNoLiveAccounts_reportsZeroTransactions_withoutQueryingTransactionCount() {
+        User target = user(targetId, "ACTIVE");
+        when(userRepository.findById(targetId)).thenReturn(Optional.of(target));
+        when(accountRepository.findByUserId(targetId)).thenReturn(List.of());
+
+        var result = adminUserService.getUser(targetId);
+
+        assertThat(result.transactionCount()).isEqualTo(0L);
+        verify(transactionRepository, never()).countByUserIdAndAccountIdIn(any(), any());
     }
 }

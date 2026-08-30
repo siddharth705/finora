@@ -64,8 +64,9 @@ export const authApi = {
     api.post<AuthResponseDto>('/auth/login', { identifier, password, scope: PORTAL_SCOPE }),
   // Identifier-first entry step (auth/security review §2.2) -- resolves an email or mobile
   // number to what the frontend should show next, without a raw exists boolean. See
-  // AuthService.identify on the backend: nextAction is 'PASSWORD' | 'GOOGLE' | 'APPLE' for an
-  // existing account, or 'CONTINUE' when there isn't one yet.
+  // AuthService.identify on the backend: nextAction is 'EXISTS' for an existing account
+  // (Phase 7, resolved 2026-08-23: no longer distinguishes which sign-in method it uses), or
+  // 'CONTINUE' when there isn't one yet.
   identify: (identifier: string) =>
     api.post<{ nextAction: string }>('/auth/identify', { identifier }).then((r) => r.data),
   forgotPassword: (email: string) =>
@@ -102,6 +103,12 @@ export const authApi = {
   // Google-verified email, or creates one, and returns the same AuthResponseDto shape either way.
   google: (idToken: string) =>
     api.post<AuthResponseDto>('/auth/google', { idToken }),
+  // D-26 (web). Same shape as google() -- idToken is what AppleSignInButton's signIn() promise
+  // resolves with, verified server-side (AppleIdTokenVerifierService), never trusted as-is.
+  // fullName is only ever present on the FIRST authorization for a given Apple ID/client id pair
+  // (Apple's own constraint, not this client's) -- forwarded through unvalidated, same as native.
+  apple: (idToken: string, fullName: string | null) =>
+    api.post<AuthResponseDto>('/auth/apple', { idToken, fullName }),
   // token is the raw verification token from a /verify-email?token=... link (register(), or a
   // fresh one loginWithGoogle sends when it finds a matching but not-yet-verified account -- see
   // VerifyEmail.tsx). Not authenticated: the token itself is the proof.
@@ -214,6 +221,16 @@ export interface TransactionExplanation {
   // 0-100, or absent -- see TransactionExplanationDto's own doc comment for which decision
   // sources populate this (never MANUAL/FILE_PROVIDED).
   confidence?: number;
+  // "Why this match?" -- absent for the common case (reconciliationStatus OK, nothing matched
+  // this row). See TransactionExplanationDto.ReconciliationExplanationDto.
+  reconciliation?: TransactionReconciliationExplanation;
+}
+
+export interface TransactionReconciliationExplanation {
+  status: 'DUPLICATE' | 'TRANSFER' | 'REFUND' | 'REVERSAL';
+  matchedTransactionId: string | null;
+  summary: string;
+  evidence: string[];
 }
 
 export const transactionsApi = {
@@ -235,6 +252,10 @@ export const transactionsApi = {
   bulkDelete: (ids: string[]) => api.post('/transactions/bulk-delete', { ids }),
   bulkRecategorize: (ids: string[], category: string) =>
     api.post('/transactions/bulk-category', { ids, category }),
+  // BH-027: "no, these really are two separate transactions." Records a human ruling that
+  // outranks the reconciliation engine's own guess -- see TransactionService.confirmNotDuplicate.
+  confirmNotDuplicate: (id: string) =>
+    api.post<Transaction>(`/transactions/${id}/not-duplicate`).then((r) => r.data),
 };
 
 export interface ConfirmedRowPayload {
@@ -247,6 +268,8 @@ export interface ConfirmedRowPayload {
   categorySource: string;
   ruleId: string | null;
   categoryConfidence: number | null;
+  /** Echoed from StagedRow.rowPosition unchanged -- see that field's own doc comment. */
+  rowPosition: number | null;
   /** What the engine guessed. */
   likelyDuplicate: boolean;
   /**
@@ -320,6 +343,11 @@ export interface ConfirmPayload {
   // confirmed rows' own date range instead of the printed period shown on the review screen).
   statementPeriodStart: string | null;
   statementPeriodEnd: string | null;
+  // Echoed back from DetectedAccountInfo.totalAmountDue/paymentDueDate, same round-trip as the
+  // statement period above -- see ConfirmRequest's own doc comment on the backend.
+  // credit-card-statement-entity-design.md. Both null for a non-credit-card statement.
+  totalAmountDue: number | null;
+  paymentDueDate: string | null;
   // Only meaningful to confirmReimport, for a statement whose stored bytes are a password-protected
   // PDF -- see ConfirmRequest's own doc comment on the backend. Every other confirm path ignores it.
   password?: string;
@@ -327,7 +355,7 @@ export interface ConfirmPayload {
 
 // One account's worth of reviewed rows within a MultiAccountConfirmPayload -- same shape as
 // ConfirmPayload minus sessionId (shared once at the top level instead of repeated per section).
-export interface SectionConfirmPayload {
+interface SectionConfirmPayload {
   rows: ConfirmedRowPayload[];
   existingAccountId: string | null;
   newAccount: NewAccountPayload | null;
@@ -335,6 +363,8 @@ export interface SectionConfirmPayload {
   statementClosingBalance: number | null;
   statementPeriodStart: string | null;
   statementPeriodEnd: string | null;
+  totalAmountDue: number | null;
+  paymentDueDate: string | null;
 }
 
 export interface MultiAccountConfirmPayload {
@@ -600,9 +630,33 @@ export interface CategoryOption {
   id: string;
   name: string;
   isSystem: boolean;
+  icon: string;
+  color: string;
 }
+
+export interface CategoryOptions {
+  icons: { token: string; label: string }[];
+  colors: { token: string; label: string }[];
+}
+
 export const categoriesApi = {
   list: () => api.get<CategoryOption[]>('/categories').then((r) => r.data),
+  options: () => api.get<CategoryOptions>('/categories/options').then((r) => r.data),
+  create: (name: string, icon?: string, color?: string) =>
+    api.post<CategoryOption>('/categories', { name, icon, color }).then((r) => r.data),
+  update: (id: string, changes: { name?: string; icon?: string; color?: string }) =>
+    api.patch<CategoryOption>(`/categories/${id}`, changes).then((r) => r.data),
+  delete: (id: string, reassignTo?: string) =>
+    api.delete(`/categories/${id}`, { params: reassignTo ? { reassignTo } : undefined }),
+  usage: (id: string) =>
+    api.get<{
+      transactionCount: number;
+      hasBudget: boolean;
+      ruleCount: number;
+      learningRowCount: number;
+    }>(
+      `/categories/${id}/usage`,
+    ).then((r) => r.data),
 };
 
 export const dashboardApi = {
@@ -610,7 +664,7 @@ export const dashboardApi = {
   journey: () => api.get<FinancialJourney>('/dashboard/journey').then((r) => r.data),
 };
 
-export interface NetWorthSnapshotPoint {
+interface NetWorthSnapshotPoint {
   date: string;
   netWorth: number;
 }
@@ -625,7 +679,7 @@ export const networthApi = {
   saveSnapshot: () => api.post<NetWorthData>('/networth/snapshot').then((r) => r.data),
 };
 
-export interface CategoryMover {
+interface CategoryMover {
   category: string;
   current: number;
   priorAverage: number;
@@ -787,14 +841,13 @@ export const accountLifecycleApi = {
     api.post<{ message: string }>('/users/me/account/delete', { sessionId }).then((r) => r.data),
   // Phase C (Download My Data). POST with the password in the body -- responseType: 'blob' since
   // the response is a streamed ZIP, not JSON (see UserController.exportData/DataExportService on
-  // the backend). The filename mirrors the backend's own "finora-data-export-<date>.zip" pattern
-  // rather than being read back out of Content-Disposition -- nothing else in this codebase parses
-  // that header either (statementImportsApi.downloadFile above takes its filename from the caller
-  // instead), and the two dates can only disagree by the moment the request straddles midnight.
+  // the backend). The filename is chosen client-side rather than read back out of
+  // Content-Disposition -- nothing else in this codebase parses that header either
+  // (statementImportsApi.downloadFile above takes its filename from the caller instead).
   exportData: async (currentPassword: string | null, googleIdToken: string | null) => {
     try {
       const res = await api.post('/users/me/data-export', { currentPassword, googleIdToken }, { responseType: 'blob' });
-      downloadBlob(res.data as Blob, `finora-data-export-${new Date().toISOString().slice(0, 10)}.zip`);
+      downloadBlob(res.data as Blob, `fynora-data-export-${new Date().toISOString().slice(0, 10)}.zip`);
     } catch (err) {
       // responseType: 'blob' applies to error responses too -- see withBlobErrorMessage's own doc
       // comment above (statementImportsApi.downloadFile hits the identical issue).

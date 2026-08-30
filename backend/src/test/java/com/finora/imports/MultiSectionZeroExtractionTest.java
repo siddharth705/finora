@@ -240,8 +240,12 @@ class MultiSectionZeroExtractionTest {
         // mechanism, does not parse as a transaction and is dropped at staging, same as before this
         // fix touched anything downstream of location.
         m.put("icici-savings-ledger-validation", 11);
+        m.put("kotak-credit-card-category-sections-and-page-footer", 21);
         m.put("pnb-savings-ledger-validation", 61);
         m.put("union-bank-savings-ledger-validation", 19);
+        m.put("cbi-account-discrepancy-disclaimer-trailer", 222);
+        m.put("pnb-one-account-discrepancy-disclaimer-trailer", 61);
+        m.put("bob-transaction-row-x-ordering", 53);
         return m;
     }
 
@@ -395,8 +399,8 @@ class MultiSectionZeroExtractionTest {
 
     private TransactionNormalizer normalizer(CategorizationService categorizationService) {
         TransactionRepository transactionRepository = mock(TransactionRepository.class);
-        when(transactionRepository.findPotentialDuplicatesByUser(any(), any(), any(), any())).thenReturn(List.of());
-        return new TransactionNormalizer(categorizationService, new DuplicateDetector(transactionRepository),
+        when(transactionRepository.findPotentialDuplicatesByUserAndAccountIdIn(any(), any(), any(), any(), any())).thenReturn(List.of());
+        return new TransactionNormalizer(categorizationService, new DuplicateDetector(transactionRepository, TestAccountRepositories.anyLive()),
                 TestRuleEngines.empty());
     }
 
@@ -440,12 +444,12 @@ class MultiSectionZeroExtractionTest {
         CategorizationService categorizationService = categorization();
         TransactionNormalizer transactionNormalizer = normalizer(categorizationService);
         TransactionRepository transactionRepository = mock(TransactionRepository.class);
-        when(transactionRepository.findPotentialDuplicatesByUser(any(), any(), any(), any())).thenReturn(List.of());
-        DuplicateDetector duplicateDetector = new DuplicateDetector(transactionRepository);
+        when(transactionRepository.findPotentialDuplicatesByUserAndAccountIdIn(any(), any(), any(), any(), any())).thenReturn(List.of());
+        DuplicateDetector duplicateDetector = new DuplicateDetector(transactionRepository, TestAccountRepositories.anyLive());
         AccountRepository accountRepository = mock(AccountRepository.class);
         ImportSessionService importSessionService = mock(ImportSessionService.class);
-        when(importSessionService.createSession(any(), any(), any(), any(), any(), any())).thenReturn(session());
-        when(importSessionService.createMultiSection(any(), any(), any(), any(), any())).thenReturn(session());
+        when(importSessionService.createSession(any(), any(), any(), any(), any(), any(), any())).thenReturn(session());
+        when(importSessionService.createMultiSection(any(), any(), any(), any(), any(), any())).thenReturn(session());
 
         PreviewGenerator previewGenerator = new PreviewGenerator(new CsvParser(), transactionNormalizer,
                 new StatementValidator(com.finora.imports.product.ProductDiscovery.standard()), verifier(),

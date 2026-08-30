@@ -35,6 +35,7 @@ import java.security.SecureRandom;
 import java.time.Instant;
 import java.util.Base64;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -71,13 +72,34 @@ public class AuthService {
     // beyond the original 13 to cover common real-life cases the first pass didn't: repaying a
     // friend, EMIs, insurance premiums, and so on, so users aren't stuck recategorizing
     // everything as "Other" or hand-creating categories one at a time.
-    private static final List<String> DEFAULT_CATEGORIES = List.of(
-            "Salary", "Rent", "Groceries", "Dining", "Transport", "Utilities", "Shopping",
-            "Health", "Entertainment", "Investments", "Fees/Interest", "Transfer",
-            "Friend Repayment", "Loan EMI", "Insurance", "Education", "Subscriptions", "Travel",
-            "Gifts & Donations", "Pets", "Home & Furnishing", "Taxes", "Cash Withdrawal",
-            "Business Expenses", "Other"
-    );
+    private static final Map<String, String[]> DEFAULT_CATEGORIES = new LinkedHashMap<>();
+    static {
+        DEFAULT_CATEGORIES.put("Salary", new String[]{"arrow-down-circle", "green"});
+        DEFAULT_CATEGORIES.put("Rent", new String[]{"home", "blue"});
+        DEFAULT_CATEGORIES.put("Groceries", new String[]{"shopping-cart", "green"});
+        DEFAULT_CATEGORIES.put("Dining", new String[]{"utensils", "orange"});
+        DEFAULT_CATEGORIES.put("Transport", new String[]{"car", "gray"});
+        DEFAULT_CATEGORIES.put("Utilities", new String[]{"zap", "yellow"});
+        DEFAULT_CATEGORIES.put("Shopping", new String[]{"shopping-bag", "purple"});
+        DEFAULT_CATEGORIES.put("Health", new String[]{"heart-pulse", "red"});
+        DEFAULT_CATEGORIES.put("Entertainment", new String[]{"film", "pink"});
+        DEFAULT_CATEGORIES.put("Investments", new String[]{"trending-up", "teal"});
+        DEFAULT_CATEGORIES.put("Fees/Interest", new String[]{"percent", "gray"});
+        DEFAULT_CATEGORIES.put("Transfer", new String[]{"repeat", "blue"});
+        DEFAULT_CATEGORIES.put("Friend Repayment", new String[]{"users", "teal"});
+        DEFAULT_CATEGORIES.put("Loan EMI", new String[]{"landmark", "red"});
+        DEFAULT_CATEGORIES.put("Insurance", new String[]{"shield", "blue"});
+        DEFAULT_CATEGORIES.put("Education", new String[]{"graduation-cap", "purple"});
+        DEFAULT_CATEGORIES.put("Subscriptions", new String[]{"refresh-cw", "pink"});
+        DEFAULT_CATEGORIES.put("Travel", new String[]{"plane", "teal"});
+        DEFAULT_CATEGORIES.put("Gifts & Donations", new String[]{"gift", "pink"});
+        DEFAULT_CATEGORIES.put("Pets", new String[]{"paw-print", "orange"});
+        DEFAULT_CATEGORIES.put("Home & Furnishing", new String[]{"sofa", "yellow"});
+        DEFAULT_CATEGORIES.put("Taxes", new String[]{"receipt", "gray"});
+        DEFAULT_CATEGORIES.put("Cash Withdrawal", new String[]{"banknote", "green"});
+        DEFAULT_CATEGORIES.put("Business Expenses", new String[]{"briefcase", "blue"});
+        DEFAULT_CATEGORIES.put("Other", new String[]{"tag", "gray"});
+    }
     private static final long RESET_TOKEN_TTL_MINUTES = 30;
     // Short relative to the reset-token TTL above -- this token exists only to carry a login
     // attempt that already proved the password straight through to a single confirm click, not
@@ -123,6 +145,7 @@ public class AuthService {
     // D-28 PR4-C: redeems RegisterRequest.referralCode, if present -- see register()'s own call
     // site and ReferralService.redeemCode's doc comment for why this never blocks signup.
     private final ReferralService referralService;
+    private final MerchantSeedService merchantSeedService;
     // SEC-07: dispatches the forgotPassword() email send off the request thread -- see
     // BackgroundWorkConfig.authEmailExecutor's own doc comment for why.
     private final Executor authEmailExecutor;
@@ -143,6 +166,7 @@ public class AuthService {
                         IdentityLookup identityLookup, RequestMetadata requestMetadata,
                         SubscriptionService subscriptionService,
                         ReferralService referralService,
+                        MerchantSeedService merchantSeedService,
                         @Qualifier("authEmailExecutor") Executor authEmailExecutor,
                         AdminMfaService adminMfaService) {
         this.userRepository = userRepository;
@@ -165,6 +189,7 @@ public class AuthService {
         this.requestMetadata = requestMetadata;
         this.subscriptionService = subscriptionService;
         this.referralService = referralService;
+        this.merchantSeedService = merchantSeedService;
         this.authEmailExecutor = authEmailExecutor;
         this.adminMfaService = adminMfaService;
     }
@@ -297,6 +322,7 @@ public class AuthService {
         passwordHistoryService.record(user.getId(), user.getPasswordHash());
 
         seedDefaultCategories(user.getId());
+        merchantSeedService.seedCuratedMerchants(user.getId());
         // D-28 PR4-A: every new account starts on the Free plan -- entitlement lookups are
         // fail-closed (EntitlementService), so skipping this would leave a brand-new user with no
         // subscription row at all, silently losing even BASIC_DASHBOARD the moment anything checks.
@@ -387,14 +413,18 @@ public class AuthService {
      * deliberately has no scope parameter.
      *
      * <p>Locked/suspended/deactivated status is intentionally not surfaced here: this endpoint
-     * answers "what credential does this identifier's account use", not "is this account usable
-     * right now" -- the latter is login()'s job, and folding it in here would only grow the
-     * surface an anonymous caller can probe pre-authentication.
+     * answers "does an account exist for this identifier", not "is this account usable right
+     * now" -- the latter is login()'s job, and folding it in here would only grow the surface an
+     * anonymous caller can probe pre-authentication.
+     *
+     * <p>Phase 7 hardening (resolved 2026-08-23): used to return the account's real
+     * {@code signInMethod} value (PASSWORD/GOOGLE/APPLE) for an existing account -- see
+     * {@link IdentifyResponse}'s own doc comment for why that's now collapsed to a single EXISTS.
      */
     public IdentifyResponse identify(IdentifyRequest request) {
         String email = resolveEmailForLogin(request.identifier(), User.SCOPE_USER);
         return findUserByEmailIgnoreCaseSafely(email, User.SCOPE_USER)
-                .map(user -> new IdentifyResponse(user.getSignInMethod()))
+                .map(user -> new IdentifyResponse("EXISTS"))
                 .orElseGet(() -> new IdentifyResponse("CONTINUE"));
     }
 
@@ -880,6 +910,7 @@ public class AuthService {
         user = userRepository.save(user);
         passwordHistoryService.record(user.getId(), user.getPasswordHash());
         seedDefaultCategories(user.getId());
+        merchantSeedService.seedCuratedMerchants(user.getId());
         // D-28 PR4-A: same "every new user gets this" discipline as seedDefaultCategories above.
         subscriptionService.provisionFreeSubscription(user.getId());
         return user;
@@ -1426,11 +1457,13 @@ public class AuthService {
     // building the whole batch in memory and writing it in one saveAll() call.
     private void seedDefaultCategories(java.util.UUID userId) {
         List<Category> categories = new ArrayList<>();
-        for (String name : DEFAULT_CATEGORIES) {
+        for (var entry : DEFAULT_CATEGORIES.entrySet()) {
             Category c = new Category();
             c.setUserId(userId);
-            c.setName(name);
+            c.setName(entry.getKey());
             c.setSystem(true);
+            c.setIcon(entry.getValue()[0]);
+            c.setColor(entry.getValue()[1]);
             categories.add(c);
         }
         categoryRepository.saveAll(categories);

@@ -22,6 +22,18 @@ staged=$(git diff --cached --name-only)
 # review while letting exactly what it warns about through.
 sh scripts/check-fixture-hygiene.sh || exit 1
 
+# Best-effort local secret scan: only when the `gitleaks` binary is present. It is a single Go
+# binary (brew install gitleaks, or see https://github.com/gitleaks/gitleaks#installing), not
+# something `npm install` at the repo root provisions the way it does for husky itself, so a fresh
+# clone without it must not be blocked. The actual gate is the "Secret scan" job in
+# .github/workflows/ci.yml, which always has the binary via gitleaks/gitleaks-action -- this is
+# the fast local nicety that catches a secret before it is ever pushed, not the enforcement point.
+if command -v gitleaks >/dev/null 2>&1; then
+  gitleaks protect --staged --no-banner --redact || exit 1
+else
+  echo "note: gitleaks not installed locally, skipping local secret scan (CI still runs it) -- see https://github.com/gitleaks/gitleaks#installing" >&2
+fi
+
 # Always, and cheap (one `git ls-files -s`): a mode regression is not tied to which files are
 # staged, and this one cost the backend job every CI run it ever had. Catching it here matters
 # more than the CI copy, because core.fileMode is false on Windows -- the bit cannot be restored

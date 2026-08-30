@@ -21,16 +21,23 @@ type Props = NativeStackScreenProps<AuthStackParamList, 'AuthEntry'>;
  * A single "email or mobile number" field replaces having to pick Login vs Register up front --
  * POST /auth/identify resolves it to what should happen next, and this screen navigates there:
  *
- * - PASSWORD -- an existing password account. Sent to Login with the identifier prefilled.
- * - GOOGLE / APPLE -- an existing OAuth account. Sent to Login with the identifier prefilled and
- *   its method, so Login hides the password field/forgot-password link for this visit (see its
- *   own doc comment) -- same §2.4 reasoning as web.
+ * - EXISTS -- an account exists for this identifier (any sign-in method). Sent to Login with the
+ *   identifier prefilled; the password field and Google/Apple buttons are always shown together
+ *   there, same as a direct visit -- see Phase 7's amendment below for why this no longer
+ *   branches on which method the account actually uses.
  * - CONTINUE -- no account behind this identifier. Sent to Register with whichever of its two
  *   fields (email or mobile number) the identifier looks like, prefilled.
  *
  * Login and Register stay fully reachable on their own via this screen's footer AND their own
  * "No account? Register" / "Already have an account? Sign in" links -- this screen fronts them,
  * it doesn't gate them.
+ *
+ * Phase 7 amendment (resolved 2026-08-23): nextAction used to be PASSWORD/GOOGLE/APPLE/CONTINUE,
+ * and this screen forwarded the method to LoginScreen so it could hide the password field for a
+ * known OAuth account (§2.4's "move the OAuth-user rejection earlier"). Collapsed to EXISTS/
+ * CONTINUE to stop /auth/identify revealing which sign-in method an existing account uses -- see
+ * IdentifyResponse's own doc comment on the backend for the full reasoning. The backend's own
+ * signInMethod refusal at actual login time is unaffected.
  */
 export function AuthEntryScreen({ navigation }: Props) {
   const c = useTheme();
@@ -69,7 +76,7 @@ export function AuthEntryScreen({ navigation }: Props) {
         const isEmail = EMAIL_PATTERN.test(trimmed);
         navigation.navigate('Register', isEmail ? { email: trimmed } : { phoneNumber: trimmed });
       } else {
-        navigation.navigate('Login', { identifier: trimmed, method: nextAction });
+        navigation.navigate('Login', { identifier: trimmed });
       }
     } catch (err) {
       setError(toUserMessage(err, 'Something went wrong. Please try again.'));
@@ -116,7 +123,7 @@ export function AuthEntryScreen({ navigation }: Props) {
     return (
       <AuthScreenLayout title="Welcome back" error={error}>
         <Text style={[styles.body, { color: c.muted }]}>
-          Your Finora account is deactivated. Sign in again to reactivate it — your data was
+          Your Fynora account is deactivated. Sign in again to reactivate it — your data was
           retained and nothing was lost.
         </Text>
 

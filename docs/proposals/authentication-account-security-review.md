@@ -1,20 +1,19 @@
 # Finora Authentication & Account Security — Review & Design
 
-**Status: Approved.** Next: Phase 7 (`/auth/identify` enumeration hardening)
-— design confirmed 2026-08-23 (option b: collapse PASSWORD/GOOGLE/APPLE
-into a single EXISTS value), not started. Phase 6 (BH-015 fix) shipped
-2026-08-23. Of Phase 0's 6 open decisions, only #3 (account deletion
-retention — needs
-legal/compliance input, tracked as its own ticket, not this doc's to close)
-remains genuinely open; the other 5 are resolved. Implementation: Phase 1 is
-done, Phase 2's audit-hardening slice is done, Phase 3's backend slice
-(`/auth/identify`, PR #327) is merged, and both its 3A (web) and 3B (mobile)
-entry-flow UX are now merged (Phase 7 will revise this). Phase 3.5's audit
-is done (no gap in its own checklist; a bonus phone-change
-session-revocation gap found and fixed). Phase 4 is fully merged (backend,
-web, mobile). Phase 5 (deferred, unscheduled) is narrower than before —
-standalone phone-OTP login and account-linking policy are now closed, not
-parked there. Committed via a worktree per `CLAUDE.md` (primary checkout is
+**Status: Approved.** Every implementation phase (1, 2, 3/3A/3B, 3.5, 4, 6,
+7) is now shipped. Of Phase 0's 6 open decisions, only #3 (account deletion
+retention — needs legal/compliance input, tracked as its own ticket, not
+this doc's to close) remains genuinely open; the other 5 are resolved.
+Phase 5 (deferred, unscheduled) is what's left: Truecaller, Passkeys, the
+`StepUpVerifier` structural refactor (§2.6), and account-recovery design
+(§2.9) — none of these are scheduled. Implementation history: Phase 1 done,
+Phase 2's audit-hardening slice done, Phase 3's backend (`/auth/identify`,
+PR #327) merged, both its 3A (web) and 3B (mobile) entry-flow UX merged and
+then revised by Phase 7. Phase 3.5's audit done (no gap in its own
+checklist; a bonus phone-change session-revocation gap found and fixed).
+Phase 4 fully merged (backend, web, mobile). Phase 6 (BH-015 fix) merged.
+Phase 7 (`/auth/identify` enumeration hardening) merged. Committed via a
+worktree per `CLAUDE.md` (primary checkout is
 a shared read-only-for-writes checkout). This is a roadmap — each phase
 ships as its own ticket/PR, never as one combined PR.
 
@@ -640,40 +639,37 @@ match.
 - No `frontend/src/pages/ResetPassword.test.tsx` existed before this —
   net-new coverage (9 tests), not a migration of existing tests.
 
-**Phase 7 — `/auth/identify` enumeration hardening**
+**Phase 7 — `/auth/identify` enumeration hardening — ✅ DONE, shipped 2026-08-23**
 `feat(auth): reduce what /auth/identify's response reveals`
-- **Resolved 2026-08-23: revisit toward stricter**, reopening Phase 3's
-  already-shipped backend + both frontends. Not started.
 - Problem: the shipped `{"nextAction": "PASSWORD" | "GOOGLE" | "APPLE" |
-  "CONTINUE"}` response still lets a caller distinguish "this identifier
+  "CONTINUE"}` response still let a caller distinguish "this identifier
   has an account" (any non-`CONTINUE` value) from "it doesn't"
-  (`CONTINUE`), and for an existing account, which method it uses.
+  (`CONTINUE`), and for an existing account, which method it used.
   §2.2's own text already named this as a mitigation, not a fix.
-- **Design resolved 2026-08-23**: option (b) — keep the identify step's
-  exists-vs-doesn't-exist routing (Phase 3's Login-vs-Register win stays:
-  `PASSWORD`/`GOOGLE`/`APPLE` all collapse into a single `EXISTS` value,
-  `CONTINUE` stays as-is), but drop which method an existing account uses
-  from the response. `nextAction` becomes `"EXISTS" | "CONTINUE"` only.
+- Shipped design: option (b) — kept the identify step's exists-vs-
+  doesn't-exist routing (Phase 3's Login-vs-Register win stays), but
+  dropped which method an existing account uses from the response.
+  `nextAction` is now `"EXISTS" | "CONTINUE"` only —
+  `PASSWORD`/`GOOGLE`/`APPLE` collapsed into the single `EXISTS` value.
   `Login.tsx`/`LoginScreen`'s OAuth hint (hide the password field for a
-  known GOOGLE/APPLE account) goes away for a prefilled-from-AuthEntry
-  visit specifically — it always shows the password field AND the
-  Google/Apple buttons together for an `EXISTS` identifier, same as a
-  direct visit to `/login` today already does. §2.4's "move the
-  OAuth-user rejection earlier" UX win is given up deliberately as the
-  cost of closing this leak; the backend's own `signInMethod` refusal on
-  an actual password-login attempt remains the real, unaffected guarantee
-  either way.
+  known GOOGLE/APPLE account, §2.4's "move the OAuth-user rejection
+  earlier") is gone entirely — the password field and Google/Apple
+  buttons are always shown together for an `EXISTS` identifier now, same
+  as a direct visit to `/login` already did. That UX win is given up
+  deliberately as the cost of closing this leak; the backend's own
+  `signInMethod` refusal on an actual password-login attempt remains the
+  real, unaffected guarantee either way.
   Options (a) (fully generic, no identify step at all) and (c) were not
-  chosen — (a) would give up the CONTINUE-vs-EXISTS routing too, a bigger
-  UX regression than this decision called for.
-- Touches: `AuthService.identify`/`IdentifyResponse` (backend, `nextAction`
-  values narrow from 4 to 2), `AuthEntry` + `Login` (web, drop the
-  `method` field from the router-state payload and the OAuth-hint branch
+  chosen — (a) would have given up the CONTINUE-vs-EXISTS routing too, a
+  bigger UX regression than this decision called for.
+- Touched: `AuthService.identify`/`IdentifyResponse` (backend, `nextAction`
+  narrowed from 4 values to 2), `AuthEntry` + `Login` (web, `method`
+  dropped from the router-state payload and the OAuth-hint branch removed
   entirely), `AuthEntryScreen` + `LoginScreen` (mobile, same). All three
-  already shipped once for the current 4-value shape, so this is a
-  revision, not a fresh build — existing tests asserting on `GOOGLE`/
-  `APPLE`/`PASSWORD` values and the OAuth-hint UI will need updating, not
-  just new tests added.
+  had shipped once already for the 4-value shape, so this was a revision,
+  not a fresh build — existing tests asserting on `GOOGLE`/`APPLE`/
+  `PASSWORD` values and the OAuth-hint UI were updated/removed, not just
+  added to.
 
 **Phase 5 — Deferred: future providers, recovery**
 Truecaller, Passkeys, the `StepUpVerifier` structural refactor (§2.6), and

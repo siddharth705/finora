@@ -17,6 +17,7 @@ const row = (over: Partial<StagedRow> = {}): StagedRow => ({
   referenceNumber: null,
   balanceAfter: null,
   duplicateMatch: null,
+  rowPosition: null,
   ...over,
 });
 
@@ -92,6 +93,14 @@ describe('buildRowPayload', () => {
     const [out] = buildRowPayload(rows, included([true]), ['Shopping']);
     expect(out.referenceNumber).toBe('CHQ-77');
     expect(out.balanceAfter).toBe(8400);
+  });
+
+  // Admin Import Row Trace (Founder Operations Dashboard) reads this back off the resulting
+  // Transaction -- silently dropping it here would leave every mobile-confirmed import untraceable.
+  it('carries rowPosition through from staging', () => {
+    const rows = [row({ rowPosition: 4 })];
+    const [out] = buildRowPayload(rows, included([true]), ['Shopping']);
+    expect(out.rowPosition).toBe(4);
   });
 
   // The backend uses these to decide whether a category was a real decision worth teaching the

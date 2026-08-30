@@ -58,6 +58,10 @@ function referral(overrides: Partial<AdminReferralSummaryDto> = {}): AdminReferr
   };
 }
 
+function pageOf(...rows: AdminReferralSummaryDto[]) {
+  return { content: rows, page: 0, size: 20, totalElements: rows.length, totalPages: 1 };
+}
+
 describe('Referrals (admin)', () => {
   beforeEach(() => {
     vi.mocked(useAdminAuth).mockReset();
@@ -67,7 +71,7 @@ describe('Referrals (admin)', () => {
 
   it('shows an access-denied message when the account lacks REFERRAL_MANAGEMENT_VIEW', () => {
     mockAuth([]);
-    vi.mocked(adminReferralsApi.list).mockResolvedValue([]);
+    vi.mocked(adminReferralsApi.list).mockResolvedValue(pageOf());
 
     renderPage();
 
@@ -76,7 +80,7 @@ describe('Referrals (admin)', () => {
 
   it('renders every referral with both parties and its status', async () => {
     mockAuth(['REFERRAL_MANAGEMENT_VIEW']);
-    vi.mocked(adminReferralsApi.list).mockResolvedValue([referral()]);
+    vi.mocked(adminReferralsApi.list).mockResolvedValue(pageOf(referral()));
 
     renderPage();
 
@@ -87,7 +91,7 @@ describe('Referrals (admin)', () => {
 
   it('shows no credit action for a referral that has not reached SUBSCRIBED', async () => {
     mockAuth(['REFERRAL_MANAGEMENT_VIEW']);
-    vi.mocked(adminReferralsApi.list).mockResolvedValue([referral({ status: 'REGISTERED' })]);
+    vi.mocked(adminReferralsApi.list).mockResolvedValue(pageOf(referral({ status: 'REGISTERED' })));
 
     renderPage();
 
@@ -98,7 +102,7 @@ describe('Referrals (admin)', () => {
   it('credits a reward for a SUBSCRIBED referral and refetches the list', async () => {
     const user = userEvent.setup();
     mockAuth(['REFERRAL_MANAGEMENT_VIEW']);
-    vi.mocked(adminReferralsApi.list).mockResolvedValue([referral({ status: 'SUBSCRIBED' })]);
+    vi.mocked(adminReferralsApi.list).mockResolvedValue(pageOf(referral({ status: 'SUBSCRIBED' })));
     vi.mocked(adminReferralsApi.creditReward).mockResolvedValue({} as any);
 
     renderPage();
@@ -115,11 +119,29 @@ describe('Referrals (admin)', () => {
 
   it('shows the rewarded amount, not a credit action, once a referral is REWARDED', async () => {
     mockAuth(['REFERRAL_MANAGEMENT_VIEW']);
-    vi.mocked(adminReferralsApi.list).mockResolvedValue([referral({ status: 'REWARDED', reward: 250 })]);
+    vi.mocked(adminReferralsApi.list).mockResolvedValue(pageOf(referral({ status: 'REWARDED', reward: 250 })));
 
     renderPage();
 
     await waitFor(() => expect(screen.getByText('₹250')).toBeInTheDocument());
     expect(screen.queryByRole('button', { name: /credit/i })).not.toBeInTheDocument();
+  });
+
+  /** Referral volume grows with the user base (ReferralService.listAll's own doc comment) --
+   *  the whole reason this page was moved off a fetch-all list. Proves the page state actually
+   *  drives the next request, not just that Pagination renders. */
+  it('requests the next page of referrals when Pagination is clicked', async () => {
+    mockAuth(['REFERRAL_MANAGEMENT_VIEW']);
+    vi.mocked(adminReferralsApi.list).mockResolvedValue(
+      { content: [referral()], page: 0, size: 20, totalElements: 25, totalPages: 2 }
+    );
+
+    renderPage();
+    await waitFor(() => expect(screen.getByText('Referrer Person')).toBeInTheDocument());
+    expect(screen.getByText('Page 1 of 2')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Next page' }));
+
+    await waitFor(() => expect(adminReferralsApi.list).toHaveBeenCalledWith(1, 20));
   });
 });

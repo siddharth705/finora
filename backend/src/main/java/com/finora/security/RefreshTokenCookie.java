@@ -22,15 +22,15 @@ import java.util.Optional;
  * statements.
  *
  * <h2>Host-only, deliberately</h2>
- * No {@code Domain} attribute. Setting {@code Domain=.finoratech.info} would send this credential
+ * No {@code Domain} attribute. Setting {@code Domain=.fynora.net} would send this credential
  * to every current and future subdomain — marketing pages, status pages, anything — when the only
  * thing that ever needs it is the API host that issued it. Omitting {@code Domain} makes the
  * cookie host-only, which is least privilege and costs nothing: the frontend never reads it, so
  * it gains nothing from being shared.
  *
  * <h2>Why {@code SameSite=Lax} is enough</h2>
- * {@code app.finoratech.info} and {@code api.finoratech.info} share the registrable domain
- * {@code finoratech.info}, so a request from one to the other is same-SITE even though it is
+ * {@code app.fynora.net} and {@code api.fynora.net} share the registrable domain
+ * {@code fynora.net}, so a request from one to the other is same-SITE even though it is
  * cross-ORIGIN. Lax cookies are sent on same-site subresource requests. That matters beyond
  * tidiness: the alternative, {@code SameSite=None}, is what browsers are progressively restricting
  * as third-party cookies, and a credential that depends on it has a deprecation clock attached.

@@ -8,9 +8,12 @@ import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.time.Instant;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.UUID;
 
@@ -140,5 +143,182 @@ class StatementImportRepositoryIT extends AbstractIntegrationTest {
 
         assertThat(statementImportRepository.findCapabilityDataByUserId(userId)).hasSize(1);
         assertThat(statementImportRepository.findCapabilityDataByUserId(otherUserId)).hasSize(1);
+    }
+
+    // --- findByUserIdAndTotalAmountDueIsNotNull: ReconciliationService's CC_PAYMENT pass (roadmap
+    // Phase 3, docs/proposals/reconciliation-evolution-roadmap-proposal.md Part 4) ---
+
+    @Test
+    @Transactional
+    void findByUserIdAndTotalAmountDueIsNotNull_returnsOnlyCreditCardStatements() {
+        StatementImport ccStatement = saveStatement(null, null);
+        ccStatement.setTotalAmountDue(new BigDecimal("2500.00"));
+        ccStatement.setPaymentDueDate(java.time.LocalDate.of(2026, 7, 15));
+        statementImportRepository.save(ccStatement);
+        saveStatement(null, null); // an ordinary (non-credit-card) statement, totalAmountDue left null
+        entityManager.flush();
+        entityManager.clear();
+
+        List<StatementImport> results = statementImportRepository.findByUserIdAndTotalAmountDueIsNotNull(userId);
+
+        assertThat(results).hasSize(1);
+        assertThat(results.get(0).getId()).isEqualTo(ccStatement.getId());
+    }
+
+    @Test
+    @Transactional
+    void findByUserIdAndTotalAmountDueIsNotNull_scopedToOneUser() {
+        StatementImport ccStatement = saveStatement(null, null);
+        ccStatement.setTotalAmountDue(new BigDecimal("2500.00"));
+        statementImportRepository.save(ccStatement);
+        entityManager.flush();
+        entityManager.clear();
+
+        assertThat(statementImportRepository.findByUserIdAndTotalAmountDueIsNotNull(UUID.randomUUID())).isEmpty();
+    }
+
+    // --- findEarliestImportedAtEverEpochMillis: FinancialJourneyService's FIRST_IMPORT milestone,
+    // a permanent behavioral fact once reached (see that service's own class doc) -- proven here
+    // against real Postgres since a mocked-repository test can only prove the SERVICE calls this
+    // method correctly, not that the native EXTRACT(EPOCH FROM MIN(...)) SQL itself is correct ---
+
+    @Test
+    @Transactional
+    void findEarliestImportedAtEverEpochMillis_returnsNull_whenThisUserHasNeverImportedAnything() {
+        assertThat(statementImportRepository.findEarliestImportedAtEverEpochMillis(userId)).isNull();
+    }
+
+    @Test
+    @Transactional
+    void findEarliestImportedAtEverEpochMillis_picksTheEarliestAcrossSeveralImports() {
+        Instant earliest = Instant.parse("2026-06-01T00:00:00Z");
+        Instant later = Instant.parse("2026-08-01T00:00:00Z");
+        StatementImport first = saveStatement(null, null);
+        first.setImportedAt(later); // saved out of order on purpose: MIN must not just pick the first row
+        statementImportRepository.save(first);
+        StatementImport second = saveStatement(null, null);
+        second.setImportedAt(earliest);
+        statementImportRepository.save(second);
+        entityManager.flush();
+        entityManager.clear();
+
+        Long epochMillis = statementImportRepository.findEarliestImportedAtEverEpochMillis(userId);
+
+        assertThat(Instant.ofEpochMilli(epochMillis)).isEqualTo(earliest);
+    }
+
+    @Test
+    @Transactional
+    void findEarliestImportedAtEverEpochMillis_survivesTheOnlyStatementLaterBeingDeleted() {
+        // The whole point of this query: a soft-deleted row must still count, unlike every OTHER
+        // query on this entity (which the entity's own @SQLRestriction correctly hides deleted
+        // rows from). This is the one deliberate exception, and this test is what proves it.
+        Instant importedAt = Instant.parse("2026-06-01T00:00:00Z");
+        StatementImport statement = saveStatement(null, null);
+        statement.setImportedAt(importedAt);
+        statementImportRepository.save(statement);
+        entityManager.flush();
+        assertThat(statementImportRepository.findEarliestImportedAtEverEpochMillis(userId)).isNotNull();
+
+        statementImportRepository.delete(statement); // soft delete via @SQLDelete
+        entityManager.flush();
+        entityManager.clear();
+
+        // Ordinary, @SQLRestriction-respecting queries agree the statement is gone now...
+        assertThat(statementImportRepository.countByUserId(userId)).isZero();
+        // ...but the milestone the deleted statement already earned must not un-tick itself.
+        Long epochMillis = statementImportRepository.findEarliestImportedAtEverEpochMillis(userId);
+        assertThat(epochMillis).isNotNull();
+        assertThat(Instant.ofEpochMilli(epochMillis)).isEqualTo(importedAt);
+    }
+
+    @Test
+    @Transactional
+    void findEarliestImportedAtEverEpochMillis_scopedToOneUser() {
+        StatementImport statement = saveStatement(null, null);
+        statement.setImportedAt(Instant.parse("2026-06-01T00:00:00Z"));
+        statementImportRepository.save(statement);
+        entityManager.flush();
+        entityManager.clear();
+
+        assertThat(statementImportRepository.findEarliestImportedAtEverEpochMillis(UUID.randomUUID())).isNull();
+    }
+
+    // --- findPriorStatementClosingBalanceForAccount: real-Postgres coverage for the query behind
+    // OpeningBalanceCarryForward. Every caller of it (ImportService.persistSection) is otherwise
+    // only proven against a mocked repository (ImportServiceOpeningBalanceCarryForwardTest) -- a
+    // mock proves the service calls the repository correctly, not that the JPQL itself (the
+    // ORDER BY/Pageable-as-LIMIT-1 shape in particular) is syntactically and semantically correct
+    // against real Postgres. This is that proof. ---
+
+    private StatementImport saveStatementWithPeriod(LocalDate periodStart, LocalDate periodEnd,
+                                                      BigDecimal closingBalance, Instant importedAt) {
+        StatementImport s = saveStatement(null, null);
+        s.setStatementPeriodStart(periodStart);
+        s.setStatementPeriodEnd(periodEnd);
+        s.setClosingBalance(closingBalance);
+        s.setImportedAt(importedAt);
+        return statementImportRepository.save(s);
+    }
+
+    @Test
+    @Transactional
+    void findPriorStatementClosingBalanceForAccount_findsThePriorStatementsClose_bySharedBoundaryDate() {
+        // The PNB repro this query exists for: June's period end (30/06) is July's period start
+        // (30/06) -- inclusive on both statements' boundary.
+        saveStatementWithPeriod(LocalDate.of(2026, 5, 31), LocalDate.of(2026, 6, 30),
+                new BigDecimal("35354.97"), Instant.parse("2026-07-01T00:00:00Z"));
+        entityManager.flush();
+        entityManager.clear();
+
+        List<BigDecimal> result = statementImportRepository.findPriorStatementClosingBalanceForAccount(
+                userId, accountId, LocalDate.of(2026, 6, 30), PageRequest.of(0, 1));
+
+        assertThat(result).containsExactly(new BigDecimal("35354.97"));
+    }
+
+    @Test
+    @Transactional
+    void findPriorStatementClosingBalanceForAccount_ordersByPeriodEndThenImportedAt_mostRecentFirst() {
+        saveStatementWithPeriod(LocalDate.of(2026, 4, 30), LocalDate.of(2026, 5, 31),
+                new BigDecimal("10000.00"), Instant.parse("2026-06-01T00:00:00Z"));
+        saveStatementWithPeriod(LocalDate.of(2026, 5, 31), LocalDate.of(2026, 6, 30),
+                new BigDecimal("35354.97"), Instant.parse("2026-07-01T00:00:00Z"));
+        entityManager.flush();
+        entityManager.clear();
+
+        List<BigDecimal> result = statementImportRepository.findPriorStatementClosingBalanceForAccount(
+                userId, accountId, LocalDate.of(2026, 7, 31), PageRequest.of(0, 1));
+
+        assertThat(result).containsExactly(new BigDecimal("35354.97"));
+    }
+
+    @Test
+    @Transactional
+    void findPriorStatementClosingBalanceForAccount_empty_whenNoPriorStatementExists() {
+        saveStatementWithPeriod(LocalDate.of(2026, 6, 30), LocalDate.of(2026, 7, 31),
+                new BigDecimal("7025.86"), Instant.parse("2026-08-01T00:00:00Z"));
+        entityManager.flush();
+        entityManager.clear();
+
+        // No statement on file ends on or before 30/05 -- the only one saved starts after it.
+        List<BigDecimal> result = statementImportRepository.findPriorStatementClosingBalanceForAccount(
+                userId, accountId, LocalDate.of(2026, 5, 30), PageRequest.of(0, 1));
+
+        assertThat(result).isEmpty();
+    }
+
+    @Test
+    @Transactional
+    void findPriorStatementClosingBalanceForAccount_empty_whenPriorStatementStatesNoClosingBalance() {
+        saveStatementWithPeriod(LocalDate.of(2026, 5, 31), LocalDate.of(2026, 6, 30), null,
+                Instant.parse("2026-07-01T00:00:00Z"));
+        entityManager.flush();
+        entityManager.clear();
+
+        List<BigDecimal> result = statementImportRepository.findPriorStatementClosingBalanceForAccount(
+                userId, accountId, LocalDate.of(2026, 6, 30), PageRequest.of(0, 1));
+
+        assertThat(result).isEmpty();
     }
 }

@@ -25,6 +25,7 @@ export function Pagination({
       <div className="flex items-center gap-2">
         <button
           type="button"
+          aria-label="Previous page"
           disabled={page === 0}
           onClick={() => onPageChange(page - 1)}
           className="w-8 h-8 rounded-lg border border-border bg-card flex items-center justify-center disabled:opacity-40"
@@ -34,6 +35,7 @@ export function Pagination({
         <span>Page {page + 1} of {Math.max(totalPages, 1)}</span>
         <button
           type="button"
+          aria-label="Next page"
           disabled={page + 1 >= totalPages}
           onClick={() => onPageChange(page + 1)}
           className="w-8 h-8 rounded-lg border border-border bg-card flex items-center justify-center disabled:opacity-40"

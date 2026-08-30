@@ -144,6 +144,30 @@ class StatementImportServiceReimportIntegrityTest {
     }
 
     @Test
+    void confirmReimport_forwardsTheRequestsTotalAmountDueAndPaymentDueDate_totheScopedRequest() throws Exception {
+        // Bug fix: the scoped ConfirmRequest this method builds used to stop at
+        // statementPeriodStart/End, silently dropping totalAmountDue/paymentDueDate even though
+        // the incoming request carries them -- every re-import of a credit-card statement wiped
+        // its own total-due/due-date on the new StatementImport row.
+        mockFreshParseReturns(GENUINE_ROW);
+        ConfirmedRow echoed = confirming(GENUINE_ROW);
+        ConfirmRequest request = new ConfirmRequest(null, List.of(echoed), null, null, null, null, null,
+                null, null, new BigDecimal("12450.75"), LocalDate.of(2026, 8, 5));
+
+        ConfirmResponse expected = new ConfirmResponse(1, 0, 0, 0, 0, List.of(), java.util.Map.of(),
+                java.util.Map.of(), List.of(), null, BigDecimal.ZERO, new BigDecimal("150.00"), null, null,
+                null, null, 0L, "CSV");
+        when(importService.confirm(eq(userId), eq("hdfc_statement.csv"), any(byte[].class), any(ConfirmRequest.class)))
+                .thenReturn(expected);
+
+        service.confirmReimport(userId, statementImportId, request);
+
+        verify(importService).confirm(eq(userId), eq("hdfc_statement.csv"), any(byte[].class), argThat(scoped ->
+                scoped.totalAmountDue().equals(new BigDecimal("12450.75"))
+                        && scoped.paymentDueDate().equals(LocalDate.of(2026, 8, 5))));
+    }
+
+    @Test
     void confirmReimport_rejectsAGenuineRowWithATamperedAmount() throws Exception {
         // Not a wholesale fabrication -- the same row the document contains, with one field bent.
         // Distinguishes "checks the whole row" from a check that only looked at, say, the date.

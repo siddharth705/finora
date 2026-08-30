@@ -20,7 +20,7 @@ export function Logo({ invert = false }: { invert?: boolean }) {
         className="font-extrabold tracking-tight text-[17px]"
         style={{ fontFamily: "'Manrope', Inter, sans-serif", color: invert ? '#F8FAFC' : '#0F172A' }}
       >
-        Finora
+        Fynora
       </span>
     </Link>
   );
@@ -82,7 +82,7 @@ export function Nav({ overHero }: { overHero: boolean }) {
         </nav>
         <div className="flex items-center gap-3">
           <Link
-            to="/login"
+            to="/auth"
             className="hidden sm:block text-sm transition-colors"
             style={{ color: overHero ? 'rgba(248,250,252,0.85)' : 'var(--m-ink-2)' }}
             onMouseEnter={(e) => { e.currentTarget.style.color = overHero ? '#F8FAFC' : '#0F172A'; }}
@@ -90,7 +90,7 @@ export function Nav({ overHero }: { overHero: boolean }) {
           >
             Log in
           </Link>
-          <MagneticLink to="/register" className="m-btn m-btn-primary !min-h-[44px] !px-4 !text-sm">
+          <MagneticLink to="/auth" className="m-btn m-btn-primary !min-h-[44px] !px-4 !text-sm">
             Get started <ArrowRight size={14} />
           </MagneticLink>
           <button
@@ -125,7 +125,7 @@ export function Nav({ overHero }: { overHero: boolean }) {
             </a>
           ))}
           <Link
-            to="/login"
+            to="/auth"
             className="m-tap block text-sm"
             style={{ color: overHero ? '#F8FAFC' : 'var(--m-ink-2)' }}
           >

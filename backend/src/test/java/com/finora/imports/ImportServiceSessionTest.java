@@ -61,7 +61,7 @@ class ImportServiceSessionTest {
         RecurringService recurringService = mock(RecurringService.class);
         importSessionService = mock(ImportSessionService.class);
 
-        DuplicateDetector duplicateDetector = new DuplicateDetector(transactionRepository);
+        DuplicateDetector duplicateDetector = new DuplicateDetector(transactionRepository, TestAccountRepositories.anyLive());
         // Mockito's default answer for an unstubbed saveAll() returning a List is an EMPTY list,
         // not null -- confirm() does `int imported = saved.size()` off this return value, so
         // without this stub every confirm() silently reports 0 imported regardless of how many
@@ -158,8 +158,8 @@ class ImportServiceSessionTest {
         // findLiveSessionByContentHash IS called now (the duplicate-upload pre-check runs
         // before parsing even starts) -- what must still never happen is a session actually
         // getting created for rejected content.
-        verify(importSessionService, never()).createSession(any(), any(), any(), any(), any(), any());
-        verify(importSessionService, never()).createMultiSection(any(), any(), any(), any(), any());
+        verify(importSessionService, never()).createSession(any(), any(), any(), any(), any(), any(), any());
+        verify(importSessionService, never()).createMultiSection(any(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -177,8 +177,8 @@ class ImportServiceSessionTest {
         // findLiveSessionByContentHash IS called now (the duplicate-upload pre-check runs
         // before parsing even starts) -- what must still never happen is a session actually
         // getting created for rejected content.
-        verify(importSessionService, never()).createSession(any(), any(), any(), any(), any(), any());
-        verify(importSessionService, never()).createMultiSection(any(), any(), any(), any(), any());
+        verify(importSessionService, never()).createSession(any(), any(), any(), any(), any(), any(), any());
+        verify(importSessionService, never()).createMultiSection(any(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -193,12 +193,13 @@ class ImportServiceSessionTest {
                 List.of(new UnparseableRow(
                         java.util.Map.of("Maturity Date", "01/06/2027"), "no date column")));
         var recurringDeposit = new StagedAccountSection(null, List.of(), 0, 0, List.of());
-        when(importSessionService.createSession(any(), any(), any(), any(), any(), any()))
+        when(importSessionService.createSession(any(), any(), any(), any(), any(), any(), any()))
                 .thenReturn(sessionWith(UUID.randomUUID(), new byte[]{1}, ImportSession.STATUS_STAGED));
         when(pdfPreviewGenerator.generateSectionsWithContext(any(), any(), any(), any())).thenReturn(
                 new com.finora.imports.pdf.PdfPreviewGenerator.PdfGenerationResult(
                         List.<StagedAccountSection>of(savings, termDeposit, recurringDeposit),
-                        new DocumentContext("PDF", "test")));
+                        new DocumentContext("PDF", "test"),
+                        com.finora.imports.pdf.CreditCardSummaryExtractor.CreditCardSummaryEvidence.NONE));
 
         var response = importService.parseAndStagePdfWithSession(userId,
                 new MockMultipartFile("file", "combined.pdf", "application/pdf", new byte[]{1}), null);
@@ -308,6 +309,57 @@ class ImportServiceSessionTest {
         assertThat(captor.getValue().getLayoutMetadataJson()).isNull();
         assertThat(captor.getValue().getLayoutFingerprint()).isNull();
         assertThat(captor.getValue().getActivatedCapabilitiesJson()).isNull();
+    }
+
+    @Test
+    void confirmSession_copiesTheSessionsCreditCardSummary_ontoTheStatementImport() throws Exception {
+        // Roadmap item 6 follow-up (PR #451): the granular balance breakdown -- unlike
+        // totalAmountDue/paymentDueDate, which round-trip through ConfirmRequest -- is copied
+        // verbatim from the session, same "confirm() has no access to the original evidence"
+        // reasoning as the layout-metadata trio above.
+        UUID sessionId = UUID.randomUUID();
+        ImportSession session = sessionWith(sessionId, "date,description,amount\n".getBytes(), ImportSession.STATUS_STAGED);
+        when(importSessionService.claimForConfirmation(userId, sessionId)).thenReturn(session);
+        when(importSessionService.readStagedRows(session)).thenReturn(List.of(stagedRow()));
+        var evidence = new com.finora.imports.pdf.CreditCardSummaryExtractor.CreditCardSummaryEvidence(
+                java.math.BigDecimal.valueOf(10000), java.math.BigDecimal.valueOf(2450.75),
+                java.math.BigDecimal.ZERO, java.math.BigDecimal.valueOf(50), java.math.BigDecimal.valueOf(10000),
+                java.math.BigDecimal.valueOf(12450.75),
+                com.finora.imports.pdf.CreditCardSummaryExtractor.CreditCardSummaryEvidence.ExtractionMethod.GRID,
+                List.of());
+        when(importSessionService.readCreditCardSummary(session)).thenReturn(evidence);
+
+        var request = new ConfirmRequest(sessionId, List.of(confirmedRow()), accountId, null, null, null, null);
+        importService.confirmSession(userId, request);
+
+        var captor = org.mockito.ArgumentCaptor.forClass(com.finora.entity.StatementImport.class);
+        verify(getStatementImportRepository()).save(captor.capture());
+        assertThat(captor.getValue().getPreviousBalance()).isEqualByComparingTo(java.math.BigDecimal.valueOf(10000));
+        assertThat(captor.getValue().getPurchases()).isEqualByComparingTo(java.math.BigDecimal.valueOf(2450.75));
+        assertThat(captor.getValue().getCashAdvances()).isEqualByComparingTo(java.math.BigDecimal.ZERO);
+        assertThat(captor.getValue().getFees()).isEqualByComparingTo(java.math.BigDecimal.valueOf(50));
+        assertThat(captor.getValue().getPaymentsAndCredits()).isEqualByComparingTo(java.math.BigDecimal.valueOf(10000));
+    }
+
+    @Test
+    void confirmSession_leavesTheBreakdownNull_whenTheSessionHasNoCreditCardSummary() throws Exception {
+        UUID sessionId = UUID.randomUUID();
+        ImportSession session = sessionWith(sessionId, "date,description,amount\n".getBytes(), ImportSession.STATUS_STAGED);
+        when(importSessionService.claimForConfirmation(userId, sessionId)).thenReturn(session);
+        when(importSessionService.readStagedRows(session)).thenReturn(List.of(stagedRow()));
+        when(importSessionService.readCreditCardSummary(session))
+                .thenReturn(com.finora.imports.pdf.CreditCardSummaryExtractor.CreditCardSummaryEvidence.NONE);
+
+        var request = new ConfirmRequest(sessionId, List.of(confirmedRow()), accountId, null, null, null, null);
+        importService.confirmSession(userId, request);
+
+        var captor = org.mockito.ArgumentCaptor.forClass(com.finora.entity.StatementImport.class);
+        verify(getStatementImportRepository()).save(captor.capture());
+        assertThat(captor.getValue().getPreviousBalance()).isNull();
+        assertThat(captor.getValue().getPurchases()).isNull();
+        assertThat(captor.getValue().getCashAdvances()).isNull();
+        assertThat(captor.getValue().getFees()).isNull();
+        assertThat(captor.getValue().getPaymentsAndCredits()).isNull();
     }
 
     private StatementImportRepository getStatementImportRepository() {

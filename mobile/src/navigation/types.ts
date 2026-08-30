@@ -10,11 +10,15 @@ export type AuthStackParamList = {
   // Login/Register -- both stay directly reachable on their own for the "No account? Register" /
   // "Sign in" footer links, which intentionally skip AuthEntry rather than round-trip through it.
   AuthEntry: undefined;
-  // identifier/method: set only when arriving via AuthEntry's POST /auth/identify result --
-  // prefills the field and, for a GOOGLE/APPLE account, hides the password form (see
-  // LoginScreen's own doc comment). message: the pre-existing one-time confirmation banner
-  // (e.g. after a password reset), unrelated to AuthEntry.
-  Login: { message?: string; identifier?: string; method?: string } | undefined;
+  // identifier: set only when arriving via AuthEntry's POST /auth/identify result -- prefills
+  // the field. message: the pre-existing one-time confirmation banner (e.g. after a password
+  // reset), unrelated to AuthEntry.
+  //
+  // Phase 7 (resolved 2026-08-23): this used to also carry `method` (PASSWORD/GOOGLE/APPLE) so
+  // LoginScreen could hide the password form for a known OAuth account -- removed along with
+  // nextAction no longer revealing which method an account uses (see AuthEntryScreen's own doc
+  // comment).
+  Login: { message?: string; identifier?: string } | undefined;
   // email/phoneNumber: set only when AuthEntry's identify() call returns nextAction CONTINUE --
   // prefills whichever of Register's two fields the identifier looked like.
   Register: { email?: string; phoneNumber?: string } | undefined;
@@ -58,7 +62,7 @@ export type MoreStackParamList = {
  * StatementImportService.confirmReimport's own doc comment for the incident). Carried through now
  * instead, in memory only, for exactly as long as this one review-and-confirm round trip lasts.
  */
-export interface ReimportParams {
+interface ReimportParams {
   statementImportId: string;
   accountId: string;
   accountName: string;

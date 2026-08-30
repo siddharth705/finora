@@ -1197,7 +1197,7 @@ class TransactionServiceTest {
     @Test
     void search_withAKeywordMatchingABankName_resolvesAndPassesThatBanksIdToTheRepository() {
         Page<Transaction> emptyPage = new PageImpl<>(List.of());
-        when(transactionRepository.search(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(Pageable.class)))
+        when(transactionRepository.search(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(Pageable.class)))
                 .thenReturn(emptyPage);
 
         var filter = new TransactionDto.FilterRequest(null, null, null, null, null, null, null,
@@ -1207,7 +1207,7 @@ class TransactionServiceTest {
         @SuppressWarnings("unchecked")
         ArgumentCaptor<List<String>> bankIdsCaptor = ArgumentCaptor.forClass(List.class);
         verify(transactionRepository).search(any(), any(), any(), any(), any(), any(), any(), any(), any(),
-                bankIdsCaptor.capture(), any(Pageable.class));
+                bankIdsCaptor.capture(), any(), any(Pageable.class));
 
         assertThat(bankIdsCaptor.getValue()).containsExactly("PNB");
     }
@@ -1218,7 +1218,7 @@ class TransactionServiceTest {
         // TransactionService always passes a non-empty placeholder instead (see its own
         // NO_BANK_MATCH_SENTINEL comment) so the repository never has to reason about that case.
         Page<Transaction> emptyPage = new PageImpl<>(List.of());
-        when(transactionRepository.search(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(Pageable.class)))
+        when(transactionRepository.search(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(Pageable.class)))
                 .thenReturn(emptyPage);
 
         var filter = new TransactionDto.FilterRequest(null, null, null, null, null, null, null,
@@ -1228,7 +1228,7 @@ class TransactionServiceTest {
         @SuppressWarnings("unchecked")
         ArgumentCaptor<List<String>> bankIdsCaptor = ArgumentCaptor.forClass(List.class);
         verify(transactionRepository).search(any(), any(), any(), any(), any(), any(), any(), any(), any(),
-                bankIdsCaptor.capture(), any(Pageable.class));
+                bankIdsCaptor.capture(), any(), any(Pageable.class));
 
         assertThat(bankIdsCaptor.getValue()).isNotEmpty();
         assertThat(bankIdsCaptor.getValue()).doesNotContain("PNB", "SBI", "HDFC");
@@ -1247,7 +1247,7 @@ class TransactionServiceTest {
         // 2 transactions on this page, but 45 total across the full result set at size 10 --
         // exactly the distinction a bare `.size()` on the returned list could never make.
         Page<Transaction> page = new PageImpl<>(pageContent, org.springframework.data.domain.PageRequest.of(0, 10), 45);
-        when(transactionRepository.search(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(Pageable.class)))
+        when(transactionRepository.search(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(Pageable.class)))
                 .thenReturn(page);
 
         var filter = new TransactionDto.FilterRequest(null, null, null, null, null, null, null, null, 0, 10, null, null);
@@ -1271,14 +1271,14 @@ class TransactionServiceTest {
      */
     @Test
     void search_withAnUnrecognisedSortDir_fallsBackToDescendingRatherThanThrowing() {
-        when(transactionRepository.search(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(Pageable.class)))
+        when(transactionRepository.search(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(Pageable.class)))
                 .thenReturn(new PageImpl<>(List.of()));
 
         var filter = new TransactionDto.FilterRequest(null, null, null, null, null, null, null, null, 0, 20, null, "bogus");
         transactionService.search(userId, filter);
 
         ArgumentCaptor<Pageable> pageableCaptor = ArgumentCaptor.forClass(Pageable.class);
-        verify(transactionRepository).search(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), pageableCaptor.capture());
+        verify(transactionRepository).search(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), pageableCaptor.capture());
         Sort.Order order = pageableCaptor.getValue().getSort().getOrderFor("txnDate");
         assertThat(order)
                 .as("an unrecognised sortDir must still produce a real sort, not fail the search")
@@ -1286,5 +1286,51 @@ class TransactionServiceTest {
         assertThat(order.getDirection())
                 .as("and the fallback must be the documented default, not an arbitrary one")
                 .isEqualTo(Sort.Direction.DESC);
+    }
+
+    // --- Deleted-account leak (see DashboardService.summarize for the original fix): a deleted
+    // account's transactions deliberately keep deleted_at unset, so search() (when no specific
+    // accountId is requested) and needsReview() must scope their fetch to exactly the user's live
+    // account ids, not just their userId. ---
+
+    @Test
+    void search_passesTheUsersLiveAccountIds_tookTheRepository() {
+        Account liveAccount = account(UUID.randomUUID(), Account.Type.SAVINGS, BigDecimal.ZERO);
+        when(accountRepository.findByUserId(userId)).thenReturn(List.of(liveAccount));
+        when(transactionRepository.search(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of()));
+
+        var filter = new TransactionDto.FilterRequest(null, null, null, null, null, null, null, null, 0, 20, null, null);
+        transactionService.search(userId, filter);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<UUID>> liveAccountIdsCaptor = ArgumentCaptor.forClass(List.class);
+        verify(transactionRepository).search(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
+                liveAccountIdsCaptor.capture(), any(Pageable.class));
+
+        assertThat(liveAccountIdsCaptor.getValue()).containsExactly(liveAccount.getId());
+    }
+
+    @Test
+    void needsReview_scopesTransactionFetch_toExactlyTheLiveAccountIds() {
+        Account liveAccount = account(UUID.randomUUID(), Account.Type.SAVINGS, BigDecimal.ZERO);
+        when(accountRepository.findByUserId(userId)).thenReturn(List.of(liveAccount));
+        when(transactionRepository.findByUserIdAndNeedsCategoryReviewTrueAndAccountIdInOrderByTxnDateDesc(eq(userId), any()))
+                .thenReturn(List.of());
+
+        transactionService.needsReview(userId);
+
+        verify(transactionRepository).findByUserIdAndNeedsCategoryReviewTrueAndAccountIdInOrderByTxnDateDesc(
+                userId, List.of(liveAccount.getId()));
+    }
+
+    @Test
+    void needsReview_withNoLiveAccounts_shortCircuits_withoutQueryingTransactions() {
+        when(accountRepository.findByUserId(userId)).thenReturn(List.of());
+
+        assertThat(transactionService.needsReview(userId)).isEmpty();
+
+        verify(transactionRepository, never())
+                .findByUserIdAndNeedsCategoryReviewTrueAndAccountIdInOrderByTxnDateDesc(any(), any());
     }
 }

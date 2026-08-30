@@ -23,11 +23,15 @@ import static org.mockito.Mockito.when;
 /**
  * AuthService.identify() -- the identifier-first entry step (Finora auth/security review §2.2,
  * docs/proposals/authentication-account-security-review.md): given an email or phone, tells the
- * client what to show next (PASSWORD / GOOGLE / APPLE / CONTINUE) without exposing a raw
- * account-existence boolean. Reuses resolveEmailForLogin's email-or-phone resolution so behavior
- * stays consistent with login() itself; oracle-safety of that resolution (case handling, phone
- * variants) is already covered by AuthServiceLoginTest and LoginExistenceOracleIT and is not
- * re-tested here.
+ * client what to show next (EXISTS / CONTINUE) without exposing a raw account-existence boolean.
+ * Reuses resolveEmailForLogin's email-or-phone resolution so behavior stays consistent with
+ * login() itself; oracle-safety of that resolution (case handling, phone variants) is already
+ * covered by AuthServiceLoginTest and LoginExistenceOracleIT and is not re-tested here.
+ *
+ * Phase 7 hardening (resolved 2026-08-23): nextAction used to mirror the account's
+ * signInMethod exactly (PASSWORD/GOOGLE/APPLE), letting a caller learn which sign-in method an
+ * existing account uses before ever attempting to sign in. Collapsed to a single EXISTS value
+ * regardless of method -- see IdentifyResponse's own doc comment for the full reasoning.
  */
 class AuthServiceIdentifyTest {
 
@@ -52,6 +56,7 @@ class AuthServiceIdentifyTest {
                 mock(com.finora.config.RequestMetadata.class),
                 mock(com.finora.service.SubscriptionService.class),
                 mock(com.finora.service.ReferralService.class),
+                mock(com.finora.service.MerchantSeedService.class),
                 Runnable::run,
                 mock(AdminMfaService.class)
         );
@@ -66,36 +71,38 @@ class AuthServiceIdentifyTest {
     }
 
     @Test
-    void identify_withEmailOfPasswordAccount_returnsPassword() {
+    void identify_withEmailOfPasswordAccount_returnsExists() {
         User u = user("jane@example.com", User.SIGN_IN_METHOD_PASSWORD);
         when(userRepository.findByEmailIgnoreCaseAndAccountScope("jane@example.com", User.SCOPE_USER))
                 .thenReturn(Optional.of(u));
 
         var response = authService.identify(new IdentifyRequest("jane@example.com"));
 
-        assertThat(response.nextAction()).isEqualTo("PASSWORD");
+        assertThat(response.nextAction()).isEqualTo("EXISTS");
     }
 
     @Test
-    void identify_withEmailOfGoogleAccount_returnsGoogle() {
+    void identify_withEmailOfGoogleAccount_returnsExists_notWhichMethod() {
         User u = user("jane@example.com", User.SIGN_IN_METHOD_GOOGLE);
         when(userRepository.findByEmailIgnoreCaseAndAccountScope("jane@example.com", User.SCOPE_USER))
                 .thenReturn(Optional.of(u));
 
         var response = authService.identify(new IdentifyRequest("jane@example.com"));
 
-        assertThat(response.nextAction()).isEqualTo("GOOGLE");
+        // Phase 7's whole point: a Google account and a password account must be indistinguishable
+        // from this response alone.
+        assertThat(response.nextAction()).isEqualTo("EXISTS");
     }
 
     @Test
-    void identify_withEmailOfAppleAccount_returnsApple() {
+    void identify_withEmailOfAppleAccount_returnsExists_notWhichMethod() {
         User u = user("jane@example.com", User.SIGN_IN_METHOD_APPLE);
         when(userRepository.findByEmailIgnoreCaseAndAccountScope("jane@example.com", User.SCOPE_USER))
                 .thenReturn(Optional.of(u));
 
         var response = authService.identify(new IdentifyRequest("jane@example.com"));
 
-        assertThat(response.nextAction()).isEqualTo("APPLE");
+        assertThat(response.nextAction()).isEqualTo("EXISTS");
     }
 
     @Test
@@ -118,7 +125,7 @@ class AuthServiceIdentifyTest {
 
         var response = authService.identify(new IdentifyRequest("+919876500001"));
 
-        assertThat(response.nextAction()).isEqualTo("PASSWORD");
+        assertThat(response.nextAction()).isEqualTo("EXISTS");
     }
 
     @Test

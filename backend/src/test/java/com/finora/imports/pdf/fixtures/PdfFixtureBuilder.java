@@ -529,6 +529,43 @@ public final class PdfFixtureBuilder {
         return render(List.of(page));
     }
 
+    /**
+     * The same composite statement as {@link #buildMultiSectionCompositeStatementSample}, with one
+     * addition: the savings section's own table states its transaction date range inline, the same
+     * "Transaction details from X to Y" phrasing {@link TransactionTableDateRangeExtractor} reads
+     * (see that class's own doc comment) -- printed once, document-wide, the way a real repeated
+     * table-header row would appear if PDFBox only rendered it once per section.
+     *
+     * <p>Exists to prove {@code PdfPreviewGenerator}'s own scoping fix: this extractor is read
+     * document-wide (like {@code CreditCardSummaryExtractor}), but unlike a credit-card billing
+     * panel it is not restricted to credit-card documents, so "read once, apply everywhere" is only
+     * safe when the document IS effectively one section. Here it genuinely is not -- a savings
+     * section and an unrelated credit-card section -- so the printed range belongs to neither
+     * section's `DetectedAccountInfo`, not to both.
+     */
+    public static byte[] buildMultiSectionCompositeStatementWithTableHeaderDateRangeSample()
+            throws IOException {
+        float[] savingsCol = {LEFT_MARGIN, 130f, 300f, 380f, 460f};
+        float[] ccCol = {LEFT_MARGIN, 150f, 470f};
+
+        PageBuilder page = new PageBuilder();
+        page.line("HSBC")
+                .line("Composite Statement")
+                .blankLine()
+                .line("SAVINGS ACCOUNT-RES  100-111111-002")
+                .line("Transaction details from 05-Jul-2026 to 10-Jul-2026")
+                .row(savingsCol, "Date", "Transaction Details", "Deposits", "Withdrawals", "Balance")
+                .row(savingsCol, "05/07/2026", "Salary Credit", "55000.00", "", "105000.00")
+                .row(savingsCol, "10/07/2026", "Grocery Store", "", "2000.00", "103000.00")
+                .blankLine()
+                .line("CREDIT CARD ACCOUNT  4000 1111 2222 3333")
+                .line("Total Amount Due 1,817.00 Minimum Due 200.00")
+                .row(ccCol, "DATE", "TRANSACTION DETAILS", "AMOUNT (Rs.)")
+                .row(ccCol, "15/07/2026", "UPI-Retailer One", "1,817.02 Dr");
+
+        return render(List.of(page));
+    }
+
     // ==================== FINANCIAL_PRODUCT_DISCOVERY ====================
 
     /**

@@ -72,7 +72,7 @@ export default function VerifyEmailChange() {
           <span className="w-7 h-7 rounded-lg bg-gradient-to-br from-primary to-primary-dark flex items-center justify-center">
             <Sparkles size={14} className="text-on-primary" strokeWidth={2.5} />
           </span>
-          <span className="font-extrabold tracking-wide text-ink">FINORA</span>
+          <span className="font-extrabold tracking-wide text-ink">FYNORA</span>
         </div>
 
         {/* Mobile has no way to intercept this page's own https:// URL directly (no hosted
@@ -88,7 +88,7 @@ export default function VerifyEmailChange() {
             href={`finora://email-change-verify?sessionId=${encodeURIComponent(sessionId)}&token=${encodeURIComponent(token)}`}
             className="block text-xs text-primary font-medium mb-4"
           >
-            Open in the Finora app
+            Open in the Fynora app
           </a>
         )}
 

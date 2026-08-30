@@ -51,7 +51,14 @@ public final class CategoryRules {
         // compound phrases below keep the same real-world coverage without the false positives.
         RULES.put("Loan EMI", List.of("loan emi", "emi payment", "emi deduction", "personal loan", "home loan", "car loan", "auto loan"));
         RULES.put("Insurance", List.of("insurance", "lic premium", "policybazaar", "premium payment"));
-        RULES.put("Cash Withdrawal", List.of("atm withdrawal", "atm wdl", "cash withdrawal", "cash wdl"));
+        // "nwd" (Non-Home-branch Withdrawal, the standard NPCI/bank narration code for an ATM
+        // withdrawal at another bank's machine) added after checking this project's own real
+        // bank-statement corpus -- the only real ATM row in it ("NWD-416021XXXXXX5853-...") was
+        // falling through every keyword above to "Other". Safe as a bare 3-letter keyword despite
+        // the "emi"/"ngo" caution below: unlike those two, "nwd" is not a substring of any common
+        // English or Indian-banking-narration word, so the word-boundary matching this file already
+        // requires (see RULE_PATTERNS below) has nothing plausible to misfire against.
+        RULES.put("Cash Withdrawal", List.of("atm withdrawal", "atm wdl", "cash withdrawal", "cash wdl", "nwd"));
         RULES.put("Travel", List.of("makemytrip", "goibibo", "yatra", "airbnb", "oyo", "indigo", "spicejet", "vistara", "hotel booking"));
         RULES.put("Subscriptions", List.of("google one", "icloud", "adobe", "microsoft 365", "linkedin premium"));
         RULES.put("Education", List.of("udemy", "coursera", "byjus", "tuition fee", "school fee", "college fee"));
