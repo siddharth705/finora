@@ -364,11 +364,17 @@ public class StatementImportService {
                 // was already reversed once, at the original statement's own confirm time
                 // (ImportService.summarise's BH-003 correction) -- summing it again here would
                 // move the balance a second time for a row that currently contributes nothing.
+                // Also excludes SUPERSEDED (#631 missed this second trigger of the same bug):
+                // StatementImportService.supersede() marks an ADDITIVE-mode original's rows
+                // SUPERSEDED and reverses their contribution in that same call, so a SUPERSEDED
+                // row's current net contribution is zero too -- deleting an already-superseded
+                // statement must not reverse it a second time here.
                 // TRANSFER/REFUND/REVERSAL/INVESTMENT_TRANSFER rows stay included: those
                 // classifications only affect expense/income REPORTING (RefundNetting.reportable),
                 // not Account.balance -- the cash genuinely moved, so the balance still reflects it.
                 List<Transaction> stillContributing = toRemove.stream()
-                        .filter(t -> t.getIsDuplicateOf() == null)
+                        .filter(t -> t.getIsDuplicateOf() == null
+                                && t.getReconciliationStatus() != Transaction.ReconciliationStatus.SUPERSEDED)
                         .toList();
                 BigDecimal reversal = AccountBalanceConvention
                         .netDelta(account.getAccountType(), stillContributing).negate();
