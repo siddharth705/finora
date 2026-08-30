@@ -69,6 +69,43 @@ public final class CoverageWarnings {
             }
         }
 
+        // Phase 4 (§0.3/§0.23): "isn't supported yet" is gone -- it now is, via duplicateOverlaps
+        // below (and duplicateOfStatementId, its flattened first-match view) and the "Import this
+        // one as a replacement?" action they drive, so each sentence states the fact and leaves the
+        // action to the caller instead of contradicting a button sitting right next to it.
+        for (DuplicateOverlap overlap : duplicateOverlaps(report, newStatementId, importedAtById)) {
+            warnings.add(overlap.warning());
+        }
+
+        return warnings;
+    }
+
+    /**
+     * One exact-duplicate-period overlap involving {@code newStatementId}, paired with the
+     * OTHER statement's id and the exact sentence describing it. {@link #forNewStatement} and
+     * {@link #duplicateOfStatementId} are both flattened views of this same data -- every
+     * sentence concatenated into one list, only the first id kept -- which is all the common case
+     * (one confirm producing at most one duplicate) ever needs. A caller that has to tell one
+     * overlap's sentence apart from another's needs this instead: see {@code
+     * StatementImportService.confirmReimport}, which strips exactly the overlap against the
+     * statement it is reimporting and must leave any OTHER duplicate this same confirm also
+     * produced -- a real, unrelated one -- fully intact. Before this paired the two, a caller in
+     * that position could only filter warnings by string prefix and clear duplicateOfStatementId
+     * by a single id comparison: two independently-flattened values with no way to agree with each
+     * other once more than one overlap existed, which is exactly how a second, unrelated
+     * duplicate's warning and id went missing together (found via self-review, Phase 4 follow-up).
+     */
+    public record DuplicateOverlap(UUID otherStatementId, String warning) {}
+
+    /**
+     * Every exact-duplicate overlap involving {@code newStatementId}, in the same order {@link
+     * #forNewStatement} emits their sentences and {@link #duplicateOfStatementId} scans them --
+     * both of those are built from this now, so they can no longer independently disagree about
+     * which overlaps exist.
+     */
+    public static List<DuplicateOverlap> duplicateOverlaps(CoverageReport report, UUID newStatementId,
+                                                              Map<UUID, Instant> importedAtById) {
+        List<DuplicateOverlap> overlaps = new ArrayList<>();
         for (CoverageOverlap overlap : report.overlaps()) {
             if (overlap.type() != OverlapType.EXACT_DUPLICATE) continue;
             boolean involvesNewStatement = overlap.segmentAId().equals(newStatementId)
@@ -79,14 +116,9 @@ public final class CoverageWarnings {
             Instant otherImportedAt = importedAtById.get(otherId);
             String importedOnClause = otherImportedAt == null ? ""
                     : ", imported on " + LocalDate.ofInstant(otherImportedAt, ZoneOffset.UTC);
-            // Phase 4 (§0.3/§0.23): "isn't supported yet" is gone -- it now is, via
-            // duplicateOfStatementId below and the "Import this one as a replacement?" action it
-            // drives, so this sentence states the fact and leaves the action to the caller instead
-            // of contradicting a button sitting right next to it.
-            warnings.add(DUPLICATE_PERIOD_WARNING_PREFIX + importedOnClause + ".");
+            overlaps.add(new DuplicateOverlap(otherId, DUPLICATE_PERIOD_WARNING_PREFIX + importedOnClause + "."));
         }
-
-        return warnings;
+        return overlaps;
     }
 
     /**
@@ -98,11 +130,7 @@ public final class CoverageWarnings {
      * stays unchanged.
      */
     public static UUID duplicateOfStatementId(CoverageReport report, UUID newStatementId) {
-        for (CoverageOverlap overlap : report.overlaps()) {
-            if (overlap.type() != OverlapType.EXACT_DUPLICATE) continue;
-            if (overlap.segmentAId().equals(newStatementId)) return overlap.segmentBId();
-            if (overlap.segmentBId().equals(newStatementId)) return overlap.segmentAId();
-        }
-        return null;
+        List<DuplicateOverlap> overlaps = duplicateOverlaps(report, newStatementId, Map.of());
+        return overlaps.isEmpty() ? null : overlaps.get(0).otherStatementId();
     }
 }
