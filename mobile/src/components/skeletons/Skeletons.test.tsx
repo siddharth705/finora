@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react-native';
 import {
-  SkeletonBudgetCard, SkeletonCard, SkeletonChart, SkeletonDashboardSection, SkeletonTransactionRow,
+  SkeletonBudgetCard, SkeletonCard, SkeletonChart, SkeletonTransactionRow,
 } from './Skeletons';
 import { ThemeProvider } from '../../theme';
 
@@ -37,14 +37,6 @@ describe('SkeletonBudgetCard', () => {
     withTheme(<SkeletonBudgetCard />);
     expect(screen.getByTestId('skeleton-budget-card', { hidden: true })).toBeTruthy();
     expect(screen.getAllByTestId('shimmer-block', { hidden: true })).toHaveLength(3);
-  });
-});
-
-describe('SkeletonDashboardSection', () => {
-  it('renders a heading placeholder plus the requested number of transaction-row placeholders', () => {
-    withTheme(<SkeletonDashboardSection rows={2} />);
-    expect(screen.getByTestId('skeleton-dashboard-section', { hidden: true })).toBeTruthy();
-    expect(screen.getAllByTestId('skeleton-transaction-row', { hidden: true })).toHaveLength(2);
   });
 });
 

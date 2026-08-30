@@ -1,6 +1,7 @@
 import { StyleSheet, View, type ViewStyle } from 'react-native';
 import { radius, spacing, useTheme } from '../../theme';
 import { CASHFLOW_HEIGHT, DONUT_SIZE } from '../../lib/chartGeometry';
+import { Card } from '../Card';
 import { Shimmer } from './Shimmer';
 
 /**
@@ -8,17 +9,22 @@ import { Shimmer } from './Shimmer';
  * (React Query v5 semantics: true only when there is no cached data for that query key yet), never
  * `isFetching` -- so a background refetch never swaps rendered data back out for one of these. See
  * DashboardScreen, LedgerScreen, ReportsScreen, BudgetsScreen and InsightsScreen for the call sites.
+ *
+ * Every card-shaped skeleton below composes the real `Card` component for its wrapper rather than
+ * rebuilding its border/radius/padding by hand -- so a change to Card's own look can't silently
+ * drift the skeletons that stand in for it out of sync.
  */
 
 export function SkeletonCard({ lines = 3, style }: { lines?: number; style?: ViewStyle }) {
-  const c = useTheme();
   return (
-    <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }, style]}>
-      <Shimmer width="40%" height={13} style={styles.heading} />
+    <Card style={style}>
+      {/* 15, not an arbitrary guess -- matches SectionHeading's real title fontSize (Card.tsx),
+          since this heading placeholder stands in for that text wherever it sits under one. */}
+      <Shimmer width="40%" height={15} style={styles.heading} />
       {Array.from({ length: lines }).map((_, i) => (
         <Shimmer key={i} width={i === lines - 1 ? '60%' : '100%'} height={12} style={styles.line} />
       ))}
-    </View>
+    </Card>
   );
 }
 
@@ -40,27 +46,12 @@ export function SkeletonTransactionRow() {
 /** Mirrors BudgetsScreen's budget card: a header placeholder standing in for category name +
  *  amounts, a progress-bar-shaped placeholder, and a one-line footer. */
 export function SkeletonBudgetCard() {
-  const c = useTheme();
   return (
-    <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }]} testID="skeleton-budget-card">
+    <Card testID="skeleton-budget-card">
       <Shimmer width="60%" height={14} style={styles.heading} />
       <Shimmer width="100%" height={8} borderRadius={4} style={styles.line} />
       <Shimmer width="35%" height={11} style={styles.line} />
-    </View>
-  );
-}
-
-/** A Card-shaped section with a heading and N transaction-row placeholders -- for any Dashboard
- *  section (Recent Transactions, Goals, Insights) that lists rows once its query resolves. */
-export function SkeletonDashboardSection({ rows = 3 }: { rows?: number }) {
-  const c = useTheme();
-  return (
-    <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }]} testID="skeleton-dashboard-section">
-      <Shimmer width="45%" height={15} style={styles.heading} />
-      {Array.from({ length: rows }).map((_, i) => (
-        <SkeletonTransactionRow key={i} />
-      ))}
-    </View>
+    </Card>
   );
 }
 
@@ -79,7 +70,6 @@ export function SkeletonChart({ variant = 'bar', width = 300 }: { variant?: 'bar
 }
 
 const styles = StyleSheet.create({
-  card: { borderWidth: 1, borderRadius: radius.lg, padding: spacing.md },
   heading: { marginBottom: spacing.sm },
   line: { marginBottom: 8 },
   txnRow: {
