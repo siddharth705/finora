@@ -88,6 +88,10 @@ was told and chose to proceed — it is not evidence of anything about the accou
 
 ## 3. V1 — what we build now
 
+**Success for V1 is measured by preventing accidental wrong-statement imports and improving analytics
+integrity, not by determining account ownership.** That sentence is the acceptance criterion for
+everything below — if a proposed addition to V1 doesn't serve it, it belongs in §5 instead.
+
 Deliberately narrow: a data-quality safeguard and a user-awareness nudge, nothing more.
 
 ### 3.1 What it does
@@ -150,11 +154,11 @@ Deliberately narrow: a data-quality safeguard and a user-awareness nudge, nothin
 StatementImport
   + extractedHolderName     string, nullable — snapshot of what PdfMetadataExtractor saw at THIS import
   + ownershipMatchStatus    enum, nullable:
-                               MATCH                  — strong name similarity, no warning shown
-                               MISMATCH               — low similarity, warning shown (§3.1.4)
+                               NAME_MATCH             — strong name similarity, no warning shown
+                               NAME_MISMATCH          — low similarity, warning shown (§3.1.4)
                                NO_HOLDER_FOUND         — extraction found no holder name to compare
                                SKIPPED_EXISTING_ACCOUNT — resolved via exact ProductIdentity match (§3.1.2)
-  + userConfirmedContinue   boolean, nullable — only meaningful when status = MISMATCH
+  + userConfirmedContinue   boolean, nullable — only meaningful when status = NAME_MISMATCH
 ```
 
 A bare `ownershipWarningShown` boolean would only ever answer "did a warning appear" — a later "why
@@ -162,8 +166,21 @@ didn't a warning appear on this import" question would have no answer beyond re-
 scratch. `ownershipMatchStatus` costs nothing extra to capture (it's a byproduct of the one comparison
 already being made) and answers both directions.
 
+`NAME_MATCH`/`NAME_MISMATCH`, not the shorter `MATCH`/`MISMATCH`: a bare `MATCH` reads as stronger than
+what actually happened (two strings compared favorably), and invites exactly the drift §1's design
+principle exists to prevent — a future `if (status == MATCH) { // account owner verified }` would be
+wrong the moment it's written. The name stays honest about what the field actually records.
+
+**`ownershipMatchStatus`'s distribution is the metric that tells you whether §5 is worth building at
+all** — "warnings fire on 2.3% of first-time imports" or "90% of imports skip the check via
+`SKIPPED_EXISTING_ACCOUNT`" are exactly the numbers that would justify (or rule out) investing in a
+confidence engine, and they fall out of this field for free. Worth tracking in aggregate once V1 ships
+(this codebase already has a metrics convention for exactly this — e.g. `finora.worker.dead_letters`
+in the import pipeline), not a new feature, just making sure the data V1 already stores actually gets
+looked at.
+
 Nothing changes on `Account`. No new table, no new relationships. This is the entire schema footprint
-of V1.
+of V1: one new string field, one new enum, one new boolean, all nullable.
 
 ### 3.3 Explicit V1 non-goals
 
@@ -178,7 +195,8 @@ of V1.
 
 ## 4. Migration (V1's own fields only)
 
-V1 adds three nullable columns to `StatementImport`, populated only going forward. Historical import
+V1 adds three new, nullable fields to `StatementImport` (a string, an enum, and a boolean — see §3.2),
+populated only going forward. Historical import
 rows simply have `extractedHolderName = null`, which the comparison logic already treats as "nothing to
 check" (§3.1, point 5) — no backfill, no retroactive computation, nothing to design here. The more
 interesting migration question — what happens to *accounts* imported before any ownership classification
@@ -253,7 +271,7 @@ design it against, and until GA/bug-hunt priorities allow room for it.
 
 | Component | Effort |
 |---|---|
-| Data model (§3.2 — three nullable columns, one table) | S |
+| Data model (§3.2 — three new nullable fields on one existing table) | S |
 | Fuzzy holder-name-match utility, multi-holder-aware (§3.1) | S |
 | Ownership review step UI (§3.1) | S |
 | ~~Everything in §5~~ | Deferred — not estimated |
