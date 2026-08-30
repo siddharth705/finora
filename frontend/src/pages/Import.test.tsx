@@ -2150,4 +2150,21 @@ describe('Import — ownership name-mismatch warning', () => {
     await waitFor(() => expect(importApi.confirm).toHaveBeenCalledTimes(1));
     expect(screen.queryByText('Statement Check')).not.toBeInTheDocument();
   });
+
+  it('never shows the warning when the profile itself has no name on file', async () => {
+    // fullName is genuinely nullable -- Apple Sign-In only supplies it on the first authorization
+    // (AuthContext's loginWithApple). Without the guard this regression-tests, isLikelyMatch(holder,
+    // null) always returns false, so EVERY import with an extractable holder name would warn,
+    // forever, for a user in this state -- and the dialog would show "null" as their profile name.
+    localStorage.removeItem('finora_name');
+    stageWithHolder('Sunil Verma');
+    const user = userEvent.setup();
+    renderImport();
+
+    await pickAndUploadPdf(user);
+    await user.click(screen.getByRole('button', { name: /confirm import/i }));
+
+    await waitFor(() => expect(importApi.confirm).toHaveBeenCalledTimes(1));
+    expect(screen.queryByText('Statement Check')).not.toBeInTheDocument();
+  });
 });

@@ -563,6 +563,12 @@ export default function Import() {
   function ownershipNameMismatch(): boolean {
     const holder = detectedAccount?.accountHolderName;
     if (!holder) return false;
+    // fullName is genuinely nullable (Apple Sign-In only supplies it on the first authorization --
+    // see AuthContext's loginWithApple). Nothing on the profile side to compare against means
+    // nothing to warn about, same "don't guess" principle OwnershipMatchService follows for this
+    // exact case on the backend -- without this guard, a user with no profile name would see this
+    // warning on every single import, and the dialog would show "null" as their profile name.
+    if (!fullName) return false;
     return !isLikelyMatch(holder, fullName);
   }
 
