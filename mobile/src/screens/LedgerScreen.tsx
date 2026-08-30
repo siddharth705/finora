@@ -4,7 +4,7 @@ import {
 } from 'react-native';
 import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { transactionsApi, type TransactionFilters } from '../api/endpoints';
+import { transactionsApi, type PagedResponse, type TransactionFilters } from '../api/endpoints';
 import { SkeletonTransactionRow } from '../components/skeletons/Skeletons';
 import { invalidateFinancialData } from '../lib/invalidateFinancialData';
 import { toUserMessage } from '../lib/apiError';
@@ -14,8 +14,28 @@ import { fmtCurrency } from '../lib/format';
 import { radius, spacing, useTheme } from '../theme';
 import type { Transaction } from '../types';
 
-const PAGE_SIZE = 20;
+export const LEDGER_PAGE_SIZE = 20;
 type TypeFilter = 'ALL' | 'INCOME' | 'EXPENSE';
+
+/**
+ * The exact filters this screen's own useInfiniteQuery below sends on a fresh mount (no search
+ * keyword typed, no type filter chosen). Exported so Dashboard's prefetch-on-focus hook
+ * (usePrefetchAdjacentScreens) can warm ['transactions', DEFAULT_LEDGER_FILTERS] under this EXACT
+ * key -- a prefetch built from a near-identical object is a cache miss with extra network calls,
+ * not a warm cache.
+ */
+export const DEFAULT_LEDGER_FILTERS: TransactionFilters = {
+  size: LEDGER_PAGE_SIZE,
+  sortField: 'date',
+  sortDir: 'desc',
+};
+
+/** Exported for the same reason as DEFAULT_LEDGER_FILTERS -- prefetchInfiniteQuery needs the
+ *  identical pagination cursor logic this screen's own useInfiniteQuery uses below, so a
+ *  prefetched page and a screen-fetched page agree on whether there's a next one. */
+export function getLedgerNextPageParam(lastPage: PagedResponse<Transaction>) {
+  return lastPage.page + 1 < lastPage.totalPages ? lastPage.page + 1 : undefined;
+}
 
 export function LedgerScreen() {
   const c = useTheme();
@@ -30,9 +50,7 @@ export function LedgerScreen() {
 
   const filters: TransactionFilters = useMemo(
     () => ({
-      size: PAGE_SIZE,
-      sortField: 'date',
-      sortDir: 'desc',
+      ...DEFAULT_LEDGER_FILTERS,
       keyword: debouncedKeyword || undefined,
       type: typeFilter === 'ALL' ? undefined : typeFilter,
     }),
@@ -54,8 +72,7 @@ export function LedgerScreen() {
     initialPageParam: 0,
     // The backend's PagedResponse carries a real totalPages, so "is there more" is answered by
     // the server rather than inferred from whether a page came back full.
-    getNextPageParam: (lastPage) =>
-      lastPage.page + 1 < lastPage.totalPages ? lastPage.page + 1 : undefined,
+    getNextPageParam: getLedgerNextPageParam,
   });
 
   const txns = data?.pages.flatMap((p) => p.content) ?? [];
