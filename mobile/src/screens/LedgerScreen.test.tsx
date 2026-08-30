@@ -30,7 +30,7 @@ jest.mock('../lib/invalidateFinancialData', () => ({
   invalidateFinancialData: jest.fn(),
 }));
 
-jest.mock('../lib/haptics', () => ({ hapticImpact: jest.fn() }));
+jest.mock('../lib/haptics');
 
 const transactions = transactionsApi as jest.Mocked<typeof transactionsApi>;
 

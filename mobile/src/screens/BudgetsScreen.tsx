@@ -77,6 +77,7 @@ export function BudgetsScreen() {
         void queryClient.invalidateQueries({ queryKey: ['dashboard-summary'] });
       } catch (e) {
         setError(toUserMessage(e, 'Could not save this budget. Try again.'));
+        hapticWarning();
       } finally {
         setSaving(false);
       }

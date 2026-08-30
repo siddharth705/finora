@@ -10,13 +10,11 @@ jest.mock('../api/endpoints', () => ({
   categoriesApi: { list: jest.fn() },
 }));
 
-jest.mock('../lib/haptics', () => ({
-  hapticSuccess: jest.fn(),
-  hapticWarning: jest.fn(),
-  // BudgetsScreen's category picker renders the real OptionPickerModal (Task 5), which now calls
-  // this too -- mocked here so pressing a category option doesn't throw.
-  hapticSelection: jest.fn(),
-}));
+// Automocked (no factory) rather than hand-listing exports: BudgetsScreen's category picker
+// renders the real OptionPickerModal, which calls hapticSelection too, and a hand-written factory
+// silently omitting a function a component actually calls is exactly the bug that happened here
+// once already. Automock covers every current AND future export of the module for free.
+jest.mock('../lib/haptics');
 
 const api = budgetsApi as jest.Mocked<typeof budgetsApi>;
 const categories = categoriesApi as jest.Mocked<typeof categoriesApi>;
@@ -81,6 +79,26 @@ describe('BudgetsScreen', () => {
 
     await waitFor(() => expect(api.upsert).toHaveBeenCalledWith('Groceries', 12000));
     expect(hapticSuccess).toHaveBeenCalledTimes(1);
+  });
+
+  // Client-side validation failures (empty category, bad limit) already warn haptically below --
+  // a genuine server-side failure is the same "this didn't work" moment for the user and must too.
+  it('warns haptically, not just success, when the save itself fails', async () => {
+    api.upsert.mockRejectedValueOnce(new Error('network down'));
+    renderScreen();
+    await screen.findByText('₹6,000 left this month');
+
+    fireEvent.press(screen.getByLabelText('Choose a category'));
+    await settle();
+    fireEvent.press(screen.getByRole('button', { name: 'Groceries' }));
+    await settle();
+    fireEvent.changeText(screen.getByLabelText(/Monthly limit/i), '12000');
+    fireEvent.press(screen.getByText('Set Budget'));
+    await settle();
+
+    expect(await screen.findByText('Could not save this budget. Try again.')).toBeTruthy();
+    expect(hapticWarning).toHaveBeenCalledTimes(1);
+    expect(hapticSuccess).not.toHaveBeenCalled();
   });
 
   // The web page takes the category as free text, so a typo silently creates a budget nothing is

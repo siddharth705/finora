@@ -78,12 +78,7 @@
     "moduleNameMapper": {
       "^react-native-reanimated$": "<rootDir>/node_modules/react-native-reanimated/src/index.ts",
       "^react-native-worklets$": "<rootDir>/node_modules/react-native-worklets/src/index.ts"
-    },
-    "transformIgnorePatterns": [
-      "/node_modules/(?!(.pnpm|react-native|@react-native|@react-native-community|expo|@expo|@expo-google-fonts|react-navigation|@react-navigation|@sentry/react-native|native-base|standard-navigation|react-native-reanimated|react-native-worklets))",
-      "/node_modules/react-native-reanimated/plugin/",
-      "/node_modules/@react-native/babel-preset/"
-    ]
+    }
   },
   "private": true,
   "overrides": {

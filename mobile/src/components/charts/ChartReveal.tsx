@@ -20,6 +20,32 @@ const AnimatedPolyline = Animated.createAnimatedComponent(Polyline);
 export const CHART_REVEAL_DURATION = 450;
 const CHART_REVEAL_EASING = Easing.out(Easing.cubic);
 
+/**
+ * Drives a single 0->1 progress value from `deps` -- shared by RevealArc and RevealPolyline, which
+ * were otherwise two copies of the identical shared-value/effect pair.
+ *
+ * Re-runs (not just on mount) whenever `deps` changes, resetting to 0 first: a refresh or filter
+ * change lands here with progress already settled at 1 (fully drawn), and re-targeting
+ * withTiming(1, ...) from 1 is a no-op with no visible motion. Callers pass the geometry that
+ * actually changes with new data (RevealArc: the slice's start/end/full; RevealPolyline: its
+ * points/length) so a mount and a genuine data change both redraw in, but an unrelated re-render
+ * (e.g. a theme change touching `color`) does not.
+ */
+function useDrawInProgress(delay: number, deps: readonly unknown[]) {
+  const progress = useSharedValue(0);
+
+  useEffect(() => {
+    progress.value = 0;
+    progress.value = withDelay(
+      delay,
+      withTiming(1, { duration: CHART_REVEAL_DURATION, easing: CHART_REVEAL_EASING })
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- deps is the caller's own dependency list.
+  }, [delay, progress, ...deps]);
+
+  return progress;
+}
+
 interface RevealArcProps {
   a: Pick<ArcSlice, 'start' | 'end' | 'full'>;
   color: string;
@@ -36,16 +62,7 @@ interface RevealArcProps {
  */
 export function RevealArc({ a, color, strokeWidth, delay = 0 }: RevealArcProps) {
   const length = a.full ? DONUT_CIRCUMFERENCE : arcLength(a.end - a.start);
-  const progress = useSharedValue(0);
-
-  useEffect(() => {
-    progress.value = withDelay(
-      delay,
-      withTiming(1, { duration: CHART_REVEAL_DURATION, easing: CHART_REVEAL_EASING })
-    );
-    // Runs once per mount -- these charts reveal in on first render, not on every value change.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  const progress = useDrawInProgress(delay, [a.start, a.end, a.full]);
 
   const animatedProps = useAnimatedProps(() => ({
     strokeDashoffset: length * (1 - progress.value),
@@ -91,15 +108,7 @@ interface RevealPolylineProps {
 /** Line-chart counterpart to RevealArc -- the same draw-in technique applied to a Polyline's own
  * length. Shared by CashFlowChart's two series and TrendChart's one. */
 export function RevealPolyline({ points, length, color, strokeWidth, delay = 0 }: RevealPolylineProps) {
-  const progress = useSharedValue(0);
-
-  useEffect(() => {
-    progress.value = withDelay(
-      delay,
-      withTiming(1, { duration: CHART_REVEAL_DURATION, easing: CHART_REVEAL_EASING })
-    );
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  const progress = useDrawInProgress(delay, [points, length]);
 
   const animatedProps = useAnimatedProps(() => ({
     strokeDashoffset: length * (1 - progress.value),

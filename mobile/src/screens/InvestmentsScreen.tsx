@@ -81,11 +81,26 @@ export function InvestmentsScreen() {
     void queryClient.invalidateQueries({ queryKey: ['networth'] });
   }
 
-  const slices: Slice[] = holdings.map((h, i) => ({
-    label: h.name,
-    value: h.balance,
-    color: ALLOCATION_COLORS[i % ALLOCATION_COLORS.length],
-  }));
+  /**
+   * Capped to the palette, same as DashboardScreen's donutSlices -- an uncapped one-slice-per-holding
+   * mapping let the chart's reveal-in stagger (RevealArc's `delay`, one slice sweeping in after
+   * another) grow without bound as holdings accumulate, and past six colours ALLOCATION_COLORS was
+   * silently reused (`i % ALLOCATION_COLORS.length`), painting two different holdings the same
+   * colour. Sorted by value first so the slices folded into "Other" are the smallest, least
+   * individually relevant ones.
+   */
+  const slices: Slice[] = useMemo(() => {
+    const sorted = [...holdings].sort((a, b) => b.balance - a.balance);
+    if (sorted.length <= ALLOCATION_COLORS.length) {
+      return sorted.map((h, i) => ({ label: h.name, value: h.balance, color: ALLOCATION_COLORS[i] }));
+    }
+    const named = sorted.slice(0, ALLOCATION_COLORS.length - 1);
+    const rest = sorted.slice(ALLOCATION_COLORS.length - 1).reduce((sum, h) => sum + h.balance, 0);
+    return [
+      ...named.map((h, i) => ({ label: h.name, value: h.balance, color: ALLOCATION_COLORS[i] })),
+      { label: 'Other', value: rest, color: ALLOCATION_COLORS[ALLOCATION_COLORS.length - 1] },
+    ];
+  }, [holdings]);
   const totalInvestments = holdings.reduce((s, h) => s + h.balance, 0);
 
   async function addHolding() {

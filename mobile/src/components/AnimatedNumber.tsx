@@ -2,8 +2,38 @@ import { useEffect } from 'react';
 import { StyleSheet, TextInput, type StyleProp, type TextStyle } from 'react-native';
 import Animated, { Easing, useAnimatedProps, useSharedValue, withTiming } from 'react-native-reanimated';
 import { fmtCurrency } from '../lib/format';
+import { CHART_REVEAL_DURATION } from './charts/ChartReveal';
 
 const AnimatedTextInput = Animated.createAnimatedComponent(TextInput);
+
+/**
+ * Indian digit grouping (last 3 digits, then pairs: "12,34,567") without `toLocaleString`/`Intl`.
+ * Mirrors `fmtCurrency`'s output exactly for the non-negative integers this ever receives.
+ *
+ * Runs inside a UI-thread worklet, which is a separate, stripped-down JS runtime from the main
+ * thread's Hermes (see format.ts's note on Hermes/ICU -- that note is about the main thread only).
+ * Reanimated's worklet runtime is not guaranteed to carry full `Intl` support, so this avoids it
+ * rather than assume parity that can't be verified without a real device build.
+ */
+function groupIndianDigits(digits: string): string {
+  'worklet';
+  if (digits.length <= 3) return digits;
+  const last3 = digits.slice(-3);
+  let rest = digits.slice(0, -3);
+  let grouped = '';
+  while (rest.length > 2) {
+    grouped = ',' + rest.slice(-2) + grouped;
+    rest = rest.slice(0, -2);
+  }
+  return rest + grouped + ',' + last3;
+}
+
+/** Worklet-safe equivalent of `fmtCurrency` -- see groupIndianDigits for why this can't just call it. */
+function fmtCurrencyWorklet(n: number): string {
+  'worklet';
+  const digits = String(Math.round(Math.abs(n)));
+  return (n < 0 ? '-₹' : '₹') + groupIndianDigits(digits);
+}
 
 interface AnimatedNumberProps {
   value: number;
@@ -29,7 +59,7 @@ interface AnimatedNumberProps {
  * towards, so the very first render shows the correct number immediately -- this only animates a
  * value that CHANGES after mount (a refresh, a save), never a count-up intro.
  */
-export function AnimatedNumber({ value, style, duration = 400, testID }: AnimatedNumberProps) {
+export function AnimatedNumber({ value, style, duration = CHART_REVEAL_DURATION, testID }: AnimatedNumberProps) {
   const animated = useSharedValue(value);
 
   useEffect(() => {
@@ -39,9 +69,10 @@ export function AnimatedNumber({ value, style, duration = 400, testID }: Animate
   const animatedProps = useAnimatedProps(() => {
     // `text`/`defaultValue` aren't part of RN's public TextInputProps type, but both are real
     // native props TextInput accepts -- the cast mirrors Reanimated's own documented example.
+    const formatted = fmtCurrencyWorklet(animated.value);
     return {
-      text: fmtCurrency(animated.value),
-      defaultValue: fmtCurrency(animated.value),
+      text: formatted,
+      defaultValue: formatted,
     } as Partial<React.ComponentProps<typeof TextInput>>;
   });
 
@@ -49,6 +80,12 @@ export function AnimatedNumber({ value, style, duration = 400, testID }: Animate
     <AnimatedTextInput
       testID={testID}
       editable={false}
+      // `editable={false}` alone doesn't stop Android from treating the underlying EditText as its
+      // own focusable node -- TalkBack would then announce this component's accessibilityLabel AND
+      // separately land focus on the raw text content, a double-announcement most visible next to
+      // sibling text (BudgetsScreen's amount row). `focusable={false}` keeps it out of the focus
+      // order entirely; accessibilityLabel below is what a wrapping `accessible` parent reads.
+      focusable={false}
       pointerEvents="none"
       underlineColorAndroid="transparent"
       style={[styles.text, style]}

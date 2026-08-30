@@ -52,13 +52,17 @@ export function DonutChart({ slices, centerLabel }: { slices: Slice[]; centerLab
       <View>
         <Svg width={DONUT_SIZE} height={DONUT_SIZE}>
           <G>
-            {arcs.map((a) => (
+            {arcs.map((a, renderIndex) => (
               <RevealArc
                 key={a.index}
                 a={a}
                 color={colorFor(a.index)}
                 strokeWidth={DONUT_STROKE}
-                delay={a.index * 60}
+                // Staggered by RENDER order, not `a.index` (the pre-filter position in the
+                // caller's array) -- a.index skips values dropped by buildArcs's zero/negative
+                // filter, so using it here left uneven gaps between slices whenever any category
+                // had no spend.
+                delay={renderIndex * 60}
               />
             ))}
           </G>

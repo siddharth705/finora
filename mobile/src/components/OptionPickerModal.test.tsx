@@ -2,7 +2,7 @@ import { fireEvent, render, screen } from '@testing-library/react-native';
 import { OptionPickerModal } from './OptionPickerModal';
 import { hapticSelection } from '../lib/haptics';
 
-jest.mock('../lib/haptics', () => ({ hapticSelection: jest.fn() }));
+jest.mock('../lib/haptics');
 
 describe('OptionPickerModal', () => {
   it('fires a selection haptic when an option is tapped', () => {
