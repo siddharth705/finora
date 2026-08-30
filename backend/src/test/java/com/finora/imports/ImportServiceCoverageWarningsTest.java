@@ -204,6 +204,35 @@ class ImportServiceCoverageWarningsTest {
         assertThat(response.duplicateOfStatementId()).isEqualTo(firstResponse.statementImportId());
     }
 
+    /**
+     * duplicateOverlapsFor: added for a bug found via self-review in {@code
+     * StatementImportService.confirmReimport} (see its own comment) -- confirms it's wired the
+     * same way {@code coverageWarningsFor} already is, against the real repository-backed report,
+     * not just the pure logic {@link CoverageWarningsTest} already covers exhaustively.
+     */
+    @Test
+    void duplicateOverlapsFor_pairsTheOverlapWithTheOriginalStatementsId() throws Exception {
+        var juneRow = row(LocalDate.of(2026, 6, 15), "SALARY", new BigDecimal("1000.00"), "INCOME");
+        var juneRequest = new ConfirmRequest(null, List.of(juneRow), accountId, null,
+                BigDecimal.ZERO, new BigDecimal("1000.00"), null,
+                LocalDate.of(2026, 6, 1), LocalDate.of(2026, 6, 30), null, null);
+        var firstResponse = importService.confirm(userId, dummyFile(), juneRequest);
+
+        var againRow = row(LocalDate.of(2026, 6, 16), "SALARY", new BigDecimal("1000.00"), "INCOME");
+        var againRequest = new ConfirmRequest(null, List.of(againRow), accountId, null,
+                BigDecimal.ZERO, new BigDecimal("1000.00"), null,
+                LocalDate.of(2026, 6, 1), LocalDate.of(2026, 6, 30), null, null);
+        var response = importService.confirm(userId, dummyFile(), againRequest);
+
+        List<CoverageWarnings.DuplicateOverlap> overlaps = importService.duplicateOverlapsFor(
+                userId, accountId, response.statementImportId(),
+                response.statementPeriodStart(), response.statementPeriodEnd());
+
+        assertThat(overlaps).hasSize(1);
+        assertThat(overlaps.get(0).otherStatementId()).isEqualTo(firstResponse.statementImportId());
+        assertThat(overlaps.get(0).warning()).contains("You already have a statement for this period");
+    }
+
     @Test
     void csvImport_withNoStatementPeriod_producesNoCoverageWarning_andDoesNotThrow() throws Exception {
         var row = row(LocalDate.of(2026, 6, 15), "SALARY", new BigDecimal("1000.00"), "INCOME");

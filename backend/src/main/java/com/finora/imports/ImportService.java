@@ -1422,6 +1422,21 @@ public class ImportService {
             return new CoverageWarningsResult(List.of(), null);
         }
 
+        AccountCoverage coverage = accountCoverageFor(userId, accountId);
+        List<String> warnings = CoverageWarnings.forNewStatement(coverage.report(), savedImport.getId(), newStart, newEnd,
+                coverage.importedAtById());
+        UUID duplicateOfStatementId = CoverageWarnings.duplicateOfStatementId(coverage.report(), savedImport.getId());
+        return new CoverageWarningsResult(warnings, duplicateOfStatementId);
+    }
+
+    /** The account-wide inputs {@link CoverageWarnings}' static methods need -- the fetch-and-
+     *  analyze steps {@link #coverageWarningsFor} and {@link #duplicateOverlapsFor} both start
+     *  from, factored out so the latter (added for a confirmReimport bug fix -- see its own
+     *  comment) doesn't duplicate them. */
+    private record AccountCoverage(StatementCoverageAnalyzer.CoverageReport report,
+                                    Map<UUID, java.time.Instant> importedAtById) {}
+
+    private AccountCoverage accountCoverageFor(UUID userId, UUID accountId) {
         List<StatementImportRepository.StatementMetadata> metadata =
                 statementImportRepository.findMetadataWithPeriodByUserIdAndAccountId(userId, accountId);
         List<StatementCoverageAnalyzer.StatementPeriod> periods = metadata.stream()
@@ -1434,10 +1449,34 @@ public class ImportService {
                 .collect(java.util.stream.Collectors.toMap(
                         StatementImportRepository.StatementMetadata::getId,
                         StatementImportRepository.StatementMetadata::getImportedAt));
+        return new AccountCoverage(report, importedAtById);
+    }
 
-        List<String> warnings = CoverageWarnings.forNewStatement(report, savedImport.getId(), newStart, newEnd, importedAtById);
-        UUID duplicateOfStatementId = CoverageWarnings.duplicateOfStatementId(report, savedImport.getId());
-        return new CoverageWarningsResult(warnings, duplicateOfStatementId);
+    /**
+     * Every exact-duplicate-period overlap {@code statementId} is currently involved in, each
+     * paired with the specific statement it duplicates. Bug fix (self-review, Phase 4 follow-up):
+     * {@code StatementImportService.confirmReimport} used to reconstruct this from the flattened
+     * {@code warnings}/{@code duplicateOfStatementId} a normal confirm response carries -- every
+     * duplicate sentence concatenated into one list, only the FIRST overlap's id kept -- which
+     * cannot tell "the overlap against the statement being reimported" apart from "a second,
+     * unrelated duplicate this same confirm also produced" once both exist: stripping the former
+     * by string prefix silently took the latter's sentence (and sometimes its id) with it, so a
+     * real, actionable duplicate could vanish from the response entirely with no warning and no
+     * way to supersede it.
+     *
+     * <p>Recomputes the account's coverage report a second time rather than threading this
+     * structured shape through {@link #summarise}'s whole confirm/persistSection/summarise call
+     * graph for the one caller that needs it -- the same trade-off {@code confirmReimport}'s
+     * warning-stripping already makes (see its own comment). Returns empty for a CSV-sourced
+     * statement (no printed period), same as {@link #coverageWarningsFor}.
+     */
+    public List<CoverageWarnings.DuplicateOverlap> duplicateOverlapsFor(
+            UUID userId, UUID accountId, UUID statementId, LocalDate periodStart, LocalDate periodEnd) {
+        if (periodStart == null || periodEnd == null) {
+            return List.of();
+        }
+        AccountCoverage coverage = accountCoverageFor(userId, accountId);
+        return CoverageWarnings.duplicateOverlaps(coverage.report(), statementId, coverage.importedAtById());
     }
 
     /**

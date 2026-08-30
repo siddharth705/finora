@@ -294,15 +294,35 @@ public class StatementImportService {
         // a "this confirm is a reimport of X" signal through ImportService's whole confirm/
         // persistSection/summarise call graph for it.
         //
-        // Both the prose warning AND duplicateOfStatementId are cleared together (Phase 4): leaving
-        // the id set after stripping the sentence that explains it would offer a "replace" action
-        // against the exact statement this reimport just corrected.
-        boolean duplicatesTheOriginal = statementImportId.equals(response.duplicateOfStatementId());
+        // Bug fix (self-review, Phase 4 follow-up): this used to strip EVERY duplicate-period
+        // warning by string prefix while only conditionally clearing duplicateOfStatementId (when
+        // it happened to equal `original`'s own id) -- two independently-flattened views of
+        // "possibly several overlaps" that had no way to stay in agreement. Whenever this reimport
+        // ALSO exact-duplicated a second, unrelated statement (a real, actionable finding -- the
+        // whole reason this feature exists), one of two things happened depending purely on which
+        // overlap CoverageWarnings.duplicateOfStatementId happened to return first: either the
+        // unrelated duplicate's id survived while its explaining sentence was stripped alongside
+        // `original`'s (an id the summary screen could never render a button for, since it only
+        // renders when warnings is non-empty), or the id got cleared to null and BOTH sentences
+        // vanished, silently dropping the second duplicate entirely. duplicateOverlapsFor gives the
+        // per-overlap (id, sentence) pairing needed to remove only the ONE overlap against
+        // `original` and leave any other duplicate -- id and sentence together -- exactly as an
+        // ordinary confirm's response would carry it.
+        List<CoverageWarnings.DuplicateOverlap> overlaps = importService.duplicateOverlapsFor(
+                userId, original.getAccountId(), response.statementImportId(),
+                response.statementPeriodStart(), response.statementPeriodEnd());
+        List<CoverageWarnings.DuplicateOverlap> realDuplicates = overlaps.stream()
+                .filter(o -> !o.otherStatementId().equals(statementImportId))
+                .toList();
+
+        List<String> warnings = new ArrayList<>(response.warnings().stream()
+                .filter(w -> !w.startsWith(CoverageWarnings.DUPLICATE_PERIOD_WARNING_PREFIX))
+                .toList());
+        realDuplicates.forEach(o -> warnings.add(o.warning()));
+
         return response.withWarningsAndDuplicateOfStatementId(
-                response.warnings().stream()
-                        .filter(w -> !w.startsWith(CoverageWarnings.DUPLICATE_PERIOD_WARNING_PREFIX))
-                        .toList(),
-                duplicatesTheOriginal ? null : response.duplicateOfStatementId());
+                warnings,
+                realDuplicates.isEmpty() ? null : realDuplicates.get(0).otherStatementId());
     }
 
     /**
