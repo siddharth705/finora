@@ -360,8 +360,18 @@ public class StatementImportService {
         // ledger that no longer exists.
         if (!toRemove.isEmpty()) {
             accountRepository.findById(statementImport.getAccountId()).ifPresent(account -> {
+                // Excludes an already-DUPLICATE-flagged row: its contribution to Account.balance
+                // was already reversed once, at the original statement's own confirm time
+                // (ImportService.summarise's BH-003 correction) -- summing it again here would
+                // move the balance a second time for a row that currently contributes nothing.
+                // TRANSFER/REFUND/REVERSAL/INVESTMENT_TRANSFER rows stay included: those
+                // classifications only affect expense/income REPORTING (RefundNetting.reportable),
+                // not Account.balance -- the cash genuinely moved, so the balance still reflects it.
+                List<Transaction> stillContributing = toRemove.stream()
+                        .filter(t -> t.getIsDuplicateOf() == null)
+                        .toList();
                 BigDecimal reversal = AccountBalanceConvention
-                        .netDelta(account.getAccountType(), toRemove).negate();
+                        .netDelta(account.getAccountType(), stillContributing).negate();
                 if (reversal.signum() != 0) {
                     account.setBalance(account.getBalance().add(reversal));
                     accountRepository.save(account);

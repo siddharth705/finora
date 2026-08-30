@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react-native';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { LedgerScreen } from './LedgerScreen';
 import { transactionsApi } from '../api/endpoints';
@@ -162,5 +162,19 @@ describe('a failure while paging', () => {
     // reading must survive a failed page.
     expect(screen.getByText('First page row')).toBeTruthy();
     expect(screen.queryByText(/No transactions yet/i)).toBeNull();
+  });
+});
+
+describe('skeleton loading', () => {
+  it('shows skeleton placeholder rows while the first page is loading, not a spinner', async () => {
+    let resolveSearch: (value: unknown) => void = () => {};
+    transactions.search.mockReturnValue(new Promise((resolve) => { resolveSearch = resolve as typeof resolveSearch; }));
+
+    renderScreen();
+
+    expect(screen.getAllByTestId('skeleton-transaction-row', { hidden: true }).length).toBeGreaterThan(0);
+    expect(screen.queryByTestId('ledger-list')).toBeNull();
+
+    await act(async () => resolveSearch(page([])));
   });
 });

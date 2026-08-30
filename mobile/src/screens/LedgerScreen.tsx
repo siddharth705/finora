@@ -1,10 +1,11 @@
 import { useMemo, useState } from 'react';
 import {
-  ActivityIndicator, Alert, FlatList, Pressable, StyleSheet, Text, TextInput, View,
+  ActivityIndicator, Alert, FlatList, Pressable, ScrollView, StyleSheet, Text, TextInput, View,
 } from 'react-native';
 import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { transactionsApi, type TransactionFilters } from '../api/endpoints';
+import { SkeletonTransactionRow } from '../components/skeletons/Skeletons';
 import { invalidateFinancialData } from '../lib/invalidateFinancialData';
 import { toUserMessage } from '../lib/apiError';
 import { useDebouncedValue } from '../lib/useDebouncedValue';
@@ -131,9 +132,15 @@ export function LedgerScreen() {
       {error ? <Text style={[styles.error, { color: c.danger }]}>{error}</Text> : null}
 
       {isLoading ? (
-        <View style={styles.centered}>
-          <ActivityIndicator size="large" color={c.primary} />
-        </View>
+        // ScrollView, not a plain View -- the FlatList is this screen's only other scrollable
+        // region and doesn't exist yet during this branch, so a plain View here would silently
+        // clip the bottom skeleton rows on shorter-viewport devices once search/filter chrome
+        // above eats into the available height.
+        <ScrollView contentContainerStyle={styles.listContent}>
+          {Array.from({ length: 8 }).map((_, i) => (
+            <SkeletonTransactionRow key={i} />
+          ))}
+        </ScrollView>
       ) : isError && txns.length === 0 ? (
         /**
          * A failed search must not fall through to ListEmptyComponent below. Without this branch
