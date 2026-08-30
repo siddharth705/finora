@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
 import { useQueryClient } from '@tanstack/react-query';
 import { budgetsApi, reportsApi, transactionsApi } from '../api/endpoints';
@@ -26,10 +26,21 @@ import { useOnline } from '../components/OfflineBanner';
 export function usePrefetchAdjacentScreens() {
   const queryClient = useQueryClient();
   const online = useOnline();
+  // Read via a ref inside the focus callback below rather than closing over `online` directly:
+  // react-navigation's useFocusEffect re-subscribes its focus/blur listeners AND immediately
+  // re-invokes the callback whenever its identity changes while the screen is already focused.
+  // Putting `online` in that callback's own deps meant every connectivity flap while sitting on
+  // Dashboard -- not just a genuine focus transition -- tore down and re-fired the whole prefetch
+  // trio. The ref keeps the callback's identity stable across online/offline flips; only real
+  // focus/blur transitions re-run it now.
+  const onlineRef = useRef(online);
+  useEffect(() => {
+    onlineRef.current = online;
+  }, [online]);
 
   useFocusEffect(
     useCallback(() => {
-      if (!online) return;
+      if (!onlineRef.current) return;
 
       void queryClient.prefetchInfiniteQuery({
         queryKey: ['transactions', DEFAULT_LEDGER_FILTERS],
@@ -58,6 +69,6 @@ export function usePrefetchAdjacentScreens() {
           staleTime: 5 * 60_000, // matches Dashboard's/ReportsScreen's own staleTime for a past month
         });
       })();
-    }, [queryClient, online])
+    }, [queryClient])
   );
 }
