@@ -22,9 +22,9 @@ or "does this payment settle that spend."
 
 ---
 
-## 0. Addendum — questions resolved across four rounds of founder review
+## 0. Addendum — questions resolved across five rounds of founder review
 
-Added after four review passes. Read this before §1 — §0.1–§0.5 are round one (a real defect in §6's
+Added after five review passes. Read this before §1 — §0.1–§0.5 are round one (a real defect in §6's
 original overlap rule, plus three open questions resolved); §0.6–§0.10 are round two (balance authority
 for superseded statements, acknowledgment lifecycle, a correction to round one's own severity suggestion,
 API summary fields, and a new risk named for the first time); §0.11–§0.15 are round three (a
@@ -32,7 +32,13 @@ well-defined coverage-percentage denominator, an explicit non-standard-period st
 history preservation, a roadmap re-sequencing, and a second new risk); §0.16–§0.20 are round four (a
 Phase 1 split, an adaptive non-standard-period threshold, a self-inconsistency in this document's own
 severity design corrected, coverage named an explicit independent domain, and the identity-drift risk
-sharpened with a specific mechanism, not just re-labeled more seriously). The original sections below are
+sharpened with a specific mechanism, not just re-labeled more seriously); §0.21–§0.24 are round five (a
+general risk-tiered sequencing principle replacing ad-hoc phase ordering, precise informational-only
+behavior for non-standard periods, forward-compatible UX wording for duplicate detection, and the
+coverage-status enum demoted to a UI convenience). **§11's roadmap table is rewritten outright in this
+round** rather than layered with another pointer note — five rounds of incremental patches had made it
+harder to read than to just restate cleanly; §0.21 carries the reasoning for the final shape. The original
+sections below are
 left intact rather than silently rewritten; each affected section carries a short pointer back here.
 
 ### 0.1 Exact adjacency semantics — and a real bug in §6's original overlap rule
@@ -550,6 +556,85 @@ not a new mechanism.
 *(Resolves review concern 5 — elevates the language and gives the specific mechanism the review's framing
 was gesturing at but didn't name.)*
 
+### 0.21 A general sequencing principle, replacing four rounds of ad-hoc phase reshuffling
+
+Every round so far has moved something between phases for a good reason each time, but never stated the
+rule generating those decisions — which is exactly how a roadmap ends up needing a fifth round of manual
+reordering. The review's proposed sequence (engine/API/admin first, observe, warnings, supersession
+pushed out past Insights) is right, and the reason it's right generalizes:
+
+> **Sequence by blast radius, not by feature grouping.** A phase that only reads existing data and
+> exposes it somewhere new (detection, the API, the admin view, Insights' movers-exclusion) can ship,
+> misfire, and be rolled back with zero lasting effect — the worst case is a wrong sentence or a missing
+> admin row. A phase that writes something durable or changes what `Account.balance` shows
+> (supersession's persistence and authority rule) cannot be undone the same way once a user has acted on
+> it. Every phase in this document sorts cleanly into one of those two tiers; the sequencing should follow
+> that sort, not which phases feel conceptually related.
+
+Applying that rule: import-time warnings (still read-only, just user-facing rather than internal) belong
+in their own step *after* the engine has been observed against real accounts, not bundled with the engine
+itself — §0.16 hadn't gone this far. Insights safety (§8) is equally read-only and has no dependency on
+supersession at all, so it can ship any time after the engine, ahead of supersession rather than after it.
+Supersession — the one phase in this entire proposal that touches `Account.balance` — is sequenced last
+among the "core" phases specifically *because* it's the one thing here that isn't reversible the way
+everything else is. §11 is rewritten below to reflect this ordering directly, rather than patched again.
+
+*(Resolves review concerns 1 and 6, and formalizes the risk ranking from concern 5 — #1 identity drift
+and #2 extraction quality are pre-existing conditions this proposal inherits and can only make
+diagnosable, not fix; #3 supersession correctness is the one risk this proposal actually introduces, which
+is exactly why it's sequenced last.)*
+
+### 0.22 Non-standard periods: informational only, precisely defined
+
+Agreed, and worth being exact about what "informational only" means operationally, since §0.12's original
+wording ("excluded from automatic gap/overlap classification") could be read as suppressing more than
+intended:
+
+- A `NON_STANDARD_PERIOD` segment's *own* boundaries are never tested against §0.1's adjacency rule
+  (correct — a multi-month blob has no reason to satisfy a normal statement's boundary-day convention).
+- Its date range still counts toward `coveredDays` (§0.11) — something real was imported for that span,
+  even if its shape is unusual, so it must not read as missing.
+- **It never suppresses a real gap on its far side.** If a genuine gap exists between a non-standard
+  segment and the *next* normal one, that gap is still detected and reported independently — proximity to
+  something unusual is never a reason to stay silent about a separate, real hole in the timeline.
+- It never blocks the rest of the report from computing. One non-standard segment affects only its own
+  classification and its immediate adjacency tests, nothing else in the account's coverage.
+
+*(Resolves review concern 2 — makes precise what was previously only described by its intent.)*
+
+### 0.23 Duplicate-period detection and supersession: split implementation, shared UX design
+
+Real point, and it changes how §0's own Phase 1A boundary should be worded, not just built. Architecturally
+the split stands — detection is read-only and ships first, supersession's authority change is genuinely
+riskier and ships later (§0.21) — but a user who sees *"you already have a statement for this period"*
+with no path forward at all reads as a dead end, not a safety feature, and 1A's copy shouldn't paint
+1B into a corner.
+
+**Fix, at the copy level, not the architecture level:** 1A's duplicate-period notice states the fact and
+says replacement isn't available yet, rather than implying nothing can ever be done — *"You already have
+a statement for this period, imported on [date]. Replacing an existing statement isn't supported yet."*
+When 1B ships, that same message gains an actual action (§0.3's "Import this one as a replacement?"),
+extending the sentence rather than replacing a UX pattern users already learned to distrust.
+
+*(Resolves review concern 3.)*
+
+### 0.24 Coverage status: booleans are the authoritative contract, the enum is a display convenience
+
+Agreed, and the fix is to say so explicitly rather than let two representations quietly compete. §0.9's
+`coverageStatus` enum was already going to keep growing — §0.12 added `HAS_NON_STANDARD_PERIODS`, and
+duplicate-period detection (§0.23) would want its own value too, heading toward the combinatorial
+explosion the review names. The boolean fields (`hasGaps`, `hasOverlaps`, `hasNonStandardPeriods`,
+`hasDuplicatePeriods`) were already present alongside the enum since §0.9 — they just weren't declared as
+the primary contract.
+
+**Fix:** the booleans are authoritative; any real consumer branches on them, not on `coverageStatus`.
+`coverageStatus` stays in the response purely as a UI convenience — a single label for a badge that
+doesn't want to compose four booleans itself — computed as a simple, documented derivation from the flags
+(e.g. `COMPLETE` iff every flag is false), never a source of new information the flags don't already
+carry.
+
+*(Resolves review concern 4.)*
+
 ---
 
 ## 1. Current behavior, traced precisely
@@ -848,51 +933,64 @@ roadmap doc's planned "Import Explorer," not a new admin subsystem.
 
 ## 11. Implementation roadmap
 
-> **Updated per §0.3, §0.4, §0.14, and §0.16:** Phase 1 split into 1A (pure detection, read-only) and 1B
-> (supersession's persistence and balance-authority change — a genuinely higher-risk data path, per
-> §0.16). CSV coverage's Phase 4 placement should be confirmed or revised by the one query in §0.4 before
-> this phasing is treated as final. Severity tiers (§0.18) are dropped from scope entirely, not deferred
-> to a phase — `delta` ships as a raw fact whenever severity would have appeared.
+Rewritten in full per §0.21's sequencing principle: **blast radius, not feature grouping.** Everything
+through Phase 3 is read-only — it can misfire and be rolled back with no lasting effect. Phase 4
+(supersession) is the one phase that changes what `Account.balance` shows, and is sequenced last among
+the core phases for exactly that reason, not because it's less important.
 
-| Phase | Scope | Depends on |
-|---|---|---|
-| **1A — Detection core** | `StatementCoverageAnalyzer` (gaps, overlaps, exact-duplicate-period *detection*, non-standard-period classification per §0.17), import-time warning (reuses existing warning UI), `GET /api/v1/accounts/{accountId}/coverage`, admin coverage view extending Import Explorer (§0.14). Read-only — no change to what drives `Account.balance`. | Nothing — works entirely off fields that already exist |
-| **1B — Supersession authority** | `supersededBy` persistence (§0.3), the balance-authority change (§0.6), the replacement confirmation flow. Deliberately sequenced after 1A has run against real accounts, since this half changes what a balance shows. | 1A |
-| **2 — Surfacing** | Coverage Timeline on `StatementHistory.tsx`; `statement_coverage_acknowledgment` table (with `status`, §0.13) + dismiss action | 1A (1B if replacement is surfaced in the timeline) |
-| **3 — Insight safety** | Movers exclude gap months from baseline; current-month gap sentence; `InsightsDto.coverageCaveat` (§0.5) | 1A (does not need 1B or Phase 2) |
-| **4 — CSV coverage (pending §0.4)** | Explicit, separately-labeled estimated period for CSV imports (§7) — placement here is provisional until the `source_format` query in §0.4 is actually run | 1A |
-| **Not in scope** | Any blended "Account Health" score (§4); gap-severity tiers (§0.18) — both revisit only with real usage/calibration data | — |
+| Phase | Scope | Depends on | Reversible if wrong? |
+|---|---|---|---|
+| **1 — Engine, API, admin view** | `StatementCoverageAnalyzer` (gaps, overlaps, exact-duplicate-period *detection*, non-standard-period classification per §0.17/§0.22), `GET /api/v1/accounts/{accountId}/coverage`, admin coverage view extending Import Explorer (§0.14). No user-facing surface yet — internal-only. | Nothing — works entirely off fields that already exist | Yes — nothing user-visible exists to walk back |
+| **— Observe** | Not an engineering phase: run Phase 1 against real accounts (PNB, Kotak, SBI, credit-card cycles at minimum) via the admin view. Confirm §0.1's boundary-day fix and §0.17's adaptive threshold hold up before anything below ships. | Phase 1 | — |
+| **2 — User-facing warnings** | Import-time gap/duplicate-period notice, worded forward-compatibly per §0.23. Still read-only. | Observe | Yes — a wrong warning is embarrassing, not damaging |
+| **3 — Insight safety** | Movers exclude gap months from baseline; current-month gap sentence; `InsightsDto.coverageCaveat` (§0.5). No dependency on supersession at all. | Phase 1 (does not need Phase 2) | Yes |
+| **4 — Supersession authority** | `supersededBy` persistence (§0.3), the balance-authority change (§0.6), the replacement confirmation flow (extending Phase 2's duplicate-period notice per §0.23). The one phase that changes what a balance shows. | Phase 2 | **No** — this is why it ships last |
+| **5 — Surfacing** | Coverage Timeline on `StatementHistory.tsx`; `statement_coverage_acknowledgment` table (`ACTIVE`/`INVALIDATED`, §0.13) + dismiss action | Phase 2 (Phase 4 if replacement is surfaced in the timeline) | Yes |
+| **6 — CSV coverage (pending §0.4)** | Explicit, separately-labeled estimated period for CSV imports (§7) — placement provisional until the `source_format` query in §0.4 is actually run | Phase 1 | Yes |
+| **Not in scope** | Any blended "Account Health" score (§4); gap-severity tiers (§0.18) — both revisit only with real usage/calibration data | — | — |
 
-Phase 1A, Phase 3, and Phase 4 are independent of each other and of Phase 2 — any can ship once 1A lands.
-Only Phase 2's replacement-flow surfacing and Phase 1B have a real dependency between them.
+Phases 2, 3, and 6 are independent of each other and can ship in any order once Phase 1 has been observed.
+Phase 4 is the only phase with no cheap undo, which is the entire reason it's last rather than bundled
+with detection the way earlier drafts of this roadmap had it.
 
 ---
 
 ## 12. Risks
+
+Ranked per §0.21 — the first two are pre-existing conditions this proposal inherits and can only make
+diagnosable, not fix; the third is the one risk this proposal actually introduces.
+
+1. **Account identity drift (§0.10, elevated by §0.20).** If account-identity resolution ever splits or
+   merges what should be one real account across two `accountId`s, coverage doesn't just inherit that
+   mistake once (the way a balance snapshot would) — it amplifies it into a standing, repeatedly-reported
+   false gap for as long as the split exists, since coverage is a timeline, not a point-in-time value.
+   Explicit non-goal for this engine to fix, but coverage output carries enough (`accountId`, per-segment
+   `statementImportId`) to make it diagnosable via the admin Import Explorer — and, per §0.20, is
+   plausibly the first feature that would surface such a bug at all.
+2. **Statement-period extraction drift (§0.15).** Coverage accuracy is bounded by extraction accuracy at
+   import time, and Finora never re-parses stored PDFs when extraction logic changes — a period-extraction
+   bug fixed later corrects future imports only, not `statementPeriodStart`/`End` values already stored.
+   No parser-version tracking exists today to make this diagnosable (confirmed absent, not assumed); that
+   belongs to the extraction subsystem's own roadmap, not this proposal's scope.
+3. **Supersession correctness.** The one risk this proposal actually introduces, not inherits — a bug in
+   §0.6's balance-authority rule or §0.3's `supersededBy` chain would corrupt `Account.balance` directly,
+   one of the most sensitive values in the system. This is the specific reason §0.21/§11 sequence
+   supersession last among the core phases, after the read-only detection/API/admin/warnings/Insights work
+   has already run against real accounts — the mitigation is sequencing, not a code-level safeguard beyond
+   what §0.6 already specifies.
+
+Lower-severity, already mitigated within the design:
 
 - **False positives on legitimately dormant accounts.** A secondary account with genuine multi-month
   non-activity is not the same as a missing statement. Mitigation: a gap requires two real *bounding*
   statements on both sides — never speculate that the most recent period is "incomplete" just because no
   newer statement has been imported yet.
 - **CSV's missing period data (§3, §7)** is a real, current blind spot this proposal's core mechanism does
-  not close on its own — Phase 4 is optional precisely because it's a separate, lower-confidence
-  extension of the same idea, not a prerequisite for Phases 1–3.
-- **Gap-notification fatigue.** Addressed by the acknowledgment table (§5) — a dismissed gap must not
-  resurface every time coverage is recomputed.
+  not close on its own — Phase 6 (§11) is optional precisely because it's a separate, lower-confidence
+  extension of the same idea, not a prerequisite for the phases before it.
+- **Gap-notification fatigue.** Addressed by the acknowledgment table (§5, §0.13) — a dismissed gap must
+  not resurface every time coverage is recomputed, and invalidation is auditable rather than silent.
 - **Scope creep into the trust-framework ask (§4).** Worth stating plainly: the request's §4 asks for a
   scoring model, and this document's answer is "don't build one yet, for a specific, precedented reason."
   That's a real disagreement with part of the request, not an omission — surfaced here rather than
   silently narrowed.
-- **Account identity drift (§0.10, elevated by §0.20).** If account-identity resolution ever splits or
-  merges what should be one real account across two `accountId`s, coverage doesn't just inherit that
-  mistake once (the way a balance snapshot would) — it amplifies it into a standing, repeatedly-reported
-  false gap for as long as the split exists, since coverage is a timeline, not a point-in-time value. A
-  major dependency, not a minor one, even though it stays an explicit non-goal for this engine to fix.
-  Coverage output carries enough (`accountId`, per-segment `statementImportId`) to make it diagnosable via
-  the admin Import Explorer — and, per §0.20, is plausibly the first feature that would surface such a
-  bug at all.
-- **Statement-period extraction drift (§0.15).** Coverage accuracy is bounded by extraction accuracy at
-  import time, and Finora never re-parses stored PDFs when extraction logic changes — a period-extraction
-  bug fixed later corrects future imports only, not `statementPeriodStart`/`End` values already stored.
-  No parser-version tracking exists today to make this diagnosable (confirmed absent, not assumed); that
-  belongs to the extraction subsystem's own roadmap, not this proposal's scope.
