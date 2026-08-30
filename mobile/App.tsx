@@ -3,7 +3,7 @@ import { QueryClientProvider } from '@tanstack/react-query';
 import { StatusBar } from 'expo-status-bar';
 import * as SplashScreen from 'expo-splash-screen';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { queryClient, startNetworkMonitoring } from './src/api/queryClient';
+import { queryClient, startNetworkMonitoring, startQueryPersistence } from './src/api/queryClient';
 import { AppLockGate } from './src/components/AppLockGate';
 import { OfflineBoundary } from './src/components/OfflineBanner';
 import { RootWarningBoundary } from './src/components/RootWarningBanner';
@@ -35,6 +35,11 @@ function App() {
   // Subscribing here rather than at module scope keeps the NetInfo listener tied to the app's
   // lifetime and torn down cleanly, instead of leaking across fast-refresh reloads in development.
   useEffect(() => startNetworkMonitoring(), []);
+  // Warms the query cache from AsyncStorage on cold start and keeps saving it as it changes -- see
+  // startQueryPersistence's own doc comment in api/queryClient.ts. Same posture as the
+  // network-monitoring effect just above: subscribed here, not at module scope, so it's torn down
+  // cleanly rather than leaking across fast-refresh reloads in development.
+  useEffect(() => startQueryPersistence(), []);
 
   // Fires after this render has committed, i.e. after RootNavigator's tree (its own bootstrapping
   // spinner, at minimum) has something real to paint -- see the preventAutoHideAsync comment
