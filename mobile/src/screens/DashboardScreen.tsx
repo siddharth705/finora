@@ -5,6 +5,7 @@ import {
 import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { usePreventScreenCapture } from 'expo-screen-capture';
+import { AnimatedNumber } from '../components/AnimatedNumber';
 import { Card, EmptyState, SectionHeading } from '../components/Card';
 import { SkeletonCard, SkeletonChart, SkeletonTransactionRow } from '../components/skeletons/Skeletons';
 import { DonutChart, type Slice } from '../components/charts/DonutChart';
@@ -196,10 +197,10 @@ export function DashboardScreen() {
 
   const kpis = summary
     ? [
-        { label: 'Total Balance', value: fmtCurrency(summary.currentBalance), delta: null as number | null, invert: false },
-        { label: 'Income', value: fmtCurrency(summary.monthlyIncome), delta: summary.incomeDeltaPct, invert: false },
-        { label: 'Expenses', value: fmtCurrency(summary.monthlyExpense), delta: summary.expenseDeltaPct, invert: true },
-        { label: 'Net Savings', value: fmtCurrency(summary.netCashFlow), delta: summary.netDeltaPct, invert: false },
+        { label: 'Total Balance', value: summary.currentBalance, delta: null as number | null, invert: false },
+        { label: 'Income', value: summary.monthlyIncome, delta: summary.incomeDeltaPct, invert: false },
+        { label: 'Expenses', value: summary.monthlyExpense, delta: summary.expenseDeltaPct, invert: true },
+        { label: 'Net Savings', value: summary.netCashFlow, delta: summary.netDeltaPct, invert: false },
       ]
     : [];
 
@@ -230,14 +231,23 @@ export function DashboardScreen() {
                   accessible
                   accessibilityLabel={
                     k.delta !== null && k.delta !== undefined
-                      ? `${k.label}: ${k.value}, ${k.delta >= 0 ? 'up' : 'down'} ${Math.abs(k.delta).toFixed(1)} percent ${deltaSpokenLabel}`
-                      : `${k.label}: ${k.value}`
+                      ? `${k.label}: ${fmtCurrency(k.value)}, ${k.delta >= 0 ? 'up' : 'down'} ${Math.abs(k.delta).toFixed(1)} percent ${deltaSpokenLabel}`
+                      : `${k.label}: ${fmtCurrency(k.value)}`
                   }
                 >
                   <Text style={[styles.kpiLabel, { color: c.muted }]}>{k.label}</Text>
-                  <Text style={[styles.kpiValue, { color: c.ink }]} numberOfLines={1} adjustsFontSizeToFit>
-                    {k.value}
-                  </Text>
+                  {/* AnimatedNumber renders on a non-editable TextInput (see its own doc comment),
+                      which has no adjustsFontSizeToFit equivalent -- the auto-shrink this line used
+                      to get for an overflowing value is traded for the transition. Accepted
+                      deliberately: fmtCurrency rounds to whole rupees and this card has headroom for
+                      realistic balances at this font size. Revisit if a real balance is ever reported
+                      clipping. numberOfLines={1}'s effect is preserved for free -- a non-multiline
+                      TextInput is already single-line. */}
+                  <AnimatedNumber
+                    testID={`kpi-${k.label}`}
+                    value={k.value}
+                    style={[styles.kpiValue, { color: c.ink }]}
+                  />
                   {k.delta !== null && k.delta !== undefined ? (
                     <Text
                       style={[
