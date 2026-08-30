@@ -234,6 +234,18 @@ jest.mock('expo-screen-capture', () => ({
   usePreventScreenCapture: jest.fn(),
 }));
 
+// expo-haptics is a native module with no JS implementation under the test runner -- same
+// posture as expo-screen-capture and expo-device above. Every haptic touchpoint in the app calls
+// through src/lib/haptics.ts, so stubbing the underlying three Expo APIs here is enough for both
+// haptics.test.ts and any screen test asserting a particular haptic fired.
+jest.mock('expo-haptics', () => ({
+  notificationAsync: jest.fn(async () => {}),
+  impactAsync: jest.fn(async () => {}),
+  selectionAsync: jest.fn(async () => {}),
+  NotificationFeedbackType: { Success: 'success', Warning: 'warning', Error: 'error' },
+  ImpactFeedbackStyle: { Light: 'light', Medium: 'medium', Heavy: 'heavy', Rigid: 'rigid', Soft: 'soft' },
+}));
+
 // Every test starts from a clean SecureStore/AsyncStorage so persistence assertions can't leak
 // between them.
 beforeEach(() => {
