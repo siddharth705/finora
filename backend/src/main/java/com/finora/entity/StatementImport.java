@@ -22,6 +22,44 @@ import java.util.UUID;
 @SQLRestriction("deleted_at IS NULL")
 public class StatementImport extends BaseEntity implements com.finora.imports.storage.StoredStatement {
 
+    /**
+     * Which account-balance branch this statement's own confirm actually took (Phase 4 of
+     * docs/proposals/statement-continuity-and-coverage-integrity-proposal.md, §0.6). Recorded once,
+     * at confirm time, by {@code ImportService.persistSection} -- the same three-way branch that
+     * already decides how {@code Account.balance} moves, echoed onto this row rather than
+     * recomputed later.
+     *
+     * <p>{@code StatementImportService.supersede} is the sole reader: when a statement is replaced
+     * by a later re-upload of the exact same period, this is what decides whether the superseded
+     * statement's continuing contribution to {@code Account.balance} needs to be reversed --
+     * {@code totalCredits}/{@code totalDebits} were never persisted here and {@code Transaction
+     * .amount} is editable after import, so re-running {@code ClosingBalanceGuard.assess} against
+     * this row at supersede time is not guaranteed to reproduce the original confirmation outcome.
+     * Recording the branch once, rather than reconstructing it, is the fix.
+     */
+    public enum BalanceApplicationMode {
+        /** {@code closingBalanceIsAuthoritative} was true: Account.balance was SET to this
+         *  statement's stated closing balance. Superseding it needs no reversal -- the replacement
+         *  statement's own confirm already set the balance again, on top of whatever this one
+         *  left behind. */
+        ABSOLUTE,
+        /** The stated closing balance was not authoritative, and this statement's rows moved the
+         *  balance by their net effect. That net effect is still sitting in Account.balance
+         *  (superseding does not delete these rows), so reversing it is exactly {@code
+         *  AccountBalanceConvention.netDelta} on this statement's own transactions, negated -- the
+         *  same reversal {@code StatementImportService.delete} already performs for the same
+         *  reason. */
+        ADDITIVE,
+        /** No rows were imported, so this statement never moved Account.balance at all. Nothing to
+         *  reverse. */
+        NONE,
+        /** This row predates the field (backfilled by V119) -- which branch its own confirm took
+         *  was never recorded. Superseding it applies no automatic reversal, since guessing wrong
+         *  would silently corrupt Account.balance; an administrator is warned to check by hand
+         *  instead. */
+        UNKNOWN_LEGACY
+    }
+
     @Column(name = "user_id", nullable = false)
     private UUID userId;
 
@@ -213,6 +251,15 @@ public class StatementImport extends BaseEntity implements com.finora.imports.st
     @Column(name = "import_job_id")
     private UUID importJobId;
 
+    /** Which OTHER statement replaced this one, or null while this statement is still active. See
+     *  {@link BalanceApplicationMode}'s class doc and {@code StatementImportService.supersede}. */
+    @Column(name = "superseded_by")
+    private UUID supersededBy;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "balance_application_mode", nullable = false, length = 20)
+    private BalanceApplicationMode balanceApplicationMode = BalanceApplicationMode.UNKNOWN_LEGACY;
+
     public UUID getUserId() { return userId; }
     public void setUserId(UUID userId) { this.userId = userId; }
     public UUID getAccountId() { return accountId; }
@@ -280,4 +327,8 @@ public class StatementImport extends BaseEntity implements com.finora.imports.st
     public void setTransactionsSkipped(int transactionsSkipped) { this.transactionsSkipped = transactionsSkipped; }
     public Instant getImportedAt() { return importedAt; }
     public void setImportedAt(Instant importedAt) { this.importedAt = importedAt; }
+    public UUID getSupersededBy() { return supersededBy; }
+    public void setSupersededBy(UUID supersededBy) { this.supersededBy = supersededBy; }
+    public BalanceApplicationMode getBalanceApplicationMode() { return balanceApplicationMode; }
+    public void setBalanceApplicationMode(BalanceApplicationMode balanceApplicationMode) { this.balanceApplicationMode = balanceApplicationMode; }
 }
