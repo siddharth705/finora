@@ -177,7 +177,13 @@ all** — "warnings fire on 2.3% of first-time imports" or "90% of imports skip 
 confidence engine, and they fall out of this field for free. Worth tracking in aggregate once V1 ships
 (this codebase already has a metrics convention for exactly this — e.g. `finora.worker.dead_letters`
 in the import pipeline), not a new feature, just making sure the data V1 already stores actually gets
-looked at.
+looked at. `NO_HOLDER_FOUND` and `SKIPPED_EXISTING_ACCOUNT` earn their place on that basis alone —
+they're analytics/debugging states, not something a user ever needs a name for.
+
+These fields (`extractedHolderName`, `ownershipMatchStatus`, `userConfirmedContinue`) are for
+debugging, analytics-quality investigation, and future product evaluation. **None of them are surfaced
+to end users in V1** — the only user-facing surface is the warning dialog itself (§3.1.4), which reads
+`ownershipMatchStatus` but never displays it.
 
 Nothing changes on `Account`. No new table, no new relationships. This is the entire schema footprint
 of V1: one new string field, one new enum, one new boolean, all nullable.
@@ -262,10 +268,10 @@ design it against, and until GA/bug-hunt priorities allow room for it.
   indefinitely? This is a real V1 question, not a Future one, since V1 itself introduces the retained
   field.
 - **Compliance framing.** This product's user base is Indian bank statements — the relevant regime is
-  India's DPDP Act (2023), not GDPR. Processing another individual's financial data inside a different
-  person's account, without that individual's consent, is exactly the kind of processing that regime is
-  concerned with. Not a blocker for V1's non-blocking scope, but worth explicit legal input before any
-  monetized feature (§5's household finance, in particular) is ever built on top of it.
+  India's DPDP Act (2023), not GDPR. Processing financial data relating to another individual may have
+  implications under that Act. Not a blocker for V1's non-blocking scope, but legal review is advisable
+  before building any future feature that explicitly models or monetizes multi-person financial
+  relationships (§5's household finance, in particular).
 
 ## 7. Estimated effort
 
