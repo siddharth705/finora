@@ -3,7 +3,7 @@ import { Dimensions, RefreshControl } from 'react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { DashboardScreen } from './DashboardScreen';
 import {
-  accountsApi, dashboardApi, goalsApi, insightsApi, reportsApi, transactionsApi, userApi,
+  accountsApi, budgetsApi, dashboardApi, goalsApi, insightsApi, reportsApi, transactionsApi, userApi,
 } from '../api/endpoints';
 import type { DashboardSummary } from '../types';
 
@@ -36,6 +36,7 @@ jest.mock('../api/endpoints', () => ({
   insightsApi: { get: jest.fn() },
   userApi: { get: jest.fn() },
   reportsApi: { availableMonths: jest.fn(), forMonth: jest.fn() },
+  budgetsApi: { list: jest.fn() },
 }));
 
 jest.mock('../context/AuthContext', () => ({
@@ -49,6 +50,7 @@ const goals = goalsApi as jest.Mocked<typeof goalsApi>;
 const insights = insightsApi as jest.Mocked<typeof insightsApi>;
 const user = userApi as jest.Mocked<typeof userApi>;
 const reports = reportsApi as jest.Mocked<typeof reportsApi>;
+const budgets = budgetsApi as jest.Mocked<typeof budgetsApi>;
 
 /**
  * A real summary for an account that has been imported but holds nothing -- every figure zero,
@@ -110,6 +112,11 @@ beforeEach(() => {
   user.get.mockResolvedValue({ timezone: 'Asia/Kolkata' } as never);
   reports.availableMonths.mockResolvedValue([]);
   reports.forMonth.mockResolvedValue({} as never);
+  // usePrefetchAdjacentScreens prefetches budgets unconditionally on every mount (see that hook's
+  // own file) -- without a default here, every test below it triggers React Query's own "Query
+  // data cannot be undefined" console.error for the ['budgets'] key, since the un-mocked jest.fn()
+  // resolves to undefined.
+  budgets.list.mockResolvedValue([]);
 });
 
 describe('when /dashboard/summary fails', () => {
@@ -445,5 +452,25 @@ describe('Recent Transactions error state', () => {
 
     expect(await screen.findByText(/Couldn't load your transactions/)).toBeTruthy();
     expect(screen.queryByText(/No transactions yet/i)).toBeNull();
+  });
+});
+
+describe('adjacent-screen prefetching', () => {
+  it('prefetches the Ledger, Budgets and latest Reports caches once summary loads', async () => {
+    dashboard.summary.mockResolvedValue(emptySummary());
+    reports.availableMonths.mockResolvedValue(['2026-08']);
+    reports.forMonth.mockResolvedValue({ month: '2026-08', income: 0, expense: 0, categories: [] });
+
+    renderScreen();
+
+    // Asserted via the mock call, not queryClient.getQueryData(['budgets']): this screen's test
+    // QueryClient uses gcTime: 0 (see renderScreen's own comment), and a prefetched query has no
+    // mounted useQuery observer, so it goes "inactive" -- and eligible for garbage collection --
+    // the instant it resolves. The prefetch demonstrably still ran and populated the cache
+    // correctly (confirmed manually during development), but the cache entry doesn't survive long
+    // enough for a read-back assertion here to reliably observe it.
+    await waitFor(() => expect(budgets.list).toHaveBeenCalled());
+    expect(transactions.search).toHaveBeenCalledWith({ page: 0, size: 20, sortField: 'date', sortDir: 'desc' });
+    await waitFor(() => expect(reports.forMonth).toHaveBeenCalledWith('2026-08'));
   });
 });

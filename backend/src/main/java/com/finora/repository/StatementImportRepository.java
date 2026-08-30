@@ -219,6 +219,13 @@ public interface StatementImportRepository extends JpaRepository<StatementImport
      *  (e.g. {@code accountRepository.findByUserId(userId)}) rather than re-deriving them here. */
     long countByUserIdAndAccountIdIn(UUID userId, java.util.Collection<UUID> accountIds);
 
+    /** {@code OwnershipMatchService}'s account-continuity signal (design doc §3.1 point 2): does
+     *  this account already have at least one prior statement import? Called before the new
+     *  statement's own row is saved, so there is nothing to exclude -- unlike {@code
+     *  countOtherStatementsForAccount} above, which excludes the statement being evaluated because
+     *  that row already exists by the time it's called. */
+    long countByUserIdAndAccountId(UUID userId, UUID accountId);
+
     /** Every statement import that carries credit-card summary fields -- {@code totalAmountDue} is
      *  null for a non-credit-card statement and populated whenever {@code
      *  CreditCardSummaryExtractor} found a payment-summary panel (see {@code StatementImport

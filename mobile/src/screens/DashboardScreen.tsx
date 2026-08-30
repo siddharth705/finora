@@ -14,6 +14,7 @@ import {
 } from '../api/endpoints';
 import { useAuth } from '../context/AuthContext';
 import { fmtCurrency, greeting, monthLabel } from '../lib/format';
+import { usePrefetchAdjacentScreens } from '../lib/prefetchAdjacentScreens';
 import { deriveRefreshing } from '../lib/refreshingIndicator';
 import { useLargeFontScale } from '../lib/useLargeFontScale';
 import { radius, spacing, useTheme } from '../theme';
@@ -38,6 +39,7 @@ export function DashboardScreen() {
   // all Android versions per expo-screen-capture's own platform notes; older iOS silently does
   // nothing rather than erroring, which is an acceptable degrade, not a broken state.
   usePreventScreenCapture();
+  usePrefetchAdjacentScreens();
   const c = useTheme();
   const largeText = useLargeFontScale();
   const insets = useSafeAreaInsets();
