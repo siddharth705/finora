@@ -33,11 +33,13 @@ data-ingestion gap, not an isolation bug. But it means Finora currently treats "
 account" and "this statement belongs to me" as the same fact, when they aren't.
 
 **The dominant real-world case is not malicious impersonation — it's an accidental wrong-file upload**
-(grabbing the wrong PDF from a shared Downloads folder). That case alone silently pollutes net worth,
-cash flow, spending trends, budgets, and any future AI-generated insight, with the product having no
-way to know it happened. A hard "holder name ≠ profile name" block is the wrong fix regardless: it
-would false-positive on every legitimate joint account, family-managed account, or accountant/business
-use case, none of which are exotic for a personal finance product. **This document scopes V1 to solve
+(grabbing the wrong PDF from a shared Downloads folder). This makes the problem a data-quality concern
+before it's a security one: an incorrect ownership assumption doesn't just mis-render one dialog, it
+silently pollutes net worth, cash flow, spending trends, budgeting, forecasting, and any future
+AI-generated insight built on top of the same accounts, with nothing in the product able to tell the
+difference. A hard "holder name ≠ profile name" block is the wrong fix regardless: it would
+false-positive on every legitimate joint account, family-managed account, or accountant/business use
+case, none of which are exotic for a personal finance product. **This document scopes V1 to solve
 exactly that one problem — the accidental upload — as narrowly as possible, and parks everything more
 ambitious for later rather than losing it.**
 
@@ -92,10 +94,23 @@ Deliberately narrow: a data-quality safeguard and a user-awareness nudge, nothin
 
 1. At the existing statement review step, compare the extracted `accountHolderName` against the
    logged-in user's profile name (`User.getFullName()`) using a new, small fuzzy-match utility.
+   **The extracted name is untrusted input, not ground truth** — §1 already calls it that, and it's
+   worth repeating right where the comparison is built: `PdfMetadataExtractor` has a documented history
+   of bank-specific extraction errors, so a "mismatch" can just as easily mean a parsing mistake as a
+   real ownership question. This is exactly why the result can only ever produce a non-blocking nudge,
+   never a block — treating extracted text as `Extracted Name == Truth` is the mistake to design against.
 2. **Skip the comparison entirely when this import already resolved to an existing account via an
    exact `ProductIdentity` match** (§2) — that continuity already vouches for the account being the
    same one imported before; re-running a name check on every routine monthly statement would be pure
    noise. This reads an already-computed result; it does not change account-matching logic.
+
+   **Tradeoff worth stating plainly: this assumes the first import was correct.** If an account's very
+   first statement was itself a mistaken upload, every subsequent statement for that same account will
+   match via `ProductIdentity` and skip the review forever — the mistake becomes permanently invisible
+   rather than merely unreviewed once. Acceptable for V1 (catching the wrong-file mistake on *a* later
+   import is still better than never), not fully solved by it. A future ownership-review enhancement
+   could periodically re-evaluate existing accounts rather than only checking on first sight; not
+   designed here, just flagged so the gap is a documented tradeoff, not a discovered one.
 3. **Multi-holder statements must be split before comparing, not compared as one string.**
    `PdfMetadataExtractor` (`imports/pdf/PdfMetadataExtractor.java`) populates `accountHolderName` as a
    single `String` at every extraction path today — confirmed by reading the extractor, not assumed. A
@@ -112,27 +127,43 @@ Deliberately narrow: a data-quality safeguard and a user-awareness nudge, nothin
    Statement Holder:   Sunil Verma
    Finora Profile:     Rahul Sharma
 
-   We couldn't verify that this statement belongs to your Finora profile. If you're managing finances
-   for a family member, business, or joint account, you can continue — just make sure you're
-   authorized to manage this account.
+   The statement holder name differs from your Finora profile name. If you're managing finances for
+   a family member or joint account, you can continue — just make sure you're authorized to manage
+   this account.
 
    [ Continue Import ]   [ Upload Different Statement ]
    ```
 
+   Deliberately avoids "verify"/"couldn't verify" — per §1's design principle, Finora isn't verifying
+   anything here, and that word implies a capability the product doesn't have. Deliberately drops
+   "business" from the example relationships too: V1 makes no business-specific accommodation (that's
+   §5), so naming it in the copy would imply support that isn't actually there.
+
 5. **On a strong match, or no extractable holder name:** no change to today's flow at all. This must
    not add a click, a delay, or any visible change to the common case.
-6. Record what happened either way (§3.2) — not just when the warning fires, but that the check ran.
+6. Record what happened either way (§3.2) — not just *that* a warning fired, but *why* it did or
+   didn't, so a support investigation months later doesn't start from nothing.
 
 ### 3.2 Data model (V1 only)
 
 ```
 StatementImport
   + extractedHolderName     string, nullable — snapshot of what PdfMetadataExtractor saw at THIS import
-  + ownershipWarningShown   boolean
-  + userConfirmedContinue   boolean, nullable — null when the warning never fired
+  + ownershipMatchStatus    enum, nullable:
+                               MATCH                  — strong name similarity, no warning shown
+                               MISMATCH               — low similarity, warning shown (§3.1.4)
+                               NO_HOLDER_FOUND         — extraction found no holder name to compare
+                               SKIPPED_EXISTING_ACCOUNT — resolved via exact ProductIdentity match (§3.1.2)
+  + userConfirmedContinue   boolean, nullable — only meaningful when status = MISMATCH
 ```
 
-Nothing changes on `Account`. No new table. No enum. This is the entire schema footprint of V1.
+A bare `ownershipWarningShown` boolean would only ever answer "did a warning appear" — a later "why
+didn't a warning appear on this import" question would have no answer beyond re-deriving it from
+scratch. `ownershipMatchStatus` costs nothing extra to capture (it's a byproduct of the one comparison
+already being made) and answers both directions.
+
+Nothing changes on `Account`. No new table, no new relationships. This is the entire schema footprint
+of V1.
 
 ### 3.3 Explicit V1 non-goals
 
