@@ -328,6 +328,46 @@ export interface AccountDto {
   status: string;
 }
 
+// Phase 1 of docs/proposals/statement-continuity-and-coverage-integrity-proposal.md.
+// coverageStatus is a display convenience only -- render off the boolean flags, which are the
+// authoritative contract (that document's §0.24).
+export interface CoverageSegmentDto {
+  statementImportId: string;
+  periodStart: string;
+  periodEnd: string;
+  classification: 'STANDARD' | 'NON_STANDARD_PERIOD';
+}
+
+export interface CoverageGapDto {
+  gapStart: string;
+  gapEnd: string;
+  daysMissing: number;
+  delta: number | null;
+}
+
+export interface CoverageOverlapDto {
+  segmentAId: string;
+  segmentBId: string;
+  overlapStart: string;
+  overlapEnd: string;
+  type: 'EXACT_DUPLICATE' | 'PARTIAL';
+}
+
+export interface CoverageDto {
+  accountId: string;
+  coverageStatus: string;
+  coveredDays: number;
+  missingDays: number;
+  coveragePercentage: number | null;
+  hasGaps: boolean;
+  hasOverlaps: boolean;
+  hasNonStandardPeriods: boolean;
+  hasDuplicatePeriods: boolean;
+  segments: CoverageSegmentDto[];
+  gaps: CoverageGapDto[];
+  overlaps: CoverageOverlapDto[];
+}
+
 export interface CreateAccountRequest {
   name: string;
   accountType: string;
