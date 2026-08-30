@@ -1,9 +1,10 @@
 import { useMemo, useState } from 'react';
 import {
-  ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View,
+  Pressable, RefreshControl, ScrollView, StyleSheet, Text, View,
 } from 'react-native';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Card, EmptyState, SectionHeading } from '../components/Card';
+import { SkeletonCard } from '../components/skeletons/Skeletons';
 import { OptionPickerModal } from '../components/OptionPickerModal';
 import { ProgressBar } from '../components/ProgressBar';
 import { reportsApi } from '../api/endpoints';
@@ -69,9 +70,15 @@ export function ReportsScreen() {
 
   if (monthsLoading) {
     return (
-      <View style={[styles.centered, { backgroundColor: c.bg }]}>
-        <ActivityIndicator size="large" color={c.primary} />
-      </View>
+      <ScrollView style={{ backgroundColor: c.bg }} contentContainerStyle={styles.content}>
+        <SkeletonCard lines={2} />
+        <View style={styles.totals}>
+          <SkeletonCard style={styles.totalCard} lines={1} />
+          <SkeletonCard style={styles.totalCard} lines={1} />
+          <SkeletonCard style={styles.totalCard} lines={1} />
+        </View>
+        <SkeletonCard style={styles.section} lines={4} />
+      </ScrollView>
     );
   }
 
@@ -148,7 +155,14 @@ export function ReportsScreen() {
       </Card>
 
       {reportLoading ? (
-        <ActivityIndicator style={styles.inlineLoader} color={c.primary} />
+        <>
+          <View style={styles.totals}>
+            <SkeletonCard style={styles.totalCard} lines={1} />
+            <SkeletonCard style={styles.totalCard} lines={1} />
+            <SkeletonCard style={styles.totalCard} lines={1} />
+          </View>
+          <SkeletonCard style={styles.section} lines={4} />
+        </>
       ) : reportError || !report ? (
         <Card style={styles.section}>
           <Text style={[styles.error, { color: c.danger }]}>
@@ -261,7 +275,6 @@ const styles = StyleSheet.create({
   exportText: { fontSize: 13, fontWeight: '600' },
   disabled: { opacity: 0.5 },
   error: { fontSize: 13, marginTop: spacing.sm },
-  inlineLoader: { marginTop: spacing.lg },
   totals: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.md },
   totalCard: { flex: 1, paddingHorizontal: spacing.sm },
   totalLabel: { fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.5 },
