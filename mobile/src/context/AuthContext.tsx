@@ -3,6 +3,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { authApi } from '../api/endpoints';
 import { setSessionCallbacks } from '../api/client';
 import { safeStorage } from '../lib/safeStorage';
+import { signOutOfGoogle } from '../lib/googleSession';
 
 /**
  * Ported from frontend/src/context/AuthContext.tsx -- same state shape, same method contracts.
@@ -116,6 +117,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setFullName(null);
     setPhoneVerifiedState(false);
     queryClient.clear();
+    // The Google session goes with it, for the same reason and at the same point as the cache: a
+    // credential the SDK still holds lets the next person press "Sign in with Google" and land in
+    // the previous person's account without a picker ever appearing. Fire-and-forget -- the local
+    // state above must not wait on a native call, and signOutOfGoogle never rejects.
+    void signOutOfGoogle();
   }, [queryClient]);
 
   // The API client can't import navigation or this context (it's imported BY both), so it calls
