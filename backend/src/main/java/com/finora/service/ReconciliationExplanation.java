@@ -47,13 +47,25 @@ final class ReconciliationExplanation {
      * true — they are recorded anyway rather than left implied, because "which fields had to match"
      * is exactly what someone disputing a duplicate needs to see, and because the key's definition
      * has changed before (see {@code duplicateKey}'s own comment on scale and null handling).
+     *
+     * @param sameBalance         whether this row's running balance also matched the original's --
+     *                            only true when {@code ReconciliationService.splitByDiscriminator}
+     *                            needed the account+date+amount+description group split by balance
+     *                            to reach this pairing (most same-day duplicates never need it, so
+     *                            this is {@code false} far more often than not) — omitted from the
+     *                            evidence entirely rather than recorded {@code false}, since "not
+     *                            checked" and "checked and different" are not the same fact and a
+     *                            reviewer should not read the absence of one signal as the other
+     * @param sameReferenceNumber same reasoning, for the reference-number fallback discriminator
      */
-    static Map<String, Object> duplicate(UUID originalId) {
+    static Map<String, Object> duplicate(UUID originalId, boolean sameBalance, boolean sameReferenceNumber) {
         Map<String, Object> reason = new LinkedHashMap<>();
         reason.put("sameAccount", true);
         reason.put("sameDate", true);
         reason.put("sameAmount", true);
         reason.put("sameDescription", true);
+        if (sameBalance) reason.put("sameBalance", true);
+        if (sameReferenceNumber) reason.put("sameReferenceNumber", true);
         return envelope("DUPLICATE", originalId, reason);
     }
 
@@ -120,6 +132,23 @@ final class ReconciliationExplanation {
         reason.put("purchaseAmount", purchase.getAmount().toPlainString());
         reason.put("partialReversal", income.getAmount().compareTo(purchase.getAmount()) < 0);
         return envelope("REVERSAL", purchase.getId(), reason);
+    }
+
+    /**
+     * Why this expense was excluded from spend totals as money moving into savings/investment
+     * rather than consumption. {@link CategoryRules}'s existing "Investments" category (Groww,
+     * Zerodha, mutual fund, SIP, ...) is the only signal here -- unlike every other explanation in
+     * this class, there is no counterpart transaction to name: the real-world pattern this covers
+     * (a UPI payment to an external broker) has no matching "money arrived" row anywhere in Finora,
+     * since the user never imports the broker's own statement. No confidence to score either, for
+     * the same reason -- there is nothing to score a pairing against, the same "deterministic, no
+     * scored confidence" precedent {@code CategoryRules}-based merchant normalization already set.
+     */
+    static Map<String, Object> investmentTransfer(Transaction t) {
+        Map<String, Object> reason = new LinkedHashMap<>();
+        reason.put("category", "Investments");
+        reason.put("amount", t.getAmount().toPlainString());
+        return envelope("INVESTMENT_TRANSFER", null, reason);
     }
 
     private static Map<String, Object> envelope(String type, UUID matchedTransaction,

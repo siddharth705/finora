@@ -77,6 +77,26 @@ class ReportServiceTest {
     }
 
     @Test
+    void forMonth_excludesInvestmentTransferFromTheExpenseTotal_butKeepsItInTheCategoryBreakdown() {
+        // Top-line-only exclusion (RefundNetting.excludingInvestmentTransfers): a SIP is not real
+        // spend and must not inflate the month's expense total, but it's still a real, budgetable
+        // category -- it must not vanish from the report's own category table.
+        Transaction groceries = txn(new BigDecimal("2000.00"), Transaction.Type.EXPENSE, Transaction.ReconciliationStatus.OK);
+        Transaction sip = txn(new BigDecimal("3000.00"), Transaction.Type.EXPENSE, Transaction.ReconciliationStatus.INVESTMENT_TRANSFER);
+
+        when(transactionRepository.findByUserIdAndTxnDateBetweenAndAccountIdIn(any(), any(), any(), any()))
+                .thenReturn(List.of(groceries, sip));
+
+        ReportDto report = reportService.forMonth(userId, "2026-07");
+
+        assertThat(report.expense()).isEqualByComparingTo("2000.00");
+        BigDecimal categoryTotal = report.categories().stream()
+                .map(ReportDto.CategoryAmount::amount)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        assertThat(categoryTotal).isEqualByComparingTo("5000.00");
+    }
+
+    @Test
     void forMonth_stillIncludesOrdinaryIncome() {
         Transaction salary = txn(new BigDecimal("50000.00"), Transaction.Type.INCOME, Transaction.ReconciliationStatus.OK);
 
