@@ -25,6 +25,7 @@
     "expo-device": "~57.0.1",
     "expo-document-picker": "~57.0.1",
     "expo-file-system": "~57.0.1",
+    "expo-haptics": "~57.0.2",
     "expo-local-authentication": "~57.0.2",
     "expo-print": "~57.0.1",
     "expo-screen-capture": "~57.0.2",
