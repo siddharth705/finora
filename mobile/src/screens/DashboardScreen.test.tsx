@@ -36,6 +36,7 @@ jest.mock('../api/endpoints', () => ({
   insightsApi: { get: jest.fn() },
   userApi: { get: jest.fn() },
   reportsApi: { availableMonths: jest.fn(), forMonth: jest.fn() },
+  budgetsApi: { list: jest.fn() },
 }));
 
 jest.mock('../context/AuthContext', () => ({
@@ -445,5 +446,26 @@ describe('Recent Transactions error state', () => {
 
     expect(await screen.findByText(/Couldn't load your transactions/)).toBeTruthy();
     expect(screen.queryByText(/No transactions yet/i)).toBeNull();
+  });
+});
+
+describe('adjacent-screen prefetching', () => {
+  it('prefetches the Ledger, Budgets and latest Reports caches once summary loads', async () => {
+    dashboard.summary.mockResolvedValue(emptySummary());
+    reports.availableMonths.mockResolvedValue(['2026-08']);
+    reports.forMonth.mockResolvedValue({ month: '2026-08', income: 0, expense: 0, categories: [] });
+    const budgetsMock = (require('../api/endpoints').budgetsApi.list as jest.Mock).mockResolvedValue([]);
+
+    renderScreen();
+
+    // Asserted via the mock call, not queryClient.getQueryData(['budgets']): this screen's test
+    // QueryClient uses gcTime: 0 (see renderScreen's own comment), and a prefetched query has no
+    // mounted useQuery observer, so it goes "inactive" -- and eligible for garbage collection --
+    // the instant it resolves. The prefetch demonstrably still ran and populated the cache
+    // correctly (confirmed manually during development), but the cache entry doesn't survive long
+    // enough for a read-back assertion here to reliably observe it.
+    await waitFor(() => expect(budgetsMock).toHaveBeenCalled());
+    expect(transactions.search).toHaveBeenCalledWith({ page: 0, size: 20, sortField: 'date', sortDir: 'desc' });
+    await waitFor(() => expect(reports.forMonth).toHaveBeenCalledWith('2026-08'));
   });
 });
