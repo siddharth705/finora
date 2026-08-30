@@ -3,6 +3,7 @@ import {
   Pressable, RefreshControl, ScrollView, StyleSheet, Text, View,
 } from 'react-native';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { AnimatedNumber } from '../components/AnimatedNumber';
 import { Button } from '../components/Button';
 import { Card, EmptyState } from '../components/Card';
 import { SkeletonBudgetCard } from '../components/skeletons/Skeletons';
@@ -160,9 +161,11 @@ export function BudgetsScreen() {
                     <Text style={[styles.budgetName, { color: c.ink }]} numberOfLines={1}>
                       {b.categoryName}
                     </Text>
-                    <Text style={[styles.budgetAmounts, { color: c.muted }]}>
-                      {fmtCurrency(b.spentThisMonth)} / {fmtCurrency(b.monthlyLimit)}
-                    </Text>
+                    <View style={styles.budgetAmountsRow}>
+                      <AnimatedNumber value={b.spentThisMonth} style={[styles.budgetAmounts, { color: c.muted }]} />
+                      <Text style={[styles.budgetAmounts, { color: c.muted }]}> / </Text>
+                      <AnimatedNumber value={b.monthlyLimit} style={[styles.budgetAmounts, { color: c.muted }]} />
+                    </View>
                   </View>
                   <ProgressBar pct={pct} color={barColor} />
                   <Text style={[styles.budgetFoot, { color: remaining >= 0 ? c.muted : c.danger }]}>
@@ -219,6 +222,7 @@ const styles = StyleSheet.create({
     marginBottom: spacing.sm,
   },
   budgetName: { fontSize: 14, fontWeight: '600', flex: 1, marginRight: spacing.sm },
+  budgetAmountsRow: { flexDirection: 'row', alignItems: 'baseline' },
   budgetAmounts: { fontSize: 12 },
   budgetFoot: { fontSize: 11, marginTop: 6 },
 });
