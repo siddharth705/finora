@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { LedgerScreen } from './LedgerScreen';
+import { DEFAULT_LEDGER_FILTERS, LEDGER_PAGE_SIZE, LedgerScreen, getLedgerNextPageParam } from './LedgerScreen';
 import { transactionsApi } from '../api/endpoints';
 import type { Transaction } from '../types';
 
@@ -176,5 +176,23 @@ describe('skeleton loading', () => {
     expect(screen.queryByTestId('ledger-list')).toBeNull();
 
     await act(async () => resolveSearch(page([])));
+  });
+});
+
+describe('DEFAULT_LEDGER_FILTERS export (for Dashboard prefetch)', () => {
+  it('matches exactly what a fresh mount searches with', async () => {
+    transactions.search.mockResolvedValue(page([]) as never);
+
+    renderScreen();
+
+    await screen.findByText(/No transactions yet/i);
+    expect(transactions.search).toHaveBeenCalledWith({ ...DEFAULT_LEDGER_FILTERS, page: 0 });
+  });
+
+  it('exposes the page size and pagination cursor logic LedgerScreen itself uses', () => {
+    expect(LEDGER_PAGE_SIZE).toBe(20);
+    expect(DEFAULT_LEDGER_FILTERS).toEqual({ size: 20, sortField: 'date', sortDir: 'desc' });
+    expect(getLedgerNextPageParam({ content: [], page: 0, size: 20, totalElements: 40, totalPages: 2 })).toBe(1);
+    expect(getLedgerNextPageParam({ content: [], page: 1, size: 20, totalElements: 40, totalPages: 2 })).toBeUndefined();
   });
 });
