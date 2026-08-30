@@ -1,7 +1,7 @@
 import {
-  CASHFLOW_PAD_TOP, CASHFLOW_PLOT_HEIGHT, DONUT_CENTER, DONUT_RADIUS, DONUT_SIZE, DONUT_STROKE,
+  CASHFLOW_PAD_TOP, CASHFLOW_PLOT_HEIGHT, DONUT_CENTER, DONUT_CIRCUMFERENCE, DONUT_RADIUS, DONUT_SIZE, DONUT_STROKE,
   TREND_PAD_TOP, TREND_PLOT_HEIGHT,
-  arcPath, buildArcs, cashFlowScale, pointOnCircle, trendScale,
+  arcLength, arcPath, buildArcs, cashFlowScale, pointOnCircle, polylineLength, trendScale,
 } from './chartGeometry';
 
 describe('donut geometry', () => {
@@ -170,5 +170,28 @@ describe('net worth trend scale', () => {
     const { xAt, yAt } = trendScale([], WIDTH);
     expect(Number.isFinite(xAt(0))).toBe(true);
     expect(Number.isFinite(yAt(0))).toBe(true);
+  });
+});
+
+describe('chart reveal geometry', () => {
+  it('measures a quarter-circle arc as a quarter of the circumference', () => {
+    expect(arcLength(90)).toBeCloseTo((Math.PI * DONUT_RADIUS) / 2);
+  });
+
+  it('measures a full sweep as the exact circumference', () => {
+    expect(arcLength(360)).toBeCloseTo(2 * Math.PI * DONUT_RADIUS);
+    expect(DONUT_CIRCUMFERENCE).toBeCloseTo(2 * Math.PI * DONUT_RADIUS);
+  });
+
+  it('measures a right-triangle polyline by straight-line distance, not by bounding box', () => {
+    // (0,0) -> (3,0) -> (3,4): legs of 3 and 4, so 3 + 4 = 7 -- not the diagonal (5) and not the
+    // sum of both axes' extents guessed independently.
+    const length = polylineLength([{ x: 0, y: 0 }, { x: 3, y: 0 }, { x: 3, y: 4 }]);
+    expect(length).toBeCloseTo(7);
+  });
+
+  it('is zero for a single point or an empty series -- nothing to draw, nothing to animate', () => {
+    expect(polylineLength([])).toBe(0);
+    expect(polylineLength([{ x: 10, y: 10 }])).toBe(0);
   });
 });

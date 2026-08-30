@@ -65,6 +65,34 @@ export function buildArcs(slices: { label: string; value: number }[]): ArcSlice[
     });
 }
 
+export const DONUT_CIRCUMFERENCE = 2 * Math.PI * DONUT_RADIUS;
+
+/**
+ * Arc length in px for a slice of the donut's fixed radius, given its sweep in degrees --
+ * used to size a progressive draw-in's strokeDasharray/strokeDashoffset pair to exactly this
+ * slice's own length, so slices don't visually overlap mid-animation. Exact, not approximated:
+ * DONUT_RADIUS is constant and every slice is a true circular arc.
+ */
+export function arcLength(sweepDegrees: number): number {
+  return DONUT_RADIUS * ((sweepDegrees * Math.PI) / 180);
+}
+
+/**
+ * Cumulative straight-line length through a polyline's points -- the line-chart counterpart to
+ * arcLength, sizing the same strokeDasharray/strokeDashoffset draw-in technique for
+ * CashFlowChart's and TrendChart's polylines. Zero for zero or one points: there is nothing to
+ * draw, so nothing to animate.
+ */
+export function polylineLength(points: { x: number; y: number }[]): number {
+  let total = 0;
+  for (let i = 1; i < points.length; i++) {
+    const dx = points[i].x - points[i - 1].x;
+    const dy = points[i].y - points[i - 1].y;
+    total += Math.sqrt(dx * dx + dy * dy);
+  }
+  return total;
+}
+
 export const CASHFLOW_HEIGHT = 150;
 export const CASHFLOW_PAD_TOP = 8;
 const CASHFLOW_PAD_BOTTOM = 22;
