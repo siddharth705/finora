@@ -138,7 +138,10 @@ class StatementImportServiceReimportIntegrityTest {
 
         ConfirmResponse result = service.confirmReimport(userId, statementImportId, request);
 
-        assertThat(result).isSameAs(expected);
+        // Value equality, not isSameAs: confirmReimport now always reconstructs the response via
+        // ConfirmResponse.withWarnings (see confirmReimport_stripsTheDuplicatePeriodWarning... below
+        // for why), so it's never literally the same object -- but must carry the same values.
+        assertThat(result).isEqualTo(expected);
         verify(importService).confirm(eq(userId), eq("hdfc_statement.csv"), any(byte[].class), argThat(scoped ->
                 scoped.rows().equals(List.of(echoed)) && scoped.existingAccountId().equals(accountId)));
     }
@@ -233,8 +236,47 @@ class StatementImportServiceReimportIntegrityTest {
 
         ConfirmResponse result = service.confirmReimport(userId, statementImportId, request);
 
-        assertThat(result).isSameAs(expected);
+        // Value equality, not isSameAs: confirmReimport now always reconstructs the response via
+        // ConfirmResponse.withWarnings (see confirmReimport_stripsTheDuplicatePeriodWarning... below
+        // for why), so it's never literally the same object -- but must carry the same values.
+        assertThat(result).isEqualTo(expected);
         verify(importService).parseAndStageAnyFormat(eq(userId), eq("PDF"), eq("sbi_statement.pdf"), any(),
                 eq((Integer) null), eq("AAAA1234"));
+    }
+
+    /**
+     * BUG found via self-review: {@link ImportService#confirm} always creates a genuinely new
+     * {@code StatementImport} row for a reimport-confirm, same period as {@code original} -- which
+     * {@code confirmReimport} never deletes (see this class's own confirmReimport comment, and this
+     * proposal's own §0.3: statement supersession is a real, separate gap, not fixed until Phase 4).
+     * So the moment {@code CoverageWarnings} shipped, every reimport started tripping its own
+     * exact-duplicate-period detection against the very statement it was correcting -- confusing,
+     * since the user's action just succeeded. Confirmed the fix strips exactly that warning by its
+     * known prefix, and only that one -- an unrelated warning must survive untouched.
+     */
+    @Test
+    void confirmReimport_stripsTheDuplicatePeriodWarningAgainstTheStatementBeingReimported() throws Exception {
+        mockFreshParseReturns(GENUINE_ROW);
+        ConfirmedRow echoed = confirming(GENUINE_ROW);
+        ConfirmRequest request = new ConfirmRequest(null, List.of(echoed), null, null, null, null, null);
+
+        ConfirmResponse expected = new ConfirmResponse(1, 0, 0, 0, 0, List.of(), java.util.Map.of(),
+                java.util.Map.of(),
+                List.of(com.finora.imports.CoverageWarnings.DUPLICATE_PERIOD_WARNING_PREFIX
+                                + ", imported on 2026-08-01. Replacing an existing statement isn't supported yet.",
+                        "This account's balance was updated from the imported transactions rather than from "
+                                + "the statement's stated closing balance: unrelated reason"),
+                null, BigDecimal.ZERO, new BigDecimal("150.00"), null, null, null, null, 0L, "CSV");
+        when(importService.confirm(eq(userId), eq("hdfc_statement.csv"), any(byte[].class), any(ConfirmRequest.class)))
+                .thenReturn(expected);
+
+        ConfirmResponse result = service.confirmReimport(userId, statementImportId, request);
+
+        assertThat(result.warnings())
+                .as("the duplicate-period notice against the statement being reimported must be stripped")
+                .noneMatch(w -> w.startsWith(com.finora.imports.CoverageWarnings.DUPLICATE_PERIOD_WARNING_PREFIX));
+        assertThat(result.warnings())
+                .as("an unrelated warning on the same response must survive untouched")
+                .anyMatch(w -> w.contains("unrelated reason"));
     }
 }
