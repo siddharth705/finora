@@ -106,8 +106,7 @@ class CoverageWarningsTest {
         assertThat(warnings).hasSize(1);
         assertThat(warnings.get(0))
                 .contains("You already have a statement for this period")
-                .contains("2026-06-15")
-                .contains("Replacing an existing statement isn't supported yet");
+                .contains("2026-06-15");
     }
 
     @Test
@@ -122,7 +121,7 @@ class CoverageWarningsTest {
                 LocalDate.of(2026, 6, 1), LocalDate.of(2026, 6, 30), Map.of());
 
         assertThat(warnings).hasSize(1);
-        assertThat(warnings.get(0)).contains("Replacing an existing statement isn't supported yet");
+        assertThat(warnings.get(0)).contains("You already have a statement for this period");
     }
 
     @Test
@@ -171,5 +170,64 @@ class CoverageWarningsTest {
                 LocalDate.of(2026, 6, 1), LocalDate.of(2026, 6, 30), Map.of());
 
         assertThat(warnings).hasSize(2);
+    }
+
+    // --- duplicateOfStatementId: Phase 4's "Import this one as a replacement?" (§0.3/§0.23) needs
+    // the ORIGINAL statement's id, not just prose, to know what to supersede. A separate method
+    // rather than folding this into forNewStatement's return -- that shape is exercised by every
+    // test above and by ImportService's one call site; this keeps both unchanged. ---
+
+    @Test
+    @DisplayName("duplicateOfStatementId returns the OTHER statement's id when the new one is an exact duplicate")
+    void duplicateOfStatementId_returnsTheOtherStatementsId() {
+        CoverageOverlap dup = new CoverageOverlap(NEW_ID, OTHER_ID,
+                LocalDate.of(2026, 6, 1), LocalDate.of(2026, 6, 30), OverlapType.EXACT_DUPLICATE);
+        CoverageReport report = new CoverageReport(List.of(), List.of(), List.of(dup),
+                30, 0, 100.0, false, true, false, true);
+
+        assertThat(CoverageWarnings.duplicateOfStatementId(report, NEW_ID)).isEqualTo(OTHER_ID);
+    }
+
+    @Test
+    @DisplayName("duplicateOfStatementId finds the new statement on either side of the overlap")
+    void duplicateOfStatementId_findsTheNewStatementOnEitherSide() {
+        CoverageOverlap dup = new CoverageOverlap(OTHER_ID, NEW_ID,
+                LocalDate.of(2026, 6, 1), LocalDate.of(2026, 6, 30), OverlapType.EXACT_DUPLICATE);
+        CoverageReport report = new CoverageReport(List.of(), List.of(), List.of(dup),
+                30, 0, 100.0, false, true, false, true);
+
+        assertThat(CoverageWarnings.duplicateOfStatementId(report, NEW_ID)).isEqualTo(OTHER_ID);
+    }
+
+    @Test
+    @DisplayName("duplicateOfStatementId is null when there is no exact-duplicate overlap involving the new statement")
+    void duplicateOfStatementId_null_whenNoDuplicateInvolvesTheNewStatement() {
+        CoverageReport report = new CoverageReport(List.of(), List.of(), List.of(), 30, 0, 100.0, false, false, false, false);
+
+        assertThat(CoverageWarnings.duplicateOfStatementId(report, NEW_ID)).isNull();
+    }
+
+    @Test
+    @DisplayName("duplicateOfStatementId ignores a PARTIAL overlap -- only EXACT_DUPLICATE qualifies")
+    void duplicateOfStatementId_null_forAPartialOverlap() {
+        CoverageOverlap partial = new CoverageOverlap(NEW_ID, OTHER_ID,
+                LocalDate.of(2026, 6, 15), LocalDate.of(2026, 6, 30), OverlapType.PARTIAL);
+        CoverageReport report = new CoverageReport(List.of(), List.of(), List.of(partial),
+                30, 0, 100.0, false, true, false, false);
+
+        assertThat(CoverageWarnings.duplicateOfStatementId(report, NEW_ID)).isNull();
+    }
+
+    @Test
+    @DisplayName("duplicateOfStatementId ignores a duplicate elsewhere on the account that doesn't involve the new statement")
+    void duplicateOfStatementId_null_forADuplicateNotInvolvingTheNewStatement() {
+        UUID unrelatedA = UUID.randomUUID();
+        UUID unrelatedB = UUID.randomUUID();
+        CoverageOverlap dup = new CoverageOverlap(unrelatedA, unrelatedB,
+                LocalDate.of(2026, 3, 1), LocalDate.of(2026, 3, 31), OverlapType.EXACT_DUPLICATE);
+        CoverageReport report = new CoverageReport(List.of(), List.of(), List.of(dup),
+                31, 0, 100.0, false, true, false, true);
+
+        assertThat(CoverageWarnings.duplicateOfStatementId(report, NEW_ID)).isNull();
     }
 }

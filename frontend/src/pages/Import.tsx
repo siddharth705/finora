@@ -26,7 +26,7 @@ import {
 import { toNewAccountPayload } from '../lib/newAccountPayload';
 import { ConfirmDialog } from '../design-system';
 import type { ImportNavState } from '../lib/importNavState';
-import type { Account, DetectedAccountInfo, VerificationReport, ImportSummary, StagedAccountSection, StagedRow, UnparseableRow } from '../types';
+import type { Account, DetectedAccountInfo, VerificationReport, ImportSummary, StagedAccountSection, StagedRow, SupersedeResult, UnparseableRow } from '../types';
 import { formatDate, formatDateDDMMMYYYY } from '../utils/date';
 
 type Step = 'upload' | 'review' | 'summary';
@@ -1599,6 +1599,30 @@ function ImportSummaryScreen({
   const periodStart = summary.statementPeriodStart ? formatDate(summary.statementPeriodStart) : null;
   const periodEnd = summary.statementPeriodEnd ? formatDate(summary.statementPeriodEnd) : null;
   const durationLabel = summary.importDurationMs < 1000 ? `${summary.importDurationMs} ms` : `${(summary.importDurationMs / 1000).toFixed(1)} s`;
+
+  // Phase 4 of the statement continuity proposal (§0.3/§0.23): "Import this one as a
+  // replacement?" -- offered only when this confirm's own period exactly duplicated an existing
+  // statement (summary.duplicateOfStatementId), extending the plain notice CoverageWarnings
+  // already renders above into a real action.
+  const [confirmingSupersede, setConfirmingSupersede] = useState(false);
+  const [supersedeStatus, setSupersedeStatus] = useState<'idle' | 'loading' | 'error'>('idle');
+  const [supersedeResult, setSupersedeResult] = useState<SupersedeResult | null>(null);
+  const [supersedeError, setSupersedeError] = useState<string | null>(null);
+
+  async function confirmSupersede() {
+    if (!summary.duplicateOfStatementId) return;
+    setConfirmingSupersede(false);
+    setSupersedeStatus('loading');
+    setSupersedeError(null);
+    try {
+      const result = await statementImportsApi.supersede(summary.duplicateOfStatementId, summary.statementImportId);
+      setSupersedeResult(result);
+      setSupersedeStatus('idle');
+    } catch (e: any) {
+      setSupersedeStatus('error');
+      setSupersedeError(e.response?.data?.message ?? 'Could not replace the existing statement.');
+    }
+  }
   return (
     <div className="bg-card rounded-xl2 shadow-card border border-border p-6 max-w-xl">
       <div className="flex items-center gap-3 mb-5">
@@ -1686,7 +1710,40 @@ function ImportSummaryScreen({
               <AlertTriangle size={13} className="text-warning flex-shrink-0 mt-0.5" /> {w}
             </p>
           ))}
+          {/* Phase 4 (§0.3/§0.23): extends the plain duplicate-period notice above into a real
+              action, once one fired for this import. */}
+          {summary.duplicateOfStatementId && !supersedeResult && (
+            <button
+              onClick={() => setConfirmingSupersede(true)}
+              disabled={supersedeStatus === 'loading'}
+              className="mt-2 text-xs font-semibold text-warning underline disabled:opacity-50"
+            >
+              {supersedeStatus === 'loading' ? 'Replacing…' : 'Import this one as a replacement?'}
+            </button>
+          )}
+          {supersedeError && (
+            <p className="text-xs text-danger mt-2">{supersedeError}</p>
+          )}
+          {supersedeResult && (
+            <p className="text-xs text-ink mt-2 flex items-start gap-2">
+              <CheckCircle2 size={13} className="text-success flex-shrink-0 mt-0.5" />
+              <span>
+                The existing statement has been replaced.
+                {supersedeResult.warning && ` ${supersedeResult.warning}`}
+              </span>
+            </p>
+          )}
         </div>
+      )}
+
+      {confirmingSupersede && (
+        <ConfirmDialog
+          title="Import this one as a replacement?"
+          message="The existing statement for this period will stop counting toward your balance, coverage, and insights. It stays in your Statement History — nothing is deleted."
+          confirmLabel="Replace"
+          onConfirm={confirmSupersede}
+          onCancel={() => setConfirmingSupersede(false)}
+        />
       )}
 
       <div className="flex gap-3">

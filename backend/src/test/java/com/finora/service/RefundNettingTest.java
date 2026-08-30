@@ -187,6 +187,20 @@ class RefundNettingTest {
     }
 
     @Test
+    @DisplayName("Phase 4: a SUPERSEDED row (its own statement was replaced) is excluded, like a transfer")
+    void supersededRowsAreExcluded() {
+        // proposal §0.6: "only the active (non-superseded) statement... participates in
+        // Account.balance, coverage, and Insights" -- the row itself is never deleted (see
+        // StatementImportService.supersede), only its reconciliationStatus changes, same
+        // precedent as INVESTMENT_TRANSFER.
+        Transaction superseded = expense(UUID.randomUUID(), "100.00");
+        superseded.setReconciliationStatus(Transaction.ReconciliationStatus.SUPERSEDED);
+        Transaction real = expense(UUID.randomUUID(), "100.00");
+
+        assertThat(RefundNetting.reportable(List.of(superseded, real))).containsExactly(real);
+    }
+
+    @Test
     @DisplayName("a CC_PAYMENT-settling payment is excluded like a transfer -- the charges it settles stay counted")
     void ccPaymentSettlementsAreExcludedButTheirChargesStay() {
         // Reconciliation-evolution-roadmap-proposal.md Part 4/10 "Net worth & cash flow,

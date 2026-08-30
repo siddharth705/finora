@@ -1231,6 +1231,25 @@ public class ImportService {
             }
         }
 
+        // Phase 4 of the coverage proposal (§0.6): record the branch just taken, not just its
+        // effect, so a future supersede decision can read what actually happened here instead of
+        // recomputing it -- see StatementImport.BalanceApplicationMode's own doc comment for why
+        // recomputation is unsafe.
+        //
+        // No repository.save() call here, deliberately: savedImport is the MANAGED instance
+        // returned by the first save() (BaseEntity's own class comment explains why that save
+        // routes through merge(), not persist()), so it is already tracked by this transaction's
+        // persistence context -- a plain setter is picked up by ordinary dirty-checking at the next
+        // flush. An explicit second save() was tried first and broke coverageWarningsFor's
+        // metadata query a few lines below with a duplicate-key merge (Collectors.toMap) -- a
+        // second merge() on an already-managed instance is not the no-op it looks like, it produces
+        // a second row visible to a query issued later in the same persistence context.
+        savedImport.setBalanceApplicationMode(closingBalanceIsAuthoritative
+                ? StatementImport.BalanceApplicationMode.ABSOLUTE
+                : !toInsert.isEmpty()
+                        ? StatementImport.BalanceApplicationMode.ADDITIVE
+                        : StatementImport.BalanceApplicationMode.NONE);
+
         // Counted HERE rather than after reconciliation, which is where it used to sit. Nothing
         // between the two points creates merchants -- they are created while the rows above are
         // built -- so the number is identical, and taking it before the shared pass is what keeps
@@ -1357,7 +1376,8 @@ public class ImportService {
         // Phase 2 of the statement continuity proposal (§11): a gap now bordering this statement,
         // or an exact-duplicate period, both scoped to this one import -- see coverageWarningsFor's
         // own comment for why an old, unrelated gap elsewhere on the account stays quiet.
-        warnings.addAll(coverageWarningsFor(userId, accountId, section.savedImport()));
+        CoverageWarningsResult coverageWarnings = coverageWarningsFor(userId, accountId, section.savedImport());
+        warnings.addAll(coverageWarnings.warnings());
 
         // Re-fetched (not the pre-import in-memory copy) so the summary reflects the balance
         // update above, if it applied. Falls back to AccountDto.from(a) (no statement/transaction
@@ -1380,8 +1400,13 @@ public class ImportService {
                 // user happened to look at. See persistSection's own comment for the precedence.
                 section.savedImport().getStatementPeriodStart(), section.savedImport().getStatementPeriodEnd(),
                 System.currentTimeMillis() - section.startedAtMs(),
-                "CSV");
+                "CSV", section.savedImport().getId(), coverageWarnings.duplicateOfStatementId());
     }
+
+    /** {@link #coverageWarningsFor}'s two independent results: the prose warnings, and (Phase 4,
+     *  §0.3) the original statement's id when one of those warnings is an exact-duplicate-period
+     *  notice -- what "Import this one as a replacement?" would supersede. */
+    private record CoverageWarningsResult(List<String> warnings, UUID duplicateOfStatementId) {}
 
     /**
      * Fetches every statement with a printed period for this account (including the one just
@@ -1390,11 +1415,11 @@ public class ImportService {
      * printed period, per that document's §3/§7 -- CSV coverage is a later, optional phase, not
      * this one) rather than running an analysis with nothing to place on a timeline.
      */
-    private List<String> coverageWarningsFor(UUID userId, UUID accountId, StatementImport savedImport) {
+    private CoverageWarningsResult coverageWarningsFor(UUID userId, UUID accountId, StatementImport savedImport) {
         LocalDate newStart = savedImport.getStatementPeriodStart();
         LocalDate newEnd = savedImport.getStatementPeriodEnd();
         if (newStart == null || newEnd == null) {
-            return List.of();
+            return new CoverageWarningsResult(List.of(), null);
         }
 
         List<StatementImportRepository.StatementMetadata> metadata =
@@ -1410,7 +1435,9 @@ public class ImportService {
                         StatementImportRepository.StatementMetadata::getId,
                         StatementImportRepository.StatementMetadata::getImportedAt));
 
-        return CoverageWarnings.forNewStatement(report, savedImport.getId(), newStart, newEnd, importedAtById);
+        List<String> warnings = CoverageWarnings.forNewStatement(report, savedImport.getId(), newStart, newEnd, importedAtById);
+        UUID duplicateOfStatementId = CoverageWarnings.duplicateOfStatementId(report, savedImport.getId());
+        return new CoverageWarningsResult(warnings, duplicateOfStatementId);
     }
 
     /**
