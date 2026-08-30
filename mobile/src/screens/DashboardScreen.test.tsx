@@ -1,5 +1,5 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react-native';
-import { Dimensions } from 'react-native';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
+import { Dimensions, RefreshControl } from 'react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { DashboardScreen } from './DashboardScreen';
 import {
@@ -335,5 +335,36 @@ describe('large Dynamic Type support (mobile design review, iOS VoiceOver/Dynami
 
     expect((await screen.findByText(LONG_DESCRIPTION)).props.numberOfLines).toBe(2);
     expect((await screen.findByText(LONG_GOAL_NAME)).props.numberOfLines).toBe(2);
+  });
+});
+
+describe('pull-to-refresh indicator', () => {
+  it('stays visible until every visible section has finished refetching, not just the summary', async () => {
+    dashboard.summary.mockResolvedValue(emptySummary());
+    const { queryClient } = renderScreen();
+    await screen.findByText('Total Balance');
+
+    // Summary resolves fast (still resolves via mockResolvedValue); accounts is held open on
+    // purpose to prove the indicator has to track it too, not just summary.
+    let resolveAccounts: (value: unknown) => void = () => {};
+    accounts.list.mockReturnValue(new Promise((resolve) => { resolveAccounts = resolve; }));
+
+    await act(async () => {
+      void queryClient.invalidateQueries({ queryKey: ['dashboard-summary'] });
+      void queryClient.invalidateQueries({ queryKey: ['accounts'] });
+    });
+
+    // The QueryClient's own state flips to fetching synchronously inside invalidateQueries, but
+    // the component's re-render (via the query observer's subscriber) can land a tick later than
+    // act()'s own flush -- waitFor absorbs that gap instead of asserting on a stale render.
+    await waitFor(() => {
+      expect(screen.UNSAFE_getByType(RefreshControl).props.refreshing).toBe(true);
+    });
+
+    await act(async () => resolveAccounts([]));
+
+    await waitFor(() => {
+      expect(screen.UNSAFE_getByType(RefreshControl).props.refreshing).toBe(false);
+    });
   });
 });

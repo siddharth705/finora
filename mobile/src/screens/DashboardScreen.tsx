@@ -82,7 +82,8 @@ export function DashboardScreen() {
     .map((d) => ({ label: monthLabel(d.month), income: d.income, expense: d.expense }));
 
   const loading = summaryQ.isLoading || accountsQ.isLoading || recentTxnsQ.isLoading;
-  const refreshing = summaryQ.isFetching && !summaryQ.isLoading;
+  const refreshing =
+    (summaryQ.isFetching || accountsQ.isFetching || recentTxnsQ.isFetching) && !loading;
 
   function refresh() {
     ['dashboard-summary', 'accounts', 'recent-transactions', 'goals', 'insights', 'report-months', 'report']
