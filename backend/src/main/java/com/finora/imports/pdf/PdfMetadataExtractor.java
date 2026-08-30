@@ -462,6 +462,16 @@ public class PdfMetadataExtractor {
     // exactly as well as a real name does (two capitalized words, no digits), so LEADING_TITLE_WORDS
     // rejects any candidate containing one of a small set of generic statement-vocabulary words no
     // real person is named after -- the same overreach-prevention shape as the BankRegistry check.
+    //
+    // Slice B (F20 follow-up): widened again, 5 -> 8, once ADDRESS_LABEL_LINE made it safe to do
+    // so. Verified via a full 27-document real-corpus sweep, not just the documents that motivated
+    // it: 8 is the exact point of diminishing returns -- 10 recovers zero further real names and
+    // adds a new false positive ("Transaction Withdrawal Deposit Balance", a table-header phrase
+    // on a real ICICI savings statement, long enough to hit this pattern's own 4-word cap only at
+    // the wider window). At 8, six real names are recovered across the corpus (four in the
+    // originally-scoped HDFC family, two more bonus wins on CBI and HSBC that F20 never even
+    // counted), with zero net new false positives once LEADING_TITLE_WORDS below is extended to
+    // match.
     // Bug fix: same underlying defect as ACCOUNT_NAME_TRAILING_LABEL above -- the leading (?i)
     // covered the WHOLE pattern, so the "2-4 capitalized words" this doc comment describes was
     // never actually enforced ([a-z] under CASE_INSENSITIVE matches uppercase too, and vice versa).
@@ -474,7 +484,7 @@ public class PdfMetadataExtractor {
     // (genericized per the Synthetic Fixture Policy) -- while finally rejecting all-lowercase prose.
     private static final Pattern LEADING_NAME_LINE = Pattern.compile(
             "^(?:(?i:mr|mrs|ms|dr|m/s)\\.?\\s+)?[A-Z][A-Za-z]*(?:\\s+[A-Z][A-Za-z]*){1,3}\\.?$");
-    private static final int LEADING_NAME_LINE_SEARCH_WINDOW = 5;
+    private static final int LEADING_NAME_LINE_SEARCH_WINDOW = 8;
     // Bug fix: verified against three real HDFC savings statements. A multi-line postal address
     // ("Address : GROUND FLOOR, ...", followed by one or two unlabeled continuation lines wrapping
     // the rest of the value) commonly has a continuation line that shape-matches LEADING_NAME_LINE
@@ -496,9 +506,19 @@ public class PdfMetadataExtractor {
     // (see its own doc comment), a document whose "Name" label line somehow reaches this
     // fallback anyway (e.g. a future layout where the label and value split across lines) must
     // not have "Name" itself swept into LEADING_NAME_LINE's captured text.
+    // "value"/"added"/"services" (real SBI credit-card boilerplate, "VALUE ADDED SERVICES") added
+    // alongside the Slice B window widening above -- the exact one new false positive that fix
+    // introduces on its own. "interest"/"accrued" (real Shivani_HDFC boilerplate, "Interest
+    // Accrued") fix a pre-existing bug found in the same real-corpus sweep, unrelated to the window
+    // change itself -- included here since it's the identical failure shape and the identical fix.
+    // Deliberately NOT extended to cover a real IndusInd/CRED statement's own leading lines: that
+    // document has a whole run of generic banking phrases in a row ("Previous Balance", "Cash
+    // Advance", ...), and excluding one just promotes the next -- a finite word list cannot fix
+    // that shape; it needs a different approach, out of scope here.
     private static final java.util.Set<String> LEADING_TITLE_WORDS = java.util.Set.of(
             "account", "statement", "card", "credit", "savings", "current", "passbook",
-            "details", "summary", "bank", "name");
+            "details", "summary", "bank", "name", "value", "added", "services",
+            "interest", "accrued");
 
     /** Matched with {@link Matcher#matches()} (whole-line), so this describes the ENTIRE line, not
      *  just where the label sits. Two alternatives:
