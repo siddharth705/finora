@@ -1,7 +1,10 @@
 # Account Ownership Intelligence — Design Proposal
 
-**Status:** Proposal only. Design after GA blockers, production-safety work, and the current bug hunt
-are closed. Same sequencing as every other document in this directory.
+**Status:** V1 (§3) approved for implementation ahead of the usual GA-blockers-first sequencing —
+deliberate exception, made 2026-08-30, because V1 scoped down to a footprint (three nullable fields,
+one utility function, one non-blocking dialog, no `Account`/schema risk) small enough that the
+resourcing rationale behind that sequencing rule doesn't apply to it. Everything in §5 (Future/Parked)
+remains unapproved and follows the normal sequencing — same as every other document in this directory.
 
 > **Design principle.** Ownership Intelligence is a data-quality system, not an identity-verification
 > system. Everything here exists to prevent accidental imports, preserve analytics correctness,
