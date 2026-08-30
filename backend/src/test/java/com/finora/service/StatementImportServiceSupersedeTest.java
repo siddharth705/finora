@@ -170,6 +170,24 @@ class StatementImportServiceSupersedeTest {
     }
 
     @Test
+    void rejectsSupersedingWhenOriginalIsAbsoluteButReplacementIsNot() {
+        // If the replacement's own confirm did not overwrite the balance (its own closing balance
+        // was missing, unstated, or did not corroborate against its own rows), then original's
+        // ABSOLUTE contribution is still sitting underneath whatever replacement's confirm did --
+        // additively or not at all. Superseding without reversing would leave the two double-
+        // counted. Refusing is the safe direction, same as UNKNOWN_LEGACY's own warning-instead-of-
+        // guessing choice above.
+        StatementImport old = statement(oldId, StatementImport.BalanceApplicationMode.ABSOLUTE);
+        stub(old, statement(newId, StatementImport.BalanceApplicationMode.ADDITIVE));
+
+        assertThatThrownBy(() -> service.supersede(userId, oldId, newId)).isInstanceOf(ApiException.class);
+
+        verify(transactionRepository, never()).findByStatementImportId(any());
+        verify(statementImportRepository, never()).save(any());
+        verify(accountRepository, never()).save(any());
+    }
+
+    @Test
     void none_doesNotReverseTheBalance() {
         StatementImport old = statement(oldId, StatementImport.BalanceApplicationMode.NONE);
         stub(old, statement(newId, StatementImport.BalanceApplicationMode.ABSOLUTE));

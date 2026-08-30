@@ -294,15 +294,35 @@ public class StatementImportService {
         // a "this confirm is a reimport of X" signal through ImportService's whole confirm/
         // persistSection/summarise call graph for it.
         //
-        // Both the prose warning AND duplicateOfStatementId are cleared together (Phase 4): leaving
-        // the id set after stripping the sentence that explains it would offer a "replace" action
-        // against the exact statement this reimport just corrected.
-        boolean duplicatesTheOriginal = statementImportId.equals(response.duplicateOfStatementId());
+        // Bug fix (self-review, Phase 4 follow-up): this used to strip EVERY duplicate-period
+        // warning by string prefix while only conditionally clearing duplicateOfStatementId (when
+        // it happened to equal `original`'s own id) -- two independently-flattened views of
+        // "possibly several overlaps" that had no way to stay in agreement. Whenever this reimport
+        // ALSO exact-duplicated a second, unrelated statement (a real, actionable finding -- the
+        // whole reason this feature exists), one of two things happened depending purely on which
+        // overlap CoverageWarnings.duplicateOfStatementId happened to return first: either the
+        // unrelated duplicate's id survived while its explaining sentence was stripped alongside
+        // `original`'s (an id the summary screen could never render a button for, since it only
+        // renders when warnings is non-empty), or the id got cleared to null and BOTH sentences
+        // vanished, silently dropping the second duplicate entirely. duplicateOverlapsFor gives the
+        // per-overlap (id, sentence) pairing needed to remove only the ONE overlap against
+        // `original` and leave any other duplicate -- id and sentence together -- exactly as an
+        // ordinary confirm's response would carry it.
+        List<CoverageWarnings.DuplicateOverlap> overlaps = importService.duplicateOverlapsFor(
+                userId, original.getAccountId(), response.statementImportId(),
+                response.statementPeriodStart(), response.statementPeriodEnd());
+        List<CoverageWarnings.DuplicateOverlap> realDuplicates = overlaps.stream()
+                .filter(o -> !o.otherStatementId().equals(statementImportId))
+                .toList();
+
+        List<String> warnings = new ArrayList<>(response.warnings().stream()
+                .filter(w -> !w.startsWith(CoverageWarnings.DUPLICATE_PERIOD_WARNING_PREFIX))
+                .toList());
+        realDuplicates.forEach(o -> warnings.add(o.warning()));
+
         return response.withWarningsAndDuplicateOfStatementId(
-                response.warnings().stream()
-                        .filter(w -> !w.startsWith(CoverageWarnings.DUPLICATE_PERIOD_WARNING_PREFIX))
-                        .toList(),
-                duplicatesTheOriginal ? null : response.duplicateOfStatementId());
+                warnings,
+                realDuplicates.isEmpty() ? null : realDuplicates.get(0).otherStatementId());
     }
 
     /**
@@ -428,6 +448,14 @@ public class StatementImportService {
      * StatementImport.BalanceApplicationMode}, persisted at ITS confirm time -- never recomputed
      * here. See that field's own doc comment for why recomputation is unsafe (totalCredits/
      * totalDebits were never persisted, and Transaction.amount is editable after import).
+     *
+     * <p><b>ABSOLUTE original requires ABSOLUTE replacement.</b> When {@code original} is ABSOLUTE,
+     * no reversal is applied below on the reasoning that replacement's own confirm already
+     * overwrote the balance. That reasoning only holds when replacement's own confirm ALSO landed
+     * in ABSOLUTE mode -- otherwise replacement's confirm merely ADDED its net delta on top of the
+     * balance original's confirm had already set, and original's contribution would still be
+     * counted underneath it after this call. Refused up front rather than silently risking a
+     * corrupted balance; see the guard clause below for the exact condition.
      */
     @Transactional
     public com.finora.dto.StatementImportDto.SupersedeResult supersede(UUID userId, UUID originalId, UUID replacementId) {
@@ -452,6 +480,25 @@ public class StatementImportService {
         if (replacement.getSupersededBy() != null) {
             throw new ApiException(HttpStatus.BAD_REQUEST,
                     "The replacement statement has itself already been superseded.");
+        }
+        // ABSOLUTE's no-reversal branch below rests entirely on "the replacement's own confirm
+        // already set the balance again, on top of whatever this one left behind" (see that case's
+        // own comment). That is only true when replacement's own confirm ALSO landed in ABSOLUTE
+        // mode -- if replacement's own closing balance was missing, unstated, or did not corroborate
+        // against its own rows, its confirm instead ADDED its net delta on top of the balance
+        // original's confirm already set, and original's full contribution never leaves the account
+        // balance. Refusing here is the same safe-direction choice UNKNOWN_LEGACY already makes
+        // (warn/refuse rather than silently risk corrupting Account.balance) -- reproduced with a
+        // concrete numeric example in SupersedeRefusesMismatchedAbsoluteModeIT.
+        if (original.getBalanceApplicationMode() == StatementImport.BalanceApplicationMode.ABSOLUTE
+                && replacement.getBalanceApplicationMode() != StatementImport.BalanceApplicationMode.ABSOLUTE) {
+            throw new ApiException(HttpStatus.BAD_REQUEST,
+                    "The replacement statement's own closing balance was not applied at its confirm "
+                            + "time (it stated none, or it did not match its transactions), so it cannot "
+                            + "safely supersede a statement whose closing balance WAS applied -- doing so "
+                            + "would leave the original statement's balance contribution still counted "
+                            + "underneath the replacement's. Re-import the replacement with a closing "
+                            + "balance that corroborates against its transactions, then try again.");
         }
 
         // Only OK-status rows -- a row already excluded for its own reason (DUPLICATE/TRANSFER/

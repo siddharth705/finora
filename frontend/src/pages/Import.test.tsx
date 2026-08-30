@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import Import from './Import';
-import { importApi, importJobsApi, categoriesApi, accountsApi, type ImportJobProgress } from '../api/endpoints';
+import { importApi, importJobsApi, statementImportsApi, categoriesApi, accountsApi, type ImportJobProgress } from '../api/endpoints';
 import type { Account, StagedAccountSection } from '../types';
 import { PDF_PASSWORD_REQUIRED, PDF_PASSWORD_INVALID, NO_HEADER_DETECTED, NO_TRANSACTIONS_FOUND, SCANNED_OCR_REQUIRED, CORRUPT_PDF, IMPORT_SESSION_ALREADY_CONFIRMED } from '../api/errorCodes';
 import { IMPORT_FAILURE_MESSAGES } from '../api/importFailureMessages';
@@ -1171,6 +1171,154 @@ describe('Import — multi-account statements get the same duplicate review', ()
     };
     expect(payload.sections[0].rows.map((r) => r.include)).toEqual([true, true]);
     expect(payload.sections[1].rows.map((r) => r.include)).toEqual([false]);
+  });
+});
+
+/**
+ * Phase 4 of the statement continuity proposal (§0.3/§0.23) extended to the multi-account summary
+ * screen. Each account confirmed from a composite statement carries its own ImportSummary (one per
+ * section), so each has to render its own warnings and its own "Import this one as a replacement?"
+ * action independently -- a savings section duplicating an existing period says nothing about
+ * whether the credit-card section in the same file does too.
+ */
+describe('Import — multi-account summary screen warnings', () => {
+  function accountFor(name: string): Account {
+    return {
+      id: `acct-${name}`,
+      name,
+      accountType: 'SAVINGS',
+      balance: 0,
+      bank: detectedAccount.bank,
+      lastImportedAt: null,
+      lastStatementPeriodStart: null,
+      lastStatementPeriodEnd: null,
+      statementsCount: 1,
+      transactionsCount: 1,
+      status: 'ACTIVE',
+    };
+  }
+
+  function summaryFor(name: string, overrides: Partial<{ warnings: string[]; duplicateOfStatementId: string | null; statementImportId: string }> = {}) {
+    return {
+      imported: 1, skipped: 0, duplicatesDetected: 0, transfersIdentified: 0, newMerchantsLearned: 0,
+      accountsCreated: [], productsCreated: {}, categoriesAssigned: {},
+      warnings: overrides.warnings ?? [],
+      account: accountFor(name),
+      totalCredits: 0, totalDebits: 0, statementOpeningBalance: null, statementClosingBalance: null,
+      statementPeriodStart: null, statementPeriodEnd: null, importDurationMs: 12, source: 'PDF',
+      statementImportId: overrides.statementImportId ?? `stmt-${name}`,
+      duplicateOfStatementId: overrides.duplicateOfStatementId ?? null,
+    };
+  }
+
+  function stagedRow(description: string) {
+    return {
+      date: '2026-07-10', description, amount: 45, type: 'EXPENSE' as const,
+      suggestedCategory: 'Transport', categorySource: 'rule' as const, ruleId: null,
+      likelyDuplicate: false, referenceNumber: null, balanceAfter: null, duplicateMatch: null,
+    };
+  }
+
+  function section(name: string) {
+    return {
+      detectedAccount: { ...detectedAccount, suggestedName: name },
+      rows: [stagedRow('BLINKIT GROCERIES 9982')],
+      totalParsed: 1,
+      flaggedDuplicates: 0,
+      unparseableRows: [],
+    } as unknown as StagedAccountSection;
+  }
+
+  function stageSections(sections: StagedAccountSection[]) {
+    vi.mocked(importApi.stagePdf).mockReset().mockResolvedValue({
+      sessionId: 'session-multi-1',
+      multiAccount: true,
+      staging: null,
+      sections,
+    } as never);
+  }
+
+  beforeEach(() => {
+    vi.mocked(categoriesApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(accountsApi.list).mockReset().mockResolvedValue([]);
+  });
+
+  const confirmAll = () => screen.getByRole('button', { name: /confirm all 2 accounts/i });
+
+  /** Nothing to pay for when neither section produced a warning. */
+  it('renders no warnings block for an account with none, even when the other account has one', async () => {
+    vi.mocked(importApi.confirmMulti).mockReset().mockResolvedValue({
+      perAccount: [summaryFor('Savings'), summaryFor('Credit Card', { warnings: ['This statement has a gap before it.'] })],
+    } as never);
+    const user = userEvent.setup();
+    renderImport();
+
+    stageSections([section('Savings'), section('Credit Card')]);
+    await pickAndUploadPdf(user);
+    await screen.findByText(/this statement covers 2 accounts/i);
+    await user.click(confirmAll());
+
+    const savingsCard = await screen.findByTestId('summary-account-0');
+    const cardCard = screen.getByTestId('summary-account-1');
+    expect(within(savingsCard).queryByText(/gap before it/i)).not.toBeInTheDocument();
+    expect(within(cardCard).getByText(/gap before it/i)).toBeInTheDocument();
+  });
+
+  /** The action only appears for the account whose own period actually duplicated one on file. */
+  it('offers "Import this one as a replacement?" only for the account with a duplicateOfStatementId', async () => {
+    vi.mocked(importApi.confirmMulti).mockReset().mockResolvedValue({
+      perAccount: [
+        summaryFor('Savings', { warnings: ['This period was already imported.'], duplicateOfStatementId: 'old-savings-stmt' }),
+        summaryFor('Credit Card', { warnings: ['This period was already imported.'] }),
+      ],
+    } as never);
+    const user = userEvent.setup();
+    renderImport();
+
+    stageSections([section('Savings'), section('Credit Card')]);
+    await pickAndUploadPdf(user);
+    await screen.findByText(/this statement covers 2 accounts/i);
+    await user.click(confirmAll());
+
+    const savingsCard = await screen.findByTestId('summary-account-0');
+    const cardCard = screen.getByTestId('summary-account-1');
+    expect(within(savingsCard).getByRole('button', { name: /import this one as a replacement/i })).toBeInTheDocument();
+    expect(within(cardCard).queryByRole('button', { name: /import this one as a replacement/i })).not.toBeInTheDocument();
+  });
+
+  /**
+   * Each card's supersede flow is independent local state -- confirming the replacement for one
+   * account must not touch the other account's card, even though both are duplicates of some
+   * existing statement.
+   */
+  it('supersedes independently per account, leaving the other account untouched', async () => {
+    vi.mocked(importApi.confirmMulti).mockReset().mockResolvedValue({
+      perAccount: [
+        summaryFor('Savings', { warnings: ['This period was already imported.'], duplicateOfStatementId: 'old-savings-stmt', statementImportId: 'new-savings-stmt' }),
+        summaryFor('Credit Card', { warnings: ['This period was already imported.'], duplicateOfStatementId: 'old-cc-stmt', statementImportId: 'new-cc-stmt' }),
+      ],
+    } as never);
+    vi.mocked(statementImportsApi.supersede).mockReset().mockResolvedValue({ warning: null } as never);
+    const user = userEvent.setup();
+    renderImport();
+
+    stageSections([section('Savings'), section('Credit Card')]);
+    await pickAndUploadPdf(user);
+    await screen.findByText(/this statement covers 2 accounts/i);
+    await user.click(confirmAll());
+
+    const savingsCard = await screen.findByTestId('summary-account-0');
+    const cardCard = screen.getByTestId('summary-account-1');
+
+    await user.click(within(savingsCard).getByRole('button', { name: /import this one as a replacement/i }));
+    await user.click(screen.getByRole('button', { name: /^replace$/i }));
+
+    await waitFor(() => expect(statementImportsApi.supersede).toHaveBeenCalledWith('old-savings-stmt', 'new-savings-stmt'));
+    expect(statementImportsApi.supersede).toHaveBeenCalledTimes(1);
+    expect(within(savingsCard).getByText(/existing statement has been replaced/i)).toBeInTheDocument();
+    // The credit card card's own action is untouched -- still offering, not already replaced.
+    expect(within(cardCard).getByRole('button', { name: /import this one as a replacement/i })).toBeInTheDocument();
+    expect(within(cardCard).queryByText(/existing statement has been replaced/i)).not.toBeInTheDocument();
   });
 });
 
