@@ -7,8 +7,10 @@ import com.finora.entity.Transaction;
 import com.finora.entity.User;
 import com.finora.exception.ApiException;
 import com.finora.exception.ErrorCode;
+import com.finora.entity.StatementImport;
 import com.finora.repository.AccountRepository;
 import com.finora.repository.CategoryRepository;
+import com.finora.repository.StatementImportRepository;
 import com.finora.repository.TransactionRepository;
 import com.finora.repository.UserRepository;
 import com.finora.security.OwnershipGuard;
@@ -38,6 +40,7 @@ public class TransactionService {
     private final TransactionRepository transactionRepository;
     private final CategoryRepository categoryRepository;
     private final AccountRepository accountRepository;
+    private final StatementImportRepository statementImportRepository;
     private final CategorizationService categorizationService;
     private final ReconciliationService reconciliationService;
     private final RecurringService recurringService;
@@ -48,6 +51,7 @@ public class TransactionService {
 
     public TransactionService(TransactionRepository transactionRepository, CategoryRepository categoryRepository,
                                AccountRepository accountRepository,
+                               StatementImportRepository statementImportRepository,
                                CategorizationService categorizationService,
                                ReconciliationService reconciliationService,
                                RecurringService recurringService,
@@ -58,6 +62,7 @@ public class TransactionService {
         this.transactionRepository = transactionRepository;
         this.categoryRepository = categoryRepository;
         this.accountRepository = accountRepository;
+        this.statementImportRepository = statementImportRepository;
         this.categorizationService = categorizationService;
         this.reconciliationService = reconciliationService;
         this.recurringService = recurringService;
@@ -508,10 +513,27 @@ public class TransactionService {
         t.setReconciliationExplanation(null);
         Transaction saved = transactionRepository.save(t);
 
-        // The balance is deliberately NOT touched. A duplicate-flagged row was always counted in
-        // Account.balance -- the flag only ever governed what the reports exclude -- so the money
-        // does not move here. What changes is that the reports now agree with the balance, which
-        // is the whole point.
+        // Usually the balance is NOT touched: a manually-entered duplicate-flagged row was always
+        // counted in Account.balance (the flag only ever governed what the reports exclude), so
+        // the money never moved and doesn't need to move back.
+        //
+        // The one exception is BH-003 (ImportService.summarise): a statement-import row flagged
+        // DUPLICATE by reconciliation at its OWN confirm time has its contribution reversed OUT of
+        // Account.balance immediately, precisely so re-importing the same file twice doesn't double
+        // -count it. Such a row currently contributes zero. Confirming it "not a duplicate" here
+        // means it counts in every report again, so the balance must count it again too, or it
+        // stays permanently short by this row's amount with no way to self-correct.
+        //
+        // ADDITIVE is the only mode BH-003 ever reversed under (see StatementImport
+        // .BalanceApplicationMode's own doc) -- ABSOLUTE/NONE never moved the balance via this
+        // row's net effect, and UNKNOWN_LEGACY predates the field, so which branch its own confirm
+        // took was never recorded and is deliberately not guessed here either.
+        if (saved.getStatementImportId() != null) {
+            statementImportRepository.findById(saved.getStatementImportId())
+                    .filter(si -> si.getBalanceApplicationMode() == StatementImport.BalanceApplicationMode.ADDITIVE)
+                    .ifPresent(si -> adjustAccountBalance(saved.getAccountId(), balanceOf(saved)));
+        }
+
         reconciliationService.reconcileForUser(userId);
         recurringService.detectForUser(userId);
 

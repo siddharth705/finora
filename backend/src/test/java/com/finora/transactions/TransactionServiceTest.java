@@ -7,6 +7,7 @@ import com.finora.entity.User;
 import com.finora.exception.ApiException;
 import com.finora.repository.AccountRepository;
 import com.finora.repository.CategoryRepository;
+import com.finora.repository.StatementImportRepository;
 import com.finora.repository.TransactionRepository;
 import com.finora.repository.UserRepository;
 import com.finora.service.AuditService;
@@ -42,6 +43,7 @@ class TransactionServiceTest {
     private TransactionRepository transactionRepository;
     private CategoryRepository categoryRepository;
     private AccountRepository accountRepository;
+    private StatementImportRepository statementImportRepository;
     private CategorizationService categorizationService;
     private ReconciliationService reconciliationService;
     private RecurringService recurringService;
@@ -60,6 +62,7 @@ class TransactionServiceTest {
         transactionRepository = mock(TransactionRepository.class);
         categoryRepository = mock(CategoryRepository.class);
         accountRepository = mock(AccountRepository.class);
+        statementImportRepository = mock(StatementImportRepository.class);
         categorizationService = mock(CategorizationService.class);
         // Preserves every existing test's expectation (needsCategoryReview mirrors suggestion
         // source alone) by default; tests that specifically exercise the confidence-threshold
@@ -87,8 +90,8 @@ class TransactionServiceTest {
                 .thenReturn(SmsResult.success(ProviderType.TWO_FACTOR, "test-message-id"));
         auditService = mock(AuditService.class);
         transactionService = new TransactionService(transactionRepository, categoryRepository, accountRepository,
-                categorizationService, reconciliationService, recurringService, auditService,
-                bankManagementService, userRepository, smsProvider);
+                statementImportRepository, categorizationService, reconciliationService, recurringService,
+                auditService, bankManagementService, userRepository, smsProvider);
 
         dummyCategory = new Category();
         ReflectionTestUtils.setField(dummyCategory, "id", UUID.randomUUID());

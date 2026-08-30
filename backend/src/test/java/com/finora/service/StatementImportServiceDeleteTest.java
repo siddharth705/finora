@@ -1,5 +1,6 @@
 package com.finora.service;
 
+import com.finora.entity.Account;
 import com.finora.entity.StatementImport;
 import com.finora.entity.Transaction;
 import com.finora.imports.ImportService;
@@ -36,6 +37,7 @@ class StatementImportServiceDeleteTest {
 
     private TransactionRepository transactionRepository;
     private StatementImportRepository statementImportRepository;
+    private AccountRepository accountRepository;
     private ReconciliationService reconciliationService;
     private RecurringService recurringService;
     private StatementImportService service;
@@ -47,10 +49,11 @@ class StatementImportServiceDeleteTest {
     void setUp() {
         transactionRepository = mock(TransactionRepository.class);
         statementImportRepository = mock(StatementImportRepository.class);
+        accountRepository = mock(AccountRepository.class);
         reconciliationService = mock(ReconciliationService.class);
         recurringService = mock(RecurringService.class);
         service = new StatementImportService(
-                statementImportRepository, mock(AccountRepository.class), mock(CategoryRepository.class),
+                statementImportRepository, accountRepository, mock(CategoryRepository.class),
                 transactionRepository, reconciliationService, recurringService,
                 mock(ImportService.class), mock(AuditService.class), mock(BankManagementService.class), new com.finora.imports.storage.StatementContentService(java.util.Optional.empty(), mock(com.finora.security.crypto.EncryptionService.class), "", ""));
 
@@ -110,5 +113,80 @@ class StatementImportServiceDeleteTest {
 
         verify(recurringService, never()).detectForUser(any());
         verify(reconciliationService, never()).reconcileForUser(any());
+    }
+
+    @Test
+    void delete_reversal_excludesATransactionAlreadyFlaggedDuplicate() {
+        // A DUPLICATE-flagged row's contribution to Account.balance was already reversed once, at
+        // the original statement's own confirm time (ImportService.summarise's BH-003 correction --
+        // ReconciliationService always sets isDuplicateOf together with reconciliationStatus
+        // DUPLICATE, never leaves a duplicate row at OK). Its CURRENT net contribution is zero, so
+        // it must not be summed into the reversal here too -- doing so would move the balance a
+        // second time for a row that never really counted. Same fix as StatementImportService's
+        // supersede() reversal.
+        UUID accountId = UUID.randomUUID();
+        StatementImport statementImport = new StatementImport();
+        ReflectionTestUtils.setField(statementImport, "id", statementImportId);
+        statementImport.setUserId(userId);
+        statementImport.setFileName("statement.csv");
+        statementImport.setAccountId(accountId);
+        when(statementImportRepository.findById(statementImportId)).thenReturn(Optional.of(statementImport));
+
+        Transaction realExpense = transaction(UUID.randomUUID());
+        realExpense.setAmount(new BigDecimal("500.00"));
+
+        Transaction alreadyDuplicate = transaction(UUID.randomUUID());
+        alreadyDuplicate.setAmount(new BigDecimal("300.00"));
+        alreadyDuplicate.setReconciliationStatus(Transaction.ReconciliationStatus.DUPLICATE);
+        alreadyDuplicate.setIsDuplicateOf(UUID.randomUUID());
+
+        when(transactionRepository.findByStatementImportId(statementImportId))
+                .thenReturn(List.of(realExpense, alreadyDuplicate));
+
+        Account account = new Account();
+        account.setAccountType(Account.Type.SAVINGS);
+        account.setBalance(new BigDecimal("9500.00"));
+        when(accountRepository.findById(accountId)).thenReturn(Optional.of(account));
+
+        service.delete(userId, statementImportId);
+
+        // Reversing only the real 500 expense's contribution -- not 500 + 300.
+        assertThat(account.getBalance()).isEqualByComparingTo("10000.00");
+    }
+
+    @Test
+    void delete_reversal_excludesATransactionAlreadyFlaggedSuperseded() {
+        // Same bug, a second trigger (#631 only excluded isDuplicateOf, not this):
+        // StatementImportService.supersede() marks an ADDITIVE-mode original's rows SUPERSEDED
+        // and, in the same call, reverses their contribution to Account.balance -- so a SUPERSEDED
+        // row's CURRENT net contribution is zero, exactly like an already-DUPLICATE-flagged row's.
+        // Deleting an already-superseded statement must not sum that row into the reversal again.
+        UUID accountId = UUID.randomUUID();
+        StatementImport statementImport = new StatementImport();
+        ReflectionTestUtils.setField(statementImport, "id", statementImportId);
+        statementImport.setUserId(userId);
+        statementImport.setFileName("statement.csv");
+        statementImport.setAccountId(accountId);
+        when(statementImportRepository.findById(statementImportId)).thenReturn(Optional.of(statementImport));
+
+        Transaction realExpense = transaction(UUID.randomUUID());
+        realExpense.setAmount(new BigDecimal("500.00"));
+
+        Transaction alreadySuperseded = transaction(UUID.randomUUID());
+        alreadySuperseded.setAmount(new BigDecimal("300.00"));
+        alreadySuperseded.setReconciliationStatus(Transaction.ReconciliationStatus.SUPERSEDED);
+
+        when(transactionRepository.findByStatementImportId(statementImportId))
+                .thenReturn(List.of(realExpense, alreadySuperseded));
+
+        Account account = new Account();
+        account.setAccountType(Account.Type.SAVINGS);
+        account.setBalance(new BigDecimal("9500.00"));
+        when(accountRepository.findById(accountId)).thenReturn(Optional.of(account));
+
+        service.delete(userId, statementImportId);
+
+        // Reversing only the real 500 expense's contribution -- not 500 + 300.
+        assertThat(account.getBalance()).isEqualByComparingTo("10000.00");
     }
 }
