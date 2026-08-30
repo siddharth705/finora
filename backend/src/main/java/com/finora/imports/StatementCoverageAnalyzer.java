@@ -24,11 +24,25 @@ import java.util.UUID;
  * confirmed PNB pattern (see {@link OpeningBalanceCarryForward}'s own class comment), not a data
  * error. Only two or more shared days are a genuine overlap.
  *
- * <p><b>Non-standard periods</b> (that document's §0.17/§0.22) never get tested for adjacency
- * against their own neighbors -- a multi-month statement has no reason to satisfy a normal
- * statement's boundary-day convention -- but a real gap on the far side of one is still detected;
- * proximity to something unusual is never a reason to stay silent about a separate hole in the
- * timeline. Their own days still count toward {@code coveredDays}, per §0.11 as narrowed by §0.12.
+ * <p><b>Non-standard periods</b> (that document's §0.17/§0.22) are still counted for gap/coverage
+ * purposes -- their raw date range fills whatever calendar days they cover, so a real gap between
+ * two OTHER segments on either side of one is never falsely reported and their own days count
+ * toward {@code coveredDays}, per §0.22 (superseding an earlier draft of §0.12 that said the
+ * opposite -- a real self-contradiction across two review rounds of the proposal, found and
+ * resolved here rather than silently picked one way). What classification changes is narrower:
+ * a non-standard segment is never tested for a boundary-day OVERLAP claim, since a broader
+ * statement legitimately enclosing narrower ones (§7) is not automatically a conflict.
+ *
+ * <p><b>Bug found via self-review, fixed here.</b> An earlier version of this class walked only
+ * ADJACENT pairs in sort order to find gaps and overlaps, and summed each segment's own duration
+ * for {@code coveredDays}. Both are wrong the moment one statement's period nests around or
+ * substantially overlaps others without being adjacent-by-index to all of them: a broader
+ * statement can already cover the space between two narrower, non-touching ones, which the
+ * adjacent-pairs walk had no way to see -- it reported a phantom gap there, and separately
+ * double-counted the nested statements' days in the naive sum. The fix: {@code coveredDays} is the
+ * size of the UNION of every segment's date range (merging overlapping/touching/nested ranges into
+ * disjoint covered blocks, walked in one pass since the segments are sorted), and overlap detection
+ * compares every pair of STANDARD segments, not just adjacent ones.
  *
  * <p><b>No severity classification is produced here</b> (§0.18): the raw boundary-value {@code
  * delta} on a gap is a fact; bucketing it into tiers without real account-balance distributions to
@@ -92,29 +106,21 @@ public final class StatementCoverageAnalyzer {
 
         List<CoverageSegment> segments = classify(sorted);
 
-        List<CoverageGap> gaps = new ArrayList<>();
-        List<CoverageOverlap> overlaps = new ArrayList<>();
-        for (int i = 0; i < sorted.size() - 1; i++) {
-            evaluatePair(sorted.get(i), sorted.get(i + 1),
-                    segments.get(i).classification(), segments.get(i + 1).classification(),
-                    gaps, overlaps);
-        }
+        MergeResult merged = mergeIntoCoveredBlocksAndGaps(sorted);
+        List<CoverageOverlap> overlaps = findOverlaps(sorted, segments);
 
-        long coveredDays = segments.stream()
-                .filter(s -> s.classification() == Classification.STANDARD)
-                .mapToLong(s -> durationDays(s.periodStart(), s.periodEnd()))
-                .sum();
-        long missingDays = gaps.stream().mapToLong(CoverageGap::daysMissing).sum();
+        long coveredDays = merged.coveredDays();
+        long missingDays = merged.gaps().stream().mapToLong(CoverageGap::daysMissing).sum();
         Double coveragePercentage = (coveredDays + missingDays) == 0 ? null
                 : Math.round((coveredDays * 1000.0) / (coveredDays + missingDays)) / 10.0;
 
-        boolean hasGaps = !gaps.isEmpty();
+        boolean hasGaps = !merged.gaps().isEmpty();
         boolean hasOverlaps = !overlaps.isEmpty();
         boolean hasNonStandardPeriods = segments.stream()
                 .anyMatch(s -> s.classification() == Classification.NON_STANDARD_PERIOD);
         boolean hasDuplicatePeriods = overlaps.stream().anyMatch(o -> o.type() == OverlapType.EXACT_DUPLICATE);
 
-        return new CoverageReport(segments, gaps, overlaps, coveredDays, missingDays, coveragePercentage,
+        return new CoverageReport(segments, merged.gaps(), overlaps, coveredDays, missingDays, coveragePercentage,
                 hasGaps, hasOverlaps, hasNonStandardPeriods, hasDuplicatePeriods);
     }
 
@@ -160,42 +166,79 @@ public final class StatementCoverageAnalyzer {
         return ChronoUnit.DAYS.between(start, end) + 1;
     }
 
-    /** {@code a} is the earlier segment in sort order, {@code b} the next. */
-    private static void evaluatePair(StatementPeriod a, StatementPeriod b,
-                                      Classification aClass, Classification bClass,
-                                      List<CoverageGap> gaps, List<CoverageOverlap> overlaps) {
-        long sharedDays = a.periodEnd().isBefore(b.periodStart())
-                ? 0
-                : ChronoUnit.DAYS.between(b.periodStart(), a.periodEnd()) + 1;
+    private record MergeResult(long coveredDays, List<CoverageGap> gaps) {}
 
-        if (sharedDays <= 0) {
-            LocalDate expectedNextStart = a.periodEnd().plusDays(1);
-            // A real gap is plain date arithmetic, independent of either side's classification --
-            // proximity to a non-standard segment must never suppress a genuine hole (§0.22).
-            if (b.periodStart().isAfter(expectedNextStart)) {
+    /** Merges every segment's date range -- regardless of classification, since even a
+     *  non-standard segment's presence fills whatever days it spans (§0.22) -- into disjoint
+     *  covered blocks in one pass over the sorted list. {@code coveredDays} is the sum of the
+     *  merged blocks' lengths (the UNION of every segment's range), never a per-segment sum that
+     *  would double-count an overlapping or nested segment's days. A gap is only ever the space
+     *  between two blocks that genuinely could not be merged -- so a broader segment spanning the
+     *  distance between two narrower, non-touching ones is credited for covering it, rather than
+     *  the narrower pair being compared to each other in isolation and reporting a phantom hole. */
+    private static MergeResult mergeIntoCoveredBlocksAndGaps(List<StatementPeriod> sorted) {
+        List<CoverageGap> gaps = new ArrayList<>();
+        long coveredDays = 0;
+
+        LocalDate blockStart = sorted.get(0).periodStart();
+        LocalDate blockEnd = sorted.get(0).periodEnd();
+        StatementPeriod blockEndOwner = sorted.get(0);
+
+        for (int i = 1; i < sorted.size(); i++) {
+            StatementPeriod s = sorted.get(i);
+            LocalDate expectedNextStart = blockEnd.plusDays(1);
+            if (s.periodStart().isAfter(expectedNextStart)) {
+                // A real gap: close out the current block, record it, start a new one.
+                coveredDays += durationDays(blockStart, blockEnd);
                 LocalDate gapStart = expectedNextStart;
-                LocalDate gapEnd = b.periodStart().minusDays(1);
-                gaps.add(new CoverageGap(gapStart, gapEnd, durationDays(gapStart, gapEnd), delta(a, b)));
+                LocalDate gapEnd = s.periodStart().minusDays(1);
+                gaps.add(new CoverageGap(gapStart, gapEnd, durationDays(gapStart, gapEnd), delta(blockEndOwner, s)));
+                blockStart = s.periodStart();
+                blockEnd = s.periodEnd();
+                blockEndOwner = s;
+            } else if (s.periodEnd().isAfter(blockEnd)) {
+                // Touching, overlapping, or the single PNB boundary-reprint day -- extend the
+                // block; classification never enters this decision, only raw calendar coverage.
+                blockEnd = s.periodEnd();
+                blockEndOwner = s;
             }
-            return;
+            // else: s is fully nested inside the current block -- already covered.
         }
+        coveredDays += durationDays(blockStart, blockEnd);
 
-        // sharedDays >= 1: a non-standard segment's own boundaries are never tested for overlap
-        // either (§0.22) -- a broader statement legitimately enclosing narrower ones (§7) is not
-        // automatically a conflict.
-        if (aClass == Classification.NON_STANDARD_PERIOD || bClass == Classification.NON_STANDARD_PERIOD) {
-            return;
+        return new MergeResult(coveredDays, gaps);
+    }
+
+    /** Every pair of STANDARD segments with two or more shared days -- not just adjacent pairs in
+     *  sort order, since a segment enclosing two others that don't touch each other must be
+     *  flagged against both, not just the one next to it by index. A non-standard segment is never
+     *  tested for an overlap claim (§0.22/§7): a broader statement legitimately enclosing narrower
+     *  ones is not automatically a conflict. */
+    private static List<CoverageOverlap> findOverlaps(List<StatementPeriod> sorted, List<CoverageSegment> segments) {
+        List<CoverageOverlap> overlaps = new ArrayList<>();
+        for (int i = 0; i < sorted.size(); i++) {
+            if (segments.get(i).classification() != Classification.STANDARD) continue;
+            for (int j = i + 1; j < sorted.size(); j++) {
+                if (segments.get(j).classification() != Classification.STANDARD) continue;
+                StatementPeriod a = sorted.get(i);
+                StatementPeriod b = sorted.get(j);
+                long sharedDays = sharedDays(a, b);
+                if (sharedDays < 2) continue; // 0 = no overlap, 1 = the known PNB boundary day
+                boolean exactDuplicate = a.periodStart().isEqual(b.periodStart())
+                        && a.periodEnd().isEqual(b.periodEnd());
+                LocalDate overlapStart = b.periodStart();
+                LocalDate overlapEnd = a.periodEnd().isBefore(b.periodEnd()) ? a.periodEnd() : b.periodEnd();
+                overlaps.add(new CoverageOverlap(a.statementImportId(), b.statementImportId(),
+                        overlapStart, overlapEnd, exactDuplicate ? OverlapType.EXACT_DUPLICATE : OverlapType.PARTIAL));
+            }
         }
+        return overlaps;
+    }
 
-        if (sharedDays == 1) {
-            return; // the one known boundary-reprint day -- continuous, not an overlap.
-        }
-
-        boolean exactDuplicate = a.periodStart().isEqual(b.periodStart()) && a.periodEnd().isEqual(b.periodEnd());
-        LocalDate overlapStart = b.periodStart();
-        LocalDate overlapEnd = a.periodEnd().isBefore(b.periodEnd()) ? a.periodEnd() : b.periodEnd();
-        overlaps.add(new CoverageOverlap(a.statementImportId(), b.statementImportId(), overlapStart, overlapEnd,
-                exactDuplicate ? OverlapType.EXACT_DUPLICATE : OverlapType.PARTIAL));
+    /** {@code a} must start no later than {@code b} (guaranteed by the sorted-list iteration order
+     *  every caller uses). §0.1's own definition, unchanged. */
+    private static long sharedDays(StatementPeriod a, StatementPeriod b) {
+        return a.periodEnd().isBefore(b.periodStart()) ? 0 : ChronoUnit.DAYS.between(b.periodStart(), a.periodEnd()) + 1;
     }
 
     private static BigDecimal delta(StatementPeriod a, StatementPeriod b) {

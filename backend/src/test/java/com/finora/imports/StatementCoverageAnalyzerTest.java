@@ -205,28 +205,77 @@ class StatementCoverageAnalyzerTest {
     }
 
     @Test
-    @DisplayName("a non-standard segment's own days still count toward coveredDays")
+    @DisplayName("a non-standard segment's own days still count toward coveredDays, and don't get miscounted as a gap")
     void nonStandardSegment_stillCountsAsCovered() {
         var report = analyze(List.of(
                 period(LocalDate.of(2026, 1, 1), LocalDate.of(2026, 1, 31)),
                 period(LocalDate.of(2026, 2, 1), LocalDate.of(2026, 2, 28)),
                 period(LocalDate.of(2026, 3, 1), LocalDate.of(2026, 10, 1))));
 
-        // §0.12 supersedes §0.11: coveredDays excludes non-standard segments' own duration.
-        // Confirmed separately below (excludedFromCoveredDays); this test only guards that its
-        // presence doesn't get miscounted as a gap either.
         assertThat(report.gaps()).isEmpty();
     }
 
     @Test
-    @DisplayName("coveredDays/missingDays exclude a non-standard segment's own duration entirely (§0.12 supersedes §0.11)")
-    void coveredDays_excludesNonStandardSegmentDuration() {
+    @DisplayName("coveredDays includes a non-standard segment's own duration (§0.22 supersedes §0.12's exclusion -- bug found and corrected on implementation)")
+    void coveredDays_includesNonStandardSegmentDuration() {
         var report = analyze(List.of(
                 period(LocalDate.of(2026, 1, 1), LocalDate.of(2026, 1, 31)),   // 31 days, standard
                 period(LocalDate.of(2026, 2, 1), LocalDate.of(2026, 2, 28)),   // 28 days, standard
                 period(LocalDate.of(2026, 3, 1), LocalDate.of(2026, 10, 1)))); // ~215 days, non-standard
 
-        assertThat(report.coveredDays()).isEqualTo(31 + 28);
+        // All three are contiguous, so the true covered span is Jan 1 - Oct 1 -- the union, not a
+        // sum of the three durations (which would double no days here, since none overlap, but
+        // §0.11's original "sum every segment's duration" phrasing breaks the moment two segments
+        // DO overlap or nest -- see coveredDays_isTheUnion_notTheSum below for that case).
+        assertThat(report.coveredDays()).isEqualTo(273 + 1);
+    }
+
+    @Test
+    @DisplayName("BUG found via self-review: a broader statement enclosing two non-touching narrower ones must not report a phantom gap between them")
+    void broaderStatementCoveringTheSpaceBetweenTwoNestedOnes_reportsNoPhantomGap() {
+        // A 90-day statement (Jan1-Mar31) -- exactly 90 days, so it stays STANDARD, not excluded
+        // from adjacency by classification -- encloses two shorter statements that don't touch
+        // each other (Feb1-14, Feb20-27). The old pairwise-adjacent-only walk compared only
+        // (Jan1-Mar31, Feb1-14) and (Feb1-14, Feb20-27), so it never noticed Jan1-Mar31 already
+        // covers the Feb15-19 space between the two nested ones, and reported a false gap there.
+        var report = analyze(List.of(
+                period(LocalDate.of(2026, 1, 1), LocalDate.of(2026, 3, 31)),
+                period(LocalDate.of(2026, 2, 1), LocalDate.of(2026, 2, 14)),
+                period(LocalDate.of(2026, 2, 20), LocalDate.of(2026, 2, 27))));
+
+        assertThat(report.gaps())
+                .as("Feb 15-19 is already covered by the Jan1-Mar31 statement -- not a real gap")
+                .isEmpty();
+    }
+
+    @Test
+    @DisplayName("BUG found via self-review: coveredDays is the union of covered days, not a naive sum of segment durations")
+    void coveredDays_isTheUnion_notTheSum() {
+        // Same shape as the phantom-gap repro above -- the true covered span is exactly Jan1-Mar31
+        // (90 days), since both nested statements fall entirely inside it. A naive sum would double
+        // and triple-count the nested statements' days: 90 + 14 + 8 = 112, not 90.
+        var report = analyze(List.of(
+                period(LocalDate.of(2026, 1, 1), LocalDate.of(2026, 3, 31)),
+                period(LocalDate.of(2026, 2, 1), LocalDate.of(2026, 2, 14)),
+                period(LocalDate.of(2026, 2, 20), LocalDate.of(2026, 2, 27))));
+
+        assertThat(report.coveredDays()).isEqualTo(90);
+    }
+
+    @Test
+    @DisplayName("overlap detection compares every pair, not just adjacent ones -- a segment enclosing two others is flagged against both")
+    void overlapDetection_comparesEveryPair_notJustAdjacentOnes() {
+        // A (90 days -- stays STANDARD, same boundary as the phantom-gap repro above) genuinely
+        // overlaps both B and C, but only A-B are adjacent in sort order; the old implementation
+        // never tested A against C at all.
+        var a = period(LocalDate.of(2026, 1, 1), LocalDate.of(2026, 3, 31));   // 90 days
+        var b = period(LocalDate.of(2026, 1, 10), LocalDate.of(2026, 1, 20));  // nested in A
+        var c = period(LocalDate.of(2026, 2, 10), LocalDate.of(2026, 2, 20));  // also nested in A, not touching B
+        var report = analyze(List.of(a, b, c));
+
+        assertThat(report.overlaps())
+                .as("A must be flagged as overlapping BOTH nested statements, not just the adjacent one")
+                .hasSize(2);
     }
 
     // --- Coverage totals (§0.11) --------------------------------------------------------------
@@ -265,6 +314,7 @@ class StatementCoverageAnalyzerTest {
         assertThat(report.overlaps()).isEmpty();
         assertThat(report.coveragePercentage()).isNull();
     }
+
 
     // --- coverageStatus (§0.24: booleans authoritative, enum a display convenience) ----------
 
