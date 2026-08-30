@@ -3,6 +3,7 @@ import { AccessibilityInfo, Platform, StyleSheet, Text, View } from 'react-nativ
 import { onlineManager } from '@tanstack/react-query';
 import { SafeAreaInsetsContext, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { spacing, useTheme } from '../theme';
+import { useTransientFlag } from '../lib/useTransientFlag';
 
 /** Subscribes to React Query's own notion of connectivity, fed by NetInfo in api/queryClient.ts.
  *  Exported so anything that needs the identical online/offline signal the banner itself renders
@@ -17,6 +18,11 @@ export function useOnline(): boolean {
 /** Single source of truth for the offline message -- spoken by iOS below, and rendered by the
  *  banner's own <Text> further down, so the two can never drift apart. */
 const OFFLINE_MESSAGE = 'No connection — showing the last data loaded';
+
+/** Shown briefly on the SAME banner when connectivity returns -- see OfflineBoundary's own
+ *  comment for why this reuses useTransientFlag rather than a new component or a modal. */
+const BACK_ONLINE_MESSAGE = 'Back online — refreshing your data';
+const BACK_ONLINE_DURATION_MS = 2500;
 
 /**
  * Wraps the app with a persistent offline strip.
@@ -39,6 +45,7 @@ export function OfflineBoundary({ children }: { children: ReactNode }) {
   const c = useTheme();
   const insets = useSafeAreaInsets();
   const online = useOnline();
+  const [showingBackOnline, confirmBackOnline] = useTransientFlag(BACK_ONLINE_DURATION_MS);
 
   // accessibilityLiveRegion below is Android-only -- React Native has no iOS equivalent, so a
   // VoiceOver user gets no signal that the banner just appeared unless something explicitly
@@ -51,15 +58,30 @@ export function OfflineBoundary({ children }: { children: ReactNode }) {
     if (Platform.OS === 'ios' && wasOnline.current && !online) {
       AccessibilityInfo.announceForAccessibility(OFFLINE_MESSAGE);
     }
+    // The reverse transition: connectivity just came back. Triggers the same transient-flag
+    // pattern BudgetsScreen's "Saved." confirmation uses (see useTransientFlag's own doc comment
+    // on why a hand-rolled setTimeout here would leak) rather than a toast or modal -- staying
+    // consistent with this component's "being offline is a state, not an event" reasoning: coming
+    // back online IS an event, briefly, and this is the one place in the boundary allowed to be.
+    if (!wasOnline.current && online) {
+      confirmBackOnline();
+      if (Platform.OS === 'ios') {
+        AccessibilityInfo.announceForAccessibility(BACK_ONLINE_MESSAGE);
+      }
+    }
     wasOnline.current = online;
-  }, [online]);
+  }, [online, confirmBackOnline]);
 
-  if (online) return <>{children}</>;
+  if (online && !showingBackOnline) return <>{children}</>;
+
+  const barColor = online ? c.successBg : c.warningBg;
+  const textColor = online ? c.successInk : c.warningInk;
+  const message = online ? BACK_ONLINE_MESSAGE : OFFLINE_MESSAGE;
 
   return (
     <View style={styles.flex}>
       <View
-        style={[styles.bar, { backgroundColor: c.warningBg, paddingTop: insets.top + 6 }]}
+        style={[styles.bar, { backgroundColor: barColor, paddingTop: insets.top + 6 }]}
         // `accessible` groups the strip into one announced element rather than leaving the role on
         // a container a screen reader steps past on its way to the text. It is also what makes the
         // role queryable, so the announcement can actually be asserted rather than assumed.
@@ -67,7 +89,7 @@ export function OfflineBoundary({ children }: { children: ReactNode }) {
         accessibilityRole="alert"
         accessibilityLiveRegion="polite"
       >
-        <Text style={[styles.text, { color: c.warningInk }]}>{OFFLINE_MESSAGE}</Text>
+        <Text style={[styles.text, { color: textColor }]}>{message}</Text>
       </View>
       <SafeAreaInsetsContext.Provider value={{ ...insets, top: 0 }}>
         <View style={styles.flex}>{children}</View>
