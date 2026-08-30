@@ -36,19 +36,41 @@ import type { ExpoConfig } from 'expo/config';
  *
  * Manage with `eas env:list` / `eas env:create --type file`.
  */
-const iosGoogleServices = process.env.GOOGLE_SERVICES_PLIST ?? './GoogleService-Info.plist';
-const androidGoogleServices = process.env.GOOGLE_SERVICES_JSON ?? './google-services.json';
+/**
+ * Which build this is. Set per profile in eas.json; unset means production.
+ *
+ * Production is the default deliberately, so anything that resolves this config without opting in
+ * -- `expo config`, a local gradle build, the Maestro flows, CI -- keeps the identifiers it had
+ * before variants existed. A dev build is the thing you ask for; it is never what you get by
+ * forgetting to ask.
+ */
+const isDev = process.env.APP_VARIANT === 'development';
+
+/**
+ * Dev and production are separate Firebase projects, so they are separate config files. The
+ * `.dev` copies are gitignored alongside the production ones -- same rule, same reason.
+ */
+const iosGoogleServices =
+  process.env.GOOGLE_SERVICES_PLIST ?? (isDev ? './GoogleService-Info.dev.plist' : './GoogleService-Info.plist');
+const androidGoogleServices =
+  process.env.GOOGLE_SERVICES_JSON ?? (isDev ? './google-services.dev.json' : './google-services.json');
 // An EAS-provided path is already absolute; only a repo-relative default needs resolving.
 const here = (p: string) => (path.isAbsolute(p) ? p : path.join(__dirname, p));
 
 const config: ExpoConfig = {
-  name: 'Fynora',
+  // Distinct on the home screen, because the whole point of the dev variant is that both are
+  // installed at once and you have to be able to tell which one you just tapped.
+  name: isDev ? 'Fynora Dev' : 'Fynora',
+  // NOT varied: the slug identifies the EAS project, which is shared. Two variants of one app,
+  // not two apps.
   slug: 'finora-mobile',
   version: '1.0.0',
   orientation: 'portrait',
   icon: './assets/icon.png',
   userInterfaceStyle: 'automatic',
-  scheme: 'finora',
+  // Varied for the same reason as the identifier: with both installed, a shared scheme makes
+  // which app handles a deep link a coin toss the OS resolves however it likes.
+  scheme: isDev ? 'finora-dev' : 'finora',
   ios: {
     supportsTablet: true,
     // Third identifier, and the last one that can be changed for free. 'com.finora.app' was the
@@ -71,12 +93,19 @@ const config: ExpoConfig = {
     // and Firebase registers phone auth, Play Integrity and the native Google OAuth clients against
     // it. See docs/engineering/mobile/mobile-setup.md, "Bundle identifier migration", for the
     // console and environment steps this line does not perform.
-    bundleIdentifier: 'com.fynora.app',
+    //
+    // The `.dev` suffix exists because Google resolves an OAuth client from the (package, SHA-1)
+    // pair, and that pair has to be unique across Firebase projects. Registering com.fynora.app in
+    // both the production and dev projects did not merely warn -- Firebase declined to create the
+    // dev project's Android OAuth clients at all, and the downloaded google-services.json came back
+    // with no client_type 1 entry and no certificate_hash. Re-registering under com.fynora.app.dev
+    // produced both immediately. See mobile-setup.md, "Dev and production variants".
+    bundleIdentifier: isDev ? 'com.fynora.app.dev' : 'com.fynora.app',
     ...(existsSync(here(iosGoogleServices)) ? { googleServicesFile: iosGoogleServices } : {}),
   },
   android: {
     // Matches ios.bundleIdentifier above -- see its comment for the history and the migration.
-    package: 'com.fynora.app',
+    package: isDev ? 'com.fynora.app.dev' : 'com.fynora.app',
     ...(existsSync(here(androidGoogleServices)) ? { googleServicesFile: androidGoogleServices } : {}),
     // Adaptive icon: a solid graphite plate with the Finora mark as the foreground layer.
     //
