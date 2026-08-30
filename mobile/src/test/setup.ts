@@ -33,6 +33,29 @@ jest.mock('expo-secure-store', () => {
   };
 });
 
+// AsyncStorage is a native module too. Same posture as SecureStore just above -- a plain in-memory
+// map, real async semantics, so useNavigationStatePersistence's actual persistence logic is
+// exercised rather than stubbed out.
+jest.mock('@react-native-async-storage/async-storage', () => {
+  const store = new Map<string, string>();
+  return {
+    __esModule: true,
+    __store: store,
+    default: {
+      getItem: jest.fn(async (k: string) => (store.has(k) ? store.get(k)! : null)),
+      setItem: jest.fn(async (k: string, v: string) => {
+        store.set(k, v);
+      }),
+      removeItem: jest.fn(async (k: string) => {
+        store.delete(k);
+      }),
+      clear: jest.fn(async () => {
+        store.clear();
+      }),
+    },
+  };
+});
+
 // Firebase Auth needs a real native app registered; nothing under test drives it directly.
 jest.mock('@react-native-firebase/auth', () => ({
   getAuth: jest.fn(() => ({})),
@@ -185,11 +208,14 @@ jest.mock('expo-screen-capture', () => ({
   usePreventScreenCapture: jest.fn(),
 }));
 
-// Every test starts from a clean SecureStore so persistence assertions can't leak between them.
+// Every test starts from a clean SecureStore/AsyncStorage so persistence assertions can't leak
+// between them.
 beforeEach(() => {
   // require(), not import: the mock has to be read AFTER jest.mock above has replaced the module,
   // and a static import would be hoisted above it. Allowed for test files in eslint.config.js.
   const secureStore = require('expo-secure-store');
   secureStore.__store.clear();
+  const asyncStorage = require('@react-native-async-storage/async-storage');
+  asyncStorage.__store.clear();
   jest.clearAllMocks();
 });
