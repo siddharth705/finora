@@ -42,7 +42,7 @@ Two upstream findings that shape the tasks below:
 - Consumes: `onlineManager` from `@tanstack/react-query` (already imported in this file).
 - Produces: `useOnline(): boolean` — now exported, so `src/lib/prefetchAdjacentScreens.ts` (Task 4) can read the same connectivity signal `OfflineBoundary` renders from, instead of standing up a second NetInfo/onlineManager subscription that could drift from what's on screen.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 ```ts
 // Added to src/components/OfflineBanner.test.tsx, above the existing `describe('OfflineBoundary', ...)`
 import { useOnline } from './OfflineBanner';
@@ -61,8 +61,8 @@ describe('useOnline', () => {
   });
 });
 ```
-- [ ] **Step 2: Run test to verify it fails** — `npm test -- src/components/OfflineBanner.test.tsx` — Expected: FAIL with `TypeError: (0 , _OfflineBanner.useOnline) is not a function` (or a module has no exported member `useOnline`), since the function exists but isn't exported yet.
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 2: Run test to verify it fails** — `npm test -- src/components/OfflineBanner.test.tsx` — Expected: FAIL with `TypeError: (0 , _OfflineBanner.useOnline) is not a function` (or a module has no exported member `useOnline`), since the function exists but isn't exported yet.
+- [x] **Step 3: Write minimal implementation**
 ```ts
 // src/components/OfflineBanner.tsx:8 — add `export`, nothing else changes
 /** Subscribes to React Query's own notion of connectivity, fed by NetInfo in api/queryClient.ts.
@@ -75,8 +75,8 @@ export function useOnline(): boolean {
   return online;
 }
 ```
-- [ ] **Step 4: Run test to verify it passes** — Expected: PASS, and the whole file's existing suite (`OfflineBoundary`, mount test) still passes unchanged.
-- [ ] **Step 5: Commit** — `git add src/components/OfflineBanner.tsx src/components/OfflineBanner.test.tsx` / `git commit -m "mobile: export useOnline for reuse outside OfflineBanner"`
+- [x] **Step 4: Run test to verify it passes** — Expected: PASS, and the whole file's existing suite (`OfflineBoundary`, mount test) still passes unchanged.
+- [x] **Step 5: Commit** — `git add src/components/OfflineBanner.tsx src/components/OfflineBanner.test.tsx` / `git commit -m "mobile: export useOnline for reuse outside OfflineBanner"`
 
 ---
 
@@ -92,7 +92,7 @@ export function useOnline(): boolean {
 
 React Navigation's `useFocusEffect` reads a `NavigationContext` that only exists inside a real `Navigator`/`Screen` tree. `DashboardScreen.test.tsx` (and most screen tests in this repo) render their screen bare — no `NavigationContainer`, no `Navigator` — exactly like `OfflineBanner.test.tsx` mocks `RootNavigator` away rather than mounting the real navigation tree. Wiring `useFocusEffect` straight into `usePrefetchAdjacentScreens` (Task 4) would make `DashboardScreen.test.tsx` throw immediately on render. This task fakes it globally as an ordinary mount effect, the same way `expo-secure-store`/`@react-native-async-storage/async-storage`/NetInfo are faked globally in this same file, so screen tests don't each need to grow a full navigation tree they have no other use for.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 ```ts
 // src/lib/prefetchAdjacentScreens.focusMock.test.ts (throwaway probe, deleted once Task 4 lands —
 // or fold straight into Task 4's own test file; shown standalone here only to isolate this step)
@@ -107,8 +107,8 @@ describe('useFocusEffect test double (src/test/setup.ts)', () => {
   });
 });
 ```
-- [ ] **Step 2: Run test to verify it fails** — `npm test -- src/lib/prefetchAdjacentScreens.focusMock.test.ts` — Expected: FAIL — real `useFocusEffect` throws (`Couldn't find a navigation object. Is your component inside NavigationContainer?`) because nothing mocks it yet.
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 2: Run test to verify it fails** — `npm test -- src/lib/prefetchAdjacentScreens.focusMock.test.ts` — Expected: FAIL — real `useFocusEffect` throws (`Couldn't find a navigation object. Is your component inside NavigationContainer?`) because nothing mocks it yet.
+- [x] **Step 3: Write minimal implementation**
 ```ts
 // src/test/setup.ts — inserted immediately after the '@react-native-community/netinfo' mock (line 69)
 
@@ -127,8 +127,8 @@ jest.mock('@react-navigation/native', () => {
   };
 });
 ```
-- [ ] **Step 4: Run test to verify it passes** — Expected: PASS. Then delete the throwaway probe file (`rm src/lib/prefetchAdjacentScreens.focusMock.test.ts`) — its only purpose was to pin this step; Task 4/5's real tests exercise the same mock going forward.
-- [ ] **Step 5: Commit** — `git add src/test/setup.ts` / `git commit -m "mobile(test): fake useFocusEffect globally so screen tests don't need a real nav tree"`
+- [x] **Step 4: Run test to verify it passes** — Expected: PASS. Then delete the throwaway probe file (`rm src/lib/prefetchAdjacentScreens.focusMock.test.ts`) — its only purpose was to pin this step; Task 4/5's real tests exercise the same mock going forward.
+- [x] **Step 5: Commit** — `git add src/test/setup.ts` / `git commit -m "mobile(test): fake useFocusEffect globally so screen tests don't need a real nav tree"`
 
 ---
 
@@ -144,7 +144,7 @@ jest.mock('@react-navigation/native', () => {
 
 React Query's cache lookup is a value match on the whole key (via a stable stringify), not a prefix match — a prefetch built from a filters object that's merely *similar* to what `LedgerScreen` constructs is a cache miss with extra network calls, not a warm cache. This task changes zero runtime behavior: `LedgerScreen`'s own filters on a fresh mount (empty search, `typeFilter: 'ALL'`) already equal `{ size: 20, sortField: 'date', sortDir: 'desc', keyword: undefined, type: undefined }`, which is what `DEFAULT_LEDGER_FILTERS` spread with `keyword`/`type` re-added still produces.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 ```ts
 // Appended to src/screens/LedgerScreen.test.tsx
 import { DEFAULT_LEDGER_FILTERS, LEDGER_PAGE_SIZE, getLedgerNextPageParam } from './LedgerScreen';
@@ -167,8 +167,8 @@ describe('DEFAULT_LEDGER_FILTERS export (for Dashboard prefetch, Task 4)', () =>
   });
 });
 ```
-- [ ] **Step 2: Run test to verify it fails** — `npm test -- src/screens/LedgerScreen.test.tsx` — Expected: FAIL with `TypeError: Cannot read properties of undefined` / `does not provide an export named 'DEFAULT_LEDGER_FILTERS'`, since nothing is exported yet.
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 2: Run test to verify it fails** — `npm test -- src/screens/LedgerScreen.test.tsx` — Expected: FAIL with `TypeError: Cannot read properties of undefined` / `does not provide an export named 'DEFAULT_LEDGER_FILTERS'`, since nothing is exported yet.
+- [x] **Step 3: Write minimal implementation**
 ```ts
 // src/screens/LedgerScreen.tsx — imports (top of file)
 import { transactionsApi, type PagedResponse, type TransactionFilters } from '../api/endpoints';
@@ -209,8 +209,8 @@ const filters: TransactionFilters = useMemo(
 // src/screens/LedgerScreen.tsx:56-57 — replace the inline getNextPageParam:
 getNextPageParam: getLedgerNextPageParam,
 ```
-- [ ] **Step 4: Run test to verify it passes** — Expected: PASS, and every pre-existing test in this file still passes unchanged (filters object is value-identical to before).
-- [ ] **Step 5: Commit** — `git add src/screens/LedgerScreen.tsx src/screens/LedgerScreen.test.tsx` / `git commit -m "mobile: export LedgerScreen's default query key so Dashboard can prefetch it exactly"`
+- [x] **Step 4: Run test to verify it passes** — Expected: PASS, and every pre-existing test in this file still passes unchanged (filters object is value-identical to before).
+- [x] **Step 5: Commit** — `git add src/screens/LedgerScreen.tsx src/screens/LedgerScreen.test.tsx` / `git commit -m "mobile: export LedgerScreen's default query key so Dashboard can prefetch it exactly"`
 
 ---
 
@@ -224,7 +224,7 @@ getNextPageParam: getLedgerNextPageParam,
 - Consumes: `useOnline` (Task 1, `../components/OfflineBanner`), `DEFAULT_LEDGER_FILTERS`/`getLedgerNextPageParam` (Task 3, `../screens/LedgerScreen`), `useFocusEffect` (Task 2's test double in tests / real react-navigation in the app), `transactionsApi.search`, `budgetsApi.list`, `reportsApi.availableMonths`, `reportsApi.forMonth` (all from `../api/endpoints`, signatures read from `src/api/endpoints.ts:131-134,403-407,477-480`).
 - Produces: `usePrefetchAdjacentScreens(): void` — called from `DashboardScreen` in Task 5.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 ```ts
 // src/lib/prefetchAdjacentScreens.test.ts
 import type { ReactNode } from 'react';
@@ -307,8 +307,8 @@ describe('usePrefetchAdjacentScreens', () => {
   });
 });
 ```
-- [ ] **Step 2: Run test to verify it fails** — `npm test -- src/lib/prefetchAdjacentScreens.test.ts` — Expected: FAIL — `Cannot find module './prefetchAdjacentScreens'`.
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 2: Run test to verify it fails** — `npm test -- src/lib/prefetchAdjacentScreens.test.ts` — Expected: FAIL — `Cannot find module './prefetchAdjacentScreens'`.
+- [x] **Step 3: Write minimal implementation**
 ```ts
 // src/lib/prefetchAdjacentScreens.ts
 import { useCallback } from 'react';
@@ -376,8 +376,8 @@ export function usePrefetchAdjacentScreens() {
   );
 }
 ```
-- [ ] **Step 4: Run test to verify it passes** — Expected: PASS (all three cases).
-- [ ] **Step 5: Commit** — `git add src/lib/prefetchAdjacentScreens.ts src/lib/prefetchAdjacentScreens.test.ts` / `git commit -m "mobile: add usePrefetchAdjacentScreens for Ledger/Budgets/Reports"`
+- [x] **Step 4: Run test to verify it passes** — Expected: PASS (all three cases).
+- [x] **Step 5: Commit** — `git add src/lib/prefetchAdjacentScreens.ts src/lib/prefetchAdjacentScreens.test.ts` / `git commit -m "mobile: add usePrefetchAdjacentScreens for Ledger/Budgets/Reports"`
 
 ---
 
@@ -393,7 +393,7 @@ export function usePrefetchAdjacentScreens() {
 
 Per the brief: adjacent-transaction prefetch ("on transaction detail view, prefetch neighboring transactions") is **not applicable**. `src/navigation/types.ts`'s `AppTabParamList`/`MoreStackParamList` and `src/navigation/AppTabs.tsx` were read in full — there is no transaction detail screen anywhere in this app (`LedgerScreen` renders rows inline with long-press-to-delete, no push-to-detail navigation exists). No screen was invented to satisfy this; it is simply out of scope until such a screen exists.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 ```ts
 // Appended to src/screens/DashboardScreen.test.tsx, after the existing mocks near the top:
 // (the endpoints factory below REPLACES the existing one at the top of the file, adding budgetsApi)
@@ -423,8 +423,8 @@ describe('adjacent-screen prefetching (Task 4 wiring)', () => {
   });
 });
 ```
-- [ ] **Step 2: Run test to verify it fails** — `npm test -- src/screens/DashboardScreen.test.tsx` — Expected: FAIL — `queryClient.getQueryData(['budgets'])` stays `undefined` because nothing calls `usePrefetchAdjacentScreens` yet.
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 2: Run test to verify it fails** — `npm test -- src/screens/DashboardScreen.test.tsx` — Expected: FAIL — `queryClient.getQueryData(['budgets'])` stays `undefined` because nothing calls `usePrefetchAdjacentScreens` yet.
+- [x] **Step 3: Write minimal implementation**
 ```ts
 // src/screens/DashboardScreen.tsx — add import near the other lib imports (after line 16):
 import { usePrefetchAdjacentScreens } from '../lib/prefetchAdjacentScreens';
@@ -434,8 +434,8 @@ import { usePrefetchAdjacentScreens } from '../lib/prefetchAdjacentScreens';
 usePreventScreenCapture();
 usePrefetchAdjacentScreens();
 ```
-- [ ] **Step 4: Run test to verify it passes** — Expected: PASS. Also re-run the file's full pre-existing suite (`npm test -- src/screens/DashboardScreen.test.tsx`) to confirm the `!summary` guard tests and every other existing case are unaffected by the new hook (they will be, since `usePrefetchAdjacentScreens` only reads `useQueryClient()`/`useOnline()` and never touches render output).
-- [ ] **Step 5: Commit** — `git add src/screens/DashboardScreen.tsx src/screens/DashboardScreen.test.tsx` / `git commit -m "mobile: prefetch Ledger/Budgets/Reports on Dashboard focus"`
+- [x] **Step 4: Run test to verify it passes** — Expected: PASS. Also re-run the file's full pre-existing suite (`npm test -- src/screens/DashboardScreen.test.tsx`) to confirm the `!summary` guard tests and every other existing case are unaffected by the new hook (they will be, since `usePrefetchAdjacentScreens` only reads `useQueryClient()`/`useOnline()` and never touches render output).
+- [x] **Step 5: Commit** — `git add src/screens/DashboardScreen.tsx src/screens/DashboardScreen.test.tsx` / `git commit -m "mobile: prefetch Ledger/Budgets/Reports on Dashboard focus"`
 
 ---
 
@@ -451,7 +451,7 @@ usePrefetchAdjacentScreens();
 
 Locked allowlist, built from every real query key found via `grep -rn "queryKey:" src` (`src/screens/DashboardScreen.tsx:51-59,64,74`, `BudgetsScreen.tsx:39,44`, `LedgerScreen.tsx:51`, `ReportsScreen.tsx:40,51`, `InsightsScreen.tsx:20-21`, `InvestmentsScreen.tsx:66-67`, `GoalsScreen.tsx:43`, `StatementHistoryScreen.tsx:62,379`, `SettingsScreen.tsx:89-93`, `settings/DeviceSessionsSection.tsx:36`, `import/ImportScreen.tsx:81,85`). Only the brief's named domains (dashboard/accounts/transactions/budgets/reports/categories) are included; everything else — `goals`, `insights`, `networth`, `recurring`, `user-settings`, `workspace-settings`, `devices`, `import-statistics`, `statement-imports`, `statement-import-transactions` — is excluded by simply not appearing, which covers every category the brief calls out (import workflow state, pending uploads, auth/session domain, error/draft state) without needing a denylist that could miss a future one.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 ```ts
 // src/api/queryPersistence.test.ts
 import { QueryClient } from '@tanstack/react-query';
@@ -498,8 +498,8 @@ describe('shouldPersistQuery', () => {
   });
 });
 ```
-- [ ] **Step 2: Run test to verify it fails** — `npm test -- src/api/queryPersistence.test.ts` — Expected: FAIL — `Cannot find module './queryPersistence'`.
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 2: Run test to verify it fails** — `npm test -- src/api/queryPersistence.test.ts` — Expected: FAIL — `Cannot find module './queryPersistence'`.
+- [x] **Step 3: Write minimal implementation**
 ```ts
 // src/api/queryPersistence.ts
 import { defaultShouldDehydrateQuery, type Query } from '@tanstack/react-query';
@@ -543,8 +543,8 @@ export function shouldPersistQuery(query: Query): boolean {
   return typeof prefix === 'string' && (PERSISTED_QUERY_KEY_PREFIXES as readonly string[]).includes(prefix);
 }
 ```
-- [ ] **Step 4: Run test to verify it passes** — Expected: PASS.
-- [ ] **Step 5: Commit** — `git add src/api/queryPersistence.ts src/api/queryPersistence.test.ts` / `git commit -m "mobile: add shouldPersistQuery allowlist for React Query cache persistence"`
+- [x] **Step 4: Run test to verify it passes** — Expected: PASS.
+- [x] **Step 5: Commit** — `git add src/api/queryPersistence.ts src/api/queryPersistence.test.ts` / `git commit -m "mobile: add shouldPersistQuery allowlist for React Query cache persistence"`
 
 ---
 
@@ -565,7 +565,7 @@ Package versions confirmed on the npm registry: `@tanstack/query-async-storage-p
 
 **Restored data is never trusted as fresh, even inside `staleTime`.** Relying purely on the shared 30s `staleTime` to trigger revalidation after a cold start works most of the time (an app is rarely relaunched within 30s of being killed) but isn't guaranteed — a quick force-quit-and-reopen would otherwise restore a query that's still technically "fresh" and skip the background refetch entirely, leaving a screen showing seconds-old-but-now-possibly-wrong data with no revalidation in flight. `persistQueryClient`'s `onSuccess` callback (fired once restore completes) is used to call `queryClient.invalidateQueries()` unconditionally, which marks every restored query stale and triggers an immediate background refetch for any that have an active observer (a mounted screen). This is the explicit flow: persist → restore on launch → mark stale immediately → background refresh → update UI when fresh data arrives — the "opens instantly, then quietly corrects itself" feel the whole initiative is chasing, made deterministic rather than incidental. `persistQueryClient`'s own default `onSuccess` resumes any paused (offline-queued) mutations; overriding `onSuccess` replaces that default, so `resumePausedMutations()` is called explicitly to preserve it.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 ```ts
 // src/api/queryClient.test.ts
 import type { ReactNode } from 'react';
@@ -650,8 +650,8 @@ describe('clearPersistedQueryCache', () => {
 });
 ```
 Add `import { waitFor } from '@testing-library/react-native';` to the top of the file alongside the other imports (combine with the `renderHook` import shown above into one `@testing-library/react-native` import line).
-- [ ] **Step 2: Run test to verify it fails** — `npm test -- src/api/queryClient.test.ts` — Expected: FAIL — `startQueryPersistence`/`clearPersistedQueryCache` are not exported yet (module has no such members). The new "treats restored data as stale immediately" test will additionally fail on its own even once those exist, since nothing yet calls `invalidateQueries()` after restore — `queryFn` is never called a second time.
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 2: Run test to verify it fails** — `npm test -- src/api/queryClient.test.ts` — Expected: FAIL — `startQueryPersistence`/`clearPersistedQueryCache` are not exported yet (module has no such members). The new "treats restored data as stale immediately" test will additionally fail on its own even once those exist, since nothing yet calls `invalidateQueries()` after restore — `queryFn` is never called a second time.
+- [x] **Step 3: Write minimal implementation**
 ```bash
 npm install @tanstack/query-async-storage-persister@^5.101.4 @tanstack/react-query-persist-client@^5.101.4
 ```
@@ -728,8 +728,8 @@ export async function clearPersistedQueryCache(): Promise<void> {
   await persister.removeClient();
 }
 ```
-- [ ] **Step 4: Run test to verify it passes** — Expected: PASS (all three cases).
-- [ ] **Step 5: Commit** — `git add package.json package-lock.json src/api/queryClient.ts src/api/queryClient.test.ts` / `git commit -m "mobile: persist React Query cache to AsyncStorage via persistQueryClient"`
+- [x] **Step 4: Run test to verify it passes** — Expected: PASS (all three cases).
+- [x] **Step 5: Commit** — `git add package.json package-lock.json src/api/queryClient.ts src/api/queryClient.test.ts` / `git commit -m "mobile: persist React Query cache to AsyncStorage via persistQueryClient"`
 
 ---
 
@@ -744,9 +744,9 @@ export async function clearPersistedQueryCache(): Promise<void> {
 
 Mirrors the existing `startNetworkMonitoring` wiring exactly (`App.tsx:37`, `useEffect(() => startNetworkMonitoring(), [])`), including subscribing inside an effect rather than at module scope so it's torn down cleanly rather than leaking across fast-refresh reloads. No `App.test.tsx` exists in this repo, and `startNetworkMonitoring`'s own wiring has no dedicated test either (confirmed via `grep -rln "startNetworkMonitoring" src App.tsx` — only `App.tsx` and `queryClient.ts` reference it); the precedent here is that the function itself is unit-tested (Task 7) and the wiring is implicitly covered by the App-rendering tests that already exist (`src/components/OfflineBanner.test.tsx`'s `"the app actually mounts it"` test, `AppLockGate.test.tsx`, `RootWarningBanner.test.tsx` — all render the real `<App />`).
 
-- [ ] **Step 1: Write the failing test** — none new; run the existing App-mounting regression suite first to record its current green baseline: `npm test -- src/components/OfflineBanner.test.tsx src/components/AppLockGate.test.tsx src/components/RootWarningBanner.test.tsx` — Expected: PASS (baseline, before this change — confirms nothing is already broken that this task's change could be blamed for).
-- [ ] **Step 2: Run test to verify it fails** — N/A for this task (wiring-only, no new assertions); proceed to Step 3.
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 1: Write the failing test** — none new; run the existing App-mounting regression suite first to record its current green baseline: `npm test -- src/components/OfflineBanner.test.tsx src/components/AppLockGate.test.tsx src/components/RootWarningBanner.test.tsx` — Expected: PASS (baseline, before this change — confirms nothing is already broken that this task's change could be blamed for).
+- [x] **Step 2: Run test to verify it fails** — N/A for this task (wiring-only, no new assertions); proceed to Step 3.
+- [x] **Step 3: Write minimal implementation**
 ```ts
 // App.tsx:6 — import
 import { queryClient, startNetworkMonitoring, startQueryPersistence } from './src/api/queryClient';
@@ -759,8 +759,8 @@ useEffect(() => startNetworkMonitoring(), []);
 // down cleanly rather than leaking across fast-refresh reloads in development.
 useEffect(() => startQueryPersistence(), []);
 ```
-- [ ] **Step 4: Run test to verify it passes** — `npm test -- src/components/OfflineBanner.test.tsx src/components/AppLockGate.test.tsx src/components/RootWarningBanner.test.tsx` — Expected: PASS, unchanged from the Step 1 baseline (the real `<App />` still mounts and behaves identically; `startQueryPersistence()` finds an empty AsyncStorage under test and silently no-ops the restore).
-- [ ] **Step 5: Commit** — `git add App.tsx` / `git commit -m "mobile: start React Query cache persistence on app boot"`
+- [x] **Step 4: Run test to verify it passes** — `npm test -- src/components/OfflineBanner.test.tsx src/components/AppLockGate.test.tsx src/components/RootWarningBanner.test.tsx` — Expected: PASS, unchanged from the Step 1 baseline (the real `<App />` still mounts and behaves identically; `startQueryPersistence()` finds an empty AsyncStorage under test and silently no-ops the restore).
+- [x] **Step 5: Commit** — `git add App.tsx` / `git commit -m "mobile: start React Query cache persistence on app boot"`
 
 ---
 
@@ -776,7 +776,7 @@ useEffect(() => startQueryPersistence(), []);
 
 This is a real security requirement, not polish (per the brief): without it, a persisted AsyncStorage blob from account A survives `queryClient.clear()` (which only empties the in-memory cache) and would be the very first thing restored — and rendered — for account B on the next cold start of a shared device. The test below is the AsyncStorage counterpart of the existing `src/context/logoutCacheIsolation.test.tsx` (MOB-AUTH-02), which already proved `clearLocalState` empties the in-memory cache on logout. Only the logout path is exercised here — not a separate session-expiry variant — because both already reach the identical `clearLocalState` function body; `src/context/sessionExpiryCacheIsolation.test.tsx` (MOB-AUTH-03) already proves that convergence for the in-memory cache, and re-proving the same routing here would test routing again, not this feature.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 ```tsx
 // src/context/persistedQueryCacheIsolation.test.tsx
 import { Text } from 'react-native';
@@ -844,8 +844,8 @@ describe('signing out clears the AsyncStorage-persisted query cache', () => {
   });
 });
 ```
-- [ ] **Step 2: Run test to verify it fails** — `npm test -- src/context/persistedQueryCacheIsolation.test.tsx` — Expected: FAIL — `AsyncStorage.getItem(PERSIST_KEY)` still resolves to the seeded blob, since `clearLocalState` doesn't call `clearPersistedQueryCache` yet.
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 2: Run test to verify it fails** — `npm test -- src/context/persistedQueryCacheIsolation.test.tsx` — Expected: FAIL — `AsyncStorage.getItem(PERSIST_KEY)` still resolves to the seeded blob, since `clearLocalState` doesn't call `clearPersistedQueryCache` yet.
+- [x] **Step 3: Write minimal implementation**
 ```ts
 // src/context/AuthContext.tsx:6 — import, alongside the existing clearPersistedNavigationState import
 import { clearPersistedNavigationState } from '../navigation/useNavigationStatePersistence';
@@ -862,8 +862,8 @@ void clearPersistedNavigationState();
 // Fire-and-forget, same as every other AsyncStorage write here.
 void clearPersistedQueryCache();
 ```
-- [ ] **Step 4: Run test to verify it passes** — Expected: PASS. Re-run `src/context/logoutCacheIsolation.test.tsx` and `src/context/sessionExpiryCacheIsolation.test.tsx` too, to confirm the existing in-memory-cache guarantees are untouched by this addition.
-- [ ] **Step 5: Commit** — `git add src/context/AuthContext.tsx src/context/persistedQueryCacheIsolation.test.tsx` / `git commit -m "mobile: clear the persisted query cache on logout/session-expiry"`
+- [x] **Step 4: Run test to verify it passes** — Expected: PASS. Re-run `src/context/logoutCacheIsolation.test.tsx` and `src/context/sessionExpiryCacheIsolation.test.tsx` too, to confirm the existing in-memory-cache guarantees are untouched by this addition.
+- [x] **Step 5: Commit** — `git add src/context/AuthContext.tsx src/context/persistedQueryCacheIsolation.test.tsx` / `git commit -m "mobile: clear the persisted query cache on logout/session-expiry"`
 
 ---
 
@@ -879,7 +879,7 @@ void clearPersistedQueryCache();
 
 `light.success` (`#16a34a`) on `light.successBg` (`#dcfce7`) computes to **~3.00:1**, under WCAG AA's 4.5:1 floor for small text — the exact same shape of problem `warningInk` (`palette.ts:44-48`) already exists to fix for the warning banner. `#166534` (a darker green) computes to **~6.49:1** on the same background — real margin, not just over the line, matching `warningInk`'s own margin (2.86:1 → 6.37:1). Dark theme's `success`/`successBg` pair already clears **~6.28:1**, so `dark.successInk` is simply set equal to `dark.success`, mirroring `dark.warningInk === dark.warning`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 ```ts
 // Appended to src/theme/palette.test.ts, inside the existing describe('theme palette contrast', ...)
 it.each([
@@ -899,8 +899,8 @@ it('dark.successInk intentionally equals dark.success, since dark theme already 
   expect(dark.successInk).toBe(dark.success);
 });
 ```
-- [ ] **Step 2: Run test to verify it fails** — `npm test -- src/theme/palette.test.ts` — Expected: FAIL — TypeScript/runtime error, `successInk` does not exist on `Palette`.
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 2: Run test to verify it fails** — `npm test -- src/theme/palette.test.ts` — Expected: FAIL — TypeScript/runtime error, `successInk` does not exist on `Palette`.
+- [x] **Step 3: Write minimal implementation**
 ```ts
 // src/theme/palette.ts:38-39 — light, immediately after successBg
 success: '#16a34a',
@@ -917,8 +917,8 @@ successBg: '#12301f',
 // value as success -- same reasoning as dark.warningInk/dark.mutedInk above.
 successInk: '#22c55e',
 ```
-- [ ] **Step 4: Run test to verify it passes** — Expected: PASS.
-- [ ] **Step 5: Commit** — `git add src/theme/palette.ts src/theme/palette.test.ts` / `git commit -m "mobile: add WCAG-AA successInk palette token"`
+- [x] **Step 4: Run test to verify it passes** — Expected: PASS.
+- [x] **Step 5: Commit** — `git add src/theme/palette.ts src/theme/palette.test.ts` / `git commit -m "mobile: add WCAG-AA successInk palette token"`
 
 ---
 
@@ -934,7 +934,7 @@ successInk: '#22c55e',
 
 No new component, per the brief: `OfflineBoundary` already owns the one persistent strip every screen renders under; a second banner component would fight it for the same screen real estate. `useTransientFlag(2500)` is reused rather than a hand-rolled `setTimeout`, exactly because its own doc comment (`src/lib/useTransientFlag.ts`) documents that the hand-rolled version was written and leaked three times on other screens before this hook existed — the same shape of leak here (a timer firing into an unmounted `OfflineBoundary`, which wraps the entire app for its whole lifetime, is unlikely to unmount, but there is no reason to hand-roll the risk when a proven, leak-safe hook already exists).
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 ```tsx
 // Appended to src/components/OfflineBanner.test.tsx, after the existing describe('OfflineBoundary', ...) block
 describe('back online feedback', () => {
@@ -1016,8 +1016,8 @@ describe('back online feedback', () => {
   });
 });
 ```
-- [ ] **Step 2: Run test to verify it fails** — `npm test -- src/components/OfflineBanner.test.tsx` — Expected: FAIL — no "Back online" text is ever rendered yet.
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 2: Run test to verify it fails** — `npm test -- src/components/OfflineBanner.test.tsx` — Expected: FAIL — no "Back online" text is ever rendered yet.
+- [x] **Step 3: Write minimal implementation**
 ```tsx
 // src/components/OfflineBanner.tsx:1 — add import
 import { useTransientFlag } from '../lib/useTransientFlag';
@@ -1079,8 +1079,8 @@ export function OfflineBoundary({ children }: { children: ReactNode }) {
   );
 }
 ```
-- [ ] **Step 4: Run test to verify it passes** — Expected: PASS. Re-run the full file (`npm test -- src/components/OfflineBanner.test.tsx`) to confirm every pre-existing `OfflineBoundary`/mount test still passes unchanged (the `online && !showingBackOnline` early return preserves the exact prior behavior once the transient flag has cleared).
-- [ ] **Step 5: Commit** — `git add src/components/OfflineBanner.tsx src/components/OfflineBanner.test.tsx` / `git commit -m "mobile: add transient back-online feedback to OfflineBoundary"`
+- [x] **Step 4: Run test to verify it passes** — Expected: PASS. Re-run the full file (`npm test -- src/components/OfflineBanner.test.tsx`) to confirm every pre-existing `OfflineBoundary`/mount test still passes unchanged (the `online && !showingBackOnline` early return preserves the exact prior behavior once the transient flag has cleared).
+- [x] **Step 5: Commit** — `git add src/components/OfflineBanner.tsx src/components/OfflineBanner.test.tsx` / `git commit -m "mobile: add transient back-online feedback to OfflineBoundary"`
 
 ## Self-Review Notes
 
@@ -1088,4 +1088,5 @@ export function OfflineBoundary({ children }: { children: ReactNode }) {
 - **Placeholder scan:** none found — every task's Step 3 shows complete, real code.
 - **Type consistency:** `PagedResponse<Transaction>` (Task 3) matches the type `getLedgerNextPageParam` consumes in Task 4's `prefetchInfiniteQuery`. `Query`/`shouldPersistQuery` (Task 6) matches the `dehydrateOptions.shouldDehydrateQuery` signature `persistQueryClient` expects in Task 7. `successInk` (Task 10) is referenced with the exact same name in Task 11.
 - **2026-08-30 update:** Task 7 revised to add an explicit `onSuccess` callback (`invalidateQueries()` + `resumePausedMutations()`) so restored data is deterministically marked stale and revalidated in the background on every cold start, rather than relying incidentally on the 30s `staleTime` window — per direction to make the "restore → stale immediately → background refresh → UI updates" flow explicit rather than assumed. New test case added to Task 7 to prove the background refetch actually fires.
-</content>
+- **Execution note (Task 7):** the plan's `persistQueryClient` call assumed an `onSuccess`/`onError` option that does not exist on this project's installed `@tanstack/react-query-persist-client` version's `PersistQueryClientOptions` type (that only exists on the separate, unused `<PersistQueryClientProvider>` component). Fixed by using the `restorePromise` the function actually returns (`const [unsubscribe, restored] = persistQueryClient({...})`) and chaining `.then()` on it instead.
+- **Execution note (Task 11):** the plan's new test block was written to be appended as a *sibling* of the existing `describe('OfflineBoundary', ...)` block, but referenced that block's locally-scoped `renderBoundary()` helper — a `ReferenceError` at collection time, the same shape of bug Phase 1 hit with `ReportsScreen.test.tsx`'s sibling-not-nested `describe`. Fixed by nesting the new `describe('back online feedback', ...)` inside `OfflineBoundary` instead. Separately, two pre-existing tests in that file asserted the *opposite* of Task 11's intended behavior: one asserted no VoiceOver announcement fires on the online transition (removed, since Task 11 deliberately adds one, and the new suite already covers it), and one counted total `announceSpy` calls across an offline→online→offline sequence expecting 2 (now 3, since the online leg also announces) — fixed by filtering the assertion down to offline-specific announcements.
