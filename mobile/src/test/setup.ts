@@ -16,6 +16,14 @@
 // everything that would touch the network mocks the endpoint layer.
 process.env.EXPO_PUBLIC_API_BASE_URL = 'https://tests.invalid';
 
+// Reanimated ships a real (non-native) implementation for use under Jest -- see
+// https://docs.swmansion.com/react-native-reanimated/docs/guides/testing. AnimatedNumber
+// (src/components/AnimatedNumber.tsx) and the chart reveal components in
+// src/components/charts/ChartReveal.tsx both depend on this being called before any test that
+// renders them. Not a jest.mock -- this is a real setup call against the actual test-mode
+// Reanimated runtime, so it belongs before the native-module mocks below rather than among them.
+require('react-native-reanimated').setUpTests();
+
 // SecureStore is a native module; back it with a plain in-memory map so AuthContext's real
 // persistence logic (and its async-ness, which is the whole reason mobile diverges from web here)
 // is exercised rather than stubbed out.
