@@ -8,6 +8,13 @@ are closed. Same sequencing as every other document in this directory.
 > maintain auditability, and surface uncertainty — not to prove who legally owns a bank account. This
 > line is the guardrail against the feature slowly growing into pseudo-KYC, fraud scoring, or access
 > control, none of which are this proposal's job, in V1 or later.
+>
+> **V1's acceptance test.** Success for V1 is measured by preventing accidental wrong-statement
+> imports and improving analytics integrity — not by determining account ownership. Every V1
+> requirement must answer yes to one question: *does this help detect an accidental upload of the
+> wrong statement?* If the answer is no — ownership verification, trust scores, consent workflows,
+> business-account handling, household finance — it belongs in §5, not V1, no matter how reasonable it
+> sounds in isolation.
 
 ## 0. The problem
 
@@ -88,9 +95,7 @@ was told and chose to proceed — it is not evidence of anything about the accou
 
 ## 3. V1 — what we build now
 
-**Success for V1 is measured by preventing accidental wrong-statement imports and improving analytics
-integrity, not by determining account ownership.** That sentence is the acceptance criterion for
-everything below — if a proposed addition to V1 doesn't serve it, it belongs in §5 instead.
+Governed by the acceptance test at the top of this document. Everything below is what passes it.
 
 Deliberately narrow: a data-quality safeguard and a user-awareness nudge, nothing more.
 
@@ -127,21 +132,29 @@ Deliberately narrow: a data-quality safeguard and a user-awareness nudge, nothin
    dialog, not a separate consent step:
 
    ```
-   Account Ownership Review
+   Statement Check
    Statement Holder:   Sunil Verma
    Finora Profile:     Rahul Sharma
 
-   The statement holder name differs from your Finora profile name. If you're managing finances for
-   a family member or joint account, you can continue — just make sure you're authorized to manage
-   this account.
+   The statement holder name differs from your Finora profile name. Please confirm you've selected
+   the correct statement before continuing.
 
    [ Continue Import ]   [ Upload Different Statement ]
    ```
 
-   Deliberately avoids "verify"/"couldn't verify" — per §1's design principle, Finora isn't verifying
-   anything here, and that word implies a capability the product doesn't have. Deliberately drops
-   "business" from the example relationships too: V1 makes no business-specific accommodation (that's
-   §5), so naming it in the copy would imply support that isn't actually there.
+   Three deliberate wording choices, all downstream of the acceptance test above:
+   - **No "Ownership" in the dialog title or "verify"/"couldn't verify" in the body** — per the design
+     principle, Finora isn't verifying or reviewing ownership here, and both words imply a capability
+     the product doesn't have.
+   - **No mention of family/joint/business/authorization.** An earlier draft of this copy said "if
+     you're managing finances for a family member or joint account, you can continue — just make sure
+     you're authorized to manage this account," which reads as reasonable but quietly asks the user to
+     reason about *authorization*, not about *which file they uploaded* — exactly the drift the
+     acceptance test exists to catch. The only question V1 is actually asking is "did you pick the
+     right statement," and the copy now asks only that. Continuing is always available regardless of
+     why the names differ; the copy just doesn't speculate about the reason anymore.
+   - **No mention of "business"** for the same reason as before: V1 makes no business-specific
+     accommodation (that's §5), so naming it would imply support that isn't there.
 
 5. **On a strong match, or no extractable holder name:** no change to today's flow at all. This must
    not add a click, a delay, or any visible change to the common case.
@@ -269,9 +282,12 @@ design it against, and until GA/bug-hunt priorities allow room for it.
   field.
 - **Compliance framing.** This product's user base is Indian bank statements — the relevant regime is
   India's DPDP Act (2023), not GDPR. Processing financial data relating to another individual may have
-  implications under that Act. Not a blocker for V1's non-blocking scope, but legal review is advisable
-  before building any future feature that explicitly models or monetizes multi-person financial
-  relationships (§5's household finance, in particular).
+  implications under that Act. **These observations are recorded for future consideration. V1
+  introduces no compliance workflow, no consent workflow, no legal-review gate, and no user-facing
+  policy change** — the sentence above is context for whoever eventually builds §5's more ambitious
+  ideas, not a requirement or blocker for the warning dialog in §3. Legal review is advisable before
+  building any future feature that explicitly models or monetizes multi-person financial relationships
+  (§5's household finance, in particular) — not before V1.
 
 ## 7. Estimated effort
 
