@@ -93,6 +93,31 @@ public interface StatementImportRepository extends JpaRepository<StatementImport
             @Param("userId") UUID userId, @Param("accountIds") java.util.Collection<UUID> accountIds);
 
     /**
+     * Every statement for one account that has a printed period -- the input
+     * {@code StatementCoverageAnalyzer} needs (see that class's own doc comment). Statements with
+     * no printed period (today, always a CSV import -- see the coverage proposal's §3/§7) are
+     * excluded rather than passed through with a null period, which the analyzer has nowhere to
+     * place on a timeline; CSV coverage is explicitly out of scope for this phase.
+     *
+     * <p>Ordered by period start so the analyzer's own sort is redundant defense, not the only
+     * ordering guarantee.
+     */
+    @Query("""
+           SELECT s.id AS id, s.accountId AS accountId, s.fileName AS fileName,
+                  s.statementPeriodStart AS statementPeriodStart, s.statementPeriodEnd AS statementPeriodEnd,
+                  s.openingBalance AS openingBalance, s.closingBalance AS closingBalance,
+                  s.totalAmountDue AS totalAmountDue, s.paymentDueDate AS paymentDueDate,
+                  s.transactionsImported AS transactionsImported, s.transactionsSkipped AS transactionsSkipped,
+                  s.importedAt AS importedAt
+             FROM StatementImport s
+            WHERE s.userId = :userId AND s.accountId = :accountId
+              AND s.statementPeriodStart IS NOT NULL AND s.statementPeriodEnd IS NOT NULL
+            ORDER BY s.statementPeriodStart
+           """)
+    List<StatementMetadata> findMetadataWithPeriodByUserIdAndAccountId(@Param("userId") UUID userId,
+                                                                        @Param("accountId") UUID accountId);
+
+    /**
      * The latest statement period end already on file for this account, ignoring one row.
      *
      * <p>BH-042/BH-024. {@code ImportService.isMostRecentStatementForAccount} used to answer this
