@@ -3,7 +3,7 @@ import { downloadBlob } from '../lib/download';
 import type {
 
   Account, AccountStatementGroup, BankInfo, Budget, DashboardSummary, DetectedAccountInfo, FinancialJourney, Goal,
-  ImportSummary, MerchantGroup, ReimportResult, StagedAccountSection, StagedRow, StatementSummary, Transaction,
+  ImportSummary, MerchantGroup, ReimportResult, StagedAccountSection, StagedRow, StatementSummary, SupersedeResult, Transaction,
   WorkspaceSettings, UnparseableRow, VerificationReport,
 } from '../types';
 
@@ -610,6 +610,11 @@ export const statementImportsApi = {
   confirmReimport: (id: string, payload: Omit<ConfirmPayload, 'newAccount' | 'sessionId'>) =>
     api.post<ImportSummary>(`/statement-imports/${id}/reimport/confirm`, { ...payload, newAccount: null }).then((r) => r.data),
   remove: (id: string) => api.delete(`/statement-imports/${id}`),
+  // "Import this one as a replacement?" (Phase 4, §0.3) -- `id` is the ORIGINAL statement, already
+  // marked superseded rather than deleted; `supersededByStatementId` must already be confirmed as
+  // its own statement (a normal confirm call) before this is called.
+  supersede: (id: string, supersededByStatementId: string) =>
+    api.post<SupersedeResult>(`/statement-imports/${id}/supersede`, { supersededByStatementId }).then((r) => r.data),
 };
 
 export const budgetsApi = {

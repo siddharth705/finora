@@ -112,6 +112,7 @@ public interface StatementImportRepository extends JpaRepository<StatementImport
              FROM StatementImport s
             WHERE s.userId = :userId AND s.accountId = :accountId
               AND s.statementPeriodStart IS NOT NULL AND s.statementPeriodEnd IS NOT NULL
+              AND s.supersededBy IS NULL
             ORDER BY s.statementPeriodStart
            """)
     List<StatementMetadata> findMetadataWithPeriodByUserIdAndAccountId(@Param("userId") UUID userId,
@@ -136,6 +137,7 @@ public interface StatementImportRepository extends JpaRepository<StatementImport
             WHERE si.userId = :userId
               AND si.accountId = :accountId
               AND si.id <> :excludingId
+              AND si.supersededBy IS NULL
            """)
     Optional<java.time.LocalDate> findLatestPeriodEndForAccount(@Param("userId") UUID userId,
                                                                  @Param("accountId") UUID accountId,
@@ -192,6 +194,7 @@ public interface StatementImportRepository extends JpaRepository<StatementImport
               AND si.statementPeriodEnd IS NOT NULL
               AND si.statementPeriodEnd <= :newStatementStart
               AND si.closingBalance IS NOT NULL
+              AND si.supersededBy IS NULL
             ORDER BY si.statementPeriodEnd DESC, si.importedAt DESC
            """)
     List<BigDecimal> findPriorStatementClosingBalanceForAccount(@Param("userId") UUID userId,

@@ -132,7 +132,7 @@ class StatementImportServiceReimportIntegrityTest {
 
         ConfirmResponse expected = new ConfirmResponse(1, 0, 0, 0, 0, List.of(), java.util.Map.of(),
                 java.util.Map.of(), List.of(), null, BigDecimal.ZERO, new BigDecimal("150.00"), null, null,
-                null, null, 0L, "CSV");
+                null, null, 0L, "CSV", UUID.randomUUID(), null);
         when(importService.confirm(eq(userId), eq("hdfc_statement.csv"), any(byte[].class), any(ConfirmRequest.class)))
                 .thenReturn(expected);
 
@@ -159,7 +159,7 @@ class StatementImportServiceReimportIntegrityTest {
 
         ConfirmResponse expected = new ConfirmResponse(1, 0, 0, 0, 0, List.of(), java.util.Map.of(),
                 java.util.Map.of(), List.of(), null, BigDecimal.ZERO, new BigDecimal("150.00"), null, null,
-                null, null, 0L, "CSV");
+                null, null, 0L, "CSV", UUID.randomUUID(), null);
         when(importService.confirm(eq(userId), eq("hdfc_statement.csv"), any(byte[].class), any(ConfirmRequest.class)))
                 .thenReturn(expected);
 
@@ -228,7 +228,7 @@ class StatementImportServiceReimportIntegrityTest {
         ConfirmedRow echoed = confirming(GENUINE_ROW);
         ConfirmResponse expected = new ConfirmResponse(1, 0, 0, 0, 0, List.of(), java.util.Map.of(),
                 java.util.Map.of(), List.of(), null, BigDecimal.ZERO, new BigDecimal("150.00"), null, null,
-                null, null, 0L, "PDF");
+                null, null, 0L, "PDF", UUID.randomUUID(), null);
         when(importService.confirm(eq(userId), eq("sbi_statement.pdf"), any(byte[].class), any(ConfirmRequest.class)))
                 .thenReturn(expected);
 
@@ -263,10 +263,11 @@ class StatementImportServiceReimportIntegrityTest {
         ConfirmResponse expected = new ConfirmResponse(1, 0, 0, 0, 0, List.of(), java.util.Map.of(),
                 java.util.Map.of(),
                 List.of(com.finora.imports.CoverageWarnings.DUPLICATE_PERIOD_WARNING_PREFIX
-                                + ", imported on 2026-08-01. Replacing an existing statement isn't supported yet.",
+                                + ", imported on 2026-08-01.",
                         "This account's balance was updated from the imported transactions rather than from "
                                 + "the statement's stated closing balance: unrelated reason"),
-                null, BigDecimal.ZERO, new BigDecimal("150.00"), null, null, null, null, 0L, "CSV");
+                null, BigDecimal.ZERO, new BigDecimal("150.00"), null, null, null, null, 0L, "CSV",
+                UUID.randomUUID(), statementImportId);
         when(importService.confirm(eq(userId), eq("hdfc_statement.csv"), any(byte[].class), any(ConfirmRequest.class)))
                 .thenReturn(expected);
 
@@ -278,5 +279,9 @@ class StatementImportServiceReimportIntegrityTest {
         assertThat(result.warnings())
                 .as("an unrelated warning on the same response must survive untouched")
                 .anyMatch(w -> w.contains("unrelated reason"));
+        assertThat(result.duplicateOfStatementId())
+                .as("the id behind the stripped warning must be cleared too, or the frontend could "
+                        + "offer to supersede the very statement this reimport just corrected")
+                .isNull();
     }
 }

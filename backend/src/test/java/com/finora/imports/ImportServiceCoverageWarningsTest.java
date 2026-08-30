@@ -179,6 +179,7 @@ class ImportServiceCoverageWarningsTest {
         var response = importService.confirm(userId, dummyFile(), juneRequest);
 
         assertThat(response.warnings()).noneMatch(w -> w.contains("Missing statement detected"));
+        assertThat(response.duplicateOfStatementId()).isNull();
     }
 
     @Test
@@ -187,7 +188,7 @@ class ImportServiceCoverageWarningsTest {
         var juneRequest = new ConfirmRequest(null, List.of(juneRow), accountId, null,
                 BigDecimal.ZERO, new BigDecimal("1000.00"), null,
                 LocalDate.of(2026, 6, 1), LocalDate.of(2026, 6, 30), null, null);
-        importService.confirm(userId, dummyFile(), juneRequest);
+        var firstResponse = importService.confirm(userId, dummyFile(), juneRequest);
 
         // Re-imported: same account, same exact printed period.
         var againRow = row(LocalDate.of(2026, 6, 16), "SALARY", new BigDecimal("1000.00"), "INCOME");
@@ -197,8 +198,10 @@ class ImportServiceCoverageWarningsTest {
         var response = importService.confirm(userId, dummyFile(), againRequest);
 
         assertThat(response.warnings())
-                .anyMatch(w -> w.contains("You already have a statement for this period")
-                        && w.contains("Replacing an existing statement isn't supported yet"));
+                .anyMatch(w -> w.contains("You already have a statement for this period"));
+        // Phase 4 (§0.3): the structured id behind the "Import this one as a replacement?" action --
+        // must name the ORIGINAL (first-imported) statement, not the one just confirmed.
+        assertThat(response.duplicateOfStatementId()).isEqualTo(firstResponse.statementImportId());
     }
 
     @Test
