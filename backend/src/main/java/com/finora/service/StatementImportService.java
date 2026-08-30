@@ -382,8 +382,29 @@ public class StatementImportService {
         // closing figure: whichever way it was written, these transactions are what the balance is
         // now standing on, and removing them without moving it leaves the column describing a
         // ledger that no longer exists.
-        if (!toRemove.isEmpty()) {
+        // ABSOLUTE-mode rows are reversed separately from ADDITIVE/NONE/UNKNOWN_LEGACY, and
+        // unconditionally (not gated on whether this statement had any transactions): an ABSOLUTE
+        // confirm's SET can move the balance even for a zero-row statement, if its stated closing
+        // balance corroborated against a carried-forward opening figure that differed from live
+        // Account.balance at that moment (see OpeningBalanceCarryForward) -- reverseAbsoluteContribution
+        // reads the persisted snapshot and live pointer, not this statement's rows, so row count is
+        // irrelevant to it. The row-based reversal below it is unchanged: negating a still-live
+        // ADDITIVE-mode row's current net effect (or an UNKNOWN_LEGACY row's, unfixed here --
+        // deliberately out of scope, see the design spec) is only correct when there are rows to
+        // sum, unlike ABSOLUTE's snapshot-based approach.
+        if (statementImport.getBalanceApplicationMode() == StatementImport.BalanceApplicationMode.ABSOLUTE
+                || !toRemove.isEmpty()) {
             accountRepository.findById(statementImport.getAccountId()).ifPresent(account -> {
+                if (statementImport.getBalanceApplicationMode() == StatementImport.BalanceApplicationMode.ABSOLUTE) {
+                    ReversalOutcome outcome = reverseAbsoluteContribution(statementImport, account);
+                    if (outcome == ReversalOutcome.NO_SNAPSHOT) {
+                        log.warn("Cannot reverse ABSOLUTE contribution for statement {}: no pre-SET "
+                                + "snapshot (row predates automatic reversal tracking). Balance not "
+                                + "adjusted; verify manually if needed.", statementImport.getId());
+                    }
+                    return;
+                }
+                if (toRemove.isEmpty()) return;
                 // Excludes an already-DUPLICATE-flagged row: its contribution to Account.balance
                 // was already reversed once, at the original statement's own confirm time
                 // (ImportService.summarise's BH-003 correction) -- summing it again here would
