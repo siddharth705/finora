@@ -3,6 +3,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { authApi } from '../api/endpoints';
 import { setSessionCallbacks } from '../api/client';
 import { safeStorage } from '../lib/safeStorage';
+import { clearPersistedNavigationState } from '../navigation/useNavigationStatePersistence';
 
 /**
  * Ported from frontend/src/context/AuthContext.tsx -- same state shape, same method contracts.
@@ -116,6 +117,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setFullName(null);
     setPhoneVerifiedState(false);
     queryClient.clear();
+    // Same reasoning as queryClient.clear() just above: a persisted screen position is a smaller
+    // leak than a balance, but the next person signing in on this device landing on wherever the
+    // previous account last was is still a mistake worth ruling out at this single convergence
+    // point rather than by remembering it at every exit path. Fire-and-forget, same as every other
+    // AsyncStorage write in this app -- there is no UI waiting on this to resolve.
+    void clearPersistedNavigationState();
   }, [queryClient]);
 
   // The API client can't import navigation or this context (it's imported BY both), so it calls
