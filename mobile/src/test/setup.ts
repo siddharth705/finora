@@ -138,6 +138,7 @@ jest.mock('@react-native-google-signin/google-signin', () => {
       configure: jest.fn(),
       hasPlayServices: jest.fn(async () => true),
       signIn: jest.fn(),
+      signOut: jest.fn(async () => {}),
     },
     GoogleSigninButton,
     isSuccessResponse: (response: { type: string }) => response?.type === 'success',
