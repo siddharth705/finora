@@ -1585,25 +1585,14 @@ function UnparseableRowsPanel({ rows }: { rows: UnparseableRow[] }) {
   );
 }
 
-function ImportSummaryScreen({
-  summary,
-  onDone,
-  onImportAnother,
-}: {
-  summary: ImportSummary;
-  onDone: () => void;
-  onImportAnother: () => void;
-}) {
-  const categoryEntries = Object.entries(summary.categoriesAssigned).sort((a, b) => b[1] - a[1]);
-  const account = summary.account;
-  const periodStart = summary.statementPeriodStart ? formatDate(summary.statementPeriodStart) : null;
-  const periodEnd = summary.statementPeriodEnd ? formatDate(summary.statementPeriodEnd) : null;
-  const durationLabel = summary.importDurationMs < 1000 ? `${summary.importDurationMs} ms` : `${(summary.importDurationMs / 1000).toFixed(1)} s`;
-
-  // Phase 4 of the statement continuity proposal (§0.3/§0.23): "Import this one as a
-  // replacement?" -- offered only when this confirm's own period exactly duplicated an existing
-  // statement (summary.duplicateOfStatementId), extending the plain notice CoverageWarnings
-  // already renders above into a real action.
+// A statement's warnings (Phase 2's gap/duplicate-period notices) plus, when this confirm's own
+// period exactly duplicated an existing statement (summary.duplicateOfStatementId), the Phase 4
+// (§0.3/§0.23) "Import this one as a replacement?" action that supersedes it. Shared between
+// ImportSummaryScreen and each per-account card in MultiImportSummaryScreen -- each `summary` is
+// its own independent ImportSummary (one per confirmed section), so one instance of this per
+// summary, with its own local state, is exactly right: nothing here needs to be shared or merged
+// across accounts.
+function StatementWarnings({ summary }: { summary: ImportSummary }) {
   const [confirmingSupersede, setConfirmingSupersede] = useState(false);
   const [supersedeStatus, setSupersedeStatus] = useState<'idle' | 'loading' | 'error'>('idle');
   const [supersedeResult, setSupersedeResult] = useState<SupersedeResult | null>(null);
@@ -1623,6 +1612,68 @@ function ImportSummaryScreen({
       setSupersedeError(e.response?.data?.message ?? 'Could not replace the existing statement.');
     }
   }
+
+  if (summary.warnings.length === 0) return null;
+
+  return (
+    <>
+      <div className="bg-warning-bg border border-warning rounded-lg p-3 mb-4">
+        {summary.warnings.map((w, i) => (
+          <p key={i} className="text-xs text-ink flex items-start gap-2">
+            <AlertTriangle size={13} className="text-warning flex-shrink-0 mt-0.5" /> {w}
+          </p>
+        ))}
+        {summary.duplicateOfStatementId && !supersedeResult && (
+          <button
+            onClick={() => setConfirmingSupersede(true)}
+            disabled={supersedeStatus === 'loading'}
+            className="mt-2 text-xs font-semibold text-warning underline disabled:opacity-50"
+          >
+            {supersedeStatus === 'loading' ? 'Replacing…' : 'Import this one as a replacement?'}
+          </button>
+        )}
+        {supersedeError && (
+          <p className="text-xs text-danger mt-2">{supersedeError}</p>
+        )}
+        {supersedeResult && (
+          <p className="text-xs text-ink mt-2 flex items-start gap-2">
+            <CheckCircle2 size={13} className="text-success flex-shrink-0 mt-0.5" />
+            <span>
+              The existing statement has been replaced.
+              {supersedeResult.warning && ` ${supersedeResult.warning}`}
+            </span>
+          </p>
+        )}
+      </div>
+
+      {confirmingSupersede && (
+        <ConfirmDialog
+          title="Import this one as a replacement?"
+          message="The existing statement for this period will stop counting toward your balance, coverage, and insights. It stays in your Statement History — nothing is deleted."
+          confirmLabel="Replace"
+          onConfirm={confirmSupersede}
+          onCancel={() => setConfirmingSupersede(false)}
+        />
+      )}
+    </>
+  );
+}
+
+function ImportSummaryScreen({
+  summary,
+  onDone,
+  onImportAnother,
+}: {
+  summary: ImportSummary;
+  onDone: () => void;
+  onImportAnother: () => void;
+}) {
+  const categoryEntries = Object.entries(summary.categoriesAssigned).sort((a, b) => b[1] - a[1]);
+  const account = summary.account;
+  const periodStart = summary.statementPeriodStart ? formatDate(summary.statementPeriodStart) : null;
+  const periodEnd = summary.statementPeriodEnd ? formatDate(summary.statementPeriodEnd) : null;
+  const durationLabel = summary.importDurationMs < 1000 ? `${summary.importDurationMs} ms` : `${(summary.importDurationMs / 1000).toFixed(1)} s`;
+
   return (
     <div className="bg-card rounded-xl2 shadow-card border border-border p-6 max-w-xl">
       <div className="flex items-center gap-3 mb-5">
@@ -1703,48 +1754,7 @@ function ImportSummaryScreen({
         </div>
       )}
 
-      {summary.warnings.length > 0 && (
-        <div className="bg-warning-bg border border-warning rounded-lg p-3 mb-4">
-          {summary.warnings.map((w, i) => (
-            <p key={i} className="text-xs text-ink flex items-start gap-2">
-              <AlertTriangle size={13} className="text-warning flex-shrink-0 mt-0.5" /> {w}
-            </p>
-          ))}
-          {/* Phase 4 (§0.3/§0.23): extends the plain duplicate-period notice above into a real
-              action, once one fired for this import. */}
-          {summary.duplicateOfStatementId && !supersedeResult && (
-            <button
-              onClick={() => setConfirmingSupersede(true)}
-              disabled={supersedeStatus === 'loading'}
-              className="mt-2 text-xs font-semibold text-warning underline disabled:opacity-50"
-            >
-              {supersedeStatus === 'loading' ? 'Replacing…' : 'Import this one as a replacement?'}
-            </button>
-          )}
-          {supersedeError && (
-            <p className="text-xs text-danger mt-2">{supersedeError}</p>
-          )}
-          {supersedeResult && (
-            <p className="text-xs text-ink mt-2 flex items-start gap-2">
-              <CheckCircle2 size={13} className="text-success flex-shrink-0 mt-0.5" />
-              <span>
-                The existing statement has been replaced.
-                {supersedeResult.warning && ` ${supersedeResult.warning}`}
-              </span>
-            </p>
-          )}
-        </div>
-      )}
-
-      {confirmingSupersede && (
-        <ConfirmDialog
-          title="Import this one as a replacement?"
-          message="The existing statement for this period will stop counting toward your balance, coverage, and insights. It stays in your Statement History — nothing is deleted."
-          confirmLabel="Replace"
-          onConfirm={confirmSupersede}
-          onCancel={() => setConfirmingSupersede(false)}
-        />
-      )}
+      <StatementWarnings summary={summary} />
 
       <div className="flex gap-3">
         <button onClick={onDone} className="bg-primary text-on-primary hover:bg-primary-dark px-4 py-2 rounded-lg text-xs font-semibold">
@@ -1790,7 +1800,7 @@ function MultiImportSummaryScreen({
         {summaries.map((summary, i) => {
           const account = summary.account;
           return (
-            <div key={i} className="bg-bg border border-border rounded-xl p-4">
+            <div key={i} data-testid={`summary-account-${i}`} className="bg-bg border border-border rounded-xl p-4">
               {account && (
                 <div className="flex items-center gap-3 mb-3">
                   <BankLogo bank={account.bank} size={32} />
@@ -1803,7 +1813,7 @@ function MultiImportSummaryScreen({
                   </div>
                 </div>
               )}
-              <div className="grid grid-cols-2 gap-2 text-xs">
+              <div className="grid grid-cols-2 gap-2 text-xs mb-3">
                 <p className="text-muted">Imported: <span className="text-ink font-medium">{summary.imported}</span></p>
                 <p className="text-muted">Skipped: <span className="text-ink font-medium">{summary.skipped}</span></p>
                 {summary.statementClosingBalance !== null && (
@@ -1812,6 +1822,11 @@ function MultiImportSummaryScreen({
                 <p className="text-muted">Total credits: <span className="text-success font-medium">{fmt(summary.totalCredits)}</span></p>
                 <p className="text-muted">Total debits: <span className="text-danger font-medium">{fmt(summary.totalDebits)}</span></p>
               </div>
+              {/* Each account's own ImportSummary carries its own warnings and, as of Phase 4, its
+                  own duplicateOfStatementId -- a composite statement's savings section can
+                  duplicate an existing period while its credit-card section does not, so this has
+                  to render (and offer to supersede) per account, not once for the whole file. */}
+              <StatementWarnings summary={summary} />
             </div>
           );
         })}
