@@ -3,7 +3,7 @@ import { Dimensions, RefreshControl } from 'react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { DashboardScreen } from './DashboardScreen';
 import {
-  accountsApi, dashboardApi, goalsApi, insightsApi, reportsApi, transactionsApi, userApi,
+  accountsApi, budgetsApi, dashboardApi, goalsApi, insightsApi, reportsApi, transactionsApi, userApi,
 } from '../api/endpoints';
 import type { DashboardSummary } from '../types';
 
@@ -50,6 +50,7 @@ const goals = goalsApi as jest.Mocked<typeof goalsApi>;
 const insights = insightsApi as jest.Mocked<typeof insightsApi>;
 const user = userApi as jest.Mocked<typeof userApi>;
 const reports = reportsApi as jest.Mocked<typeof reportsApi>;
+const budgets = budgetsApi as jest.Mocked<typeof budgetsApi>;
 
 /**
  * A real summary for an account that has been imported but holds nothing -- every figure zero,
@@ -111,6 +112,11 @@ beforeEach(() => {
   user.get.mockResolvedValue({ timezone: 'Asia/Kolkata' } as never);
   reports.availableMonths.mockResolvedValue([]);
   reports.forMonth.mockResolvedValue({} as never);
+  // usePrefetchAdjacentScreens prefetches budgets unconditionally on every mount (see that hook's
+  // own file) -- without a default here, every test below it triggers React Query's own "Query
+  // data cannot be undefined" console.error for the ['budgets'] key, since the un-mocked jest.fn()
+  // resolves to undefined.
+  budgets.list.mockResolvedValue([]);
 });
 
 describe('when /dashboard/summary fails', () => {
@@ -454,7 +460,6 @@ describe('adjacent-screen prefetching', () => {
     dashboard.summary.mockResolvedValue(emptySummary());
     reports.availableMonths.mockResolvedValue(['2026-08']);
     reports.forMonth.mockResolvedValue({ month: '2026-08', income: 0, expense: 0, categories: [] });
-    const budgetsMock = (require('../api/endpoints').budgetsApi.list as jest.Mock).mockResolvedValue([]);
 
     renderScreen();
 
@@ -464,7 +469,7 @@ describe('adjacent-screen prefetching', () => {
     // the instant it resolves. The prefetch demonstrably still ran and populated the cache
     // correctly (confirmed manually during development), but the cache entry doesn't survive long
     // enough for a read-back assertion here to reliably observe it.
-    await waitFor(() => expect(budgetsMock).toHaveBeenCalled());
+    await waitFor(() => expect(budgets.list).toHaveBeenCalled());
     expect(transactions.search).toHaveBeenCalledWith({ page: 0, size: 20, sortField: 'date', sortDir: 'desc' });
     await waitFor(() => expect(reports.forMonth).toHaveBeenCalledWith('2026-08'));
   });
