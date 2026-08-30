@@ -2,6 +2,7 @@ import { api, rawApi, type ApiEnvelope } from './client';
 import type {
 
   AccountDto, ActivationFunnelDto, ActivityTrendPointDto, AdminReferralSummaryDto, AdminUpdateUserRequest, AuditLogDto, BankDto, CategoryConfidencePoint,
+  CoverageDto,
   CreateAccountRequest, CreateBankRequest, CreateMerchantTemplateRequest, CreateRelationshipRequest,
   CreateRuleRequest, CreateUserRequest, FeatureFlagDto, GmailMerchantParserStatDto, LearningGrowthPoint, LearningPlatformStatsDto, LearningSummaryDto,
   LearningTimelineEntry,
@@ -191,6 +192,11 @@ export const adminAccountsApi = {
     api.put<AccountDto>(`/admin/users/${userId}/accounts/${accountId}`, request).then((r) => r.data),
   delete: (userId: string, accountId: string) =>
     api.delete(`/admin/users/${userId}/accounts/${accountId}`),
+  // Phase 1 of docs/proposals/statement-continuity-and-coverage-integrity-proposal.md (§0.14) --
+  // by accountId alone, not nested under a userId path, matching AdminImportTraceController's own
+  // by-reference lookup shape.
+  coverage: (accountId: string) =>
+    api.get<CoverageDto>(`/admin/accounts/${accountId}/coverage`).then((r) => r.data),
 };
 
 export const adminTransactionsApi = {
