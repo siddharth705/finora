@@ -1,9 +1,22 @@
-import { act, render, screen } from '@testing-library/react-native';
+import { act, render, renderHook, screen } from '@testing-library/react-native';
 import { AccessibilityInfo, Platform, Text } from 'react-native';
 import { onlineManager } from '@tanstack/react-query';
-import { OfflineBoundary } from './OfflineBanner';
+import { OfflineBoundary, useOnline } from './OfflineBanner';
 import { ThemeProvider } from '../theme';
 import App from '../../App';
+
+describe('useOnline', () => {
+  afterEach(() => onlineManager.setOnline(true));
+
+  it('is exported and tracks onlineManager', () => {
+    onlineManager.setOnline(true);
+    const { result } = renderHook(() => useOnline());
+    expect(result.current).toBe(true);
+
+    act(() => onlineManager.setOnline(false));
+    expect(result.current).toBe(false);
+  });
+});
 
 // Replaced so the mount test below stays a test of App's own composition rather than of the whole
 // navigation tree. Everything above it -- the providers, and the boundary itself -- stays real.

@@ -4,8 +4,11 @@ import { onlineManager } from '@tanstack/react-query';
 import { SafeAreaInsetsContext, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { spacing, useTheme } from '../theme';
 
-/** Subscribes to React Query's own notion of connectivity, fed by NetInfo in api/queryClient.ts. */
-function useOnline(): boolean {
+/** Subscribes to React Query's own notion of connectivity, fed by NetInfo in api/queryClient.ts.
+ *  Exported so anything that needs the identical online/offline signal the banner itself renders
+ *  from (usePrefetchAdjacentScreens) reads from this one source rather than a second NetInfo
+ *  subscription that could disagree with what's on screen. */
+export function useOnline(): boolean {
   const [online, setOnline] = useState(() => onlineManager.isOnline());
   useEffect(() => onlineManager.subscribe(setOnline), []);
   return online;
