@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { AccessibilityInfo, Platform, StyleSheet, Text, View } from 'react-native';
 import { onlineManager } from '@tanstack/react-query';
 import { SafeAreaInsetsContext, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -54,7 +54,14 @@ export function OfflineBoundary({ children }: { children: ReactNode }) {
   // symmetric with Android's live region (which also stays silent for content present at mount --
   // both only announce a live *change*, not the app opening already offline).
   const wasOnline = useRef(online);
-  useEffect(() => {
+  // useLayoutEffect, not useEffect: confirmBackOnline()'s setActive(true) must land in the SAME
+  // commit `online` itself just flipped in, not the next one. useEffect runs after paint, so a
+  // plain effect here would let React commit and (on native) render a frame where `online` is
+  // already true but showingBackOnline hasn't caught up yet -- online && !showingBackOnline is
+  // true at THAT commit, so the guard below would show no banner at all for one frame, between the
+  // offline strip disappearing and the back-online strip appearing. Synchronous, pre-paint timing
+  // closes that gap.
+  useLayoutEffect(() => {
     if (Platform.OS === 'ios' && wasOnline.current && !online) {
       AccessibilityInfo.announceForAccessibility(OFFLINE_MESSAGE);
     }
