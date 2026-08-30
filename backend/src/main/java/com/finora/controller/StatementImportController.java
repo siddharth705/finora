@@ -7,6 +7,8 @@ import com.finora.dto.StatementImportDto.AccountGroup;
 import com.finora.dto.StatementImportDto.ReimportRequest;
 import com.finora.dto.StatementImportDto.ReimportResult;
 import com.finora.dto.StatementImportDto.Summary;
+import com.finora.dto.StatementImportDto.SupersedeRequest;
+import com.finora.dto.StatementImportDto.SupersedeResult;
 import com.finora.transactions.TransactionDto;
 import com.finora.security.CurrentUser;
 import com.finora.service.StatementImportService;
@@ -80,6 +82,16 @@ public class StatementImportController {
     @PostMapping("/{id}/reimport/confirm")
     public ApiResponse<ConfirmResponse> confirmReimport(@PathVariable UUID id, @Valid @RequestBody ConfirmRequest request) throws java.io.IOException {
         return ApiResponse.ok(statementImportService.confirmReimport(currentUser.id(), id, request), "Import complete");
+    }
+
+    // "Import this one as a replacement?" (Phase 4, §0.3/§0.23): id is the ORIGINAL statement, now
+    // marked superseded rather than deleted. The replacement must already be confirmed as its own
+    // statement (a normal POST /import/*/confirm) before this call -- see
+    // StatementImportService.supersede's own doc comment for why this is two calls, not one.
+    @PostMapping("/{id}/supersede")
+    public ApiResponse<SupersedeResult> supersede(@PathVariable UUID id, @Valid @RequestBody SupersedeRequest request) {
+        return ApiResponse.ok(statementImportService.supersede(currentUser.id(), id, request.supersededByStatementId()),
+                "Statement marked as replaced");
     }
 
     @DeleteMapping("/{id}")

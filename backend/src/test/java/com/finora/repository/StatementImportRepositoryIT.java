@@ -321,4 +321,58 @@ class StatementImportRepositoryIT extends AbstractIntegrationTest {
 
         assertThat(result).isEmpty();
     }
+
+    // --- Phase 4 (statement supersession, §0.6): "only the active (non-superseded) statement for
+    // a given period participates in Account.balance, coverage, and Insights". These three queries
+    // are how a THIRD statement's own confirm (isMostRecentStatementForAccount, opening-balance
+    // carry-forward) and coverage/Insights (StatementCoverageAnalyzer) see the account's history --
+    // a superseded row must be invisible to all three, the same way a soft-deleted one already is. ---
+
+    @Test
+    @Transactional
+    void findPriorStatementClosingBalanceForAccount_excludesASupersededStatement() {
+        StatementImport superseded = saveStatementWithPeriod(LocalDate.of(2026, 5, 31), LocalDate.of(2026, 6, 30),
+                new BigDecimal("35354.97"), Instant.parse("2026-07-01T00:00:00Z"));
+        superseded.setSupersededBy(UUID.randomUUID());
+        statementImportRepository.save(superseded);
+        entityManager.flush();
+        entityManager.clear();
+
+        List<BigDecimal> result = statementImportRepository.findPriorStatementClosingBalanceForAccount(
+                userId, accountId, LocalDate.of(2026, 6, 30), PageRequest.of(0, 1));
+
+        assertThat(result).isEmpty();
+    }
+
+    @Test
+    @Transactional
+    void findLatestPeriodEndForAccount_excludesASupersededStatement() {
+        StatementImport superseded = saveStatementWithPeriod(LocalDate.of(2026, 5, 31), LocalDate.of(2026, 6, 30),
+                new BigDecimal("35354.97"), Instant.parse("2026-07-01T00:00:00Z"));
+        superseded.setSupersededBy(UUID.randomUUID());
+        statementImportRepository.save(superseded);
+        entityManager.flush();
+        entityManager.clear();
+
+        java.util.Optional<LocalDate> result = statementImportRepository.findLatestPeriodEndForAccount(
+                userId, accountId, UUID.randomUUID());
+
+        assertThat(result).isEmpty();
+    }
+
+    @Test
+    @Transactional
+    void findMetadataWithPeriodByUserIdAndAccountId_excludesASupersededStatement() {
+        StatementImport superseded = saveStatementWithPeriod(LocalDate.of(2026, 5, 31), LocalDate.of(2026, 6, 30),
+                new BigDecimal("35354.97"), Instant.parse("2026-07-01T00:00:00Z"));
+        superseded.setSupersededBy(UUID.randomUUID());
+        statementImportRepository.save(superseded);
+        entityManager.flush();
+        entityManager.clear();
+
+        List<StatementImportRepository.StatementMetadata> result =
+                statementImportRepository.findMetadataWithPeriodByUserIdAndAccountId(userId, accountId);
+
+        assertThat(result).isEmpty();
+    }
 }

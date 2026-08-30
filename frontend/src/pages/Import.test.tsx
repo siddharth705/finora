@@ -26,6 +26,7 @@ vi.mock('../api/endpoints', () => ({
   statementImportsApi: {
     confirmReimport: vi.fn(),
     remove: vi.fn(),
+    supersede: vi.fn(),
   },
   categoriesApi: {
     list: vi.fn(),

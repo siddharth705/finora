@@ -119,11 +119,21 @@ public final class RefundNetting {
      * than just from the cross-category total this classification exists to correct. See
      * {@link #excludingInvestmentTransfers} for the narrower, total-only cut every top-line
      * spend/income sum should apply instead.
+     *
+     * <p>DOES drop {@code SUPERSEDED} rows -- unlike {@code INVESTMENT_TRANSFER}, a superseded
+     * statement's transactions are not a category that should still show up anywhere: they are the
+     * account's history as Finora used to understand it, before a later re-upload of the exact same
+     * period replaced it (docs/proposals/statement-continuity-and-coverage-integrity-proposal.md
+     * §0.6). The row stays on file rather than being deleted, same reasoning as every status this
+     * filter already excludes, but it must vanish from every report the way a TRANSFER row already
+     * does -- otherwise the replacement statement's transactions and the superseded original's both
+     * count, double-billing the same period.
      */
     public static List<Transaction> reportable(Collection<Transaction> transactions,
                                                  Set<UUID> ccPaymentFromTransactionIds) {
         return transactions.stream()
                 .filter(t -> t.getIsDuplicateOf() == null && !t.isTransfer() && !isRefundLeg(t)
+                        && t.getReconciliationStatus() != Transaction.ReconciliationStatus.SUPERSEDED
                         && (t.getId() == null || !ccPaymentFromTransactionIds.contains(t.getId())))
                 .toList();
     }

@@ -1,11 +1,13 @@
 package com.finora.service;
 
+import com.finora.dto.InsightsDto;
 import com.finora.entity.Account;
 import com.finora.entity.Category;
 import com.finora.entity.Transaction;
 import com.finora.repository.AccountRepository;
 import com.finora.repository.BudgetRepository;
 import com.finora.repository.CategoryRepository;
+import com.finora.repository.StatementImportRepository;
 import com.finora.repository.TransactionRepository;
 import com.finora.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -40,8 +42,10 @@ class InsightsServiceTest {
     private AccountRepository accountRepository;
     private CategoryRepository categoryRepository;
     private BudgetRepository budgetRepository;
+    private StatementImportRepository statementImportRepository;
     private InsightsService insightsService;
     private final UUID userId = UUID.randomUUID();
+    private UUID liveAccountId;
     private Category dining;
     private Category groceries;
 
@@ -51,17 +55,23 @@ class InsightsServiceTest {
         accountRepository = mock(AccountRepository.class);
         categoryRepository = mock(CategoryRepository.class);
         budgetRepository = mock(BudgetRepository.class);
+        statementImportRepository = mock(StatementImportRepository.class);
         when(budgetRepository.findByUserId(userId)).thenReturn(List.of());
         TransactionGraphService transactionGraphService = mock(TransactionGraphService.class);
         when(transactionGraphService.ccPaymentFromTransactionIds(any())).thenReturn(Set.of());
 
         Account liveAccount = new Account();
-        ReflectionTestUtils.setField(liveAccount, "id", UUID.randomUUID());
+        liveAccountId = UUID.randomUUID();
+        ReflectionTestUtils.setField(liveAccount, "id", liveAccountId);
         liveAccount.setUserId(userId);
         when(accountRepository.findByUserId(userId)).thenReturn(List.of(liveAccount));
+        // No statement history by default -- no gaps, matching every existing test's assumption
+        // that coverage never affects the numbers unless a test explicitly sets it up.
+        when(statementImportRepository.findMetadataWithPeriodByUserIdAndAccountId(any(), any()))
+                .thenReturn(List.of());
 
         insightsService = new InsightsService(transactionRepository, accountRepository, categoryRepository, budgetRepository,
-                mock(UserRepository.class), transactionGraphService);
+                mock(UserRepository.class), transactionGraphService, statementImportRepository);
 
         dining = new Category();
         ReflectionTestUtils.setField(dining, "id", UUID.randomUUID());
@@ -239,5 +249,116 @@ class InsightsServiceTest {
         var result = insightsService.build(userId);
 
         assertThat(result.sentences()).noneMatch(s -> s.contains("top merchant"));
+    }
+
+    // --- Phase 3 (§0.5/§8): coverage-aware Insights -------------------------------------------
+
+    private StatementImportRepository.StatementMetadata statementMetadata(LocalDate start, LocalDate end) {
+        StatementImportRepository.StatementMetadata m = mock(StatementImportRepository.StatementMetadata.class);
+        when(m.getId()).thenReturn(UUID.randomUUID());
+        when(m.getStatementPeriodStart()).thenReturn(start);
+        when(m.getStatementPeriodEnd()).thenReturn(end);
+        when(m.getOpeningBalance()).thenReturn(BigDecimal.ZERO);
+        when(m.getClosingBalance()).thenReturn(BigDecimal.ZERO);
+        return m;
+    }
+
+    private void givenStatements(StatementImportRepository.StatementMetadata... statements) {
+        when(statementImportRepository.findMetadataWithPeriodByUserIdAndAccountId(userId, liveAccountId))
+                .thenReturn(List.of(statements));
+    }
+
+    @Test
+    void moversBaseline_excludesAPriorMonthThatIntersectsAKnownGap() {
+        // Statements on file for May and July only -- June is a known gap. June's own transactions
+        // below (imported some other way, e.g. Gmail) must not count toward the "recent average"
+        // Dining is compared against, or the comparison is against a baseline the account itself
+        // says is incomplete.
+        givenStatements(
+                statementMetadata(LocalDate.of(2026, 5, 1), LocalDate.of(2026, 5, 31)),
+                statementMetadata(LocalDate.of(2026, 7, 1), LocalDate.of(2026, 7, 31)));
+
+        givenTransactions(List.of(
+                expense(LocalDate.of(2026, 5, 15), BigDecimal.valueOf(1000), dining, "Cafe"),
+                // June: a real transaction exists (so the month appears in priorMonths at all),
+                // but the account has no statement covering June -- a known gap.
+                expense(LocalDate.of(2026, 6, 15), BigDecimal.valueOf(10), dining, "Cafe"),
+                expense(LocalDate.of(2026, 8, 15), BigDecimal.valueOf(1200), dining, "Cafe")));
+
+        var result = insightsService.build(userId);
+
+        InsightsDto.CategoryMover diningMover = result.movers().stream()
+                .filter(m -> m.category().equals("Dining")).findFirst().orElseThrow();
+        // Only May (1000) counts -- June's 10 must be excluded from the average entirely, not just
+        // diluted. If June were included the average would be (1000+10)/2 = 505; excluded, it's
+        // exactly May's own figure.
+        assertThat(diningMover.priorAverage()).isEqualByComparingTo(BigDecimal.valueOf(1000).setScale(4));
+    }
+
+    @Test
+    void moversBaseline_unaffected_whenNoGapExists() {
+        givenStatements(
+                statementMetadata(LocalDate.of(2026, 5, 1), LocalDate.of(2026, 5, 31)),
+                statementMetadata(LocalDate.of(2026, 6, 1), LocalDate.of(2026, 6, 30)),
+                statementMetadata(LocalDate.of(2026, 7, 1), LocalDate.of(2026, 7, 31)));
+
+        givenTransactions(List.of(
+                expense(LocalDate.of(2026, 5, 15), BigDecimal.valueOf(1000), dining, "Cafe"),
+                expense(LocalDate.of(2026, 6, 15), BigDecimal.valueOf(2000), dining, "Cafe"),
+                expense(LocalDate.of(2026, 8, 15), BigDecimal.valueOf(1200), dining, "Cafe")));
+
+        var result = insightsService.build(userId);
+
+        InsightsDto.CategoryMover diningMover = result.movers().stream()
+                .filter(m -> m.category().equals("Dining")).findFirst().orElseThrow();
+        assertThat(diningMover.priorAverage()).isEqualByComparingTo(BigDecimal.valueOf(1500).setScale(4));
+    }
+
+    @Test
+    void currentMonthGap_addsACaveatSentence_andPopulatesCoverageCaveat() {
+        // May and September are both on file -- July, sitting inside that gap, is where this
+        // account's transactions happen to end (e.g. imported via Gmail, not a bank statement).
+        // A single trailing statement is deliberately NOT enough to trigger this (see
+        // StatementCoverageAnalyzer's own "never speculate about the most recent period" rule,
+        // confirmed the hard way -- this test originally had only May on file and the caveat
+        // correctly never fired, because July had no bounding statement on its far side).
+        givenStatements(
+                statementMetadata(LocalDate.of(2026, 5, 1), LocalDate.of(2026, 5, 31)),
+                statementMetadata(LocalDate.of(2026, 9, 1), LocalDate.of(2026, 9, 30)));
+
+        givenTransactions(List.of(
+                expense(LocalDate.of(2026, 5, 15), BigDecimal.valueOf(1000), dining, "Cafe"),
+                expense(LocalDate.of(2026, 7, 15), BigDecimal.valueOf(1000), dining, "Cafe")));
+
+        var result = insightsService.build(userId);
+
+        assertThat(result.sentences())
+                .anyMatch(s -> s.contains("may be missing") && s.contains("July 2026"));
+        assertThat(result.coverageCaveat()).isNotNull();
+        assertThat(result.coverageCaveat().month()).isEqualTo("2026-07");
+    }
+
+    @Test
+    void noGapAnywhere_coverageCaveatIsNull_andNoCaveatSentence() {
+        givenStatements(statementMetadata(LocalDate.of(2026, 7, 1), LocalDate.of(2026, 7, 31)));
+        givenTransactions(List.of(expense(LocalDate.of(2026, 7, 15), BigDecimal.valueOf(1000), dining, "Cafe")));
+
+        var result = insightsService.build(userId);
+
+        assertThat(result.coverageCaveat()).isNull();
+        assertThat(result.sentences()).noneMatch(s -> s.contains("may be missing"));
+    }
+
+    @Test
+    void noStatementHistoryAtAll_behavesExactlyAsBeforeCoverageAwareness() {
+        // No statements on file at all (e.g. every transaction was entered manually or via Gmail)
+        // -- StatementCoverageAnalyzer.analyze() on an empty list detects no gaps, since a gap
+        // requires two real bounding statements. Must not misread "no data" as "a gap".
+        givenTransactions(List.of(expense(LocalDate.of(2026, 7, 15), BigDecimal.valueOf(1000), dining, "Cafe")));
+
+        var result = insightsService.build(userId);
+
+        assertThat(result.coverageCaveat()).isNull();
+        assertThat(result.sentences()).noneMatch(s -> s.contains("may be missing"));
     }
 }

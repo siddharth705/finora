@@ -28,14 +28,22 @@ import java.util.UUID;
  * partial overlap could mean several different things (wrong account, a corrected re-upload with a
  * genuinely different range) that a one-line import-time notice can't disambiguate responsibly.
  *
- * <p>The duplicate wording is written to extend, not replace, once supersession (Phase 4) ships:
- * "isn't supported yet" states the current limitation honestly rather than implying a dead end,
- * so the eventual "Import this one as a replacement?" action reads as a continuation of the same
- * sentence a user already saw, not a new UX pattern (§0.23).
+ * <p>Phase 4 update: the duplicate sentence used to end "...isn't supported yet" -- it now does,
+ * via {@link #duplicateOfStatementId} and the "Import this one as a replacement?" action it
+ * drives (§0.23), so the sentence states the fact and leaves the action to the caller instead of
+ * contradicting a button sitting right next to it.
  */
 public final class CoverageWarnings {
 
     private CoverageWarnings() {}
+
+    /** The fixed opening of the duplicate-period sentence -- exposed so a caller with a reason to
+     *  know a "duplicate" isn't really one (see {@code StatementImportService.confirmReimport},
+     *  which reimport-confirms a statement without deleting the original it's correcting, so this
+     *  code has no way to tell the two apart on its own) can filter it back out by prefix, without
+     *  this class or ImportService's confirm/persistSection/summarise pipeline needing to know
+     *  about that one caller's special case. */
+    public static final String DUPLICATE_PERIOD_WARNING_PREFIX = "You already have a statement for this period";
 
     /**
      * @param report            the whole account's coverage report, computed AFTER the new
@@ -71,10 +79,30 @@ public final class CoverageWarnings {
             Instant otherImportedAt = importedAtById.get(otherId);
             String importedOnClause = otherImportedAt == null ? ""
                     : ", imported on " + LocalDate.ofInstant(otherImportedAt, ZoneOffset.UTC);
-            warnings.add("You already have a statement for this period" + importedOnClause
-                    + ". Replacing an existing statement isn't supported yet.");
+            // Phase 4 (§0.3/§0.23): "isn't supported yet" is gone -- it now is, via
+            // duplicateOfStatementId below and the "Import this one as a replacement?" action it
+            // drives, so this sentence states the fact and leaves the action to the caller instead
+            // of contradicting a button sitting right next to it.
+            warnings.add(DUPLICATE_PERIOD_WARNING_PREFIX + importedOnClause + ".");
         }
 
         return warnings;
+    }
+
+    /**
+     * The ORIGINAL statement's id when {@code newStatementId}'s own confirm produced an
+     * exact-duplicate-period overlap, or null when it did not. Phase 4's "Import this one as a
+     * replacement?" action needs this id to know what to supersede -- kept as a separate method
+     * rather than folded into {@link #forNewStatement}'s {@code List<String>} return so that
+     * widely-used shape (every test in this class, and {@code ImportService}'s one call site)
+     * stays unchanged.
+     */
+    public static UUID duplicateOfStatementId(CoverageReport report, UUID newStatementId) {
+        for (CoverageOverlap overlap : report.overlaps()) {
+            if (overlap.type() != OverlapType.EXACT_DUPLICATE) continue;
+            if (overlap.segmentAId().equals(newStatementId)) return overlap.segmentBId();
+            if (overlap.segmentBId().equals(newStatementId)) return overlap.segmentAId();
+        }
+        return null;
     }
 }

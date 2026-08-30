@@ -787,6 +787,43 @@ public class ImportDto {
             LocalDate statementPeriodStart,
             LocalDate statementPeriodEnd,
             long importDurationMs,
-            String source
-    ) {}
+            String source,
+            // The statement THIS confirm just created -- absent from this response since it was
+            // first written; added for Phase 4 (statement-continuity-and-coverage-integrity-
+            // proposal.md §0.3) because "Import this one as a replacement?" has to name the
+            // replacement statement when calling POST /{originalId}/supersede, and nothing else in
+            // this response identified it.
+            UUID statementImportId,
+            // Non-null only when this statement's own confirm produced an exact-duplicate-period
+            // overlap against an existing statement (see CoverageWarnings.duplicateOfStatementId,
+            // the same computation warnings' duplicate-period sentence is built from) -- the
+            // ORIGINAL statement's id, i.e. what "Import this one as a replacement?" would supersede.
+            UUID duplicateOfStatementId
+    ) {
+        /** Reconstructs this response with a different {@code warnings} list, every other field
+         *  unchanged -- used by {@code StatementImportService.confirmReimport} to drop a
+         *  duplicate-period notice generated against the very statement the reimport corrects,
+         *  without needing to thread a "this confirm is a reimport of X" signal through
+         *  ImportService's whole confirm/persistSection/summarise call graph for one call site. */
+        public ConfirmResponse withWarnings(List<String> warnings) {
+            return new ConfirmResponse(imported, skipped, duplicatesDetected, transfersIdentified,
+                    newMerchantsLearned, accountsCreated, productsCreated, categoriesAssigned, warnings,
+                    account, totalCredits, totalDebits, statementOpeningBalance, statementClosingBalance,
+                    statementPeriodStart, statementPeriodEnd, importDurationMs, source,
+                    statementImportId, duplicateOfStatementId);
+        }
+
+        /** Like {@link #withWarnings}, but also replaces {@code duplicateOfStatementId} -- used by
+         *  the same {@code confirmReimport} caller, for the same reason: a reimport-confirm's
+         *  duplicate-period warning names the statement being reimported, which is not a real
+         *  duplicate to offer a replace action against, so both the prose and the id it would drive
+         *  need to be cleared together. */
+        public ConfirmResponse withWarningsAndDuplicateOfStatementId(List<String> warnings, UUID duplicateOfStatementId) {
+            return new ConfirmResponse(imported, skipped, duplicatesDetected, transfersIdentified,
+                    newMerchantsLearned, accountsCreated, productsCreated, categoriesAssigned, warnings,
+                    account, totalCredits, totalDebits, statementOpeningBalance, statementClosingBalance,
+                    statementPeriodStart, statementPeriodEnd, importDurationMs, source,
+                    statementImportId, duplicateOfStatementId);
+        }
+    }
 }

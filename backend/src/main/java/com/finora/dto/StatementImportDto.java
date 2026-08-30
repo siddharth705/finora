@@ -82,4 +82,29 @@ public class StatementImportDto {
      * document password in a URL would be captured by access logs, proxy logs and browser history.
      */
     public record ReimportRequest(String password) {}
+
+    /**
+     * Result of "Import this one as a replacement?" (Phase 4 of the coverage proposal, §0.3/§0.23):
+     * a later re-upload of the exact same statement period, confirmed as its own statement, then
+     * explicitly marked as replacing the original.
+     *
+     * @param supersededStatementId   the original statement, now excluded from Account.balance,
+     *                                coverage, and Insights -- but never deleted, see
+     *                                {@code StatementImportService.supersede}
+     * @param supersededByStatementId the replacement, already confirmed before this call
+     * @param balanceReversed         whether the original's continuing contribution to
+     *                                Account.balance was reversed (true only for {@code ADDITIVE})
+     * @param warning                 non-null only when the original predates balance-application-
+     *                                mode tracking ({@code UNKNOWN_LEGACY}) -- no automatic reversal
+     *                                was attempted, and an administrator should verify the account's
+     *                                balance by hand
+     */
+    public record SupersedeResult(UUID supersededStatementId, UUID supersededByStatementId,
+                                   boolean balanceReversed, String warning) {}
+
+    /** Body for {@code POST /{id}/supersede} -- {@code id} in the path is the ORIGINAL statement
+     *  being replaced, {@code supersededByStatementId} the already-confirmed replacement. */
+    public record SupersedeRequest(
+            @jakarta.validation.constraints.NotNull(message = "supersededByStatementId is required")
+            UUID supersededByStatementId) {}
 }
