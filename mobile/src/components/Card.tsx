@@ -4,10 +4,12 @@ import { radius, spacing, useTheme } from '../theme';
 
 /** The card surface every screen builds on -- the mobile equivalent of the web's
  *  `bg-card rounded-xl2 shadow-card border border-border` combination. */
-export function Card({ children, style }: { children: ReactNode; style?: ViewStyle }) {
+export function Card({ children, style, testID }: { children: ReactNode; style?: ViewStyle; testID?: string }) {
   const c = useTheme();
   return (
-    <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }, style]}>{children}</View>
+    <View testID={testID} style={[styles.card, { backgroundColor: c.card, borderColor: c.border }, style]}>
+      {children}
+    </View>
   );
 }
 

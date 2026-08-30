@@ -113,3 +113,17 @@ describe('BudgetsScreen', () => {
     expect(await screen.findByText(/No budgets set yet/)).toBeTruthy();
   });
 });
+
+describe('skeleton loading', () => {
+  it('shows skeleton budget cards on first load, with the add-budget form already usable', () => {
+    api.list.mockReset().mockReturnValue(new Promise(() => {}));
+    categories.list.mockReset().mockResolvedValue([{ id: 'c-1', name: 'Groceries', isSystem: true }]);
+
+    renderScreen();
+
+    // The shell -- category picker and Set Budget button -- must not wait on the budgets list.
+    expect(screen.getByLabelText('Choose a category')).toBeTruthy();
+    expect(screen.getByText('Set Budget')).toBeTruthy();
+    expect(screen.getAllByTestId('skeleton-budget-card', { hidden: true }).length).toBeGreaterThan(0);
+  });
+});

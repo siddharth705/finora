@@ -98,4 +98,15 @@ describe('InsightsScreen', () => {
     expect(await screen.findByText(/at least 2 charges from the same merchant/)).toBeTruthy();
     expect(screen.getByText(/Not enough history yet/)).toBeTruthy();
   });
+
+  it('shows the static notice and skeleton sections immediately, before either query resolves', () => {
+    insights.get.mockReset().mockReturnValue(new Promise(() => {}));
+    recurring.list.mockReset().mockReturnValue(new Promise(() => {}));
+
+    renderScreen();
+
+    expect(screen.getByText(/not an\s+AI-generated assistant/)).toBeTruthy();
+    expect(screen.getAllByTestId('shimmer-block', { hidden: true }).length).toBeGreaterThan(0);
+    expect(screen.queryByText("This Month's Observations")).toBeNull();
+  });
 });

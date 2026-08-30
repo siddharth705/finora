@@ -1,5 +1,5 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react-native';
-import { Dimensions } from 'react-native';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
+import { Dimensions, RefreshControl } from 'react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { DashboardScreen } from './DashboardScreen';
 import {
@@ -335,5 +335,115 @@ describe('large Dynamic Type support (mobile design review, iOS VoiceOver/Dynami
 
     expect((await screen.findByText(LONG_DESCRIPTION)).props.numberOfLines).toBe(2);
     expect((await screen.findByText(LONG_GOAL_NAME)).props.numberOfLines).toBe(2);
+  });
+});
+
+describe('pull-to-refresh indicator', () => {
+  it('does not wait on accounts, since accounts data is never rendered on this screen', async () => {
+    dashboard.summary.mockResolvedValue(emptySummary());
+    const { queryClient } = renderScreen();
+    await screen.findByText('Total Balance');
+
+    // Summary resolves fast; accounts is held open on purpose -- the indicator must NOT wait on
+    // it, since nothing on screen reads accountsQ.data. (This used to be inverted: the indicator
+    // tracked accountsQ.isFetching, which both kept the spinner up after every visible section had
+    // settled, AND could flip the spinner on with no user gesture at all if accounts merely
+    // happened to resolve slower than summary/recent-transactions on first mount.)
+    let resolveAccounts: (value: unknown) => void = () => {};
+    accounts.list.mockReturnValue(new Promise((resolve) => { resolveAccounts = resolve as typeof resolveAccounts; }));
+
+    await act(async () => {
+      void queryClient.invalidateQueries({ queryKey: ['dashboard-summary'] });
+      void queryClient.invalidateQueries({ queryKey: ['accounts'] });
+    });
+
+    // The QueryClient's own state flips to fetching synchronously inside invalidateQueries, but
+    // the component's re-render (via the query observer's subscriber) can land a tick later than
+    // act()'s own flush -- waitFor absorbs that gap instead of asserting on a stale render.
+    await waitFor(() => {
+      expect(screen.UNSAFE_getByType(RefreshControl).props.refreshing).toBe(false);
+    });
+
+    await act(async () => resolveAccounts([]));
+  });
+
+  it('stays visible until Goals, Insights, and the Cash Flow report queries have finished too', async () => {
+    dashboard.summary.mockResolvedValue(emptySummary());
+    const { queryClient } = renderScreen();
+    await screen.findByText('Total Balance');
+
+    // Summary/accounts/recent-transactions all resolve fast; insights is held open on purpose --
+    // refresh() invalidates it and its section is genuinely rendered, so the spinner must track it.
+    let resolveInsights: (value: unknown) => void = () => {};
+    insights.get.mockReturnValue(new Promise((resolve) => { resolveInsights = resolve as typeof resolveInsights; }));
+
+    await act(async () => {
+      void queryClient.invalidateQueries({ queryKey: ['dashboard-summary'] });
+      void queryClient.invalidateQueries({ queryKey: ['insights'] });
+    });
+
+    await waitFor(() => {
+      expect(screen.UNSAFE_getByType(RefreshControl).props.refreshing).toBe(true);
+    });
+
+    await act(async () => resolveInsights({ sentences: [], movers: [] }));
+
+    await waitFor(() => {
+      expect(screen.UNSAFE_getByType(RefreshControl).props.refreshing).toBe(false);
+    });
+  });
+});
+
+describe('the shell mounts before the network settles (dashboard shell capstone)', () => {
+  it('shows the greeting and section skeletons immediately, then swaps in real content once summary and recent transactions arrive', async () => {
+    let resolveSummary: (value: unknown) => void = () => {};
+    dashboard.summary.mockReturnValue(new Promise((resolve) => { resolveSummary = resolve as typeof resolveSummary; }));
+    let resolveTxns: (value: unknown) => void = () => {};
+    transactions.search.mockReturnValue(new Promise((resolve) => { resolveTxns = resolve as typeof resolveTxns; }));
+
+    renderScreen();
+
+    // The shell -- greeting and section headings -- is already on screen, not hidden behind a
+    // full-screen spinner.
+    expect(screen.getByText(/Good (morning|afternoon|evening|night)/)).toBeTruthy();
+    expect(screen.getByText('Cash Flow')).toBeTruthy();
+    expect(screen.getByText('Recent Transactions')).toBeTruthy();
+    expect(screen.getAllByTestId('shimmer-block', { hidden: true }).length).toBeGreaterThan(0);
+    expect(screen.queryByText('Total Balance')).toBeNull();
+
+    await act(async () => {
+      resolveSummary(emptySummary({ currentBalance: 4200 }));
+      resolveTxns({ content: [], page: 0, size: 5, totalElements: 0, totalPages: 0 });
+    });
+
+    expect(await screen.findByText('Total Balance')).toBeTruthy();
+    expect(screen.queryByTestId('shimmer-block', { hidden: true })).toBeNull();
+  });
+
+  it('skeletons Recent Transactions independently of the summary section', async () => {
+    dashboard.summary.mockResolvedValue(emptySummary());
+    let resolveTxns: (value: unknown) => void = () => {};
+    transactions.search.mockReturnValue(new Promise((resolve) => { resolveTxns = resolve as typeof resolveTxns; }));
+
+    renderScreen();
+
+    expect(await screen.findByText('Total Balance')).toBeTruthy();
+    // Summary has already settled, but the transactions section is still on its own skeleton.
+    expect(screen.getAllByTestId('skeleton-transaction-row', { hidden: true }).length).toBeGreaterThan(0);
+
+    await act(async () => resolveTxns({ content: [], page: 0, size: 5, totalElements: 0, totalPages: 0 }));
+
+    expect(await screen.findByText(/No transactions yet/i)).toBeTruthy();
+  });
+});
+
+describe('Recent Transactions error state', () => {
+  it('says the transactions could not be loaded, instead of claiming there are none', async () => {
+    dashboard.summary.mockResolvedValue(emptySummary());
+    transactions.search.mockRejectedValue(new Error('boom'));
+    renderScreen();
+
+    expect(await screen.findByText(/Couldn't load your transactions/)).toBeTruthy();
+    expect(screen.queryByText(/No transactions yet/i)).toBeNull();
   });
 });
