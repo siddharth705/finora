@@ -14,6 +14,7 @@ import {
 } from '../api/endpoints';
 import { useAuth } from '../context/AuthContext';
 import { fmtCurrency, greeting, monthLabel } from '../lib/format';
+import { deriveRefreshing } from '../lib/refreshingIndicator';
 import { useLargeFontScale } from '../lib/useLargeFontScale';
 import { radius, spacing, useTheme } from '../theme';
 
@@ -47,7 +48,10 @@ export function DashboardScreen() {
 
   // useQueries (not one Promise.all) so a single failing endpoint degrades to one empty section
   // instead of blanking the screen -- same reasoning as the web Dashboard's own comment.
-  const [summaryQ, accountsQ, recentTxnsQ, goalsQ, insightsQ, settingsQ] = useQueries({
+  // The accounts query's result is intentionally unbound -- see the comment further down: it
+  // fires (and prewarms AccountsScreen's cache) but nothing on this screen reads its data or
+  // fetch state anymore.
+  const [summaryQ, , recentTxnsQ, goalsQ, insightsQ, settingsQ] = useQueries({
     queries: [
       { queryKey: ['dashboard-summary'], queryFn: () => dashboardApi.summary() },
       { queryKey: ['accounts'], queryFn: () => accountsApi.list() },
@@ -82,12 +86,23 @@ export function DashboardScreen() {
     .filter((d): d is NonNullable<typeof d> => !!d)
     .map((d) => ({ label: monthLabel(d.month), income: d.income, expense: d.expense }));
 
-  // accountsQ.data is never read on this screen (only its loading/fetching state, for gating the
-  // pull-to-refresh indicator above) -- it stays out of the initial-load gate so the shell doesn't
-  // wait on a fetch whose result isn't rendered here.
+  // The accounts query's data is never read anywhere on this screen (it only prewarms
+  // AccountsScreen's cache), so it stays out of BOTH the initial-load gate (the shell shouldn't
+  // wait on a fetch whose result isn't rendered here) and the refreshing indicator below (a pull
+  // gesture that visibly finishes shouldn't keep spinning on a fetch the user can't see the result
+  // of -- and the reverse bug is just as real: if accounts happens to resolve slower than
+  // summary/recent-transactions on first mount, including it here would flip the spinner on with
+  // no user gesture at all, since initialLoad has already gone false).
+  //
+  // Tracks every query whose data IS rendered and that refresh() (below) actually invalidates --
+  // summary/recent-transactions plus goals, insights, and the Cash Flow chart's per-month report
+  // queries. Missing any of these would let the spinner disappear while a visible section is still
+  // silently updating underneath it.
   const initialLoad = summaryQ.isLoading || recentTxnsQ.isLoading;
-  const refreshing =
-    (summaryQ.isFetching || accountsQ.isFetching || recentTxnsQ.isFetching) && !initialLoad;
+  const refreshing = deriveRefreshing(
+    [summaryQ, recentTxnsQ, goalsQ, insightsQ, ...monthlyReportsQ],
+    initialLoad
+  );
 
   function refresh() {
     ['dashboard-summary', 'accounts', 'recent-transactions', 'goals', 'insights', 'report-months', 'report']
@@ -286,6 +301,13 @@ export function DashboardScreen() {
             <SkeletonTransactionRow />
             <SkeletonTransactionRow />
           </>
+        ) : recentTxnsQ.isError ? (
+          // A failed request is not an answer of zero -- same reasoning as LedgerScreen's own
+          // isError branch. Without this, a persistent failure here would fall through to the
+          // empty-state message below and tell someone with years of history they have none.
+          <Text style={[styles.errorText, { color: c.danger }]}>
+            Couldn&apos;t load your transactions — pull down to try again.
+          </Text>
         ) : recentTxns.length === 0 ? (
           <EmptyState message="No transactions yet. Import a statement to get started." />
         ) : (

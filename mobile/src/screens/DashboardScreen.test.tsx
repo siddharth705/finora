@@ -339,13 +339,16 @@ describe('large Dynamic Type support (mobile design review, iOS VoiceOver/Dynami
 });
 
 describe('pull-to-refresh indicator', () => {
-  it('stays visible until every visible section has finished refetching, not just the summary', async () => {
+  it('does not wait on accounts, since accounts data is never rendered on this screen', async () => {
     dashboard.summary.mockResolvedValue(emptySummary());
     const { queryClient } = renderScreen();
     await screen.findByText('Total Balance');
 
-    // Summary resolves fast (still resolves via mockResolvedValue); accounts is held open on
-    // purpose to prove the indicator has to track it too, not just summary.
+    // Summary resolves fast; accounts is held open on purpose -- the indicator must NOT wait on
+    // it, since nothing on screen reads accountsQ.data. (This used to be inverted: the indicator
+    // tracked accountsQ.isFetching, which both kept the spinner up after every visible section had
+    // settled, AND could flip the spinner on with no user gesture at all if accounts merely
+    // happened to resolve slower than summary/recent-transactions on first mount.)
     let resolveAccounts: (value: unknown) => void = () => {};
     accounts.list.mockReturnValue(new Promise((resolve) => { resolveAccounts = resolve as typeof resolveAccounts; }));
 
@@ -358,10 +361,32 @@ describe('pull-to-refresh indicator', () => {
     // the component's re-render (via the query observer's subscriber) can land a tick later than
     // act()'s own flush -- waitFor absorbs that gap instead of asserting on a stale render.
     await waitFor(() => {
-      expect(screen.UNSAFE_getByType(RefreshControl).props.refreshing).toBe(true);
+      expect(screen.UNSAFE_getByType(RefreshControl).props.refreshing).toBe(false);
     });
 
     await act(async () => resolveAccounts([]));
+  });
+
+  it('stays visible until Goals, Insights, and the Cash Flow report queries have finished too', async () => {
+    dashboard.summary.mockResolvedValue(emptySummary());
+    const { queryClient } = renderScreen();
+    await screen.findByText('Total Balance');
+
+    // Summary/accounts/recent-transactions all resolve fast; insights is held open on purpose --
+    // refresh() invalidates it and its section is genuinely rendered, so the spinner must track it.
+    let resolveInsights: (value: unknown) => void = () => {};
+    insights.get.mockReturnValue(new Promise((resolve) => { resolveInsights = resolve as typeof resolveInsights; }));
+
+    await act(async () => {
+      void queryClient.invalidateQueries({ queryKey: ['dashboard-summary'] });
+      void queryClient.invalidateQueries({ queryKey: ['insights'] });
+    });
+
+    await waitFor(() => {
+      expect(screen.UNSAFE_getByType(RefreshControl).props.refreshing).toBe(true);
+    });
+
+    await act(async () => resolveInsights({ sentences: [], movers: [] }));
 
     await waitFor(() => {
       expect(screen.UNSAFE_getByType(RefreshControl).props.refreshing).toBe(false);
@@ -409,5 +434,16 @@ describe('the shell mounts before the network settles (dashboard shell capstone)
     await act(async () => resolveTxns({ content: [], page: 0, size: 5, totalElements: 0, totalPages: 0 }));
 
     expect(await screen.findByText(/No transactions yet/i)).toBeTruthy();
+  });
+});
+
+describe('Recent Transactions error state', () => {
+  it('says the transactions could not be loaded, instead of claiming there are none', async () => {
+    dashboard.summary.mockResolvedValue(emptySummary());
+    transactions.search.mockRejectedValue(new Error('boom'));
+    renderScreen();
+
+    expect(await screen.findByText(/Couldn't load your transactions/)).toBeTruthy();
+    expect(screen.queryByText(/No transactions yet/i)).toBeNull();
   });
 });
