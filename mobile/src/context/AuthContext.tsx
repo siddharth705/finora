@@ -4,6 +4,7 @@ import { authApi } from '../api/endpoints';
 import { setSessionCallbacks } from '../api/client';
 import { safeStorage } from '../lib/safeStorage';
 import { clearPersistedNavigationState } from '../navigation/useNavigationStatePersistence';
+import { clearPersistedQueryCache } from '../api/queryClient';
 import { signOutOfGoogle } from '../lib/googleSession';
 
 /**
@@ -124,6 +125,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // point rather than by remembering it at every exit path. Fire-and-forget, same as every other
     // AsyncStorage write in this app -- there is no UI waiting on this to resolve.
     void clearPersistedNavigationState();
+    // Item B: same convergence-point reasoning as clearPersistedNavigationState just above, one
+    // layer further down. queryClient.clear() (above) only empties the IN-MEMORY cache -- Item B's
+    // AsyncStorage persistence (startQueryPersistence, api/queryClient.ts) means a copy of
+    // whatever was cached at the last save also lives on disk. Without this, the next person to
+    // sign in on this device would have their very first frame painted from the PREVIOUS
+    // account's persisted balances. Fire-and-forget, same as every other AsyncStorage write here.
+    void clearPersistedQueryCache();
     // The Google session goes with it, for the same reason and at the same point as the cache: a
     // credential the SDK still holds lets the next person press "Sign in with Google" and land in
     // the previous person's account without a picker ever appearing. Fire-and-forget -- the local
