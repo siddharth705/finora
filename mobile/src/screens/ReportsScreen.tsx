@@ -15,6 +15,22 @@ import { radius, spacing, useTheme } from '../theme';
 
 type Exporting = 'csv' | 'pdf' | null;
 
+/** The totals-row + category-breakdown skeleton shape, shared by the months-still-loading shell
+ *  and the report-still-loading (uncached month) branch below -- one definition means the two
+ *  loading states can't silently drift apart from each other. */
+function ReportBodySkeleton() {
+  return (
+    <>
+      <View style={styles.totals}>
+        <SkeletonCard style={styles.totalCard} lines={1} />
+        <SkeletonCard style={styles.totalCard} lines={1} />
+        <SkeletonCard style={styles.totalCard} lines={1} />
+      </View>
+      <SkeletonCard style={styles.section} lines={4} />
+    </>
+  );
+}
+
 /**
  * Port of frontend/src/pages/Reports.tsx.
  *
@@ -72,12 +88,7 @@ export function ReportsScreen() {
     return (
       <ScrollView style={{ backgroundColor: c.bg }} contentContainerStyle={styles.content}>
         <SkeletonCard lines={2} />
-        <View style={styles.totals}>
-          <SkeletonCard style={styles.totalCard} lines={1} />
-          <SkeletonCard style={styles.totalCard} lines={1} />
-          <SkeletonCard style={styles.totalCard} lines={1} />
-        </View>
-        <SkeletonCard style={styles.section} lines={4} />
+        <ReportBodySkeleton />
       </ScrollView>
     );
   }
@@ -155,14 +166,7 @@ export function ReportsScreen() {
       </Card>
 
       {reportLoading ? (
-        <>
-          <View style={styles.totals}>
-            <SkeletonCard style={styles.totalCard} lines={1} />
-            <SkeletonCard style={styles.totalCard} lines={1} />
-            <SkeletonCard style={styles.totalCard} lines={1} />
-          </View>
-          <SkeletonCard style={styles.section} lines={4} />
-        </>
+        <ReportBodySkeleton />
       ) : reportError || !report ? (
         <Card style={styles.section}>
           <Text style={[styles.error, { color: c.danger }]}>
