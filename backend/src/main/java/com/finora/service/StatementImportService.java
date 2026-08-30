@@ -384,11 +384,17 @@ public class StatementImportService {
                 // was already reversed once, at the original statement's own confirm time
                 // (ImportService.summarise's BH-003 correction) -- summing it again here would
                 // move the balance a second time for a row that currently contributes nothing.
+                // Also excludes SUPERSEDED (#631 missed this second trigger of the same bug):
+                // StatementImportService.supersede() marks an ADDITIVE-mode original's rows
+                // SUPERSEDED and reverses their contribution in that same call, so a SUPERSEDED
+                // row's current net contribution is zero too -- deleting an already-superseded
+                // statement must not reverse it a second time here.
                 // TRANSFER/REFUND/REVERSAL/INVESTMENT_TRANSFER rows stay included: those
                 // classifications only affect expense/income REPORTING (RefundNetting.reportable),
                 // not Account.balance -- the cash genuinely moved, so the balance still reflects it.
                 List<Transaction> stillContributing = toRemove.stream()
-                        .filter(t -> t.getIsDuplicateOf() == null)
+                        .filter(t -> t.getIsDuplicateOf() == null
+                                && t.getReconciliationStatus() != Transaction.ReconciliationStatus.SUPERSEDED)
                         .toList();
                 BigDecimal reversal = AccountBalanceConvention
                         .netDelta(account.getAccountType(), stillContributing).negate();
@@ -442,6 +448,14 @@ public class StatementImportService {
      * StatementImport.BalanceApplicationMode}, persisted at ITS confirm time -- never recomputed
      * here. See that field's own doc comment for why recomputation is unsafe (totalCredits/
      * totalDebits were never persisted, and Transaction.amount is editable after import).
+     *
+     * <p><b>ABSOLUTE original requires ABSOLUTE replacement.</b> When {@code original} is ABSOLUTE,
+     * no reversal is applied below on the reasoning that replacement's own confirm already
+     * overwrote the balance. That reasoning only holds when replacement's own confirm ALSO landed
+     * in ABSOLUTE mode -- otherwise replacement's confirm merely ADDED its net delta on top of the
+     * balance original's confirm had already set, and original's contribution would still be
+     * counted underneath it after this call. Refused up front rather than silently risking a
+     * corrupted balance; see the guard clause below for the exact condition.
      */
     @Transactional
     public com.finora.dto.StatementImportDto.SupersedeResult supersede(UUID userId, UUID originalId, UUID replacementId) {
@@ -466,6 +480,25 @@ public class StatementImportService {
         if (replacement.getSupersededBy() != null) {
             throw new ApiException(HttpStatus.BAD_REQUEST,
                     "The replacement statement has itself already been superseded.");
+        }
+        // ABSOLUTE's no-reversal branch below rests entirely on "the replacement's own confirm
+        // already set the balance again, on top of whatever this one left behind" (see that case's
+        // own comment). That is only true when replacement's own confirm ALSO landed in ABSOLUTE
+        // mode -- if replacement's own closing balance was missing, unstated, or did not corroborate
+        // against its own rows, its confirm instead ADDED its net delta on top of the balance
+        // original's confirm already set, and original's full contribution never leaves the account
+        // balance. Refusing here is the same safe-direction choice UNKNOWN_LEGACY already makes
+        // (warn/refuse rather than silently risk corrupting Account.balance) -- reproduced with a
+        // concrete numeric example in SupersedeRefusesMismatchedAbsoluteModeIT.
+        if (original.getBalanceApplicationMode() == StatementImport.BalanceApplicationMode.ABSOLUTE
+                && replacement.getBalanceApplicationMode() != StatementImport.BalanceApplicationMode.ABSOLUTE) {
+            throw new ApiException(HttpStatus.BAD_REQUEST,
+                    "The replacement statement's own closing balance was not applied at its confirm "
+                            + "time (it stated none, or it did not match its transactions), so it cannot "
+                            + "safely supersede a statement whose closing balance WAS applied -- doing so "
+                            + "would leave the original statement's balance contribution still counted "
+                            + "underneath the replacement's. Re-import the replacement with a closing "
+                            + "balance that corroborates against its transactions, then try again.");
         }
 
         // Only OK-status rows -- a row already excluded for its own reason (DUPLICATE/TRANSFER/
