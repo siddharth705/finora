@@ -22,6 +22,155 @@ or "does this payment settle that spend."
 
 ---
 
+## 0. Addendum — four questions resolved after founder review
+
+Added after a first review pass. Read this before §1 — it corrects one real defect the review surfaced
+in §6's original overlap rule, and resolves three other open questions the original draft had left as
+unverified or unaddressed. The original sections below are left intact rather than silently rewritten;
+each affected section carries a short pointer back here.
+
+### 0.1 Exact adjacency semantics — and a real bug in §6's original overlap rule
+
+Two bank-provided conventions exist for how consecutive statement periods relate to each other, and both
+are real, not hypothetical:
+
+- **Exclusive-adjacent** (the common case): period N ends on day X, period N+1 begins on day X+1 — e.g.
+  May 1–31, then June 1–30.
+- **Inclusive-shared-boundary**: `OpeningBalanceCarryForward`'s own class comment documents a real PNB
+  pair — `31-05-2026 to 30-06-2026`, then `30-06-2026 to 31-07-2026`. The boundary date (30-06) is
+  reprinted as *both* the prior period's close and the next period's open. This is not a data error; it's
+  how PNB prints statements, and it's the entire reason `OpeningBalanceCarryForward` exists.
+
+§6's original overlap rule (`A.start ≤ B.end && B.start ≤ A.end`) would flag *every* PNB statement pair as
+a one-day overlap — a false positive on ordinary, correct, back-to-back imports, every month, on every
+PNB account. That's a real defect the review question surfaced, not a hypothetical edge case.
+
+**Corrected definition**, `A` = earlier segment, `B` = the next segment, same account:
+
+```
+sharedDays = A.periodEnd >= B.periodStart ? (A.periodEnd − B.periodStart + 1 day) : 0
+
+isAdjacent(A, B):
+    (sharedDays == 0 && B.periodStart == A.periodEnd.plusDays(1))   -- exclusive-adjacent
+    || sharedDays == 1                                               -- single reprinted boundary day
+    -> continuous: no gap, no overlap warning
+
+isGap(A, B):     B.periodStart > A.periodEnd.plusDays(1)
+    gapStart = A.periodEnd.plusDays(1)
+    gapEnd   = B.periodStart.minusDays(1)
+
+isOverlap(A, B): sharedDays >= 2
+    -- more than the one known boundary-reprint day is genuinely double-covered
+```
+
+A single shared day is classified as continuous, not flagged — a known, already-handled printing
+convention, not a coverage problem. Only two or more shared days are a genuine overlap. This generalizes
+to credit-card cycles for free: `15 Jun–14 Jul`, then `15 Jul–14 Aug` satisfies exclusive-adjacent exactly
+(14 Jul + 1 day = 15 Jul), no CC-specific branch required. The review's concern that this needs
+"account-type awareness" turns out not to hold — it needs correct interval arithmetic on the printed
+dates, which is already type-agnostic.
+
+Left open: whether every bank that reprints a boundary day does so *consistently* across all its
+statement pairs, or only sometimes — the class comment documents PNB specifically; other banks in
+Finora's supported set haven't been checked. Recommend treating `sharedDays == 1` as continuous
+universally (bank-agnostic) rather than a PNB-specific carve-out — safe either way, since misclassifying a
+genuine one-day overlap as continuous only costs a missed warning, never a wrong balance (balance
+correctness is `ClosingBalanceGuard`/`OpeningBalanceCarryForward`'s job, not this one's).
+
+*(Corrects §6's overlap rule as originally written.)*
+
+### 0.2 Annual / custom-period statements — investigated, confirmed unresolved at the product level
+
+Checked directly rather than left as a guess: `StatementImport` has no period-type field,
+`PdfMetadataExtractor` extracts *that* a period exists but never *what kind*, and no bank-specific parser
+config expresses a period type anywhere. This isn't a documentation gap — **the concept doesn't exist in
+the codebase at all.** Finora parses whatever start/end dates a PDF prints, monthly or otherwise, with no
+way today to know which it got.
+
+This can't be resolved by more code-reading — it's a product question (does Finora intend to support
+annual/YTD imports, ever?) only Sid can answer, and the original draft was right to flag it as
+unresolved rather than guess. What the design can do without that answer: degrade safely. If a segment's
+printed period exceeds a generous threshold (e.g. >45 days — comfortably past any monthly or CC-cycle
+length, including a long first or short last partial period), don't silently treat it as a same-shape
+monthly segment for gap/overlap math. Flag it distinctly ("this statement covers an unusually long
+period — 214 days") and exclude it from automatic gap/overlap classification against the normal-length
+segments around it, rather than producing a confidently wrong verdict. This turns an unanswered product
+question into a safe default rather than a blocker — Phase 1 can ship without Sid resolving it first, at
+the cost of a less complete answer for whatever population (currently unknown, possibly zero) would
+actually trigger it.
+
+*(Resolves the open question originally left in §7.)*
+
+### 0.3 Statement supersession / replacement — a real, separate gap, confirmed absent
+
+Investigated directly: today, importing a second statement for an account+period that already has one
+creates an entirely new, independent `StatementImport` row. `StatementImportService.confirmReimport`
+calls the exact same `ImportService.confirm(...)` path as a first-time import — no existing-period check
+exists anywhere in `ImportService` or `StatementImportRepository`. Nothing marks either row authoritative
+or stale; both simply coexist. `ReconciliationService`'s transaction-level duplicate detection *happens*
+to catch the resulting duplicate transactions when they're byte-identical
+(`accountId|txnDate|amount|description`), but draws no connection at the statement level, and would miss
+a genuinely corrected re-upload where amounts, descriptions, or dates differ even slightly — exactly the
+"bank regenerated it" / "parser improved" case the review raised.
+
+This is real and distinct from gap/overlap detection, not a variant of it: gap and overlap ask whether
+*periods* line up; supersession asks whether *two statements claiming the same period* should be treated
+as one evolving fact or two competing ones. Recommend as an explicit Phase 1 addition — a natural sibling
+to the exact-duplicate-period case already in §6, since both need the same underlying check (does a
+statement already exist for this exact period?). When a new statement's period exactly matches an
+existing one for the same account, surface it distinctly: *"You already have a statement for this
+period, imported on [date] with N transactions. Import this one as a replacement?"* If confirmed, mark
+the prior `StatementImport` superseded (a new nullable `supersededBy` FK, mirroring the roadmap doc's own
+"loser stays as provenance, not deleted" pattern for canonical transactions) rather than leaving two live,
+competing statements with no relationship between them. A superseded statement's transactions stop
+counting toward balances/Insights, the same way a `TRANSFER`-classified transaction already stops
+counting toward expense totals — reused precedent, not a new mechanism.
+
+This was missing from the original proposal's scope entirely, not a deprioritized nice-to-have — recommend
+folding it into Phase 1 alongside exact-duplicate-period detection, since shipping one without the other
+leaves half the problem solved.
+
+*(A genuine addition — the original proposal did not address this case.)*
+
+### 0.4 CSV prevalence — measurable today, and cheap to answer directly
+
+Good news: this doesn't need investigation, it needs one query. `StatementImport.sourceFormat`
+(`"CSV"`/`"PDF"`, not-null, added by `V36__statement_import_source_format.sql`) already exists on every
+row — nothing currently aggregates it, but the data is there:
+
+```sql
+SELECT source_format, count(*) FROM statement_imports GROUP BY source_format;
+```
+
+Recommend running this before locking CSV support to Phase 4, rather than debating it further in the
+abstract. If CSV is a small minority of imports, Phase 4's placement stands as originally proposed; if
+it's a large fraction, CSV's estimated-period mechanism (§7) should move earlier — "coverage works for PDF
+accounts, silently doesn't exist for CSV accounts" would otherwise ship as a confusing asymmetry to a
+possibly-large population from day one. This is a five-minute check, not a research project — recommend
+Sid or an admin run it directly rather than blocking further proposal work on it.
+
+*(Resolves the open question originally left in §11's Phase 4 placement.)*
+
+### 0.5 Two further refinements, not required but folded in
+
+**Coverage was already meant to be persistent and queryable, not a one-time event.** §9's
+`GET /api/v1/accounts/{accountId}/coverage` was always queryable on demand, not only surfaced once at
+import time — the Phase 1/Phase 2 split in §11 was about *where in the UI* it first appears (an
+import-time banner before a persistent Coverage Timeline view), never about the underlying data being
+transient. Worth stating explicitly, since the phasing language could read as "coverage only exists as a
+one-time warning," which was never the intent.
+
+**`InsightsDto` should carry coverage metadata internally, even before any UI surfaces it.** A good, cheap
+addition, folded into §8's scope now rather than added later as a breaking change. `InsightsDto` is a flat
+`(sentences, movers)` record today with no metadata envelope, so this is a genuinely new field, not a slot
+that already exists — but adding it while §8's work is being built anyway costs little, and avoids a
+second feature quietly reintroducing the exact "Insights doesn't know what it doesn't know" problem this
+whole proposal exists to fix. Recommend `InsightsDto` gain a `coverageCaveat: CoverageCaveat | null`
+field (populated whenever the reporting window intersects a gap, null otherwise) alongside the Phase 3
+work in §11 — internal/API-only until a separate UI decision is made about surfacing it.
+
+---
+
 ## 1. Current behavior, traced precisely
 
 Scenario: a user imports April and May statements for an account (consecutive), then imports July
@@ -182,6 +331,10 @@ one already exists under a different name.)
 
 ## 6. Overlap detection
 
+> **Superseded by §0.1:** the raw interval test below flags a false positive on every PNB statement pair
+> (and possibly other banks with the same boundary-reprint convention). Use §0.1's `isAdjacent`/`isGap`/
+> `isOverlap` definitions instead of the rule as originally written here.
+
 Given each segment is already `[periodStart, periodEnd]`, overlap is plain interval math:
 `A.start ≤ B.end && B.start ≤ A.end`, scoped strictly per `accountId` — coverage must never compare
 periods across different accounts, including different accounts of the same user, or a legitimate
@@ -220,7 +373,9 @@ Two cases, treated differently:
   Finora supports importing an annual/consolidated statement today**, and did not want to guess. If it
   exists, a broader statement's period legitimately *encloses* several already-imported narrower ones;
   that should be modeled as satisfied coverage, not a conflicting overlap. Flagging as unresolved rather
-  than designing blind.
+  than designing blind. **See §0.2** — confirmed by direct code search (not just "not found by me") that
+  this concept doesn't exist anywhere in the codebase today, plus a safe-degradation recommendation that
+  doesn't require Sid to resolve the product question before Phase 1 can ship.
 - **Credit card cycles (15 Jun–14 Jul, 15 Jul–14 Aug):** no special-casing needed. Per the roadmap doc's
   own Phase 1 finding, `statementPeriodStart`/`End` are populated identically regardless of `Account.Type`
   — a CC statement's period is whatever was printed, same field, same extractor. Gap/overlap detection is
@@ -304,12 +459,17 @@ roadmap doc's planned "Import Explorer," not a new admin subsystem.
 
 ## 11. Implementation roadmap
 
+> **Updated per §0.3 and §0.4:** statement supersession moved into Phase 1 (it shares its underlying
+> check with exact-duplicate-period detection, and was a genuine scope gap, not a deprioritized item).
+> CSV coverage's Phase 4 placement should be confirmed or revised by the one query in §0.4 before this
+> phasing is treated as final.
+
 | Phase | Scope | Depends on |
 |---|---|---|
-| **1 — Detection core** | `StatementCoverageAnalyzer` (pure function), import-time warning (reuses existing warning UI), `GET /api/v1/accounts/{accountId}/coverage`. No new tables. | Nothing — works entirely off fields that already exist |
+| **1 — Detection core** | `StatementCoverageAnalyzer` (pure function), import-time warning (reuses existing warning UI), `GET /api/v1/accounts/{accountId}/coverage`, exact-duplicate-period + supersession handling (§0.3). No new tables except the `supersededBy` FK. | Nothing — works entirely off fields that already exist |
 | **2 — Surfacing** | Coverage Timeline on `StatementHistory.tsx`; admin coverage endpoint extending Import Explorer; `statement_coverage_acknowledgment` table + dismiss action | Phase 1 |
-| **3 — Insight safety** | Movers exclude gap months from baseline; current-month gap sentence | Phase 1 (does not need Phase 2) |
-| **4 — CSV coverage (optional)** | Explicit, separately-labeled estimated period for CSV imports (§7) | Phase 1 |
+| **3 — Insight safety** | Movers exclude gap months from baseline; current-month gap sentence; `InsightsDto.coverageCaveat` (§0.5) | Phase 1 (does not need Phase 2) |
+| **4 — CSV coverage (pending §0.4)** | Explicit, separately-labeled estimated period for CSV imports (§7) — placement here is provisional until the `source_format` query in §0.4 is actually run | Phase 1 |
 | **Not in scope** | Any blended "Account Health" score (§4) — revisit only with real usage/calibration data, matching the roadmap doc's own deferral of its confidence-formula work for the same reason | — |
 
 Phase 1 and Phase 3 are independent of each other and of Phase 2 — either can ship first.
