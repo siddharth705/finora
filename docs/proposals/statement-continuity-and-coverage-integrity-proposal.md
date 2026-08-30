@@ -22,14 +22,17 @@ or "does this payment settle that spend."
 
 ---
 
-## 0. Addendum — questions resolved across three rounds of founder review
+## 0. Addendum — questions resolved across four rounds of founder review
 
-Added after three review passes. Read this before §1 — §0.1–§0.5 are round one (a real defect in §6's
+Added after four review passes. Read this before §1 — §0.1–§0.5 are round one (a real defect in §6's
 original overlap rule, plus three open questions resolved); §0.6–§0.10 are round two (balance authority
 for superseded statements, acknowledgment lifecycle, a correction to round one's own severity suggestion,
 API summary fields, and a new risk named for the first time); §0.11–§0.15 are round three (a
 well-defined coverage-percentage denominator, an explicit non-standard-period state, acknowledgment
-history preservation, a roadmap re-sequencing, and a second new risk). The original sections below are
+history preservation, a roadmap re-sequencing, and a second new risk); §0.16–§0.20 are round four (a
+Phase 1 split, an adaptive non-standard-period threshold, a self-inconsistency in this document's own
+severity design corrected, coverage named an explicit independent domain, and the identity-drift risk
+sharpened with a specific mechanism, not just re-labeled more seriously). The original sections below are
 left intact rather than silently rewritten; each affected section carries a short pointer back here.
 
 ### 0.1 Exact adjacency semantics — and a real bug in §6's original overlap rule
@@ -83,6 +86,10 @@ correctness is `ClosingBalanceGuard`/`OpeningBalanceCarryForward`'s job, not thi
 *(Corrects §6's overlap rule as originally written.)*
 
 ### 0.2 Annual / custom-period statements — investigated, confirmed unresolved at the product level
+
+> **The >45-day threshold below is superseded by §0.17** — replaced with an adaptive,
+> account-relative definition. The rest of this section (no period-type concept exists in the codebase,
+> safe degradation as the right default) stands.
 
 Checked directly rather than left as a guess: `StatementImport` has no period-type field,
 `PdfMetadataExtractor` extracts *that* a period exists but never *what kind*, and no bank-specific parser
@@ -245,18 +252,13 @@ closing balance and the next statement's opening balance. Their plain difference
 detected gap, not just the rare self-reconciliation-failure case:
 
 ```
-GapSeverity: LOW | MEDIUM | HIGH | UNKNOWN
-
-delta = abs(priorStatement.closingBalance − nextStatement.openingBalance)
-
-UNKNOWN  -- either boundary value is missing/unextracted (should be rare once a gap is detected,
-            since detection itself requires both bounding statements)
-LOW      -- delta < ₹1,000        (illustrative threshold, not calibrated -- revise freely)
-MEDIUM   -- ₹1,000 ≤ delta < ₹25,000
-HIGH     -- delta ≥ ₹25,000
+delta = abs(priorStatement.closingBalance − nextStatement.openingBalance)   -- null if either boundary
+                                                                                value is missing
 ```
 
-`UNKNOWN` becomes the rare case rather than the common one, which is what severity is actually for.
+> **The LOW/MEDIUM/HIGH banding originally sketched here is withdrawn — see §0.18.** Expose `delta` as a
+> raw figure; don't classify it into tiers without real data to calibrate against. This was an
+> inconsistency with this document's own §4 stance, not just an uncalibrated placeholder.
 
 *(Corrects §7's original suggestion and resolves review concern C.)*
 
@@ -272,15 +274,19 @@ Agreed — every consumer would otherwise derive these independently. §9's resp
 {
   "accountId": "...",
   "coverageStatus": "HAS_GAPS",
-  "coveragePercentage": 91.7,
+  "coveredDays": 61,
+  "missingDays": 30,
+  "coveragePercentage": 67.0,
   "hasGaps": true,
   "hasOverlaps": false,
   "segments": [ ... ],
   "gaps": [ { "gapStart": "2026-06-01", "gapEnd": "2026-06-30", "daysMissing": 30,
-              "severity": "MEDIUM", "acknowledged": false } ],
+              "delta": 12000, "acknowledged": false } ],
   "overlaps": [ ... ]
 }
 ```
+
+(`coveredDays`/`missingDays` per §0.11; `delta` — a raw figure, no severity tier — per §0.18.)
 
 `coverageStatus` ∈ `{ COMPLETE, HAS_GAPS, HAS_OVERLAPS, HAS_GAPS_AND_OVERLAPS }`. `coveragePercentage` is
 days-covered ÷ days-in-account-history — a plain, literal ratio, not a fabricated composite (consistent
@@ -434,6 +440,115 @@ enabling a targeted backfill when extraction logic changes) belongs to the impor
 own roadmap, not this proposal's scope.
 
 *(Adds a second risk to §12, alongside §0.10's account-identity drift.)*
+
+### 0.16 Phase 1 is genuinely too large — split, with one refinement
+
+Fair, and the count makes the case on its own: as scoped after three rounds, "Phase 1" had absorbed
+detection, exact-duplicate handling, the full supersession/replacement workflow, and a balance-authority
+change, alongside the admin view §0.14 just added. Splitting is right — supersession touches
+`Account.balance` directly, and belongs in a different risk tier from pure detection.
+
+**One refinement to the proposed split, not a full rewrite of it:** exact-duplicate-period *detection* is
+cheap and belongs with the rest of detection (§6 already groups it there); it's the *persistence and
+authority* half of supersession — the `supersededBy` chain, and changing which statement's balance wins —
+that's the genuinely higher-risk data path. Splitting on "detect vs. mutate" rather than "supersession vs.
+everything else" keeps the safest possible version of the duplicate-period warning shipping on day one
+(it's read-only, same category as a gap or overlap flag), while still isolating the part that actually
+touches money:
+
+- **Phase 1A** — `StatementCoverageAnalyzer` (gaps, overlaps, exact-duplicate-*detection*), coverage API,
+  admin coverage view (§0.14), import-time warning. No mutation to `Account.balance` beyond what already
+  happens today.
+- **Phase 1B** — supersession persistence (`supersededBy`, §0.3), the balance-authority change (§0.6), the
+  replacement confirmation flow. Ships once 1A has run against real accounts (§0.14's own rationale
+  applies doubly here, since this half changes what a balance shows).
+
+*(Resolves review concern 1; see §11 for the updated table.)*
+
+### 0.17 Non-standard-period threshold — adopt the adaptive definition
+
+Agreed, and for a reason consistent with this document's own recurring stance: a fixed global cutoff
+(45 or 90 days) is exactly the kind of unearned, uncalibrated number §4 already argues against for a
+health score — it just hadn't been applied to this threshold yet. An account-relative definition is more
+honest about what "unusual" means, the same way §0.11 replaced an unknowable global denominator with a
+per-account one.
+
+```
+classification(segment, accountSegments):
+    if accountSegments.count < 3: STANDARD          -- cold start: no basis to call anything unusual yet
+    medianDuration = median(otherSegments.duration for accountSegments excluding this one)
+    segment.duration > max(90 days, 2 x medianDuration)  ->  NON_STANDARD_PERIOD
+    else                                                  ->  STANDARD
+```
+
+The flat 90-day floor stays as a backstop under the adaptive rule, not instead of it — without it, an
+account whose own history already skews long (several genuinely non-standard periods in a row) could
+keep normalizing its own outliers as "standard for this account" indefinitely. The cold-start rule matters
+for the same reason §0.11's denominator had to avoid inventing a fact Finora doesn't have: with fewer than
+three statements, there's no account-specific "typical" yet to compare against.
+
+*(Resolves review concern 2, corrects §0.2's original 45-day figure.)*
+
+### 0.18 Gap severity — this document was inconsistent with its own §4 stance, and should fix that, not just soften the numbers
+
+Worth naming plainly rather than softening: §0.8 hardcoded ₹1,000/₹25,000 bands two sections after §4
+argued, at length, against exactly this kind of unearned number. "Illustrative, not calibrated — revise
+freely" was the right caveat but the wrong fix — the review's point isn't that the *values* are wrong,
+it's that an absolute rupee figure can't be right for every account regardless of what number is chosen:
+₹25,000 is a materially different signal for a student's account than for a corporate or high-limit
+credit-card account, no matter how the band is tuned.
+
+**Fix, matching §4's actual philosophy rather than just its caveat:** don't ship a LOW/MEDIUM/HIGH
+classification in Phase 1 at all. Expose the raw `delta` (§0.8's boundary-value difference) as a fact —
+consumers can read a rupee amount and judge it in context — and defer any bucketing into severity tiers
+until real account-balance distributions exist to calibrate against, the same deferral the roadmap doc
+already applies to its own confidence-formula work (cited at §11). If a relative version is wanted later
+(delta as a percentage of the account's trailing average balance or monthly flow, rather than an absolute
+figure), that's a real option worth exploring then — with real data, not a second guess.
+
+*(Resolves review concern 3 by removing the inconsistency, not just adjusting the numbers — corrects
+§0.8/§0.9's severity enum accordingly.)*
+
+### 0.19 Coverage as an explicit independent domain
+
+Already true of the design — §5's `StatementCoverageAnalyzer` was written as a standalone pure function
+with three consumers (import-time, Insights, admin) and none of them own it — but it was implicit in the
+class structure rather than stated as a principle. Worth stating directly, since the review's failure mode
+(every future feature — Budgets, Forecasting, Reports, Tax exports — reimplementing coverage logic its
+own way) is exactly the kind of drift that only gets prevented by naming the rule, not by one class
+happening to be structured correctly today:
+
+> **Coverage is an independent domain concept, not a feature of Insights or any other single consumer.**
+> `StatementCoverageAnalyzer` and its output shape (`CoverageReport`) are the one source of truth; any
+> future feature that needs to know whether an account's history is complete calls it, rather than
+> deriving its own notion of completeness from `StatementImport` rows directly.
+
+*(Resolves review concern 4 — makes explicit what §5's design already implied.)*
+
+### 0.20 Account identity drift — a sharper argument for why coverage is more exposed than the rest of the app, not just a re-labeled risk
+
+§0.10 named this risk; the review asks to elevate it. Worth grounding *why* rather than just agreeing to
+stronger language, because the reason changes what follows from it. Every existing feature that reads
+`Account.balance` already inherits whatever account-identity resolution decided — that's not new. What's
+different about coverage specifically: `Account.balance` is a single current snapshot, so an identity
+mistake produces one wrong value until the next statement corrects it. Coverage is inherently a
+*timeline* — a one-time identity split in the middle of an account's history produces a gap artifact that
+doesn't self-correct; it gets re-reported as a false gap every single time coverage is queried, for as
+long as the split exists. Coverage doesn't just inherit an identity mistake, it amplifies a one-time error
+into a standing, repeated, wrong signal. That's a real basis for "major dependency," not just "worth
+tracking."
+
+**Still correctly out of scope for this engine to fix** — identity resolution is a different subsystem,
+and the roadmap doc's own reasoning for keeping the canonical-transaction layer and the relationship graph
+separate applies here too. But one genuine silver lining worth stating alongside the elevated risk: because
+coverage amplifies rather than merely inherits identity mistakes, it's also likely to be the **first
+feature that makes an identity-resolution bug visible in practice** — a coverage report showing an
+implausible gap on an account with continuous real-world statements is a decent early signal something
+upstream is wrong, discoverable through the same admin coverage view §0.14 already moved into Phase 1A,
+not a new mechanism.
+
+*(Resolves review concern 5 — elevates the language and gives the specific mechanism the review's framing
+was gesturing at but didn't name.)*
 
 ---
 
@@ -733,22 +848,23 @@ roadmap doc's planned "Import Explorer," not a new admin subsystem.
 
 ## 11. Implementation roadmap
 
-> **Updated per §0.3, §0.4, and §0.14:** statement supersession moved into Phase 1 (it shares its
-> underlying check with exact-duplicate-period detection, and was a genuine scope gap, not a
-> deprioritized item). CSV coverage's Phase 4 placement should be confirmed or revised by the one query
-> in §0.4 before this phasing is treated as final. The admin coverage view also moved into Phase 1,
-> ahead of the consumer-facing Coverage Timeline (§0.14) — the underlying detection logic should be
-> validated against real accounts internally before end users see any of it.
+> **Updated per §0.3, §0.4, §0.14, and §0.16:** Phase 1 split into 1A (pure detection, read-only) and 1B
+> (supersession's persistence and balance-authority change — a genuinely higher-risk data path, per
+> §0.16). CSV coverage's Phase 4 placement should be confirmed or revised by the one query in §0.4 before
+> this phasing is treated as final. Severity tiers (§0.18) are dropped from scope entirely, not deferred
+> to a phase — `delta` ships as a raw fact whenever severity would have appeared.
 
 | Phase | Scope | Depends on |
 |---|---|---|
-| **1 — Detection core** | `StatementCoverageAnalyzer` (pure function), import-time warning (reuses existing warning UI), `GET /api/v1/accounts/{accountId}/coverage`, exact-duplicate-period + supersession handling (§0.3/§0.6), admin coverage view extending Import Explorer (§0.14). No new tables except the `supersededBy` FK. | Nothing — works entirely off fields that already exist |
-| **2 — Surfacing** | Coverage Timeline on `StatementHistory.tsx`; `statement_coverage_acknowledgment` table (with `status`, §0.13) + dismiss action | Phase 1 |
-| **3 — Insight safety** | Movers exclude gap months from baseline; current-month gap sentence; `InsightsDto.coverageCaveat` (§0.5) | Phase 1 (does not need Phase 2) |
-| **4 — CSV coverage (pending §0.4)** | Explicit, separately-labeled estimated period for CSV imports (§7) — placement here is provisional until the `source_format` query in §0.4 is actually run | Phase 1 |
-| **Not in scope** | Any blended "Account Health" score (§4) — revisit only with real usage/calibration data, matching the roadmap doc's own deferral of its confidence-formula work for the same reason | — |
+| **1A — Detection core** | `StatementCoverageAnalyzer` (gaps, overlaps, exact-duplicate-period *detection*, non-standard-period classification per §0.17), import-time warning (reuses existing warning UI), `GET /api/v1/accounts/{accountId}/coverage`, admin coverage view extending Import Explorer (§0.14). Read-only — no change to what drives `Account.balance`. | Nothing — works entirely off fields that already exist |
+| **1B — Supersession authority** | `supersededBy` persistence (§0.3), the balance-authority change (§0.6), the replacement confirmation flow. Deliberately sequenced after 1A has run against real accounts, since this half changes what a balance shows. | 1A |
+| **2 — Surfacing** | Coverage Timeline on `StatementHistory.tsx`; `statement_coverage_acknowledgment` table (with `status`, §0.13) + dismiss action | 1A (1B if replacement is surfaced in the timeline) |
+| **3 — Insight safety** | Movers exclude gap months from baseline; current-month gap sentence; `InsightsDto.coverageCaveat` (§0.5) | 1A (does not need 1B or Phase 2) |
+| **4 — CSV coverage (pending §0.4)** | Explicit, separately-labeled estimated period for CSV imports (§7) — placement here is provisional until the `source_format` query in §0.4 is actually run | 1A |
+| **Not in scope** | Any blended "Account Health" score (§4); gap-severity tiers (§0.18) — both revisit only with real usage/calibration data | — |
 
-Phase 1 and Phase 3 are independent of each other and of Phase 2 — either can ship first.
+Phase 1A, Phase 3, and Phase 4 are independent of each other and of Phase 2 — any can ship once 1A lands.
+Only Phase 2's replacement-flow surfacing and Phase 1B have a real dependency between them.
 
 ---
 
@@ -767,11 +883,14 @@ Phase 1 and Phase 3 are independent of each other and of Phase 2 — either can 
   scoring model, and this document's answer is "don't build one yet, for a specific, precedented reason."
   That's a real disagreement with part of the request, not an omission — surfaced here rather than
   silently narrowed.
-- **Account identity drift (§0.10).** If account-identity resolution ever splits or merges what should be
-  one real account across two `accountId`s, coverage would show a phantom gap or phantom completeness.
-  Explicit non-goal for this engine to detect or fix — that's a different subsystem's job — but a tracked
-  risk, not a dismissed one: coverage output carries enough (`accountId`, per-segment `statementImportId`)
-  to make it diagnosable via the admin Import Explorer if it ever happens, rather than invisible.
+- **Account identity drift (§0.10, elevated by §0.20).** If account-identity resolution ever splits or
+  merges what should be one real account across two `accountId`s, coverage doesn't just inherit that
+  mistake once (the way a balance snapshot would) — it amplifies it into a standing, repeatedly-reported
+  false gap for as long as the split exists, since coverage is a timeline, not a point-in-time value. A
+  major dependency, not a minor one, even though it stays an explicit non-goal for this engine to fix.
+  Coverage output carries enough (`accountId`, per-segment `statementImportId`) to make it diagnosable via
+  the admin Import Explorer — and, per §0.20, is plausibly the first feature that would surface such a
+  bug at all.
 - **Statement-period extraction drift (§0.15).** Coverage accuracy is bounded by extraction accuracy at
   import time, and Finora never re-parses stored PDFs when extraction logic changes — a period-extraction
   bug fixed later corrects future imports only, not `statementPeriodStart`/`End` values already stored.
