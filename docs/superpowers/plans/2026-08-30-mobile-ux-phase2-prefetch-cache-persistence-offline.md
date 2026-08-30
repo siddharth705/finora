@@ -17,6 +17,7 @@
 - `@react-native-async-storage/async-storage` is already a direct dependency — no new storage dependency, only the two persistence packages.
 - **Fintech cache-persistence guardrails, locked by the user, non-negotiable in this plan:** persist only dashboard/accounts/transactions/budgets/reports/categories query keys; never persist import workflow state, pending uploads, the auth/session domain (tokens stay in SecureStore via `safeStorage.ts`, never duplicated), error states, or drafts; 24h `maxAge`; persisted cache cleared on logout/session-expiry at the same `clearLocalState` convergence point as the in-memory cache and nav state.
 - Every prefetch must reuse the target screen's own exact query key/function — a prefetch under a near-identical-but-different key is a wasted network call, not a warm cache.
+- On cold start, restored persisted data must be treated as stale immediately and revalidated in the background — never trusted as fresh purely because it happens to fall inside the shared 30s `staleTime` window. The flow is: persist cache → restore on launch → mark stale immediately → background refresh → update UI when fresh data arrives.
 - Test tooling: Jest 29, `@testing-library/react-native` 13.3.3, `npm test -- <path>` from `mobile/`.
 
 ---
@@ -562,11 +563,15 @@ Package versions confirmed on the npm registry: `@tanstack/query-async-storage-p
 
 `maxAge: 24h` — long enough that reopening the app the next morning still shows real figures instantly instead of a skeleton; short enough that a persisted balance from days ago never survives to be shown as fact. Data older than this is discarded wholesale on restore (`persistQueryClientRestore`'s own `maxAge` behavior, confirmed by reading `@tanstack/query-persist-client-core`'s `src/persist.ts`) rather than shown stale-then-silently-corrected — a number that's briefly wrong and then jumps is worse, in a finance app, than the ordinary loading skeleton it replaces.
 
+**Restored data is never trusted as fresh, even inside `staleTime`.** Relying purely on the shared 30s `staleTime` to trigger revalidation after a cold start works most of the time (an app is rarely relaunched within 30s of being killed) but isn't guaranteed — a quick force-quit-and-reopen would otherwise restore a query that's still technically "fresh" and skip the background refetch entirely, leaving a screen showing seconds-old-but-now-possibly-wrong data with no revalidation in flight. `persistQueryClient`'s `onSuccess` callback (fired once restore completes) is used to call `queryClient.invalidateQueries()` unconditionally, which marks every restored query stale and triggers an immediate background refetch for any that have an active observer (a mounted screen). This is the explicit flow: persist → restore on launch → mark stale immediately → background refresh → update UI when fresh data arrives — the "opens instantly, then quietly corrects itself" feel the whole initiative is chasing, made deterministic rather than incidental. `persistQueryClient`'s own default `onSuccess` resumes any paused (offline-queued) mutations; overriding `onSuccess` replaces that default, so `resumePausedMutations()` is called explicitly to preserve it.
+
 - [ ] **Step 1: Write the failing test**
 ```ts
 // src/api/queryClient.test.ts
+import type { ReactNode } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { QueryClient, dehydrate } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider, dehydrate, useQuery } from '@tanstack/react-query';
+import { renderHook } from '@testing-library/react-native';
 import { clearPersistedQueryCache, queryClient, startQueryPersistence } from './queryClient';
 
 const PERSIST_KEY = 'finora_query_cache';
@@ -603,6 +608,35 @@ describe('startQueryPersistence', () => {
     await waitFor(async () => expect(await AsyncStorage.getItem(PERSIST_KEY)).toBeNull());
     expect(queryClient.getQueryData(['dashboard-summary'])).toBeUndefined();
   });
+
+  it('treats restored data as stale immediately and refetches it in the background, even though it is still within staleTime', async () => {
+    const seed = new QueryClient();
+    seed.setQueryData(['dashboard-summary'], { currentBalance: 42 });
+    await AsyncStorage.setItem(PERSIST_KEY, blob(dehydrate(seed)));
+
+    // A queryFn that resolves to a DIFFERENT value than what's restored, so a passing test proves
+    // a real background refetch happened -- not just that the cache still holds the restored value.
+    const queryFn = jest.fn().mockResolvedValue({ currentBalance: 99 });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    );
+    // Mounted BEFORE persistence restores, mirroring a screen that's already on screen at boot --
+    // invalidateQueries only triggers an immediate refetch for queries with an active observer.
+    renderHook(() => useQuery({ queryKey: ['dashboard-summary'], queryFn }), { wrapper });
+
+    startQueryPersistence();
+
+    // Restored instantly...
+    await waitFor(() =>
+      expect(queryClient.getQueryData(['dashboard-summary'])).toEqual({ currentBalance: 42 })
+    );
+    // ...but never trusted as fresh -- a background refetch fires without anything else asking for
+    // it, and the UI-visible cache value updates once it resolves.
+    await waitFor(() => expect(queryFn).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(queryClient.getQueryData(['dashboard-summary'])).toEqual({ currentBalance: 99 })
+    );
+  });
 });
 
 describe('clearPersistedQueryCache', () => {
@@ -615,8 +649,8 @@ describe('clearPersistedQueryCache', () => {
   });
 });
 ```
-Add `import { waitFor } from '@testing-library/react-native';` to the top of the file alongside the other imports.
-- [ ] **Step 2: Run test to verify it fails** — `npm test -- src/api/queryClient.test.ts` — Expected: FAIL — `startQueryPersistence`/`clearPersistedQueryCache` are not exported yet (module has no such members).
+Add `import { waitFor } from '@testing-library/react-native';` to the top of the file alongside the other imports (combine with the `renderHook` import shown above into one `@testing-library/react-native` import line).
+- [ ] **Step 2: Run test to verify it fails** — `npm test -- src/api/queryClient.test.ts` — Expected: FAIL — `startQueryPersistence`/`clearPersistedQueryCache` are not exported yet (module has no such members). The new "treats restored data as stale immediately" test will additionally fail on its own even once those exist, since nothing yet calls `invalidateQueries()` after restore — `queryFn` is never called a second time.
 - [ ] **Step 3: Write minimal implementation**
 ```bash
 npm install @tanstack/query-async-storage-persister@^5.101.4 @tanstack/react-query-persist-client@^5.101.4
@@ -666,6 +700,18 @@ export function startQueryPersistence(): () => void {
     maxAge: PERSIST_MAX_AGE,
     buster: PERSIST_BUSTER,
     dehydrateOptions: { shouldDehydrateQuery: shouldPersistQuery },
+    onSuccess: () => {
+      // Restored data is shown instantly, but must never be treated as fresh purely because it
+      // falls inside the shared 30s staleTime -- a quick force-quit-and-reopen would otherwise
+      // skip revalidation entirely. invalidateQueries() marks every restored query stale AND
+      // triggers an immediate background refetch for any with an active observer (a mounted
+      // screen), giving the explicit flow: restore -> stale immediately -> background refresh ->
+      // UI updates once fresh data arrives.
+      void queryClient.invalidateQueries();
+      // persistQueryClient's own default onSuccess resumes paused (offline-queued) mutations;
+      // overriding onSuccess replaces that default, so it's called explicitly here to preserve it.
+      void queryClient.resumePausedMutations();
+    },
   });
   return unsubscribe;
 }
@@ -1041,4 +1087,5 @@ export function OfflineBoundary({ children }: { children: ReactNode }) {
 - **Spec coverage:** React Query Prefetching (Tasks 1-5), Persist React Query Cache (Tasks 6-9), Offline Awareness (Tasks 10-11). All three Phase 2 brief items are covered; navigation state persistence is correctly excluded as already merged.
 - **Placeholder scan:** none found — every task's Step 3 shows complete, real code.
 - **Type consistency:** `PagedResponse<Transaction>` (Task 3) matches the type `getLedgerNextPageParam` consumes in Task 4's `prefetchInfiniteQuery`. `Query`/`shouldPersistQuery` (Task 6) matches the `dehydrateOptions.shouldDehydrateQuery` signature `persistQueryClient` expects in Task 7. `successInk` (Task 10) is referenced with the exact same name in Task 11.
+- **2026-08-30 update:** Task 7 revised to add an explicit `onSuccess` callback (`invalidateQueries()` + `resumePausedMutations()`) so restored data is deterministically marked stale and revalidated in the background on every cold start, rather than relying incidentally on the 30s `staleTime` window — per direction to make the "restore → stale immediately → background refresh → UI updates" flow explicit rather than assumed. New test case added to Task 7 to prove the background refetch actually fires.
 </content>
