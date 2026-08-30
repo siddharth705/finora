@@ -773,3 +773,88 @@ verifier tests and config comments.
   without a decision.
 - **`slug: 'finora-mobile'`** — the EAS project slug. It identifies the project on EAS, not the app
   on a device; changing it re-points the EAS project and is not something to do incidentally.
+
+---
+
+## Dev and production variants
+
+Two variants of one app, selected by the `APP_VARIANT` environment variable, set per profile in
+`mobile/eas.json`.
+
+| | Production | Development |
+|---|---|---|
+| `APP_VARIANT` | `production` (or unset) | `development` |
+| Identifier (both platforms) | `com.fynora.app` | `com.fynora.app.dev` |
+| Display name | Fynora | Fynora Dev |
+| URL scheme | `finora` | `finora-dev` |
+| Firebase project | Fynora (`finora-88346`) | Fynora Dev (`finora-dev-55602`) |
+| API | `api.fynora.net` | `dev-api.fynora.net` |
+| EAS profiles | `preview`, `production` | `development`, `dev` |
+
+**Production is the default when `APP_VARIANT` is unset.** Anything that resolves the config without
+opting in — `expo config`, a local gradle build, the Maestro flows, CI — keeps the identifiers it had
+before variants existed. A dev build is something you ask for, never something you get by forgetting
+to ask.
+
+### Why the identifiers differ — this is not cosmetic
+
+Google resolves an OAuth client from the **(package name, SHA-1) pair**, and that pair must be unique
+across Firebase projects.
+
+Registering `com.fynora.app` in both the production and dev projects did not merely produce the
+console's "already in use" warning. **Firebase declined to create the dev project's Android OAuth
+clients at all**: the downloaded `google-services.json` came back with a `client_type: 3` web client
+and nothing else — no `client_type: 1` entry, no `certificate_hash`. A build using it cannot do
+Google Sign-In (no native client to resolve) or phone auth (no registered certificate).
+
+Re-registering under `com.fynora.app.dev` produced both Android clients immediately, one per
+fingerprint. The suffix is what makes the pairs unique.
+
+### The keystore consequence, which is easy to miss
+
+**EAS credentials are keyed per application identifier.** `com.fynora.app.dev` has no keystore, so
+the first dev build generates a new one — with **new fingerprints that are not the production upload
+key's**.
+
+So the production upload key's SHA-1 (`6F:DE:…`), even if it was registered against the dev Firebase
+app, does not match anything a dev EAS build produces. After the first dev build:
+
+1. `npx eas-cli credentials -p android` with `APP_VARIANT=development` → read the new keystore's
+   SHA-1 and SHA-256.
+2. Add both to the **`com.fynora.app.dev`** app in the **Fynora Dev** project.
+3. Re-download `google-services.json` and update the `GOOGLE_SERVICES_JSON` EAS variable in the
+   `development` environment.
+
+The local debug keystore is shared across packages, so its fingerprint carries over unchanged — which
+is why a locally-built dev debug binary can work while an EAS-built one does not.
+
+### Config files
+
+Dev uses its own, and they are gitignored the same way:
+
+| Variant | Android | iOS |
+|---|---|---|
+| Production | `mobile/google-services.json` | `mobile/GoogleService-Info.plist` |
+| Development | `mobile/google-services.dev.json` | `mobile/GoogleService-Info.dev.plist` |
+
+`GOOGLE_SERVICES_JSON` / `GOOGLE_SERVICES_PLIST` override both when set, which is how EAS builds get
+them — see [Where the build actually reads these files from](#where-the-build-actually-reads-these-files-from).
+The `development` environment needs **four** variables, not two:
+
+```
+EXPO_PUBLIC_API_BASE_URL=https://dev-api.fynora.net
+EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID=<dev project's web client id>
+GOOGLE_SERVICES_JSON=<dev google-services.json, as a secret file>
+GOOGLE_SERVICES_PLIST=<dev GoogleService-Info.plist, as a secret file>
+```
+
+Setting only the first two leaves the build falling back to the **production** Firebase files: a
+binary whose web client id says dev and whose native config says prod, failing in a way that reads
+like a backend audience bug.
+
+### Backend
+
+The dev backend's `GOOGLE_LOGIN_CLIENT_IDS` must contain the **dev** project's web client id, and
+must not contain production's — a dev backend that accepts production-audience tokens defeats the
+separation. `APPLE_LOGIN_CLIENT_IDS` on dev is `com.fynora.app.dev`, for the same reason it is
+`com.fynora.app` on production: Apple's `aud` on a natively-minted token is the bundle identifier.

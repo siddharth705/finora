@@ -38,6 +38,10 @@ yarn-error.*
 # Each developer downloads their own from the Firebase Console; see .env.example / app.config.ts.
 GoogleService-Info.plist
 google-services.json
+# Same files for the dev Firebase project (APP_VARIANT=development). The rules above match exact
+# names, so these need their own lines or a dev download lands in a commit.
+GoogleService-Info.dev.plist
+google-services.dev.json
 
 # typescript
 *.tsbuildinfo
