@@ -22,12 +22,13 @@ or "does this payment settle that spend."
 
 ---
 
-## 0. Addendum — four questions resolved after founder review
+## 0. Addendum — questions resolved across two rounds of founder review
 
-Added after a first review pass. Read this before §1 — it corrects one real defect the review surfaced
-in §6's original overlap rule, and resolves three other open questions the original draft had left as
-unverified or unaddressed. The original sections below are left intact rather than silently rewritten;
-each affected section carries a short pointer back here.
+Added after two review passes. Read this before §1 — §0.1–§0.5 are round one (a real defect in §6's
+original overlap rule, plus three open questions resolved); §0.6–§0.10 are round two (balance authority
+for superseded statements, acknowledgment lifecycle, a correction to round one's own severity suggestion,
+API summary fields, and a new risk named for the first time). The original sections below are left intact
+rather than silently rewritten; each affected section carries a short pointer back here.
 
 ### 0.1 Exact adjacency semantics — and a real bug in §6's original overlap rule
 
@@ -168,6 +169,144 @@ second feature quietly reintroducing the exact "Insights doesn't know what it do
 whole proposal exists to fix. Recommend `InsightsDto` gain a `coverageCaveat: CoverageCaveat | null`
 field (populated whenever the reporting window intersects a gap, null otherwise) alongside the Phase 3
 work in §11 — internal/API-only until a separate UI decision is made about surfacing it.
+
+### 0.6 Balance authority for superseded statements — and a pre-existing hazard this closes, not just a new rule
+
+Checked what happens today, before proposing a new rule: `ImportService.isMostRecentStatementForAccount`
+(the gate that decides whether a statement's closing balance may overwrite `Account.balance`) compares
+only `statementPeriodEnd` values — `importedAt`/import order is never read anywhere in that path. Its tie
+case matters here: `!latestOther.isAfter(thisStatementEnd)` treats an *equal* period-end as "most recent,"
+so two statements covering the identical period both satisfy the gate. Concretely, for the corrected
+re-upload example — July v1 closing 100,000, later July v2 closing 102,000, same period — today's logic
+(with no supersession concept at all yet) sets `Account.balance` to 102,000 the moment v2 is confirmed,
+simply because it ties on period-end and is being confirmed now. But this isn't a durable decision: if
+v1 were somehow re-confirmed again later, the identical tie logic would flip `Account.balance` straight
+back to 100,000 — there's no persisted precedence, only "whichever tied statement was confirmed most
+recently, recomputed fresh every time." **This hazard exists today, independent of whether supersession
+ships** — it's simply invisible right now because nothing creates same-period duplicates on purpose yet.
+
+**Rule this proposal adds:** only the active (non-superseded) statement for a given period participates
+in `Account.balance`, coverage, and Insights. Concretely:
+
+- When a new statement's period exactly matches an existing active statement's period (§0.3), and the
+  user confirms replacement, the prior statement's `supersededBy` is set to the new one's id. The new
+  statement is now the account's active statement for that period.
+- `isMostRecentStatementForAccount`'s existing period-comparison logic is unchanged for comparing
+  *different* periods — supersession only decides which statement is authoritative *within* one period,
+  it doesn't change which period drives `Account.balance` across the account's whole history.
+- A statement can be superseded more than once (v1 → v2 → v3). Active is simply "nothing points at me":
+  `WHERE supersededBy IS NULL`, for whichever statement is the current leaf of the chain — no need to
+  re-target earlier links when a new supersession happens.
+- This closes the tie-break hazard above by construction: with supersession, a superseded statement is
+  never confirmed again through the normal flow, so there's no path back to the stale balance.
+
+*(Resolves review concern A.)*
+
+### 0.7 Gap acknowledgment lifecycle
+
+The scenario worth designing for precisely: a gap is acknowledged (June missing), then June is imported
+(gap closes), then June's statement is later removed or itself superseded away entirely (gap reappears
+with the *same* `gapStart`/`gapEnd` as before). Should the original acknowledgment silently suppress the
+reappeared gap?
+
+**No — recommend event-driven invalidation, not date-based persistence.** An acknowledgment is deleted
+(not merely checked-and-ignored) whenever any `StatementImport` create or supersession event for that
+account has a period intersecting the acknowledged gap's `[gapStart, gapEnd]`. Walking through the
+scenario: June's import intersects `[Jun 1, Jun 30]` → the old acknowledgment is deleted at that point
+(harmless — the gap is gone anyway, nothing left to suppress). If June's statement is later removed, that
+event *also* intersects `[Jun 1, Jun 30]` → nothing to delete (already gone), and when the gap
+recomputes as present again, there's no surviving acknowledgment, so the user is correctly re-prompted.
+
+This is scoped narrowly on purpose: only intersecting events invalidate an acknowledgment, so importing
+an unrelated statement for a *different* period on the same account never clears an unrelated
+acknowledgment — avoiding the exact nagging-fatigue problem §5's acknowledgment table exists to prevent,
+while still not letting a stale acknowledgment silently reappear over genuinely changed underlying data.
+
+*(Resolves review concern B.)*
+
+### 0.8 Gap severity — a correction to this document's own earlier suggestion, not just a formalization
+
+§7 originally suggested using `OpeningBalanceCarryForward`'s computed disagreement as a severity signal.
+On closer inspection, prompted by the request to formalize this, **that suggestion is narrower than it
+looked and doesn't actually cover the review's own example.** `OpeningBalanceCarryForward` is only
+consulted when the *new* statement fails its own internal self-check (opening + net ≠ its own claimed
+closing) — and a genuine multi-month gap (May imported, July imported, June missing) essentially never
+triggers that: July is an honest, self-consistent bank document regardless of what happened in June, so
+its own arithmetic checks out and carry-forward is never invoked. Concretely: the review's own example —
+May closes 500,000, June opens 12,000 — is precisely the case where this signal would **not** fire, since
+July's own statement, taken alone, reconciles with itself. The original suggestion would have left
+severity at `UNKNOWN` for the most common real gap shape, which isn't useful.
+
+**Better signal, and one that doesn't depend on `OpeningBalanceCarryForward` at all:** whenever a gap is
+detected in the first place, both bounding values already exist by construction — the prior statement's
+closing balance and the next statement's opening balance. Their plain difference is available for every
+detected gap, not just the rare self-reconciliation-failure case:
+
+```
+GapSeverity: LOW | MEDIUM | HIGH | UNKNOWN
+
+delta = abs(priorStatement.closingBalance − nextStatement.openingBalance)
+
+UNKNOWN  -- either boundary value is missing/unextracted (should be rare once a gap is detected,
+            since detection itself requires both bounding statements)
+LOW      -- delta < ₹1,000        (illustrative threshold, not calibrated -- revise freely)
+MEDIUM   -- ₹1,000 ≤ delta < ₹25,000
+HIGH     -- delta ≥ ₹25,000
+```
+
+`UNKNOWN` becomes the rare case rather than the common one, which is what severity is actually for.
+
+*(Corrects §7's original suggestion and resolves review concern C.)*
+
+### 0.9 Coverage API summary fields
+
+Agreed — every consumer would otherwise derive these independently. §9's response gains:
+
+```json
+{
+  "accountId": "...",
+  "coverageStatus": "HAS_GAPS",
+  "coveragePercentage": 91.7,
+  "hasGaps": true,
+  "hasOverlaps": false,
+  "segments": [ ... ],
+  "gaps": [ { "gapStart": "2026-06-01", "gapEnd": "2026-06-30", "daysMissing": 30,
+              "severity": "MEDIUM", "acknowledged": false } ],
+  "overlaps": [ ... ]
+}
+```
+
+`coverageStatus` ∈ `{ COMPLETE, HAS_GAPS, HAS_OVERLAPS, HAS_GAPS_AND_OVERLAPS }`. `coveragePercentage` is
+days-covered ÷ days-in-account-history — a plain, literal ratio, not a fabricated composite (consistent
+with §4's stance against blended scores; a percentage of *actual days accounted for* is a fact, not a
+weighted judgment call).
+
+*(Resolves review concern D.)*
+
+### 0.10 Account identity drift — a genuinely new risk, not previously documented
+
+Checked directly rather than assumed: existing account-matching (`accountMatch.ts`'s trailing-digit
+suffix comparison; server-side `ImportService.resolveTargetAccount` via `ProductIdentity`) already
+documents and mitigates masking-format *variance within one match attempt* — e.g. "XXXXXX4587" vs.
+"XX4587" resolving to the same account. But **no existing code or doc addresses the same real-world
+account already having been split across two different `accountId` rows, persisting, and needing
+reconciliation after the fact.** This is genuinely new territory this review is the first to name — worth
+being direct about that rather than implying it was already covered.
+
+**Recommend explicit non-goal for the coverage engine itself, but a tracked risk, not a dismissed one.**
+`StatementCoverageAnalyzer` should not attempt to detect or merge split accounts — that's account
+identity resolution's job (a different subsystem, and one the roadmap doc's own canonical-transaction
+design already treats as a separate concern from the relationship graph, for the same reason: collapsing
+two different problems into one mechanism forces every consumer to disambiguate on every read). What
+coverage *should* do: if identity resolution ever changes in a way that splits or merges historical
+accounts, a resulting "phantom gap" (May on one `accountId`, July on another, both really the same
+account) should be diagnosable, not invisible — coverage output already carries `accountId` and the
+underlying `StatementImport` ids per segment (§9), which is enough for the admin Import Explorer trace
+tooling (roadmap doc, Part 9) to investigate if a user reports a gap that shouldn't exist. No new
+mechanism needed to make this diagnosable; just don't build something that would hide it either.
+
+*(Resolves the review's account-identity loophole — named as a tracked risk, not a non-goal for the
+whole problem, only for this engine's scope.)*
 
 ---
 
@@ -357,6 +496,9 @@ Two cases, treated differently:
 
 ## 7. Edge cases
 
+> **Corrected by §0.8:** the severity signal proposed just below turned out not to cover this bullet's
+> own example. Use §0.8's boundary-difference definition instead.
+
 - **Missing month (May → July):** the core case; handled by gap detection above.
 - **Large balance discontinuity (May close ₹500,000, June open ₹12,000):** as traced in §1, if July's own
   opening balance reconciles against July's own totals, this is simply correct data describing real
@@ -415,6 +557,10 @@ transaction rows — no existing notion of a month being untrustworthy. Recommen
 ---
 
 ## 9. API design
+
+> **Extended by §0.9:** the response below is missing summary fields (`coverageStatus`,
+> `coveragePercentage`, `hasGaps`, `hasOverlaps`) and per-gap `severity` (§0.8) — see §0.9 for the fuller
+> shape.
 
 Mirrors the shape the roadmap doc already established for `GET /api/v1/transactions/{id}/explanation`:
 
@@ -491,3 +637,8 @@ Phase 1 and Phase 3 are independent of each other and of Phase 2 — either can 
   scoring model, and this document's answer is "don't build one yet, for a specific, precedented reason."
   That's a real disagreement with part of the request, not an omission — surfaced here rather than
   silently narrowed.
+- **Account identity drift (§0.10).** If account-identity resolution ever splits or merges what should be
+  one real account across two `accountId`s, coverage would show a phantom gap or phantom completeness.
+  Explicit non-goal for this engine to detect or fix — that's a different subsystem's job — but a tracked
+  risk, not a dismissed one: coverage output carries enough (`accountId`, per-segment `statementImportId`)
+  to make it diagnosable via the admin Import Explorer if it ever happens, rather than invisible.
