@@ -22,13 +22,15 @@ or "does this payment settle that spend."
 
 ---
 
-## 0. Addendum — questions resolved across two rounds of founder review
+## 0. Addendum — questions resolved across three rounds of founder review
 
-Added after two review passes. Read this before §1 — §0.1–§0.5 are round one (a real defect in §6's
+Added after three review passes. Read this before §1 — §0.1–§0.5 are round one (a real defect in §6's
 original overlap rule, plus three open questions resolved); §0.6–§0.10 are round two (balance authority
 for superseded statements, acknowledgment lifecycle, a correction to round one's own severity suggestion,
-API summary fields, and a new risk named for the first time). The original sections below are left intact
-rather than silently rewritten; each affected section carries a short pointer back here.
+API summary fields, and a new risk named for the first time); §0.11–§0.15 are round three (a
+well-defined coverage-percentage denominator, an explicit non-standard-period state, acknowledgment
+history preservation, a roadmap re-sequencing, and a second new risk). The original sections below are
+left intact rather than silently rewritten; each affected section carries a short pointer back here.
 
 ### 0.1 Exact adjacency semantics — and a real bug in §6's original overlap rule
 
@@ -260,6 +262,10 @@ HIGH     -- delta ≥ ₹25,000
 
 ### 0.9 Coverage API summary fields
 
+> **Refined by §0.11 and §0.12:** `coveragePercentage`'s denominator below was underspecified — see
+> §0.11 for the corrected, well-defined version (raw `coveredDays`/`missingDays` as the primary fields).
+> `coverageStatus`'s enum is also extended in §0.12 to cover non-standard periods.
+
 Agreed — every consumer would otherwise derive these independently. §9's response gains:
 
 ```json
@@ -307,6 +313,127 @@ mechanism needed to make this diagnosable; just don't build something that would
 
 *(Resolves the review's account-identity loophole — named as a tracked risk, not a non-goal for the
 whole problem, only for this engine's scope.)*
+
+### 0.11 Coverage percentage — the denominator was genuinely underspecified, and doesn't need to be invented
+
+§0.9's `coveragePercentage` said "days-covered ÷ days-in-account-history" without defining what "account
+history" means — a real gap, not a nitpick, since Finora has no way to know when an account actually
+opened before the user's first import. Rather than pick an arbitrary denominator, the fix is to notice
+neither half of the ratio needs one:
+
+- `coveredDays` = sum of every segment's duration — well-defined regardless of anything outside the
+  imported statements themselves.
+- `missingDays` = sum of every detected gap's duration, and a gap is only ever detected *between two real
+  bounding statements* (already the rule in §12's dormant-account mitigation) — so this is equally
+  well-defined without reference to "true account age."
+
+Both counts are facts about what's been imported, not estimates of an unknowable account lifetime.
+`coveragePercentage`, if computed at all, is `coveredDays / (coveredDays + missingDays)` — scoped to the
+span between the account's first and last imported statement, never claiming to know anything before or
+after it. The API returns the raw counts as primary fields; a percentage is a UI-layer convenience derived
+from them, not a separately-sourced number:
+
+```json
+{ "coveredDays": 61, "missingDays": 31, "coveragePercentage": 66.3 }
+```
+
+*(Resolves review concern 1 — the raw counts were the right instinct; the percentage isn't dropped, just
+correctly scoped and demoted to derived-in-UI rather than a separately storable fact.)*
+
+### 0.12 Non-standard periods need their own explicit state, not silent exclusion
+
+§0.2's original mitigation — exclude a >45-day segment from gap/overlap classification — is safe but
+under-specifies what the *report* says happened. A consumer reading `gaps: []`, `overlaps: []` for an
+account with an excluded segment would reasonably read that as "fully covered," when the honest answer is
+"we don't know how to classify part of this account's history." Silence and confirmed-complete must never
+look the same.
+
+**Fix: give the excluded case its own value in the segment's own record, not just an internal exclusion.**
+
+```
+CoverageSegment { statementImportId, periodStart, periodEnd, classification }
+classification: STANDARD | NON_STANDARD_PERIOD
+```
+
+Any report containing a `NON_STANDARD_PERIOD` segment sets `coverageStatus` to a value that can't be
+confused with `COMPLETE` even when zero gaps exist among the standard segments — extending §0.9's enum to
+`{ COMPLETE, HAS_GAPS, HAS_OVERLAPS, HAS_GAPS_AND_OVERLAPS, HAS_NON_STANDARD_PERIODS }` (combinable in
+practice, but never silently collapsed into `COMPLETE`). `coveredDays`/`missingDays` (§0.11) exclude
+non-standard segments' duration entirely from both counts, rather than guessing which bucket they belong
+in.
+
+*(Resolves review concern 2.)*
+
+### 0.13 Acknowledgment history — invalidate, don't delete
+
+§0.7's event-driven invalidation rule was right about *when* to stop suppressing a reappeared gap; it was
+wrong about *how* — physical deletion discards exactly the audit trail this codebase otherwise preserves
+by habit (the roadmap doc's own "loser stays as provenance, not deleted" principle, already cited once in
+this document at §0.3, applies here too and was missed the first time).
+
+**Fix:** `statement_coverage_acknowledgment` gains a status instead of being deleted on invalidation:
+
+```
+status: ACTIVE | INVALIDATED
+invalidatedAt, invalidatedByStatementImportId   -- nullable, set together on invalidation
+```
+
+Coverage lookups only honor `status = ACTIVE` rows when deciding whether to suppress a gap — behaviorally
+identical to §0.7's original rule — but an `INVALIDATED` row stays queryable: *"the user acknowledged this
+gap on [date]; it was later invalidated when [statement] touched the same period."* Same runtime
+behavior, better debugging story, and it costs one column, not a redesign.
+
+*(Resolves review concern 3.)*
+
+### 0.14 Roadmap re-sequencing — admin exposure into Phase 1, ahead of the consumer timeline
+
+Worth taking seriously rather than treating as a nice-to-have reorder: **coverage is unproven the moment
+it ships.** Before any user sees an import-time gap warning or a Coverage Timeline, someone needs to have
+watched it run against real accounts and confirmed the PNB-boundary fix (§0.1) actually holds, the
+severity thresholds (§0.8) aren't noisy, and non-standard-period detection (§0.12) doesn't misfire on a
+statement type nobody anticipated. An admin view is how that confirmation happens before end users are
+the ones discovering a false positive.
+
+This doesn't need new Phase 1 engineering beyond what's already scoped — §9's `GET /coverage` API was
+always going to exist in Phase 1; the only change is *which* consumer gets built against it first. The
+admin coverage view is cheap specifically because it extends the roadmap doc's already-designed Import
+Explorer (Part 9) rather than being a new screen, which is not true of the consumer-facing Coverage
+Timeline in §10.
+
+**Revised phase 1 scope:** `StatementCoverageAnalyzer`, `GET /api/v1/accounts/{accountId}/coverage`,
+supersession + exact-duplicate-period handling (§0.3/§0.6), the import-time warning banner (low-risk and
+narrowly scoped — kept in Phase 1), **and** the admin coverage view extending Import Explorer (moved up
+from Phase 2). The consumer-facing Coverage Timeline (§10) is the one piece that stays in Phase 2,
+specifically *because* it's the polished, harder-to-walk-back surface — the one worth waiting on until
+Phase 1's admin visibility has actually validated the underlying detection logic against real data.
+
+*(Resolves review concern 4 — see §11 for the updated table.)*
+
+### 0.15 A second new risk: statement-period extraction drift
+
+Checked directly, not assumed: **no parser-version tracking exists anywhere in the codebase today** —
+`StatementImport`/`ImportJob` have no such field, confirmed by a full-repo search. (A sibling proposal,
+`data-import-intelligence-proposal.md`, floats parser-version tracking as *future* admin-observability
+work — it is not built.) This makes the risk the review names sharper than a passing mention: if
+`PdfMetadataExtractor`'s period-extraction logic changes between two points in time (a bug fix, a new bank
+layout added, a regex tightened), **coverage for accounts imported under the old logic doesn't
+retroactively re-derive** — Finora doesn't re-parse stored PDFs when a parser changes — so this specific
+risk is more "coverage is only as correct as whatever was extracted at import time and never revisited"
+than "coverage might silently drift on its own." That's a narrower, more containable risk than the
+review's framing suggests, but worth stating precisely rather than either dismissing or overstating it:
+
+> **Coverage accuracy is bounded by statement-period extraction accuracy at the time of import, and
+> extraction accuracy is not currently re-verified after the fact.** A period-extraction bug found and
+> fixed later (the same class of bug §3 already describes once, for PNB) corrects future imports but does
+> not retroactively correct historical `statementPeriodStart`/`End` values already stored — those would
+> need the same kind of one-off backfill any other stored-value bug fix needs, coverage-specific tooling
+> does not solve it.
+
+No mitigation is proposed here beyond documenting it plainly — the honest fix (parser-version tracking,
+enabling a targeted backfill when extraction logic changes) belongs to the import/extraction subsystem's
+own roadmap, not this proposal's scope.
+
+*(Adds a second risk to §12, alongside §0.10's account-identity drift.)*
 
 ---
 
@@ -452,7 +579,8 @@ never got that statement, stop reminding me"). This mirrors an existing, proven 
 `notDuplicateConfirmedAt` already makes a user's "not a duplicate" call stick permanently, and the
 roadmap doc's graph design gives `USER_CONFIRMED` edges the same permanence. A small new table —
 `statement_coverage_acknowledgment(userId, accountId, gapStart, gapEnd, acknowledgedAt, reason)` — is the
-only new persisted state this proposal needs. (I did not find an existing generic
+only new persisted state this proposal needs (§0.13 adds a `status` column to this table — invalidate,
+don't delete). (I did not find an existing generic
 dismissal/acknowledgment mechanism to reuse instead — worth a quick check before implementation in case
 one already exists under a different name.)
 
@@ -605,15 +733,17 @@ roadmap doc's planned "Import Explorer," not a new admin subsystem.
 
 ## 11. Implementation roadmap
 
-> **Updated per §0.3 and §0.4:** statement supersession moved into Phase 1 (it shares its underlying
-> check with exact-duplicate-period detection, and was a genuine scope gap, not a deprioritized item).
-> CSV coverage's Phase 4 placement should be confirmed or revised by the one query in §0.4 before this
-> phasing is treated as final.
+> **Updated per §0.3, §0.4, and §0.14:** statement supersession moved into Phase 1 (it shares its
+> underlying check with exact-duplicate-period detection, and was a genuine scope gap, not a
+> deprioritized item). CSV coverage's Phase 4 placement should be confirmed or revised by the one query
+> in §0.4 before this phasing is treated as final. The admin coverage view also moved into Phase 1,
+> ahead of the consumer-facing Coverage Timeline (§0.14) — the underlying detection logic should be
+> validated against real accounts internally before end users see any of it.
 
 | Phase | Scope | Depends on |
 |---|---|---|
-| **1 — Detection core** | `StatementCoverageAnalyzer` (pure function), import-time warning (reuses existing warning UI), `GET /api/v1/accounts/{accountId}/coverage`, exact-duplicate-period + supersession handling (§0.3). No new tables except the `supersededBy` FK. | Nothing — works entirely off fields that already exist |
-| **2 — Surfacing** | Coverage Timeline on `StatementHistory.tsx`; admin coverage endpoint extending Import Explorer; `statement_coverage_acknowledgment` table + dismiss action | Phase 1 |
+| **1 — Detection core** | `StatementCoverageAnalyzer` (pure function), import-time warning (reuses existing warning UI), `GET /api/v1/accounts/{accountId}/coverage`, exact-duplicate-period + supersession handling (§0.3/§0.6), admin coverage view extending Import Explorer (§0.14). No new tables except the `supersededBy` FK. | Nothing — works entirely off fields that already exist |
+| **2 — Surfacing** | Coverage Timeline on `StatementHistory.tsx`; `statement_coverage_acknowledgment` table (with `status`, §0.13) + dismiss action | Phase 1 |
 | **3 — Insight safety** | Movers exclude gap months from baseline; current-month gap sentence; `InsightsDto.coverageCaveat` (§0.5) | Phase 1 (does not need Phase 2) |
 | **4 — CSV coverage (pending §0.4)** | Explicit, separately-labeled estimated period for CSV imports (§7) — placement here is provisional until the `source_format` query in §0.4 is actually run | Phase 1 |
 | **Not in scope** | Any blended "Account Health" score (§4) — revisit only with real usage/calibration data, matching the roadmap doc's own deferral of its confidence-formula work for the same reason | — |
@@ -642,3 +772,8 @@ Phase 1 and Phase 3 are independent of each other and of Phase 2 — either can 
   Explicit non-goal for this engine to detect or fix — that's a different subsystem's job — but a tracked
   risk, not a dismissed one: coverage output carries enough (`accountId`, per-segment `statementImportId`)
   to make it diagnosable via the admin Import Explorer if it ever happens, rather than invisible.
+- **Statement-period extraction drift (§0.15).** Coverage accuracy is bounded by extraction accuracy at
+  import time, and Finora never re-parses stored PDFs when extraction logic changes — a period-extraction
+  bug fixed later corrects future imports only, not `statementPeriodStart`/`End` values already stored.
+  No parser-version tracking exists today to make this diagnosable (confirmed absent, not assumed); that
+  belongs to the extraction subsystem's own roadmap, not this proposal's scope.
