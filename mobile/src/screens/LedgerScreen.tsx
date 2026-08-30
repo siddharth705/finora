@@ -5,6 +5,7 @@ import {
 import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { transactionsApi, type TransactionFilters } from '../api/endpoints';
+import { SkeletonTransactionRow } from '../components/skeletons/Skeletons';
 import { invalidateFinancialData } from '../lib/invalidateFinancialData';
 import { toUserMessage } from '../lib/apiError';
 import { useDebouncedValue } from '../lib/useDebouncedValue';
@@ -131,8 +132,10 @@ export function LedgerScreen() {
       {error ? <Text style={[styles.error, { color: c.danger }]}>{error}</Text> : null}
 
       {isLoading ? (
-        <View style={styles.centered}>
-          <ActivityIndicator size="large" color={c.primary} />
+        <View style={styles.listContent}>
+          {Array.from({ length: 8 }).map((_, i) => (
+            <SkeletonTransactionRow key={i} />
+          ))}
         </View>
       ) : isError && txns.length === 0 ? (
         /**
