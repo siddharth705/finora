@@ -1,9 +1,10 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import Import from './Import';
+import { AuthProvider } from '../context/AuthContext';
 import { importApi, importJobsApi, statementImportsApi, categoriesApi, accountsApi, type ImportJobProgress } from '../api/endpoints';
 import type { Account, StagedAccountSection } from '../types';
 import { PDF_PASSWORD_REQUIRED, PDF_PASSWORD_INVALID, NO_HEADER_DETECTED, NO_TRANSACTIONS_FOUND, SCANNED_OCR_REQUIRED, CORRUPT_PDF, IMPORT_SESSION_ALREADY_CONFIRMED } from '../api/errorCodes';
@@ -125,7 +126,9 @@ function renderImport() {
     ...render(
       <QueryClientProvider client={queryClient}>
         <MemoryRouter>
-          <Import />
+          <AuthProvider>
+            <Import />
+          </AuthProvider>
         </MemoryRouter>
       </QueryClientProvider>
     ),
@@ -1761,7 +1764,9 @@ describe('Import — resuming via navigation state', () => {
     return render(
       <QueryClientProvider client={queryClient}>
         <MemoryRouter initialEntries={[{ pathname: '/app/import', state: { kind: 'resume', resumeSessionId } }]}>
-          <Import />
+          <AuthProvider>
+            <Import />
+          </AuthProvider>
         </MemoryRouter>
       </QueryClientProvider>
     );
@@ -1869,7 +1874,9 @@ describe('Import — arriving to retry a failed sync import', () => {
           pathname: '/app/import',
           state: { kind: 'retry', retryFileName, retryFailureCode },
         }]}>
-          <Import />
+          <AuthProvider>
+            <Import />
+          </AuthProvider>
         </MemoryRouter>
       </QueryClientProvider>
     );
@@ -2030,5 +2037,134 @@ describe('Import — arriving to retry a failed sync import', () => {
     // navigation and local useState updates commit on separate ticks. findByTestId resolving
     // only proves the dropzone is back, not that retryState has cleared yet.
     await waitFor(() => expect(screen.queryByTestId('retry-import-banner')).not.toBeInTheDocument());
+  });
+});
+
+/**
+ * docs/proposals/account-ownership-intelligence-proposal.md §3.1: the client-side pre-check that
+ * decides whether to show the "Statement Check" dialog before confirming. The backend's own
+ * OwnershipMatchService (which persists the authoritative result) is covered separately in
+ * ImportServiceSessionTest -- this only covers the frontend gate.
+ */
+describe('Import — ownership name-mismatch warning', () => {
+  function detectedAccountWithHolder(accountHolderName: string | null) {
+    return { ...detectedAccount, accountHolderName };
+  }
+
+  function stageWithHolder(accountHolderName: string | null) {
+    vi.mocked(importApi.stagePdf).mockReset().mockResolvedValue({
+      sessionId: 'session-1',
+      multiAccount: false,
+      sections: null,
+      staging: {
+        rows: [],
+        totalParsed: 0,
+        flaggedDuplicates: 0,
+        detectedAccount: detectedAccountWithHolder(accountHolderName),
+        unparseableRows: [],
+      },
+    } as never);
+  }
+
+  beforeEach(() => {
+    localStorage.setItem('finora_name', 'Rahul Sharma');
+    vi.mocked(categoriesApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(accountsApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(importApi.confirm).mockReset().mockResolvedValue({
+      imported: 1, skipped: 0, duplicatesDetected: 0, transfersIdentified: 0, newMerchantsLearned: 0,
+      accountsCreated: [], productsCreated: {}, categoriesAssigned: {}, warnings: [], account: null,
+      totalCredits: 0, totalDebits: 0, statementOpeningBalance: null, statementClosingBalance: null,
+      statementPeriodStart: null, statementPeriodEnd: null, importDurationMs: 12, source: 'PDF',
+    } as never);
+  });
+
+  afterEach(() => localStorage.removeItem('finora_name'));
+
+  it('shows the warning and does not confirm yet when the holder name differs from the profile', async () => {
+    stageWithHolder('Sunil Verma');
+    const user = userEvent.setup();
+    renderImport();
+
+    await pickAndUploadPdf(user);
+    await user.click(screen.getByRole('button', { name: /confirm import/i }));
+
+    expect(await screen.findByText('Statement Check')).toBeInTheDocument();
+    expect(screen.getByText(/Sunil Verma/)).toBeInTheDocument();
+    expect(screen.getByText(/Rahul Sharma/)).toBeInTheDocument();
+    expect(importApi.confirm).not.toHaveBeenCalled();
+  });
+
+  it('confirms with userConfirmedContinue once the user clicks Continue Import', async () => {
+    stageWithHolder('Sunil Verma');
+    const user = userEvent.setup();
+    renderImport();
+
+    await pickAndUploadPdf(user);
+    await user.click(screen.getByRole('button', { name: /confirm import/i }));
+    await screen.findByText('Statement Check');
+    await user.click(screen.getByRole('button', { name: 'Continue Import' }));
+
+    await waitFor(() => expect(importApi.confirm).toHaveBeenCalledTimes(1));
+    expect(importApi.confirm).toHaveBeenCalledWith(
+      expect.objectContaining({ userConfirmedContinue: true }),
+    );
+  });
+
+  it('returns to the upload step without confirming when the user picks Upload Different Statement', async () => {
+    stageWithHolder('Sunil Verma');
+    const user = userEvent.setup();
+    renderImport();
+
+    await pickAndUploadPdf(user);
+    await user.click(screen.getByRole('button', { name: /confirm import/i }));
+    await screen.findByText('Statement Check');
+    await user.click(screen.getByRole('button', { name: 'Upload Different Statement' }));
+
+    await screen.findByTestId('statement-dropzone');
+    expect(importApi.confirm).not.toHaveBeenCalled();
+  });
+
+  it('never shows the warning when the holder name matches the profile', async () => {
+    stageWithHolder('Rahul Sharma');
+    const user = userEvent.setup();
+    renderImport();
+
+    await pickAndUploadPdf(user);
+    await user.click(screen.getByRole('button', { name: /confirm import/i }));
+
+    await waitFor(() => expect(importApi.confirm).toHaveBeenCalledTimes(1));
+    expect(screen.queryByText('Statement Check')).not.toBeInTheDocument();
+    expect(importApi.confirm).toHaveBeenCalledWith(
+      expect.objectContaining({ userConfirmedContinue: undefined }),
+    );
+  });
+
+  it('never shows the warning when the statement has no extractable holder name', async () => {
+    stageWithHolder(null);
+    const user = userEvent.setup();
+    renderImport();
+
+    await pickAndUploadPdf(user);
+    await user.click(screen.getByRole('button', { name: /confirm import/i }));
+
+    await waitFor(() => expect(importApi.confirm).toHaveBeenCalledTimes(1));
+    expect(screen.queryByText('Statement Check')).not.toBeInTheDocument();
+  });
+
+  it('never shows the warning when the profile itself has no name on file', async () => {
+    // fullName is genuinely nullable -- Apple Sign-In only supplies it on the first authorization
+    // (AuthContext's loginWithApple). Without the guard this regression-tests, isLikelyMatch(holder,
+    // null) always returns false, so EVERY import with an extractable holder name would warn,
+    // forever, for a user in this state -- and the dialog would show "null" as their profile name.
+    localStorage.removeItem('finora_name');
+    stageWithHolder('Sunil Verma');
+    const user = userEvent.setup();
+    renderImport();
+
+    await pickAndUploadPdf(user);
+    await user.click(screen.getByRole('button', { name: /confirm import/i }));
+
+    await waitFor(() => expect(importApi.confirm).toHaveBeenCalledTimes(1));
+    expect(screen.queryByText('Statement Check')).not.toBeInTheDocument();
   });
 });

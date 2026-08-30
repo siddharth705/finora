@@ -482,12 +482,26 @@ public class ImportDto {
             LocalDate statementPeriodStart, LocalDate statementPeriodEnd,
             // Same round-trip as ConfirmRequest's own trailing fields -- see that record's doc
             // comment.
-            BigDecimal totalAmountDue, LocalDate paymentDueDate
+            BigDecimal totalAmountDue, LocalDate paymentDueDate,
+            // Same round-trip as ConfirmRequest's own userConfirmedContinue -- see that record's
+            // doc comment.
+            Boolean userConfirmedContinue
     ) {
         /** Pre-existing arity -- see ConfirmRequest's own legacy constructor for why. */
         public SectionConfirm(List<ConfirmedRow> rows, UUID existingAccountId, NewAccountRequest newAccount,
                                BigDecimal statementOpeningBalance, BigDecimal statementClosingBalance) {
-            this(rows, existingAccountId, newAccount, statementOpeningBalance, statementClosingBalance, null, null, null, null);
+            this(rows, existingAccountId, newAccount, statementOpeningBalance, statementClosingBalance,
+                    null, null, null, null, null);
+        }
+
+        /** Same arity as the pre-existing credit-card-fields constructor -- see ConfirmRequest's
+         *  own equivalent for why. */
+        public SectionConfirm(List<ConfirmedRow> rows, UUID existingAccountId, NewAccountRequest newAccount,
+                               BigDecimal statementOpeningBalance, BigDecimal statementClosingBalance,
+                               LocalDate statementPeriodStart, LocalDate statementPeriodEnd,
+                               BigDecimal totalAmountDue, LocalDate paymentDueDate) {
+            this(rows, existingAccountId, newAccount, statementOpeningBalance, statementClosingBalance,
+                    statementPeriodStart, statementPeriodEnd, totalAmountDue, paymentDueDate, null);
         }
     }
 
@@ -618,7 +632,13 @@ public class ImportDto {
             // DetectedAccountInfo.totalAmountDue/paymentDueDate as staged, not re-derived.
             // credit-card-statement-entity-design.md -- both null for a CSV import or any
             // non-credit-card statement, same as on DetectedAccountInfo itself.
-            BigDecimal totalAmountDue, LocalDate paymentDueDate
+            BigDecimal totalAmountDue, LocalDate paymentDueDate,
+            // docs/proposals/account-ownership-intelligence-proposal.md §3.1/§3.2. Whether the user
+            // clicked "Continue Import" after the client-side ownership warning fired. Null on
+            // every call site that never showed the warning (name matched, no holder extracted, or
+            // an older client that predates this field) -- persistSection stores null as null,
+            // genuinely meaning "there was nothing to confirm past", not "unknown".
+            Boolean userConfirmedContinue
     ) {
         /** Pre-existing arity. Kept so the many call sites that construct a request with no printed
          *  statement period to echo -- reimport's internal re-scoping, tests, Gmail's receipt-derived
@@ -629,7 +649,7 @@ public class ImportDto {
                                NewAccountRequest newAccount, BigDecimal statementOpeningBalance,
                                BigDecimal statementClosingBalance, String password) {
             this(sessionId, rows, existingAccountId, newAccount, statementOpeningBalance,
-                    statementClosingBalance, password, null, null, null, null);
+                    statementClosingBalance, password, null, null, null, null, null);
         }
 
         /** Same arity as the pre-existing period-echoing constructor above, for call sites that
@@ -639,7 +659,19 @@ public class ImportDto {
                                BigDecimal statementClosingBalance, String password,
                                LocalDate statementPeriodStart, LocalDate statementPeriodEnd) {
             this(sessionId, rows, existingAccountId, newAccount, statementOpeningBalance,
-                    statementClosingBalance, password, statementPeriodStart, statementPeriodEnd, null, null);
+                    statementClosingBalance, password, statementPeriodStart, statementPeriodEnd, null, null, null);
+        }
+
+        /** Same arity as the pre-existing credit-card-fields constructor above, for call sites that
+         *  echo those but predate the ownership-warning field. */
+        public ConfirmRequest(UUID sessionId, List<ConfirmedRow> rows, UUID existingAccountId,
+                               NewAccountRequest newAccount, BigDecimal statementOpeningBalance,
+                               BigDecimal statementClosingBalance, String password,
+                               LocalDate statementPeriodStart, LocalDate statementPeriodEnd,
+                               BigDecimal totalAmountDue, LocalDate paymentDueDate) {
+            this(sessionId, rows, existingAccountId, newAccount, statementOpeningBalance,
+                    statementClosingBalance, password, statementPeriodStart, statementPeriodEnd,
+                    totalAmountDue, paymentDueDate, null);
         }
     }
 
