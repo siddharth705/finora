@@ -37,6 +37,14 @@ public final class CoverageWarnings {
 
     private CoverageWarnings() {}
 
+    /** The fixed opening of the duplicate-period sentence -- exposed so a caller with a reason to
+     *  know a "duplicate" isn't really one (see {@code StatementImportService.confirmReimport},
+     *  which reimport-confirms a statement without deleting the original it's correcting, so this
+     *  code has no way to tell the two apart on its own) can filter it back out by prefix, without
+     *  this class or ImportService's confirm/persistSection/summarise pipeline needing to know
+     *  about that one caller's special case. */
+    public static final String DUPLICATE_PERIOD_WARNING_PREFIX = "You already have a statement for this period";
+
     /**
      * @param report            the whole account's coverage report, computed AFTER the new
      *                          statement was persisted
@@ -71,7 +79,7 @@ public final class CoverageWarnings {
             Instant otherImportedAt = importedAtById.get(otherId);
             String importedOnClause = otherImportedAt == null ? ""
                     : ", imported on " + LocalDate.ofInstant(otherImportedAt, ZoneOffset.UTC);
-            warnings.add("You already have a statement for this period" + importedOnClause
+            warnings.add(DUPLICATE_PERIOD_WARNING_PREFIX + importedOnClause
                     + ". Replacing an existing statement isn't supported yet.");
         }
 
