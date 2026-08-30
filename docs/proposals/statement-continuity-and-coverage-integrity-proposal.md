@@ -1,6 +1,10 @@
 # Statement Continuity & Coverage Integrity — Proposal
 
-**Status:** proposal — not scheduled, prioritized, or approved. No code in this document, per request.
+**Status:** accepted direction, pending prioritization — closed after five rounds of review (2026-08-30).
+The architecture is settled; what remains (CSV prevalence, false-positive rate, non-standard-period
+frequency, identity-drift incidence) are empirical questions Phase 1's own read-only rollout is designed
+to answer, not open design questions. Not yet scheduled against other roadmap work. No code in this
+document, per the original request.
 
 **Relationship to other proposals:** this document is a sibling to
 [`reconciliation-evolution-roadmap-proposal.md`](reconciliation-evolution-roadmap-proposal.md) ("the
