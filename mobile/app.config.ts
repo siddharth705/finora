@@ -51,19 +51,32 @@ const config: ExpoConfig = {
   scheme: 'finora',
   ios: {
     supportsTablet: true,
-    // 'com.finora.app' was the original identifier on both platforms, but it's unavailable under
-    // this project's Apple Developer team for iOS registration (fails with "not available" --
-    // either a genuine third-party collision, or residue from the Organization/DUNS enrollment
-    // attempt abandoned in favor of an Individual account before final submission, per D-14/R-16
-    // in the plan doc). Renamed to the domain this project's own backend/frontend already use
-    // (finoratech.info) rather than guessing at another '.app' variant that might collide again --
-    // and Android's package name renamed to match, so the two platforms carry one identifier
-    // rather than a permanent, easy-to-forget divergence between them.
-    bundleIdentifier: 'com.finoratech.app',
+    // Third identifier, and the last one that can be changed for free. 'com.finora.app' was the
+    // original and is unavailable under this project's Apple Developer team ("not available" --
+    // either a third-party collision or residue from the Organization/DUNS enrollment abandoned in
+    // favor of Individual, per D-14/R-16). It was then renamed to 'com.finoratech.app' after the
+    // domain the backend and frontend used at the time. That domain has since been sold and cut
+    // over, so the identifier pointed at something this project no longer owns while the app was
+    // shipping under the name Fynora.
+    //
+    // A bundle identifier is effectively permanent once an app has been submitted: changing it
+    // afterwards means a new App Store listing and a new Play listing, with ratings, reviews and
+    // installs starting from zero. Nothing has been submitted yet, so this is the free moment, and
+    // D-31 in the plan doc records the decision to spend it rather than let first submission make
+    // it by default. Android's package matches deliberately -- one identifier across both
+    // platforms rather than a permanent divergence nobody remembers is there.
+    //
+    // NOT self-contained. The backend verifies Apple ID tokens against this exact string (Apple's
+    // `aud` claim on a natively-minted token IS the bundle identifier -- see AppleLoginProperties),
+    // and Firebase registers phone auth, Play Integrity and the native Google OAuth clients against
+    // it. See docs/engineering/mobile/mobile-setup.md, "Bundle identifier migration", for the
+    // console and environment steps this line does not perform.
+    bundleIdentifier: 'com.fynora.app',
     ...(existsSync(here(iosGoogleServices)) ? { googleServicesFile: iosGoogleServices } : {}),
   },
   android: {
-    package: 'com.finoratech.app',
+    // Matches ios.bundleIdentifier above -- see its comment for the history and the migration.
+    package: 'com.fynora.app',
     ...(existsSync(here(androidGoogleServices)) ? { googleServicesFile: androidGoogleServices } : {}),
     // Adaptive icon: a solid graphite plate with the Finora mark as the foreground layer.
     //

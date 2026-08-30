@@ -12,7 +12,7 @@ class AppleSignInHealthProviderTest {
     @Test
     void check_reportsUp_whenClientIdsConfigured() {
         AppleLoginProperties properties = new AppleLoginProperties();
-        properties.setClientIds(List.of("com.finoratech.app"));
+        properties.setClientIds(List.of("com.fynora.app"));
         AppleSignInHealthProvider provider = new AppleSignInHealthProvider(properties);
 
         HealthCheckResult result = provider.check();

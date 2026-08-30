@@ -3,7 +3,7 @@
 # loading/error branches. Assumes nothing about ledger contents: a freshly seeded account has no
 # transactions, so this only asserts on what's true for EVERY account, verified vs.
 # mobile/src/screens/DashboardScreen.tsx directly rather than assumed.
-appId: com.finoratech.app
+appId: com.fynora.app
 env:
   TEST_EMAIL: maestro-test@finora.test
   TEST_PASSWORD: MaestroSeedPass2026

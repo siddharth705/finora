@@ -31,7 +31,7 @@ exemptions:
 2. A line carrying `check-contact-addresses: allow`, for prose that must name an address literally
    rather than link it (a legal notice quoting a contact, say).
 
-Note this is about *mailboxes*: the mobile bundle identifier (`com.finoratech.app`, renamed from
+Note this is about *mailboxes*: the mobile bundle identifier (`com.fynora.app`, renamed from
 `com.finora.app` on both platforms after an Apple Developer registration collision, unrelated to
 either mailbox migration) matches no `@` and is intentionally untouched.
 """
@@ -57,7 +57,7 @@ SOURCE_OF_TRUTH = REPO_ROOT / "frontend" / "src" / "lib" / "contact.ts"
 RETIRED_DOMAINS = ("finora.app", "finoratech.info")
 CURRENT_DOMAIN = "fynora.net"
 
-# A mailbox, not a bare domain: requires the local-part and @ so that `com.finoratech.app` (the
+# A mailbox, not a bare domain: requires the local-part and @ so that `com.fynora.app` (the
 # mobile bundle identifier) and prose mentions of a domain do not trip the check.
 ALL_DOMAINS = RETIRED_DOMAINS + (CURRENT_DOMAIN,)
 MAILBOX = re.compile(
