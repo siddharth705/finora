@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { StatusBar } from 'expo-status-bar';
+import * as SplashScreen from 'expo-splash-screen';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { queryClient, startNetworkMonitoring } from './src/api/queryClient';
 import { AppLockGate } from './src/components/AppLockGate';
@@ -16,6 +17,15 @@ import { ThemeProvider } from './src/theme';
 // when EXPO_PUBLIC_SENTRY_DSN is unset -- see src/lib/monitoring.ts.
 initMonitoring();
 
+// Also before the component: the native splash screen otherwise auto-hides itself as soon as the
+// first frame is handed to the native renderer, which can land before this module has even
+// finished evaluating (this file, everything it imports, RootNavigator's own tree). That gap
+// between "native splash gone" and "first React frame actually painted" is a blank white/black
+// flash on cold start. Held off until the mount effect below explicitly releases it, once React
+// has committed a real frame -- RootNavigator's own bootstrapping spinner (auth restore) is what
+// the user sees after that, not before it.
+void SplashScreen.preventAutoHideAsync();
+
 // AuthProvider sits inside QueryClientProvider because auth calls go through the same API client
 // every query does, and outside RootNavigator because the navigator picks its stack from auth
 // state (see RootNavigator's own comment). OfflineBoundary wraps the navigator rather than living
@@ -25,6 +35,16 @@ function App() {
   // Subscribing here rather than at module scope keeps the NetInfo listener tied to the app's
   // lifetime and torn down cleanly, instead of leaking across fast-refresh reloads in development.
   useEffect(() => startNetworkMonitoring(), []);
+
+  // Fires after this render has committed, i.e. after RootNavigator's tree (its own bootstrapping
+  // spinner, at minimum) has something real to paint -- see the preventAutoHideAsync comment
+  // above for why this can't just be the native default. Deliberately NOT gated on auth
+  // bootstrapping finishing: waiting that long would hold the native splash up through the whole
+  // SecureStore restore with no visible progress, which is worse than handing off to the spinner
+  // RootNavigator already shows for exactly that wait.
+  useEffect(() => {
+    void SplashScreen.hideAsync();
+  }, []);
 
   return (
     <QueryClientProvider client={queryClient}>

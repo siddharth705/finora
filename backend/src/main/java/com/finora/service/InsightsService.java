@@ -4,16 +4,20 @@ import com.finora.dto.InsightsDto;
 import com.finora.entity.Budget;
 import com.finora.entity.Category;
 import com.finora.entity.Transaction;
+import com.finora.imports.StatementCoverageAnalyzer;
 import com.finora.repository.AccountRepository;
 import com.finora.repository.BudgetRepository;
 import com.finora.repository.CategoryRepository;
+import com.finora.repository.StatementImportRepository;
 import com.finora.repository.TransactionRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.LocalDate;
 import java.time.YearMonth;
+import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.stream.Collectors;
 import com.finora.repository.UserRepository;
@@ -63,24 +67,31 @@ public class InsightsService {
      *  performed no calendar resolution at all. */
     private final UserRepository userRepository;
     private final TransactionGraphService transactionGraphService;
+    /** Phase 3 of docs/proposals/statement-continuity-and-coverage-integrity-proposal.md (§8) --
+     *  Insights consumes coverage, it doesn't own it: {@link StatementCoverageAnalyzer} stays a
+     *  pure function with no repository of its own, so this is the same repository call Phase 1's
+     *  AccountCoverageService already makes, not a new data source. */
+    private final StatementImportRepository statementImportRepository;
 
     public InsightsService(TransactionRepository transactionRepository, AccountRepository accountRepository,
                             CategoryRepository categoryRepository,
                             BudgetRepository budgetRepository, UserRepository userRepository,
-                            TransactionGraphService transactionGraphService) {
+                            TransactionGraphService transactionGraphService,
+                            StatementImportRepository statementImportRepository) {
         this.transactionRepository = transactionRepository;
         this.accountRepository = accountRepository;
         this.categoryRepository = categoryRepository;
         this.budgetRepository = budgetRepository;
         this.userRepository = userRepository;
         this.transactionGraphService = transactionGraphService;
+        this.statementImportRepository = statementImportRepository;
     }
 
     @Transactional(readOnly = true)
     public InsightsDto build(UUID userId) {
         Optional<Pipeline> maybePipeline = pipeline(userId);
         if (maybePipeline.isEmpty()) {
-            return new InsightsDto(List.of("Upload or add transactions to see spending insights."), List.of());
+            return new InsightsDto(List.of("Upload or add transactions to see spending insights."), List.of(), null);
         }
         Pipeline pipeline = maybePipeline.get();
         List<Transaction> txns = pipeline.txns();
@@ -88,7 +99,14 @@ public class InsightsService {
         RefundNetting refunds = pipeline.refunds();
         String currentMonth = pipeline.currentMonth();
         String periodLabel = pipeline.reportingMonthIsCurrent() ? "this month" : "in " + currentMonth;
-        List<String> priorMonths = pipeline.priorMonths();
+        // §8: a prior month with a known, unacknowledged coverage gap is excluded from the
+        // baseline entirely -- not diluted, not annotated -- rather than silently averaging in a
+        // month the account's own statement history says is incomplete. (No acknowledgment
+        // mechanism exists yet -- Phase 5 -- so every gap found here is "unacknowledged" by
+        // definition; this is the correct, safe default until that table exists.)
+        List<String> priorMonths = pipeline.priorMonths().stream()
+                .filter(m -> !monthIntersectsAnyGap(m, pipeline.gaps()))
+                .toList();
 
         Map<String, BigDecimal> currentByCat = groupByCategory(txns, currentMonth, categoriesById, refunds);
         Map<String, BigDecimal> priorByCat = new HashMap<>();
@@ -118,6 +136,24 @@ public class InsightsService {
         // the JVM's default locale"); it just was never applied to output.
         sentences.add(String.format(Locale.ENGLISH, "In %s, total spend was \u20b9%,.0f across %d categories.",
                 currentMonth, total, currentByCat.size()));
+
+        // \u00a78: the current reporting month itself intersecting a gap is a caveat about the number
+        // just stated above, not a mover -- placed right after it rather than at the end, the same
+        // "state the fact, then its caveat" ordering a reader expects. Reuses PR #589's own
+        // pattern for the new-category sentence: gate on data presence, degrade gracefully, one
+        // clear sentence rather than reworking every existing one.
+        List<StatementCoverageAnalyzer.CoverageGap> currentMonthGaps = pipeline.gaps().stream()
+                .filter(g -> monthIntersects(currentMonth, g))
+                .toList();
+        InsightsDto.CoverageCaveat coverageCaveat = currentMonthGaps.isEmpty() ? null
+                : new InsightsDto.CoverageCaveat(currentMonth, currentMonthGaps.stream()
+                        .map(g -> new InsightsDto.CoverageCaveat.GapWindow(g.gapStart(), g.gapEnd()))
+                        .toList());
+        if (coverageCaveat != null) {
+            sentences.add(String.format(Locale.ENGLISH,
+                    "Some transactions for %s may be missing \u2014 import that statement to complete your history.",
+                    YearMonth.parse(currentMonth).format(DateTimeFormatter.ofPattern("MMMM yyyy", Locale.ENGLISH))));
+        }
 
         currentByCat.entrySet().stream().max(Map.Entry.comparingByValue())
                 .ifPresent(top -> sentences.add(String.format(Locale.ENGLISH,
@@ -191,7 +227,7 @@ public class InsightsService {
                 .ifPresent(top -> sentences.add(String.format(Locale.ENGLISH,
                         "Your top merchant %s was \"%s\" at \u20b9%,.0f.", periodLabel, top.getKey(), top.getValue())));
 
-        return new InsightsDto(sentences, movers);
+        return new InsightsDto(sentences, movers, coverageCaveat);
     }
 
     /** BH-005: the netting is a parameter rather than a field because it is derived per request
@@ -253,10 +289,50 @@ public class InsightsService {
                 ? months.subList(Math.max(0, months.size() - PRIOR_MONTHS_WINDOW), months.size() - 1)
                 : List.of();
 
-        return Optional.of(new Pipeline(currentMonth, reportingMonthIsCurrent, priorMonths, txns, categoriesById, refunds));
+        List<StatementCoverageAnalyzer.CoverageGap> gaps = coverageGapsAcross(userId, liveAccountIds);
+
+        return Optional.of(new Pipeline(currentMonth, reportingMonthIsCurrent, priorMonths, txns, categoriesById,
+                refunds, gaps));
     }
 
-    /** See {@link #pipeline}. */
+    /**
+     * Every gap across every one of the user's live accounts, unioned into one flat list -- a
+     * month is untrustworthy for the aggregate the moment ANY account has a gap touching it,
+     * regardless of which account's data is actually missing. {@link StatementCoverageAnalyzer}
+     * stays a pure function with no repository access of its own (its own class comment);
+     * this is the same {@code findMetadataWithPeriodByUserIdAndAccountId} query Phase 1's
+     * AccountCoverageService already calls per account, run here once per account in scope.
+     */
+    private List<StatementCoverageAnalyzer.CoverageGap> coverageGapsAcross(UUID userId, List<UUID> liveAccountIds) {
+        List<StatementCoverageAnalyzer.CoverageGap> gaps = new ArrayList<>();
+        for (UUID accountId : liveAccountIds) {
+            List<StatementImportRepository.StatementMetadata> metadata =
+                    statementImportRepository.findMetadataWithPeriodByUserIdAndAccountId(userId, accountId);
+            if (metadata.isEmpty()) continue;
+            List<StatementCoverageAnalyzer.StatementPeriod> periods = metadata.stream()
+                    .map(m -> new StatementCoverageAnalyzer.StatementPeriod(m.getId(), m.getStatementPeriodStart(),
+                            m.getStatementPeriodEnd(), m.getOpeningBalance(), m.getClosingBalance()))
+                    .toList();
+            gaps.addAll(StatementCoverageAnalyzer.analyze(periods).gaps());
+        }
+        return gaps;
+    }
+
+    /** Whether a {@code "yyyy-MM"} month bucket shares any calendar day with a coverage gap. */
+    private static boolean monthIntersects(String yearMonth, StatementCoverageAnalyzer.CoverageGap gap) {
+        YearMonth ym = YearMonth.parse(yearMonth);
+        LocalDate monthStart = ym.atDay(1);
+        LocalDate monthEnd = ym.atEndOfMonth();
+        return !gap.gapEnd().isBefore(monthStart) && !gap.gapStart().isAfter(monthEnd);
+    }
+
+    private static boolean monthIntersectsAnyGap(String yearMonth, List<StatementCoverageAnalyzer.CoverageGap> gaps) {
+        return gaps.stream().anyMatch(g -> monthIntersects(yearMonth, g));
+    }
+
+    /** See {@link #pipeline}. {@code gaps} (Phase 3, §8) is every coverage gap across the user's
+     *  live accounts -- {@link #build} decides how to use it; this record only carries it. */
     record Pipeline(String currentMonth, boolean reportingMonthIsCurrent, List<String> priorMonths,
-                     List<Transaction> txns, Map<UUID, Category> categoriesById, RefundNetting refunds) {}
+                     List<Transaction> txns, Map<UUID, Category> categoriesById, RefundNetting refunds,
+                     List<StatementCoverageAnalyzer.CoverageGap> gaps) {}
 }

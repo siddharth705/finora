@@ -156,6 +156,14 @@ export function LedgerScreen() {
           testID="ledger-list"
           data={txns}
           keyExtractor={(t) => t.id}
+          // Mirrors ImportScreen's own tuning (same three props, same reasoning there). No
+          // getItemLayout: row height isn't fixed here -- it varies with description/merchant
+          // text length and with the user's font-scale setting (useLargeFontScale above), and a
+          // wrong precomputed offset would make FlatList jump to the wrong place on a long list,
+          // not just skip the optimization.
+          initialNumToRender={12}
+          windowSize={9}
+          removeClippedSubviews
           onEndReached={() => {
             if (hasNextPage && !isFetchingNextPage) void fetchNextPage();
           }}
