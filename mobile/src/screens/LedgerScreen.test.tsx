@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { DEFAULT_LEDGER_FILTERS, LEDGER_PAGE_SIZE, LedgerScreen, getLedgerNextPageParam } from './LedgerScreen';
 import { transactionsApi } from '../api/endpoints';
+import { hapticImpact } from '../lib/haptics';
 import type { Transaction } from '../types';
 
 /**
@@ -28,6 +29,8 @@ jest.mock('../api/endpoints', () => ({
 jest.mock('../lib/invalidateFinancialData', () => ({
   invalidateFinancialData: jest.fn(),
 }));
+
+jest.mock('../lib/haptics', () => ({ hapticImpact: jest.fn() }));
 
 const transactions = transactionsApi as jest.Mocked<typeof transactionsApi>;
 
@@ -194,5 +197,17 @@ describe('DEFAULT_LEDGER_FILTERS export (for Dashboard prefetch)', () => {
     expect(DEFAULT_LEDGER_FILTERS).toEqual({ size: 20, sortField: 'date', sortDir: 'desc' });
     expect(getLedgerNextPageParam({ content: [], page: 0, size: 20, totalElements: 40, totalPages: 2 })).toBe(1);
     expect(getLedgerNextPageParam({ content: [], page: 1, size: 20, totalElements: 40, totalPages: 2 })).toBeUndefined();
+  });
+});
+
+describe('long-press haptic', () => {
+  it('acknowledges the long press with an impact haptic before offering to delete', async () => {
+    transactions.search.mockResolvedValue(page([txn()]) as never);
+    renderScreen();
+    await waitFor(() => screen.getByText('Grocery run'));
+
+    fireEvent(screen.getByRole('button', { name: /Grocery run/ }), 'longPress');
+
+    expect(hapticImpact).toHaveBeenCalledTimes(1);
   });
 });
