@@ -1,10 +1,11 @@
 import { useState } from 'react';
 import {
-  ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View,
+  Pressable, RefreshControl, ScrollView, StyleSheet, Text, View,
 } from 'react-native';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Button } from '../components/Button';
 import { Card, EmptyState } from '../components/Card';
+import { SkeletonBudgetCard } from '../components/skeletons/Skeletons';
 import { OptionPickerModal } from '../components/OptionPickerModal';
 import { ProgressBar } from '../components/ProgressBar';
 import { TextField } from '../components/TextField';
@@ -77,14 +78,6 @@ export function BudgetsScreen() {
     });
   }
 
-  if (isLoading) {
-    return (
-      <View style={[styles.centered, { backgroundColor: c.bg }]}>
-        <ActivityIndicator size="large" color={c.primary} />
-      </View>
-    );
-  }
-
   return (
     <ScrollView
       style={{ backgroundColor: c.bg }}
@@ -127,7 +120,13 @@ export function BudgetsScreen() {
       </Card>
 
       <View style={styles.list}>
-        {isError ? (
+        {isLoading ? (
+          <>
+            <SkeletonBudgetCard />
+            <SkeletonBudgetCard />
+            <SkeletonBudgetCard />
+          </>
+        ) : isError ? (
           <Card>
             <Text style={[styles.error, { color: c.danger }]}>Could not load budgets.</Text>
           </Card>
