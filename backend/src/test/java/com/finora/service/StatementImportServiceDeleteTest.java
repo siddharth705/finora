@@ -153,4 +153,40 @@ class StatementImportServiceDeleteTest {
         // Reversing only the real 500 expense's contribution -- not 500 + 300.
         assertThat(account.getBalance()).isEqualByComparingTo("10000.00");
     }
+
+    @Test
+    void delete_reversal_excludesATransactionAlreadyFlaggedSuperseded() {
+        // Same bug, a second trigger (#631 only excluded isDuplicateOf, not this):
+        // StatementImportService.supersede() marks an ADDITIVE-mode original's rows SUPERSEDED
+        // and, in the same call, reverses their contribution to Account.balance -- so a SUPERSEDED
+        // row's CURRENT net contribution is zero, exactly like an already-DUPLICATE-flagged row's.
+        // Deleting an already-superseded statement must not sum that row into the reversal again.
+        UUID accountId = UUID.randomUUID();
+        StatementImport statementImport = new StatementImport();
+        ReflectionTestUtils.setField(statementImport, "id", statementImportId);
+        statementImport.setUserId(userId);
+        statementImport.setFileName("statement.csv");
+        statementImport.setAccountId(accountId);
+        when(statementImportRepository.findById(statementImportId)).thenReturn(Optional.of(statementImport));
+
+        Transaction realExpense = transaction(UUID.randomUUID());
+        realExpense.setAmount(new BigDecimal("500.00"));
+
+        Transaction alreadySuperseded = transaction(UUID.randomUUID());
+        alreadySuperseded.setAmount(new BigDecimal("300.00"));
+        alreadySuperseded.setReconciliationStatus(Transaction.ReconciliationStatus.SUPERSEDED);
+
+        when(transactionRepository.findByStatementImportId(statementImportId))
+                .thenReturn(List.of(realExpense, alreadySuperseded));
+
+        Account account = new Account();
+        account.setAccountType(Account.Type.SAVINGS);
+        account.setBalance(new BigDecimal("9500.00"));
+        when(accountRepository.findById(accountId)).thenReturn(Optional.of(account));
+
+        service.delete(userId, statementImportId);
+
+        // Reversing only the real 500 expense's contribution -- not 500 + 300.
+        assertThat(account.getBalance()).isEqualByComparingTo("10000.00");
+    }
 }
