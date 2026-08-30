@@ -1188,8 +1188,15 @@ public class ImportService {
                 && isMostRecentStatementForAccount(userId, accountId, maxDate, savedImport.getId());
         if (closingBalanceIsAuthoritative) {
             accountRepository.findById(accountId).ifPresent(account -> {
+                // Captured before the overwrite -- the only safe source for reversing this SET
+                // later (see StatementImport.balanceBeforeAbsoluteSet's own doc comment). Nothing
+                // about this statement's own rows or opening/closing arithmetic can reconstruct it
+                // after the fact.
+                java.math.BigDecimal priorBalance = account.getBalance();
                 account.setBalance(request.statementClosingBalance());
+                account.setLastAbsoluteSetStatementId(savedImport.getId());
                 accountRepository.save(account);
+                savedImport.setBalanceBeforeAbsoluteSet(priorBalance);
             });
         } else if (!toInsert.isEmpty()) {
             accountRepository.findById(accountId).ifPresent(account -> {
