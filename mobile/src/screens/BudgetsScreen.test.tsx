@@ -2,11 +2,17 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { BudgetsScreen } from './BudgetsScreen';
 import { budgetsApi, categoriesApi } from '../api/endpoints';
+import { hapticSuccess, hapticWarning } from '../lib/haptics';
 import type { Budget } from '../types';
 
 jest.mock('../api/endpoints', () => ({
   budgetsApi: { list: jest.fn(), upsert: jest.fn() },
   categoriesApi: { list: jest.fn() },
+}));
+
+jest.mock('../lib/haptics', () => ({
+  hapticSuccess: jest.fn(),
+  hapticWarning: jest.fn(),
 }));
 
 const api = budgetsApi as jest.Mocked<typeof budgetsApi>;
@@ -71,6 +77,7 @@ describe('BudgetsScreen', () => {
     await settle();
 
     await waitFor(() => expect(api.upsert).toHaveBeenCalledWith('Groceries', 12000));
+    expect(hapticSuccess).toHaveBeenCalledTimes(1);
   });
 
   // The web page takes the category as free text, so a typo silently creates a budget nothing is
@@ -85,6 +92,7 @@ describe('BudgetsScreen', () => {
 
     expect(api.upsert).not.toHaveBeenCalled();
     expect(screen.getByText('Pick a category first.')).toBeTruthy();
+    expect(hapticWarning).toHaveBeenCalledTimes(1);
   });
 
   it('refuses a limit that is not a positive number', async () => {
@@ -104,6 +112,7 @@ describe('BudgetsScreen', () => {
     }
 
     expect(api.upsert).not.toHaveBeenCalled();
+    expect(hapticWarning).toHaveBeenCalledTimes(3);
   });
 
   it('says so plainly when no budgets are set', async () => {

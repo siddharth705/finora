@@ -12,6 +12,7 @@ import { TextField } from '../components/TextField';
 import { budgetsApi, categoriesApi } from '../api/endpoints';
 import { toUserMessage } from '../lib/apiError';
 import { fmtCurrency } from '../lib/format';
+import { hapticSuccess, hapticWarning } from '../lib/haptics';
 import { useSingleFlight } from '../lib/useSingleFlight';
 import { useTransientFlag } from '../lib/useTransientFlag';
 import { parsePositiveAmount } from '../lib/validation';
@@ -51,10 +52,12 @@ export function BudgetsScreen() {
     const amount = parsePositiveAmount(limit);
     if (!category) {
       setError('Pick a category first.');
+      hapticWarning();
       return;
     }
     if (amount === null) {
       setError('Monthly limit must be a number greater than zero.');
+      hapticWarning();
       return;
     }
     setError(null);
@@ -65,6 +68,7 @@ export function BudgetsScreen() {
         setCategory(null);
         setLimit('');
         confirmSaved();
+        hapticSuccess();
         // Dashboard's budget widget and the health score/notifications both read this -- see the
         // web page's own comment. 'budgets' alone would leave the Dashboard stale until its cache
         // aged out.
