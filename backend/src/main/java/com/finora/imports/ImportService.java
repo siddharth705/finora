@@ -1354,6 +1354,10 @@ public class ImportService {
         if (section.openingBalanceDecision().carriedForward()) {
             warnings.add(section.openingBalanceDecision().reason());
         }
+        // Phase 2 of the statement continuity proposal (§11): a gap now bordering this statement,
+        // or an exact-duplicate period, both scoped to this one import -- see coverageWarningsFor's
+        // own comment for why an old, unrelated gap elsewhere on the account stays quiet.
+        warnings.addAll(coverageWarningsFor(userId, accountId, section.savedImport()));
 
         // Re-fetched (not the pre-import in-memory copy) so the summary reflects the balance
         // update above, if it applied. Falls back to AccountDto.from(a) (no statement/transaction
@@ -1377,6 +1381,36 @@ public class ImportService {
                 section.savedImport().getStatementPeriodStart(), section.savedImport().getStatementPeriodEnd(),
                 System.currentTimeMillis() - section.startedAtMs(),
                 "CSV");
+    }
+
+    /**
+     * Fetches every statement with a printed period for this account (including the one just
+     * saved), runs {@link StatementCoverageAnalyzer}, and delegates to {@link CoverageWarnings} for
+     * which facts are worth telling the user about right now. Returns empty for a CSV import (no
+     * printed period, per that document's §3/§7 -- CSV coverage is a later, optional phase, not
+     * this one) rather than running an analysis with nothing to place on a timeline.
+     */
+    private List<String> coverageWarningsFor(UUID userId, UUID accountId, StatementImport savedImport) {
+        LocalDate newStart = savedImport.getStatementPeriodStart();
+        LocalDate newEnd = savedImport.getStatementPeriodEnd();
+        if (newStart == null || newEnd == null) {
+            return List.of();
+        }
+
+        List<StatementImportRepository.StatementMetadata> metadata =
+                statementImportRepository.findMetadataWithPeriodByUserIdAndAccountId(userId, accountId);
+        List<StatementCoverageAnalyzer.StatementPeriod> periods = metadata.stream()
+                .map(m -> new StatementCoverageAnalyzer.StatementPeriod(m.getId(), m.getStatementPeriodStart(),
+                        m.getStatementPeriodEnd(), m.getOpeningBalance(), m.getClosingBalance()))
+                .toList();
+        StatementCoverageAnalyzer.CoverageReport report = StatementCoverageAnalyzer.analyze(periods);
+
+        Map<UUID, java.time.Instant> importedAtById = metadata.stream()
+                .collect(java.util.stream.Collectors.toMap(
+                        StatementImportRepository.StatementMetadata::getId,
+                        StatementImportRepository.StatementMetadata::getImportedAt));
+
+        return CoverageWarnings.forNewStatement(report, savedImport.getId(), newStart, newEnd, importedAtById);
     }
 
     /**
