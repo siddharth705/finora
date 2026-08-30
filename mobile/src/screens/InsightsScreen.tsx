@@ -6,6 +6,7 @@ import { Card, EmptyState, SectionHeading } from '../components/Card';
 import { SkeletonCard } from '../components/skeletons/Skeletons';
 import { insightsApi, recurringApi } from '../api/endpoints';
 import { fmtCurrency, fmtDate } from '../lib/format';
+import { deriveRefreshing } from '../lib/refreshingIndicator';
 import { radius, spacing, useTheme } from '../theme';
 
 /** Port of frontend/src/pages/Insights.tsx. */
@@ -24,7 +25,7 @@ export function InsightsScreen() {
   });
 
   const loading = insightsQ.isLoading || recurringQ.isLoading;
-  const refreshing = (insightsQ.isFetching || recurringQ.isFetching) && !loading;
+  const refreshing = deriveRefreshing([insightsQ, recurringQ], loading);
   const sentences = insightsQ.data?.sentences ?? [];
   const recurring = recurringQ.data ?? [];
   const movers = (insightsQ.data?.movers ?? []).filter((m) => m.pctChange !== null).slice(0, 6);
