@@ -16,6 +16,7 @@ import com.finora.repository.TransactionRepository;
 import com.finora.accounts.AccountBalanceConvention;
 import com.finora.accounts.AccountDto;
 import com.finora.imports.ConfirmedRowIntegrity;
+import com.finora.imports.CoverageWarnings;
 import com.finora.imports.ImportService;
 import com.finora.security.OwnershipGuard;
 import org.springframework.http.HttpStatus;
@@ -278,7 +279,22 @@ public class StatementImportService {
                 request.statementOpeningBalance(), request.statementClosingBalance(), null,
                 request.statementPeriodStart(), request.statementPeriodEnd(),
                 request.totalAmountDue(), request.paymentDueDate());
-        return importService.confirm(userId, original.getFileName(), content, scoped);
+        var response = importService.confirm(userId, original.getFileName(), content, scoped);
+
+        // Bug fix (self-review, statement continuity Phase 2): this reimport-confirms via the same
+        // path a first-time import takes, and `original` is never deleted -- confirm() creates a
+        // genuinely new StatementImport row with the SAME period, so CoverageWarnings correctly
+        // (from its own, narrower view) sees a same-period duplicate and warns about it. From the
+        // user's side, that reads as "you already have a statement for this period ... isn't
+        // supported yet" immediately after an action that just successfully corrected one -- true
+        // in the letter (the old row genuinely still exists, unreplaced; see this class's own
+        // "statement supersession" gap, not fixed until Phase 4) but actively misleading in this
+        // context. Stripped here, at the one call site that actually knows this "duplicate" is the
+        // statement being reimported, rather than threading a "this confirm is a reimport of X"
+        // signal through ImportService's whole confirm/persistSection/summarise call graph for it.
+        return response.withWarnings(response.warnings().stream()
+                .filter(w -> !w.startsWith(CoverageWarnings.DUPLICATE_PERIOD_WARNING_PREFIX))
+                .toList());
     }
 
     /**

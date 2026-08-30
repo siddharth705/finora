@@ -788,5 +788,17 @@ public class ImportDto {
             LocalDate statementPeriodEnd,
             long importDurationMs,
             String source
-    ) {}
+    ) {
+        /** Reconstructs this response with a different {@code warnings} list, every other field
+         *  unchanged -- used by {@code StatementImportService.confirmReimport} to drop a
+         *  duplicate-period notice generated against the very statement the reimport corrects,
+         *  without needing to thread a "this confirm is a reimport of X" signal through
+         *  ImportService's whole confirm/persistSection/summarise call graph for one call site. */
+        public ConfirmResponse withWarnings(List<String> warnings) {
+            return new ConfirmResponse(imported, skipped, duplicatesDetected, transfersIdentified,
+                    newMerchantsLearned, accountsCreated, productsCreated, categoriesAssigned, warnings,
+                    account, totalCredits, totalDebits, statementOpeningBalance, statementClosingBalance,
+                    statementPeriodStart, statementPeriodEnd, importDurationMs, source);
+        }
+    }
 }
