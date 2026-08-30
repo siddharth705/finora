@@ -68,6 +68,25 @@ jest.mock('@react-native-community/netinfo', () => ({
   default: { addEventListener: jest.fn(() => jest.fn()) },
 }));
 
+// react-navigation's useFocusEffect needs a real Navigator/Screen context, which most screen unit
+// tests here render without (see DashboardScreen.test.tsx, which mounts DashboardScreen bare, the
+// same way OfflineBanner.test.tsx mocks RootNavigator away rather than building a real navigation
+// tree). Faked as a plain mount effect so Dashboard's prefetch-on-focus wiring can be exercised
+// without every affected screen test growing a navigation tree it otherwise has no use for.
+//
+// jest.requireActual is deliberately NOT used here (unlike most mocks in this file that spread the
+// real module): @react-navigation/native's installed build ships ESM-syntax source at its "main"
+// entry, which this project's Jest config cannot load directly once nothing intercepts resolution
+// first -- every other test file in this repo that touches this package mocks it outright for the
+// same reason (see StatementHistoryScreen.test.tsx). Everything this app actually imports from the
+// package (NavigationContainer, useNavigation, etc.) is provided here as a lightweight stand-in.
+jest.mock('@react-navigation/native', () => {
+  const { useEffect } = require('react');
+  return {
+    useFocusEffect: (effect: () => void | (() => void)) => useEffect(effect, []),
+  };
+});
+
 // @expo/vector-icons reaches expo-font -> expo-asset, which isn't resolvable under the runner, so
 // importing any screen that shows an icon fails before a test can run. Rendered as a plain Text
 // node carrying the glyph name: icons are decorative here, and every control this project ships
