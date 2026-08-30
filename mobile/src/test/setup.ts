@@ -83,7 +83,14 @@ jest.mock('@react-native-community/netinfo', () => ({
 jest.mock('@react-navigation/native', () => {
   const { useEffect } = require('react');
   return {
-    useFocusEffect: (effect: () => void | (() => void)) => useEffect(effect, []),
+    // `effect` is a passthrough argument from whatever hook calls useFocusEffect, not a value
+    // this mock can statically analyze; the real useFocusEffect re-runs on every focus, so
+    // running once per mount here (matching the app's own useCallback-memoized effects) is the
+    // correct test-time behavior.
+    useFocusEffect: (effect: () => void | (() => void)) => {
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+      useEffect(effect, []);
+    },
   };
 });
 
