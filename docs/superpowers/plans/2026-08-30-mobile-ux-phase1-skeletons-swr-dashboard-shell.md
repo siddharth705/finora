@@ -18,6 +18,7 @@
 - No new dependency is needed for the shimmer animation — core RN `Animated` with `useNativeDriver: true` is sufficient (confirmed: no `react-native-reanimated` or gradient library exists in this project yet).
 - Production Sentry (brief item 13) is an operational/credentials task, not code — captured as a checklist at the end of this plan, not as bite-sized TDD tasks.
 - Test tooling: Jest 29, `@testing-library/react-native` 13.3.3, `npm test -- <path>` from `mobile/`. Match each existing screen test file's house style (mocking conventions, `renderScreen()` helpers) rather than inventing a new one.
+- **Found during Task 1, applies to every later task:** (1) Shimmer/skeleton components deliberately hide themselves from accessibility (`accessibilityElementsHidden`/`importantForAccessibility="no-hide-descendants"`) — correct a11y behavior, but RNTL 13.3.3 excludes accessibility-hidden elements from every query by default (`defaultIncludeHiddenElements: false`). Every `getByTestId`/`getAllByTestId`/`queryByTestId` call targeting `shimmer-block` or any `skeleton-*` testID must pass `{ hidden: true }` as a second argument, or it will silently fail to find an element that is genuinely in the tree. (2) This project's `eslint-plugin-react-hooks` v7 (React Compiler rules) forbids reading `.current` during render at all, including the common `useRef(init).current` lazy-initialization idiom — use `useState(() => init)[0]` instead for any render-scoped singleton (e.g. an `Animated.Value`).
 
 ---
 
@@ -31,7 +32,7 @@
 - Consumes: `useTheme()` and `radius` from `../../theme` (`c.border`, `radius.md`).
 - Produces: `Shimmer({ width?: DimensionValue; height: number; borderRadius?: number; style?: ViewStyle; testID?: string })` — every skeleton component in Task 2/3 is built from this.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 ```tsx
 import { render, screen } from '@testing-library/react-native';
 import { Shimmer } from './Shimmer';
@@ -83,8 +84,8 @@ describe('Shimmer', () => {
   });
 });
 ```
-- [ ] **Step 2: Run test to verify it fails** — `npm test -- src/components/skeletons/Shimmer.test.tsx` — Expected: FAIL with `Cannot find module './Shimmer'`.
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 2: Run test to verify it fails** — `npm test -- src/components/skeletons/Shimmer.test.tsx` — Expected: FAIL with `Cannot find module './Shimmer'`.
+- [x] **Step 3: Write minimal implementation**
 ```tsx
 import { useEffect, useRef } from 'react';
 import {
@@ -141,8 +142,8 @@ const styles = StyleSheet.create({
   block: { overflow: 'hidden' },
 });
 ```
-- [ ] **Step 4: Run test to verify it passes** — Expected: PASS
-- [ ] **Step 5: Commit** — `git add src/components/skeletons/Shimmer.tsx src/components/skeletons/Shimmer.test.tsx` / `git commit -m "feat(mobile): add Shimmer skeleton primitive"`
+- [x] **Step 4: Run test to verify it passes** — Expected: PASS
+- [x] **Step 5: Commit** — `git add src/components/skeletons/Shimmer.tsx src/components/skeletons/Shimmer.test.tsx` / `git commit -m "feat(mobile): add Shimmer skeleton primitive"`
 
 ---
 
@@ -156,7 +157,7 @@ const styles = StyleSheet.create({
 - Consumes: `Shimmer` (Task 1), `radius`/`spacing`/`useTheme` from `../../theme`.
 - Produces: `SkeletonCard({ lines?: number; style?: ViewStyle })`, `SkeletonTransactionRow()` — both used by Task 3's components and by the screen-level tasks (4, 6, 7, 9).
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 ```tsx
 import { render, screen } from '@testing-library/react-native';
 import { SkeletonCard, SkeletonTransactionRow } from './Skeletons';
@@ -187,8 +188,8 @@ describe('SkeletonTransactionRow', () => {
   });
 });
 ```
-- [ ] **Step 2: Run test to verify it fails** — `npm test -- src/components/skeletons/Skeletons.test.tsx` — Expected: FAIL with `Cannot find module './Skeletons'`.
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 2: Run test to verify it fails** — `npm test -- src/components/skeletons/Skeletons.test.tsx` — Expected: FAIL with `Cannot find module './Skeletons'`.
+- [x] **Step 3: Write minimal implementation**
 ```tsx
 import { StyleSheet, View, type ViewStyle } from 'react-native';
 import { radius, spacing, useTheme } from '../../theme';
@@ -238,8 +239,8 @@ const styles = StyleSheet.create({
   txnMain: { flex: 1, marginRight: spacing.sm, gap: 6 },
 });
 ```
-- [ ] **Step 4: Run test to verify it passes** — Expected: PASS
-- [ ] **Step 5: Commit** — `git add src/components/skeletons/Skeletons.tsx src/components/skeletons/Skeletons.test.tsx` / `git commit -m "feat(mobile): add SkeletonCard and SkeletonTransactionRow"`
+- [x] **Step 4: Run test to verify it passes** — Expected: PASS
+- [x] **Step 5: Commit** — `git add src/components/skeletons/Skeletons.tsx src/components/skeletons/Skeletons.test.tsx` / `git commit -m "feat(mobile): add SkeletonCard and SkeletonTransactionRow"`
 
 ---
 
@@ -253,7 +254,7 @@ const styles = StyleSheet.create({
 - Consumes: `Shimmer` (Task 1), `SkeletonTransactionRow` (Task 2), `CASHFLOW_HEIGHT`/`DONUT_SIZE` from `../../lib/chartGeometry`.
 - Produces: `SkeletonBudgetCard()`, `SkeletonDashboardSection({ rows?: number })`, `SkeletonChart({ variant?: 'bar' | 'donut'; width?: number })`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 ```tsx
 // appended to src/components/skeletons/Skeletons.test.tsx
 import { SkeletonBudgetCard, SkeletonChart, SkeletonDashboardSection } from './Skeletons';
@@ -286,8 +287,8 @@ describe('SkeletonChart', () => {
   });
 });
 ```
-- [ ] **Step 2: Run test to verify it fails** — `npm test -- src/components/skeletons/Skeletons.test.tsx` — Expected: FAIL with `SkeletonBudgetCard is not exported`/similar.
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 2: Run test to verify it fails** — `npm test -- src/components/skeletons/Skeletons.test.tsx` — Expected: FAIL with `SkeletonBudgetCard is not exported`/similar.
+- [x] **Step 3: Write minimal implementation**
 ```tsx
 // appended to src/components/skeletons/Skeletons.tsx
 import { CASHFLOW_HEIGHT, DONUT_SIZE } from '../../lib/chartGeometry';
@@ -350,8 +351,8 @@ const styles = StyleSheet.create({
   donutWrap: { alignItems: 'center', justifyContent: 'center', paddingVertical: spacing.sm },
 });
 ```
-- [ ] **Step 4: Run test to verify it passes** — Expected: PASS
-- [ ] **Step 5: Commit** — `git add src/components/skeletons/Skeletons.tsx src/components/skeletons/Skeletons.test.tsx` / `git commit -m "feat(mobile): add SkeletonBudgetCard, SkeletonDashboardSection, SkeletonChart"`
+- [x] **Step 4: Run test to verify it passes** — Expected: PASS
+- [x] **Step 5: Commit** — `git add src/components/skeletons/Skeletons.tsx src/components/skeletons/Skeletons.test.tsx` / `git commit -m "feat(mobile): add SkeletonBudgetCard, SkeletonDashboardSection, SkeletonChart"`
 
 ---
 
@@ -364,7 +365,7 @@ const styles = StyleSheet.create({
 **Interfaces:**
 - Consumes: `SkeletonTransactionRow` (Task 2).
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 ```tsx
 // appended to src/screens/LedgerScreen.test.tsx
 describe('skeleton loading', () => {
@@ -382,8 +383,8 @@ describe('skeleton loading', () => {
 });
 ```
 (Add `act` to the top-level `@testing-library/react-native` import if not already present in this file.)
-- [ ] **Step 2: Run test to verify it fails** — `npm test -- src/screens/LedgerScreen.test.tsx` — Expected: FAIL, `getAllByTestId('skeleton-transaction-row')` finds none (the current code renders an `ActivityIndicator`).
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 2: Run test to verify it fails** — `npm test -- src/screens/LedgerScreen.test.tsx` — Expected: FAIL, `getAllByTestId('skeleton-transaction-row')` finds none (the current code renders an `ActivityIndicator`).
+- [x] **Step 3: Write minimal implementation**
 ```tsx
 // LedgerScreen.tsx -- import addition near the top
 import { SkeletonTransactionRow } from '../components/skeletons/Skeletons';
@@ -398,8 +399,8 @@ import { SkeletonTransactionRow } from '../components/skeletons/Skeletons';
         </View>
       ) : isError && txns.length === 0 ? (
 ```
-- [ ] **Step 4: Run test to verify it passes** — Expected: PASS
-- [ ] **Step 5: Commit** — `git add src/screens/LedgerScreen.tsx src/screens/LedgerScreen.test.tsx` / `git commit -m "feat(mobile): show skeleton rows on LedgerScreen's first load"`
+- [x] **Step 4: Run test to verify it passes** — Expected: PASS
+- [x] **Step 5: Commit** — `git add src/screens/LedgerScreen.tsx src/screens/LedgerScreen.test.tsx` / `git commit -m "feat(mobile): show skeleton rows on LedgerScreen's first load"`
 
 ---
 
@@ -414,7 +415,7 @@ import { SkeletonTransactionRow } from '../components/skeletons/Skeletons';
 
 Today `if (isLoading) return <ActivityIndicator/>` (lines 80-86) hides the entire screen — including the category picker, limit field and "Set Budget" button, none of which depend on the budgets list — while the budgets query is in flight. That's a shell-doesn't-mount-immediately bug independent of Item A's skeleton work, and fixing it is what actually gets BudgetsScreen showing something useful on first paint.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 ```tsx
 // appended to src/screens/BudgetsScreen.test.tsx
 it('shows skeleton budget cards on first load, with the add-budget form already usable', () => {
@@ -429,8 +430,8 @@ it('shows skeleton budget cards on first load, with the add-budget form already 
   expect(screen.getAllByTestId('skeleton-budget-card').length).toBeGreaterThan(0);
 });
 ```
-- [ ] **Step 2: Run test to verify it fails** — `npm test -- src/screens/BudgetsScreen.test.tsx` — Expected: FAIL, `getByLabelText('Choose a category')` throws because the screen currently early-returns a bare spinner while `isLoading` is true.
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 2: Run test to verify it fails** — `npm test -- src/screens/BudgetsScreen.test.tsx` — Expected: FAIL, `getByLabelText('Choose a category')` throws because the screen currently early-returns a bare spinner while `isLoading` is true.
+- [x] **Step 3: Write minimal implementation**
 ```tsx
 // BudgetsScreen.tsx -- import addition
 import { SkeletonBudgetCard } from '../components/skeletons/Skeletons';
@@ -465,8 +466,8 @@ import { SkeletonBudgetCard } from '../components/skeletons/Skeletons';
         ) : (
 ```
 Also drop `ActivityIndicator` from the `react-native` import at the top of the file (line 3) — it's now unused.
-- [ ] **Step 4: Run test to verify it passes** — Expected: PASS
-- [ ] **Step 5: Commit** — `git add src/screens/BudgetsScreen.tsx src/screens/BudgetsScreen.test.tsx` / `git commit -m "feat(mobile): mount BudgetsScreen's form immediately, skeleton the list"`
+- [x] **Step 4: Run test to verify it passes** — Expected: PASS
+- [x] **Step 5: Commit** — `git add src/screens/BudgetsScreen.tsx src/screens/BudgetsScreen.test.tsx` / `git commit -m "feat(mobile): mount BudgetsScreen's form immediately, skeleton the list"`
 
 ---
 
@@ -481,7 +482,7 @@ Also drop `ActivityIndicator` from the `react-native` import at the top of the f
 
 Two loading sites here: `monthsLoading` (lines 70-76) currently blanks the whole screen; `reportLoading` (line 150) is already scoped to just the report body, but renders a bare `ActivityIndicator` instead of a shape matching the totals row + category breakdown it replaces. Switching months (`onSelect` sets `pickedMonth`) changes the `['report', month]` query key — for a month never fetched this session, `reportLoading` goes true again, which is the exact "isLoading with no cached data yet" case a skeleton belongs in.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 ```tsx
 // appended to src/screens/ReportsScreen.test.tsx
 describe('skeleton loading', () => {
@@ -509,8 +510,8 @@ describe('skeleton loading', () => {
   });
 });
 ```
-- [ ] **Step 2: Run test to verify it fails** — `npm test -- src/screens/ReportsScreen.test.tsx` — Expected: FAIL, no `shimmer-block` testIDs exist yet in ReportsScreen's output.
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 2: Run test to verify it fails** — `npm test -- src/screens/ReportsScreen.test.tsx` — Expected: FAIL, no `shimmer-block` testIDs exist yet in ReportsScreen's output.
+- [x] **Step 3: Write minimal implementation**
 ```tsx
 // ReportsScreen.tsx -- import addition
 import { SkeletonCard } from '../components/skeletons/Skeletons';
@@ -545,8 +546,8 @@ import { SkeletonCard } from '../components/skeletons/Skeletons';
       ) : reportError || !report ? (
 ```
 Drop `ActivityIndicator` from the `react-native` import at the top of the file — both former call sites are gone.
-- [ ] **Step 4: Run test to verify it passes** — Expected: PASS
-- [ ] **Step 5: Commit** — `git add src/screens/ReportsScreen.tsx src/screens/ReportsScreen.test.tsx` / `git commit -m "feat(mobile): skeleton ReportsScreen's totals and category breakdown"`
+- [x] **Step 4: Run test to verify it passes** — Expected: PASS
+- [x] **Step 5: Commit** — `git add src/screens/ReportsScreen.tsx src/screens/ReportsScreen.test.tsx` / `git commit -m "feat(mobile): skeleton ReportsScreen's totals and category breakdown"`
 
 ---
 
@@ -561,7 +562,7 @@ Drop `ActivityIndicator` from the `react-native` import at the top of the file �
 
 The current `if (loading) return <ActivityIndicator/>` (lines 36-42) also hides the static disclaimer banner ("These are rule-based statistical observations… not an AI-generated assistant") — text that has no data dependency at all and should never wait on a network call.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 ```tsx
 // appended to src/screens/InsightsScreen.test.tsx
 it('shows the static notice and skeleton sections immediately, before either query resolves', () => {
@@ -575,8 +576,8 @@ it('shows the static notice and skeleton sections immediately, before either que
   expect(screen.queryByText("This Month's Observations")).toBeNull();
 });
 ```
-- [ ] **Step 2: Run test to verify it fails** — `npm test -- src/screens/InsightsScreen.test.tsx` — Expected: FAIL, `getByText(/not an\s+AI-generated assistant/)` throws because the whole screen is currently one `ActivityIndicator` while `loading` is true.
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 2: Run test to verify it fails** — `npm test -- src/screens/InsightsScreen.test.tsx` — Expected: FAIL, `getByText(/not an\s+AI-generated assistant/)` throws because the whole screen is currently one `ActivityIndicator` while `loading` is true.
+- [x] **Step 3: Write minimal implementation**
 ```tsx
 // InsightsScreen.tsx -- import addition
 import { SkeletonCard } from '../components/skeletons/Skeletons';
@@ -694,8 +695,8 @@ import { SkeletonCard } from '../components/skeletons/Skeletons';
 }
 ```
 (The `styles.centered` rule can stay in the stylesheet even though nothing references it after this change, or be deleted — either is fine; deleting it is the tidier choice.) Drop `ActivityIndicator` from the `react-native` import.
-- [ ] **Step 4: Run test to verify it passes** — Expected: PASS
-- [ ] **Step 5: Commit** — `git add src/screens/InsightsScreen.tsx src/screens/InsightsScreen.test.tsx` / `git commit -m "feat(mobile): mount InsightsScreen's notice immediately, skeleton the sections"`
+- [x] **Step 4: Run test to verify it passes** — Expected: PASS
+- [x] **Step 5: Commit** — `git add src/screens/InsightsScreen.tsx src/screens/InsightsScreen.test.tsx` / `git commit -m "feat(mobile): mount InsightsScreen's notice immediately, skeleton the sections"`
 
 ---
 
@@ -716,7 +717,7 @@ const refreshing = summaryQ.isFetching && !summaryQ.isLoading;
 
 only tracks `summaryQ`. If `summaryQ` resolves before `accountsQ`/`recentTxnsQ` do, the pull-to-refresh spinner disappears while those two are still in flight — the user releases the gesture believing the refresh finished when part of it hasn't.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 ```tsx
 // appended to src/screens/DashboardScreen.test.tsx -- add `RefreshControl` to the 'react-native' import
 import { RefreshControl } from 'react-native';
@@ -746,16 +747,16 @@ describe('pull-to-refresh indicator', () => {
 });
 ```
 (Add `act` to the top-level `@testing-library/react-native` import if not already present in this file — it currently imports `fireEvent, render, screen, waitFor`.)
-- [ ] **Step 2: Run test to verify it fails** — `npm test -- src/screens/DashboardScreen.test.tsx` — Expected: FAIL, `refreshing` reads `false` right after `summaryQ` settles even though `accountsQ` is still fetching.
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 2: Run test to verify it fails** — `npm test -- src/screens/DashboardScreen.test.tsx` — Expected: FAIL, `refreshing` reads `false` right after `summaryQ` settles even though `accountsQ` is still fetching.
+- [x] **Step 3: Write minimal implementation**
 ```tsx
 // DashboardScreen.tsx:84-85
   const loading = summaryQ.isLoading || accountsQ.isLoading || recentTxnsQ.isLoading;
   const refreshing =
     (summaryQ.isFetching || accountsQ.isFetching || recentTxnsQ.isFetching) && !loading;
 ```
-- [ ] **Step 4: Run test to verify it passes** — Expected: PASS
-- [ ] **Step 5: Commit** — `git add src/screens/DashboardScreen.tsx src/screens/DashboardScreen.test.tsx` / `git commit -m "fix(mobile): dashboard pull-to-refresh now tracks accounts and transactions too"`
+- [x] **Step 4: Run test to verify it passes** — Expected: PASS
+- [x] **Step 5: Commit** — `git add src/screens/DashboardScreen.tsx src/screens/DashboardScreen.test.tsx` / `git commit -m "fix(mobile): dashboard pull-to-refresh now tracks accounts and transactions too"`
 
 ---
 
@@ -774,7 +775,7 @@ Today (lines 143-149) the whole screen is one `ActivityIndicator` gated on `summ
 1. `accountsQ.data` is never read anywhere in this file — only `accountsQ.isLoading`/`accountsQ.isFetching` are used (for gating and for the refresh indicator). Blocking first paint on it is pure waste; it's dropped from the *initial-load* gate below (it stays part of the `refreshing` calculation from Task 8, since `refresh()` still explicitly re-fetches it and a user's pull gesture should track that).
 2. The existing `if (!summary) return errorScreen` guard (currently reached only after the full-screen loading branch) is the correct, already-tested behavior for a genuinely failed request (see `DashboardScreen.test.tsx`'s "when /dashboard/summary fails" suite) — it must fire only on a *settled* failure, not while `summaryQ` is still loading for the first time.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 ```tsx
 // appended to src/screens/DashboardScreen.test.tsx
 describe('the shell mounts before the network settles (dashboard shell capstone)', () => {
@@ -820,8 +821,8 @@ describe('the shell mounts before the network settles (dashboard shell capstone)
   });
 });
 ```
-- [ ] **Step 2: Run test to verify it fails** — `npm test -- src/screens/DashboardScreen.test.tsx` — Expected: FAIL, `screen.getByText('Cash Flow')` throws because the current code renders only an `ActivityIndicator` while `summaryQ.isLoading` is true.
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 2: Run test to verify it fails** — `npm test -- src/screens/DashboardScreen.test.tsx` — Expected: FAIL, `screen.getByText('Cash Flow')` throws because the current code renders only an `ActivityIndicator` while `summaryQ.isLoading` is true.
+- [x] **Step 3: Write minimal implementation**
 
 Replace `DashboardScreen.tsx:1-17` (imports):
 ```tsx
@@ -1075,8 +1076,8 @@ Replace `DashboardScreen.tsx:84-331` — everything from `const loading = ...` t
   );
 }
 ```
-- [ ] **Step 4: Run test to verify it passes** — Expected: PASS. Also re-run `npm test -- src/screens/DashboardScreen.test.tsx` in full to confirm the pre-existing suites (`when /dashboard/summary fails`, `M0-A: the spending donut…`, `when the dashboard is legitimately empty`, `large Dynamic Type support`) still pass unmodified — they all assert on *settled* states reached via `mockResolvedValue`/`mockRejectedValue`, none of which the loading-state restructuring touches.
-- [ ] **Step 5: Commit** — `git add src/screens/DashboardScreen.tsx src/screens/DashboardScreen.test.tsx` / `git commit -m "feat(mobile): dashboard shell mounts immediately with per-section skeletons"`
+- [x] **Step 4: Run test to verify it passes** — Expected: PASS. Also re-run `npm test -- src/screens/DashboardScreen.test.tsx` in full to confirm the pre-existing suites (`when /dashboard/summary fails`, `M0-A: the spending donut…`, `when the dashboard is legitimately empty`, `large Dynamic Type support`) still pass unmodified — they all assert on *settled* states reached via `mockResolvedValue`/`mockRejectedValue`, none of which the loading-state restructuring touches.
+- [x] **Step 5: Commit** — `git add src/screens/DashboardScreen.tsx src/screens/DashboardScreen.test.tsx` / `git commit -m "feat(mobile): dashboard shell mounts immediately with per-section skeletons"`
 
 ---
 
@@ -1096,4 +1097,7 @@ Replace `DashboardScreen.tsx:84-331` — everything from `const loading = ...` t
 - **Spec coverage:** Skeleton Loading System (Tasks 1-7), Stale-While-Revalidate UX (Task 8's bug fix + the audit note covering all 5 screens), Dashboard Shell (Task 9), Production Sentry (Operational Checklist). All four Phase 1 brief items are covered; axios timeout and splash-flash are correctly excluded as already merged.
 - **Placeholder scan:** Task 9 Step 3 originally risked being summarized rather than shown in full during assembly — corrected to include the complete real `DashboardScreen.tsx` replacement code rather than a description of it.
 - **Type consistency:** `SkeletonChart`'s `variant` prop (`'bar' | 'donut'`) is used consistently across Task 3's definition and Task 9's call sites. `SkeletonCard`'s `lines`/`style` props match between Task 2's definition and Tasks 6/7/9's call sites.
+- **2026-08-30 execution note (Task 9, and retroactively Tasks 4/8):** the "hold a promise open, resolve it later" test pattern (`let resolveX: (value: unknown) => void = () => {}; mock.mockReturnValue(new Promise((resolve) => { resolveX = resolve; }));`) fails `tsc --noEmit` under this project's strict function-type variance — the real `resolve`'s inferred parameter type (e.g. `Account[] | PromiseLike<Account[]>`) is a narrower type than the pre-declared `(value: unknown) => void`, and TS's contravariant check for function-type variables (not method syntax) rejects the assignment. Fixed at every occurrence with `resolveX = resolve as typeof resolveX;`. Apply this cast on any future use of the same pattern.
+- **2026-08-30 execution note (Task 8):** the plan's original test asserted `refreshing` synchronously right after `act(async () => { invalidateQueries(); invalidateQueries(); })` with no internal `await`. Under React 19, the QueryClient's own state (`fetchStatus: 'fetching'`, confirmed via `queryClient.getQueryState`) flips correctly and synchronously, but the component's re-render via the query observer's subscriber can land a tick after `act()`'s own flush completes — so the direct `expect(...).toBe(true)` was flaky-false. Fixed by wrapping both `refreshing` assertions in `await waitFor(() => expect(...))`. Apply the same pattern to any future test that asserts on a React Query-driven UI value immediately after `invalidateQueries`/`refetch` inside a synchronous `act` callback.
+- **2026-08-30 execution note:** Task 3's own implementation and test disagreed with each other (`SkeletonBudgetCard` rendered 4 `shimmer-block`s — a split category/amount header — but its own test expected 3). Fixed during execution by collapsing the header to a single shimmer, matching the test's "header, progress bar, footer" description; `budgetHeader` style removed as a result (now unused). Also found during Task 1 and applied throughout: RNTL query calls against skeleton testIDs need `{ hidden: true }` (see Global Constraints), and `Animated.Value` singletons need `useState(() => ...)` not `useRef(...).current` (this project's `react-hooks/refs` lint rule forbids the latter). Task 6's new `describe('skeleton loading', ...)` block, as written, was appended as a SIBLING of `describe('ReportsScreen', ...)` rather than nested inside it — meaning it never inherited that block's `beforeEach` mock reset, so the second new test silently hung on a still-pending mock left over from the first. Fixed by nesting the new describe block inside the existing one, matching how every other test group in the file is structured. This same trap applies to Task 7 (`InsightsScreen.test.tsx`'s top-level `it(...)` calls, not a `describe`, so no nesting issue there) and any future appended test block in a file with a shared `beforeEach` — append INSIDE the existing describe, not after its closing brace.
 </content>
