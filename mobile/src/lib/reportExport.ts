@@ -27,7 +27,7 @@ import { fmtCurrency } from './format';
 
 function csvCell(value: string): string {
   const isPlainNumber = value.trim() !== '' && Number.isFinite(Number(value));
-  const needsFormulaGuard = !isPlainNumber && /^[=+\-@\t\r]/.test(value);
+  const needsFormulaGuard = !isPlainNumber && /^[=+\-@\t\r]/.test(value.replace(/^ +/, ''));
   const guarded = needsFormulaGuard ? `'${value}` : value;
   // RFC 4180: wrap in quotes, and double any quote inside.
   return `"${guarded.replace(/"/g, '""')}"`;
