@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
+import { motion, useReducedMotion } from 'framer-motion';
 import { Line, Doughnut } from 'react-chartjs-2';
 import {
   Chart as ChartJS, ArcElement, LineElement, PointElement, LinearScale, CategoryScale, Tooltip, Legend, Filler,
@@ -15,7 +16,8 @@ import { BankLogo } from '../components/BankLogo';
 import { MerchantLogo } from '../components/MerchantLogo';
 import { AddTransactionModal } from '../components/AddTransactionModal';
 import { FinancialJourney } from '../components/FinancialJourney';
-import { FinoraCard, MetricCard, EmptyState, SectionHeader, QuickActionCard, ChartContainer, Badge, baseChartOptions } from '../design-system';
+import { FinoraCard, MetricCard, EmptyState, SectionHeader, QuickActionCard, ChartContainer, Badge, baseChartOptions, Button, Skeleton } from '../design-system';
+import { useDelayedLoading } from '../hooks/useDelayedLoading';
 import { ICON_COMPONENTS, COLOR_HEX } from '../lib/categoryIcons';
 import {
   dashboardApi, accountsApi, transactionsApi, categoriesApi, goalsApi, insightsApi, userApi, budgetsApi, reportsApi, recurringApi,
@@ -23,6 +25,11 @@ import {
 } from '../api/endpoints';
 
 ChartJS.register(ArcElement, LineElement, PointElement, LinearScale, CategoryScale, Tooltip, Legend, Filler);
+
+// react-router's Link wrapped for framer-motion gesture props -- same technique as
+// QuickActionCard.tsx, used here for the floating action button (the other named hoverScale
+// adopter in the animation-polish roadmap alongside Quick Action tiles).
+const MotionLink = motion.create(Link);
 
 function fmt(n: number) {
   // Negative amounts (e.g. a month where spend exceeded income) must render as "-₹500",
@@ -203,13 +210,29 @@ export default function Dashboard() {
     .map((q) => q.data)
     .filter((d): d is NonNullable<typeof d> => !!d);
 
-  const loading = summaryQ.isLoading || accountsQ.isLoading || recentTxnsQ.isLoading || goalsQ.isLoading;
+  // Animation-polish roadmap §3 priority 1 / §1's "section-scoped loading" rule: split the old
+  // blanket 4-query gate so whichever section's data arrives first renders first, instead of
+  // everything waiting on the slowest one. Not a full split, though -- `isEmpty` below reads
+  // recentTxnsQ.data directly and gates several OTHER sections (Financial Health Score,
+  // Categorization Confidence, Next Actions, the Limited History banner), so recentTxnsQ is
+  // structurally load-bearing for the page shell, not just its own card. Decoupling it the way
+  // accounts/goals/budgets are decoupled below would let `isEmpty` default to `true` off an
+  // unresolved query, hiding those sections for a user who actually has data -- trading the
+  // original flash-of-wrong-content bug for a new one in the opposite direction. summaryQ and
+  // recentTxnsQ stay a blocking pair; accountsQ/goalsQ/budgetsQ (below, each only used within its
+  // own card) become independently-loading sections.
+  const blockingLoading = summaryQ.isLoading || recentTxnsQ.isLoading;
   // Bug fix: TanStack Query's isLoading flips to false once a query SETTLES, including settling
   // with an error -- so a failed summary/accounts/transactions/goals fetch used to fall straight
   // through to `if (!summary) return null`, rendering a blank page on the app's own landing route
   // with zero indication anything went wrong. isError only ever reflects the queries `loading`
   // itself is already built from, so this can't introduce a new spinner-that-never-resolves case.
   const hasError = summaryQ.isError || accountsQ.isError || recentTxnsQ.isError || goalsQ.isError;
+  const showPageSkeleton = useDelayedLoading(blockingLoading);
+  const showAccountsSkeleton = useDelayedLoading(accountsQ.isLoading);
+  const showGoalsSkeleton = useDelayedLoading(goalsQ.isLoading);
+  const showBudgetsSkeleton = useDelayedLoading(budgetsQ.isLoading);
+  const prefersReducedMotion = useReducedMotion();
   const summary = summaryQ.data;
   const accounts = (accountsQ.data ?? []).filter((acc) => acc.accountType !== 'INVESTMENT').slice(0, 4);
   const recentTxns = recentTxnsQ.data?.content ?? [];
@@ -221,7 +244,7 @@ export default function Dashboard() {
   // taking the first few is "soonest due", not an arbitrary truncation.
   const upcomingRecurring = (recurringQ.data ?? []).slice(0, 5);
 
-  if (loading) return <p className="text-muted">Loading…</p>;
+  if (blockingLoading) return showPageSkeleton ? <DashboardSkeleton /> : null;
   if (hasError || !summary) return <p className="text-muted">Couldn't load your dashboard — please try again later.</p>;
 
   const firstName = fullName?.split(' ')[0] ?? 'there';
@@ -671,7 +694,24 @@ export default function Dashboard() {
         <FinoraCard>
           <SectionHeader title="Accounts Overview" viewAllTo="/app/accounts" size="sm" />
           <div className="space-y-3">
-            {accounts.length === 0 ? (
+            {accountsQ.isLoading ? (
+              showAccountsSkeleton && (
+                <Skeleton.Region label="Loading accounts">
+                  <div className="space-y-3">
+                    {[0, 1].map((i) => (
+                      <div key={i} className="flex items-center gap-3">
+                        <Skeleton.Circle size={36} />
+                        <div className="min-w-0 flex-1 space-y-1">
+                          <Skeleton.Text width="w-28" />
+                          <Skeleton.Text width="w-16" className="h-2.5" />
+                        </div>
+                        <Skeleton.Text width="w-14" className="h-4" />
+                      </div>
+                    ))}
+                  </div>
+                </Skeleton.Region>
+              )
+            ) : accounts.length === 0 ? (
               <EmptyState
                 icon={Wallet}
                 iconBg="bg-blue-100"
@@ -710,13 +750,9 @@ export default function Dashboard() {
                 title="No transactions yet"
                 desc="Your recent transactions will appear here."
                 cta={
-                  <button
-                    type="button"
-                    onClick={() => setShowAddModal(true)}
-                    className="bg-primary text-on-primary hover:bg-primary-dark rounded-lg px-4 py-2 text-xs font-semibold"
-                  >
+                  <Button onClick={() => setShowAddModal(true)}>
                     + Add Transaction
-                  </button>
+                  </Button>
                 }
               />
             ) : recentTxns.map((t) => {
@@ -749,7 +785,23 @@ export default function Dashboard() {
         <FinoraCard>
           <SectionHeader title="Budget Progress" viewAllTo="/app/budgets" size="sm" />
           <div className="space-y-4">
-            {budgets.length === 0 ? (
+            {budgetsQ.isLoading ? (
+              showBudgetsSkeleton && (
+                <Skeleton.Region label="Loading budgets">
+                  <div className="space-y-4">
+                    {[0, 1].map((i) => (
+                      <div key={i}>
+                        <div className="flex justify-between items-baseline mb-1.5">
+                          <Skeleton.Text width="w-20" />
+                          <Skeleton.Text width="w-8" className="h-2.5" />
+                        </div>
+                        <Skeleton.Block className="h-1.5 w-full" />
+                      </div>
+                    ))}
+                  </div>
+                </Skeleton.Region>
+              )
+            ) : budgets.length === 0 ? (
               <EmptyState
                 icon={PiggyBank}
                 iconBg="bg-orange-100"
@@ -791,7 +843,23 @@ export default function Dashboard() {
         <FinoraCard>
           <SectionHeader title="Goals" viewAllTo="/app/goals" size="sm" />
           <div className="space-y-4">
-            {goals.length === 0 ? (
+            {goalsQ.isLoading ? (
+              showGoalsSkeleton && (
+                <Skeleton.Region label="Loading goals">
+                  <div className="space-y-4">
+                    {[0, 1].map((i) => (
+                      <div key={i}>
+                        <div className="flex justify-between items-baseline mb-1.5">
+                          <Skeleton.Text width="w-20" />
+                          <Skeleton.Text width="w-8" className="h-2.5" />
+                        </div>
+                        <Skeleton.Block className="h-1.5 w-full" />
+                      </div>
+                    ))}
+                  </div>
+                </Skeleton.Region>
+              )
+            ) : goals.length === 0 ? (
               <EmptyState
                 icon={Target}
                 iconBg="bg-red-100"
@@ -962,18 +1030,45 @@ export default function Dashboard() {
       {/* Floating action button — was purely decorative before (no onClick at all). Statement
           import is the primary way new data is meant to enter Finora, so that's what this
           now opens rather than, say, a generic "add transaction" menu. */}
-      <Link
+      <MotionLink
         to="/app/import"
+        whileTap={prefersReducedMotion ? undefined : { scale: 0.92 }}
+        whileHover={prefersReducedMotion ? undefined : { scale: 1.05 }}
         className="fixed bottom-8 right-8 w-14 h-14 rounded-full bg-primary text-on-primary shadow-soft flex items-center justify-center hover:bg-primary-dark"
         title="Import a bank or credit card statement"
       >
         <Plus size={24} />
-      </Link>
+      </MotionLink>
 
       {showAddModal && (
         <AddTransactionModal onClose={() => setShowAddModal(false)} onSaved={onTransactionAdded} />
       )}
     </div>
+  );
+}
+
+/**
+ * Shown while summaryQ/recentTxnsQ (the two structurally-blocking queries -- see the comment
+ * above `blockingLoading`) are still in flight. Approximates the real page's shape (greeting, KPI
+ * grid, health score block, cash-flow + spending-breakdown row) closely enough that swapping in
+ * real content doesn't itself cause a layout jump, without trying to pixel-match every card.
+ */
+function DashboardSkeleton() {
+  return (
+    <Skeleton.Region label="Loading your dashboard" className="space-y-6">
+      <div>
+        <Skeleton.Text width="w-64" className="h-7 mb-2" />
+        <Skeleton.Text width="w-96" />
+      </div>
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
+        {Array.from({ length: 5 }).map((_, i) => <Skeleton.Card key={i} />)}
+      </div>
+      <Skeleton.Block className="h-40 rounded-xl2" />
+      <div className="grid lg:grid-cols-[1.6fr_1fr] gap-6">
+        <Skeleton.Block className="h-72 rounded-xl2" />
+        <Skeleton.Block className="h-72 rounded-xl2" />
+      </div>
+    </Skeleton.Region>
   );
 }
 

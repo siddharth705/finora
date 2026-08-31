@@ -278,3 +278,94 @@ describe('Ledger — merchant group review card', () => {
     expect(await screen.findByTestId('merchant-group-review-card')).toBeInTheDocument();
   });
 });
+
+// Animation-polish roadmap Phase 2 (§3 priority 2): the table body's plain "Loading…" text row
+// became a skeleton, and the row-action/pagination buttons became IconButton.
+describe('Ledger — Phase 2 table skeleton and IconButton migration', () => {
+  beforeEach(() => {
+    vi.mocked(transactionsApi.needsReview).mockReset().mockResolvedValue([]);
+    vi.mocked(categoriesApi.list).mockReset().mockResolvedValue([]);
+  });
+
+  it('marks the table body as a busy live region while the initial search is loading', () => {
+    // Never resolves during this test -- isLoading stays true for its whole duration.
+    vi.mocked(transactionsApi.search).mockReset().mockReturnValue(new Promise(() => {}));
+    const { container } = renderLedger();
+
+    const tbody = container.querySelector('tbody')!;
+    expect(tbody).toHaveAttribute('role', 'status');
+    expect(tbody).toHaveAttribute('aria-busy', 'true');
+    expect(tbody).toHaveAttribute('aria-live', 'polite');
+  });
+
+  // Regression test: the sr-only announcement row was originally nested inside the same
+  // useDelayedLoading-gated block as the visible skeleton rows, so the live region had zero
+  // children -- nothing to announce -- for the whole ~200ms delay window. It must render
+  // immediately, independent of that delay, the same way ChartContainer's Skeleton.Region label
+  // already does (that window exists to prevent a sighted-user flicker, which doesn't apply to a
+  // screen-reader announcement).
+  it('announces "Loading transactions" immediately, without waiting for the skeleton rows to appear', () => {
+    vi.mocked(transactionsApi.search).mockReset().mockReturnValue(new Promise(() => {}));
+    renderLedger();
+
+    expect(screen.getByText('Loading transactions')).toBeInTheDocument();
+  });
+
+  it('renders real rows once the search resolves, with no residual loading row left behind', async () => {
+    vi.mocked(transactionsApi.search).mockReset().mockResolvedValue({
+      content: [txn({ id: 'txn-1', description: 'AMAZON PAY' })],
+      page: 0, size: 10, totalElements: 1, totalPages: 1,
+    });
+    const { container } = renderLedger();
+
+    expect(await screen.findByText('AMAZON PAY')).toBeInTheDocument();
+    const tbody = container.querySelector('tbody')!;
+    expect(tbody).not.toHaveAttribute('role', 'status');
+    expect(tbody.querySelectorAll('.animate-pulse').length).toBe(0);
+  });
+
+  it('exposes the edit and delete row actions by their accessible names', async () => {
+    vi.mocked(transactionsApi.search).mockReset().mockResolvedValue({
+      content: [txn({ id: 'txn-1', description: 'AMAZON PAY' })],
+      page: 0, size: 10, totalElements: 1, totalPages: 1,
+    });
+    renderLedger();
+
+    expect(await screen.findByRole('button', { name: 'Edit transaction' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Delete transaction' })).toBeInTheDocument();
+  });
+
+  it('shows the delete button in a loading state while the delete request is in flight', async () => {
+    const user = userEvent.setup();
+    vi.mocked(transactionsApi.search).mockReset().mockResolvedValue({
+      content: [txn({ id: 'txn-1', description: 'AMAZON PAY' })],
+      page: 0, size: 10, totalElements: 1, totalPages: 1,
+    });
+    let resolveRemove!: () => void;
+    vi.mocked(transactionsApi.remove).mockReset().mockReturnValue(
+      new Promise((resolve) => {
+        resolveRemove = () => resolve(undefined as never);
+      })
+    );
+    renderLedger();
+
+    await user.click(await screen.findByRole('button', { name: 'Delete transaction' }));
+    await user.click(await screen.findByRole('button', { name: 'Delete' })); // ConfirmDialog
+
+    const deleteButton = await screen.findByRole('button', { name: 'Delete transaction' });
+    expect(deleteButton).toBeDisabled();
+
+    resolveRemove();
+    await waitFor(() => expect(deleteButton).not.toBeDisabled());
+  });
+
+  it('exposes Previous/Next pagination controls by their accessible names', async () => {
+    vi.mocked(transactionsApi.search).mockReset().mockResolvedValue({
+      content: [txn()], page: 0, size: 1, totalElements: 2, totalPages: 2,
+    });
+    renderLedger();
+
+    expect(await screen.findByRole('button', { name: 'Previous page' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Next page' })).toBeInTheDocument();
+  });
+});

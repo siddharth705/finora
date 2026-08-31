@@ -7,7 +7,11 @@ type IconButtonSize = 'sm' | 'md';
 
 const VARIANT_CLASSES: Record<IconButtonVariant, string> = {
   default: 'text-muted hover:text-ink hover:bg-bg',
-  danger: 'text-muted hover:text-danger hover:bg-danger-bg',
+  // Always-red at rest, not muted-until-hover -- matches Button's own danger variant
+  // (`text-danger` unconditional). See frontend/src/design-system/IconButton.tsx's identical
+  // comment: this was a real inconsistency between the two Phase 0 primitives, caught only once
+  // Phase 2 (frontend/Ledger.tsx) actually used `variant="danger"` for the first time.
+  danger: 'text-danger hover:bg-danger-bg',
 };
 
 const SIZE_CLASSES: Record<IconButtonSize, string> = {
