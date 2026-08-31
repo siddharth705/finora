@@ -235,7 +235,28 @@ public class CapabilityCoverageService {
             // A real Canara Bank statement's own bare "Chq: <reference>" trailer line, past
             // MAX_TRAILING_CONTINUATION_ROWS's count cap, recovered as trailing content anyway by
             // content shape rather than count -- see PdfTableLocator.CHEQUE_REFERENCE_TRAILER.
-            "CHEQUE_REFERENCE_TRAILER_RECOVERED");
+            "CHEQUE_REFERENCE_TRAILER_RECOVERED",
+            // A statement period stated as two separately colon-labeled fields on one row
+            // ("From : <date>" / "To : <date>") rather than one combined "Period" label -- found
+            // on real HDFC savings-account statements and a real Sanjay HDFC statement. See
+            // PdfMetadataExtractor.FROM_TO_LABELED_PERIOD.
+            "STATEMENT_PERIOD_FROM_TO_FIELDS",
+            // A statement period labeled "Statement From" rather than "Statement Period"/
+            // "Billing Period" -- found on real Manas_HDFC, Shivani_HDFC, and Sanjay SBI
+            // statements. See PdfMetadataExtractor.STATEMENT_FROM_LABELED_PERIOD.
+            "STATEMENT_PERIOD_STATEMENT_FROM_LABEL",
+            // A statement period labeled "Statement of Account" rather than any "...Period"
+            // vocabulary -- found on a real Central Bank of India statement. See
+            // PdfMetadataExtractor.STATEMENT_OF_ACCOUNT_PERIOD.
+            "STATEMENT_PERIOD_STATEMENT_OF_ACCOUNT_LABEL",
+            // A statement period stated as plain prose ("...for the period <date> to <date>")
+            // with no parentheses and no "Label:" shape at all -- found on real canara.pdf and
+            // ICICI saving.pdf statements. See PdfMetadataExtractor.STATEMENT_PERIOD_PROSE.
+            "STATEMENT_PERIOD_PROSE",
+            // A statement period labeled "For Period:" -- found on a real PNB ONE savings
+            // statement, whose own line also carries an unrelated "Statement of Account:<number>"
+            // label before it. See PdfMetadataExtractor.FOR_PERIOD_LABELED.
+            "STATEMENT_PERIOD_FOR_PERIOD_LABEL");
 
     /**
      * @param importsAnalysed    how many imports these counts are drawn from -- a coverage figure
