@@ -84,7 +84,11 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: '20'
+          # Bumped alongside ci.yml/e2e-nightly.yml's Node 20 -> 22 move for consistency across the
+          # CI fleet, even though mobile itself has no engines constraint forcing it -- this job
+          # only installs mobile/package-lock.json, unaffected by the jsdom-driven reason the other
+          # workflows moved.
+          node-version: '22'
           cache: 'npm'
           cache-dependency-path: mobile/package-lock.json
 
