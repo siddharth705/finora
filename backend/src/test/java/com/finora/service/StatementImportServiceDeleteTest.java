@@ -189,4 +189,120 @@ class StatementImportServiceDeleteTest {
         // Reversing only the real 500 expense's contribution -- not 500 + 300.
         assertThat(account.getBalance()).isEqualByComparingTo("10000.00");
     }
+
+    @Test
+    void delete_reversesAnAbsoluteStatement_toItsPreSetBalance_whenStillTheLiveAnchor() {
+        UUID accountId = UUID.randomUUID();
+        StatementImport statementImport = new StatementImport();
+        ReflectionTestUtils.setField(statementImport, "id", statementImportId);
+        statementImport.setUserId(userId);
+        statementImport.setFileName("statement.csv");
+        statementImport.setAccountId(accountId);
+        statementImport.setBalanceApplicationMode(StatementImport.BalanceApplicationMode.ABSOLUTE);
+        statementImport.setClosingBalance(new BigDecimal("9500.00"));
+        statementImport.setBalanceBeforeAbsoluteSet(new BigDecimal("10000.00"));
+        when(statementImportRepository.findById(statementImportId)).thenReturn(Optional.of(statementImport));
+
+        when(transactionRepository.findByStatementImportId(statementImportId))
+                .thenReturn(List.of(transaction(UUID.randomUUID())));
+
+        Account account = new Account();
+        account.setAccountType(Account.Type.SAVINGS);
+        account.setBalance(new BigDecimal("9500.00"));
+        account.setLastAbsoluteSetStatementId(statementImportId);
+        when(accountRepository.findById(accountId)).thenReturn(Optional.of(account));
+
+        service.delete(userId, statementImportId);
+
+        assertThat(account.getBalance()).isEqualByComparingTo("10000.00");
+        assertThat(account.getLastAbsoluteSetStatementId()).isNull();
+    }
+
+    @Test
+    void delete_doesNotDoubleReverseAnAbsoluteStatement_whenALaterSetAlreadyOverwroteIt() {
+        UUID accountId = UUID.randomUUID();
+        UUID laterStatementId = UUID.randomUUID();
+        StatementImport statementImport = new StatementImport();
+        ReflectionTestUtils.setField(statementImport, "id", statementImportId);
+        statementImport.setUserId(userId);
+        statementImport.setFileName("statement.csv");
+        statementImport.setAccountId(accountId);
+        statementImport.setBalanceApplicationMode(StatementImport.BalanceApplicationMode.ABSOLUTE);
+        statementImport.setClosingBalance(new BigDecimal("9500.00"));
+        statementImport.setBalanceBeforeAbsoluteSet(new BigDecimal("10000.00"));
+        when(statementImportRepository.findById(statementImportId)).thenReturn(Optional.of(statementImport));
+
+        when(transactionRepository.findByStatementImportId(statementImportId))
+                .thenReturn(List.of(transaction(UUID.randomUUID())));
+
+        Account account = new Account();
+        account.setAccountType(Account.Type.SAVINGS);
+        account.setBalance(new BigDecimal("12000.00"));
+        account.setLastAbsoluteSetStatementId(laterStatementId);
+        when(accountRepository.findById(accountId)).thenReturn(Optional.of(account));
+
+        service.delete(userId, statementImportId);
+
+        assertThat(account.getBalance()).isEqualByComparingTo("12000.00");
+        assertThat(account.getLastAbsoluteSetStatementId()).isEqualTo(laterStatementId);
+    }
+
+    @Test
+    void delete_doesNotReverse_andLogsAWarning_whenTheStatementPredatesTheSnapshotField() {
+        // BalanceApplicationMode says ABSOLUTE, but balanceBeforeAbsoluteSet is null -- a row
+        // confirmed before this fix shipped. Never guess; same stance as UNKNOWN_LEGACY, and the
+        // same case supersede() handles via its NO_SNAPSHOT outcome.
+        UUID accountId = UUID.randomUUID();
+        StatementImport statementImport = new StatementImport();
+        ReflectionTestUtils.setField(statementImport, "id", statementImportId);
+        statementImport.setUserId(userId);
+        statementImport.setFileName("statement.csv");
+        statementImport.setAccountId(accountId);
+        statementImport.setBalanceApplicationMode(StatementImport.BalanceApplicationMode.ABSOLUTE);
+        statementImport.setClosingBalance(new BigDecimal("9500.00"));
+        // balanceBeforeAbsoluteSet deliberately left null.
+        when(statementImportRepository.findById(statementImportId)).thenReturn(Optional.of(statementImport));
+
+        when(transactionRepository.findByStatementImportId(statementImportId))
+                .thenReturn(List.of(transaction(UUID.randomUUID())));
+
+        Account account = new Account();
+        account.setAccountType(Account.Type.SAVINGS);
+        account.setBalance(new BigDecimal("9500.00"));
+        account.setLastAbsoluteSetStatementId(statementImportId);
+        when(accountRepository.findById(accountId)).thenReturn(Optional.of(account));
+
+        service.delete(userId, statementImportId);
+
+        assertThat(account.getBalance()).isEqualByComparingTo("9500.00");
+        verify(accountRepository, never()).save(any());
+    }
+
+    @Test
+    void delete_reversesAnAbsoluteStatement_evenWithZeroTransactions() {
+        // ABSOLUTE mode can fire with zero rows (opening == closing trivially corroborates) -- the
+        // reversal must not be gated on whether this statement had any transactions, unlike the
+        // ADDITIVE/NONE row-based reversal below it.
+        UUID accountId = UUID.randomUUID();
+        StatementImport statementImport = new StatementImport();
+        ReflectionTestUtils.setField(statementImport, "id", statementImportId);
+        statementImport.setUserId(userId);
+        statementImport.setFileName("statement.csv");
+        statementImport.setAccountId(accountId);
+        statementImport.setBalanceApplicationMode(StatementImport.BalanceApplicationMode.ABSOLUTE);
+        statementImport.setClosingBalance(new BigDecimal("100.00"));
+        statementImport.setBalanceBeforeAbsoluteSet(new BigDecimal("500.00"));
+        when(statementImportRepository.findById(statementImportId)).thenReturn(Optional.of(statementImport));
+        when(transactionRepository.findByStatementImportId(statementImportId)).thenReturn(List.of());
+
+        Account account = new Account();
+        account.setAccountType(Account.Type.SAVINGS);
+        account.setBalance(new BigDecimal("100.00"));
+        account.setLastAbsoluteSetStatementId(statementImportId);
+        when(accountRepository.findById(accountId)).thenReturn(Optional.of(account));
+
+        service.delete(userId, statementImportId);
+
+        assertThat(account.getBalance()).isEqualByComparingTo("500.00");
+    }
 }
