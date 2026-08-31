@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query';
-import { Pencil, Trash2, X, ChevronLeft, ChevronRight, HelpCircle } from 'lucide-react';
+import { Pencil, Trash2, X, ChevronLeft, ChevronRight, HelpCircle, Loader2 } from 'lucide-react';
 import { transactionsApi, type TransactionFilters, type UpdateTransactionPayload, type TransactionExplanation } from '../api/endpoints';
 import { AskOnceCard } from '../components/AskOnceCard';
 import { CategoryCombobox } from '../components/CategoryCombobox';
@@ -9,7 +9,8 @@ import { CategoryCreateEditPanel } from '../components/CategoryCreateEditPanel';
 import { MerchantGroupReviewCard } from '../components/MerchantGroupReviewCard';
 import { MerchantLogo } from '../components/MerchantLogo';
 import type { Transaction } from '../types';
-import { ConfirmDialog } from '../design-system';
+import { ConfirmDialog, Button, IconButton, Skeleton } from '../design-system';
+import { useDelayedLoading } from '../hooks/useDelayedLoading';
 
 function fmt(n: number) {
   // Negative amounts (e.g. a month where spend exceeded income) must render as "-₹500",
@@ -73,6 +74,7 @@ export default function Ledger() {
     placeholderData: keepPreviousData, // keep showing the old page while the new one loads, no flash-to-empty
   });
   const txns = page?.content ?? [];
+  const showTableSkeleton = useDelayedLoading(isLoading);
 
   // Deleting a transaction can shrink the total below the page currently being viewed (e.g. the
   // only row left on the last page) -- without this, that page would just render empty with no
@@ -138,7 +140,9 @@ export default function Ledger() {
 
       <div className="bg-card rounded shadow overflow-x-auto relative">
         {isFetching && !isLoading && (
-          <div className="absolute top-2 right-3 text-[10px] uppercase text-primary">Refreshing…</div>
+          <div className="absolute top-2 right-3 text-[10px] uppercase text-primary flex items-center gap-1">
+            <Loader2 size={11} className="animate-spin" aria-hidden="true" /> Refreshing…
+          </div>
         )}
         <table className="w-full text-sm">
           <thead>
@@ -151,9 +155,33 @@ export default function Ledger() {
               <th className="p-2"></th>
             </tr>
           </thead>
-          <tbody>
+          <tbody role={isLoading ? 'status' : undefined} aria-busy={isLoading || undefined} aria-live={isLoading ? 'polite' : undefined}>
             {isLoading ? (
-              <tr><td colSpan={6} className="p-4 text-center text-gray-500">Loading…</td></tr>
+              // Bug fix: the sr-only announcement must not wait out the same flash-prevention
+              // window the visual skeleton does -- that window exists to avoid a sighted-user
+              // flicker, which doesn't apply to a screen-reader announcement. Same reasoning
+              // ChartContainer.tsx already applies to its own Skeleton.Region; this row was
+              // wrongly nested inside the showTableSkeleton gate, leaving the live region with
+              // zero children (nothing to announce) for the whole delay window.
+              <>
+                <tr className="sr-only"><td colSpan={6}>Loading transactions</td></tr>
+                {showTableSkeleton && [0, 1, 2, 3, 4].map((i) => (
+                  <tr key={i} className="border-b border-dashed" aria-hidden="true">
+                    <td colSpan={6} className="p-2">
+                      <div className="flex items-center gap-4">
+                        <Skeleton.Text width="w-16" />
+                        <div className="flex items-center gap-2 flex-1">
+                          <Skeleton.Circle size={22} />
+                          <Skeleton.Text width="w-48" />
+                        </div>
+                        <Skeleton.Text width="w-16" />
+                        <Skeleton.Text width="w-14" />
+                        <Skeleton.Text width="w-16" />
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </>
             ) : txns.length === 0 ? (
               <tr><td colSpan={6} className="p-4 text-center text-gray-500 italic">No transactions match these filters.</td></tr>
             ) : (
@@ -197,23 +225,22 @@ export default function Ledger() {
                   </td>
                   <td className="p-2">
                     <div className="flex items-center gap-1 justify-end">
-                      <button
-                        type="button"
+                      <IconButton
+                        size="sm"
+                        icon={<Pencil size={13} />}
+                        aria-label="Edit transaction"
                         title="Edit transaction"
                         onClick={() => setEditing(t)}
-                        className="w-7 h-7 rounded border border-border flex items-center justify-center text-muted hover:text-ink hover:bg-bg"
-                      >
-                        <Pencil size={13} />
-                      </button>
-                      <button
-                        type="button"
+                      />
+                      <IconButton
+                        size="sm"
+                        variant="danger"
+                        icon={<Trash2 size={13} />}
+                        aria-label="Delete transaction"
                         title="Delete transaction"
-                        disabled={deletingId === t.id}
+                        loading={deletingId === t.id}
                         onClick={() => setConfirmDelete(t)}
-                        className="w-7 h-7 rounded border border-border flex items-center justify-center text-danger hover:bg-danger-bg disabled:opacity-40"
-                      >
-                        <Trash2 size={13} />
-                      </button>
+                      />
                     </div>
                   </td>
                 </tr>
@@ -233,23 +260,21 @@ export default function Ledger() {
             <span className="text-ink font-medium">{page.totalElements.toLocaleString('en-IN')}</span>
           </p>
           <div className="flex items-center gap-2">
-            <button
-              type="button"
+            <IconButton
+              size="sm"
+              icon={<ChevronLeft size={14} />}
+              aria-label="Previous page"
               onClick={() => setFilters((f) => ({ ...f, page: Math.max(0, (f.page ?? 0) - 1) }))}
               disabled={page.page === 0 || isFetching}
-              className="w-7 h-7 rounded border border-border flex items-center justify-center text-muted hover:text-ink hover:bg-bg disabled:opacity-40"
-            >
-              <ChevronLeft size={14} />
-            </button>
+            />
             <span className="text-ink">Page {page.page + 1} of {Math.max(1, page.totalPages)}</span>
-            <button
-              type="button"
+            <IconButton
+              size="sm"
+              icon={<ChevronRight size={14} />}
+              aria-label="Next page"
               onClick={() => setFilters((f) => ({ ...f, page: (f.page ?? 0) + 1 }))}
               disabled={page.page + 1 >= page.totalPages || isFetching}
-              className="w-7 h-7 rounded border border-border flex items-center justify-center text-muted hover:text-ink hover:bg-bg disabled:opacity-40"
-            >
-              <ChevronRight size={14} />
-            </button>
+            />
           </div>
         </div>
       )}
@@ -456,16 +481,16 @@ function EditTransactionModal({
           </div>
 
           <div className="flex gap-3 mt-5">
-            <button
+            <Button
               onClick={save}
-              disabled={saving || !description.trim() || !amount || !(parseFloat(amount) > 0)}
-              className="bg-primary text-on-primary hover:bg-primary-dark px-4 py-2 rounded-lg text-xs font-semibold disabled:opacity-50"
+              loading={saving}
+              disabled={!description.trim() || !amount || !(parseFloat(amount) > 0)}
             >
-              {saving ? 'Saving…' : 'Save changes'}
-            </button>
-            <button onClick={onClose} className="border border-border text-ink px-4 py-2 rounded-lg text-xs font-semibold">
+              Save changes
+            </Button>
+            <Button onClick={onClose} variant="secondary">
               Cancel
-            </button>
+            </Button>
           </div>
         </div>
       </div>

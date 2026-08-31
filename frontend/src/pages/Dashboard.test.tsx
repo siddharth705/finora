@@ -1172,3 +1172,132 @@ describe('Dashboard — Your Financial Journey', () => {
     expect(screen.queryByText('Financial Health Score')).not.toBeInTheDocument();
   });
 });
+
+// Animation-polish roadmap Phase 2 (§3 priority 1): the old page-level gate ANDed four queries
+// together. These tests cover the two things that fix had to get right: `isEmpty` (which several
+// isEmpty-gated sections depend on, not just Recent Transactions' own card) must never be computed
+// from an unresolved recentTxnsQ, and accounts/goals/budgets -- genuinely independent of anything
+// outside their own cards -- must be able to render their own section while still loading, without
+// blocking the rest of the page.
+describe('Dashboard — Phase 2 section-scoped loading', () => {
+  function pending<T>() {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>((r) => {
+      resolve = r;
+    });
+    return { promise, resolve };
+  }
+
+  beforeEach(() => {
+    vi.mocked(dashboardApi.summary).mockReset().mockResolvedValue(summary());
+    vi.mocked(dashboardApi.journey).mockReset().mockResolvedValue({ milestones: [] });
+    vi.mocked(categoriesApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(insightsApi.get).mockReset().mockResolvedValue({ sentences: [], movers: [] });
+    vi.mocked(userApi.get).mockReset().mockResolvedValue({
+      email: 'amy@example.test', fullName: 'Amy Santiago', lowBalanceThreshold: 2000,
+      theme: 'system', timezone: 'Asia/Kolkata', phoneNumber: '+919876500000',
+      phoneVerified: true, createdAt: '2026-01-01T00:00:00Z', passwordChangedAt: null, signInMethod: 'PASSWORD',
+    });
+    vi.mocked(reportsApi.availableMonths).mockReset().mockResolvedValue(['2026-08']);
+    vi.mocked(reportsApi.forMonth).mockReset().mockResolvedValue({
+      month: '2026-08', income: 80000, expense: 45000, categories: [],
+    });
+    vi.mocked(recurringApi.list).mockReset().mockResolvedValue([]);
+  });
+
+  it('never computes isEmpty (which several sections key off) from an unresolved recentTxnsQ', async () => {
+    // summary resolves immediately; recentTxnsQ deliberately never resolves during this test. If
+    // isEmpty were computed from recentTxnsQ.data defaulting to undefined, the page would render
+    // past the (would-be) gate and wrongly hide Financial Health Score for an account that
+    // actually has plenty of history -- recentTxnsQ staying blocking is what prevents that.
+    const recentTxns = pending<any>();
+    vi.mocked(accountsApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(transactionsApi.search).mockReset().mockReturnValue(recentTxns.promise);
+    vi.mocked(goalsApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(budgetsApi.list).mockReset().mockResolvedValue([]);
+
+    renderDashboard();
+
+    // Give summary's own resolution a tick to land -- Financial Health Score must still not
+    // appear, because the page itself hasn't rendered past the blocking gate yet.
+    await new Promise((r) => setTimeout(r, 0));
+    expect(screen.queryByText('Financial Health Score')).not.toBeInTheDocument();
+    // The assertion above alone doesn't discriminate this fix from the exact bug it guards
+    // against: a broken implementation that decoupled recentTxnsQ would ALSO render past the gate
+    // with isEmpty wrongly defaulting to true, which hides Financial Health Score for a different
+    // (wrong) reason -- that assertion would pass either way. What actually proves the page
+    // hasn't rendered at all is a page-shell element that ISN'T gated by isEmpty, like Accounts
+    // Overview's header -- present the moment the page passes the blocking gate, regardless of
+    // isEmpty. If summaryQ.isLoading alone (not summaryQ || recentTxnsQ) were the real gate, this
+    // header would already be here even though recentTxnsQ hasn't resolved.
+    expect(screen.queryByText('Accounts Overview')).not.toBeInTheDocument();
+
+    recentTxns.resolve({ content: [], page: 0, size: 4, totalElements: 12, totalPages: 3 });
+    expect(await screen.findByText('Financial Health Score')).toBeInTheDocument();
+    expect(screen.getByText('Accounts Overview')).toBeInTheDocument();
+  });
+
+  it('shows Accounts Overview once loaded without waiting on Budgets/Goals, and vice versa', async () => {
+    // Everything else resolves immediately except accountsQ, which resolves after the rest of the
+    // page is already up -- proving accounts/goals/budgets no longer share one blocking gate.
+    const accounts = pending<any>();
+    vi.mocked(accountsApi.list).mockReset().mockReturnValue(accounts.promise);
+    vi.mocked(transactionsApi.search).mockReset().mockResolvedValue({
+      content: [], page: 0, size: 4, totalElements: 12, totalPages: 3,
+    });
+    vi.mocked(goalsApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(budgetsApi.list).mockReset().mockResolvedValue([]);
+
+    renderDashboard();
+
+    // The page itself (gated only on summary+recentTxns, both resolved) is already up, including
+    // the Accounts Overview section header -- it just hasn't gotten its data yet.
+    expect(await screen.findByText('Accounts Overview')).toBeInTheDocument();
+    expect(screen.queryByText('No accounts yet')).not.toBeInTheDocument();
+
+    accounts.resolve([]);
+    expect(await screen.findByText('No accounts yet')).toBeInTheDocument();
+  });
+
+  it('shows real budget rows once budgetsQ resolves, without having claimed "No budgets set" first', async () => {
+    const budgets = pending<any>();
+    vi.mocked(accountsApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(transactionsApi.search).mockReset().mockResolvedValue({
+      content: [], page: 0, size: 4, totalElements: 12, totalPages: 3,
+    });
+    vi.mocked(goalsApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(budgetsApi.list).mockReset().mockReturnValue(budgets.promise);
+
+    renderDashboard();
+
+    expect(await screen.findByText('Budget Progress')).toBeInTheDocument();
+    expect(screen.queryByText('No budgets set')).not.toBeInTheDocument();
+
+    budgets.resolve([{ id: 'b1', categoryName: 'Groceries', monthlyLimit: 8000, spentThisMonth: 2000 }]);
+    expect(await screen.findByText('Groceries')).toBeInTheDocument();
+    expect(screen.queryByText('No budgets set')).not.toBeInTheDocument();
+  });
+
+  it('shows a real goal once goalsQ resolves, without having claimed "No goals yet" first', async () => {
+    // Same pattern as the accounts/budgets tests above, for the third independently-loading
+    // section -- flagged by the Phase 2 adversarial review as a real coverage gap (accounts and
+    // budgets each got a dedicated race test, goals didn't, even though all three follow the
+    // identical isLoading-gated pattern).
+    const goals = pending<any>();
+    vi.mocked(accountsApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(transactionsApi.search).mockReset().mockResolvedValue({
+      content: [], page: 0, size: 4, totalElements: 12, totalPages: 3,
+    });
+    vi.mocked(goalsApi.list).mockReset().mockReturnValue(goals.promise);
+    vi.mocked(budgetsApi.list).mockReset().mockResolvedValue([]);
+
+    renderDashboard();
+
+    expect(await screen.findByText('Goals')).toBeInTheDocument();
+    expect(screen.queryByText('No goals yet')).not.toBeInTheDocument();
+
+    goals.resolve([{ id: 'g1', name: 'Emergency Fund', targetAmount: 100000, currentAmount: 25000 }]);
+    expect(await screen.findByText('Emergency Fund')).toBeInTheDocument();
+    expect(screen.queryByText('No goals yet')).not.toBeInTheDocument();
+  });
+});
