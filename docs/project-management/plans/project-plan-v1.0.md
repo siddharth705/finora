@@ -999,16 +999,30 @@ measured.
 
 ### Mobile track
 
-| Block | Work | Est. | Note |
+**Re-baselined 2026-08-29.** The table below was written 2026-08-09 and was wrong in both
+directions by 2026-08-23 — M1/M2/M4 had closed on Android without being marked, and M5 was
+recorded as not started when three Maestro flows and a CI emulator job already existed. Status
+here is measured against `origin/main`, not carried forward.
+
+| Block | Work | Est. | Status |
 |---|---|---|---|
-| M0 | **Store enrolment — Apple Developer Program and Google Play Console** | ~2 h of work, **2–7 weeks of waiting** | **Not started as of 2026-08-09.** Now the longest-lead item in the entire project — see §9a. Start today |
-| M1 | EAS Build/Submit pipeline, signing credentials, first Android dev build | 2–3 d | Android needs no Play Console for a dev build, so this can start before enrolment clears |
-| M2 | First physical-device bring-up: APNs silent push (iOS) and Play Integrity (Android) for Firebase phone auth | 3–5 d | **Highest-variance item in the plan.** Never done once. Phone verification gates every protected endpoint, so if this is wrong, nothing works |
-| M3 | Native-surface QA: share sheet, system date picker, `expo-print` PDF output | 1–2 d | All three have only ever run against mocks |
-| M4 | Mobile duplicate-review parity — `initialInclusion()` still silently unticks on `likelyDuplicate` with no review screen behind it | 2 d | The WI5 correctness rule, one platform over. Named in the M2 charter and owned by the mobile initiative |
-| M5 | Mobile E2E (Detox or Maestro) + a CI slot | 3–4 d | None exists; the CI job bundles JS only |
-| M6 | Store listings, screenshots, **privacy policy + ToS**, Play Data Safety, Apple App Privacy | 2–3 d | R-9b: the policies are a hard submission gate |
-| | **Mobile subtotal** | **13–20 d** | |
+| M0 | **Store enrolment — Apple Developer Program and Google Play Console** | ~2 h of work, **2–7 weeks of waiting** | ✅ **Apple: enrolled.** See the D-8 correction in §11 — an App ID was registered under this project's Apple team, which is not possible without it. Play Console state to confirm. **No longer the longest-lead item** |
+| M1 | EAS Build/Submit pipeline, signing credentials, first Android dev build | 2–3 d | ✅ **Done.** EAS project linked, 89 MB APK produced |
+| M2 | First physical-device bring-up: APNs silent push (iOS) and Play Integrity (Android) for Firebase phone auth | 3–5 d | 🟡 **Android done** — phone auth verified on a real device. **iOS not attempted.** Still the highest-variance remaining item, but half its variance is now retired |
+| M3 | Native-surface QA: share sheet, system date picker, `expo-print` PDF output | 1–2 d | 🟡 Share sheet wired for statement download. **CSV/PDF export contents never verified** — this is M3's real remainder and a Gate A item |
+| M4 | Mobile duplicate-review parity | 2 d | ✅ **Done.** `confirmedNotDuplicate` wired through staging → confirm; 3/3 EXACT on device |
+| M5 | Mobile E2E (Detox or Maestro) + a CI slot | 3–4 d | 🟡 **Maestro exists** — `mobile/.maestro/` has login/dashboard/import flows, a fixture, a seed script, a runner, and a CI emulator job. Not yet pointed at iOS; no expiry/isolation flow |
+| M6 | Store listings, screenshots, **privacy policy + ToS**, Play Data Safety, Apple App Privacy | 2–3 d | ❌ Not started. D-12 open. R-9b: a hard submission gate |
+| M7 | **In-app account deletion** | 3–4 d | ❌ **New, and probably not optional** — see §10's Gate C and the parity matrix §4.1. Apple 5.1.1(v) and Google Play's data-deletion policy both trigger once an app supports account creation, which `RegisterScreen` does |
+| | **Mobile subtotal (remaining)** | **9–14 d** | Excludes parity work, which is tracked separately — see below |
+
+**Mobile ↔ web parity is now a tracked workstream, not an open question.** The owner decided on
+2026-08-29 that mobile is to be a **full replacement** for the web app. The measured gap and its
+release criteria live in [`mobile-web-parity-matrix.md`](./mobile-web-parity-matrix.md): **50
+capabilities, 21 shipped, 2 partial, 27 absent (~44%)**, costed at **38–51 d** for full parity.
+That figure is deliberately *not* added to the subtotal above — §10's Gate D keeps it off the beta
+critical path. Folding it in would push the beta out by roughly two months and delay the start of
+Google Play's uncompressible 14-day tester clock by the same amount.
 
 ### Calendar items — elapsed, not effort
 
@@ -1076,7 +1090,9 @@ balance-repair migration is needed for BH-003 — which is why the net is +6 day
 
 ## 9a. The store clocks — the real constraint on the date
 
-**D-8 resolved 2026-08-09: neither store account exists yet.** Two externally-imposed clocks follow,
+**D-8 resolved 2026-08-09: neither store account exists yet. Superseded 2026-08-29 for Apple —
+enrolment has since completed (see §11).** The Google Play clock below still applies in full;
+Apple's enrolment tail no longer does. Two externally-imposed clocks follow,
 neither of which responds to effort, and together they now set the launch date more than the code
 does.
 
@@ -1200,6 +1216,34 @@ in parallel with work you are doing anyway.
 | **v1.0 Ready** | 🔴 | All of the above |
 | **Go-Live** | 🔴 | Owner approval against this table |
 
+### Mobile release gates (new, 2026-08-29)
+
+The gates above are the product-wide ones. Mobile has four of its own, kept separate **because
+conflating them is what turns a four-week beta into a twelve-week one.** Full detail and the
+per-item evidence are in [`mobile-web-parity-matrix.md`](./mobile-web-parity-matrix.md) §6.
+
+| Gate | Status | What remains |
+|---|---|---|
+| **A — Android Closed Beta** | 🟡 | P0 cache leak ✅ **closed 2026-08-29 (#517)**. Remaining: CSV/PDF export contents, import failure/retry, import→delete→re-import, offline, production logout/re-login; `EXPO_PUBLIC_SENTRY_DSN` set in EAS (**crash reporting is currently inert**); rollback procedure written; backend↔mobile API compatibility confirmed. **Does not require parity** |
+| **B — iOS Closed Beta (TestFlight)** | 🔴 | Gate A (shared codebase); iOS core journey validated on Simulator; `ios` block added to `mobile/eas.json` (**there is none in any profile**); `GOOGLE_SERVICES_PLIST` EAS secret; APNs `.p8` uploaded to Firebase; phone-OTP verified on a physical device |
+| **C — Store submission** | 🔴 | Gates A/B; **in-app account deletion shipped** (M7); privacy policy naming the data controller (D-12), ToS, Play Data Safety, Apple App Privacy, listings; Android only: 12 testers × 14 continuous days on a **closed** track, then production access |
+| **D — "Mobile replaces web"** | 🔴 | Every P1 and P2 row in the parity matrix shipped and validated on both platforms, or explicitly reclassified by the owner. **38–51 d.** Until D passes, mobile is not positioned publicly as a web replacement — in store listings, marketing copy, or in-app messaging (see `standards/marketing-claims-checklist.md`) |
+
+**Gate B's bundle-identifier check, before the first TestFlight build.** Both platforms ship
+`com.finoratech.app` while the app's display name is `Fynora` and the URL scheme is `finora`. The
+identifier derives from `finoratech.info`, the domain that was sold and cut over. A bundle ID is
+effectively permanent after first submission — changing it later means new App Store and Play
+listings with ratings and installs starting from zero. `mobile-setup.md` already carries the
+instruction to confirm it before first submission; this is the point at which that becomes live.
+Not a defect and not a recommendation to change it — a decision that will otherwise be made
+permanently by default.
+
+**Implementation is single-track; validation is not.** There are 14 `Platform.OS` references in
+`mobile/src`, none in a financial-feature screen, and no `.ios.tsx`/`.android.tsx` variants. Every
+parity item ships to both platforms in the same commit, so Gate D is one body of work. Gates A and
+B are separate because *proof* is per-platform: Android has device-level evidence for the shipped
+subset and iOS has none beyond launching to the Sign In screen.
+
 **Explicit release criteria** — Finora is v1.0 when all of these hold:
 
 1. Zero open Critical or High defects; every P0 fix carries a test that fails against the old code.
@@ -1227,6 +1271,10 @@ in parallel with work you are doing anyway.
 | ~~**D-1**~~ | ~~Is production serving real users?~~ | — | ✅ **Resolved 2026-08-09: no. Owner-only testing, no customer data.** Closes R-3; removes the need for a balance-repair migration; makes production a free rehearsal surface until the first real signup |
 | ~~**D-2**~~ | ~~Is mobile in v1.0 or v1.1?~~ | — | ✅ **Resolved 2026-08-09: mobile is in v1.0.** Cost accepted: +13–19 working days, target moves 2026-09-19 → 2026-10-16. R-9 elevated; mobile joins the critical path |
 | ~~**D-8**~~ | ~~Already enrolled in either store?~~ | — | ✅ **Resolved 2026-08-09: neither.** Enrolment is now the longest-lead item in the project (§9a). Conservative date moved 2026-11-13 → 2026-11-27 to absorb Apple's reported tail |
+| **D-8b** | **Correction, 2026-08-29: Apple enrolment has since completed.** D-8's "neither" was true on 2026-08-09 and was still being planned against on 2026-08-29, three weeks after it stopped being true. Evidence: `mobile-setup.md` records that `com.finora.app` could not be registered as an App ID **under this project's Apple Developer team** — impossible without an active account — and D-14/R-16 track the Individual resubmission | Apple's 2–7 week tail was the longest-lead item in the entire project and the reason iOS work was sequenced last. It is gone. iOS pipeline work, the APNs key and TestFlight are all startable now | ✅ **Resolved.** §9's Mobile track and §9a updated. **Play Console state still to confirm** — the 12-tester/14-day clock genuinely does still apply |
+| ~~**D-30**~~ | ~~Is mobile a companion experience or a full replacement for web?~~ | — | ✅ **Decided 2026-08-29: full replacement.** Converts an open-ended goal into a bounded backlog — see [`mobile-web-parity-matrix.md`](./mobile-web-parity-matrix.md). Measured gap: 50 capabilities, 21 shipped, 2 partial, 27 absent (~44%), costed at 38–51 d. **Explicitly does not gate the beta** — §10's Gate D holds it off the critical path |
+| **D-31** | **Does the bundle identifier `com.finoratech.app` ship as-is?** | Both platforms carry it while the app is named `Fynora`; it derives from `finoratech.info`, the sold/cut-over domain. Effectively permanent after first store submission — changing it later means new App Store and Play listings with ratings and installs from zero | Decide before the first TestFlight build, not after. `mobile-setup.md` already carries the instruction to confirm before first submission. A bundle ID is never user-visible, so leaving it is defensible — what is not defensible is letting first submission decide it by default. ~1 d to change (Firebase re-registration on both platforms, fresh google-services files, Android SHA re-add, new Apple App ID + APNs association, re-issued Google Sign-In client IDs, EAS credentials reset) |
+| **D-32** | **Is in-app account deletion a store requirement for this app?** | Apple 5.1.1(v) and Google Play's data-deletion policy both trigger once an app supports account creation, which `RegisterScreen` does. Mobile has no `accountLifecycleApi` at all | Confirm against live guideline text. If it holds it is a **submission gate** (§10 Gate C, M7), not a parity item, and would have been mandatory even under the companion positioning. ~3–4 d; the OTP-gated re-auth session it needs already exists in `ChangePasswordSheet` |
 | ~~**D-9**~~ | ~~Individual or organisation store accounts?~~ | — | ✅ **Resolved 2026-08-09: individual, no legal entity exists.** Google's 12-tester gate now **applies**, which makes the 2026-09-12 milestone binding rather than conditional. D-10 and D-11 activate; D-12 is raised as a consequence |
 | **D-10** | **Who are the 12 Play testers?** | **Live** (D-9 = individual). Twelve real people who install the app and stay opted in for 14 continuous days; the streak resets if the count drops | Line them up during Phase 4, not on the day the build is ready. Assume 15–16 recruited to hold 12 |
 | ~~**D-11**~~ | ~~Simultaneous launch, or iOS first?~~ | — | ✅ **Decided 2026-08-15: iOS first**, reversing the standing "launch together" recommendation. TestFlight has no 12-tester gate, so iOS can go store-ready ~3 weeks before Android's Play closed-test streak completes. **Consequence, not yet reflected in §5/§9: those sections currently assume a simultaneous release** — the critical-path diagram, the "one coherent v1.0" framing, and any date math built on both tracks converging need re-deriving against this split. Flagged, not yet done |
@@ -1270,6 +1318,7 @@ On any report from an engineering session, review, deployment or bug hunt:
 
 | Date | Change | Why |
 |---|---|---|
+| 2026-08-29 | **Mobile track re-baselined; four mobile release gates added (§10); D-8 corrected; mobile↔web parity recorded as a tracked workstream.** The P0 session-expiry cache leak closed (#517) — `logout()` cleared the React Query cache but a session *expiring* did not, so the next person to sign in on the device was rendered the previous person's balances; reproduced against `main` before the fix, mutation-checked both ways. Owner decided mobile is to be a **full replacement** for web (D-30), and the measured gap now lives in `mobile-web-parity-matrix.md` (50 capabilities, ~44%, 38–51 d). **D-8 was wrong for about three weeks**: Apple enrolment had completed and the plan was still sequencing iOS behind a 2–7 week wait that no longer existed. Three items were found that are not parity work — in-app account deletion is probably a store submission gate (D-32), the `com.finoratech.app` bundle identifier becomes permanent at first submission and derives from a cut-over domain (D-31), and premium entitlements on iOS pull Apple's IAP rule into a pricing question already blocked on D-7/D-28. | §9's Mobile track had M1/M2/M4 closed but unmarked and M5 recorded as not started when Maestro flows and a CI emulator job already existed — it was wrong in both directions, and it is the table decisions get made from. Separating the four mobile gates keeps "replacement" off the beta critical path: folding parity into the beta would push it out ~2 months and delay the start of Google Play's uncompressible 14-day tester clock by the same amount. |
 | 2026-08-22 | **2F investigated and closed as moot; 2E.5 re-scoped after its own framing didn't survive contact with the shipped code (§4d touched).** Owner authorized starting both 2E.5 and 2F together. **2F**: swept all 23 multi-page real documents; 20/20 ground-truthed ones extract their exact expected transaction count, including the corpus's 39-, 24-, 24-, and 15-page documents — existing page-boundary machinery (page-scoped row grouping, repeated-header/banner suppression, page-scoped continuation) already handles this correctly. No code change; closed same as 2E.3/2E.4. **2E.5**: the plan's own prior framing — "IOB, HSBC need the general multi-tier case 2E.2 deferred" — turned out to conflate two unrelated things. A direct reflection trace against the real IOB document (three physical header-region rows; the accepted row is the *last* of the three, not the first) shows `reconstructHeader`'s single backward step already reaches the immediate-neighbor row and fails there on the same multi-cell gate ICICI's case hits, while a second, further row stays unreachable regardless of cell count — `reconstructHeader`'s own doc comment names the missing capability "`wrappedHeaderAt`'s forward composition," referring to that method's early-anchor, walk-toward-later-rows direction, not the location of IOB's fragments relative to the accepted row (they are earlier, not later). Tracing the ICICI regression already documented in that same comment shows the widened candidate never addressed ICICI's real defect (a duplicate-named amount pair) at all — it added unrelated columns while leaving the true ambiguity unresolved, passing the shipped validation's raw-cell-collision-and-date-parse check because that check is structural, not semantic. A separate, isolated OCR investigation independently confirmed HSBC's mechanism precisely: `groupIntoRows` clusters against a fixed first-member anchor, so cumulative OCR y-jitter exceeds tolerance even when every individual gap is smaller — a row-formation defect, unrelated to header composition entirely. Recorded as a correction in place in `header-reconstruction-design.md` §9 and `header-reconstruction-phase2e1-investigation.md`, not a new document, per this plan's own doc-correction discipline | Direct execution of the owner's go-ahead; both investigations changed the shape of the work enough that proceeding on the plan's original framing would have repeated the ICICI regression rather than avoided it |
 | 2026-08-22 | **2E.4 closed — not reproduced (§4d touched).** Resuming Phase 2E after 2E.3's closure, checked the owner's remaining unverified claim ("CBI opening balance detected as 47.77") against the real CBI statement. Traced its own first-transaction balance — an Indian comma-grouped shape structurally matching the claim — through every parsing stage in the PDF import path: `CsvParser.parseNumeric` strips commas correctly regardless of grouping position, and `BalanceSequenceResolver` (the one live path that could set `openingBalance`) uses the same correct parser and returns `null` for this document by its own deliberate ambiguity-suppression design (Phase 2G), not a wrong value. No mechanism found that would produce the claimed shape. `cbi-opening-balance-investigation.md` | Same "check the hypothesis before believing it" discipline as 2E.3 — both halves of the owner's original 2E framing are now checked against real evidence rather than carried forward unverified |
 | 2026-08-22 | **2E.3 corrected from "⬜ Not started" to closed — not reproduced (§4d touched).** The row had been carried forward as open work since D-29 (08-21), but the investigation that actually checked it (`same-day-reversal-closing-balance-investigation.md`, PR #250) already ran and closed it before 2G's own changelog entry above was written — this plan's table just hadn't been corrected to match. Caught while resuming 2E work: re-reading the merged investigation doc showed its own explicit recommendation ("close 2E.3 as not reproduced") had never been reflected here | Same discipline as every other stale-reference correction in this changelog — the doc, not the plan table, is the source of truth for what was actually checked |

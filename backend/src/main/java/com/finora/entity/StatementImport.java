@@ -22,6 +22,74 @@ import java.util.UUID;
 @SQLRestriction("deleted_at IS NULL")
 public class StatementImport extends BaseEntity implements com.finora.imports.storage.StoredStatement {
 
+    /**
+     * Which account-balance branch this statement's own confirm actually took (Phase 4 of
+     * docs/proposals/statement-continuity-and-coverage-integrity-proposal.md, §0.6). Recorded once,
+     * at confirm time, by {@code ImportService.persistSection} -- the same three-way branch that
+     * already decides how {@code Account.balance} moves, echoed onto this row rather than
+     * recomputed later.
+     *
+     * <p>{@code StatementImportService.supersede} is the sole reader: when a statement is replaced
+     * by a later re-upload of the exact same period, this is what decides whether the superseded
+     * statement's continuing contribution to {@code Account.balance} needs to be reversed --
+     * {@code totalCredits}/{@code totalDebits} were never persisted here and {@code Transaction
+     * .amount} is editable after import, so re-running {@code ClosingBalanceGuard.assess} against
+     * this row at supersede time is not guaranteed to reproduce the original confirmation outcome.
+     * Recording the branch once, rather than reconstructing it, is the fix.
+     */
+    public enum BalanceApplicationMode {
+        /** {@code closingBalanceIsAuthoritative} was true: Account.balance was SET to this
+         *  statement's stated closing balance. Superseding it needs no reversal -- the replacement
+         *  statement's own confirm already set the balance again, on top of whatever this one
+         *  left behind. */
+        ABSOLUTE,
+        /** The stated closing balance was not authoritative, and this statement's rows moved the
+         *  balance by their net effect. That net effect is still sitting in Account.balance
+         *  (superseding does not delete these rows), so reversing it is exactly {@code
+         *  AccountBalanceConvention.netDelta} on this statement's own transactions, negated -- the
+         *  same reversal {@code StatementImportService.delete} already performs for the same
+         *  reason. */
+        ADDITIVE,
+        /** No rows were imported, so this statement never moved Account.balance at all. Nothing to
+         *  reverse. */
+        NONE,
+        /** This row predates the field (backfilled by V119) -- which branch its own confirm took
+         *  was never recorded. Superseding it applies no automatic reversal, since guessing wrong
+         *  would silently corrupt Account.balance; an administrator is warned to check by hand
+         *  instead. */
+        UNKNOWN_LEGACY
+    }
+
+    /**
+     * docs/proposals/account-ownership-intelligence-proposal.md §3.2 -- the outcome of comparing
+     * this statement's extracted holder name against the confirming user's Finora profile name,
+     * computed once at confirm time by {@code OwnershipMatchService} and never recomputed. Nullable,
+     * with no legacy/unknown member: unlike {@link BalanceApplicationMode}, nothing here needs
+     * backfilling on old rows -- a statement imported before this field existed simply has no value,
+     * which the comparison logic already treats as "nothing to check" (no backfill was ever the
+     * proposal's own decision, §4/§5 of that document).
+     *
+     * <p>{@code NAME_MATCH}/{@code NAME_MISMATCH}, not the shorter {@code MATCH}/{@code MISMATCH}: a
+     * bare {@code MATCH} reads as stronger than what this actually records (two strings compared
+     * favorably) and invites treating it as ownership proof, which it is not -- see the design
+     * doc's own principle: this is a data-quality system, not an identity-verification one.
+     */
+    public enum OwnershipMatchStatus {
+        /** Strong name similarity against the profile -- no warning shown. */
+        NAME_MATCH,
+        /** Low name similarity -- the non-blocking warning was shown (see {@code
+         *  userConfirmedContinue} for whether the user proceeded past it). */
+        NAME_MISMATCH,
+        /** Extraction found no holder name on the statement to compare at all. */
+        NO_HOLDER_FOUND,
+        /** This import resolved to an account that already had at least one prior statement import
+         *  -- the comparison was skipped entirely, since that continuity already vouches for the
+         *  account being the same one imported before. Re-running the check on every routine
+         *  monthly statement would be pure noise. Tradeoff, stated once in the design doc and not
+         *  repeated here: this assumes the account's first-ever import was itself correct. */
+        SKIPPED_EXISTING_ACCOUNT
+    }
+
     @Column(name = "user_id", nullable = false)
     private UUID userId;
 
@@ -94,6 +162,50 @@ public class StatementImport extends BaseEntity implements com.finora.imports.st
 
     @Column(name = "closing_balance")
     private BigDecimal closingBalance;
+
+    /** A credit-card statement's total bill for this cycle -- same field {@code
+     *  CreditCardSummaryExtractor} put on {@code DetectedAccountInfo.totalAmountDue} at staging
+     *  time, echoed back through {@code ConfirmRequest} the same way {@link #statementPeriodStart}
+     *  is. Null for CSV imports and any non-credit-card statement -- see that field's own doc
+     *  comment for why nothing here needs to re-check account type before setting it. */
+    @Column(name = "total_amount_due")
+    private BigDecimal totalAmountDue;
+
+    /** This cycle's payment due date -- {@code PdfMetadataExtractor} already extracts this
+     *  reliably (see {@code DetectedAccountInfo.paymentDueDate}'s own doc comment); null whenever
+     *  nothing was printed, or for a non-credit-card statement, same as {@link #totalAmountDue}. */
+    @Column(name = "payment_due_date")
+    private LocalDate paymentDueDate;
+
+    /** The rest of a credit-card statement's own billing-summary panel -- see
+     *  {@code CreditCardSummaryExtractor.CreditCardSummaryEvidence}, whose fields these mirror
+     *  exactly. Copied verbatim from the {@code ImportSession} this confirm came from (see
+     *  {@code ImportService.persistSection}'s own comment), never recomputed here.
+     *
+     *  <p>Null whenever no summary panel was found, same as {@link #totalAmountDue} -- but NOT
+     *  always null together with it: {@code StatementImportService.confirmReimport} has no
+     *  {@code ImportSession} to copy this from (it re-parses via {@code parseAndStageAnyFormat},
+     *  which never persists one), so a re-imported credit-card statement's row always has these
+     *  four null even though {@link #totalAmountDue}/{@link #paymentDueDate} (echoed through
+     *  {@code ConfirmRequest}, which reimport-confirm does carry) are populated. Accepted as a
+     *  narrower version of the same "best-effort, no session on this path" limitation {@code
+     *  layoutMetadataJson} and its siblings already have -- closing it means threading
+     *  {@code CreditCardSummaryEvidence} through {@code parseAndStageAnyFormat} too, a separate
+     *  follow-up. */
+    @Column(name = "previous_balance")
+    private BigDecimal previousBalance;
+
+    @Column(name = "purchases")
+    private BigDecimal purchases;
+
+    @Column(name = "cash_advances")
+    private BigDecimal cashAdvances;
+
+    @Column(name = "fees")
+    private BigDecimal fees;
+
+    @Column(name = "payments_and_credits")
+    private BigDecimal paymentsAndCredits;
 
     @Column(name = "transactions_imported", nullable = false)
     private int transactionsImported;
@@ -169,6 +281,46 @@ public class StatementImport extends BaseEntity implements com.finora.imports.st
     @Column(name = "import_job_id")
     private UUID importJobId;
 
+    /** Which OTHER statement replaced this one, or null while this statement is still active. See
+     *  {@link BalanceApplicationMode}'s class doc and {@code StatementImportService.supersede}. */
+    @Column(name = "superseded_by")
+    private UUID supersededBy;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "balance_application_mode", nullable = false, length = 20)
+    private BalanceApplicationMode balanceApplicationMode = BalanceApplicationMode.UNKNOWN_LEGACY;
+
+    /** {@code Account.balance} the instant before this statement's own confirm overwrote it (only
+     *  when {@link #balanceApplicationMode} is {@code ABSOLUTE} -- null otherwise, including for
+     *  every row confirmed before this field existed). This is the only safe source for reversing
+     *  that SET later: {@code effectiveOpeningBalance} at confirm time comes from the account's
+     *  PRIOR statement's stated closing balance (see {@code OpeningBalanceCarryForward}), not from
+     *  live {@code Account.balance}, so it can diverge from what the balance actually was if a
+     *  manual edit or transaction landed in between -- the arithmetic identity {@code opening +
+     *  net == closing} does not reconstruct this value after the fact. Read by {@code
+     *  StatementImportService.reverseAbsoluteContribution}, together with {@link
+     *  Account#getLastAbsoluteSetStatementId()}, which tells whether this SET is still the
+     *  account's live anchor or has already been overwritten by something else. */
+    @Column(name = "balance_before_absolute_set")
+    private java.math.BigDecimal balanceBeforeAbsoluteSet;
+
+    /** Snapshot of what {@code PdfMetadataExtractor} saw for this statement's account holder at
+     *  confirm time -- see {@link OwnershipMatchStatus}'s class doc. Never recomputed after the
+     *  fact, same "best-effort, left null on a path with no session" discipline as
+     *  {@link #layoutMetadataJson}/{@link #layoutFingerprint} above. */
+    @Column(name = "extracted_holder_name")
+    private String extractedHolderName;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "ownership_match_status", length = 30)
+    private OwnershipMatchStatus ownershipMatchStatus;
+
+    /** Whether the user clicked "Continue Import" after seeing the ownership warning. Null when the
+     *  warning never fired ({@code ownershipMatchStatus} is anything other than {@code
+     *  NAME_MISMATCH}) -- there was nothing to confirm past. */
+    @Column(name = "user_confirmed_continue")
+    private Boolean userConfirmedContinue;
+
     public UUID getUserId() { return userId; }
     public void setUserId(UUID userId) { this.userId = userId; }
     public UUID getAccountId() { return accountId; }
@@ -216,10 +368,36 @@ public class StatementImport extends BaseEntity implements com.finora.imports.st
     public void setOpeningBalance(BigDecimal openingBalance) { this.openingBalance = openingBalance; }
     public BigDecimal getClosingBalance() { return closingBalance; }
     public void setClosingBalance(BigDecimal closingBalance) { this.closingBalance = closingBalance; }
+    public BigDecimal getTotalAmountDue() { return totalAmountDue; }
+    public void setTotalAmountDue(BigDecimal totalAmountDue) { this.totalAmountDue = totalAmountDue; }
+    public LocalDate getPaymentDueDate() { return paymentDueDate; }
+    public void setPaymentDueDate(LocalDate paymentDueDate) { this.paymentDueDate = paymentDueDate; }
+    public BigDecimal getPreviousBalance() { return previousBalance; }
+    public void setPreviousBalance(BigDecimal previousBalance) { this.previousBalance = previousBalance; }
+    public BigDecimal getPurchases() { return purchases; }
+    public void setPurchases(BigDecimal purchases) { this.purchases = purchases; }
+    public BigDecimal getCashAdvances() { return cashAdvances; }
+    public void setCashAdvances(BigDecimal cashAdvances) { this.cashAdvances = cashAdvances; }
+    public BigDecimal getFees() { return fees; }
+    public void setFees(BigDecimal fees) { this.fees = fees; }
+    public BigDecimal getPaymentsAndCredits() { return paymentsAndCredits; }
+    public void setPaymentsAndCredits(BigDecimal paymentsAndCredits) { this.paymentsAndCredits = paymentsAndCredits; }
     public int getTransactionsImported() { return transactionsImported; }
     public void setTransactionsImported(int transactionsImported) { this.transactionsImported = transactionsImported; }
     public int getTransactionsSkipped() { return transactionsSkipped; }
     public void setTransactionsSkipped(int transactionsSkipped) { this.transactionsSkipped = transactionsSkipped; }
     public Instant getImportedAt() { return importedAt; }
     public void setImportedAt(Instant importedAt) { this.importedAt = importedAt; }
+    public UUID getSupersededBy() { return supersededBy; }
+    public void setSupersededBy(UUID supersededBy) { this.supersededBy = supersededBy; }
+    public BalanceApplicationMode getBalanceApplicationMode() { return balanceApplicationMode; }
+    public void setBalanceApplicationMode(BalanceApplicationMode balanceApplicationMode) { this.balanceApplicationMode = balanceApplicationMode; }
+    public java.math.BigDecimal getBalanceBeforeAbsoluteSet() { return balanceBeforeAbsoluteSet; }
+    public void setBalanceBeforeAbsoluteSet(java.math.BigDecimal balanceBeforeAbsoluteSet) { this.balanceBeforeAbsoluteSet = balanceBeforeAbsoluteSet; }
+    public String getExtractedHolderName() { return extractedHolderName; }
+    public void setExtractedHolderName(String extractedHolderName) { this.extractedHolderName = extractedHolderName; }
+    public OwnershipMatchStatus getOwnershipMatchStatus() { return ownershipMatchStatus; }
+    public void setOwnershipMatchStatus(OwnershipMatchStatus ownershipMatchStatus) { this.ownershipMatchStatus = ownershipMatchStatus; }
+    public Boolean getUserConfirmedContinue() { return userConfirmedContinue; }
+    public void setUserConfirmedContinue(Boolean userConfirmedContinue) { this.userConfirmedContinue = userConfirmedContinue; }
 }

@@ -1,6 +1,8 @@
 package com.finora.repository;
 
 import com.finora.entity.Referral;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.util.List;
@@ -16,7 +18,10 @@ public interface ReferralRepository extends JpaRepository<Referral, UUID> {
      *  arrived through. */
     Optional<Referral> findByReferredUserId(UUID referredUserId);
 
-    List<Referral> findAllByOrderByCreatedAtDesc();
+    /** Admin Portal, Referral dashboard list -- grows with referral volume (roughly bounded by
+     *  user count, same shape of risk as SubscriptionRepository.findAllByOrderByCreatedAtDesc's
+     *  own doc comment), so this replaced an unconditional {@code findAll} the same way. */
+    Page<Referral> findAllByOrderByCreatedAtDesc(Pageable pageable);
 
     /** AccountPurgeSweepService -- referrals the purged user made as a referrer. Does not touch
      *  the OTHER user's own row-half; see {@link #deleteByReferredUserId} for that. */

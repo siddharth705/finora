@@ -98,4 +98,39 @@ describe('InsightsScreen', () => {
     expect(await screen.findByText(/at least 2 charges from the same merchant/)).toBeTruthy();
     expect(screen.getByText(/Not enough history yet/)).toBeTruthy();
   });
+
+  it('shows the static notice and skeleton sections immediately, before either query resolves', () => {
+    insights.get.mockReset().mockReturnValue(new Promise(() => {}));
+    recurring.list.mockReset().mockReturnValue(new Promise(() => {}));
+
+    renderScreen();
+
+    expect(screen.getByText(/not an\s+AI-generated assistant/)).toBeTruthy();
+    expect(screen.getAllByTestId('shimmer-block', { hidden: true }).length).toBeGreaterThan(0);
+    expect(screen.queryByText("This Month's Observations")).toBeNull();
+  });
+
+  // Each card gates on only the query its own data comes from -- a slow recurringApi.list() must
+  // not hold Observations/Category Movers (both read insightsQ only) on their skeleton too.
+  it('reveals Observations and Category Movers independently of a still-loading Recurring Payments', async () => {
+    recurring.list.mockReset().mockReturnValue(new Promise(() => {}));
+
+    renderScreen();
+
+    expect(await screen.findByText('You spent 18% less on dining this month.')).toBeTruthy();
+    expect(screen.getByText('Dining')).toBeTruthy();
+    expect(screen.queryByText('netflix')).toBeNull();
+    // Only Recurring Payments' own shimmer is left -- the other two cards already have real data.
+    expect(screen.getAllByTestId('shimmer-block', { hidden: true }).length).toBeGreaterThan(0);
+  });
+
+  it('reveals Recurring Payments independently of a still-loading insights query', async () => {
+    insights.get.mockReset().mockReturnValue(new Promise(() => {}));
+
+    renderScreen();
+
+    expect(await screen.findByText('netflix')).toBeTruthy();
+    expect(screen.queryByText("This Month's Observations")).toBeNull();
+    expect(screen.queryByText('Category Movers')).toBeNull();
+  });
 });

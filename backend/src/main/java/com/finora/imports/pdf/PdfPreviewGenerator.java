@@ -156,8 +156,16 @@ public class PdfPreviewGenerator {
     /** One {@link DocumentContext}'s worth of recorded structural facts and capability
      *  activations for the WHOLE document -- every section of a multi-account PDF (e.g. HSBC's
      *  composite statement) shares one, since they came from the same file (Phase 1 "capture
-     *  facts" -- docs/engineering/financial-document-intelligence-principles.md). */
-    public record PdfGenerationResult(List<StagedAccountSection> sections, DocumentContext documentContext) {}
+     *  facts" -- docs/engineering/financial-document-intelligence-principles.md).
+     *
+     *  <p>{@code creditCardSummary} (roadmap item 6 follow-up, PR #451): the SAME document-level
+     *  reading already computed below and handed to every section's {@code buildLedgerSection}
+     *  (see the same "effectively always one account" reasoning there) -- exposed here too so
+     *  {@code ImportService} can carry the full balance breakdown into the session, not just the
+     *  {@code totalAmountDue} field that already reaches {@code DetectedAccountInfo}. {@code
+     *  CreditCardSummaryEvidence.NONE} (never null) when no summary panel was found. */
+    public record PdfGenerationResult(List<StagedAccountSection> sections, DocumentContext documentContext,
+                                       CreditCardSummaryEvidence creditCardSummary) {}
 
     /** Same as {@link #generateSections}, but also returns the {@link DocumentContext} built
      *  while parsing -- the entry point {@code ImportService} uses when it needs to persist that
@@ -245,7 +253,8 @@ public class PdfPreviewGenerator {
             // the contradiction -- printed activity, nothing staged -- with nothing to state it.
             StagedAccountSection section = buildLedgerSection(userId, filename, emptySection, unknown, ctx,
                     printedSummary, printedCreditCardSummary, printedDateRange);
-            return new PdfGenerationResult(List.of(surfaceUnrecognizedText(section, empty.preTableLines())), ctx);
+            return new PdfGenerationResult(List.of(surfaceUnrecognizedText(section, empty.preTableLines())), ctx,
+                    printedCreditCardSummary);
         }
 
         List<StagedAccountSection> result = new ArrayList<>();
@@ -264,7 +273,7 @@ public class PdfPreviewGenerator {
         // One document's worth, across every section -- the DocumentContext is per-file, and a
         // combined statement's sections all failed (or didn't) as part of the same parse run.
         ctx.recordUnparseable(unparseableAcrossDocument);
-        return new PdfGenerationResult(result, ctx);
+        return new PdfGenerationResult(result, ctx, printedCreditCardSummary);
     }
 
     /**
@@ -368,12 +377,17 @@ public class PdfPreviewGenerator {
         // Same reasoning again, for merchant resolution (Transaction Intelligence Phase A) -- see
         // PreviewGenerator's identical hoist and MerchantIndex's own doc comment.
         MerchantIndex merchantIndex = transactionNormalizer.merchantIndexFor(userId);
-        for (Map<String, String> row : section.rows()) {
+        List<Map<String, String>> sectionRows = section.rows();
+        for (int i = 0; i < sectionRows.size(); i++) {
+            Map<String, String> row = sectionRows.get(i);
+            // 1-based, within this section -- same convention as PreviewGenerator's CSV path.
+            int rowPosition = i + 1;
             StagedRow parsed = transactionNormalizer.normalize(userId, row, ctx, rules, duplicateIndex, merchantIndex);
             if (parsed == null) {
                 unparseable.add(new UnparseableRow(row, transactionNormalizer.explainFailure(row)));
                 continue;
             }
+            parsed = parsed.withRowPosition(rowPosition);
             // RowKind.BALANCE_MARKER (see that enum's doc comment): a row whose only recognizable
             // amount came from a Balance-style column, not a real debit/credit/amount column --
             // structurally a statement's own OPENING BALANCE/CLOSING BALANCE label, not a

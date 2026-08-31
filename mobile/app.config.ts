@@ -36,34 +36,76 @@ import type { ExpoConfig } from 'expo/config';
  *
  * Manage with `eas env:list` / `eas env:create --type file`.
  */
-const iosGoogleServices = process.env.GOOGLE_SERVICES_PLIST ?? './GoogleService-Info.plist';
-const androidGoogleServices = process.env.GOOGLE_SERVICES_JSON ?? './google-services.json';
+/**
+ * Which build this is. Set per profile in eas.json; unset means production.
+ *
+ * Production is the default deliberately, so anything that resolves this config without opting in
+ * -- `expo config`, a local gradle build, the Maestro flows, CI -- keeps the identifiers it had
+ * before variants existed. A dev build is the thing you ask for; it is never what you get by
+ * forgetting to ask.
+ */
+const isDev = process.env.APP_VARIANT === 'development';
+
+/**
+ * Dev and production are separate Firebase projects, so they are separate config files. The
+ * `.dev` copies are gitignored alongside the production ones -- same rule, same reason.
+ */
+const iosGoogleServices =
+  process.env.GOOGLE_SERVICES_PLIST ?? (isDev ? './GoogleService-Info.dev.plist' : './GoogleService-Info.plist');
+const androidGoogleServices =
+  process.env.GOOGLE_SERVICES_JSON ?? (isDev ? './google-services.dev.json' : './google-services.json');
 // An EAS-provided path is already absolute; only a repo-relative default needs resolving.
 const here = (p: string) => (path.isAbsolute(p) ? p : path.join(__dirname, p));
 
 const config: ExpoConfig = {
-  name: 'Fynora',
+  // Distinct on the home screen, because the whole point of the dev variant is that both are
+  // installed at once and you have to be able to tell which one you just tapped.
+  name: isDev ? 'Fynora Dev' : 'Fynora',
+  // NOT varied: the slug identifies the EAS project, which is shared. Two variants of one app,
+  // not two apps.
   slug: 'finora-mobile',
   version: '1.0.0',
   orientation: 'portrait',
   icon: './assets/icon.png',
   userInterfaceStyle: 'automatic',
-  scheme: 'finora',
+  // Varied for the same reason as the identifier: with both installed, a shared scheme makes
+  // which app handles a deep link a coin toss the OS resolves however it likes.
+  scheme: isDev ? 'finora-dev' : 'finora',
   ios: {
     supportsTablet: true,
-    // 'com.finora.app' was the original identifier on both platforms, but it's unavailable under
-    // this project's Apple Developer team for iOS registration (fails with "not available" --
-    // either a genuine third-party collision, or residue from the Organization/DUNS enrollment
-    // attempt abandoned in favor of an Individual account before final submission, per D-14/R-16
-    // in the plan doc). Renamed to the domain this project's own backend/frontend already use
-    // (finoratech.info) rather than guessing at another '.app' variant that might collide again --
-    // and Android's package name renamed to match, so the two platforms carry one identifier
-    // rather than a permanent, easy-to-forget divergence between them.
-    bundleIdentifier: 'com.finoratech.app',
+    // Third identifier, and the last one that can be changed for free. 'com.finora.app' was the
+    // original and is unavailable under this project's Apple Developer team ("not available" --
+    // either a third-party collision or residue from the Organization/DUNS enrollment abandoned in
+    // favor of Individual, per D-14/R-16). It was then renamed to 'com.finoratech.app' after the
+    // domain the backend and frontend used at the time. That domain has since been sold and cut
+    // over, so the identifier pointed at something this project no longer owns while the app was
+    // shipping under the name Fynora.
+    //
+    // A bundle identifier is effectively permanent once an app has been submitted: changing it
+    // afterwards means a new App Store listing and a new Play listing, with ratings, reviews and
+    // installs starting from zero. Nothing has been submitted yet, so this is the free moment, and
+    // D-31 in the plan doc records the decision to spend it rather than let first submission make
+    // it by default. Android's package matches deliberately -- one identifier across both
+    // platforms rather than a permanent divergence nobody remembers is there.
+    //
+    // NOT self-contained. The backend verifies Apple ID tokens against this exact string (Apple's
+    // `aud` claim on a natively-minted token IS the bundle identifier -- see AppleLoginProperties),
+    // and Firebase registers phone auth, Play Integrity and the native Google OAuth clients against
+    // it. See docs/engineering/mobile/mobile-setup.md, "Bundle identifier migration", for the
+    // console and environment steps this line does not perform.
+    //
+    // The `.dev` suffix exists because Google resolves an OAuth client from the (package, SHA-1)
+    // pair, and that pair has to be unique across Firebase projects. Registering com.fynora.app in
+    // both the production and dev projects did not merely warn -- Firebase declined to create the
+    // dev project's Android OAuth clients at all, and the downloaded google-services.json came back
+    // with no client_type 1 entry and no certificate_hash. Re-registering under com.fynora.app.dev
+    // produced both immediately. See mobile-setup.md, "Dev and production variants".
+    bundleIdentifier: isDev ? 'com.fynora.app.dev' : 'com.fynora.app',
     ...(existsSync(here(iosGoogleServices)) ? { googleServicesFile: iosGoogleServices } : {}),
   },
   android: {
-    package: 'com.finoratech.app',
+    // Matches ios.bundleIdentifier above -- see its comment for the history and the migration.
+    package: isDev ? 'com.fynora.app.dev' : 'com.fynora.app',
     ...(existsSync(here(androidGoogleServices)) ? { googleServicesFile: androidGoogleServices } : {}),
     // Adaptive icon: a solid graphite plate with the Finora mark as the foreground layer.
     //
@@ -107,6 +149,12 @@ const config: ExpoConfig = {
   plugins: [
     'expo-secure-store',
     'expo-sharing',
+    // No options, deliberately: this project has never set a custom splash image (no `"splash"`
+    // key existed before this either), so the plugin keeps generating the same icon-derived
+    // default it always has. Only reason it's listed at all is that App.tsx now calls
+    // SplashScreen.preventAutoHideAsync()/hideAsync() at runtime -- see App.tsx's own comment --
+    // and Expo's installer requires the plugin registered for that runtime API to be present.
+    'expo-splash-screen',
     '@react-native-community/datetimepicker',
     '@react-native-firebase/app',
     '@react-native-firebase/auth',
@@ -142,6 +190,17 @@ const config: ExpoConfig = {
           // Required so RNFBApp/RNFBAuth link correctly under static frameworks — see
           // rnfirebase.io's Expo config-plugin install guide.
           forceStaticLinking: ['RNFBApp', 'RNFBAuth'],
+        },
+        android: {
+          // Android blocks cleartext (plain HTTP) traffic by default for any app targeting API 28+,
+          // which every real build of this app correctly leaves alone — production and staging are
+          // both HTTPS. The one build that needs it is a Maestro run against a local/CI backend at
+          // http://10.0.2.2:<port> (the emulator's alias for the host), which has no certificate to
+          // terminate TLS with. MAESTRO_ALLOW_CLEARTEXT is unset for every other build path (a
+          // developer's `expo run:android`, any `eas build` profile), so this is `undefined` --
+          // Expo's own default -- everywhere except a Maestro build, which sets it explicitly. See
+          // mobile/.maestro/README.md.
+          usesCleartextTraffic: process.env.MAESTRO_ALLOW_CLEARTEXT === 'true' ? true : undefined,
         },
       },
     ],

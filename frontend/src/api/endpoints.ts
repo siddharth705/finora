@@ -3,7 +3,7 @@ import { downloadBlob } from '../lib/download';
 import type {
 
   Account, AccountStatementGroup, BankInfo, Budget, DashboardSummary, DetectedAccountInfo, FinancialJourney, Goal,
-  ImportSummary, MerchantGroup, ReimportResult, StagedAccountSection, StagedRow, StatementSummary, Transaction,
+  ImportSummary, MerchantGroup, ReimportResult, StagedAccountSection, StagedRow, StatementSummary, SupersedeResult, Transaction,
   WorkspaceSettings, UnparseableRow, VerificationReport,
 } from '../types';
 
@@ -221,6 +221,16 @@ export interface TransactionExplanation {
   // 0-100, or absent -- see TransactionExplanationDto's own doc comment for which decision
   // sources populate this (never MANUAL/FILE_PROVIDED).
   confidence?: number;
+  // "Why this match?" -- absent for the common case (reconciliationStatus OK, nothing matched
+  // this row). See TransactionExplanationDto.ReconciliationExplanationDto.
+  reconciliation?: TransactionReconciliationExplanation;
+}
+
+export interface TransactionReconciliationExplanation {
+  status: 'DUPLICATE' | 'TRANSFER' | 'REFUND' | 'REVERSAL';
+  matchedTransactionId: string | null;
+  summary: string;
+  evidence: string[];
 }
 
 export const transactionsApi = {
@@ -242,6 +252,10 @@ export const transactionsApi = {
   bulkDelete: (ids: string[]) => api.post('/transactions/bulk-delete', { ids }),
   bulkRecategorize: (ids: string[], category: string) =>
     api.post('/transactions/bulk-category', { ids, category }),
+  // BH-027: "no, these really are two separate transactions." Records a human ruling that
+  // outranks the reconciliation engine's own guess -- see TransactionService.confirmNotDuplicate.
+  confirmNotDuplicate: (id: string) =>
+    api.post<Transaction>(`/transactions/${id}/not-duplicate`).then((r) => r.data),
 };
 
 export interface ConfirmedRowPayload {
@@ -254,6 +268,8 @@ export interface ConfirmedRowPayload {
   categorySource: string;
   ruleId: string | null;
   categoryConfidence: number | null;
+  /** Echoed from StagedRow.rowPosition unchanged -- see that field's own doc comment. */
+  rowPosition: number | null;
   /** What the engine guessed. */
   likelyDuplicate: boolean;
   /**
@@ -327,9 +343,18 @@ export interface ConfirmPayload {
   // confirmed rows' own date range instead of the printed period shown on the review screen).
   statementPeriodStart: string | null;
   statementPeriodEnd: string | null;
+  // Echoed back from DetectedAccountInfo.totalAmountDue/paymentDueDate, same round-trip as the
+  // statement period above -- see ConfirmRequest's own doc comment on the backend.
+  // credit-card-statement-entity-design.md. Both null for a non-credit-card statement.
+  totalAmountDue: number | null;
+  paymentDueDate: string | null;
   // Only meaningful to confirmReimport, for a statement whose stored bytes are a password-protected
   // PDF -- see ConfirmRequest's own doc comment on the backend. Every other confirm path ignores it.
   password?: string;
+  // docs/proposals/account-ownership-intelligence-proposal.md §3.1/§3.2. Whether the user clicked
+  // "Continue Import" after the client-side ownership warning fired -- see ConfirmRequest's own
+  // doc comment on the backend. Omitted (not just false) when the warning never fired.
+  userConfirmedContinue?: boolean;
 }
 
 // One account's worth of reviewed rows within a MultiAccountConfirmPayload -- same shape as
@@ -342,6 +367,8 @@ interface SectionConfirmPayload {
   statementClosingBalance: number | null;
   statementPeriodStart: string | null;
   statementPeriodEnd: string | null;
+  totalAmountDue: number | null;
+  paymentDueDate: string | null;
 }
 
 export interface MultiAccountConfirmPayload {
@@ -587,6 +614,11 @@ export const statementImportsApi = {
   confirmReimport: (id: string, payload: Omit<ConfirmPayload, 'newAccount' | 'sessionId'>) =>
     api.post<ImportSummary>(`/statement-imports/${id}/reimport/confirm`, { ...payload, newAccount: null }).then((r) => r.data),
   remove: (id: string) => api.delete(`/statement-imports/${id}`),
+  // "Import this one as a replacement?" (Phase 4, §0.3) -- `id` is the ORIGINAL statement, already
+  // marked superseded rather than deleted; `supersededByStatementId` must already be confirmed as
+  // its own statement (a normal confirm call) before this is called.
+  supersede: (id: string, supersededByStatementId: string) =>
+    api.post<SupersedeResult>(`/statement-imports/${id}/supersede`, { supersededByStatementId }).then((r) => r.data),
 };
 
 export const budgetsApi = {
@@ -607,9 +639,33 @@ export interface CategoryOption {
   id: string;
   name: string;
   isSystem: boolean;
+  icon: string;
+  color: string;
 }
+
+export interface CategoryOptions {
+  icons: { token: string; label: string }[];
+  colors: { token: string; label: string }[];
+}
+
 export const categoriesApi = {
   list: () => api.get<CategoryOption[]>('/categories').then((r) => r.data),
+  options: () => api.get<CategoryOptions>('/categories/options').then((r) => r.data),
+  create: (name: string, icon?: string, color?: string) =>
+    api.post<CategoryOption>('/categories', { name, icon, color }).then((r) => r.data),
+  update: (id: string, changes: { name?: string; icon?: string; color?: string }) =>
+    api.patch<CategoryOption>(`/categories/${id}`, changes).then((r) => r.data),
+  delete: (id: string, reassignTo?: string) =>
+    api.delete(`/categories/${id}`, { params: reassignTo ? { reassignTo } : undefined }),
+  usage: (id: string) =>
+    api.get<{
+      transactionCount: number;
+      hasBudget: boolean;
+      ruleCount: number;
+      learningRowCount: number;
+    }>(
+      `/categories/${id}/usage`,
+    ).then((r) => r.data),
 };
 
 export const dashboardApi = {

@@ -77,7 +77,7 @@ class ImportServiceAskOnceTest {
                 .thenAnswer(inv -> inv.getArgument(1));
         reconciliationService = mock(ReconciliationService.class);
         recurringService = mock(RecurringService.class);
-        DuplicateDetector duplicateDetector = new DuplicateDetector(transactionRepository);
+        DuplicateDetector duplicateDetector = new DuplicateDetector(transactionRepository, TestAccountRepositories.anyLive());
         CsvParser csvParser = new CsvParser();
         TransactionNormalizer transactionNormalizer = new TransactionNormalizer(categorizationService, duplicateDetector, com.finora.imports.TestRuleEngines.empty());
         StatementValidator statementValidator = new StatementValidator(com.finora.imports.product.ProductDiscovery.standard());
@@ -94,7 +94,9 @@ class ImportServiceAskOnceTest {
                 merchantRepository, statementImportRepository, categorizationService, reconciliationService,
                 recurringService, previewGenerator, duplicateDetector, ruleLearningService,
                 mock(ImportSessionService.class), mock(com.finora.imports.pdf.PdfPreviewGenerator.class),
-                new com.finora.imports.product.ProductIdentityResolver(accountRepository), new com.finora.imports.storage.StatementContentService(java.util.Optional.empty(), mock(com.finora.security.crypto.EncryptionService.class), "", ""),
+                new com.finora.imports.product.ProductIdentityResolver(accountRepository),
+                mock(com.finora.imports.ownership.OwnershipMatchService.class),
+                new com.finora.imports.storage.StatementContentService(java.util.Optional.empty(), mock(com.finora.security.crypto.EncryptionService.class), "", ""),
                 mock(com.finora.imports.analysis.StatementAnalysisRecorder.class),
                 mock(com.finora.imports.analysis.ImportVerificationRecorder.class),
                 learningEventPublisher, mock(LayoutRegistryService.class),
@@ -545,6 +547,40 @@ class ImportServiceAskOnceTest {
         verify(statementImportRepository).save(captor.capture());
         assertThat(captor.getValue().getStatementPeriodStart()).isNull();
         assertThat(captor.getValue().getStatementPeriodEnd()).isNull();
+    }
+
+    @Test
+    void confirm_persistsTotalAmountDueAndPaymentDueDate_echoedFromTheRequest() throws Exception {
+        // Same round-trip as the statement-period fields above: DetectedAccountInfo.totalAmountDue/
+        // paymentDueDate (CreditCardSummaryExtractor / PdfMetadataExtractor at staging time) has
+        // nowhere to land at confirm without the request echoing it back -- see
+        // credit-card-statement-entity-design.md.
+        var row1 = new ConfirmedRow(LocalDate.of(2026, 7, 10), "SWIGGY*ORDR9182 BLR",
+                BigDecimal.valueOf(486), "EXPENSE", "Dining", true, "rule", null, false, null, null);
+        var request = new ConfirmRequest(null, List.of(row1), accountId, null, null, null, null,
+                LocalDate.of(2026, 7, 1), LocalDate.of(2026, 7, 31),
+                BigDecimal.valueOf(12450.75), LocalDate.of(2026, 8, 5));
+
+        importService.confirm(userId, dummyFile(), request);
+
+        ArgumentCaptor<StatementImport> captor = ArgumentCaptor.forClass(StatementImport.class);
+        verify(statementImportRepository).save(captor.capture());
+        assertThat(captor.getValue().getTotalAmountDue()).isEqualByComparingTo(BigDecimal.valueOf(12450.75));
+        assertThat(captor.getValue().getPaymentDueDate()).isEqualTo(LocalDate.of(2026, 8, 5));
+    }
+
+    @Test
+    void confirm_leavesTotalAmountDueAndPaymentDueDateNull_forANonCreditCardImport() throws Exception {
+        var row1 = new ConfirmedRow(LocalDate.of(2026, 7, 10), "SWIGGY*ORDR9182 BLR",
+                BigDecimal.valueOf(486), "EXPENSE", "Dining", true, "rule", null, false, null, null);
+        var request = new ConfirmRequest(null, List.of(row1), accountId, null, null, null, null);
+
+        importService.confirm(userId, dummyFile(), request);
+
+        ArgumentCaptor<StatementImport> captor = ArgumentCaptor.forClass(StatementImport.class);
+        verify(statementImportRepository).save(captor.capture());
+        assertThat(captor.getValue().getTotalAmountDue()).isNull();
+        assertThat(captor.getValue().getPaymentDueDate()).isNull();
     }
 
     @Test

@@ -96,4 +96,89 @@ class ProductIdentityTest {
 
         assertThat(fromDatabase.matches(discovered)).isEqualTo(ProductIdentity.Match.EXACT);
     }
+
+    // IFSC + account holder name fallback (see ProductIdentity's own "When there is no number at
+    // all" doc section) -- the real PNB incident: account-number extraction found nothing at all
+    // (no full number, no masked digits), so "some evidence" (same bank, same IFSC, same holder)
+    // and "no evidence" both used to collapse into the same NONE/NEW outcome. Genericized values
+    // per the Synthetic Fixture Policy.
+
+    @Test
+    void noAccountNumberAtAll_butMatchingIfscAndHolderName_isProbable() {
+        var discovered = ProductIdentity.of("PNB", FinancialProductType.SAVINGS, null, null)
+                .withWeakSignals("PUNB0XXXXXX", "JOHN DOE");
+        var stored = ProductIdentity.stored("PNB", FinancialProductType.SAVINGS, null, null)
+                .withWeakSignals("PUNB0XXXXXX", "JOHN DOE");
+
+        assertThat(discovered.matches(stored)).isEqualTo(ProductIdentity.Match.PROBABLE);
+    }
+
+    @Test
+    void ifscAloneWithNoHolderNameIsNotEnoughToMatch() {
+        // A branch's IFSC is shared by every customer at that branch -- nowhere near specific
+        // enough on its own to suggest a match, let alone merge into one.
+        var discovered = ProductIdentity.of("PNB", FinancialProductType.SAVINGS, null, null)
+                .withWeakSignals("PUNB0XXXXXX", null);
+        var stored = ProductIdentity.stored("PNB", FinancialProductType.SAVINGS, null, null)
+                .withWeakSignals("PUNB0XXXXXX", null);
+
+        assertThat(discovered.matches(stored)).isEqualTo(ProductIdentity.Match.NONE);
+    }
+
+    @Test
+    void holderNameAloneWithNoIfscIsNotEnoughToMatch() {
+        // A holder name alone is shared by every account someone holds at that bank -- exactly the
+        // ambiguity this fallback exists to avoid resolving by guessing.
+        var discovered = ProductIdentity.of("PNB", FinancialProductType.SAVINGS, null, null)
+                .withWeakSignals(null, "JOHN DOE");
+        var stored = ProductIdentity.stored("PNB", FinancialProductType.SAVINGS, null, null)
+                .withWeakSignals(null, "JOHN DOE");
+
+        assertThat(discovered.matches(stored)).isEqualTo(ProductIdentity.Match.NONE);
+    }
+
+    @Test
+    void sameBankAloneWithNeitherIfscNorHolderNameIsNotEnoughToMatch() {
+        var discovered = ProductIdentity.of("PNB", FinancialProductType.SAVINGS, null, null);
+        var stored = ProductIdentity.stored("PNB", FinancialProductType.SAVINGS, null, null);
+
+        assertThat(discovered.matches(stored)).isEqualTo(ProductIdentity.Match.NONE);
+    }
+
+    @Test
+    void ifscAndHolderNameMatch_butDifferentProductTypes_isNotAMatch() {
+        // Same person, same branch -- a savings account and a fixed deposit are still two
+        // different products, the identical guard the masked-number fallback already applies.
+        var savings = ProductIdentity.of("PNB", FinancialProductType.SAVINGS, null, null)
+                .withWeakSignals("PUNB0XXXXXX", "JOHN DOE");
+        var deposit = ProductIdentity.of("PNB", FinancialProductType.FIXED_DEPOSIT, null, null)
+                .withWeakSignals("PUNB0XXXXXX", "JOHN DOE");
+
+        assertThat(savings.matches(deposit)).isEqualTo(ProductIdentity.Match.NONE);
+    }
+
+    @Test
+    void ifscAndHolderNameFallback_toleratesCasingAndSpacingDifferences() {
+        var discovered = ProductIdentity.of("PNB", FinancialProductType.SAVINGS, null, null)
+                .withWeakSignals("punb0xxxxxx", "John  Doe");
+        var stored = ProductIdentity.stored("PNB", FinancialProductType.SAVINGS, null, null)
+                .withWeakSignals("PUNB0XXXXXX", "JOHN DOE");
+
+        assertThat(discovered.matches(stored)).isEqualTo(ProductIdentity.Match.PROBABLE);
+    }
+
+    @Test
+    void aStrongKeyOnOneSideStillWinsOverTheWeakSignalFallback() {
+        // Not the incident scenario (both sides would lack a number after a failed extraction),
+        // but the fallback's own guard: it only applies when THIS side has neither a strong key
+        // nor masked digits. A side that has a real number never needs to fall back to IFSC/holder
+        // at all -- the ordinary EXACT/NONE-on-disagreement rules above already decide it.
+        var withNumber = ProductIdentity.of("PNB", FinancialProductType.SAVINGS,
+                "98765432101234", "1234") // synthetic-ok
+                .withWeakSignals("PUNB0XXXXXX", "JOHN DOE");
+        var withoutNumber = ProductIdentity.of("PNB", FinancialProductType.SAVINGS, null, null)
+                .withWeakSignals("PUNB0XXXXXX", "JOHN DOE");
+
+        assertThat(withNumber.matches(withoutNumber)).isEqualTo(ProductIdentity.Match.NONE);
+    }
 }

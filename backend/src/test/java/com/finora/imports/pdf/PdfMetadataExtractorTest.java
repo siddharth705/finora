@@ -35,11 +35,127 @@ class PdfMetadataExtractorTest {
         assertThat(metadata.ifscCode()).isEqualTo("SBIN0001234");
     }
 
+    /**
+     * ACCOUNT_PRODUCT_BANNER. A real BOB savings statement never prints the phrase "Account
+     * Number" anywhere: its account identity lives only in a per-page product banner that names
+     * the product and states the number after a hyphen, with the holder's name leading the same
+     * line. {@code PdfTableLocator} already recognises this exact shape (SECTION_MARKER plus
+     * ACCOUNT_NUMBER_IN_MARKER) and keeps the first such banner in the section's auxiliary text --
+     * verified directly against the real document -- so the line reaches this class unchanged and
+     * simply matched nothing here.
+     *
+     * <p>Two details are load-bearing and both come from the real line's measured shape: the
+     * holder name PRECEDES the banner, so this pattern must find() rather than match a whole
+     * line; and the flattened line carries more than one space before the hyphen, so the
+     * separator must be whitespace-tolerant.
+     *
+     * <p>Digits here are altered, never the real document's -- the geometry and token order are
+     * what this test exercises, and the real value has no business in the repository.
+     */
+    @Test
+    void extract_recognizesAnAccountNumber_fromAProductBannerNamingTheAccountType() {
+        // Only the token ORDER and the doubled space before the hyphen are corpus-derived.
+        var metadata = extractor.extract(
+                List.of("ANANYA VERMA SAVINGS ACCOUNT  - 41870200031276")); // synthetic-ok: invented value and name
+
+        assertThat(metadata.accountNumberMasked()).endsWith("1276");
+    }
+
+    /** The same banner shape for a product other than savings, proving the tier keys off the
+     *  shared ACCOUNT_PRODUCT_LABELS vocabulary rather than one hardcoded word. */
+    @Test
+    void extract_recognizesAProductBannerAccountNumber_forANonSavingsProduct() {
+        var metadata = extractor.extract(
+                List.of("CURRENT ACCOUNT - 90441200556613")); // synthetic-ok: invented, no corpus document supplied it
+
+        assertThat(metadata.accountNumberMasked()).endsWith("6613");
+    }
+
+    /** A banner with no number states a product, not an identity -- it must not resolve, and must
+     *  not leave a partial or fabricated value behind. */
+    @Test
+    void extract_doesNotResolveAnAccountNumber_fromAProductBannerCarryingNoDigits() {
+        var metadata = extractor.extract(List.of("SAVINGS ACCOUNT - PREMIUM TIER"));
+
+        assertThat(metadata.accountNumberMasked()).isNull();
+    }
+
+    /** Precedence: the banner tier is last, so a document that already stated its number the
+     *  ordinary way keeps that value even when a banner is also present. */
+    @Test
+    void extract_prefersAnExplicitAccountNumberLabel_overAProductBannerOnAnotherLine() {
+        var metadata = extractor.extract(List.of(
+                "Account Number: 000123456789", // synthetic-ok: reuses this file's existing placeholder
+                "ANANYA VERMA SAVINGS ACCOUNT  - 41870200031276")); // synthetic-ok: invented, as above
+
+        assertThat(metadata.accountNumberMasked()).endsWith("6789");
+    }
+
     @Test
     void extract_recognizesAnAccountNumber_whenTheValuePrecedesItsLabelOnTheSameLine() {
         var metadata = extractor.extract(List.of("100200300400599 Account Number"));
 
         assertThat(metadata.accountNumberMasked()).endsWith("0599");
+    }
+
+    /**
+     * F21 (extraction-coverage-audit.md, real-corpus follow-up): several real statements never
+     * say "Account Number" at all -- they abbreviate to "Account No" or "Account No.", a shape
+     * ACCOUNT_NUMBER's literal "Account Number" text had no tolerance for. Confirmed on 4 real
+     * documents across 4 banks this way. Genericized per the Synthetic Fixture Policy -- the shape
+     * being tested is the abbreviation itself, not any bank's specific formatting.
+     */
+    @Test
+    void extract_recognizesAnAccountNumber_labelledAccountNo() {
+        var metadata = extractor.extract(List.of("Account No     : 500123456789")); // synthetic-ok
+
+        assertThat(metadata.accountNumberMasked()).endsWith("6789");
+    }
+
+    @Test
+    void extract_recognizesAnAccountNumber_labelledAccountNoWithATrailingPeriod() {
+        var metadata = extractor.extract(List.of("Account No. 200987654321")); // synthetic-ok
+
+        assertThat(metadata.accountNumberMasked()).endsWith("4321");
+    }
+
+    /**
+     * The widened label must not regress the exact phrase it already handled -- this is the same
+     * fixture as extract_stillHandlesTheOrdinaryLabelThenValueShape above, isolated to just this
+     * field so a future change to ACCOUNT_NUMBER specifically is caught here too.
+     */
+    @Test
+    void extract_stillRecognizesTheFullPhrase_accountNumber() {
+        var metadata = extractor.extract(List.of("Account Number: 000123456789")); // synthetic-ok
+
+        assertThat(metadata.accountNumberMasked()).endsWith("6789");
+    }
+
+    /**
+     * ACCOUNT_NUMBER is line-anchored (labelPattern's own "^\s*" prefix) -- widening its label
+     * vocabulary must not turn it into an unanchored search. A line that merely CONTAINS the
+     * abbreviated phrase, without starting with it, must not match; this is what keeps the F21 fix
+     * from reopening the exact class of false-positive F22 fixed for the card-number family.
+     */
+    @Test
+    void extract_doesNotMatchAccountNo_whenItIsNotAtTheStartOfTheLine() {
+        var metadata = extractor.extract(List.of("Please quote your Account No. 500123456789 when calling.")); // synthetic-ok
+
+        assertThat(metadata.accountNumberMasked()).isNull();
+    }
+
+    /**
+     * The "No" abbreviation must not match as a bare prefix of a longer word. "Account Nominee" is
+     * a genuine, realistic nomination-section field label -- not a contrived edge case -- and
+     * without a boundary guard after "No", it would be captured as if "minee: <name>" were an
+     * account number, since this call site accepts whatever is captured with no further
+     * validation. Caught in self-review before this fix shipped.
+     */
+    @Test
+    void extract_doesNotMatchAccountNo_whenNoIsAPrefixOfALongerWord() {
+        var metadata = extractor.extract(List.of("Account Nominee: JOHN DOE")); // synthetic-ok
+
+        assertThat(metadata.accountNumberMasked()).isNull();
     }
 
     /**
@@ -173,6 +289,41 @@ class PdfMetadataExtractorTest {
     }
 
     /**
+     * F22 (extraction-coverage-audit.md, real-corpus follow-up): the same-line-anywhere fallback's
+     * unanchored {@code CARD_NUMBER_LABEL} match also fires on an incidental "card number" mention
+     * buried in unrelated instructional prose, and {@code firstMatchAfter}'s same-line search then
+     * had no bound on how far past the label it would look -- an unrelated digit run appearing
+     * later in the same sentence (a phone number, an unrelated code) was captured as if it were the
+     * card number. Confirmed on two real statements this way: one where the label sat inside a
+     * sentence about the number's own digit count, another inside an SMS-instruction sentence whose
+     * only digit run was a customer-service phone number. Genericized per the Synthetic Fixture
+     * Policy -- the shape being tested is "label mid-sentence, unrelated digits later on the same
+     * line," not either bank's specific wording.
+     */
+    @Test
+    void extract_doesNotMatchAnUnrelatedNumberOnTheSameLine_whenProseSeparatesTheLabelFromIt() {
+        var metadata = extractor.extract(List.of(
+                "Please quote your complete card number when calling. For help call 9876543210.")); // synthetic-ok
+
+        assertThat(metadata.accountNumberMasked()).isNull();
+    }
+
+    /**
+     * The positive counterpart to the test above, restated explicitly so the fix can't be
+     * over-tightened into rejecting Kotak's own real shape: a label immediately followed by its
+     * value (only whitespace between them) must still match, even with unrelated text BEFORE the
+     * label on the same line -- this is a restatement of
+     * {@link #extract_recognizesACardNumber_whenUnrelatedTextPrecedesTheLabelOnTheSameLine()},
+     * kept here so both tests are visible together during the F22 fix.
+     */
+    @Test
+    void extract_stillMatchesTheSameLineValue_whenOnlyWhitespaceSeparatesLabelFromValue() {
+        var metadata = extractor.extract(List.of("Primary Card Number XXXX XXXX XXXX 9012"));
+
+        assertThat(metadata.accountNumberMasked()).isEqualTo("XXXX XXXX XXXX 9012");
+    }
+
+    /**
      * The label identifies the field -- not the value's shape. A masked-looking number with no
      * recognized card/account-number label anywhere near it must never be picked up, however
      * identifier-shaped it looks; otherwise this would regress into exactly the "find any
@@ -242,6 +393,121 @@ class PdfMetadataExtractorTest {
         assertThat(metadata.statementPeriodEnd()).isEqualTo(java.time.LocalDate.of(2026, 7, 31));
     }
 
+    // ===== Statement-period recovery (F-item: statement-period extraction gap) =====
+    //
+    // All eight real credit-card statements in the corpus print a statement or billing period;
+    // only one was extracted. Each test below is one measured failure mode. Dates are structural
+    // (the shape is the subject), never a real document's own period.
+
+    /** ICICI shape: a full month NAME. DATE_FORMATS carried only the abbreviated "MMM" form. */
+    @Test
+    void extract_recognizesAStatementPeriod_statedWithFullMonthNames() {
+        var metadata = extractor.extract(List.of("Statement period : June 12, 2026 to July 11, 2026"));
+
+        assertThat(metadata.statementPeriodStart()).isEqualTo(java.time.LocalDate.of(2026, 6, 12));
+        assertThat(metadata.statementPeriodEnd()).isEqualTo(java.time.LocalDate.of(2026, 7, 11));
+    }
+
+    /** SBI shape: a 2-digit year, AND unrelated trailing content sharing the line. Verified as two
+     *  independent gaps -- removing the trailing text alone still failed to parse. */
+    @Test
+    void extract_recognizesAStatementPeriod_withATwoDigitYearAndTrailingContentOnTheLine() {
+        var metadata = extractor.extract(List.of("Statement Period: 11 Jul 26 to 10 Aug 26   Amount"));
+
+        assertThat(metadata.statementPeriodStart()).isEqualTo(java.time.LocalDate.of(2026, 7, 11));
+        assertThat(metadata.statementPeriodEnd()).isEqualTo(java.time.LocalDate.of(2026, 8, 10));
+    }
+
+    /** HDFC shape: the field is labelled "Billing Period", a label the vocabulary never carried. */
+    @Test
+    void extract_recognizesABillingPeriod_asAStatementPeriod() {
+        var metadata = extractor.extract(List.of("Billing Period 15 Jun 2026 to 14 Jul 2026"));
+
+        assertThat(metadata.statementPeriodStart()).isEqualTo(java.time.LocalDate.of(2026, 6, 15));
+        assertThat(metadata.statementPeriodEnd()).isEqualTo(java.time.LocalDate.of(2026, 7, 14));
+    }
+
+    /** HSBC shape: an UPPERCASE month name. "24 JUN 2026" failed where "24 Jun 2026" parsed --
+     *  DateTimeFormatter is case-sensitive by default, and that alone lost the document. */
+    @Test
+    void extract_recognizesAStatementPeriod_withUppercaseMonthNames() {
+        var metadata = extractor.extract(List.of("Statement Period 24 JUN 2026 To 23 JUL 2026"));
+
+        assertThat(metadata.statementPeriodStart()).isEqualTo(java.time.LocalDate.of(2026, 6, 24));
+        assertThat(metadata.statementPeriodEnd()).isEqualTo(java.time.LocalDate.of(2026, 7, 23));
+    }
+
+    /** AU shape: the period is stated inside a sentence, hyphen-separated, and the START DATE
+     *  CARRIES NO YEAR -- so the year must be inferred from the end date. */
+    @Test
+    void extract_recognizesAStatementPeriod_fromAParenthesizedHyphenatedRangeInASentence() {
+        var metadata = extractor.extract(
+                List.of("Statement for your credit card ending with 6385 (19 Mar - 18 Apr 2026)")); // synthetic-ok
+
+        assertThat(metadata.statementPeriodStart()).isEqualTo(java.time.LocalDate.of(2026, 3, 19));
+        assertThat(metadata.statementPeriodEnd()).isEqualTo(java.time.LocalDate.of(2026, 4, 18));
+    }
+
+    /**
+     * The year-inference trap. When only the end date states a year and the range crosses a year
+     * boundary, copying that year onto the start dates it a YEAR LATE. A December-to-January
+     * period must start in the PRECEDING year. A wrong period corrupts an identity signal
+     * silently rather than failing loudly, which is why this case is asserted explicitly.
+     */
+    @Test
+    void extract_infersThePrecedingYear_whenAHyphenatedRangeCrossesAYearBoundary() {
+        var metadata = extractor.extract(
+                List.of("Statement for your credit card ending with 6385 (19 Dec - 18 Jan 2026)")); // synthetic-ok
+
+        assertThat(metadata.statementPeriodStart()).isEqualTo(java.time.LocalDate.of(2025, 12, 19));
+        assertThat(metadata.statementPeriodEnd()).isEqualTo(java.time.LocalDate.of(2026, 1, 18));
+    }
+
+    /** HDFC's REAL shape, as the extractor receives it: a hyphen-separated range that precedes a
+     *  "Billing Period" trailing label. The idealised "Billing Period <range>" fixture above
+     *  passed while the real document still failed -- the label trails its value here. */
+    @Test
+    void extract_recognizesABillingPeriod_whenTheHyphenatedRangePrecedesTheLabel() {
+        var metadata = extractor.extract(List.of("15 Jun, 2026 - 14 Jul, 2026 Billing Period"));
+
+        assertThat(metadata.statementPeriodStart()).isEqualTo(java.time.LocalDate.of(2026, 6, 15));
+        assertThat(metadata.statementPeriodEnd()).isEqualTo(java.time.LocalDate.of(2026, 7, 14));
+    }
+
+    /** SBI's REAL shape: unrelated text precedes the label ("for Statement Period: ..."), which
+     *  labelPattern's start-anchor rejects outright. */
+    @Test
+    void extract_recognizesAStatementPeriod_whenTextPrecedesTheLabelOnTheSameLine() {
+        var metadata = extractor.extract(List.of("for Statement Period: 11 Jul 26 to 10 Aug 26"));
+
+        assertThat(metadata.statementPeriodStart()).isEqualTo(java.time.LocalDate.of(2026, 7, 11));
+        assertThat(metadata.statementPeriodEnd()).isEqualTo(java.time.LocalDate.of(2026, 8, 10));
+    }
+
+    /** The guard on the unanchored form: prose mentioning a period must never become a field.
+     *  Safety comes from requiring a complete date range straight after the label, not from an
+     *  anchor -- so this asserts the prose case stays null. */
+    @Test
+    void extract_doesNotReadAProseMentionOfAPeriod_asAStatementPeriodField() {
+        var metadata = extractor.extract(List.of(
+                "Interest free credit period is up to 50 days from 01 Jun 2026 onwards."));
+
+        assertThat(metadata.statementPeriodStart()).isNull();
+        assertThat(metadata.statementPeriodEnd()).isNull();
+    }
+
+    /** Axis/IndusInd/HSBC shape: the label is a grid header and its value sits on a LATER line,
+     *  so no same-line pattern can reach it. */
+    @Test
+    void extract_recognizesAStatementPeriod_whenTheValueSitsOnALaterLineThanItsGridLabel() {
+        var metadata = extractor.extract(List.of(
+                "Statement Period                    Payment Due Date",
+                "01 Jun 2026 to 30 Jun 2026          20 Jul 2026"));
+
+        assertThat(metadata.statementPeriodStart()).isEqualTo(java.time.LocalDate.of(2026, 6, 1));
+        assertThat(metadata.statementPeriodEnd()).isEqualTo(java.time.LocalDate.of(2026, 6, 30));
+    }
+
     @Test
     void extract_doesNotMisreadATwoColumnSectionHeader_asABranchNameField() {
         // "Branch Address" here is a section header ("Branch Address" | "Statement Details" side
@@ -249,6 +515,91 @@ class PdfMetadataExtractorTest {
         // same statement: the bare "Branch" match used to consume "Address Statement Details" as
         // if it were the branch name.
         var metadata = extractor.extract(List.of("Branch Address Statement Details"));
+
+        assertThat(metadata.branchName()).isNull();
+    }
+
+    @Test
+    void extract_recognizesABranchCodeLabel_withAColon() {
+        // F23: verified against a real CBI statement -- "Branch Code:" isn't recognized as a label
+        // variant at all, so "Code" (and its colon) fell into the captured value instead of being
+        // consumed as part of the label.
+        var metadata = extractor.extract(List.of("Branch Code: 797")); // synthetic-ok
+
+        assertThat(metadata.branchName()).isEqualTo("797");
+    }
+
+    @Test
+    void extract_recognizesABranchCodeLabel_withWideColumnSpacing() {
+        // Verified against real HDFC/SBI statements, whose grid layout puts many spaces before the
+        // colon: "Branch Code          : 4566".
+        var metadata = extractor.extract(List.of("Branch Code          : 4566")); // synthetic-ok
+
+        assertThat(metadata.branchName()).isEqualTo("4566");
+    }
+
+    @Test
+    void extract_doesNotMatchBranch_whenItIsAPrefixOfALongerWord() {
+        // F23: verified against a real Axis Bank credit-card statement -- a boilerplate footer
+        // line ("Branches /Loan Centres (please visit ... to locate the nearest branch /loan
+        // centre)") isn't a "Branch: <value>" field at all. The bare "Branch" label used to match
+        // as a literal prefix of the plural "Branches", capturing the rest of the footer sentence
+        // as if it were the branch name.
+        var metadata = extractor.extract(
+                List.of("Branches /Loan Centres (please visit our website to locate the nearest branch)"));
+
+        assertThat(metadata.branchName()).isNull();
+    }
+
+    @Test
+    void extract_doesNotMatchBranch_whenItIsAPrefixOfAConcatenatedToken() {
+        // Found during a corpus-wide sweep beyond F23's originally-documented cases: a garbled
+        // line from a real Kotak statement ("BRANCHHYDAPIN1234/16:02") has no space or punctuation
+        // separating "BRANCH" from the rest of the token at all -- the same failure family as the
+        // "Branches" false match above, just without a real word boundary to exploit.
+        var metadata = extractor.extract(List.of("BRANCHHYDAPIN1234/16:02")); // synthetic-ok
+
+        assertThat(metadata.branchName()).isNull();
+    }
+
+    @Test
+    void extract_doesNotMisreadABranchDetailsSectionHeader_asABranchNameField() {
+        // F23: verified against a real PNB ONE statement -- "Branch Details" is a bare section
+        // header (no value on the same line), not a genuine "Branch: <name>" field. The header
+        // used to match first and permanently block the real "Branch Name:" value two lines below,
+        // via the branchName == null guard.
+        var metadata = extractor.extract(List.of(
+                "Branch Details",
+                "Customer Details",
+                "Branch Name:  JHANSI,SIPRI BAZAR"));
+
+        assertThat(metadata.branchName()).isEqualTo("JHANSI,SIPRI BAZAR");
+    }
+
+    @Test
+    void extract_doesNotMatchBranch_whenItModifiesADifferentFieldsLabel() {
+        // Found running this fix through the real compiled pipeline (not just the audit's text
+        // replay): a real SBI statement's footer contact block uses "Branch" as a MODIFIER for a
+        // different field -- "Branch Email ID: ... :" and "Branch Phone: ..." -- not the
+        // branch-name field itself. The bare "Branch" label used to match and swallow the rest of
+        // either line as if it were the branch name.
+        var metadata = extractor.extract(List.of(
+                "Branch Email ID example@example.com :",
+                "Branch Phone : 1234567890")); // synthetic-ok
+
+        assertThat(metadata.branchName()).isNull();
+    }
+
+    @Test
+    void extract_doesNotMatchBranch_whenALowercaseOccurrenceStartsAWrappedSentence() {
+        // Found running this fix through the real compiled pipeline: a real Axis Bank statement
+        // wraps one boilerplate sentence across two physical lines, and the second line starts
+        // with the bare word "branch" purely because of where the sentence happened to wrap, not
+        // because it's a label. Every genuine label in this corpus is capitalized; requiring a
+        // literal uppercase "B" rejects this without needing to understand sentence structure.
+        var metadata = extractor.extract(List.of(
+                "Branches /Loan Centres (please visit our website to locate the nearest",
+                "branch /loan centre)"));
 
         assertThat(metadata.branchName()).isNull();
     }
@@ -385,13 +736,75 @@ class PdfMetadataExtractorTest {
 
     @Test
     void extract_doesNotApplyTheLeadingNameLineFallback_beyondTheSearchWindow() {
-        // Five filler lines that each contain a digit (so none of them shape-match
+        // Eight filler lines that each contain a digit (so none of them shape-match
         // LEADING_NAME_LINE themselves -- it requires letters-only words) push the real name to
-        // index 5, past LEADING_NAME_LINE_SEARCH_WINDOW (5, i.e. valid indices 0-4 only).
+        // index 8, past LEADING_NAME_LINE_SEARCH_WINDOW (8, i.e. valid indices 0-7 only).
         var metadata = extractor.extract(List.of(
-                "Line 1", "Line 2", "Line 3", "Line 4", "Line 5", "JOHN DOE"));
+                "Line 1", "Line 2", "Line 3", "Line 4", "Line 5", "Line 6", "Line 7", "Line 8",
+                "JOHN DOE"));
 
         assertThat(metadata.accountHolderName()).isNull();
+    }
+
+    @Test
+    void extract_recognizesAnAccountHolderName_pastTheOldFiveLineWindow_withinTheWidenedWindow() {
+        // Slice B (F20 follow-up): verified against real HDFC statements, whose holder name sits
+        // at index 6 -- past the original 5-line window, but within the widened 8-line one.
+        var metadata = extractor.extract(List.of(
+                "Line 1", "Line 2", "Line 3", "Line 4", "Line 5", "Line 6", "JOHN DOE"));
+
+        assertThat(metadata.accountHolderName()).isEqualTo("JOHN DOE");
+    }
+
+    @Test
+    void extract_doesNotMisreadAGenericServicesBanner_asTheAccountHolderName() {
+        // Slice B: verified against a real SBI credit-card statement -- "VALUE ADDED SERVICES" is
+        // a section banner, not a name, but only became reachable once the window widened to 8.
+        var metadata = extractor.extract(List.of(
+                "Line 1", "Line 2", "Line 3", "Line 4", "Line 5", "Line 6",
+                "VALUE ADDED SERVICES"));
+
+        assertThat(metadata.accountHolderName()).isNull();
+    }
+
+    @Test
+    void extract_doesNotMisreadAnInterestAccruedLine_asTheAccountHolderName() {
+        // Pre-existing bug, found by the same real-corpus sweep that validated Slice B: a real
+        // Shivani_HDFC recurring-deposit section has "Interest Accrued" as a leading line in one
+        // of its sections, already reachable within the ORIGINAL 5-line window -- unrelated to the
+        // window widening itself.
+        var metadata = extractor.extract(List.of("Interest Accrued", "Some other line"));
+
+        assertThat(metadata.accountHolderName()).isNull();
+    }
+
+    @Test
+    void extract_doesNotMisreadAnAddressContinuationLine_asTheAccountHolderName() {
+        // Bug fix: verified against three real HDFC savings statements. A postal address wraps
+        // across unlabeled continuation lines after "Address :", and a place name on one of those
+        // lines ("Bhandarkar Road", genericized here) shape-matches LEADING_NAME_LINE exactly as
+        // well as a real name -- 2-4 capitalized words, no digits, no punctuation. Without this
+        // guard, the address fragment was captured as the account holder and the real name (further
+        // down the document) was silently blocked by the accountHolderName == null guard.
+        var metadata = extractor.extract(List.of(
+                "Address : Ground Floor, Some Building",
+                "Bhandarkar Road"));
+
+        assertThat(metadata.accountHolderName()).isNull();
+    }
+
+    @Test
+    void extract_resumesLeadingNameLineMatching_onceTheAddressBlockEndsAtAColonBearingLine() {
+        // The continuation guard must not swallow a genuine name that happens to sit right after
+        // the address block ends -- "City :" (or any colon-bearing line) is corpus-observed to
+        // always close the run in this shape.
+        var metadata = extractor.extract(List.of(
+                "Address : Ground Floor, Some Building",
+                "Bhandarkar Road",
+                "City : Pune 411004",
+                "JOHN DOE"));
+
+        assertThat(metadata.accountHolderName()).isEqualTo("JOHN DOE");
     }
 
     @Test
@@ -670,5 +1083,129 @@ class PdfMetadataExtractorTest {
         // affected by the scrambled Credit Limit columns, since GRID_DUE_DATE_LABEL's own label
         // ("DUE DATE") and its value ("09 Aug, 2026") both sit within one ordinary window-scan.
         assertThat(metadata.paymentDueDate()).isEqualTo(java.time.LocalDate.of(2026, 8, 9));
+    }
+
+    /**
+     * PNB never labels its account number "Account Number" at all -- it states the number inline
+     * in a "Statement of Account:&lt;number&gt; For Period: ..." line (verified against a real PNB
+     * savings statement; see {@code pnb-savings-ledger-validation.trace}, genericized here per the
+     * Synthetic Fixture Policy). Neither {@code ACCOUNT_NUMBER} nor
+     * {@code ACCOUNT_NUMBER_TRAILING_LABEL} recognize this shape, which is why account number
+     * extraction previously fell through to null for every PNB statement -- and, downstream, why
+     * ProductIdentityResolver could never match a later PNB re-import to the same account (it had
+     * neither a full nor a masked number to build a strong key from).
+     */
+    @Test
+    void extract_recognizesAPnbAccountNumber_fromTheStatementOfAccountLine() {
+        var metadata = extractor.extract(List.of(
+                "Statement of Account:12345678901234 For Period: 01/01/2026 to 31/01/2026")); // synthetic-ok
+
+        assertThat(metadata.accountNumberMasked()).isEqualTo("••••1234");
+        assertThat(metadata.accountNumberFullForHashingOnly()).isEqualTo("12345678901234"); // synthetic-ok
+    }
+
+    @Test
+    void extract_recognizesAPnbAccountNumber_toleratingExtraWhitespaceAroundTheColon() {
+        var metadata = extractor.extract(List.of(
+                "Statement of Account : 12345678901234 For Period :")); // synthetic-ok
+
+        assertThat(metadata.accountNumberMasked()).isEqualTo("••••1234");
+        assertThat(metadata.accountNumberFullForHashingOnly()).isEqualTo("12345678901234"); // synthetic-ok
+    }
+
+    /**
+     * PDF text extraction often introduces unexpected line breaks -- the label and its value can
+     * land on separate lines entirely, the same genuine multi-line-grid shape
+     * {@code findGridValue}'s other callers already handle for their own labels.
+     */
+    @Test
+    void extract_recognizesAPnbAccountNumber_whenTheLabelAndValueAreSplitAcrossLines() {
+        var metadata = extractor.extract(List.of(
+                "Statement of Account:",
+                "12345678901234", // synthetic-ok
+                "For Period:"));
+
+        assertThat(metadata.accountNumberMasked()).isEqualTo("••••1234");
+        assertThat(metadata.accountNumberFullForHashingOnly()).isEqualTo("12345678901234"); // synthetic-ok
+    }
+
+    /**
+     * A real canara statement's own account-number field never says "Account"/"Account Number" at
+     * all -- it states the number inline as "Statement for A/c &lt;value&gt; for the period ...",
+     * using the common Indian-banking shorthand "A/c" for "account". Unlike PNB's shape above, the
+     * value canara prints is already masked at the source, not a plain digit run -- verified
+     * against a real canara statement, genericized here per the Synthetic Fixture Policy.
+     */
+    @Test
+    void extract_recognizesACanaraAccountNumber_fromTheAcLine() {
+        var metadata = extractor.extract(List.of(
+                "Statement for A/c XXXXXXXXX1234 for the period 01-Jul-2026 to 31-Jul-2026")); // synthetic-ok
+
+        assertThat(metadata.accountNumberMasked()).isEqualTo("XXXXXXXXX1234");
+    }
+
+    @Test
+    void extract_recognizesACanaraAccountNumber_toleratingAColonAfterAc() {
+        var metadata = extractor.extract(List.of("A/c: XXXXXXXXX5678 for the period")); // synthetic-ok
+
+        assertThat(metadata.accountNumberMasked()).isEqualTo("XXXXXXXXX5678");
+    }
+
+    /**
+     * The same digit-count/trailing-digit floor every other card/account-number match already
+     * applies (looksLikeCardOrAccountNumber) -- a short, non-identifying token after "A/c" (e.g. a
+     * page or note reference) must not be picked up just because it happens to look mask-shaped.
+     */
+    @Test
+    void extract_doesNotMatchATooShortTokenAfterAc() {
+        var metadata = extractor.extract(List.of("A/c 12 opened on request")); // synthetic-ok
+
+        assertThat(metadata.accountNumberMasked()).isNull();
+    }
+
+    /**
+     * labelPattern's mid-line branch (added for the lineOf X-ordering fix, 2026-08-29 -- see
+     * PdfTableLocator.lineOf's own doc comment) lets a label appear after other chain-merged
+     * content on the same physical row, not only at the line's own start. Modeled on the real HDFC
+     * shape that motivated it (an address fragment sitting genuinely further left on the page than
+     * "Account No :", so a correctly x-ordered join puts it first on the line) -- genericized per
+     * the Synthetic Fixture Policy, no value from any real document appears here.
+     */
+    @Test
+    void extract_recognizesAnAccountNumber_afterAChainMergedLeftwardNeighborOnTheSameLine() {
+        var metadata = extractor.extract(List.of(
+                "SOME CITY STATE Account No : 111122223333444 SOME PLAN NAME")); // synthetic-ok
+
+        assertThat(metadata.accountNumberMasked()).endsWith("3444");
+    }
+
+    /**
+     * A chain-merged row can legitimately hold TWO label:value pairs back to back (modeled on a
+     * real IFSC-then-MICR letterhead shape, genericized per the Synthetic Fixture Policy -- no
+     * value from any real document appears here). The captured value must stop before the second
+     * pair's own "label :" rather than swallowing it whole -- see labelPattern's own doc comment
+     * for why the capture is non-greedy with a lookahead boundary, not just greedy to end of line.
+     */
+    @Test
+    void extract_stopsTheCapturedValueBeforeASecondChainMergedLabelOnTheSameLine() {
+        var metadata = extractor.extract(List.of("IFSC Code : ABCD0XXXXXX MICR : 888877776")); // synthetic-ok
+
+        assertThat(metadata.ifscCode()).isEqualTo("ABCD0XXXXXX");
+    }
+
+    /**
+     * ACCOUNT_HOLDER's bare "Name" alternative is deliberately excluded from labelPattern's
+     * mid-line branch (unlike its other alternatives, "Account Holder"/"Customer Name") because
+     * "Name" is a generic single word that is a substring of many unrelated compound labels.
+     * Modeled on a real HSBC shape ("Branch Name : <branch>", chain-merged onto its own row --
+     * genericized per the Synthetic Fixture Policy, no value from any real document appears here):
+     * without the exclusion, the branch value would be stolen as the account holder's name instead.
+     */
+    @Test
+    void extract_doesNotStealABranchNameValueAsTheAccountHolder_whenChainMergedOnOneLine() {
+        var metadata = extractor.extract(List.of("Branch Name : SOME TOWN BRANCH")); // synthetic-ok
+
+        assertThat(metadata.accountHolderName()).isNull();
+        assertThat(metadata.branchName()).isEqualTo("SOME TOWN BRANCH");
     }
 }

@@ -107,11 +107,41 @@ public class ImportDto {
              * the category came directly from the source file ({@code categorySource == "file"}),
              * which is a fact, not a guess.
              */
-            Integer categoryConfidence
+            Integer categoryConfidence,
+            /**
+             * This row's 1-based position within its section (page range for PDF, or line range
+             * for CSV) as originally parsed -- Founder Operations Dashboard, Import Explorer
+             * (docs/proposals/reconciliation-evolution-roadmap-proposal.md Part 9). Null for
+             * every caller that predates it, and for {@code GmailStagingBridge} (a receipt has no
+             * "row position" the way a statement line does). Set once, at the staging loop
+             * ({@code PreviewGenerator}/{@code PdfPreviewGenerator}) via {@link #withRowPosition}
+             * -- never by {@code TransactionNormalizer.normalize} itself, which has no visibility
+             * into where in the file the row it was handed came from.
+             */
+            Integer rowPosition
     ) {
+        /** The shape every caller used before {@code rowPosition} was added. Defaults null -- see
+         *  that field's own doc comment. */
+        public StagedRow(LocalDate date, String description, BigDecimal amount, String type,
+                          String suggestedCategory, String categorySource, UUID ruleId,
+                          boolean likelyDuplicate, String referenceNumber, BigDecimal balanceAfter,
+                          DuplicateMatch duplicateMatch, RowKind kind, Double confidence,
+                          String merchant, Double merchantConfidence, Integer categoryConfidence) {
+            this(date, description, amount, type, suggestedCategory, categorySource, ruleId,
+                    likelyDuplicate, referenceNumber, balanceAfter, duplicateMatch, kind, confidence,
+                    merchant, merchantConfidence, categoryConfidence, null);
+        }
+
+        /** A copy with {@code rowPosition} set -- see that field's own doc comment. */
+        public StagedRow withRowPosition(int rowPosition) {
+            return new StagedRow(date, description, amount, type, suggestedCategory, categorySource, ruleId,
+                    likelyDuplicate, referenceNumber, balanceAfter, duplicateMatch, kind, confidence,
+                    merchant, merchantConfidence, categoryConfidence, rowPosition);
+        }
+
         /** Pre-categoryConfidence arity (Transaction Intelligence Phase B). Kept so every existing
          *  construction of this 15-component shape -- production and test -- keeps compiling
-         *  unchanged. Defaults categoryConfidence to null. */
+         *  unchanged. Defaults categoryConfidence and rowPosition to null. */
         public StagedRow(LocalDate date, String description, BigDecimal amount, String type,
                           String suggestedCategory, String categorySource, UUID ruleId,
                           boolean likelyDuplicate, String referenceNumber, BigDecimal balanceAfter,
@@ -119,7 +149,7 @@ public class ImportDto {
                           String merchant, Double merchantConfidence) {
             this(date, description, amount, type, suggestedCategory, categorySource, ruleId,
                     likelyDuplicate, referenceNumber, balanceAfter, duplicateMatch, kind, confidence,
-                    merchant, merchantConfidence, null);
+                    merchant, merchantConfidence, null, null);
         }
 
         /**
@@ -449,12 +479,29 @@ public class ImportDto {
             BigDecimal statementOpeningBalance, BigDecimal statementClosingBalance,
             // Same round-trip, and same bug fix, as ConfirmRequest's own two trailing fields --
             // see that record's doc comment.
-            LocalDate statementPeriodStart, LocalDate statementPeriodEnd
+            LocalDate statementPeriodStart, LocalDate statementPeriodEnd,
+            // Same round-trip as ConfirmRequest's own trailing fields -- see that record's doc
+            // comment.
+            BigDecimal totalAmountDue, LocalDate paymentDueDate,
+            // Same round-trip as ConfirmRequest's own userConfirmedContinue -- see that record's
+            // doc comment.
+            Boolean userConfirmedContinue
     ) {
         /** Pre-existing arity -- see ConfirmRequest's own legacy constructor for why. */
         public SectionConfirm(List<ConfirmedRow> rows, UUID existingAccountId, NewAccountRequest newAccount,
                                BigDecimal statementOpeningBalance, BigDecimal statementClosingBalance) {
-            this(rows, existingAccountId, newAccount, statementOpeningBalance, statementClosingBalance, null, null);
+            this(rows, existingAccountId, newAccount, statementOpeningBalance, statementClosingBalance,
+                    null, null, null, null, null);
+        }
+
+        /** Same arity as the pre-existing credit-card-fields constructor -- see ConfirmRequest's
+         *  own equivalent for why. */
+        public SectionConfirm(List<ConfirmedRow> rows, UUID existingAccountId, NewAccountRequest newAccount,
+                               BigDecimal statementOpeningBalance, BigDecimal statementClosingBalance,
+                               LocalDate statementPeriodStart, LocalDate statementPeriodEnd,
+                               BigDecimal totalAmountDue, LocalDate paymentDueDate) {
+            this(rows, existingAccountId, newAccount, statementOpeningBalance, statementClosingBalance,
+                    statementPeriodStart, statementPeriodEnd, totalAmountDue, paymentDueDate, null);
         }
     }
 
@@ -580,7 +627,18 @@ public class ImportDto {
             // no longer does that; a null here is stored as null, genuinely meaning "no period was
             // ever printed" rather than a guess reconstructed from the confirmed rows. See
             // persistSection's own comment.
-            LocalDate statementPeriodStart, LocalDate statementPeriodEnd
+            LocalDate statementPeriodStart, LocalDate statementPeriodEnd,
+            // Same round-trip as statementPeriodStart/End, and the same reason: echoed from
+            // DetectedAccountInfo.totalAmountDue/paymentDueDate as staged, not re-derived.
+            // credit-card-statement-entity-design.md -- both null for a CSV import or any
+            // non-credit-card statement, same as on DetectedAccountInfo itself.
+            BigDecimal totalAmountDue, LocalDate paymentDueDate,
+            // docs/proposals/account-ownership-intelligence-proposal.md §3.1/§3.2. Whether the user
+            // clicked "Continue Import" after the client-side ownership warning fired. Null on
+            // every call site that never showed the warning (name matched, no holder extracted, or
+            // an older client that predates this field) -- persistSection stores null as null,
+            // genuinely meaning "there was nothing to confirm past", not "unknown".
+            Boolean userConfirmedContinue
     ) {
         /** Pre-existing arity. Kept so the many call sites that construct a request with no printed
          *  statement period to echo -- reimport's internal re-scoping, tests, Gmail's receipt-derived
@@ -591,7 +649,29 @@ public class ImportDto {
                                NewAccountRequest newAccount, BigDecimal statementOpeningBalance,
                                BigDecimal statementClosingBalance, String password) {
             this(sessionId, rows, existingAccountId, newAccount, statementOpeningBalance,
-                    statementClosingBalance, password, null, null);
+                    statementClosingBalance, password, null, null, null, null, null);
+        }
+
+        /** Same arity as the pre-existing period-echoing constructor above, for call sites that
+         *  echo the printed period but predate the credit-card fields. */
+        public ConfirmRequest(UUID sessionId, List<ConfirmedRow> rows, UUID existingAccountId,
+                               NewAccountRequest newAccount, BigDecimal statementOpeningBalance,
+                               BigDecimal statementClosingBalance, String password,
+                               LocalDate statementPeriodStart, LocalDate statementPeriodEnd) {
+            this(sessionId, rows, existingAccountId, newAccount, statementOpeningBalance,
+                    statementClosingBalance, password, statementPeriodStart, statementPeriodEnd, null, null, null);
+        }
+
+        /** Same arity as the pre-existing credit-card-fields constructor above, for call sites that
+         *  echo those but predate the ownership-warning field. */
+        public ConfirmRequest(UUID sessionId, List<ConfirmedRow> rows, UUID existingAccountId,
+                               NewAccountRequest newAccount, BigDecimal statementOpeningBalance,
+                               BigDecimal statementClosingBalance, String password,
+                               LocalDate statementPeriodStart, LocalDate statementPeriodEnd,
+                               BigDecimal totalAmountDue, LocalDate paymentDueDate) {
+            this(sessionId, rows, existingAccountId, newAccount, statementOpeningBalance,
+                    statementClosingBalance, password, statementPeriodStart, statementPeriodEnd,
+                    totalAmountDue, paymentDueDate, null);
         }
     }
 
@@ -671,15 +751,31 @@ public class ImportDto {
             /** Echoed from {@code StagedRow.categoryConfidence} unchanged by review -- see that
              *  field's own doc comment. Lands on {@code Transaction.decisionConfidence} at confirm
              *  time. */
-            Integer categoryConfidence
+            Integer categoryConfidence,
+            /** Echoed from {@code StagedRow.rowPosition} unchanged by review -- see that field's
+             *  own doc comment. Lands on {@code Transaction.sourceRowPosition} at confirm time
+             *  when {@code include} is true; recorded as an excluded-by-user outcome otherwise.
+             *  Null for a client that predates this field, same as every other "carried from
+             *  staging" field above when an older client omits it -- the Import Explorer just has
+             *  nothing to show for that row instead of a wrong answer. */
+            Integer rowPosition
     ) {
+        /** Pre-rowPosition arity (Founder Operations Dashboard, Import Explorer). */
+        public ConfirmedRow(LocalDate date, String description, BigDecimal amount, String type,
+                            String category, boolean include, String categorySource, UUID ruleId,
+                            boolean likelyDuplicate, String referenceNumber, BigDecimal balanceAfter,
+                            boolean confirmedNotDuplicate, Integer categoryConfidence) {
+            this(date, description, amount, type, category, include, categorySource, ruleId,
+                    likelyDuplicate, referenceNumber, balanceAfter, confirmedNotDuplicate, categoryConfidence, null);
+        }
+
         /** Pre-categoryConfidence arity (Transaction Intelligence Phase B). */
         public ConfirmedRow(LocalDate date, String description, BigDecimal amount, String type,
                             String category, boolean include, String categorySource, UUID ruleId,
                             boolean likelyDuplicate, String referenceNumber, BigDecimal balanceAfter,
                             boolean confirmedNotDuplicate) {
             this(date, description, amount, type, category, include, categorySource, ruleId,
-                    likelyDuplicate, referenceNumber, balanceAfter, confirmedNotDuplicate, null);
+                    likelyDuplicate, referenceNumber, balanceAfter, confirmedNotDuplicate, null, null);
         }
 
         /** Pre-WI5 arity. Kept so the many call sites that construct a row without a duplicate
@@ -723,6 +819,43 @@ public class ImportDto {
             LocalDate statementPeriodStart,
             LocalDate statementPeriodEnd,
             long importDurationMs,
-            String source
-    ) {}
+            String source,
+            // The statement THIS confirm just created -- absent from this response since it was
+            // first written; added for Phase 4 (statement-continuity-and-coverage-integrity-
+            // proposal.md §0.3) because "Import this one as a replacement?" has to name the
+            // replacement statement when calling POST /{originalId}/supersede, and nothing else in
+            // this response identified it.
+            UUID statementImportId,
+            // Non-null only when this statement's own confirm produced an exact-duplicate-period
+            // overlap against an existing statement (see CoverageWarnings.duplicateOfStatementId,
+            // the same computation warnings' duplicate-period sentence is built from) -- the
+            // ORIGINAL statement's id, i.e. what "Import this one as a replacement?" would supersede.
+            UUID duplicateOfStatementId
+    ) {
+        /** Reconstructs this response with a different {@code warnings} list, every other field
+         *  unchanged -- used by {@code StatementImportService.confirmReimport} to drop a
+         *  duplicate-period notice generated against the very statement the reimport corrects,
+         *  without needing to thread a "this confirm is a reimport of X" signal through
+         *  ImportService's whole confirm/persistSection/summarise call graph for one call site. */
+        public ConfirmResponse withWarnings(List<String> warnings) {
+            return new ConfirmResponse(imported, skipped, duplicatesDetected, transfersIdentified,
+                    newMerchantsLearned, accountsCreated, productsCreated, categoriesAssigned, warnings,
+                    account, totalCredits, totalDebits, statementOpeningBalance, statementClosingBalance,
+                    statementPeriodStart, statementPeriodEnd, importDurationMs, source,
+                    statementImportId, duplicateOfStatementId);
+        }
+
+        /** Like {@link #withWarnings}, but also replaces {@code duplicateOfStatementId} -- used by
+         *  the same {@code confirmReimport} caller, for the same reason: a reimport-confirm's
+         *  duplicate-period warning names the statement being reimported, which is not a real
+         *  duplicate to offer a replace action against, so both the prose and the id it would drive
+         *  need to be cleared together. */
+        public ConfirmResponse withWarningsAndDuplicateOfStatementId(List<String> warnings, UUID duplicateOfStatementId) {
+            return new ConfirmResponse(imported, skipped, duplicatesDetected, transfersIdentified,
+                    newMerchantsLearned, accountsCreated, productsCreated, categoriesAssigned, warnings,
+                    account, totalCredits, totalDebits, statementOpeningBalance, statementClosingBalance,
+                    statementPeriodStart, statementPeriodEnd, importDurationMs, source,
+                    statementImportId, duplicateOfStatementId);
+        }
+    }
 }

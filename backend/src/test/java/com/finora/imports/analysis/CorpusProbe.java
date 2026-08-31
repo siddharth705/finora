@@ -1,5 +1,7 @@
 package com.finora.imports.analysis;
 
+import com.finora.imports.TestAccountRepositories;
+
 import com.finora.imports.*;
 import com.finora.dto.ImportDto.StagedAccountSection;
 import com.finora.imports.pdf.*;
@@ -195,8 +197,8 @@ public final class CorpusProbe {
         when(categorization.suggestReadOnly(any(), any(), any(), any(), any(), any()))
                 .thenReturn(suggestion);
         TransactionRepository transactions = mock(TransactionRepository.class);
-        when(transactions.findPotentialDuplicatesByUser(any(), any(), any(), any())).thenReturn(List.of());
-        return new TransactionNormalizer(categorization, new DuplicateDetector(transactions),
+        when(transactions.findPotentialDuplicatesByUserAndAccountIdIn(any(), any(), any(), any(), any())).thenReturn(List.of());
+        return new TransactionNormalizer(categorization, new DuplicateDetector(transactions, TestAccountRepositories.anyLive()),
                 TestRuleEngines.empty());
     }
 

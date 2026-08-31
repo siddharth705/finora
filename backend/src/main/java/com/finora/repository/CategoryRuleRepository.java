@@ -1,6 +1,8 @@
 package com.finora.repository;
 
 import com.finora.entity.CategoryRule;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -23,10 +25,16 @@ public interface CategoryRuleRepository extends JpaRepository<CategoryRule, UUID
     // just not evaluated).
     List<CategoryRule> findByUserIdOrScopeOrderByPriorityAsc(UUID userId, CategoryRule.Scope scope);
 
-    // Backs the admin Global Rules page (AdminRuleController) -- every GLOBAL rule regardless of
-    // enabled state, same "management view sees everything, evaluation view sees enabled-only"
-    // split findByScopeAndEnabledTrueOrderByPriorityAsc above already establishes.
+    // Used by AdminSearchService, which needs the FULL global-rule set to search across -- not
+    // paginated, unlike the admin Global Rules page's own overload just below.
     List<CategoryRule> findByScopeOrderByPriorityAsc(CategoryRule.Scope scope);
+
+    // Backs the admin Global Rules page (AdminRuleController), paginated -- every GLOBAL rule
+    // regardless of enabled state, same "management view sees everything, evaluation view sees
+    // enabled-only" split findByScopeAndEnabledTrueOrderByPriorityAsc above already establishes.
+    // A Pageable overload of the same derived query just above -- Spring Data lets both coexist,
+    // so AdminSearchService keeps its full unpaged list while this page gets real pagination.
+    Page<CategoryRule> findByScopeOrderByPriorityAsc(CategoryRule.Scope scope, Pageable pageable);
 
     /**
      * Financial Intelligence Workspace, Rule Management module -- bulk UPDATE rather than
@@ -50,4 +58,13 @@ public interface CategoryRuleRepository extends JpaRepository<CategoryRule, UUID
      *  the same guarantee deleteByUserId above already relies on: scope='GLOBAL' rows always have
      *  user_id IS NULL, so this can never pull in a shared rule that isn't the caller's own. */
     List<CategoryRule> findByUserId(UUID userId);
+
+    /** Custom-category rename/delete cascade -- every USER-scope ASSIGN_CATEGORY/MARK_INVESTMENT
+     *  rule whose action_value still names the category being renamed or deleted, so it can be
+     *  rewritten in lockstep. GLOBAL rules are never matched here (this repo's scope='USER' rows
+     *  never include a GLOBAL row -- see this interface's other USER-scoped methods for the same
+     *  invariant), which is correct: global rules only ever reference immutable system category
+     *  names, so they never need this cascade. */
+    List<CategoryRule> findByUserIdAndActionTypeInAndActionValueIgnoreCase(
+            UUID userId, List<CategoryRule.ActionType> actionTypes, String actionValue);
 }

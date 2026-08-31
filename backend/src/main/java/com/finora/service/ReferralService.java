@@ -1,5 +1,6 @@
 package com.finora.service;
 
+import com.finora.dto.PagedResponse;
 import com.finora.dto.ReferralDtos.AdminReferralSummaryDto;
 import com.finora.dto.ReferralDtos.MyReferralDto;
 import com.finora.dto.ReferralDtos.MyReferralsDto;
@@ -13,8 +14,11 @@ import com.finora.repository.ReferralRepository;
 import com.finora.repository.RefreshTokenRepository;
 import com.finora.repository.UserRepository;
 import com.finora.repository.WalletLedgerRepository;
+import com.finora.util.PageBounds;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -166,15 +170,21 @@ public class ReferralService {
         return new MyReferralsDto(dtos, balance);
     }
 
+    /** Admin Portal, Referral dashboard. Was an unconditional {@code findAll()} across the whole
+     *  table -- referral volume grows with the user base (every registration through a code adds
+     *  a row), same reasoning {@code SubscriptionService.listAll}'s own doc comment gives for the
+     *  identical fix there. The user batch-fetch below is already scoped to just this page's
+     *  referrer/referred ids, not the whole table. */
     @Transactional(readOnly = true)
-    public List<AdminReferralSummaryDto> listAll() {
-        var referrals = referralRepository.findAllByOrderByCreatedAtDesc();
+    public PagedResponse<AdminReferralSummaryDto> listAll(int page, int size) {
+        Page<Referral> referrals = referralRepository.findAllByOrderByCreatedAtDesc(
+                PageRequest.of(PageBounds.safePage(page), PageBounds.safeSize(size)));
         Set<UUID> userIds = new HashSet<>();
         referrals.forEach(r -> { userIds.add(r.getReferrerUserId()); userIds.add(r.getReferredUserId()); });
         Map<UUID, User> usersById = userRepository.findAllById(userIds).stream()
                 .collect(Collectors.toMap(User::getId, u -> u));
 
-        return referrals.stream().map(r -> {
+        return PagedResponse.of(referrals.map(r -> {
             User referrer = usersById.get(r.getReferrerUserId());
             User referred = usersById.get(r.getReferredUserId());
             return new AdminReferralSummaryDto(
@@ -182,7 +192,7 @@ public class ReferralService {
                     r.getReferrerUserId(), referrer != null ? referrer.getEmail() : null, referrer != null ? referrer.getFullName() : null,
                     r.getReferredUserId(), referred != null ? referred.getEmail() : null, referred != null ? referred.getFullName() : null,
                     r.getStatus(), r.getReward(), r.getCreatedAt());
-        }).toList();
+        }));
     }
 
     /**

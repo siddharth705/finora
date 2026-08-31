@@ -1,11 +1,13 @@
 package com.finora.accounts;
 
 import com.finora.entity.Account;
+import com.finora.entity.Transaction;
 import com.finora.repository.AccountRepository;
 import com.finora.repository.StatementImportRepository;
 import com.finora.repository.TransactionRepository;
 import com.finora.service.AuditService;
 import com.finora.service.BankManagementService;
+import com.finora.service.TransactionGraphService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -35,6 +37,7 @@ class AccountServiceTest {
     private StatementImportRepository statementImportRepository;
     private TransactionRepository transactionRepository;
     private AuditService auditService;
+    private TransactionGraphService transactionGraphService;
     private AccountService accountService;
     private final UUID userId = UUID.randomUUID();
     private final UUID accountId = UUID.randomUUID();
@@ -50,6 +53,10 @@ class AccountServiceTest {
         // would NPE inside listForUser's Collectors.toMap(...) -- every test that reaches
         // listForUser needs this stubbed, so it's set here rather than repeated per-test.
         when(transactionRepository.countByAccountForUser(any())).thenReturn(List.of());
+        // Default: no transactions on the account being deleted, unless a test overrides this --
+        // same null-vs-empty-List reasoning as countByAccountForUser above, this time for
+        // delete()'s own graph-edge-rejection lookup.
+        when(transactionRepository.findByUserIdAndAccountIdIn(any(), any())).thenReturn(List.of());
         // bankManagementService.resolve(...) is what listForUser/create/update use to attach each
         // account's BankDto -- stubbed to fall back through to the real static registry (the same
         // resolution BankManagementService.resolve() itself does for a non-custom bankId) so
@@ -60,8 +67,9 @@ class AccountServiceTest {
                 AccountDto.BankDto.from(com.finora.util.BankRegistry.get(invocation.getArgument(0))));
 
         auditService = mock(AuditService.class);
+        transactionGraphService = mock(TransactionGraphService.class);
         accountService = new AccountService(accountRepository, statementImportRepository,
-                transactionRepository, auditService, bankManagementService);
+                transactionRepository, auditService, bankManagementService, transactionGraphService);
     }
 
     private Account existingAccount() {
@@ -108,6 +116,41 @@ class AccountServiceTest {
         AccountDto result = accountService.update(userId, accountId, balanceEdit, actingAdminId);
 
         assertThat(result.balance()).isEqualByComparingTo(BigDecimal.valueOf(20000));
+    }
+
+    // Bug fix: a manual balance edit is a fresh, fully-trusted baseline -- any statement's claim
+    // to being this account's live absolute-SET anchor must be invalidated by it, the same way a
+    // later ABSOLUTE-mode statement confirm invalidates an earlier one (see the "absolute balance
+    // reversal" design spec's Case D / product-decision note).
+    @Test
+    void update_withANewBalance_clearsTheAbsoluteSetPointer() {
+        Account existing = existingAccount();
+        existing.setLastAbsoluteSetStatementId(UUID.randomUUID());
+        when(accountRepository.findById(accountId)).thenReturn(java.util.Optional.of(existing));
+        when(accountRepository.save(any(Account.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        AccountDto.CreateRequest balanceEdit = new AccountDto.CreateRequest(
+                "Punjab National Bank", "SAVINGS", BigDecimal.valueOf(20000), null, null, null, null, null, null, null, null);
+
+        accountService.update(userId, accountId, balanceEdit, actingAdminId);
+
+        assertThat(existing.getLastAbsoluteSetStatementId()).isNull();
+    }
+
+    @Test
+    void update_withNoBalanceInRequest_leavesTheAbsoluteSetPointerUntouched() {
+        Account existing = existingAccount();
+        UUID existingPointer = UUID.randomUUID();
+        existing.setLastAbsoluteSetStatementId(existingPointer);
+        when(accountRepository.findById(accountId)).thenReturn(java.util.Optional.of(existing));
+        when(accountRepository.save(any(Account.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        AccountDto.CreateRequest renameOnly = new AccountDto.CreateRequest(
+                "Salary Account", "SAVINGS", null, null, null, null, null, null, null, null, null);
+
+        accountService.update(userId, accountId, renameOnly, actingAdminId);
+
+        assertThat(existing.getLastAbsoluteSetStatementId()).isEqualTo(existingPointer);
     }
 
     @Test
@@ -296,5 +339,39 @@ class AccountServiceTest {
 
         verify(auditService).record(eq(userId), eq("ACCOUNT_DELETED"), eq("Account"), eq(accountId),
                 argThat(metadata -> actingAdminId.toString().equals(metadata.get("actorId"))));
+    }
+
+    // Bug fix (dug up alongside the audit-metadata gap above): a graph edge from ANY reconciliation
+    // pass -- TRANSFER, REFUND, CC_PAYMENT -- can reference this account's transactions from the
+    // OTHER side. This account's own transactions deliberately keep deleted_at unset (see
+    // ReconciliationService's own "deleted-account leak" comments), so those edges would otherwise
+    // stay live forever, excluding real, currently-visible money from cash flow to "net against"
+    // spend the user can no longer see. delete() now rejects them at the moment of deletion.
+    @Test
+    void delete_rejectsGraphEdges_touchingTheDeletedAccountsTransactions() {
+        when(accountRepository.findById(accountId)).thenReturn(java.util.Optional.of(existingAccount()));
+        UUID txnId1 = UUID.randomUUID();
+        UUID txnId2 = UUID.randomUUID();
+        Transaction t1 = new Transaction();
+        ReflectionTestUtils.setField(t1, "id", txnId1);
+        Transaction t2 = new Transaction();
+        ReflectionTestUtils.setField(t2, "id", txnId2);
+        when(transactionRepository.findByUserIdAndAccountIdIn(userId, List.of(accountId)))
+                .thenReturn(List.of(t1, t2));
+
+        accountService.delete(userId, accountId, actingAdminId);
+
+        verify(transactionGraphService).rejectEdgesTouchingTransactions(List.of(txnId1, txnId2));
+    }
+
+    @Test
+    void delete_recordsHowManyGraphEdgesWereRejected() {
+        when(accountRepository.findById(accountId)).thenReturn(java.util.Optional.of(existingAccount()));
+        when(transactionGraphService.rejectEdgesTouchingTransactions(any())).thenReturn(3);
+
+        accountService.delete(userId, accountId, actingAdminId);
+
+        verify(auditService).record(eq(userId), eq("ACCOUNT_DELETED"), eq("Account"), eq(accountId),
+                argThat(metadata -> Integer.valueOf(3).equals(metadata.get("graphEdgesRejected"))));
     }
 }
