@@ -166,9 +166,11 @@ public final class CreditCardSummaryExtractor {
 
         // Same gate StatementSummaryExtractor applies, for the same reason: a document that never
         // prints "Total Amount Due" anywhere has no billing-summary panel for either strategy to
-        // misread a transaction table's own header as.
-        boolean documentHasATotalDue = runs.stream()
-                .anyMatch(t -> matches(stripDecoration(StatementSummaryExtractor.normalize(t.text())), TOTAL_DUE_LABELS));
+        // misread a transaction table's own header as. Uses joinedLabelsOnSameRow rather than a
+        // single-run check so a label split across adjacent runs (see trySameRow) is not rejected
+        // here before either strategy gets a chance to read it.
+        boolean documentHasATotalDue = joinedLabelsOnSameRow(runs).stream()
+                .anyMatch(l -> "totalAmountDue".equals(l.key()));
         if (!documentHasATotalDue) return CreditCardSummaryEvidence.NONE;
 
         // Both strategies always run, deliberately never short-circuited on the first to find
@@ -377,10 +379,7 @@ public final class CreditCardSummaryExtractor {
     private static CreditCardSummaryEvidence trySameRow(List<PositionedText> runs) {
         Map<Integer, Map<String, List<PositionedText>>> resolvedByPageAndKey = new TreeMap<>();
 
-        for (PositionedText label : runs) {
-            String key = keyFor(StatementSummaryExtractor.normalize(label.text()));
-            if (key == null) continue;
-
+        for (JoinedLabel label : joinedLabelsOnSameRow(runs)) {
             List<PositionedText> candidates = runs.stream()
                     .filter(t -> t.pageIndex() == label.pageIndex())
                     .filter(t -> t.x() > label.endX())
@@ -392,13 +391,68 @@ public final class CreditCardSummaryExtractor {
 
             if (candidates.size() == 1) {
                 resolvedByPageAndKey.computeIfAbsent(label.pageIndex(), p -> new LinkedHashMap<>())
-                        .computeIfAbsent(key, k -> new ArrayList<>()).add(candidates.get(0));
+                        .computeIfAbsent(label.key(), k -> new ArrayList<>()).add(candidates.get(0));
             }
             // Zero candidates for THIS occurrence: try the next label. Two or more competing
             // candidates for this occurrence: refused right here, never added.
         }
 
         return bestPageEvidence(resolvedByPageAndKey, CreditCardSummaryEvidence.ExtractionMethod.INLINE_LABEL_VALUE);
+    }
+
+    /** How far apart two adjacent runs may sit horizontally and still be considered one continued
+     *  label — tight enough to never span two genuinely different columns (real word-to-word gaps
+     *  observed: roughly 2-20pt), unlike {@link #SAME_ROW_MAX_X_DISTANCE}, which bounds a LABEL to
+     *  its VALUE, a materially larger and different distance. */
+    private static final float LABEL_JOIN_MAX_X_GAP = 30.0f;
+
+    /** One matched label, possibly spanning more than one source run, with the combined bounding
+     *  box {@link #trySameRow}'s candidate search needs — everything a single-run
+     *  {@code PositionedText} label used to provide. */
+    private record JoinedLabel(String key, float y, int pageIndex, float x, float endX) {}
+
+    /**
+     * Every maximal span of immediately-adjacent, same-row runs whose concatenation matches one
+     * of this class's own known labels — checked incrementally so the SHORTEST matching span
+     * wins (never over-extends past a match looking for a longer one). A single run that already
+     * matches on its own is naturally included (a one-run "span"). Scoped narrowly: it can only
+     * ever recognise the same fixed, curated label vocabulary {@link #keyFor} already knows,
+     * split across runs — it invents no new labels and matches no unrecognised text.
+     *
+     * <p>Deliberately does NOT use {@link StatementSummaryExtractor#groupIntoRows} — that
+     * groups by Y across the FULL PAGE WIDTH, which is exactly what let an unrelated column's
+     * text interleave with a summary widget's own rows (see {@link #valueRowWithinGap}'s own doc
+     * comment). Joining only immediately-adjacent runs within {@link #LABEL_JOIN_MAX_X_GAP} of
+     * each other cannot span an unrelated column the way a full row-group can — a real
+     * cross-column gap is hundreds of points, this join tolerance is 30.
+     */
+    private static List<JoinedLabel> joinedLabelsOnSameRow(List<PositionedText> runs) {
+        List<PositionedText> sorted = runs.stream()
+                .sorted(Comparator.comparingInt(PositionedText::pageIndex)
+                        .thenComparingDouble(PositionedText::y)
+                        .thenComparingDouble(PositionedText::x))
+                .toList();
+
+        List<JoinedLabel> found = new ArrayList<>();
+        for (int start = 0; start < sorted.size(); start++) {
+            StringBuilder joined = new StringBuilder();
+            PositionedText first = sorted.get(start);
+            float endX = first.x();
+            for (int end = start; end < sorted.size(); end++) {
+                PositionedText t = sorted.get(end);
+                if (t.pageIndex() != first.pageIndex()
+                        || Math.abs(t.y() - first.y()) > SAME_ROW_Y_TOLERANCE) break;
+                if (end > start && t.x() - endX > LABEL_JOIN_MAX_X_GAP) break;
+                joined.append(joined.isEmpty() ? "" : " ").append(t.text().trim());
+                endX = t.endX();
+                String key = keyFor(StatementSummaryExtractor.normalize(joined.toString()));
+                if (key != null) {
+                    found.add(new JoinedLabel(key, first.y(), first.pageIndex(), first.x(), endX));
+                    break;
+                }
+            }
+        }
+        return found;
     }
 
     /** Accepts a key only when exactly one label occurrence resolved a value for it, OR when more

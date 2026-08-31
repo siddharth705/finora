@@ -566,4 +566,53 @@ class CreditCardSummaryExtractorTest {
 
         assertThat(summary.totalAmountDue()).isEqualByComparingTo("13100.00");
     }
+
+    // ------------------------------------------------- multi-run label joining (Phase 5, task 5)
+
+    @Test
+    void joinsAdjacentSameRowRunsIntoOneLabel() {
+        // A real shape: "Total", "Amount", "Due" printed as three separate positioned-text runs
+        // (individually differently styled/spaced) rather than one contiguous string, immediately
+        // followed on the same row by the value.
+        List<PositionedText> runs = new ArrayList<>(List.of(
+                run("Total", 280f, 18f, 132f),
+                run("Amount", 300.7f, 28f, 132f),
+                run("Due", 331.5f, 15f, 132f),
+                run("13,100.00", 435f, 60f, 132f)));
+
+        var summary = CreditCardSummaryExtractor.extract(runs);
+
+        assertThat(summary.totalAmountDue()).isEqualByComparingTo("13100.00");
+    }
+
+    @Test
+    void doesNotJoinRunsAcrossALargeXGap() {
+        // Guards against over-generalising the join: two runs far enough apart to plausibly belong
+        // to different columns must not be joined even if their concatenation would happen to match.
+        List<PositionedText> runs = new ArrayList<>(List.of(
+                run("Total", 30f, 18f, 132f),
+                run("Amount", 500f, 28f, 132f),      // implausibly far from "Total" to be one label
+                run("Due", 531f, 15f, 132f),
+                run("13,100.00", 600f, 60f, 132f)));
+
+        var summary = CreditCardSummaryExtractor.extract(runs);
+
+        assertThat(summary.totalAmountDue()).isNull();
+    }
+
+    @Test
+    void aJoinedLabelStillRequiresExactlyOneUnambiguousCandidate() {
+        // The existing "refuse on competing candidates" rule must still apply to a joined label,
+        // not just a single-run one.
+        List<PositionedText> runs = new ArrayList<>(List.of(
+                run("Total", 280f, 18f, 132f),
+                run("Amount", 300.7f, 28f, 132f),
+                run("Due", 331.5f, 15f, 132f),
+                run("13,100.00", 435f, 60f, 132f),
+                run("14,200.00", 500f, 60f, 132f)));
+
+        var summary = CreditCardSummaryExtractor.extract(runs);
+
+        assertThat(summary.totalAmountDue()).isNull();
+    }
 }
