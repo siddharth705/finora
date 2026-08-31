@@ -72,7 +72,7 @@ public class GoogleOAuthProperties {
      * reproduction where the backend's own log confirmed the connection succeeded while the browser
      * still ended up looking signed out.
      */
-    private String postConnectRedirect = "https://app.finoratech.info/app/settings";
+    private String postConnectRedirect = "https://app.fynora.net/app/settings";
 
     /**
      * Google's own endpoints. Real values by default — nothing needs to set these.

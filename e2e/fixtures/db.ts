@@ -52,7 +52,7 @@ export async function one<T = Record<string, unknown>>(
 }
 
 /** A single scalar, already unwrapped -- most integrity checks are counts and sums. */
-export async function scalar<T = string>(sql: string, params: unknown[] = []): Promise<T | null> {
+async function scalar<T = string>(sql: string, params: unknown[] = []): Promise<T | null> {
   const row = await one<Record<string, T>>(sql, params);
   if (!row) return null;
   const values = Object.values(row);
@@ -65,7 +65,7 @@ export async function count(sql: string, params: unknown[] = []): Promise<number
 
 /** Money, as a number, with null read as zero -- `sum()` over no rows is NULL in SQL, and a test
  *  asserting "nothing was counted" wants 0 rather than a null that compares false against it. */
-export async function money(sql: string, params: unknown[] = []): Promise<number> {
+async function money(sql: string, params: unknown[] = []): Promise<number> {
   return Number(await scalar<string>(sql, params) ?? 0);
 }
 

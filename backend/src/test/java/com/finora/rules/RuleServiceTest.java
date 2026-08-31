@@ -1,11 +1,14 @@
 package com.finora.rules;
 
+import com.finora.dto.PagedResponse;
 import com.finora.entity.CategoryRule;
 import com.finora.exception.ApiException;
 import com.finora.repository.CategoryRuleRepository;
 import com.finora.service.AuditService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.List;
@@ -342,5 +345,32 @@ class RuleServiceTest {
 
         assertThat(result.matchCount()).isZero();
         assertThat(result.lastMatchedAt()).isNull();
+    }
+
+    // --- listGlobal() -- Admin Portal, Global Rules page ---
+
+    @Test
+    void listGlobal_mapsRepositoryResultsToDtos() {
+        CategoryRule global = globalRule(UUID.randomUUID());
+        when(categoryRuleRepository.findByScopeOrderByPriorityAsc(CategoryRule.Scope.GLOBAL, PageRequest.of(0, 20)))
+                .thenReturn(new PageImpl<>(List.of(global)));
+
+        PagedResponse<RuleDto> result = ruleService.listGlobal(0, 20);
+
+        assertThat(result.content()).hasSize(1);
+        assertThat(result.content().get(0).scope()).isEqualTo("GLOBAL");
+    }
+
+    /** PageBounds.safePage/safeSize clamp before the query, same reasoning every other admin
+     *  list page's identical clamp test gives. */
+    @Test
+    void listGlobal_clampsAnOutOfRangePageAndSize() {
+        when(categoryRuleRepository.findByScopeOrderByPriorityAsc(CategoryRule.Scope.GLOBAL, PageRequest.of(0, 100)))
+                .thenReturn(new PageImpl<>(List.of()));
+
+        PagedResponse<RuleDto> result = ruleService.listGlobal(-5, 500);
+
+        assertThat(result.content()).isEmpty();
+        verify(categoryRuleRepository).findByScopeOrderByPriorityAsc(CategoryRule.Scope.GLOBAL, PageRequest.of(0, 100));
     }
 }

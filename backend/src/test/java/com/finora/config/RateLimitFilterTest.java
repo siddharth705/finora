@@ -503,4 +503,43 @@ class RateLimitFilterTest {
         assertThat(response.getStatus()).isEqualTo(429);
         assertThat(response.getHeader(org.springframework.http.HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN)).isNull();
     }
+
+    /**
+     * Bug fix: an OPTIONS preflight to a rate-limited endpoint (e.g. {@code /api/v1/import/jobs},
+     * whose real upload request carries a multipart body and an Authorization header, so the
+     * browser always sends a real CORS preflight first) used to consume the SAME bucket as the
+     * real request that follows it. Once that bucket emptied, the NEXT preflight itself got
+     * short-circuited with a bare 429 -- missing the Access-Control-Allow-Methods /
+     * -Allow-Headers a preflight response must carry (see applyCorsHeadersForShortCircuitedResponse's
+     * own comment: it is deliberately not the full preflight machinery). The browser reports that
+     * as a generic "preflight ... does not have HTTP ok status" CORS failure, hiding the real
+     * cause (rate limiting) from both the user and the console.
+     *
+     * <p>A preflight carries no side effect of its own -- the actual cost is in the request it
+     * precedes, which is separately counted when that request itself arrives -- so it must never
+     * be rate-limited, on any endpoint.
+     */
+    @Test
+    void optionsPreflightRequests_areNeverRateLimited_evenAfterTheBucketIsExhausted() throws Exception {
+        RateLimitFilter filter = newFilter(false);
+        FilterChain chain = mock(FilterChain.class);
+
+        // Exhaust the shared import-stage bucket for this IP via real (non-preflight) requests.
+        assertThat(tripsRateLimitAfterManyRequests(filter, requestFor("/api/v1/import/jobs", "10.0.2.1", null)))
+                .isTrue();
+
+        HttpServletRequest preflight = mock(HttpServletRequest.class);
+        when(preflight.getMethod()).thenReturn("OPTIONS");
+        when(preflight.getRequestURI()).thenReturn("/api/v1/import/jobs");
+        when(preflight.getContextPath()).thenReturn("");
+        when(preflight.getRemoteAddr()).thenReturn("10.0.2.1");
+
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        filter.doFilterInternal(preflight, response, chain);
+
+        assertThat(response.getStatus())
+                .as("an OPTIONS preflight must never be rate-limited, even against an already-exhausted bucket")
+                .isNotEqualTo(429);
+        verify(chain, atLeastOnce()).doFilter(any(), any());
+    }
 }

@@ -215,7 +215,9 @@ test.describe('Phase 4 — import completion', () => {
     await expect(userPage.getByText('Import complete')).toBeVisible({ timeout: 30_000 });
 
     await expect(userPage.getByText('Transactions imported')).toBeVisible();
-    await expect(userPage.getByText(/statement period/i)).toBeVisible();
+    // No "Statement period" assertion here: since #388, that line only renders a bank's own
+    // printed period, never one guessed from transaction dates -- a plain CSV like this fixture
+    // (no such header) genuinely has none to show, on either format's path.
     expect(await transactionsFor(user.id), 'the summary and the ledger must agree').toHaveLength(5);
   });
 

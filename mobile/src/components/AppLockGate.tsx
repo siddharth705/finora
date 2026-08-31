@@ -60,7 +60,7 @@ export function AppLockGate({ children }: { children: ReactNode }) {
   const tryUnlock = useCallback(async () => {
     setAuthenticating(true);
     try {
-      const success = await appLock.authenticate('Unlock Finora');
+      const success = await appLock.authenticate('Unlock Fynora');
       if (success) setLocked(false);
     } finally {
       setAuthenticating(false);
@@ -152,7 +152,7 @@ export function AppLockGate({ children }: { children: ReactNode }) {
   return (
     <View style={[styles.container, { backgroundColor: c.bg }]}>
       <Ionicons name="lock-closed" size={48} color={c.primary} />
-      <Text style={[styles.title, { color: c.ink }]}>Finora is locked</Text>
+      <Text style={[styles.title, { color: c.ink }]}>Fynora is locked</Text>
       <Text style={[styles.subtitle, { color: c.muted }]}>
         Unlock with your fingerprint, face, or device passcode to continue.
       </Text>

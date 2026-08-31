@@ -1,6 +1,7 @@
 package com.finora.service;
 
 import com.finora.dto.BillingDtos.SubscriptionSummaryDto;
+import com.finora.dto.PagedResponse;
 import com.finora.entity.Plan;
 import com.finora.entity.PlanChange;
 import com.finora.entity.Subscription;
@@ -15,6 +16,8 @@ import com.finora.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.List;
@@ -184,7 +187,8 @@ class SubscriptionServiceTest {
         sub.setUserId(userId);
         sub.setPlanId(planId);
         sub.setStatus(Subscription.STATUS_ACTIVE);
-        when(subscriptionRepository.findAll()).thenReturn(List.of(sub));
+        when(subscriptionRepository.findAllByOrderByCreatedAtDesc(PageRequest.of(0, 20)))
+                .thenReturn(new PageImpl<>(List.of(sub)));
         when(planRepository.findAll()).thenReturn(List.of(planWith("PLUS", planId)));
         User user = new User();
         ReflectionTestUtils.setField(user, "id", userId);
@@ -192,10 +196,26 @@ class SubscriptionServiceTest {
         user.setFullName("Jane Doe");
         when(userRepository.findAllById(List.of(userId))).thenReturn(List.of(user));
 
-        List<SubscriptionSummaryDto> result = service.listAll();
+        PagedResponse<SubscriptionSummaryDto> result = service.listAll(0, 20);
 
-        assertThat(result).hasSize(1);
-        assertThat(result.get(0).userEmail()).isEqualTo("jane@example.com");
-        assertThat(result.get(0).planCode()).isEqualTo("PLUS");
+        assertThat(result.content()).hasSize(1);
+        assertThat(result.content().get(0).userEmail()).isEqualTo("jane@example.com");
+        assertThat(result.content().get(0).planCode()).isEqualTo("PLUS");
+    }
+
+    /** PageBounds.safePage/safeSize clamp before the query -- a negative page or an oversized
+     *  size must never reach PageRequest.of directly (it throws IllegalArgumentException with no
+     *  handler, surfacing as an opaque 500), same reasoning as AdminUserService.list. */
+    @Test
+    void listAll_clampsAnOutOfRangePageAndSize() {
+        when(subscriptionRepository.findAllByOrderByCreatedAtDesc(PageRequest.of(0, 100)))
+                .thenReturn(new PageImpl<>(List.of()));
+        when(planRepository.findAll()).thenReturn(List.of());
+        when(userRepository.findAllById(List.of())).thenReturn(List.of());
+
+        PagedResponse<SubscriptionSummaryDto> result = service.listAll(-5, 500);
+
+        assertThat(result.content()).isEmpty();
+        verify(subscriptionRepository).findAllByOrderByCreatedAtDesc(PageRequest.of(0, 100));
     }
 }

@@ -183,7 +183,14 @@ public class AdminUserService {
     public UserDetailDto getUser(UUID userId) {
         User user = requireUser(userId);
         long accountCount = accountRepository.countByUserId(userId);
-        long transactionCount = transactionRepository.countByUserId(userId);
+        // Deleted-account leak (see DashboardService.summarize for the original fix): a deleted
+        // account's transactions deliberately keep deleted_at unset, so the unscoped count would
+        // keep counting them here forever, unlike accountCount above (already correctly scoped by
+        // Account's own @SQLRestriction). Scoped to the same live account ids so both stats agree.
+        List<UUID> liveAccountIds = accountRepository.findByUserId(userId).stream()
+                .map(com.finora.entity.Account::getId).toList();
+        long transactionCount = liveAccountIds.isEmpty() ? 0
+                : transactionRepository.countByUserIdAndAccountIdIn(userId, liveAccountIds);
         return new UserDetailDto(user.getId(), user.getEmail(), user.getFullName(), user.getPhoneNumber(),
                 user.isPhoneVerified(), user.getStatus(), roleNames(user), user.getCreatedAt(),
                 user.getUpdatedAt(), accountCount, transactionCount);

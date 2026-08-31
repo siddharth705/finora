@@ -17,7 +17,7 @@ sections: 4
   rows: 9
   auxLines: 27
   accountNumberMasked: ••••9999
-  accountHolderName: Interest Xxxxxxx
+  accountHolderName: null
   ifscCode: HDFC0XXXXXX
   statementPeriod: null .. null
   product: UNKNOWN (34%, UNIDENTIFIED)

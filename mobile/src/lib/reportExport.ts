@@ -17,11 +17,20 @@ import { fmtCurrency } from './format';
  * category named `Dining "out"` produces a corrupt CSV column without proper quote doubling, and
  * one named `Rent & Bills <shared>` produces malformed HTML without escaping -- neither throws,
  * both just quietly render wrong.
+ *
+ * csvCell also has to defend against formula interpretation, not just CSV parsing: category names
+ * are user-controlled (CategorizationService.resolveOrCreateCategory takes any string from manual
+ * entry, bulk recategorize, or import review), and Excel/Sheets/LibreOffice evaluate a cell value
+ * starting with `=`, `+`, `-`, `@`, or a leading tab/carriage return as a formula on open, quoted
+ * or not. Mirrors frontend/src/lib/download.ts's csvCell.
  */
 
 function csvCell(value: string): string {
+  const isPlainNumber = value.trim() !== '' && Number.isFinite(Number(value));
+  const needsFormulaGuard = !isPlainNumber && /^[=+\-@\t\r]/.test(value);
+  const guarded = needsFormulaGuard ? `'${value}` : value;
   // RFC 4180: wrap in quotes, and double any quote inside.
-  return `"${value.replace(/"/g, '""')}"`;
+  return `"${guarded.replace(/"/g, '""')}"`;
 }
 
 export function toCsv(report: ReportData): string {
@@ -76,7 +85,7 @@ export function toPrintableHtml(report: ReportData): string {
 </style>
 </head>
 <body>
-  <h1>Finora — ${escapeHtml(report.month)}</h1>
+  <h1>Fynora — ${escapeHtml(report.month)}</h1>
   <p class="sub">Monthly report</p>
   <div class="totals">
     <div class="total"><div class="label">Income</div><div class="value income">${escapeHtml(fmtCurrency(report.income))}</div></div>
@@ -97,7 +106,7 @@ async function share(uri: string, mimeType: string, utiType: string, dialogTitle
 }
 
 export async function shareCsv(report: ReportData): Promise<void> {
-  const name = `finora-report-${report.month}.csv`;
+  const name = `fynora-report-${report.month}.csv`;
   const file = new File(Paths.cache, name);
   // A previous export of the same month leaves the file behind, and create() won't overwrite.
   if (file.exists) file.delete();
@@ -108,5 +117,5 @@ export async function shareCsv(report: ReportData): Promise<void> {
 
 export async function sharePdf(report: ReportData): Promise<void> {
   const { uri } = await Print.printToFileAsync({ html: toPrintableHtml(report) });
-  await share(uri, 'application/pdf', 'com.adobe.pdf', `finora-report-${report.month}.pdf`);
+  await share(uri, 'application/pdf', 'com.adobe.pdf', `fynora-report-${report.month}.pdf`);
 }

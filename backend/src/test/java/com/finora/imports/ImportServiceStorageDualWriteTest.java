@@ -106,7 +106,7 @@ class ImportServiceStorageDualWriteTest {
     /** Builds a fresh ImportService with every collaborator the same except statementContentService,
      *  which each test swaps to exercise one branch of the store()-present/absent split. */
     private ImportService importServiceWith(StatementContentService statementContentService) {
-        DuplicateDetector duplicateDetector = new DuplicateDetector(transactionRepository);
+        DuplicateDetector duplicateDetector = new DuplicateDetector(transactionRepository, TestAccountRepositories.anyLive());
         CsvParser csvParser = new CsvParser();
         TransactionNormalizer transactionNormalizer =
                 new TransactionNormalizer(categorizationService, duplicateDetector, TestRuleEngines.empty());
@@ -123,7 +123,7 @@ class ImportServiceStorageDualWriteTest {
                 merchantRepository, statementImportRepository, categorizationService, mock(ReconciliationService.class),
                 mock(RecurringService.class), previewGenerator, duplicateDetector, ruleLearningService,
                 importSessionService, mock(com.finora.imports.pdf.PdfPreviewGenerator.class),
-                productIdentityResolver, statementContentService,
+                productIdentityResolver, mock(com.finora.imports.ownership.OwnershipMatchService.class), statementContentService,
                 mock(com.finora.imports.analysis.StatementAnalysisRecorder.class),
                 mock(com.finora.imports.analysis.ImportVerificationRecorder.class),
                 mock(com.finora.service.MerchantLearningEventPublisher.class), mock(LayoutRegistryService.class),

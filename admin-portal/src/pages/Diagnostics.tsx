@@ -44,7 +44,7 @@ const EXTERNAL_LINKS = [
  *  environment/build metadata, nothing that identifies a specific person's data. */
 function formatDiagnosticsSummary(data: PlatformDiagnosticsDto): string {
   return [
-    'Finora Platform Diagnostics',
+    'Fynora Platform Diagnostics',
     `Version: ${data.application.version ?? 'Not available'}`,
     `Git commit: ${data.application.gitCommit ?? 'Not available'}`,
     `Spring profile: ${data.application.springProfile}`,

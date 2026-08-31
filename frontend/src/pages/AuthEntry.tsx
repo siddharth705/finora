@@ -1,183 +1,124 @@
-import { useState, type FormEvent } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
-import { ShieldCheck, ArrowRight, User } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Link, useLocation, useSearchParams, useNavigate } from 'react-router-dom';
+import { ShieldCheck } from 'lucide-react';
 import { BrandMark } from '../components/BrandMark';
-import { GoogleSignInButton } from '../components/GoogleSignInButton';
-import { AppleSignInButton } from '../components/AppleSignInButton';
-import { authApi } from '../api/endpoints';
-import { useAuth } from '../context/AuthContext';
-import { AUTH_ACCOUNT_DEACTIVATED } from '../api/errorCodes';
-import { ReactivateAccountPrompt } from '../components/ReactivateAccountPrompt';
+import { MarketingPanel } from './auth-entry/MarketingPanel';
+import { IdentifyStep } from './auth-entry/IdentifyStep';
+import { PasswordStep } from './auth-entry/PasswordStep';
+import { RegisterStep } from './auth-entry/RegisterStep';
 
-// Matches Register.tsx's own EMAIL_PATTERN -- used here only to decide which of Register's two
-// fields (email vs mobile number) to prefill when nextAction is CONTINUE, not as a submission
-// gate (the backend is the one source of truth for what counts as a valid identifier).
-const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+type Step = 'identify' | 'password' | 'register';
+
+interface DeepLinkState {
+  identifier?: string;
+  banner?: string;
+  skipToPassword?: boolean;
+}
 
 /**
- * Unified authentication entry page (auth/security review §2.2 / Phase 3). A single identifier
- * field replaces having to pick "Login" vs "Register" up front -- POST /auth/identify (see
- * AuthService.identify) resolves it to what should happen next, and this page routes there:
- *
- * - EXISTS -- an account exists for this identifier (any sign-in method). Sent to /login with
- *   the identifier prefilled; the password field and Google button are always shown together
- *   there, same as a direct visit -- see Phase 7's amendment below for why this no longer
- *   branches on which method the account actually uses.
- * - CONTINUE -- no account behind this identifier (or at least, nothing this endpoint will
- *   confirm -- see AuthService.identify's own doc comment on why status isn't surfaced here).
- *   Sent to /register with whichever of its two fields (email or mobile number) the identifier
- *   looks like, prefilled.
- *
- * /login and /register stay fully live and directly reachable on their own -- this page fronts
- * them, it doesn't replace or gate them. Landing-page CTA wiring (whether "Sign in" / "Get
- * started" should route through here instead of straight to /login /register) is left for a
- * separate decision, not part of this slice.
- *
- * Phase 7 amendment (resolved 2026-08-23): nextAction used to be PASSWORD/GOOGLE/APPLE/CONTINUE,
- * and this page forwarded the method to Login.tsx so it could hide the password field for a
- * known OAuth account (§2.4's "move the OAuth-user rejection earlier"). Collapsed to EXISTS/
- * CONTINUE to stop /auth/identify revealing which sign-in method an existing account uses --
- * closing that half of the enumeration leak cost this page its per-method routing, which is the
- * accepted tradeoff (see IdentifyResponse's own doc comment on the backend for the full
- * reasoning). The backend's own signInMethod refusal at actual login time is unaffected.
+ * Unified authentication entry page (auth/security review §2.2 / Phase 3, collapsed into a
+ * single screen 2026-08-24 -- see docs/superpowers/specs/2026-08-24-unified-auth-entry-design.md).
+ * /auth is the only route a user navigates to; /login and /register are redirects (App.tsx) kept
+ * only for old bookmarks/links. Every transition below is UI-only -- see the spec's Security
+ * boundaries section: `step` and `identifier` never substitute for a real backend call. Each step
+ * component still posts to the real endpoint it always did (/auth/identify, /auth/login,
+ * /auth/register, /auth/google, /auth/apple) and only advances on that call's own success.
  */
 export default function AuthEntry() {
-  const { loginWithGoogle, loginWithApple } = useAuth();
+  const location = useLocation();
   const navigate = useNavigate();
-  const [identifier, setIdentifier] = useState('');
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [reactivationToken, setReactivationToken] = useState<string | null>(null);
+  const [searchParams] = useSearchParams();
+  // D-28 PR4-C, unchanged from Register.tsx: a referral link's `?ref=` is only meaningful for the
+  // signup this page load represents.
+  const referralCode = searchParams.get('ref') ?? undefined;
 
-  const identifierValid = identifier.trim().length > 0;
+  const deepLink = location.state as DeepLinkState | null;
+  const [step, setStep] = useState<Step>(deepLink?.skipToPassword ? 'password' : 'identify');
+  const [identifier, setIdentifier] = useState(deepLink?.identifier ?? '');
+  const [banner, setBanner] = useState<string | null>(deepLink?.banner ?? null);
+  const [registerPrefill, setRegisterPrefill] = useState<{ email?: string; phoneNumber?: string }>({});
 
-  async function handleSubmit(e: FormEvent) {
-    e.preventDefault();
-    setError(null);
-    if (!identifierValid) { setError('Enter your email or mobile number.'); return; }
-    setLoading(true);
-    try {
-      const trimmed = identifier.trim();
-      const { nextAction } = await authApi.identify(trimmed);
-      if (nextAction === 'CONTINUE') {
-        const isEmail = EMAIL_PATTERN.test(trimmed);
-        void navigate('/register', { state: isEmail ? { email: trimmed } : { phoneNumber: trimmed } });
-      } else {
-        void navigate('/login', { state: { identifier: trimmed } });
+  // Reset to a safe default on a back/forward-cache restore -- some browsers restore this exact
+  // live component instance (not a fresh mount) when the user hits Forward after Back, which would
+  // otherwise silently show whatever step/password/reactivation state was on screen when they left.
+  // A genuine reload is unaffected: it always remounts from scratch, so `useState`'s initial values
+  // (including the deep-link case above, which browsers persist across a reload of that same
+  // history entry) already do the right thing without this handler.
+  useEffect(() => {
+    function handlePageShow(event: Event) {
+      if ((event as PageTransitionEvent).persisted) {
+        setStep('identify');
+        setIdentifier('');
+        setBanner(null);
+        setRegisterPrefill({});
       }
-    } catch (err: any) {
-      setError(err.response?.data?.message ?? 'Something went wrong. Please try again.');
-    } finally {
-      setLoading(false);
     }
+    window.addEventListener('pageshow', handlePageShow);
+    return () => window.removeEventListener('pageshow', handlePageShow);
+  }, []);
+
+  function afterAuthSuccess(phoneVerified: boolean) {
+    void navigate(phoneVerified ? '/app' : '/verify-phone', { state: phoneVerified ? undefined : { fromLogin: true } });
   }
 
-  async function handleGoogleCredential(idToken: string) {
-    setError(null);
-    setLoading(true);
-    try {
-      const phoneVerified = await loginWithGoogle(idToken);
-      void navigate(phoneVerified ? '/app' : '/verify-phone', { state: phoneVerified ? undefined : { fromLogin: true } });
-    } catch (err: any) {
-      const token = err.response?.data?.errorCode === AUTH_ACCOUNT_DEACTIVATED
-        ? err.response?.data?.details?.reactivationToken
-        : null;
-      if (token) {
-        setReactivationToken(token);
-      } else {
-        setError(err.response?.data?.message ?? 'Google sign-in failed.');
-      }
-    } finally {
-      setLoading(false);
-    }
+  function handleExists(existingIdentifier: string) {
+    setIdentifier(existingIdentifier);
+    setBanner(null);
+    setStep('password');
   }
 
-  async function handleAppleCredential(idToken: string, fullName: string | null) {
-    setError(null);
-    setLoading(true);
-    try {
-      const phoneVerified = await loginWithApple(idToken, fullName);
-      void navigate(phoneVerified ? '/app' : '/verify-phone', { state: phoneVerified ? undefined : { fromLogin: true } });
-    } catch (err: any) {
-      const token = err.response?.data?.errorCode === AUTH_ACCOUNT_DEACTIVATED
-        ? err.response?.data?.details?.reactivationToken
-        : null;
-      if (token) {
-        setReactivationToken(token);
-      } else {
-        setError(err.response?.data?.message ?? 'Apple sign-in failed.');
-      }
-    } finally {
-      setLoading(false);
-    }
+  function handleContinue(newIdentifier: string, prefill: { email?: string; phoneNumber?: string }) {
+    setIdentifier(newIdentifier);
+    setRegisterPrefill(prefill);
+    setStep('register');
   }
+
+  // 409 from RegisterStep -- the DB unique constraint is the real authority here, not the earlier
+  // /auth/identify CONTINUE (see the spec's "registration race" note). Replaces today's Register.tsx
+  // "Continue to login" link with an in-place step switch.
+  function handleAccountExists(existingIdentifier: string) {
+    setIdentifier(existingIdentifier);
+    setBanner('This email or mobile number already has an account — sign in below.');
+    setStep('password');
+  }
+
+  // Clears everything transient, not just the step -- identifier, and (by unmounting PasswordStep/
+  // RegisterStep) their own local password/confirmPassword/error/reactivation-token/OAuth-in-flight
+  // state along with them. Matters on shared computers.
+  function handleNotYou() {
+    setStep('identify');
+    setIdentifier('');
+    setBanner(null);
+    setRegisterPrefill({});
+  }
+
+  const marketingCopy = step === 'password'
+    ? { badge: 'Welcome back', headline: <>Pick up right where you <span className="text-primary">left off</span></>, description: 'Sign in to see your latest transactions, budgets, goals and AI-powered insights — all in one place.' }
+    : { badge: 'Your finances, finally in one place', headline: <>Take control of your money with <span className="text-primary">Fynora</span></>, description: 'Import statements, track spending, set budgets and get AI-powered insights to build a better financial future.' };
 
   return (
-    <div className="min-h-screen bg-bg flex flex-col items-center justify-center p-4 gap-6">
-      <div className="w-full max-w-sm">
-        {reactivationToken ? (
-          <ReactivateAccountPrompt
-            token={reactivationToken}
-            onCancel={() => setReactivationToken(null)}
-            onReactivated={(phoneVerified) =>
-              void navigate(phoneVerified ? '/app' : '/verify-phone', { state: phoneVerified ? undefined : { fromLogin: true } })
-            }
-          />
-        ) : (
-        <form onSubmit={handleSubmit} noValidate className="bg-card rounded-xl2 p-8 w-full shadow-soft border border-border">
-          <div className="flex items-center gap-2 mb-6">
+    <div className="min-h-screen bg-bg flex flex-col items-center justify-center p-4 lg:p-8 gap-6">
+      <div className="w-full max-w-6xl grid lg:grid-cols-2 gap-10 lg:gap-16 items-center">
+        <MarketingPanel {...marketingCopy} />
+
+        <div className="bg-card rounded-xl2 p-8 w-full shadow-soft border border-border">
+          <div className="flex items-center gap-2 mb-6 lg:hidden">
             <Link to="/" className="flex items-center gap-2 w-fit">
               <BrandMark size={28} variant="auto" className="rounded-lg" />
-              <span className="font-extrabold tracking-wide text-ink">FINORA</span>
+              <span className="font-extrabold tracking-wide text-ink">FYNORA</span>
             </Link>
           </div>
 
-          <h2 className="text-2xl font-extrabold text-ink mb-1">Sign in or create an account</h2>
-          <p className="text-sm text-muted mb-6">Enter your email or mobile number to continue</p>
-
-          {error && <p className="text-danger text-sm mb-4">{error}</p>}
-
-          <label htmlFor="auth-entry-identifier" className="block text-xs font-medium text-muted mb-1">Email or mobile number</label>
-          <div className="relative mb-6">
-            <User size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
-            <input
-              id="auth-entry-identifier"
-              type="text"
-              required
-              autoComplete="username"
-              value={identifier}
-              onChange={(e) => setIdentifier(e.target.value)}
-              placeholder="you@example.com or +91XXXXXXXXXX"
-              className="w-full border border-border rounded-lg pl-9 pr-3 py-2.5 text-sm bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-primary/30"
-            />
-          </div>
-
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full bg-primary hover:bg-primary-dark text-on-primary rounded-lg py-2.5 text-sm font-semibold flex items-center justify-center gap-1.5 disabled:opacity-50"
-          >
-            {loading ? 'Continuing…' : 'Continue'}
-            {!loading && <ArrowRight size={15} />}
-          </button>
-
-          <div className="flex items-center gap-3 my-5">
-            <div className="flex-1 h-px bg-border" />
-            <span className="text-xs text-muted">or continue with</span>
-            <div className="flex-1 h-px bg-border" />
-          </div>
-
-          <GoogleSignInButton text="signin_with" onCredential={handleGoogleCredential} onError={setError} />
-          <div className="mt-3">
-            <AppleSignInButton onCredential={handleAppleCredential} onError={setError} />
-          </div>
-
-          <div className="flex items-start gap-2.5 bg-primary-light rounded-lg p-3 mt-6">
-            <ShieldCheck size={16} className="text-primary flex-shrink-0 mt-0.5" />
-            <p className="text-xs text-ink">Your financial data is encrypted and securely protected.</p>
-          </div>
-        </form>
-        )}
+          {step === 'identify' && (
+            <IdentifyStep onExists={handleExists} onContinue={handleContinue} onSuccess={afterAuthSuccess} />
+          )}
+          {step === 'password' && (
+            <PasswordStep identifier={identifier} banner={banner} onSuccess={afterAuthSuccess} onNotYou={handleNotYou} />
+          )}
+          {step === 'register' && (
+            <RegisterStep prefill={registerPrefill} referralCode={referralCode} onSuccess={afterAuthSuccess} onAccountExists={handleAccountExists} />
+          )}
+        </div>
       </div>
 
       <p className="text-xs text-muted flex items-center gap-2">

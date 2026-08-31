@@ -1,5 +1,7 @@
 package com.finora.imports.pdf;
 
+import com.finora.imports.TestAccountRepositories;
+
 import com.finora.dto.ImportDto.StagedAccountSection;
 import com.finora.dto.ImportDto.StagingResponse;
 import com.finora.imports.DuplicateDetector;
@@ -45,8 +47,8 @@ class SingleAccountPdfKeepsItsVerificationTest {
         when(categorizationService.suggestReadOnly(any(), any(), any(), any(), any(), any()))
                 .thenReturn(new CategorizationService.Suggestion("Uncategorized", "default", null, null, null));
         TransactionRepository transactionRepository = mock(TransactionRepository.class);
-        when(transactionRepository.findPotentialDuplicatesByUser(any(), any(), any(), any())).thenReturn(List.of());
-        DuplicateDetector duplicateDetector = new DuplicateDetector(transactionRepository);
+        when(transactionRepository.findPotentialDuplicatesByUserAndAccountIdIn(any(), any(), any(), any(), any())).thenReturn(List.of());
+        DuplicateDetector duplicateDetector = new DuplicateDetector(transactionRepository, TestAccountRepositories.anyLive());
         TransactionNormalizer transactionNormalizer = new TransactionNormalizer(categorizationService,
                 duplicateDetector, com.finora.imports.TestRuleEngines.empty());
 

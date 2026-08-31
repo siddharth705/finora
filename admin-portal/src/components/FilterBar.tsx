@@ -12,7 +12,7 @@ export type FilterField =
   | { type: 'select'; key: string; value: string; onChange: (v: string) => void; options: { label: string; value: string }[]; placeholder?: string; label: string }
   | { type: 'date'; key: string; value: string; onChange: (v: string) => void; label: string };
 
-export interface FilterBarSavedViewsProps<T extends Record<string, string>> {
+interface FilterBarSavedViewsProps<T extends Record<string, string>> {
   views: SavedView<T>[];
   /** The current, live filter values -- what gets written under a new name on "Save current". */
   currentValues: T;

@@ -1,5 +1,7 @@
 package com.finora.imports.analysis;
 
+import com.finora.imports.TestAccountRepositories;
+
 import com.finora.dto.ImportDto.DetectedAccountInfo;
 import com.finora.dto.ImportDto.StagedAccountSection;
 import com.finora.imports.BalanceChainValidator;
@@ -137,17 +139,37 @@ public final class ProductIdentityCorpusProbe {
             System.out.println("  OK: all " + identified.size() + " identified sections are pairwise distinct");
         }
 
-        // Self-match sanity check: every section with a strong key must match ITSELF exactly --
-        // otherwise re-importing this exact document would never be recognised as a re-import at
-        // all, silently creating a duplicate every time (the numberless-product gap Phase 1 found).
+        // Self-match check: what would ProductIdentityResolver actually decide if this exact
+        // document were imported a second time? Every section with a strong key must match
+        // ITSELF EXACTLY -- otherwise a re-import would never be auto-recognised (the
+        // numberless-product gap Phase 1 found). Sections WITHOUT a strong key were previously
+        // assumed to always resolve to NONE/NEW here, without ever actually calling matches() to
+        // check -- that assumption is exactly what BH-061's "every credit-card re-import creates a
+        // duplicate, forever" conclusion rested on, and it is wrong whenever a masked number was
+        // still captured: ProductIdentity's own sameMasked check (a genuinely separate code path
+        // from the strong-key hash) can already return PROBABLE with no strong key at all. Calling
+        // matches() unconditionally, and reporting the real Resolution, replaces that assumption
+        // with a measurement (extraction-coverage-audit.md F1's second follow-up).
         for (Identified s : identified) {
-            if (s.identity().strongKey() == null) {
-                System.out.println("  [" + s.index() + "] NO STRONG KEY -- a re-import of this exact "
-                        + "section can never be recognised; every re-import creates a new account "
-                        + "(Phase 1's numberless-product finding)");
-            } else if (s.identity().matches(s.identity()) != ProductIdentity.Match.EXACT) {
-                collision = true; // reusing the flag: this is also a real problem, just not a cross-section one
-                System.out.println("  [" + s.index() + "] BUG: does not match itself -- re-import would never be recognised");
+            ProductIdentity.Match selfMatch = s.identity().matches(s.identity());
+            if (s.identity().strongKey() != null) {
+                if (selfMatch != ProductIdentity.Match.EXACT) {
+                    collision = true; // reusing the flag: this is also a real problem, just not a cross-section one
+                    System.out.println("  [" + s.index() + "] BUG: has a strong key but does not match "
+                            + "itself -- re-import would never be recognised");
+                }
+            } else {
+                String reason = switch (selfMatch) {
+                    case EXACT -> "IMPOSSIBLE -- EXACT requires a strong key, which this section does not have";
+                    case PROBABLE -> "PROBABLE -- no strong key, but a captured masked number would flag this "
+                            + "as a likely re-import for human review, not silently duplicate it";
+                    case NONE -> "NONE -- no strong key and no masked number either; a re-import of this exact "
+                            + "section would silently create a new account every time";
+                };
+                System.out.println("  [" + s.index() + "] NO STRONG KEY -- re-import resolution: " + reason);
+                if (selfMatch == ProductIdentity.Match.EXACT) {
+                    collision = true; // logically impossible per ProductIdentity's own contract; flag loudly if seen
+                }
             }
         }
 
@@ -172,8 +194,8 @@ public final class ProductIdentityCorpusProbe {
         when(categorization.suggestReadOnly(any(), any(), any(), any(), any(), any()))
                 .thenReturn(suggestion);
         TransactionRepository transactions = mock(TransactionRepository.class);
-        when(transactions.findPotentialDuplicatesByUser(any(), any(), any(), any())).thenReturn(List.of());
-        return new TransactionNormalizer(categorization, new DuplicateDetector(transactions),
+        when(transactions.findPotentialDuplicatesByUserAndAccountIdIn(any(), any(), any(), any(), any())).thenReturn(List.of());
+        return new TransactionNormalizer(categorization, new DuplicateDetector(transactions, TestAccountRepositories.anyLive()),
                 TestRuleEngines.empty());
     }
 

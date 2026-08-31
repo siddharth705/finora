@@ -52,7 +52,7 @@ export function SiteFooter() {
               target="_blank"
               rel="noopener noreferrer"
               className="m-tap inline-flex items-center gap-2 mt-5 text-sm text-slate-400 hover:text-white transition-colors"
-              aria-label="Finora on Instagram (opens in a new tab)"
+              aria-label="Fynora on Instagram (opens in a new tab)"
             >
               <InstagramIcon size={17} />
               {footer.instagramHandle}
@@ -78,7 +78,7 @@ export function SiteFooter() {
         </div>
 
         <div className="pt-7 border-t border-white/10 flex flex-col sm:flex-row items-center justify-between gap-3">
-          <p className="text-xs text-slate-500">© {new Date().getFullYear()} Finora. All rights reserved.</p>
+          <p className="text-xs text-slate-500">© {new Date().getFullYear()} Fynora. All rights reserved.</p>
           <p className="text-xs text-slate-500">{footer.tagline}</p>
         </div>
       </div>

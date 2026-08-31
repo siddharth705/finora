@@ -98,6 +98,13 @@ export interface DashboardSummary {
   healthScore: number | null;
   healthLabel: string | null;
   healthBreakdown: Record<string, number>;
+  /**
+   * The real quantity behind each entry in healthBreakdown, keyed by the same component name --
+   * e.g. "Savings Rate" -> "Your savings rate was 18.5%." Each bar in healthBreakdown
+   * shows a NORMALIZED 0-100 score, not the number it was computed from. Empty exactly when
+   * healthBreakdown is (below healthScoreMinTransactions).
+   */
+  healthBreakdownDetail: Record<string, string>;
   healthScoreAvailable: boolean;
   healthScoreTransactionCount: number;
   healthScoreMinTransactions: number;
@@ -111,12 +118,92 @@ export interface DashboardSummary {
    */
   reportingMonth: string | null;
   reportingMonthIsCurrent: boolean;
+  /**
+   * True when the user has fewer than limitedHistoryMonthFloor distinct calendar months of
+   * transaction data. Trend deltas and the health score above are still real numbers -- neither
+   * is hidden -- but both are prone to thin-data artifacts this far below the floor (a near-empty
+   * prior-month denominator for the deltas; a health score built from too few comparable months).
+   * historyMonthCount/limitedHistoryMonthFloor let the client render "X / N months" without
+   * hardcoding the threshold, mirroring healthScoreTransactionCount/healthScoreMinTransactions.
+   */
+  limitedHistory: boolean;
+  historyMonthCount: number;
+  limitedHistoryMonthFloor: number;
+  statementCount: number;
+  accountCount: number;
+  /**
+   * True when categoryReviewSpendPct of this month's spend -- transactions flagged
+   * needsCategoryReview, the same signal the Ledger's "needs review" badge already uses -- is at
+   * or above categoryReviewSpendWarningThresholdPct. Deliberately NOT keyed on the category name
+   * "Uncategorized" or "Other": "Other" is a real, resolvable category (the categorization
+   * engine's fallback when nothing matched), so landing there doesn't necessarily mean a
+   * transaction has no useful category -- it means the categorization engine's own confidence
+   * check flagged it for a human to look at.
+   */
+  categoryReviewWarning: boolean;
+  categoryReviewSpendPct: number;
+  categoryReviewSpendAmount: number;
+  categoryReviewTransactionCount: number;
+  categoryReviewSpendWarningThresholdPct: number;
+  /**
+   * Why incomeDeltaPct/expenseDeltaPct/netDeltaPct came back null when a real percentage might be
+   * expected -- 'PARTIAL_PRIOR_MONTH' (the prior calendar month is really just the ragged edge of
+   * the same continuous statement window the current month came from) or
+   * 'TOO_FEW_PRIOR_TRANSACTIONS' (a real, full prior month, but too few of its own transactions to
+   * trust as a ratio's denominator). Null whenever the deltas are real numbers, or null for a
+   * self-explanatory reason (no prior period at all, or a genuinely zero prior amount) that
+   * doesn't need a "Why?" disclosure. All three deltas share one gate, so there's nothing to say
+   * per-metric that isn't already said once here.
+   */
+  comparisonGateReason: 'PARTIAL_PRIOR_MONTH' | 'TOO_FEW_PRIOR_TRANSACTIONS' | null;
+  comparisonGateMinTransactions: number;
+  /**
+   * The categories behind a real (non-null) expenseDeltaPct -- e.g. "Dining ₹8,000 vs ₹5,000
+   * (+60%)" instead of leaving "expenses are up 12%" unexplained. Built from the SAME
+   * currentMonth/priorMonth comparison expenseDeltaPct itself comes from, not Insights' own
+   * rolling 3-month-average movers -- a different prior-period definition that would disagree
+   * with the number it's meant to explain. Always empty when expenseDeltaPct is null.
+   */
+  expenseCategoryMovers: CategoryMover[];
+  /**
+   * Detected Issues. ReconciliationService's own duplicate pass already silently excludes a row
+   * from every total above the moment it runs (Transaction.isDuplicateOf) -- until now nothing
+   * told the user it happened. transactionsApi.confirmNotDuplicate (BH-027) already existed to
+   * let a human overrule that guess; it simply had no caller anywhere in the product.
+   * duplicateTransactionCount is the TRUE, uncapped total; detectedDuplicates is the capped,
+   * newest-first list the card actually renders.
+   */
+  duplicateTransactionCount: number;
+  detectedDuplicates: DetectedDuplicate[];
+  /**
+   * Categorization Confidence. How sure the categorization engine was, on average (0-100), about
+   * the categories it assigned this month -- a positive, ongoing data-quality signal, distinct
+   * from categoryReviewWarning (which only fires when spend is badly miscategorized). Null below
+   * categorizationConfidenceMinTransactions engine-decided transactions this month.
+   */
+  categorizationConfidenceScore: number | null;
+  categorizationConfidenceTransactionCount: number;
+  categorizationConfidenceMinTransactions: number;
+}
+
+export interface CategoryMover {
+  category: string;
+  currentAmount: number;
+  priorAmount: number;
+  pctChange: number | null;
+}
+
+export interface DetectedDuplicate {
+  transactionId: string;
+  date: string;
+  merchant: string;
+  amount: number;
 }
 
 // D-25 PR3-B/C. `type` is one of ACCOUNT_CREATED/FIRST_IMPORT/FIRST_BUDGET/FIRST_GOAL/
 // FIRST_GOAL_ACHIEVED (FinancialJourneyDto's own constants) -- left as `string`, not a union,
 // so an unrecognized future value degrades to a generic label instead of a type error.
-export interface JourneyMilestone {
+interface JourneyMilestone {
   type: string;
   completed: boolean;
   completedAt: string | null;
@@ -196,6 +283,11 @@ export interface StagedRow {
   // from the source document, not a guess). Distinct from `confidence` above (Gmail-receipt
   // extraction reliability) and `merchantConfidence` (merchant-identity resolution).
   categoryConfidence: number | null;
+  // 1-based position within its section as originally parsed, or null for a client/import path
+  // that predates this field. Echoed back unchanged in the confirm request so it lands on
+  // Transaction.sourceRowPosition -- the only thing the admin Import Row Trace (Founder
+  // Operations Dashboard) reads it for. No UI consumes it here.
+  rowPosition: number | null;
 }
 
 export interface MerchantGroup {
@@ -261,7 +353,7 @@ export interface DetectedAccountInfo {
 // Mirrors the backend FinancialProductType enum. FD/RD/PPF/EPF/NPS/mutual fund/demat route to the
 // Investments module rather than a separate Deposits one; LOAN/INSURANCE/FOREX_CARD are recognised
 // but not modelled yet, so they surface on the review screen instead of creating anything.
-export type FinancialProductType =
+type FinancialProductType =
   | 'SAVINGS' | 'CURRENT' | 'OVERDRAFT' | 'WALLET'
   | 'CREDIT_CARD'
   | 'FIXED_DEPOSIT' | 'RECURRING_DEPOSIT' | 'PPF' | 'EPF' | 'NPS' | 'MUTUAL_FUND' | 'DEMAT'
@@ -270,7 +362,7 @@ export type FinancialProductType =
 
 // A rule-based (never weighted) reliability status -- see ImportReliabilityStatus on the
 // backend for the exact derivation. Mirrors that enum's three values.
-export type ImportReliabilityStatus = 'CLEAN' | 'REVIEW_RECOMMENDED' | 'NEEDS_ATTENTION';
+type ImportReliabilityStatus = 'CLEAN' | 'REVIEW_RECOMMENDED' | 'NEEDS_ATTENTION';
 
 // Whether an import can be proven faithful to the statement it came from, and on what basis --
 // see ImportDto.VerificationReport on the backend, and
@@ -310,7 +402,7 @@ export interface BalanceChainDetails {
   discrepancies: BalanceRowDiscrepancy[];
 }
 
-export interface BalanceRowDiscrepancy {
+interface BalanceRowDiscrepancy {
   rowIndex: number;
   expectedBalance: number;
   actualBalance: number;
@@ -354,6 +446,23 @@ export interface ImportSummary {
   statementPeriodEnd: string | null;
   importDurationMs: number;
   source: string;
+  // Phase 4 of the statement continuity proposal (§0.3): the statement THIS confirm just created,
+  // and (non-null only when this import's period exactly duplicates an existing statement) the
+  // ORIGINAL statement's id -- what "Import this one as a replacement?" would supersede.
+  statementImportId: string;
+  duplicateOfStatementId: string | null;
+}
+
+// Phase 4 of the statement continuity proposal (§0.3): result of "Import this one as a
+// replacement?" -- see StatementImportDto.SupersedeResult on the backend.
+export interface SupersedeResult {
+  supersededStatementId: string;
+  supersededByStatementId: string;
+  balanceReversed: boolean;
+  // Non-null only when the superseded statement predates balance-application-mode tracking --
+  // no automatic balance reversal was attempted, and an administrator should verify the account
+  // balance by hand.
+  warning: string | null;
 }
 
 // Statement History — organized by account rather than a flat list of uploaded files, since
@@ -365,6 +474,9 @@ export interface StatementSummary {
   statementPeriodEnd: string | null;
   openingBalance: number | null;
   closingBalance: number | null;
+  // Credit-card statement entity, roadmap item 6. Null for a non-credit-card statement.
+  totalAmountDue: number | null;
+  paymentDueDate: string | null;
   transactionsImported: number;
   transactionsSkipped: number;
   importedAt: string;

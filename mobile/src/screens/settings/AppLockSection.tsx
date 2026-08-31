@@ -89,7 +89,7 @@ export function AppLockSection() {
         <View style={styles.rowMain}>
           <Text style={[styles.rowTitle, { color: c.ink }]}>App Lock</Text>
           <Text style={[styles.rowMeta, { color: c.mutedInk }]}>
-            Require your fingerprint, face, or device passcode to open Finora.
+            Require your fingerprint, face, or device passcode to open Fynora.
           </Text>
         </View>
         <Switch

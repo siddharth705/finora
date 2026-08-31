@@ -217,7 +217,7 @@ public class UserController {
         DataExportService.ExportBundle bundle = dataExportService.buildBundle(userId, request.currentPassword(), request.googleIdToken(), request.appleIdToken());
         auditService.record(userId, "DATA_EXPORT_REQUESTED", "User", userId, Map.of());
 
-        String fileName = "finora-data-export-" + LocalDate.now() + ".zip";
+        String fileName = "fynora-data-export-" + LocalDate.now() + ".zip";
         // Captured on this (synchronous) request thread, not read again inside the callback below:
         // StreamingResponseBody runs its callback on a separate async-dispatch thread, and MDC is
         // thread-local, so CorrelationIdFilter's own key is already gone (cleared in its finally,

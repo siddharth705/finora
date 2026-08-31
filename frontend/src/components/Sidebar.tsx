@@ -55,7 +55,7 @@ export function Sidebar() {
     logout();
     // logout() already clears the token in context, which makes ProtectedRoute redirect
     // on its own re-render — this just makes the jump immediate and explicit.
-    void navigate('/login');
+    void navigate('/auth');
   }
 
   return (
@@ -68,7 +68,7 @@ export function Sidebar() {
           <div className="w-8 h-8 rounded-lg overflow-hidden flex-shrink-0">
             <BrandMark size={32} invert />
           </div>
-          {!collapsed && <span className="text-white font-extrabold tracking-wide text-lg truncate">FINORA</span>}
+          {!collapsed && <span className="text-white font-extrabold tracking-wide text-lg truncate">FYNORA</span>}
         </NavLink>
         <button
           type="button"

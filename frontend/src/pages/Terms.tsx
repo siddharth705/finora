@@ -6,11 +6,11 @@ export default function Terms() {
   return (
     <PublicLayout
       title="Terms & Conditions"
-      subtitle="Last updated: July 2026. Please read these terms carefully before using Finora."
+      subtitle="Last updated: July 2026. Please read these terms carefully before using Fynora."
     >
       <PublicSection title="1. Acceptance of Terms">
         <p>
-          By creating an account or otherwise using Finora ("the Service"), you agree to be bound by these
+          By creating an account or otherwise using Fynora ("the Service"), you agree to be bound by these
           Terms & Conditions. If you do not agree to these terms, please do not use the Service.
         </p>
       </PublicSection>
@@ -18,7 +18,7 @@ export default function Terms() {
       <PublicSection title="2. User Responsibilities">
         <p>
           You are responsible for the accuracy of the information you provide, including account details,
-          transaction data, and any bank or card statements you choose to import. Finora helps you organize
+          transaction data, and any bank or card statements you choose to import. Fynora helps you organize
           and understand your own financial data — it does not verify the accuracy of the underlying source
           documents on your behalf.
         </p>
@@ -26,7 +26,7 @@ export default function Terms() {
 
       <PublicSection title="3. Account Registration">
         <p>
-          To use Finora, you must register with a valid email address and mobile number. You agree to provide
+          To use Fynora, you must register with a valid email address and mobile number. You agree to provide
           accurate, current information and to keep it up to date. You may not register on behalf of someone
           else without their permission, and you may not maintain more than one account per person.
         </p>
@@ -35,7 +35,7 @@ export default function Terms() {
       <PublicSection title="4. Account Security">
         <p>
           You are responsible for maintaining the confidentiality of your password and for all activity that
-          occurs under your account. Notify us immediately if you suspect unauthorized access. Finora stores
+          occurs under your account. Notify us immediately if you suspect unauthorized access. Fynora stores
           passwords using industry-standard hashing and never stores them in plain text.
         </p>
       </PublicSection>
@@ -52,7 +52,7 @@ export default function Terms() {
 
       <PublicSection title="6. Data Processing">
         <p>
-          When you import a bank or credit card statement, Finora processes that file to extract transactions,
+          When you import a bank or credit card statement, Fynora processes that file to extract transactions,
           detect accounts, and generate categorization suggestions. This processing happens so the Service can
           function — see our <Link to="/privacy" className="text-primary hover:underline">Privacy Policy</Link> for
           full detail on what is collected, how it's stored, and your rights over it.
@@ -61,7 +61,7 @@ export default function Terms() {
 
       <PublicSection title="7. Subscription & Billing">
         <p>
-          Finora currently offers a Free plan. Premium and Enterprise plans described on our pricing page are
+          Fynora currently offers a Free plan. Premium and Enterprise plans described on our pricing page are
           not yet billable — no payment method is collected, and no charges will occur, until those plans are
           formally launched and clearly communicated in advance.
         </p>
@@ -69,7 +69,7 @@ export default function Terms() {
 
       <PublicSection title="8. Intellectual Property">
         <p>
-          The Finora name, logo, and the Service's underlying software are the property of Finora and its
+          The Fynora name, logo, and the Service's underlying software are the property of Fynora and its
           licensors. Your own financial data — transactions, accounts, budgets, goals, and anything else you
           create or import — remains yours.
         </p>
@@ -77,16 +77,16 @@ export default function Terms() {
 
       <PublicSection title="9. Limitation of Liability">
         <p>
-          Finora is a personal finance organization tool, not a bank, financial advisor, or broker. Nothing in
-          the Service constitutes financial, investment, tax, or legal advice. Finora is provided "as is,"
-          without warranty of any kind, and Finora shall not be liable for any indirect, incidental, or
+          Fynora is a personal finance organization tool, not a bank, financial advisor, or broker. Nothing in
+          the Service constitutes financial, investment, tax, or legal advice. Fynora is provided "as is,"
+          without warranty of any kind, and Fynora shall not be liable for any indirect, incidental, or
           consequential damages arising from your use of the Service.
         </p>
       </PublicSection>
 
       <PublicSection title="10. Account Termination">
         <p>
-          You may stop using the Service and request account deletion at any time. Finora may suspend or
+          You may stop using the Service and request account deletion at any time. Fynora may suspend or
           terminate accounts that violate these terms, engage in fraudulent activity, or pose a security risk
           to the Service or other users.
         </p>

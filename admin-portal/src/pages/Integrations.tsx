@@ -89,7 +89,7 @@ function IntegrationsContent() {
 
 export default function Integrations() {
   return (
-    <AdminLayout title="Integrations" subtitle="Third-party services Finora talks to, their live status, and what's planned next">
+    <AdminLayout title="Integrations" subtitle="Third-party services Fynora talks to, their live status, and what's planned next">
       <RequirePermission permission="PLATFORM_DIAGNOSTICS_VIEW">
         <IntegrationsContent />
       </RequirePermission>

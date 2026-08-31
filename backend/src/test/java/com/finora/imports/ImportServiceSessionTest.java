@@ -61,7 +61,7 @@ class ImportServiceSessionTest {
         RecurringService recurringService = mock(RecurringService.class);
         importSessionService = mock(ImportSessionService.class);
 
-        DuplicateDetector duplicateDetector = new DuplicateDetector(transactionRepository);
+        DuplicateDetector duplicateDetector = new DuplicateDetector(transactionRepository, TestAccountRepositories.anyLive());
         // Mockito's default answer for an unstubbed saveAll() returning a List is an EMPTY list,
         // not null -- confirm() does `int imported = saved.size()` off this return value, so
         // without this stub every confirm() silently reports 0 imported regardless of how many
@@ -82,7 +82,9 @@ class ImportServiceSessionTest {
         importService = new ImportService(accountRepository, accountService, transactionRepository,
                 merchantRepository, statementImportRepository, categorizationService, reconciliationService,
                 recurringService, previewGenerator, duplicateDetector, ruleLearningService, importSessionService,
-                pdfPreviewGenerator, productIdentityResolver, new com.finora.imports.storage.StatementContentService(java.util.Optional.empty(), mock(com.finora.security.crypto.EncryptionService.class), "", ""),
+                pdfPreviewGenerator, productIdentityResolver,
+                mock(com.finora.imports.ownership.OwnershipMatchService.class),
+                new com.finora.imports.storage.StatementContentService(java.util.Optional.empty(), mock(com.finora.security.crypto.EncryptionService.class), "", ""),
                 mock(com.finora.imports.analysis.StatementAnalysisRecorder.class),
                 mock(com.finora.imports.analysis.ImportVerificationRecorder.class),
                 learningEventPublisher, mock(LayoutRegistryService.class),
@@ -158,8 +160,8 @@ class ImportServiceSessionTest {
         // findLiveSessionByContentHash IS called now (the duplicate-upload pre-check runs
         // before parsing even starts) -- what must still never happen is a session actually
         // getting created for rejected content.
-        verify(importSessionService, never()).createSession(any(), any(), any(), any(), any(), any());
-        verify(importSessionService, never()).createMultiSection(any(), any(), any(), any(), any());
+        verify(importSessionService, never()).createSession(any(), any(), any(), any(), any(), any(), any());
+        verify(importSessionService, never()).createMultiSection(any(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -177,8 +179,8 @@ class ImportServiceSessionTest {
         // findLiveSessionByContentHash IS called now (the duplicate-upload pre-check runs
         // before parsing even starts) -- what must still never happen is a session actually
         // getting created for rejected content.
-        verify(importSessionService, never()).createSession(any(), any(), any(), any(), any(), any());
-        verify(importSessionService, never()).createMultiSection(any(), any(), any(), any(), any());
+        verify(importSessionService, never()).createSession(any(), any(), any(), any(), any(), any(), any());
+        verify(importSessionService, never()).createMultiSection(any(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -193,12 +195,13 @@ class ImportServiceSessionTest {
                 List.of(new UnparseableRow(
                         java.util.Map.of("Maturity Date", "01/06/2027"), "no date column")));
         var recurringDeposit = new StagedAccountSection(null, List.of(), 0, 0, List.of());
-        when(importSessionService.createSession(any(), any(), any(), any(), any(), any()))
+        when(importSessionService.createSession(any(), any(), any(), any(), any(), any(), any()))
                 .thenReturn(sessionWith(UUID.randomUUID(), new byte[]{1}, ImportSession.STATUS_STAGED));
         when(pdfPreviewGenerator.generateSectionsWithContext(any(), any(), any(), any())).thenReturn(
                 new com.finora.imports.pdf.PdfPreviewGenerator.PdfGenerationResult(
                         List.<StagedAccountSection>of(savings, termDeposit, recurringDeposit),
-                        new DocumentContext("PDF", "test")));
+                        new DocumentContext("PDF", "test"),
+                        com.finora.imports.pdf.CreditCardSummaryExtractor.CreditCardSummaryEvidence.NONE));
 
         var response = importService.parseAndStagePdfWithSession(userId,
                 new MockMultipartFile("file", "combined.pdf", "application/pdf", new byte[]{1}), null);
@@ -295,6 +298,88 @@ class ImportServiceSessionTest {
     }
 
     @Test
+    void confirmSession_readsTheSessionsDetectedHolderName_andPersistsTheOwnershipMatchResult() throws Exception {
+        // docs/proposals/account-ownership-intelligence-proposal.md §3.1/§3.2: confirmSession has
+        // no DetectedAccountInfo of its own, only what the session staged -- accountHolderName has
+        // to come from importSessionService.readDetectedAccount(session), same "copied verbatim"
+        // treatment as the layout metadata trio above, and the resulting match status/holder name
+        // /userConfirmedContinue must land on the saved StatementImport row.
+        UUID sessionId = UUID.randomUUID();
+        ImportSession session = sessionWith(sessionId, "date,description,amount\n".getBytes(), ImportSession.STATUS_STAGED);
+        when(importSessionService.claimForConfirmation(userId, sessionId)).thenReturn(session);
+        when(importSessionService.readStagedRows(session)).thenReturn(List.of(stagedRow()));
+        when(importSessionService.readDetectedAccount(session)).thenReturn(detectedAccountWithHolder("Sunil Verma"));
+        when(getOwnershipMatchService().evaluate(userId, accountId, "Sunil Verma"))
+                .thenReturn(com.finora.entity.StatementImport.OwnershipMatchStatus.NAME_MISMATCH);
+
+        var request = new com.finora.dto.ImportDto.ConfirmRequest(sessionId, List.of(confirmedRow()), accountId,
+                null, null, null, null, null, null, null, null, true);
+        importService.confirmSession(userId, request);
+
+        var captor = org.mockito.ArgumentCaptor.forClass(com.finora.entity.StatementImport.class);
+        verify(getStatementImportRepository()).save(captor.capture());
+        assertThat(captor.getValue().getExtractedHolderName()).isEqualTo("Sunil Verma");
+        assertThat(captor.getValue().getOwnershipMatchStatus())
+                .isEqualTo(com.finora.entity.StatementImport.OwnershipMatchStatus.NAME_MISMATCH);
+        assertThat(captor.getValue().getUserConfirmedContinue()).isTrue();
+    }
+
+    @Test
+    void confirmSession_leavesUserConfirmedContinueNull_whenTheMatchWasNotAMismatch() throws Exception {
+        // Only meaningful when the warning actually fired -- a client-supplied true/false when
+        // nothing was ever shown would be claiming a decision the user was never asked to make.
+        UUID sessionId = UUID.randomUUID();
+        ImportSession session = sessionWith(sessionId, "date,description,amount\n".getBytes(), ImportSession.STATUS_STAGED);
+        when(importSessionService.claimForConfirmation(userId, sessionId)).thenReturn(session);
+        when(importSessionService.readStagedRows(session)).thenReturn(List.of(stagedRow()));
+        when(importSessionService.readDetectedAccount(session)).thenReturn(detectedAccountWithHolder("Rahul Sharma"));
+        when(getOwnershipMatchService().evaluate(userId, accountId, "Rahul Sharma"))
+                .thenReturn(com.finora.entity.StatementImport.OwnershipMatchStatus.NAME_MATCH);
+
+        // A client that never showed a warning has nothing to echo back -- true here would be a
+        // lie about a dialog the user never saw.
+        var request = new com.finora.dto.ImportDto.ConfirmRequest(sessionId, List.of(confirmedRow()), accountId,
+                null, null, null, null, null, null, null, null, true);
+        importService.confirmSession(userId, request);
+
+        var captor = org.mockito.ArgumentCaptor.forClass(com.finora.entity.StatementImport.class);
+        verify(getStatementImportRepository()).save(captor.capture());
+        assertThat(captor.getValue().getOwnershipMatchStatus())
+                .isEqualTo(com.finora.entity.StatementImport.OwnershipMatchStatus.NAME_MATCH);
+        assertThat(captor.getValue().getUserConfirmedContinue())
+                .as("NAME_MATCH means no warning fired, so nothing was ever confirmed past")
+                .isNull();
+    }
+
+    @Test
+    void confirm_withNoSession_leavesExtractedHolderNameNull() {
+        // The byte-array confirm() overload (used by StatementImportService.confirmReimport()) has
+        // no ImportSession to read a holder name from -- same best-effort-null treatment as the
+        // layout metadata trio in the test right below this one.
+        var request = new com.finora.dto.ImportDto.ConfirmRequest(null, List.of(confirmedRow()), accountId, null,
+                null, null, null);
+        importService.confirm(userId, "statement.csv", "date,description,amount\n".getBytes(), request);
+
+        var captor = org.mockito.ArgumentCaptor.forClass(com.finora.entity.StatementImport.class);
+        verify(getStatementImportRepository()).save(captor.capture());
+        assertThat(captor.getValue().getExtractedHolderName()).isNull();
+    }
+
+    private com.finora.dto.ImportDto.DetectedAccountInfo detectedAccountWithHolder(String accountHolderName) {
+        return new com.finora.dto.ImportDto.DetectedAccountInfo("Test Bank", "SAVINGS",
+                new BigDecimal("1000"), new BigDecimal("900"),
+                LocalDate.of(2026, 7, 1), LocalDate.of(2026, 7, 31), null, null, null, null,
+                accountHolderName, null, null, null,
+                "SAVINGS", 0.85, false, List.of(), null,
+                null, null, null, null, null, null, null);
+    }
+
+    private com.finora.imports.ownership.OwnershipMatchService getOwnershipMatchService() {
+        return (com.finora.imports.ownership.OwnershipMatchService)
+                ReflectionTestUtils.getField(importService, "ownershipMatchService");
+    }
+
+    @Test
     void confirm_withNoSession_leavesLayoutFieldsNull() {
         // The byte-array confirm() overload (used by StatementImportService.confirmReimport(),
         // which replays already-stored bytes rather than a fresh staged session) has no
@@ -308,6 +393,57 @@ class ImportServiceSessionTest {
         assertThat(captor.getValue().getLayoutMetadataJson()).isNull();
         assertThat(captor.getValue().getLayoutFingerprint()).isNull();
         assertThat(captor.getValue().getActivatedCapabilitiesJson()).isNull();
+    }
+
+    @Test
+    void confirmSession_copiesTheSessionsCreditCardSummary_ontoTheStatementImport() throws Exception {
+        // Roadmap item 6 follow-up (PR #451): the granular balance breakdown -- unlike
+        // totalAmountDue/paymentDueDate, which round-trip through ConfirmRequest -- is copied
+        // verbatim from the session, same "confirm() has no access to the original evidence"
+        // reasoning as the layout-metadata trio above.
+        UUID sessionId = UUID.randomUUID();
+        ImportSession session = sessionWith(sessionId, "date,description,amount\n".getBytes(), ImportSession.STATUS_STAGED);
+        when(importSessionService.claimForConfirmation(userId, sessionId)).thenReturn(session);
+        when(importSessionService.readStagedRows(session)).thenReturn(List.of(stagedRow()));
+        var evidence = new com.finora.imports.pdf.CreditCardSummaryExtractor.CreditCardSummaryEvidence(
+                java.math.BigDecimal.valueOf(10000), java.math.BigDecimal.valueOf(2450.75),
+                java.math.BigDecimal.ZERO, java.math.BigDecimal.valueOf(50), java.math.BigDecimal.valueOf(10000),
+                java.math.BigDecimal.valueOf(12450.75),
+                com.finora.imports.pdf.CreditCardSummaryExtractor.CreditCardSummaryEvidence.ExtractionMethod.GRID,
+                List.of());
+        when(importSessionService.readCreditCardSummary(session)).thenReturn(evidence);
+
+        var request = new ConfirmRequest(sessionId, List.of(confirmedRow()), accountId, null, null, null, null);
+        importService.confirmSession(userId, request);
+
+        var captor = org.mockito.ArgumentCaptor.forClass(com.finora.entity.StatementImport.class);
+        verify(getStatementImportRepository()).save(captor.capture());
+        assertThat(captor.getValue().getPreviousBalance()).isEqualByComparingTo(java.math.BigDecimal.valueOf(10000));
+        assertThat(captor.getValue().getPurchases()).isEqualByComparingTo(java.math.BigDecimal.valueOf(2450.75));
+        assertThat(captor.getValue().getCashAdvances()).isEqualByComparingTo(java.math.BigDecimal.ZERO);
+        assertThat(captor.getValue().getFees()).isEqualByComparingTo(java.math.BigDecimal.valueOf(50));
+        assertThat(captor.getValue().getPaymentsAndCredits()).isEqualByComparingTo(java.math.BigDecimal.valueOf(10000));
+    }
+
+    @Test
+    void confirmSession_leavesTheBreakdownNull_whenTheSessionHasNoCreditCardSummary() throws Exception {
+        UUID sessionId = UUID.randomUUID();
+        ImportSession session = sessionWith(sessionId, "date,description,amount\n".getBytes(), ImportSession.STATUS_STAGED);
+        when(importSessionService.claimForConfirmation(userId, sessionId)).thenReturn(session);
+        when(importSessionService.readStagedRows(session)).thenReturn(List.of(stagedRow()));
+        when(importSessionService.readCreditCardSummary(session))
+                .thenReturn(com.finora.imports.pdf.CreditCardSummaryExtractor.CreditCardSummaryEvidence.NONE);
+
+        var request = new ConfirmRequest(sessionId, List.of(confirmedRow()), accountId, null, null, null, null);
+        importService.confirmSession(userId, request);
+
+        var captor = org.mockito.ArgumentCaptor.forClass(com.finora.entity.StatementImport.class);
+        verify(getStatementImportRepository()).save(captor.capture());
+        assertThat(captor.getValue().getPreviousBalance()).isNull();
+        assertThat(captor.getValue().getPurchases()).isNull();
+        assertThat(captor.getValue().getCashAdvances()).isNull();
+        assertThat(captor.getValue().getFees()).isNull();
+        assertThat(captor.getValue().getPaymentsAndCredits()).isNull();
     }
 
     private StatementImportRepository getStatementImportRepository() {

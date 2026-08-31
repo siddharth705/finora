@@ -49,7 +49,7 @@ export default function ForgotPassword() {
           <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-rose-400 to-[#15171C] flex items-center justify-center">
             <ShieldAlert size={18} className="text-white" strokeWidth={2.5} />
           </div>
-          <span className="font-extrabold tracking-wide text-xl text-ink">FINORA ADMIN</span>
+          <span className="font-extrabold tracking-wide text-xl text-ink">FYNORA ADMIN</span>
         </div>
 
         <div className="bg-card border border-border rounded-xl2 shadow-soft p-6">

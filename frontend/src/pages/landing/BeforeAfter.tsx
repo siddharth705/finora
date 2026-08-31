@@ -5,7 +5,7 @@ import { beforeAfter } from './landing-config';
 /**
  * The section the page was missing, and the one that does the most work.
  *
- * Everything else describes what Finora does. This is the only place that shows what changes --
+ * Everything else describes what Fynora does. This is the only place that shows what changes --
  * two identical-shaped columns so the eye compares them directly, ending on "confusion" against
  * "confidence". The parallel structure is the argument; keep both columns the same length if this
  * is ever edited.
@@ -70,8 +70,8 @@ export function BeforeAfter() {
         blurb={beforeAfter.blurb}
       />
       <div className="grid md:grid-cols-2 gap-5 max-w-4xl mx-auto">
-        <Reveal><Column label="Before Finora" steps={beforeAfter.before} tone="before" /></Reveal>
-        <Reveal delayMs={140}><Column label="With Finora" steps={beforeAfter.after} tone="after" /></Reveal>
+        <Reveal><Column label="Before Fynora" steps={beforeAfter.before} tone="before" /></Reveal>
+        <Reveal delayMs={140}><Column label="With Fynora" steps={beforeAfter.after} tone="after" /></Reveal>
       </div>
     </Section>
   );

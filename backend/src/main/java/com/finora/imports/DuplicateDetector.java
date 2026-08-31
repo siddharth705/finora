@@ -1,6 +1,8 @@
 package com.finora.imports;
 
+import com.finora.entity.Account;
 import com.finora.entity.Transaction;
+import com.finora.repository.AccountRepository;
 import com.finora.repository.TransactionRepository;
 import org.springframework.stereotype.Component;
 
@@ -26,9 +28,11 @@ import java.util.Optional;
 public class DuplicateDetector {
 
     private final TransactionRepository transactionRepository;
+    private final AccountRepository accountRepository;
 
-    public DuplicateDetector(TransactionRepository transactionRepository) {
+    public DuplicateDetector(TransactionRepository transactionRepository, AccountRepository accountRepository) {
         this.transactionRepository = transactionRepository;
+        this.accountRepository = accountRepository;
     }
 
     /**
@@ -37,16 +41,24 @@ public class DuplicateDetector {
      * <p>Recommendation 2 of the import pipeline profile: findMatch below cost 1.00 statements per
      * row, measured. A statement covers ~31 dates whatever its row count, so this is the difference
      * between 5,000 queries and 31 for a large statement.
+     *
+     * <p>Live account ids are derived once here, not once per date inside {@link DuplicateIndex} --
+     * that class is already a cache scoped to the duration of one parse, so computing this once
+     * per index is both correct and consistent with that design.
      */
     public DuplicateIndex indexFor(UUID userId) {
-        return new DuplicateIndex(transactionRepository, userId);
+        List<UUID> liveAccountIds = accountRepository.findByUserId(userId).stream().map(Account::getId).toList();
+        return new DuplicateIndex(transactionRepository, userId, liveAccountIds);
     }
 
     /**
      * Duplicate check at staging time can't be scoped to a target account yet — the account is
-     * chosen/created after staging (see ImportDto.ConfirmRequest) — so this checks across all of
-     * the user's transactions rather than one account. That's a feature, not a limitation: it
-     * also catches "you already logged this under a different account by mistake."
+     * chosen/created after staging (see ImportDto.ConfirmRequest) — so this checks across every
+     * LIVE account the user has, rather than one account. That's a feature, not a limitation: it
+     * also catches "you already logged this under a different account by mistake." Excludes a
+     * soft-deleted account's transactions, which the plain user-scoped query would otherwise keep
+     * matching against forever (see {@code TransactionRepository.findByUserIdAndAccountIdIn}'s own
+     * doc comment).
      */
     public boolean isLikelyDuplicate(UUID userId, LocalDate date, BigDecimal amount, String description) {
         return findMatch(userId, date, amount, description).isPresent();
@@ -68,7 +80,10 @@ public class DuplicateDetector {
      */
     public Optional<ImportDto.DuplicateMatch> findMatch(UUID userId, LocalDate date,
                                                           BigDecimal amount, String description) {
-        return describe(transactionRepository.findPotentialDuplicatesByUser(userId, date, amount, description));
+        List<UUID> liveAccountIds = accountRepository.findByUserId(userId).stream().map(Account::getId).toList();
+        if (liveAccountIds.isEmpty()) return describe(List.of());
+        return describe(transactionRepository.findPotentialDuplicatesByUserAndAccountIdIn(
+                userId, date, amount, description, liveAccountIds));
     }
 
     /**

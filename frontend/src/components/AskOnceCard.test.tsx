@@ -8,7 +8,7 @@ import type { Transaction } from '../types';
 
 vi.mock('../api/endpoints', () => ({
   transactionsApi: { needsReview: vi.fn(), updateCategory: vi.fn() },
-  categoriesApi: { list: vi.fn() },
+  categoriesApi: { list: vi.fn(), options: vi.fn(), create: vi.fn() },
 }));
 
 function txn(id: string, description: string): Transaction {
@@ -31,7 +31,11 @@ function renderCard() {
 
 describe('AskOnceCard pagination', () => {
   beforeEach(() => {
-    vi.mocked(categoriesApi.list).mockResolvedValue([{ name: 'Food' }, { name: 'Transport' }] as any);
+    vi.mocked(categoriesApi.list).mockResolvedValue([
+      { id: 'cat-1', name: 'Food', isSystem: false, icon: 'tag', color: 'gray' },
+      { id: 'cat-2', name: 'Transport', isSystem: false, icon: 'tag', color: 'gray' },
+    ] as any);
+    vi.mocked(categoriesApi.options).mockResolvedValue({ icons: [], colors: [] } as any);
   });
 
   it('shows only 10 items on the first page when there are more than 10', async () => {
@@ -81,5 +85,77 @@ describe('AskOnceCard pagination', () => {
 
     await user.click(screen.getByLabelText('Next page'));
     expect(screen.getByLabelText('Next page')).toBeDisabled();
+  });
+});
+
+describe('AskOnceCard resolve (optimistic)', () => {
+  beforeEach(() => {
+    vi.mocked(categoriesApi.list).mockResolvedValue([
+      { id: 'cat-1', name: 'Food', isSystem: false, icon: 'tag', color: 'gray' },
+      { id: 'cat-2', name: 'Transport', isSystem: false, icon: 'tag', color: 'gray' },
+    ] as any);
+    vi.mocked(categoriesApi.options).mockResolvedValue({ icons: [], colors: [] } as any);
+  });
+
+  it('removes the row immediately on Confirm, before the save request resolves', async () => {
+    const user = userEvent.setup();
+    vi.mocked(transactionsApi.needsReview).mockResolvedValue([txn('t1', 'Coffee Shop')]);
+    // Deliberately never resolved in this test -- proves the row is gone before the request
+    // finishes, not just eventually after it. Same "an async throw only creates the rejection
+    // when actually invoked" reasoning as this file's other tests -- a Promise that never settles
+    // can't trip unhandled-rejection detection either way.
+    vi.mocked(transactionsApi.updateCategory).mockReturnValue(new Promise(() => {}));
+    renderCard();
+
+    await waitFor(() => expect(screen.getByText('Coffee Shop')).toBeInTheDocument());
+    const combobox = screen.getByRole('combobox');
+    await user.type(combobox, 'Food');
+    await user.click(await screen.findByText('Food'));
+    await user.click(screen.getByRole('button', { name: /confirm/i }));
+
+    await waitFor(() => expect(screen.queryByText('Coffee Shop')).not.toBeInTheDocument());
+  });
+
+  it('restores the row at its original position and shows an error when the save fails', async () => {
+    const user = userEvent.setup();
+    vi.mocked(transactionsApi.needsReview).mockResolvedValue([
+      txn('t1', 'Coffee Shop'), txn('t2', 'Grocery Store'), txn('t3', 'Gas Station'),
+    ]);
+    vi.mocked(transactionsApi.updateCategory).mockImplementation(async () => {
+      throw new Error('Network error');
+    });
+    renderCard();
+
+    await waitFor(() => expect(screen.getByText('Grocery Store')).toBeInTheDocument());
+    const combobox = screen.getAllByRole('combobox')[1];
+    await user.type(combobox, 'Food');
+    await user.click(await screen.findByText('Food'));
+    await user.click(screen.getAllByRole('button', { name: /confirm/i })[1]);
+
+    // The immediate-removal half is covered by the test above (using a promise that never
+    // resolves, so the intermediate state is actually observable) -- this test's own job is the
+    // END state once the save fails: restored, in its original middle position.
+    expect(await screen.findByText('Grocery Store')).toBeInTheDocument();
+    expect(screen.getByText("Couldn't save that category — please try again.")).toBeInTheDocument();
+    const names = screen.getAllByText(/Coffee Shop|Grocery Store|Gas Station/).map((el) => el.textContent);
+    expect(names).toEqual(['Coffee Shop', 'Grocery Store', 'Gas Station']);
+  });
+
+  it('keeps its previously chosen category selected after being restored', async () => {
+    const user = userEvent.setup();
+    vi.mocked(transactionsApi.needsReview).mockResolvedValue([txn('t1', 'Coffee Shop')]);
+    vi.mocked(transactionsApi.updateCategory).mockImplementation(async () => {
+      throw new Error('Network error');
+    });
+    renderCard();
+
+    await waitFor(() => expect(screen.getByText('Coffee Shop')).toBeInTheDocument());
+    const combobox = screen.getByRole('combobox');
+    await user.type(combobox, 'Transport');
+    await user.click(await screen.findByText('Transport'));
+    await user.click(screen.getByRole('button', { name: /confirm/i }));
+
+    expect(await screen.findByText('Coffee Shop')).toBeInTheDocument();
+    expect(screen.getByRole('combobox')).toHaveTextContent('Transport');
   });
 });

@@ -45,6 +45,10 @@ This repository already runs:
   Docker dependencies
 - **Secret scanning with push protection** — blocks commits containing recognizable credential
   patterns before they reach the repository
+- **[gitleaks](https://github.com/gitleaks/gitleaks)** — complementary to push protection, not a
+  replacement: a broader, entropy-based scan on every PR (that PR's diff) and nightly (full commit
+  history), plus a best-effort local pre-commit check when the binary is installed. Known
+  historical false positives are recorded in [`.gitleaksignore`](.gitleaksignore) by fingerprint.
 - **[`scripts/check-dependency-advisories.py`](scripts/check-dependency-advisories.py)** — gates
   CI on npm advisories in shipped frontend/admin-portal/mobile code, with a maintained allowlist
 
