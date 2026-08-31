@@ -54,7 +54,7 @@
     "wrangler": "^4.117.0"
   },
   "engines": {
-    "node": ">=20.19.0"
+    "node": ">=22.22.2"
   },
   "allowScripts": {
     "@sentry/cli@2.58.6": true
