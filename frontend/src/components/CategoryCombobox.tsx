@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { ChevronDown, Pencil, Plus, Trash2 } from 'lucide-react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { Check, ChevronDown, Pencil, Plus, Trash2 } from 'lucide-react';
 import { categoriesApi, type CategoryOption } from '../api/endpoints';
 import { similarityRatio } from '../lib/similarity';
 import { CategoryCreateEditPanel } from './CategoryCreateEditPanel';
@@ -54,6 +54,7 @@ export function CategoryCombobox({
   // "+ Create" for a name that already existed and 409ed. One query key fixes both halves.
   const categoriesQ = useQuery({ queryKey: ['categories'], queryFn: () => categoriesApi.list(), retry: false });
   const categories = useMemo(() => categoriesQ.data ?? [], [categoriesQ.data]);
+  const queryClient = useQueryClient();
 
   // `query` is the popover's own search text now, not a mirror of `value` — the trigger button
   // shows the selection, so there is no field for typed-but-unselected text to strand itself in
@@ -99,6 +100,19 @@ export function CategoryCombobox({
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
   }, [open]);
+
+  // Warms the icon/color palette the moment the popover opens, which is well before the user can
+  // actually reach "+ New category" -- by the time they click it, categoriesApi.options() has
+  // already resolved, so CategoryCreateEditPanel's own ['category-options'] query serves from
+  // cache instead of the panel showing a blank grid for a network round trip.
+  useEffect(() => {
+    if (!open) return;
+    void queryClient.prefetchQuery({
+      queryKey: ['category-options'],
+      queryFn: categoriesApi.options,
+      staleTime: Infinity,
+    });
+  }, [open, queryClient]);
 
   // Unlike closeAndRefocus, calling triggerRef.current?.focus() at the point `panel` is cleared
   // is too early -- the trigger button doesn't exist in the DOM yet while an edit/create/delete
@@ -222,7 +236,11 @@ export function CategoryCombobox({
         </p>
       )}
       {open && (
-        <div className="absolute z-10 mt-1 w-full bg-card border border-border rounded-lg shadow-lg max-h-72 overflow-y-auto">
+        <div
+          role="listbox"
+          aria-label="Categories"
+          className="absolute z-10 mt-1 w-full bg-card border border-border rounded-lg shadow-lg max-h-72 overflow-y-auto"
+        >
           <div className="p-2 border-b border-border sticky top-0 bg-card">
             <input
               ref={searchRef}
@@ -233,14 +251,22 @@ export function CategoryCombobox({
               onChange={(e) => setQuery(e.target.value)}
             />
           </div>
-          {exactMatches.map((c) => (
-            <div key={c.id} className="group flex items-center hover:bg-sidebar-hover">
+          {exactMatches.map((c) => {
+            const isSelected = c.name === value;
+            return (
+            <div
+              key={c.id}
+              className={`group flex items-center transition-colors ${isSelected ? 'bg-primary-light' : 'hover:bg-primary-light/50'}`}
+            >
               <button
                 type="button"
-                className="flex-1 min-w-0 text-left px-3 py-2 text-sm truncate"
+                role="option"
+                aria-selected={isSelected}
+                className={`flex-1 min-w-0 flex items-center justify-between gap-2 text-left px-3 py-2 text-sm truncate ${isSelected ? 'text-primary font-medium' : 'text-ink'}`}
                 onClick={() => select(c)}
               >
-                {c.name}
+                <span className="truncate">{c.name}</span>
+                {isSelected && <Check size={14} className="flex-shrink-0" />}
               </button>
               {/* System categories are immutable by design (see the design spec's system-vs-user
                   split), so they get neither control. opacity-0 + group-hover keeps the row clean
@@ -266,7 +292,8 @@ export function CategoryCombobox({
                 </span>
               )}
             </div>
-          ))}
+            );
+          })}
           {fuzzySuggestions.length > 0 && (
             <div className="px-3 py-1 text-[11px] uppercase text-muted">
               Did you mean:

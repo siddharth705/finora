@@ -152,6 +152,56 @@ describe('DuplicateReview', () => {
     expect(onApplyToSimilar).toHaveBeenCalledWith(0);
   });
 
+  /** A long duplicate list should not force clicking "Skip this row" one at a time -- but with
+   *  only one outstanding row, a bulk button would be a second way to do the exact same click. */
+  describe('bulk resolve (onDecideAll)', () => {
+    it('is not offered when onDecideAll is omitted', () => {
+      render(
+        <DuplicateReview
+          rows={[row(), row({ description: 'UBER TRIP 8891' })]}
+          decisions={['unresolved', 'unresolved']}
+          onDecide={vi.fn()}
+          onApplyToSimilar={vi.fn()}
+        />
+      );
+
+      expect(screen.queryByRole('button', { name: /remaining/ })).not.toBeInTheDocument();
+    });
+
+    it('is not offered when at most one row is outstanding', () => {
+      render(
+        <DuplicateReview
+          rows={[row(), row({ description: 'UBER TRIP 8891' })]}
+          decisions={['import', 'unresolved']}
+          onDecide={vi.fn()}
+          onApplyToSimilar={vi.fn()}
+          onDecideAll={vi.fn()}
+        />
+      );
+
+      expect(screen.queryByRole('button', { name: /remaining/ })).not.toBeInTheDocument();
+    });
+
+    it('skips or imports everything still outstanding, in one click', async () => {
+      const onDecideAll = vi.fn();
+      render(
+        <DuplicateReview
+          rows={[row(), row({ description: 'UBER TRIP 8891' }), row({ description: 'ZOMATO 221' })]}
+          decisions={['unresolved', 'unresolved', 'unresolved']}
+          onDecide={vi.fn()}
+          onApplyToSimilar={vi.fn()}
+          onDecideAll={onDecideAll}
+        />
+      );
+
+      await userEvent.click(screen.getByRole('button', { name: 'Skip all remaining' }));
+      expect(onDecideAll).toHaveBeenCalledWith('skip');
+
+      await userEvent.click(screen.getByRole('button', { name: 'Import all remaining' }));
+      expect(onDecideAll).toHaveBeenCalledWith('import');
+    });
+  });
+
   /** The safety message is part of the contract, not decoration: the user needs to know that
    *  looking at this screen has not changed anything yet. */
   it('states that nothing changes until the import is confirmed', () => {

@@ -79,3 +79,18 @@ work isn't done yet and the session is just pausing).
 Read-only exploration — reading code, answering questions about the repo, reviewing docs —
 doesn't need a worktree. Create one before the first *write*: an edit, file creation, a
 configuration change, a test change, a commit, a merge, or any implementation modification.
+
+## Use the existing knowledge graph for coding questions
+
+`graphify-out/graph.json` is a pre-built knowledge graph of this codebase (entities,
+call/import relationships, community clusters) — kept manually up to date, not on a schedule.
+Before answering a question about the codebase's architecture, how something works, what
+calls what, or where to make a change, check whether `graphify-out/graph.json` exists and
+consult it first via `graphify query "<question>"` / `graphify explain "<name>"` / `graphify
+path "A" "B"` (see the `graphify` skill) rather than starting from a blind grep. Treat it as
+a fast, already-built map of the repo, not a substitute for reading the actual source before
+changing it.
+
+This is read-only guidance: never run `/graphify --update` or any rebuild automatically as
+part of answering a question. The graph is refreshed manually, on request, at the primary
+checkout — a session should query it, not rebuild it.
