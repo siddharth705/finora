@@ -4,13 +4,17 @@ import com.finora.AbstractIntegrationTest;
 import com.finora.dto.ImportDto.ConfirmRequest;
 import com.finora.dto.ImportDto.ConfirmedRow;
 import com.finora.entity.Account;
+import com.finora.entity.StatementImport;
 import com.finora.entity.Transaction;
 import com.finora.entity.User;
+import com.finora.exception.ApiException;
 import com.finora.imports.ImportService;
 import com.finora.repository.AccountRepository;
 import com.finora.repository.MerchantLearningEventRepository;
+import com.finora.repository.StatementImportRepository;
 import com.finora.repository.TransactionRepository;
 import com.finora.repository.UserRepository;
+import com.finora.service.StatementImportService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -24,6 +28,7 @@ import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * confirmNotDuplicate()'s own doc comment says "the balance is deliberately NOT touched... a
@@ -42,8 +47,10 @@ class ConfirmNotDuplicateBalanceIT extends AbstractIntegrationTest {
 
     @Autowired private ImportService importService;
     @Autowired private TransactionService transactionService;
+    @Autowired private StatementImportService statementImportService;
     @Autowired private AccountRepository accountRepository;
     @Autowired private TransactionRepository transactionRepository;
+    @Autowired private StatementImportRepository statementImportRepository;
     @Autowired private UserRepository userRepository;
     @Autowired private MerchantLearningEventRepository learningEventRepository;
 
@@ -81,7 +88,11 @@ class ConfirmNotDuplicateBalanceIT extends AbstractIntegrationTest {
     }
 
     private MockMultipartFile statementFile() {
-        return new MockMultipartFile("file", "statement.csv", "text/csv",
+        return statementFile("statement.csv");
+    }
+
+    private MockMultipartFile statementFile(String name) {
+        return new MockMultipartFile("file", name, "text/csv",
                 "irrelevant-the-rows-are-supplied-directly".getBytes(StandardCharsets.UTF_8));
     }
 
@@ -93,6 +104,23 @@ class ConfirmNotDuplicateBalanceIT extends AbstractIntegrationTest {
     private void importRows(Fixture f, ConfirmedRow... rows) throws Exception {
         importService.confirm(f.user().getId(), statementFile(),
                 new ConfirmRequest(null, List.of(rows), f.account().getId(), null, null, null, null));
+    }
+
+    private void importRowsWithPeriod(Fixture f, String fileName, LocalDate periodStart,
+                                       LocalDate periodEnd, ConfirmedRow... rows) throws Exception {
+        importService.confirm(f.user().getId(), statementFile(fileName),
+                new ConfirmRequest(null, List.of(rows), f.account().getId(), null, null, null, null,
+                        periodStart, periodEnd));
+    }
+
+    private StatementImport statementNamed(Fixture f, String fileName) {
+        return statementImportRepository
+                .findAllByOrderByImportedAtDesc(org.springframework.data.domain.PageRequest.of(0, 50))
+                .stream()
+                .filter(si -> si.getUserId().equals(f.user().getId()))
+                .filter(si -> si.getFileName().equals(fileName))
+                .findFirst()
+                .orElseThrow();
     }
 
     private BigDecimal balanceOf(Fixture f) {
@@ -127,5 +155,62 @@ class ConfirmNotDuplicateBalanceIT extends AbstractIntegrationTest {
         assertThat(balanceOf(f))
                 .as("the row now counts in every report again; the balance must count it too")
                 .isEqualByComparingTo("910.00");
+    }
+
+    @Test
+    @DisplayName("refuses to confirm-not-duplicate a row whose own statement has since been "
+            + "superseded, leaving both its status and the balance untouched")
+    void refusesWhenTheOwningStatementHasBeenSuperseded() throws Exception {
+        Fixture f = fixture("1000.00");
+        LocalDate periodStart = LocalDate.of(2026, 7, 1);
+        LocalDate periodEnd = LocalDate.of(2026, 7, 31);
+
+        // Original: one row, ADDITIVE (no closing balance stated).
+        importRowsWithPeriod(f, "original.csv", periodStart, periodEnd,
+                row("METRO FARE", "45.00", "EXPENSE"));
+        assertThat(balanceOf(f)).isEqualByComparingTo("955.00");
+
+        // Re-imported by mistake, same period, same row: reconciliation flags this second METRO
+        // FARE DUPLICATE against the first, and BH-003 reverses its own 45.00 contribution the
+        // moment this confirm runs -- same mechanism the sibling test above covers.
+        importRowsWithPeriod(f, "reimport-with-duplicate.csv", periodStart, periodEnd,
+                row("METRO FARE", "45.00", "EXPENSE"));
+        assertThat(balanceOf(f))
+                .as("BH-003 already reversed the second row's contribution")
+                .isEqualByComparingTo("955.00");
+        StatementImport reimport = statementNamed(f, "reimport-with-duplicate.csv");
+        Transaction duplicateRow = transactionRepository.findByStatementImportId(reimport.getId())
+                .stream().findFirst().orElseThrow();
+        assertThat(duplicateRow.getReconciliationStatus())
+                .isEqualTo(Transaction.ReconciliationStatus.DUPLICATE);
+
+        // The accidental reimport itself gets superseded by a later, unrelated correction covering
+        // the exact same period -- this is the interaction the balance-only fix in #633 didn't
+        // account for: supersede() only ever touches OK-status rows (see its own doc comment), so
+        // the DUPLICATE row above is left behind untouched, still pointing at a statement that is
+        // now marked replaced.
+        importRowsWithPeriod(f, "replacement.csv", periodStart, periodEnd,
+                row("COFFEE", "10.00", "EXPENSE"));
+        assertThat(balanceOf(f)).isEqualByComparingTo("945.00");
+        StatementImport replacement = statementNamed(f, "replacement.csv");
+        statementImportService.supersede(f.user().getId(), reimport.getId(), replacement.getId());
+        assertThat(statementImportRepository.findById(reimport.getId()).orElseThrow().getSupersededBy())
+                .isEqualTo(replacement.getId());
+
+        // The user later finds this stale DUPLICATE row in the dashboard's "detected duplicates"
+        // widget (DashboardService filters purely on reconciliationStatus, with no awareness of
+        // supersession) and clicks "Not a duplicate". Un-duplicating it would resurrect a row from
+        // a statement Finora has already marked replaced -- refused outright, same as supersede()
+        // itself already refuses to act on a statement that's already been superseded.
+        assertThatThrownBy(() -> transactionService.confirmNotDuplicate(f.user().getId(), duplicateRow.getId()))
+                .isInstanceOf(ApiException.class);
+
+        Transaction duplicateRowAfter = transactionRepository.findById(duplicateRow.getId()).orElseThrow();
+        assertThat(duplicateRowAfter.getReconciliationStatus())
+                .as("refused before any mutation -- still excluded from every report")
+                .isEqualTo(Transaction.ReconciliationStatus.DUPLICATE);
+        assertThat(balanceOf(f))
+                .as("refused before any mutation -- the balance stays exactly where supersede left it")
+                .isEqualByComparingTo("945.00");
     }
 }
