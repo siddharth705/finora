@@ -109,4 +109,28 @@ describe('InsightsScreen', () => {
     expect(screen.getAllByTestId('shimmer-block', { hidden: true }).length).toBeGreaterThan(0);
     expect(screen.queryByText("This Month's Observations")).toBeNull();
   });
+
+  // Each card gates on only the query its own data comes from -- a slow recurringApi.list() must
+  // not hold Observations/Category Movers (both read insightsQ only) on their skeleton too.
+  it('reveals Observations and Category Movers independently of a still-loading Recurring Payments', async () => {
+    recurring.list.mockReset().mockReturnValue(new Promise(() => {}));
+
+    renderScreen();
+
+    expect(await screen.findByText('You spent 18% less on dining this month.')).toBeTruthy();
+    expect(screen.getByText('Dining')).toBeTruthy();
+    expect(screen.queryByText('netflix')).toBeNull();
+    // Only Recurring Payments' own shimmer is left -- the other two cards already have real data.
+    expect(screen.getAllByTestId('shimmer-block', { hidden: true }).length).toBeGreaterThan(0);
+  });
+
+  it('reveals Recurring Payments independently of a still-loading insights query', async () => {
+    insights.get.mockReset().mockReturnValue(new Promise(() => {}));
+
+    renderScreen();
+
+    expect(await screen.findByText('netflix')).toBeTruthy();
+    expect(screen.queryByText("This Month's Observations")).toBeNull();
+    expect(screen.queryByText('Category Movers')).toBeNull();
+  });
 });

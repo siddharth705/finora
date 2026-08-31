@@ -1,3 +1,4 @@
+import { AccessibilityInfo } from 'react-native';
 import { render, screen } from '@testing-library/react-native';
 import { Shimmer } from './Shimmer';
 import { ThemeProvider } from '../../theme';
@@ -52,5 +53,29 @@ describe('Shimmer', () => {
     renderShimmer({ testID: 'skeleton-chart-bar' });
     expect(screen.getByTestId('skeleton-chart-bar', { hidden: true })).toBeTruthy();
     expect(screen.queryByTestId('shimmer-block', { hidden: true })).toBeNull();
+  });
+
+  // Every Shimmer block is individually hidden from assistive tech (see above), which otherwise
+  // leaves no signal at all that the screen is loading -- the ActivityIndicator this system
+  // replaced was at least a real element VoiceOver/TalkBack announced on its own.
+  describe('loading announcement', () => {
+    it('announces once when the first Shimmer of a loading episode mounts', () => {
+      const announce = jest.spyOn(AccessibilityInfo, 'announceForAccessibility');
+      renderShimmer();
+      expect(announce).toHaveBeenCalledWith('Loading');
+      expect(announce).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not announce again for additional Shimmers in the same loading episode', () => {
+      const announce = jest.spyOn(AccessibilityInfo, 'announceForAccessibility');
+      render(
+        <ThemeProvider>
+          <Shimmer height={20} />
+          <Shimmer height={20} />
+          <Shimmer height={20} />
+        </ThemeProvider>
+      );
+      expect(announce).toHaveBeenCalledTimes(1);
+    });
   });
 });

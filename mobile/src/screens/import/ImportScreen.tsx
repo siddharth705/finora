@@ -13,7 +13,7 @@ import { accountsApi, categoriesApi, importApi, statementImportsApi, type RNFile
 import { PDF_PASSWORD_INVALID, PDF_PASSWORD_REQUIRED } from '../../api/errorCodes';
 import { apiErrorCode, toUserMessage } from '../../lib/apiError';
 import { fmtCurrency } from '../../lib/format';
-import { hapticSuccess } from '../../lib/haptics';
+import { hapticError, hapticSuccess } from '../../lib/haptics';
 import { invalidateFinancialData } from '../../lib/invalidateFinancialData';
 import {
   buildNewAccountPayload, buildRowPayload, initialAccountForm, initialCategories,
@@ -281,6 +281,7 @@ export function ImportScreen() {
       hapticSuccess();
     } catch (e) {
       setError(toUserMessage(e, 'Could not complete the import.'));
+      hapticError();
     } finally {
       setConfirming(false);
     }

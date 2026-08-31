@@ -2,7 +2,7 @@ import { StyleSheet, Text, View } from 'react-native';
 import Svg, { Circle, Line } from 'react-native-svg';
 import { fmtCurrency, fmtDate } from '../../lib/format';
 import {
-  TREND_HEIGHT, TREND_PAD_TOP, TREND_PLOT_HEIGHT, polylineLength, trendScale,
+  TREND_HEIGHT, TREND_PAD_TOP, TREND_PLOT_HEIGHT, polylineLength, toSvgPoints, trendScale,
 } from '../../lib/chartGeometry';
 import { spacing, useTheme } from '../../theme';
 import { RevealPolyline } from './ChartReveal';
@@ -27,7 +27,7 @@ export function TrendChart({ points, width }: { points: TrendPoint[]; width: num
   }
 
   const { xAt, yAt } = trendScale(points.map((p) => p.value), width);
-  const polylinePoints = points.map((p, i) => `${xAt(i)},${yAt(p.value)}`).join(' ');
+  // {x,y} pairs computed once; the SVG points string and polylineLength are both derived from it.
   const linePoints = points.map((p, i) => ({ x: xAt(i), y: yAt(p.value) }));
 
   const first = points[0];
@@ -56,7 +56,7 @@ export function TrendChart({ points, width }: { points: TrendPoint[]; width: num
             strokeWidth={1}
           />
           <RevealPolyline
-            points={polylinePoints}
+            points={toSvgPoints(linePoints)}
             length={polylineLength(linePoints)}
             color={c.primary}
             strokeWidth={2}
