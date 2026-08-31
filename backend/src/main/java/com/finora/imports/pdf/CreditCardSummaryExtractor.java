@@ -118,8 +118,12 @@ public final class CreditCardSummaryExtractor {
             "other debit&charges", "other debit & charges", "finance charges", "fees");
     private static final List<String> PAYMENTS_LABELS = List.of(
             "payments / credits", "payments/credits", "payments and credits", "payments & refunds");
+    // "total amount due (payable)" is deliberately not listed here: stripDecoration() strips any
+    // trailing parenthetical before this list is consulted, so it would always collapse to the
+    // plain "total amount due" entry below anyway -- listing both invited exactly the kind of
+    // dead-entry drift a future reader would have to re-derive is safe.
     private static final List<String> TOTAL_DUE_LABELS = List.of(
-            "total amount due", "total amount due (payable)", "total payment due");
+            "total amount due", "total payment due");
 
     /**
      * What a credit-card statement printed about its own billing equation, every field nullable
