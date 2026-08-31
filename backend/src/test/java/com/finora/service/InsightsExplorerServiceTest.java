@@ -7,6 +7,7 @@ import com.finora.entity.Transaction;
 import com.finora.repository.AccountRepository;
 import com.finora.repository.BudgetRepository;
 import com.finora.repository.CategoryRepository;
+import com.finora.repository.StatementImportRepository;
 import com.finora.repository.TransactionRepository;
 import com.finora.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -41,6 +42,8 @@ class InsightsExplorerServiceTest {
         accountRepository = mock(AccountRepository.class);
         categoryRepository = mock(CategoryRepository.class);
         BudgetRepository budgetRepository = mock(BudgetRepository.class);
+        StatementImportRepository statementImportRepository = mock(StatementImportRepository.class);
+        when(statementImportRepository.findMetadataWithPeriodByUserIdAndAccountId(any(), any())).thenReturn(List.of());
         userRepository = mock(UserRepository.class);
         TransactionGraphService transactionGraphService = mock(TransactionGraphService.class);
         when(transactionGraphService.ccPaymentFromTransactionIds(any())).thenReturn(Set.of());
@@ -51,7 +54,7 @@ class InsightsExplorerServiceTest {
         when(accountRepository.findByUserId(userId)).thenReturn(List.of(liveAccount));
 
         InsightsService insightsService = new InsightsService(transactionRepository, accountRepository, categoryRepository, budgetRepository,
-                userRepository, transactionGraphService);
+                userRepository, transactionGraphService, statementImportRepository);
         service = new InsightsExplorerService(insightsService, userRepository);
 
         dining = new Category();

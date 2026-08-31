@@ -28,14 +28,22 @@ import java.util.UUID;
  * partial overlap could mean several different things (wrong account, a corrected re-upload with a
  * genuinely different range) that a one-line import-time notice can't disambiguate responsibly.
  *
- * <p>The duplicate wording is written to extend, not replace, once supersession (Phase 4) ships:
- * "isn't supported yet" states the current limitation honestly rather than implying a dead end,
- * so the eventual "Import this one as a replacement?" action reads as a continuation of the same
- * sentence a user already saw, not a new UX pattern (§0.23).
+ * <p>Phase 4 update: the duplicate sentence used to end "...isn't supported yet" -- it now does,
+ * via {@link #duplicateOfStatementId} and the "Import this one as a replacement?" action it
+ * drives (§0.23), so the sentence states the fact and leaves the action to the caller instead of
+ * contradicting a button sitting right next to it.
  */
 public final class CoverageWarnings {
 
     private CoverageWarnings() {}
+
+    /** The fixed opening of the duplicate-period sentence -- exposed so a caller with a reason to
+     *  know a "duplicate" isn't really one (see {@code StatementImportService.confirmReimport},
+     *  which reimport-confirms a statement without deleting the original it's correcting, so this
+     *  code has no way to tell the two apart on its own) can filter it back out by prefix, without
+     *  this class or ImportService's confirm/persistSection/summarise pipeline needing to know
+     *  about that one caller's special case. */
+    public static final String DUPLICATE_PERIOD_WARNING_PREFIX = "You already have a statement for this period";
 
     /**
      * @param report            the whole account's coverage report, computed AFTER the new
@@ -61,6 +69,43 @@ public final class CoverageWarnings {
             }
         }
 
+        // Phase 4 (§0.3/§0.23): "isn't supported yet" is gone -- it now is, via duplicateOverlaps
+        // below (and duplicateOfStatementId, its flattened first-match view) and the "Import this
+        // one as a replacement?" action they drive, so each sentence states the fact and leaves the
+        // action to the caller instead of contradicting a button sitting right next to it.
+        for (DuplicateOverlap overlap : duplicateOverlaps(report, newStatementId, importedAtById)) {
+            warnings.add(overlap.warning());
+        }
+
+        return warnings;
+    }
+
+    /**
+     * One exact-duplicate-period overlap involving {@code newStatementId}, paired with the
+     * OTHER statement's id and the exact sentence describing it. {@link #forNewStatement} and
+     * {@link #duplicateOfStatementId} are both flattened views of this same data -- every
+     * sentence concatenated into one list, only the first id kept -- which is all the common case
+     * (one confirm producing at most one duplicate) ever needs. A caller that has to tell one
+     * overlap's sentence apart from another's needs this instead: see {@code
+     * StatementImportService.confirmReimport}, which strips exactly the overlap against the
+     * statement it is reimporting and must leave any OTHER duplicate this same confirm also
+     * produced -- a real, unrelated one -- fully intact. Before this paired the two, a caller in
+     * that position could only filter warnings by string prefix and clear duplicateOfStatementId
+     * by a single id comparison: two independently-flattened values with no way to agree with each
+     * other once more than one overlap existed, which is exactly how a second, unrelated
+     * duplicate's warning and id went missing together (found via self-review, Phase 4 follow-up).
+     */
+    public record DuplicateOverlap(UUID otherStatementId, String warning) {}
+
+    /**
+     * Every exact-duplicate overlap involving {@code newStatementId}, in the same order {@link
+     * #forNewStatement} emits their sentences and {@link #duplicateOfStatementId} scans them --
+     * both of those are built from this now, so they can no longer independently disagree about
+     * which overlaps exist.
+     */
+    public static List<DuplicateOverlap> duplicateOverlaps(CoverageReport report, UUID newStatementId,
+                                                              Map<UUID, Instant> importedAtById) {
+        List<DuplicateOverlap> overlaps = new ArrayList<>();
         for (CoverageOverlap overlap : report.overlaps()) {
             if (overlap.type() != OverlapType.EXACT_DUPLICATE) continue;
             boolean involvesNewStatement = overlap.segmentAId().equals(newStatementId)
@@ -71,10 +116,21 @@ public final class CoverageWarnings {
             Instant otherImportedAt = importedAtById.get(otherId);
             String importedOnClause = otherImportedAt == null ? ""
                     : ", imported on " + LocalDate.ofInstant(otherImportedAt, ZoneOffset.UTC);
-            warnings.add("You already have a statement for this period" + importedOnClause
-                    + ". Replacing an existing statement isn't supported yet.");
+            overlaps.add(new DuplicateOverlap(otherId, DUPLICATE_PERIOD_WARNING_PREFIX + importedOnClause + "."));
         }
+        return overlaps;
+    }
 
-        return warnings;
+    /**
+     * The ORIGINAL statement's id when {@code newStatementId}'s own confirm produced an
+     * exact-duplicate-period overlap, or null when it did not. Phase 4's "Import this one as a
+     * replacement?" action needs this id to know what to supersede -- kept as a separate method
+     * rather than folded into {@link #forNewStatement}'s {@code List<String>} return so that
+     * widely-used shape (every test in this class, and {@code ImportService}'s one call site)
+     * stays unchanged.
+     */
+    public static UUID duplicateOfStatementId(CoverageReport report, UUID newStatementId) {
+        List<DuplicateOverlap> overlaps = duplicateOverlaps(report, newStatementId, Map.of());
+        return overlaps.isEmpty() ? null : overlaps.get(0).otherStatementId();
     }
 }

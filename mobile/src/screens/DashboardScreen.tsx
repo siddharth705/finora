@@ -1,11 +1,12 @@
 import { useMemo, useState } from 'react';
 import {
-  ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, Text, useWindowDimensions, View,
+  Pressable, RefreshControl, ScrollView, StyleSheet, Text, useWindowDimensions, View,
 } from 'react-native';
 import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { usePreventScreenCapture } from 'expo-screen-capture';
 import { Card, EmptyState, SectionHeading } from '../components/Card';
+import { SkeletonCard, SkeletonChart, SkeletonTransactionRow } from '../components/skeletons/Skeletons';
 import { DonutChart, type Slice } from '../components/charts/DonutChart';
 import { CashFlowChart } from '../components/charts/CashFlowChart';
 import {
@@ -13,6 +14,8 @@ import {
 } from '../api/endpoints';
 import { useAuth } from '../context/AuthContext';
 import { fmtCurrency, greeting, monthLabel } from '../lib/format';
+import { usePrefetchAdjacentScreens } from '../lib/prefetchAdjacentScreens';
+import { deriveRefreshing } from '../lib/refreshingIndicator';
 import { useLargeFontScale } from '../lib/useLargeFontScale';
 import { radius, spacing, useTheme } from '../theme';
 
@@ -36,6 +39,7 @@ export function DashboardScreen() {
   // all Android versions per expo-screen-capture's own platform notes; older iOS silently does
   // nothing rather than erroring, which is an acceptable degrade, not a broken state.
   usePreventScreenCapture();
+  usePrefetchAdjacentScreens();
   const c = useTheme();
   const largeText = useLargeFontScale();
   const insets = useSafeAreaInsets();
@@ -46,7 +50,10 @@ export function DashboardScreen() {
 
   // useQueries (not one Promise.all) so a single failing endpoint degrades to one empty section
   // instead of blanking the screen -- same reasoning as the web Dashboard's own comment.
-  const [summaryQ, accountsQ, recentTxnsQ, goalsQ, insightsQ, settingsQ] = useQueries({
+  // The accounts query's result is intentionally unbound -- see the comment further down: it
+  // fires (and prewarms AccountsScreen's cache) but nothing on this screen reads its data or
+  // fetch state anymore.
+  const [summaryQ, , recentTxnsQ, goalsQ, insightsQ, settingsQ] = useQueries({
     queries: [
       { queryKey: ['dashboard-summary'], queryFn: () => dashboardApi.summary() },
       { queryKey: ['accounts'], queryFn: () => accountsApi.list() },
@@ -81,8 +88,23 @@ export function DashboardScreen() {
     .filter((d): d is NonNullable<typeof d> => !!d)
     .map((d) => ({ label: monthLabel(d.month), income: d.income, expense: d.expense }));
 
-  const loading = summaryQ.isLoading || accountsQ.isLoading || recentTxnsQ.isLoading;
-  const refreshing = summaryQ.isFetching && !summaryQ.isLoading;
+  // The accounts query's data is never read anywhere on this screen (it only prewarms
+  // AccountsScreen's cache), so it stays out of BOTH the initial-load gate (the shell shouldn't
+  // wait on a fetch whose result isn't rendered here) and the refreshing indicator below (a pull
+  // gesture that visibly finishes shouldn't keep spinning on a fetch the user can't see the result
+  // of -- and the reverse bug is just as real: if accounts happens to resolve slower than
+  // summary/recent-transactions on first mount, including it here would flip the spinner on with
+  // no user gesture at all, since initialLoad has already gone false).
+  //
+  // Tracks every query whose data IS rendered and that refresh() (below) actually invalidates --
+  // summary/recent-transactions plus goals, insights, and the Cash Flow chart's per-month report
+  // queries. Missing any of these would let the spinner disappear while a visible section is still
+  // silently updating underneath it.
+  const initialLoad = summaryQ.isLoading || recentTxnsQ.isLoading;
+  const refreshing = deriveRefreshing(
+    [summaryQ, recentTxnsQ, goalsQ, insightsQ, ...monthlyReportsQ],
+    initialLoad
+  );
 
   function refresh() {
     ['dashboard-summary', 'accounts', 'recent-transactions', 'goals', 'insights', 'report-months', 'report']
@@ -140,17 +162,11 @@ export function DashboardScreen() {
     ];
   }, [summary]);
 
-  if (loading) {
-    return (
-      <View style={[styles.centered, { backgroundColor: c.bg }]}>
-        <ActivityIndicator size="large" color={c.primary} />
-      </View>
-    );
-  }
-
   // summaryQ can fail on its own (the whole point of useQueries above) -- say so rather than
-  // rendering a screen of zeroes that reads as "you have no money".
-  if (!summary) {
+  // rendering a screen of zeroes that reads as "you have no money". Only on a SETTLED failure,
+  // though -- summaryQ.isLoading with no cached data yet falls through to the shell below, which
+  // shows its own per-section skeletons instead of blocking the whole screen behind one spinner.
+  if (!summaryQ.isLoading && !summary) {
     return (
       <View style={[styles.centered, { backgroundColor: c.bg }]}>
         <Text style={[styles.errorText, { color: c.muted }]}>Couldn't load your dashboard.</Text>
@@ -167,21 +183,25 @@ export function DashboardScreen() {
   // as the web dashboard did. The backend now says which month it is reporting on; both clients
   // read it rather than guessing, which is the drift check-client-auth-policy.py exists to catch
   // in the auth layer and which this is the reporting-layer instance of.
-  const periodIsCurrent = summary.reportingMonthIsCurrent || !summary.reportingMonth;
-  const periodLabel = periodIsCurrent ? 'this month' : monthLabel(summary.reportingMonth!);
+  // summary can still be undefined here -- a settled failure already returned above, but a still-
+  // loading first fetch falls through to the shell, which renders these off default values below.
+  const periodIsCurrent = summary ? (summary.reportingMonthIsCurrent || !summary.reportingMonth) : true;
+  const periodLabel = periodIsCurrent ? 'this month' : monthLabel(summary!.reportingMonth!);
   const deltaLabel = periodIsCurrent
     ? 'vs last month'
-    : `vs the month before ${monthLabel(summary.reportingMonth!)}`;
+    : `vs the month before ${monthLabel(summary!.reportingMonth!)}`;
   const deltaSpokenLabel = periodIsCurrent
     ? 'versus last month'
-    : `versus the month before ${monthLabel(summary.reportingMonth!)}`;
+    : `versus the month before ${monthLabel(summary!.reportingMonth!)}`;
 
-  const kpis = [
-    { label: 'Total Balance', value: fmtCurrency(summary.currentBalance), delta: null as number | null, invert: false },
-    { label: 'Income', value: fmtCurrency(summary.monthlyIncome), delta: summary.incomeDeltaPct, invert: false },
-    { label: 'Expenses', value: fmtCurrency(summary.monthlyExpense), delta: summary.expenseDeltaPct, invert: true },
-    { label: 'Net Savings', value: fmtCurrency(summary.netCashFlow), delta: summary.netDeltaPct, invert: false },
-  ];
+  const kpis = summary
+    ? [
+        { label: 'Total Balance', value: fmtCurrency(summary.currentBalance), delta: null as number | null, invert: false },
+        { label: 'Income', value: fmtCurrency(summary.monthlyIncome), delta: summary.incomeDeltaPct, invert: false },
+        { label: 'Expenses', value: fmtCurrency(summary.monthlyExpense), delta: summary.expenseDeltaPct, invert: true },
+        { label: 'Net Savings', value: fmtCurrency(summary.netCashFlow), delta: summary.netDeltaPct, invert: false },
+      ]
+    : [];
 
   const chartWidth = width - spacing.md * 2 - spacing.md * 2;
 
@@ -200,38 +220,40 @@ export function DashboardScreen() {
       </Text>
 
       <View style={styles.kpiGrid}>
-        {kpis.map((k) => (
-          <Card key={k.label} style={styles.kpiCard}>
-            {/* Grouped into one accessible node: swiping through "Income", "₹82,000", then
-                "▲ 4.1% vs last month" as three separate items loses the connection between them,
-                and the bare triangle is announced as "black up-pointing triangle". */}
-            <View
-              accessible
-              accessibilityLabel={
-                k.delta !== null && k.delta !== undefined
-                  ? `${k.label}: ${k.value}, ${k.delta >= 0 ? 'up' : 'down'} ${Math.abs(k.delta).toFixed(1)} percent ${deltaSpokenLabel}`
-                  : `${k.label}: ${k.value}`
-              }
-            >
-              <Text style={[styles.kpiLabel, { color: c.muted }]}>{k.label}</Text>
-              <Text style={[styles.kpiValue, { color: c.ink }]} numberOfLines={1} adjustsFontSizeToFit>
-                {k.value}
-              </Text>
-              {k.delta !== null && k.delta !== undefined ? (
-                <Text
-                  style={[
-                    styles.kpiDelta,
-                    { color: (k.invert ? k.delta < 0 : k.delta >= 0) ? c.success : c.danger },
-                  ]}
+        {summary
+          ? kpis.map((k) => (
+              <Card key={k.label} style={styles.kpiCard}>
+                {/* Grouped into one accessible node: swiping through "Income", "₹82,000", then
+                    "▲ 4.1% vs last month" as three separate items loses the connection between
+                    them, and the bare triangle is announced as "black up-pointing triangle". */}
+                <View
+                  accessible
+                  accessibilityLabel={
+                    k.delta !== null && k.delta !== undefined
+                      ? `${k.label}: ${k.value}, ${k.delta >= 0 ? 'up' : 'down'} ${Math.abs(k.delta).toFixed(1)} percent ${deltaSpokenLabel}`
+                      : `${k.label}: ${k.value}`
+                  }
                 >
-                  {k.delta >= 0 ? '▲' : '▼'} {Math.abs(k.delta).toFixed(1)}% {deltaLabel}
-                </Text>
-              ) : (
-                <Text style={styles.kpiDelta} />
-              )}
-            </View>
-          </Card>
-        ))}
+                  <Text style={[styles.kpiLabel, { color: c.muted }]}>{k.label}</Text>
+                  <Text style={[styles.kpiValue, { color: c.ink }]} numberOfLines={1} adjustsFontSizeToFit>
+                    {k.value}
+                  </Text>
+                  {k.delta !== null && k.delta !== undefined ? (
+                    <Text
+                      style={[
+                        styles.kpiDelta,
+                        { color: (k.invert ? k.delta < 0 : k.delta >= 0) ? c.success : c.danger },
+                      ]}
+                    >
+                      {k.delta >= 0 ? '▲' : '▼'} {Math.abs(k.delta).toFixed(1)}% {deltaLabel}
+                    </Text>
+                  ) : (
+                    <Text style={styles.kpiDelta} />
+                  )}
+                </View>
+              </Card>
+            ))
+          : [0, 1, 2, 3].map((i) => <SkeletonCard key={i} style={styles.kpiCard} lines={1} />)}
       </View>
 
       <Card style={styles.section}>
@@ -254,24 +276,41 @@ export function DashboardScreen() {
             </View>
           }
         />
-        <CashFlowChart points={cashFlowPoints} width={chartWidth} />
+        {summary ? <CashFlowChart points={cashFlowPoints} width={chartWidth} /> : <SkeletonChart width={chartWidth} />}
       </Card>
 
       <Card style={styles.section}>
         <SectionHeading title="Spending by Category" />
-        {donutSlices.length === 0 ? (
-          <EmptyState message={`No spending recorded ${periodLabel} yet.`} />
+        {summary ? (
+          donutSlices.length === 0 ? (
+            <EmptyState message={`No spending recorded ${periodLabel} yet.`} />
+          ) : (
+            <DonutChart
+              slices={donutSlices}
+              centerLabel={fmtCurrency(donutSlices.reduce((s, x) => s + x.value, 0))}
+            />
+          )
         ) : (
-          <DonutChart
-            slices={donutSlices}
-            centerLabel={fmtCurrency(donutSlices.reduce((s, x) => s + x.value, 0))}
-          />
+          <SkeletonChart variant="donut" />
         )}
       </Card>
 
       <Card style={styles.section}>
         <SectionHeading title="Recent Transactions" />
-        {recentTxns.length === 0 ? (
+        {recentTxnsQ.isLoading ? (
+          <>
+            <SkeletonTransactionRow />
+            <SkeletonTransactionRow />
+            <SkeletonTransactionRow />
+          </>
+        ) : recentTxnsQ.isError ? (
+          // A failed request is not an answer of zero -- same reasoning as LedgerScreen's own
+          // isError branch. Without this, a persistent failure here would fall through to the
+          // empty-state message below and tell someone with years of history they have none.
+          <Text style={[styles.errorText, { color: c.danger }]}>
+            Couldn&apos;t load your transactions — pull down to try again.
+          </Text>
+        ) : recentTxns.length === 0 ? (
           <EmptyState message="No transactions yet. Import a statement to get started." />
         ) : (
           recentTxns.map((t) => (

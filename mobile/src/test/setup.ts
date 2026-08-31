@@ -33,6 +33,29 @@ jest.mock('expo-secure-store', () => {
   };
 });
 
+// AsyncStorage is a native module too. Same posture as SecureStore just above -- a plain in-memory
+// map, real async semantics, so useNavigationStatePersistence's actual persistence logic is
+// exercised rather than stubbed out.
+jest.mock('@react-native-async-storage/async-storage', () => {
+  const store = new Map<string, string>();
+  return {
+    __esModule: true,
+    __store: store,
+    default: {
+      getItem: jest.fn(async (k: string) => (store.has(k) ? store.get(k)! : null)),
+      setItem: jest.fn(async (k: string, v: string) => {
+        store.set(k, v);
+      }),
+      removeItem: jest.fn(async (k: string) => {
+        store.delete(k);
+      }),
+      clear: jest.fn(async () => {
+        store.clear();
+      }),
+    },
+  };
+});
+
 // Firebase Auth needs a real native app registered; nothing under test drives it directly.
 jest.mock('@react-native-firebase/auth', () => ({
   getAuth: jest.fn(() => ({})),
@@ -44,6 +67,32 @@ jest.mock('@react-native-community/netinfo', () => ({
   __esModule: true,
   default: { addEventListener: jest.fn(() => jest.fn()) },
 }));
+
+// react-navigation's useFocusEffect needs a real Navigator/Screen context, which most screen unit
+// tests here render without (see DashboardScreen.test.tsx, which mounts DashboardScreen bare, the
+// same way OfflineBanner.test.tsx mocks RootNavigator away rather than building a real navigation
+// tree). Faked as a plain mount effect so Dashboard's prefetch-on-focus wiring can be exercised
+// without every affected screen test growing a navigation tree it otherwise has no use for.
+//
+// jest.requireActual is deliberately NOT used here (unlike most mocks in this file that spread the
+// real module): @react-navigation/native's installed build ships ESM-syntax source at its "main"
+// entry, which this project's Jest config cannot load directly once nothing intercepts resolution
+// first -- every other test file in this repo that touches this package mocks it outright for the
+// same reason (see StatementHistoryScreen.test.tsx). Everything this app actually imports from the
+// package (NavigationContainer, useNavigation, etc.) is provided here as a lightweight stand-in.
+jest.mock('@react-navigation/native', () => {
+  const { useEffect } = require('react');
+  return {
+    // `effect` is a passthrough argument from whatever hook calls useFocusEffect, not a value
+    // this mock can statically analyze; the real useFocusEffect re-runs on every focus, so
+    // running once per mount here (matching the app's own useCallback-memoized effects) is the
+    // correct test-time behavior.
+    useFocusEffect: (effect: () => void | (() => void)) => {
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+      useEffect(effect, []);
+    },
+  };
+});
 
 // @expo/vector-icons reaches expo-font -> expo-asset, which isn't resolvable under the runner, so
 // importing any screen that shows an icon fails before a test can run. Rendered as a plain Text
@@ -115,6 +164,7 @@ jest.mock('@react-native-google-signin/google-signin', () => {
       configure: jest.fn(),
       hasPlayServices: jest.fn(async () => true),
       signIn: jest.fn(),
+      signOut: jest.fn(async () => {}),
     },
     GoogleSigninButton,
     isSuccessResponse: (response: { type: string }) => response?.type === 'success',
@@ -184,11 +234,14 @@ jest.mock('expo-screen-capture', () => ({
   usePreventScreenCapture: jest.fn(),
 }));
 
-// Every test starts from a clean SecureStore so persistence assertions can't leak between them.
+// Every test starts from a clean SecureStore/AsyncStorage so persistence assertions can't leak
+// between them.
 beforeEach(() => {
   // require(), not import: the mock has to be read AFTER jest.mock above has replaced the module,
   // and a static import would be hoisted above it. Allowed for test files in eslint.config.js.
   const secureStore = require('expo-secure-store');
   secureStore.__store.clear();
+  const asyncStorage = require('@react-native-async-storage/async-storage');
+  asyncStorage.__store.clear();
   jest.clearAllMocks();
 });
