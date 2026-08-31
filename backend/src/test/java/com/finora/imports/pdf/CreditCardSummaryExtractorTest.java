@@ -405,4 +405,72 @@ class CreditCardSummaryExtractorTest {
                         + "field resolved on the real summary's own page")
                 .isNull();
     }
+
+    // ------------------------------------------------- gate loosening (Phase 5, task 1)
+
+    @Test
+    void totalAmountDueSurfacesAlone_whenOnlyOneStrategyFoundIt_evenWithoutFullReconciliation() {
+        // GRID finds ONLY totalAmountDue on this page (no previous balance, purchases, or payments
+        // printed alongside it) -- a real shape: some statements' top summary prints just the
+        // headline total next to a due date, with no component breakdown anywhere.
+        List<PositionedText> runs = new ArrayList<>(List.of(
+                run("Total Amount Due", 50f, 100f, 200f),
+                run("13,100.00", 55f, 60f, 230f)));
+
+        var summary = CreditCardSummaryExtractor.extract(runs);
+
+        assertThat(summary.totalAmountDue()).isEqualByComparingTo("13100.00");
+        assertThat(summary.hasReconcilableFields())
+                .as("the other three fields are genuinely absent -- reconciliation must still refuse")
+                .isFalse();
+    }
+
+    @Test
+    void totalAmountDueStaysNull_whenTheTwoStrategiesDisagree() {
+        // GRID resolves a value from a clean stacked grid on page 0; INLINE_LABEL_VALUE separately
+        // resolves a DIFFERENT value from an unrelated same-row match on page 1 (the shape of a real
+        // illustrative worked-example section elsewhere in a statement). Genuine disagreement --
+        // per the explicit scope decision, this stays unresolved rather than guessing a winner.
+        List<PositionedText> runs = new ArrayList<>(List.of(
+                run("Total Amount Due", 50f, 100f, 200f),
+                run("13,100.00", 55f, 60f, 230f),
+                runOnPage("Total Amount Due", 50f, 100f, 500f, 1),
+                runOnPage("9,999.00", 160f, 60f, 500f, 1)));
+
+        var summary = CreditCardSummaryExtractor.extract(runs);
+
+        assertThat(summary.totalAmountDue()).isNull();
+        assertThat(summary.conflictingFields()).contains("totalAmountDue");
+    }
+
+    @Test
+    void totalAmountDueSurfaces_whenTheTwoStrategiesAgree() {
+        // A genuinely different shape per page, each strategy resolving the SAME amount from its own
+        // page independently: page 0 is a stacked grid (label y=200, value row y=230 -- GRID's
+        // shape, too far apart in y for SAME_ROW's 3pt tolerance); page 1 is a same-row layout
+        // (label and value both y=200 -- SAME_ROW's shape; GRID finds nothing there, since there is
+        // no second row on that page for rowBelow to pair it with). Both land on the identical
+        // figure, so this exercises the TRUE agreement branch, not just "one strategy silent."
+        List<PositionedText> runs = new ArrayList<>(List.of(
+                run("Total Amount Due", 50f, 100f, 200f),
+                run("13,100.00", 55f, 60f, 230f),
+                runOnPage("Total Amount Due", 50f, 100f, 200f, 1),
+                runOnPage("13,100.00", 160f, 60f, 200f, 1)));
+
+        var summary = CreditCardSummaryExtractor.extract(runs);
+
+        assertThat(summary.totalAmountDue()).isEqualByComparingTo("13100.00");
+        assertThat(summary.conflictingFields())
+                .as("equal values across strategies must never register as a conflict")
+                .doesNotContain("totalAmountDue");
+    }
+
+    @Test
+    void aFullyReconciledDocumentIsUnaffected() {
+        // Guards against Task 1 accidentally changing AU's already-passing, already-tested shape.
+        var summary = CreditCardSummaryExtractor.extract(cleanSummaryBlock());
+
+        assertThat(summary.totalAmountDue()).isEqualByComparingTo("13100.00");
+        assertThat(summary.hasReconcilableFields()).isTrue();
+    }
 }

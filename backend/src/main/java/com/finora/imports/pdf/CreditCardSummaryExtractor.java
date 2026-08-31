@@ -194,10 +194,38 @@ public final class CreditCardSummaryExtractor {
             chosen = CreditCardSummaryEvidence.NONE;
         }
 
+        if (chosen.totalAmountDue() == null) {
+            BigDecimal bestEffort = bestEffortTotalAmountDue(grid, sameRow);
+            if (bestEffort != null) {
+                chosen = new CreditCardSummaryEvidence(chosen.previousBalance(), chosen.purchases(),
+                        chosen.cashAdvances(), chosen.fees(), chosen.paymentsAndCredits(),
+                        bestEffort, chosen.extractionMethod(), chosen.conflictingFields());
+            }
+        }
+
         if (conflicts.isEmpty()) return chosen;
         return new CreditCardSummaryEvidence(chosen.previousBalance(), chosen.purchases(),
                 chosen.cashAdvances(), chosen.fees(), chosen.paymentsAndCredits(),
                 chosen.totalAmountDue(), chosen.extractionMethod(), conflicts);
+    }
+
+    /**
+     * {@code totalAmountDue} alone, independent of whether the other three reconciliation fields
+     * are present — a statement can print a clean headline total with no component breakdown
+     * anywhere, which {@code hasReconcilableFields()} correctly refuses to reconcile but which is
+     * still a real, usable metadata fact. Only when the two strategies agree or one is silent; a
+     * genuine disagreement stays null, the same "refuse rather than guess" discipline
+     * {@link #conflictsBetween} already applies. Deliberately does NOT prefer one strategy's
+     * reading over the other's when they conflict — that would be a precedence rule generalised
+     * from a single document's evidence, not yet validated against a second one.
+     */
+    private static BigDecimal bestEffortTotalAmountDue(CreditCardSummaryEvidence grid,
+                                                         CreditCardSummaryEvidence sameRow) {
+        BigDecimal g = grid.totalAmountDue();
+        BigDecimal s = sameRow.totalAmountDue();
+        if (g == null) return s;
+        if (s == null) return g;
+        return g.compareTo(s) == 0 ? g : null;
     }
 
     /** Fields where both strategies found a value and those values disagreed. A field only one
