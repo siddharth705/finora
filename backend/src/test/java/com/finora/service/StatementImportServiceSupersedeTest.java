@@ -154,13 +154,12 @@ class StatementImportServiceSupersedeTest {
 
     @Test
     void additive_skipsReversalWhenReplacementIsAbsolute() {
-        // Mirror image of rejectsSupersedingWhenOriginalIsAbsoluteButReplacementIsNot, but this
-        // direction doesn't need refusing: ABSOLUTE mode does not ADD to Account.balance, it
-        // OVERWRITES it with replacement's own stated closing balance (ImportService.persistSection)
-        // -- discarding original's still-unreversed ADDITIVE contribution along with everything else
-        // that predated it. The overwrite already leaves the balance correct on its own, so there's
-        // simply nothing left here to reverse; unlike the ABSOLUTE-original case, there's no
-        // unresolvable double-count to refuse against.
+        // Mirror image of the ABSOLUTE-original reversal case below, but this direction needs no
+        // special handling: ABSOLUTE mode does not ADD to Account.balance, it OVERWRITES it with
+        // replacement's own stated closing balance (ImportService.persistSection) -- discarding
+        // original's still-unreversed ADDITIVE contribution along with everything else that
+        // predated it. The overwrite already leaves the balance correct on its own, so there's
+        // simply nothing left here to reverse.
         StatementImport old = statement(oldId, StatementImport.BalanceApplicationMode.ADDITIVE);
         stub(old, statement(newId, StatementImport.BalanceApplicationMode.ABSOLUTE));
         when(transactionRepository.findByStatementImportId(oldId))
@@ -175,38 +174,67 @@ class StatementImportServiceSupersedeTest {
     }
 
     @Test
-    void absolute_doesNotReverseTheBalance() {
+    void absolute_reversesToThePreSetBalance_whenStillTheLiveAnchor() {
         StatementImport old = statement(oldId, StatementImport.BalanceApplicationMode.ABSOLUTE);
-        stub(old, statement(newId, StatementImport.BalanceApplicationMode.ABSOLUTE));
-        when(transactionRepository.findByStatementImportId(oldId))
-                .thenReturn(List.of(transaction(oldId, "500.00", Transaction.ReconciliationStatus.OK)));
-        Account account = account(new BigDecimal("9500.00"));
+        old.setClosingBalance(new BigDecimal("9500.00"));
+        old.setBalanceBeforeAbsoluteSet(new BigDecimal("10000.00"));
+        stub(old, statement(newId, StatementImport.BalanceApplicationMode.ADDITIVE));
+        when(transactionRepository.findByStatementImportId(oldId)).thenReturn(List.of());
+        // Replacement's own ADDITIVE confirm already added its -300.00 net delta on top of old's
+        // SET (9500.00 - 300.00 = 9200.00) before supersede() is ever called -- this is the
+        // balance supersede() must correct, not the 9500.00 old's own SET produced.
+        Account account = account(new BigDecimal("9200.00"));
+        account.setLastAbsoluteSetStatementId(oldId);
         when(accountRepository.findById(accountId)).thenReturn(Optional.of(account));
 
         SupersedeResult result = service.supersede(userId, oldId, newId);
 
-        assertThat(account.getBalance()).isEqualByComparingTo("9500.00");
-        assertThat(result.balanceReversed()).isFalse();
+        // 9200.00 - (9500.00 - 10000.00) = 9200.00 + 500.00 = 9700.00, i.e. old's pre-SET baseline
+        // (10000.00) plus replacement's real net delta (-300.00).
+        assertThat(account.getBalance()).isEqualByComparingTo("9700.00");
+        assertThat(account.getLastAbsoluteSetStatementId()).isNull();
+        assertThat(result.balanceReversed()).isTrue();
         assertThat(result.warning()).isNull();
-        verify(accountRepository, never()).save(any());
     }
 
     @Test
-    void rejectsSupersedingWhenOriginalIsAbsoluteButReplacementIsNot() {
-        // If the replacement's own confirm did not overwrite the balance (its own closing balance
-        // was missing, unstated, or did not corroborate against its own rows), then original's
-        // ABSOLUTE contribution is still sitting underneath whatever replacement's confirm did --
-        // additively or not at all. Superseding without reversing would leave the two double-
-        // counted. Refusing is the safe direction, same as UNKNOWN_LEGACY's own warning-instead-of-
-        // guessing choice above.
+    void absolute_doesNothing_whenReplacementItselfWasAlreadyTheLiveAnchor() {
+        // Replacement's own confirm was ALSO ABSOLUTE -- its own confirm already moved the pointer
+        // to itself before supersede() runs, so old's SET has already been fully overwritten.
         StatementImport old = statement(oldId, StatementImport.BalanceApplicationMode.ABSOLUTE);
+        old.setClosingBalance(new BigDecimal("9500.00"));
+        old.setBalanceBeforeAbsoluteSet(new BigDecimal("10000.00"));
+        stub(old, statement(newId, StatementImport.BalanceApplicationMode.ABSOLUTE));
+        when(transactionRepository.findByStatementImportId(oldId)).thenReturn(List.of());
+        Account account = account(new BigDecimal("9700.00"));
+        account.setLastAbsoluteSetStatementId(newId);
+        when(accountRepository.findById(accountId)).thenReturn(Optional.of(account));
+
+        SupersedeResult result = service.supersede(userId, oldId, newId);
+
+        assertThat(account.getBalance()).isEqualByComparingTo("9700.00");
+        assertThat(account.getLastAbsoluteSetStatementId()).isEqualTo(newId);
+        assertThat(result.balanceReversed()).isFalse();
+        assertThat(result.warning()).isNull();
+    }
+
+    @Test
+    void absolute_doesNothing_andWarns_whenTheOriginalPredatesTheSnapshotField() {
+        // BalanceApplicationMode says ABSOLUTE, but balanceBeforeAbsoluteSet is null -- a row
+        // confirmed before this fix shipped. Never guess; same stance as UNKNOWN_LEGACY.
+        StatementImport old = statement(oldId, StatementImport.BalanceApplicationMode.ABSOLUTE);
+        old.setClosingBalance(new BigDecimal("9500.00"));
         stub(old, statement(newId, StatementImport.BalanceApplicationMode.ADDITIVE));
+        when(transactionRepository.findByStatementImportId(oldId)).thenReturn(List.of());
+        Account account = account(new BigDecimal("9200.00"));
+        account.setLastAbsoluteSetStatementId(oldId);
+        when(accountRepository.findById(accountId)).thenReturn(Optional.of(account));
 
-        assertThatThrownBy(() -> service.supersede(userId, oldId, newId)).isInstanceOf(ApiException.class);
+        SupersedeResult result = service.supersede(userId, oldId, newId);
 
-        verify(transactionRepository, never()).findByStatementImportId(any());
-        verify(statementImportRepository, never()).save(any());
-        verify(accountRepository, never()).save(any());
+        assertThat(account.getBalance()).isEqualByComparingTo("9200.00");
+        assertThat(result.balanceReversed()).isFalse();
+        assertThat(result.warning()).isNotNull();
     }
 
     @Test

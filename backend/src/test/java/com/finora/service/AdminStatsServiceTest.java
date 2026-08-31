@@ -45,9 +45,9 @@ class AdminStatsServiceTest {
         // 3 real users total (2 active, 1 suspended) plus the locked bootstrap account, which is
         // also status=SUSPENDED -- if it weren't excluded from every count, these numbers would be
         // off by one somewhere.
-        when(userRepository.countByRoleNot("BOOTSTRAP_ADMIN")).thenReturn(3L);
-        when(userRepository.countByStatusAndRoleNot("SUSPENDED", "BOOTSTRAP_ADMIN")).thenReturn(1L);
-        when(userRepository.countByStatusAndRoleNot("ACTIVE", "BOOTSTRAP_ADMIN")).thenReturn(2L);
+        when(userRepository.countByEmailNot(BootstrapService.BOOTSTRAP_IDENTIFIER)).thenReturn(3L);
+        when(userRepository.countByStatusAndEmailNot("SUSPENDED", BootstrapService.BOOTSTRAP_IDENTIFIER)).thenReturn(1L);
+        when(userRepository.countByStatusAndEmailNot("ACTIVE", BootstrapService.BOOTSTRAP_IDENTIFIER)).thenReturn(2L);
 
         PlatformStatsDto dto = service.overview();
 
@@ -61,9 +61,9 @@ class AdminStatsServiceTest {
     @Test
     void overview_doesNotCountADeactivatedAccountAsActive() {
         // 3 users total: 1 active, 1 suspended, 1 deactivated.
-        when(userRepository.countByRoleNot("BOOTSTRAP_ADMIN")).thenReturn(3L);
-        when(userRepository.countByStatusAndRoleNot("SUSPENDED", "BOOTSTRAP_ADMIN")).thenReturn(1L);
-        when(userRepository.countByStatusAndRoleNot("ACTIVE", "BOOTSTRAP_ADMIN")).thenReturn(1L);
+        when(userRepository.countByEmailNot(BootstrapService.BOOTSTRAP_IDENTIFIER)).thenReturn(3L);
+        when(userRepository.countByStatusAndEmailNot("SUSPENDED", BootstrapService.BOOTSTRAP_IDENTIFIER)).thenReturn(1L);
+        when(userRepository.countByStatusAndEmailNot("ACTIVE", BootstrapService.BOOTSTRAP_IDENTIFIER)).thenReturn(1L);
 
         PlatformStatsDto dto = service.overview();
 
@@ -71,5 +71,28 @@ class AdminStatsServiceTest {
         // The old totalUsers - suspendedUsers derivation would have reported 2 here (wrongly
         // counting the deactivated account as active).
         assertThat(dto.activeUsers()).isEqualTo(1L);
+    }
+
+    /** Bug fix regression test. totalUsers and suspendedUsers used to be
+     *  {@code countByRoleNot}/{@code countByStatusAndRoleNot("BOOTSTRAP_ADMIN")}, which only
+     *  excluded the bootstrap account while its legacy {@code User.role} column still held that
+     *  value -- true only during the setup wizard. Once {@code SetupService.completeSetup()} calls
+     *  {@code RoleService.revokeRole}, that column resets to {@code DEFAULT_ROLE} and the account's
+     *  status becomes SUSPENDED, so the role-based filters silently stopped excluding it: totalUsers
+     *  overcounted by one forever, and suspendedUsers counted it as a real suspended user forever.
+     *  This pins that both are now read via the account's EMAIL instead, which never changes -- see
+     *  {@code UserRepositoryIT} for proof against a real Postgres that the email-based queries
+     *  actually survive that role reset. */
+    @Test
+    void overview_excludesTheBootstrapAdminByEmail_notByItsResettableRoleColumn() {
+        when(userRepository.countByEmailNot(BootstrapService.BOOTSTRAP_IDENTIFIER)).thenReturn(5L);
+        when(userRepository.countByStatusAndEmailNot("SUSPENDED", BootstrapService.BOOTSTRAP_IDENTIFIER)).thenReturn(2L);
+        when(userRepository.countByStatusAndEmailNot("ACTIVE", BootstrapService.BOOTSTRAP_IDENTIFIER)).thenReturn(3L);
+
+        PlatformStatsDto dto = service.overview();
+
+        assertThat(dto.totalUsers()).isEqualTo(5L);
+        assertThat(dto.suspendedUsers()).isEqualTo(2L);
+        assertThat(dto.activeUsers()).isEqualTo(3L);
     }
 }

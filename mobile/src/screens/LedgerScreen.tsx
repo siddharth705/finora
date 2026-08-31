@@ -8,6 +8,7 @@ import { transactionsApi, type PagedResponse, type TransactionFilters } from '..
 import { SkeletonTransactionRow } from '../components/skeletons/Skeletons';
 import { invalidateFinancialData } from '../lib/invalidateFinancialData';
 import { toUserMessage } from '../lib/apiError';
+import { hapticError, hapticImpact } from '../lib/haptics';
 import { useDebouncedValue } from '../lib/useDebouncedValue';
 import { useLargeFontScale } from '../lib/useLargeFontScale';
 import { fmtCurrency } from '../lib/format';
@@ -79,6 +80,10 @@ export function LedgerScreen() {
   const totalElements = data?.pages[0]?.totalElements ?? 0;
 
   function confirmDelete(t: Transaction) {
+    // Before the alert, not after a choice is made -- the same convention iOS's own system apps
+    // use for a press that's about to open a destructive confirmation, so the gesture itself
+    // feels acknowledged rather than only its eventual outcome.
+    hapticImpact();
     // Alert.alert replaces the web's window.confirm(), which doesn't exist in React Native.
     Alert.alert(
       'Delete transaction?',
@@ -100,6 +105,7 @@ export function LedgerScreen() {
       invalidateFinancialData(queryClient);
     } catch (e) {
       setError(toUserMessage(e, 'Could not delete this transaction.'));
+      hapticError();
     } finally {
       setDeletingId(null);
     }

@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import {
-  Animated, StyleSheet, type DimensionValue, type ViewStyle,
+  AccessibilityInfo, Animated, StyleSheet, type DimensionValue, type ViewStyle,
 } from 'react-native';
 import { radius, useTheme } from '../../theme';
 
@@ -28,6 +28,10 @@ let sharedLoop: Animated.CompositeAnimation | null = null;
 function acquireSharedLoop() {
   activeShimmerCount += 1;
   if (activeShimmerCount === 1) {
+    // releaseSharedLoop's stop() below freezes sharedPulse wherever it was mid-fade, not
+    // necessarily back at 0.35 -- without this reset, the first pulse of a new loading episode
+    // starts from that leftover value instead of the intended minimum, reading as a stutter.
+    sharedPulse.setValue(0.35);
     sharedLoop = Animated.loop(
       Animated.sequence([
         Animated.timing(sharedPulse, { toValue: 1, duration: 700, useNativeDriver: true }),
@@ -35,6 +39,14 @@ function acquireSharedLoop() {
       ])
     );
     sharedLoop.start();
+    // Every individual Shimmer block is hidden from the accessibility tree below (a screen reader
+    // reading out a dozen unlabelled "gray rectangle" placeholders is worse than reading nothing),
+    // but that leaves NO signal at all that the screen is loading -- the old spinner this system
+    // replaced was, at minimum, a real native element VoiceOver/TalkBack announced on its own. A
+    // one-time announcement exactly when loading starts (this ref-count going 0->1 is that moment,
+    // the same signal that already starts the shared pulse above) restores that without re-
+    // exposing every placeholder individually or repeating the announcement per skeleton block.
+    AccessibilityInfo.announceForAccessibility('Loading');
   }
 }
 
