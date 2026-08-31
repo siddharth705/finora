@@ -226,10 +226,6 @@ scripts/load-test/results/*/k6-summary.json
 
 .claude/
 
-# Superpowers brainstorming visual-companion sessions (mockups shown in-browser during design
-# discussions) -- working scratch, not a deliverable.
-.superpowers/
-
 # ============================================================================================
 # Operating System
 # ============================================================================================
@@ -279,3 +275,11 @@ reports/
 # locally needs a real token -- which must never be committed. Ignored rather than documented-and-
 # hoped-for: check-fixture-hygiene.sh scans staged content, but a JWT is not a shape it recognises.
 ops/monitoring/scrape-token
+
+.venv/
+
+# ============================================================================================
+# Graphify (local codebase knowledge graph -- dev tooling, not a build artifact of the app)
+# ============================================================================================
+
+graphify-out/
