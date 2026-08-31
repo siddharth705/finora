@@ -39,6 +39,23 @@ describe('toCsv', () => {
     expect(csv).toContain('"Category","Amount"');
     expect(csv).not.toContain('undefined');
   });
+
+  // Category names are user-controlled and flow into a file a spreadsheet may later open. Without
+  // this guard, a category named e.g. `=HYPERLINK(...)` would execute as a formula on open instead
+  // of displaying as text.
+  it('neutralises a category name that starts with a formula-triggering character', () => {
+    const csv = toCsv({
+      ...report,
+      categories: [{ category: '=HYPERLINK("http://evil.example","click")', amount: 100 }],
+    });
+    const row = csv.split('\n').find((l) => l.includes('HYPERLINK'));
+    expect(row).toBe('"\'=HYPERLINK(""http://evil.example"",""click"")","100"');
+  });
+
+  it('does not mangle a genuine negative amount', () => {
+    const csv = toCsv({ ...report, categories: [{ category: 'Refund', amount: -500 }] });
+    expect(csv).toContain('"Refund","-500"');
+  });
 });
 
 describe('toPrintableHtml', () => {

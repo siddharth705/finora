@@ -102,8 +102,8 @@ export const adminMfaApi = {
   status: () => api.get<{ enabled: boolean }>('/admin-mfa/status').then((r) => r.data),
   enroll: () => api.post<{ secret: string; provisioningUri: string }>('/admin-mfa/enroll').then((r) => r.data),
   confirm: (code: string) => api.post<{ recoveryCodes: string[] }>('/admin-mfa/confirm', { code }).then((r) => r.data),
-  disable: (currentPassword: string | null, googleIdToken: string | null) =>
-    api.post<void>('/admin-mfa/disable', { currentPassword, googleIdToken }).then((r) => r.data),
+  disable: (currentPassword: string | null, googleIdToken: string | null, code: string) =>
+    api.post<void>('/admin-mfa/disable', { currentPassword, googleIdToken, code }).then((r) => r.data),
 };
 
 // Just one endpoint now -- there's no backend-triggered "send" step (Firebase's own client SDK
