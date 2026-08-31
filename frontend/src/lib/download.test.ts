@@ -35,6 +35,12 @@ describe('csvCell', () => {
   it('still guards a formula that merely starts like a number', () => {
     expect(csvCell('-1+1')).toBe(`"'-1+1"`);
   });
+
+  // Leading whitespace before a formula-triggering character must not bypass the guard: a
+  // user-controlled category name like ' =cmd|...' would otherwise sail through untouched.
+  it('guards a formula-triggering character preceded by leading whitespace', () => {
+    expect(csvCell(' =cmd|\'/c calc\'!A0')).toBe(`"' =cmd|'/c calc'!A0"`);
+  });
 });
 
 describe('toCsv', () => {
