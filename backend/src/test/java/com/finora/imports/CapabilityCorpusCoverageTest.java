@@ -245,6 +245,29 @@ class CapabilityCorpusCoverageTest {
                 "no trace, and none is planned -- same reasoning as BLANK_COLUMN_NAME_QUALIFIED, "
                         + "same real document. Covered instead by HeaderColumnRecoveryTest's fully "
                         + "hand-synthesized fixtures.");
+        DECLARED_WITHOUT_A_TRACE.put("STATEMENT_PERIOD_FROM_TO_FIELDS",
+                "no trace yet -- evidenced from real HDFC savings-account statements and a real "
+                        + "Sanjay HDFC statement, none of which have a committed trace in this "
+                        + "corpus. Real-corpus behavior verified directly via CorpusProbe against "
+                        + "the original files instead.");
+        DECLARED_WITHOUT_A_TRACE.put("STATEMENT_PERIOD_STATEMENT_FROM_LABEL",
+                "no trace yet -- evidenced from real Manas_HDFC, Shivani_HDFC, and Sanjay SBI "
+                        + "statements, none of which have a committed trace in this corpus. "
+                        + "Real-corpus behavior verified directly via CorpusProbe against the "
+                        + "original files instead.");
+        DECLARED_WITHOUT_A_TRACE.put("STATEMENT_PERIOD_STATEMENT_OF_ACCOUNT_LABEL",
+                "no trace yet -- evidenced from a real Central Bank of India statement with no "
+                        + "committed trace in this corpus. Real-corpus behavior verified directly "
+                        + "via CorpusProbe against the original file instead.");
+        DECLARED_WITHOUT_A_TRACE.put("STATEMENT_PERIOD_PROSE",
+                "no trace yet -- evidenced from real canara.pdf and ICICI saving.pdf statements, "
+                        + "neither of which has a committed trace in this corpus. Real-corpus "
+                        + "behavior verified directly via CorpusProbe against the original files "
+                        + "instead.");
+        DECLARED_WITHOUT_A_TRACE.put("STATEMENT_PERIOD_FOR_PERIOD_LABEL",
+                "no trace yet -- evidenced from a real PNB ONE savings statement with no "
+                        + "committed trace in this corpus. Real-corpus behavior verified directly "
+                        + "via CorpusProbe against the original file instead.");
         // PAGE_LEGEND_BLOCK_SUPPRESSED was DECLARED_WITHOUT_A_TRACE here -- the real SBI Credit
         // Card.PDF it was originally evidenced from has no committed trace in this corpus. Entry
         // deleted per this test's own ratchet: kotak-credit-card-category-sections-and-page-footer

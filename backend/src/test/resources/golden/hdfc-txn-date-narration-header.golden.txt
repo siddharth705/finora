@@ -8,7 +8,7 @@ sections: 1
   accountNumberMasked: ••••9999
   accountHolderName: Xxxxx Xxxxxxxxxx
   ifscCode: HDFC0XXXXXX
-  statementPeriod: null .. null
+  statementPeriod: 2026-07-03 .. 2026-07-31
   product: SAVINGS (92%, VALIDATED)
   mayCreateAutomatically: true
 
