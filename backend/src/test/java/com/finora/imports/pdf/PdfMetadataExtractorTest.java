@@ -508,6 +508,79 @@ class PdfMetadataExtractorTest {
         assertThat(metadata.statementPeriodEnd()).isEqualTo(java.time.LocalDate.of(2026, 6, 30));
     }
 
+    /** A real HDFC savings-account statement layout (HDFC 3 month.pdf, HDFC sav.pdf, Mann HDFC.pdf,
+     *  Sanjay HDFC.pdf all share this shape): the period is two separately colon-labeled fields on
+     *  one row -- "From : <date>" and "To : <date>" -- not one combined "Period" label. */
+    @Test
+    void extract_recognizesAStatementPeriod_statedAsSeparateFromAndToLabeledFields() {
+        var metadata = extractor.extract(List.of(
+                "From : 01/05/2026 To : 31/07/2026 Statement of account"));
+
+        assertThat(metadata.statementPeriodStart()).isEqualTo(java.time.LocalDate.of(2026, 5, 1));
+        assertThat(metadata.statementPeriodEnd()).isEqualTo(java.time.LocalDate.of(2026, 7, 31));
+    }
+
+    /** A real Manas_HDFC/Shivani_HDFC/Sanjay SBI statement shape: the field is labeled "Statement
+     *  From", not "Statement Period"/"Billing Period" -- STATEMENT_PERIOD_ANYWHERE's own label
+     *  alternation doesn't cover it. */
+    @Test
+    void extract_recognizesAStatementPeriod_labeledStatementFrom() {
+        var metadata = extractor.extract(List.of(
+                "Statement From : 01/06/2026 To 30/06/2026"));
+
+        assertThat(metadata.statementPeriodStart()).isEqualTo(java.time.LocalDate.of(2026, 6, 1));
+        assertThat(metadata.statementPeriodEnd()).isEqualTo(java.time.LocalDate.of(2026, 6, 30));
+    }
+
+    /** A real BOB.pdf statement prints "Statement Period from <date> to <date>" -- the existing
+     *  STATEMENT_PERIOD_ANYWHERE label matches, but its separator only tolerates an optional
+     *  colon, not the word "from" that's actually there. */
+    @Test
+    void extract_recognizesAStatementPeriod_whenTheLabelIsFollowedByTheWordFrom() {
+        var metadata = extractor.extract(List.of(
+                "Statement Period from Jun 01, 2026 to Jun 30, 2026"));
+
+        assertThat(metadata.statementPeriodStart()).isEqualTo(java.time.LocalDate.of(2026, 6, 1));
+        assertThat(metadata.statementPeriodEnd()).isEqualTo(java.time.LocalDate.of(2026, 6, 30));
+    }
+
+    /** A real CBI.pdf statement labels this field "Statement of Account" -- a different label
+     *  from every existing pattern's "...Period" vocabulary. */
+    @Test
+    void extract_recognizesAStatementPeriod_labeledStatementOfAccount() {
+        var metadata = extractor.extract(List.of(
+                "STATEMENT OF ACCOUNT from 10/05/2026 to 08/08/2026"));
+
+        assertThat(metadata.statementPeriodStart()).isEqualTo(java.time.LocalDate.of(2026, 5, 10));
+        assertThat(metadata.statementPeriodEnd()).isEqualTo(java.time.LocalDate.of(2026, 8, 8));
+    }
+
+    /** Real canara.pdf and ICICI saving.pdf statements both state their period as plain prose --
+     *  "...for the period <date> to <date>" -- with no parentheses at all, so
+     *  STATEMENT_PERIOD_IN_SENTENCE (which requires parens) doesn't match. */
+    @Test
+    void extract_recognizesAStatementPeriod_statedAsProseWithNoParentheses() {
+        var metadata = extractor.extract(List.of(
+                "Statement for A/c XXXXXXXXX1455 for the period 02-Jul-2026 to 01-Aug-2026"));
+
+        assertThat(metadata.statementPeriodStart()).isEqualTo(java.time.LocalDate.of(2026, 7, 2));
+        assertThat(metadata.statementPeriodEnd()).isEqualTo(java.time.LocalDate.of(2026, 8, 1));
+    }
+
+    /** A real PNB ONE savings statement's own heading: "Statement of Account:<number> For
+     *  Period: <date> to <date>" -- the account number's own "Statement of Account:" label is
+     *  unrelated leading text; the real period label is "For Period:", found via unanchored
+     *  matching the same way STATEMENT_PERIOD_ANYWHERE already tolerates arbitrary text before
+     *  its own label. */
+    @Test
+    void extract_recognizesAStatementPeriod_labeledForPeriod() {
+        var metadata = extractor.extract(List.of(
+                "Statement of Account:1000200030004000 For Period: 30-06-2026 to 31-07-2026")); // synthetic-ok
+
+        assertThat(metadata.statementPeriodStart()).isEqualTo(java.time.LocalDate.of(2026, 6, 30));
+        assertThat(metadata.statementPeriodEnd()).isEqualTo(java.time.LocalDate.of(2026, 7, 31));
+    }
+
     @Test
     void extract_doesNotMisreadATwoColumnSectionHeader_asABranchNameField() {
         // "Branch Address" here is a section header ("Branch Address" | "Statement Details" side
