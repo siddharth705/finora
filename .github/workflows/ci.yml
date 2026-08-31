@@ -349,7 +349,10 @@ jobs:
       - name: Regenerate the synthetic corpus regression fixture
         working-directory: backend
         run: |
-          ./mvnw -q -o dependency:build-classpath -Dmdep.outputFile=target/corpus-classpath.txt -Dmdep.includeScope=test
+          # No -o here (unlike the local-workflow scripts' own build_classpath()): nothing earlier
+          # in this job invokes maven-dependency-plugin, so a fresh runner's cache never has it,
+          # and offline mode fails outright instead of fetching it once.
+          ./mvnw -q dependency:build-classpath -Dmdep.outputFile=target/corpus-classpath.txt -Dmdep.includeScope=test
           test -s target/corpus-classpath.txt || { echo "classpath resolution produced an empty file"; exit 1; }
           java -cp "target/test-classes:target/classes:$(cat target/corpus-classpath.txt)" \
                com.finora.imports.analysis.SyntheticFixtureGenerator
