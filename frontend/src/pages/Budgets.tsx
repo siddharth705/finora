@@ -3,7 +3,8 @@ import { useQueryClient } from '@tanstack/react-query';
 import { PiggyBank } from 'lucide-react';
 import { budgetsApi } from '../api/endpoints';
 import type { Budget } from '../types';
-import { FinoraCard, EmptyState } from '../design-system';
+import { FinoraCard, EmptyState, Button, Skeleton } from '../design-system';
+import { useDelayedLoading } from '../hooks/useDelayedLoading';
 
 function fmt(n: number) {
   // Negative amounts (e.g. a month where spend exceeded income) must render as "-₹500",
@@ -18,12 +19,20 @@ export default function Budgets() {
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
+  // Bug fix: this page had no loading flag at all -- `budgets` started `[]`, which is
+  // indistinguishable from "genuinely no budgets set," so the EmptyState rendered immediately on
+  // every mount and then popped to real content once the fetch resolved. `loading` now gates the
+  // EmptyState branch explicitly; `showSkeleton` (useDelayedLoading) only controls whether a
+  // skeleton appears during that gate, not whether the wrong content shows.
+  const [loading, setLoading] = useState(true);
   const queryClient = useQueryClient();
 
   function load() {
-    budgetsApi.list().then(setBudgets).catch(() => setError('Could not load budgets.'));
+    setLoading(true);
+    budgetsApi.list().then(setBudgets).catch(() => setError('Could not load budgets.')).finally(() => setLoading(false));
   }
   useEffect(load, []);
+  const showSkeleton = useDelayedLoading(loading);
 
   async function addOrUpdate() {
     if (!newCategory || !newLimit) return;
@@ -66,15 +75,29 @@ export default function Budgets() {
           <label htmlFor="budget-monthly-limit" className="block text-xs uppercase text-gray-500 mb-1">Monthly limit</label>
           <input id="budget-monthly-limit" type="number" value={newLimit} onChange={(e) => setNewLimit(e.target.value)} className="bg-card text-ink border rounded px-2 py-1.5 text-sm" />
         </div>
-        <button onClick={addOrUpdate} disabled={saving} className="bg-primary text-on-primary hover:bg-primary-dark px-4 py-2 rounded text-xs uppercase disabled:opacity-50">
-          {saving ? 'Saving…' : 'Set Budget'}
-        </button>
+        <Button onClick={addOrUpdate} loading={saving} size="md" className="uppercase">
+          Set Budget
+        </Button>
         {saved && <span className="text-success text-xs">Saved.</span>}
       </FinoraCard>
       {error && <p className="text-danger text-sm">{error}</p>}
 
       <FinoraCard padding="sm" className="space-y-3">
-        {budgets.length === 0 ? (
+        {loading ? (
+          showSkeleton && (
+            <Skeleton.Region label="Loading budgets">
+              <div className="space-y-3">
+                {[0, 1, 2].map((i) => (
+                  <div key={i} className="grid grid-cols-[140px_1fr_140px] items-center gap-3">
+                    <Skeleton.Text width="w-20" />
+                    <Skeleton.Block className="h-2 w-full" />
+                    <Skeleton.Text width="w-24" />
+                  </div>
+                ))}
+              </div>
+            </Skeleton.Region>
+          )
+        ) : budgets.length === 0 ? (
           <EmptyState
             icon={PiggyBank}
             iconBg="bg-orange-100"
