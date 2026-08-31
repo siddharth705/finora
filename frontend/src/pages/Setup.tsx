@@ -9,7 +9,8 @@ import { BankLogo } from '../components/BankLogo';
 import { MaskedAccountNumber } from '../components/MaskedAccountNumber';
 import type { Account, BankInfo } from '../types';
 import { formatDate } from '../utils/date';
-import { ConfirmDialog } from '../design-system';
+import { ConfirmDialog, Button, IconButton, Skeleton } from '../design-system';
+import { useDelayedLoading } from '../hooks/useDelayedLoading';
 
 const TYPE_LABEL: Record<Account['accountType'], string> = {
   SAVINGS: 'Savings Account',
@@ -67,11 +68,19 @@ export default function Setup() {
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
 
+  // Bug fix: no loading flag existed, so `accounts` starting `[]` was indistinguishable from
+  // "genuinely no accounts yet" -- see the identical fix and reasoning on Budgets.tsx/Goals.tsx.
+  // This was the worst instance of the three visually, since the real account cards (bank logo,
+  // balance, statement period, masked number) are richer than a budget row or goal card.
+  const [loading, setLoading] = useState(true);
+
   function load() {
-    accountsApi.list().then(setAccounts).catch(() => setError('Could not load accounts.'));
+    setLoading(true);
+    accountsApi.list().then(setAccounts).catch(() => setError('Could not load accounts.')).finally(() => setLoading(false));
   }
   useEffect(load, []);
   useEffect(() => { banksApi.list().then(setBanks).catch(() => setBanks([])); }, []);
+  const showSkeleton = useDelayedLoading(loading);
 
   async function addAccount() {
     if (!name) return;
@@ -162,7 +171,37 @@ export default function Setup() {
       </div>
 
       <div className="space-y-3">
-        {accounts.length === 0 ? (
+        {loading ? (
+          showSkeleton && (
+            <Skeleton.Region label="Loading accounts">
+              <div className="space-y-3">
+                {[0, 1].map((i) => (
+                  <div key={i} className="bg-card rounded-xl2 border border-border shadow-card overflow-hidden">
+                    <div className="p-5 flex items-center gap-4">
+                      <Skeleton.Circle size={44} />
+                      <div className="flex-1 min-w-0 space-y-1.5">
+                        <Skeleton.Text width="w-40" />
+                        <Skeleton.Text width="w-24" className="h-2.5" />
+                      </div>
+                      <Skeleton.Text width="w-20" className="h-5" />
+                    </div>
+                    <div className="p-5 grid sm:grid-cols-3 gap-4">
+                      {[0, 1, 2].map((j) => (
+                        <div key={j} className="flex items-start gap-2.5">
+                          <Skeleton.Circle size={15} />
+                          <div className="flex-1 space-y-1">
+                            <Skeleton.Text width="w-20" className="h-2.5" />
+                            <Skeleton.Text width="w-16" />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </Skeleton.Region>
+          )
+        ) : accounts.length === 0 ? (
           <div className="bg-card rounded-xl2 border border-border shadow-card p-8 text-center">
             <p className="text-sm text-muted italic">No accounts yet — import a statement above, or add one manually below.</p>
           </div>
@@ -221,13 +260,11 @@ export default function Setup() {
                       Import New
                     </Link>
                     <div className="relative">
-                      <button
+                      <IconButton
                         onClick={() => setMenuOpenFor(menuOpenFor === a.id ? null : a.id)}
-                        className="text-muted hover:text-ink p-1.5"
+                        icon={<MoreVertical size={16} />}
                         aria-label="More actions"
-                      >
-                        <MoreVertical size={16} />
-                      </button>
+                      />
                       {menuOpenFor === a.id && (
                         <>
                           {/* Bug fix: unlike the identical-purpose menus in Sidebar.tsx/TopBar.tsx,
@@ -372,9 +409,9 @@ export default function Setup() {
               </div>
             </>
           )}
-          <button onClick={addAccount} disabled={saving} className="bg-primary text-on-primary hover:bg-primary-dark px-4 py-2 rounded text-xs uppercase disabled:opacity-50">
-            {saving ? 'Adding…' : 'Add'}
-          </button>
+          <Button onClick={addAccount} loading={saving} className="uppercase">
+            Add
+          </Button>
         </div>
       </details>
       {error && <p className="text-danger text-sm">{error}</p>}
