@@ -473,4 +473,51 @@ class CreditCardSummaryExtractorTest {
         assertThat(summary.totalAmountDue()).isEqualByComparingTo("13100.00");
         assertThat(summary.hasReconcilableFields()).isTrue();
     }
+
+    // ------------------------------------------------- duplicate-label agreement (Phase 5, task 2)
+
+    @Test
+    void aDuplicateLabelIsAcceptedWhenEveryOccurrenceAgrees() {
+        // Two occurrences of the same label on one page, same value both times -- a bank printing
+        // its own total under two different footnote markers/wordings for the identical figure.
+        List<PositionedText> runs = new ArrayList<>(List.of(
+                run("Previous Balance", 50f, 90f, 300f),
+                run("Purchases", 150f, 60f, 300f),
+                run("Payments / Credits", 340f, 90f, 300f),
+                run("Total Amount Due", 440f, 90f, 300f),
+                run("10,000.00", 55f, 40f, 330f),
+                run("5,000.00", 155f, 40f, 330f),
+                run("2,000.00", 345f, 40f, 330f),
+                run("13,000.00", 445f, 40f, 330f),
+                run("Total Amount Due", 440f, 90f, 400f),
+                run("13,000.00", 445f, 40f, 430f)));
+
+        var summary = CreditCardSummaryExtractor.extract(runs);
+
+        assertThat(summary.totalAmountDue()).isEqualByComparingTo("13000.00");
+        assertThat(summary.hasReconcilableFields()).isTrue();
+    }
+
+    @Test
+    void aDuplicateLabelStillRefusesWhenOccurrencesDisagree() {
+        // Same shape as above, but the second occurrence's value differs -- must remain refused,
+        // unchanged from today's behaviour (this is the existing test this task must not break,
+        // made explicit).
+        List<PositionedText> runs = new ArrayList<>(List.of(
+                run("Previous Balance", 50f, 90f, 300f),
+                run("Purchases", 150f, 60f, 300f),
+                run("Payments / Credits", 340f, 90f, 300f),
+                run("Total Amount Due", 440f, 90f, 300f),
+                run("10,000.00", 55f, 40f, 330f),
+                run("5,000.00", 155f, 40f, 330f),
+                run("2,000.00", 345f, 40f, 330f),
+                run("13,000.00", 445f, 40f, 330f),
+                run("Total Amount Due", 440f, 90f, 400f),
+                run("999.00", 445f, 40f, 430f)));
+
+        var summary = CreditCardSummaryExtractor.extract(runs);
+
+        assertThat(summary.totalAmountDue()).isNull();
+        assertThat(summary.hasReconcilableFields()).isFalse();
+    }
 }

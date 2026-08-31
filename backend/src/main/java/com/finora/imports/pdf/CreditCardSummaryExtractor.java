@@ -372,17 +372,32 @@ public final class CreditCardSummaryExtractor {
         return bestPageEvidence(resolvedByPageAndKey, CreditCardSummaryEvidence.ExtractionMethod.INLINE_LABEL_VALUE);
     }
 
-    /** Accepts a key only when exactly one label occurrence resolved a value for it, within one
-     *  page's own resolutions. Shared by both strategies so "a repeated label is ambiguous, not
-     *  first-wins" is one rule, not two that could drift apart. */
+    /** Accepts a key only when exactly one label occurrence resolved a value for it, OR when more
+     *  than one did and every occurrence resolved to the IDENTICAL amount — redundancy (the same
+     *  figure printed twice under different wording or footnote markers), not ambiguity.
+     *  Occurrences that disagree are still refused, unchanged: two different numbers under one
+     *  label is real ambiguity, which this class already refuses rather than guesses at
+     *  everywhere else. Shared by both strategies so this is one rule, not two that could drift
+     *  apart. */
     private static Map<String, PositionedText> onlyUnambiguous(Map<String, List<PositionedText>> resolvedByKey) {
         Map<String, PositionedText> labelled = new LinkedHashMap<>();
         for (Map.Entry<String, List<PositionedText>> entry : resolvedByKey.entrySet()) {
-            if (entry.getValue().size() == 1) {
-                labelled.put(entry.getKey(), entry.getValue().get(0));
+            List<PositionedText> occurrences = entry.getValue();
+            if (occurrences.size() == 1 || allOccurrencesAgree(occurrences)) {
+                labelled.put(entry.getKey(), occurrences.get(0));
             }
         }
         return labelled;
+    }
+
+    private static boolean allOccurrencesAgree(List<PositionedText> occurrences) {
+        BigDecimal first = amount(occurrences.get(0));
+        if (first == null) return false;
+        for (PositionedText t : occurrences) {
+            BigDecimal a = amount(t);
+            if (a == null || a.compareTo(first) != 0) return false;
+        }
+        return true;
     }
 
     /**
