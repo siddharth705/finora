@@ -304,6 +304,15 @@ jobs:
       - name: Ground-truth matcher (self-test)
         run: python3 scripts/test-ground-truth-match.py
 
+      # The in-repo refusal on corpus-run.py and run-corpus-ground-truth.py is the guard that
+      # stops a real corpus from ever being processed in place, and --allow-in-repo-synthetic-corpus
+      # is the one explicit way past it -- a regression here is exactly the shape of mistake that
+      # already happened once (see the 2026-08-08 incident referenced in
+      # docs/architecture/system-design/ground-truth-model-design.md), so it gets the same
+      # self-test discipline as the two steps above rather than being trusted to stay correct.
+      - name: In-repo corpus refusal (self-test)
+        run: python3 scripts/test-corpus-run.py
+
       - uses: actions/setup-java@v5
         with:
           java-version: '25'
@@ -326,6 +335,33 @@ jobs:
       - name: Run tests
         working-directory: backend
         run: ./mvnw -B --no-transfer-progress test
+
+      # The one thing in the whole corpus-regression suite that is genuinely CI-gated end to end
+      # (probe -> match -> merge-blocking). The real 27-document corpus can never run here -- see
+      # the self-test steps above -- so this fixture is what actually protects the
+      # description-corruption defect class in CI; everything else stays a manual, local,
+      # pre-merge step documented in docs/architecture/system-design/corpus-regression-suite.md.
+      #
+      # Its PDF is never committed -- a raw PDF's bytes cannot be PII-scanned, so this repo's
+      # pre-commit policy refuses one outright. SyntheticFixtureGenerator regenerates it fresh here
+      # from its own reviewable Java source, the same "render in-memory, never commit the bytes"
+      # shape every other synthetic fixture in this codebase already uses.
+      - name: Regenerate the synthetic corpus regression fixture
+        working-directory: backend
+        run: |
+          # No -o here (unlike the local-workflow scripts' own build_classpath()): nothing earlier
+          # in this job invokes maven-dependency-plugin, so a fresh runner's cache never has it,
+          # and offline mode fails outright instead of fetching it once.
+          ./mvnw -q dependency:build-classpath -Dmdep.outputFile=target/corpus-classpath.txt -Dmdep.includeScope=test
+          test -s target/corpus-classpath.txt || { echo "classpath resolution produced an empty file"; exit 1; }
+          java -cp "target/test-classes:target/classes:$(cat target/corpus-classpath.txt)" \
+               com.finora.imports.analysis.SyntheticFixtureGenerator
+
+      - name: Synthetic corpus regression (mechanism-gated)
+        run: python3 scripts/run-corpus-ground-truth.py
+             backend/target/synthetic-corpus-regression
+             --ground-truth backend/target/synthetic-corpus-regression/ground-truth
+             --allow-in-repo-synthetic-corpus
 
       # Runs on a FAILING run too -- that is when knowing which classes failed, and whether the ITs
       # ran at all, is worth most. It reports rather than re-judges: a genuine test failure is

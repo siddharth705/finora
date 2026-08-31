@@ -12,9 +12,15 @@ import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.text.PDFTextStripper;
 
 import java.io.File;
+import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -58,22 +64,42 @@ public final class CorpusProbe {
     private static final int SCHEMA = 1;
 
     public static void main(String[] args) {
-        if (args.length < 1) {
-            System.err.println("Usage: CorpusProbe <path-to.pdf>");
-            System.exit(2);
+        boolean synthetic = false;
+        String pdfArg = null;
+        for (String arg : args) {
+            if ("--synthetic".equals(arg)) {
+                synthetic = true;
+            } else {
+                pdfArg = arg;
+            }
         }
-        Path pdf = Path.of(args[0]);
+        if (pdfArg == null) {
+            System.err.println("Usage: CorpusProbe [--synthetic] <path-to.pdf>");
+            System.exit(2);
+            return;
+        }
+        Path pdf = Path.of(pdfArg);
         // One statement must never take the corpus run down with it, so every failure mode becomes a
         // record rather than a stack trace. Throwable, not Exception: a malformed PDF can surface as
         // an Error from a decoder, and a corpus that stops at file 3 of 16 is not a corpus.
         try {
-            System.out.println(probe(pdf));
+            System.out.println(probe(pdf, synthetic));
         } catch (Throwable t) {
             System.out.println(errorRecord(pdf, t));
         }
     }
 
-    static String probe(Path pdf) throws Exception {
+    /**
+     * {@code synthetic} is the one flag in this class that can change what leaves the process. When
+     * {@code false} (every real-corpus caller, and the default from {@code main()} with no flag), the
+     * output is byte-for-byte what this probe has always emitted -- no {@code observationSource}, no
+     * {@code transactions}. Only an explicit {@code --synthetic} unlocks per-row content, and only
+     * for a committed, reviewed fixture that has one: see
+     * {@code scripts/ground-truth-match.py}'s {@code _observation_source()}, which treats an absent
+     * marker as {@code REAL_CORPUS} -- the safe direction -- so a probe that forgets to pass this
+     * flag loses capability rather than gaining permission to leak real transaction content.
+     */
+    static String probe(Path pdf, boolean synthetic) throws Exception {
         byte[] bytes = Files.readAllBytes(pdf);
 
         int pages;
@@ -130,13 +156,23 @@ public final class CorpusProbe {
                     verification.merge(finding.rule(), finding.outcome(), CorpusProbe::worse);
                 }
             }
+            List<Map<String, String>> transactions = synthetic ? transactionsOf(section) : null;
             detail.add(new Section(i, sectionRows,
                     account == null ? null : account.detectedProduct(),
                     account == null ? null : account.suggestedAccountType(),
                     account == null ? null : account.accountNumberMasked(),
                     account == null ? 0.0 : account.productConfidence(),
                     account != null && account.productNeedsReview(),
-                    sectionVerification));
+                    sectionVerification,
+                    account == null ? null : account.openingBalance(),
+                    account == null ? null : account.closingBalance(),
+                    account == null ? null : account.statementPeriodStart(),
+                    account == null ? null : account.statementPeriodEnd(),
+                    account == null ? null : account.creditLimit(),
+                    account == null ? null : account.totalAmountDue(),
+                    account == null ? null : account.paymentDueDate(),
+                    transactions,
+                    descriptionHashesOf(section)));
         }
 
         String fingerprint = generated.documentContext() == null ? "unknown"
@@ -161,6 +197,7 @@ public final class CorpusProbe {
          .append(",\"file\":").append(quote(pdf.getFileName().toString()))
          .append(",\"status\":\"ok\"")
          .append(",\"observed\":{")
+         .append(synthetic ? "\"observationSource\":\"SYNTHETIC\"," : "")
          .append("\"pages\":").append(pages)
          .append(",\"extractedChars\":").append(extractedChars)
          .append(",\"positionedRuns\":").append(positionedRuns)
@@ -178,6 +215,62 @@ public final class CorpusProbe {
          .append('}')
          .append('}');
         return j.toString();
+    }
+
+    /**
+     * The per-row content {@code ground-truth-match.py}'s {@code VALUE_DIMENSIONS} axis compares --
+     * only ever built when the caller has already committed to {@code --synthetic}. {@code type} is
+     * this pipeline's INCOME/EXPENSE convention; the matcher's vocabulary (and
+     * {@code GroundTruthDocument.row()}, its Java-side counterpart) is CREDIT/DEBIT, so this is the
+     * one place that translation happens.
+     */
+    private static List<Map<String, String>> transactionsOf(StagedAccountSection section) {
+        List<Map<String, String>> rows = new ArrayList<>();
+        for (var row : section.rows()) {
+            Map<String, String> r = new LinkedHashMap<>();
+            r.put("date", row.date() == null ? null : row.date().toString());
+            r.put("description", row.description());
+            r.put("amount", row.amount() == null ? null : row.amount().toPlainString());
+            r.put("direction", "INCOME".equals(row.type()) ? "CREDIT" : "DEBIT");
+            r.put("currency", "INR");
+            rows.add(r);
+        }
+        return rows;
+    }
+
+    /**
+     * One SHA-256 digest per row's description, in row order -- computed unconditionally, on every
+     * probe (real corpus included). This is CHANGE detection, never VALUE disclosure: see
+     * {@code corpus-diff.py}'s {@code compare_description_drift}, the only consumer, which never
+     * sees or reports the text either, only whether the hash at a given row position differs
+     * between two runs.
+     *
+     * <p>Not a privacy-hardened anonymisation scheme -- it is unsalted (a per-run salt would defeat
+     * the whole point: equal descriptions must hash equal across two runs for drift comparison to
+     * mean anything), so a common, low-entropy description ("ATM WITHDRAWAL", a frequent merchant
+     * name) is dictionary-attackable by anyone who can already read this hash. That is an
+     * acceptable bound only because of where this output lives: a local, never-committed
+     * {@code corpus-run.py} JSONL file on a machine that already has the source PDFs sitting next
+     * to it -- reading the hash requires exactly the filesystem access that would let someone open
+     * the PDF directly, so this adds no exposure beyond what that access already gives. It is not
+     * safe to commit, log centrally, or share outside that boundary.
+     */
+    private static List<String> descriptionHashesOf(StagedAccountSection section) {
+        List<String> hashes = new ArrayList<>();
+        for (var row : section.rows()) {
+            hashes.add(sha256(row.description() == null ? "" : row.description()));
+        }
+        return hashes;
+    }
+
+    private static String sha256(String text) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] hash = digest.digest(text.getBytes(StandardCharsets.UTF_8));
+            return HexFormat.of().formatHex(hash, 0, 8);
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 unavailable", e);
+        }
     }
 
     /**
@@ -217,7 +310,17 @@ public final class CorpusProbe {
      */
     record Section(int index, int rows, String detectedProduct, String suggestedAccountType,
                    String accountNumberMasked, double productConfidence, boolean productNeedsReview,
-                   Map<String, String> verification) {}
+                   Map<String, String> verification,
+                   BigDecimal openingBalance, BigDecimal closingBalance,
+                   LocalDate statementPeriodStart, LocalDate statementPeriodEnd,
+                   BigDecimal creditLimit, BigDecimal totalAmountDue, LocalDate paymentDueDate,
+                   /** Null on every real-corpus probe. Only {@code --synthetic} ever populates
+                    *  this -- see {@code transactionsOf} and {@code probe}'s own doc comment. */
+                   List<Map<String, String>> transactions,
+                   /** Populated unconditionally, real corpus included -- see
+                    *  {@code descriptionHashesOf}'s own doc comment for why a one-way hash carries
+                    *  none of {@code transactions}'s disclosure risk. */
+                   List<String> descriptionHashes) {}
 
     /**
      * Renders sections as an ordered JSON array.
@@ -244,6 +347,34 @@ public final class CorpusProbe {
              .append(",\"productConfidence\":").append(Math.round(s.productConfidence() * 1000) / 1000.0)
              .append(",\"productNeedsReview\":").append(s.productNeedsReview())
              .append(",\"verification\":").append(stringMap(s.verification()))
+             .append(",\"openingBalance\":").append(s.openingBalance() == null ? "null" : quote(s.openingBalance().toPlainString()))
+             .append(",\"closingBalance\":").append(s.closingBalance() == null ? "null" : quote(s.closingBalance().toPlainString()))
+             .append(",\"statementPeriodStart\":").append(s.statementPeriodStart() == null ? "null" : quote(s.statementPeriodStart().toString()))
+             .append(",\"statementPeriodEnd\":").append(s.statementPeriodEnd() == null ? "null" : quote(s.statementPeriodEnd().toString()))
+             .append(",\"creditLimit\":").append(s.creditLimit() == null ? "null" : quote(s.creditLimit().toPlainString()))
+             .append(",\"totalAmountDue\":").append(s.totalAmountDue() == null ? "null" : quote(s.totalAmountDue().toPlainString()))
+             .append(",\"paymentDueDate\":").append(s.paymentDueDate() == null ? "null" : quote(s.paymentDueDate().toString()))
+             .append(",\"descriptionHashes\":").append(stringArray(s.descriptionHashes()))
+             .append(s.transactions() == null ? "" : ",\"transactions\":" + transactionsJson(s.transactions()))
+             .append('}');
+        }
+        return b.append(']').toString();
+    }
+
+    /** {@code null} means "not synthetic" and never reaches here -- {@link #sectionsJson} omits the
+     *  key entirely in that case, matching {@code ground-truth-match.py}'s "absent means
+     *  REAL_CORPUS" default rather than emitting a key that could be confused with "observed, and
+     *  empty". */
+    private static String transactionsJson(List<Map<String, String>> rows) {
+        StringBuilder b = new StringBuilder("[");
+        for (int i = 0; i < rows.size(); i++) {
+            if (i > 0) b.append(',');
+            Map<String, String> r = rows.get(i);
+            b.append("{\"date\":").append(r.get("date") == null ? "null" : quote(r.get("date")))
+             .append(",\"description\":").append(quote(r.get("description")))
+             .append(",\"amount\":").append(r.get("amount") == null ? "null" : quote(r.get("amount")))
+             .append(",\"direction\":").append(quote(r.get("direction")))
+             .append(",\"currency\":").append(quote(r.get("currency")))
              .append('}');
         }
         return b.append(']').toString();
