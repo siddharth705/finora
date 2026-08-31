@@ -351,6 +351,38 @@ describe('Import — discarding the current review to force a fresh parse', () =
     expect(await screen.findByText(/could not discard/i)).toBeInTheDocument();
     expect(screen.getByText(/which account is this statement for/i)).toBeInTheDocument();
   });
+
+  /**
+   * Gap found in a pre-commit review: the discard control was only added to the single-account
+   * review screen. A composite statement (e.g. a bank combining a savings account and a
+   * recurring-deposit schedule in one PDF -- exactly the shape that motivated part of this
+   * investigation) lands on the multi-account review screen instead, which had no discard control
+   * at all even though `sessionId` is populated there too and the backend fix protects it equally.
+   */
+  it('also discards a multi-account session and returns to the upload step', async () => {
+    vi.mocked(importApi.stagePdf).mockReset().mockResolvedValue({
+      sessionId: 'sess-multi-9',
+      multiAccount: true,
+      staging: null,
+      sections: [
+        { detectedAccount, rows: [], totalParsed: 0, flaggedDuplicates: 0, unparseableRows: [] },
+        { detectedAccount, rows: [], totalParsed: 0, flaggedDuplicates: 0, unparseableRows: [] },
+      ],
+    } as never);
+    vi.mocked(importApi.discardSession).mockReset().mockResolvedValue(undefined as never);
+    const user = userEvent.setup();
+    renderImport();
+
+    await pickAndUploadPdf(user);
+    await screen.findByText(/this statement covers 2 accounts/i);
+
+    await user.click(screen.getByRole('button', { name: /discard and start over/i }));
+    expect(await screen.findByText('Discard this import and start over?')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Discard' }));
+
+    expect(importApi.discardSession).toHaveBeenCalledWith('sess-multi-9');
+    expect(await screen.findByTestId('statement-dropzone')).toBeInTheDocument();
+  });
 });
 
 /**

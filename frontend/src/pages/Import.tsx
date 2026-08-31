@@ -1080,9 +1080,20 @@ export default function Import() {
             <h2 className="font-semibold text-ink text-sm mb-1">
               This statement covers {multiSections.length} accounts
             </h2>
-            <p className="text-xs text-muted">
-              We found {multiSections.length} separate accounts in this file — review each one below, then confirm
-              them all together.
+            <p className="text-xs text-muted flex items-center gap-2 flex-wrap">
+              <span>
+                We found {multiSections.length} separate accounts in this file — review each one below, then confirm
+                them all together.
+              </span>
+              {sessionId && (
+                <button
+                  type="button"
+                  onClick={() => setConfirmDiscardReviewOpen(true)}
+                  className="text-xs text-muted underline flex-shrink-0"
+                >
+                  Not what you expected? Discard and start over
+                </button>
+              )}
             </p>
           </div>
 
