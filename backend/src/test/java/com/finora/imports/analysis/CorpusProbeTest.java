@@ -5,7 +5,16 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 
+import com.finora.imports.pdf.fixtures.PdfFixtureBuilder;
+import com.finora.imports.pdf.fixtures.SyntheticStatementDefinition;
+import com.finora.imports.pdf.fixtures.SyntheticStatementDefinition.ExpectedEntity;
+import com.finora.imports.pdf.fixtures.SyntheticStatementDefinition.Presence;
+import com.finora.imports.pdf.fixtures.SyntheticStatementDefinition.Row;
+import com.finora.imports.pdf.fixtures.SyntheticStatementDefinition.ZeroTransactions;
+import org.junit.jupiter.api.io.TempDir;
+
 import java.math.BigDecimal;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDate;
 import java.util.List;
@@ -68,7 +77,7 @@ class CorpusProbeTest {
     private static CorpusProbe.Section sec(int index, int rows, String product, String type) {
         return new CorpusProbe.Section(index, rows, product, type, null, 0.5, false,
                 Map.of("BALANCE_CHAIN", "VERIFIED"),
-                null, null, null, null, null, null, null);
+                null, null, null, null, null, null, null, null);
     }
 
     // ------------------------------------------------- statement-level financial facts (Task 1)
@@ -79,7 +88,7 @@ class CorpusProbeTest {
                 0, 3, "SAVINGS", "SAVINGS", "****1234", 0.9, false, Map.of(),
                 new BigDecimal("1000.00"), new BigDecimal("1500.00"),
                 LocalDate.of(2026, 7, 1), LocalDate.of(2026, 7, 31),
-                null, null, null);
+                null, null, null, null);
 
         String json = CorpusProbe.sectionsJson(List.of(section));
 
@@ -97,7 +106,7 @@ class CorpusProbeTest {
         CorpusProbe.Section section = new CorpusProbe.Section(
                 0, 3, "CREDIT_CARD", "CREDIT_CARD", null, 0.9, false, Map.of(),
                 null, null, null, null,
-                new BigDecimal("50000.00"), new BigDecimal("4321.50"), LocalDate.of(2026, 8, 15));
+                new BigDecimal("50000.00"), new BigDecimal("4321.50"), LocalDate.of(2026, 8, 15), null);
 
         String json = CorpusProbe.sectionsJson(List.of(section));
 
@@ -157,10 +166,10 @@ class CorpusProbeTest {
         String json = CorpusProbe.sectionsJson(List.of(
                 new CorpusProbe.Section(0, 75, "UNKNOWN", "SAVINGS", null, 0.5, false,
                         Map.of("COLUMN_AMBIGUITY", "VERIFIED"),
-                        null, null, null, null, null, null, null),
+                        null, null, null, null, null, null, null, null),
                 new CorpusProbe.Section(1, 0, "UNKNOWN", "SAVINGS", null, 0.5, true,
                         Map.of("COLUMN_AMBIGUITY", "WARNING"),
-                        null, null, null, null, null, null, null)));
+                        null, null, null, null, null, null, null, null)));
 
         assertThat(json).contains("\"WARNING\"").contains("\"VERIFIED\"");
         assertThat(json.indexOf("VERIFIED")).isLessThan(json.indexOf("WARNING"));
@@ -171,7 +180,7 @@ class CorpusProbeTest {
     void missingAccountIdentityRendersNull() {
         String json = CorpusProbe.sectionsJson(List.of(
                 new CorpusProbe.Section(0, 0, null, null, null, 0.0, false, Map.of(),
-                        null, null, null, null, null, null, null)));
+                        null, null, null, null, null, null, null, null)));
 
         assertThat(json).contains("\"detectedProduct\":null")
                 .contains("\"accountNumberMasked\":null")
@@ -187,5 +196,41 @@ class CorpusProbeTest {
     void aNullMessageDoesNotProduceInvalidJson() {
         assertThat(CorpusProbe.errorRecord(Path.of("x.pdf"), new RuntimeException()))
                 .contains("\"message\":\"null\"");
+    }
+
+    // ------------------------------------------------- SYNTHETIC opt-in (Task 4)
+
+    private static Path oneRowFixture(Path tempDir) throws Exception {
+        var definition = new SyntheticStatementDefinition("corpus-probe-synthetic-001", List.of(
+                new ExpectedEntity("savings-primary", "SAVINGS", Presence.DETECTED, "••••4321",
+                        ZeroTransactions.FALSE, List.of(
+                                new Row(LocalDate.of(2026, 7, 1), "Coffee shop",
+                                        new BigDecimal("100.00"), false)))),
+                List.of());
+        Path pdf = tempDir.resolve("corpus-probe-synthetic-001.pdf");
+        Files.write(pdf, PdfFixtureBuilder.render(definition));
+        return pdf;
+    }
+
+    @Test
+    void probe_omitsObservationSourceAndTransactions_whenSyntheticFlagIsAbsent(@TempDir Path tempDir) throws Exception {
+        Path pdf = oneRowFixture(tempDir);
+
+        String json = CorpusProbe.probe(pdf, false);
+
+        assertThat(json).doesNotContain("observationSource");
+        assertThat(json).doesNotContain("\"transactions\"");
+    }
+
+    @Test
+    void probe_emitsObservationSourceAndPerRowTransactions_whenSyntheticFlagIsSet(@TempDir Path tempDir) throws Exception {
+        Path pdf = oneRowFixture(tempDir);
+
+        String json = CorpusProbe.probe(pdf, true);
+
+        assertThat(json).contains("\"observationSource\":\"SYNTHETIC\"");
+        assertThat(json).contains("\"transactions\":[");
+        assertThat(json).contains("\"description\":\"Coffee shop\"");
+        assertThat(json).contains("\"direction\":\"DEBIT\"");
     }
 }
