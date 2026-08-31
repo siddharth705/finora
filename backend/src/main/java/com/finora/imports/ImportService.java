@@ -99,6 +99,7 @@ public class ImportService {
     private final ImportSessionService importSessionService;
     private final com.finora.imports.pdf.PdfPreviewGenerator pdfPreviewGenerator;
     private final ProductIdentityResolver productIdentityResolver;
+    private final com.finora.imports.ownership.OwnershipMatchService ownershipMatchService;
     private final StatementAnalysisRecorder analysisRecorder;
     /** Keeps the verification rules' findings, which until now reached the staging response and
      *  were then discarded -- see ImportVerificationRecorder and milestone-2 item 6. */
@@ -126,6 +127,7 @@ public class ImportService {
                           ImportSessionService importSessionService,
                           com.finora.imports.pdf.PdfPreviewGenerator pdfPreviewGenerator,
                           ProductIdentityResolver productIdentityResolver,
+                          com.finora.imports.ownership.OwnershipMatchService ownershipMatchService,
                           com.finora.imports.storage.StatementContentService statementContentService,
                           StatementAnalysisRecorder analysisRecorder,
                           com.finora.imports.analysis.ImportVerificationRecorder verificationRecorder,
@@ -137,6 +139,7 @@ public class ImportService {
         this.analysisRecorder = analysisRecorder;
         this.verificationRecorder = verificationRecorder;
         this.productIdentityResolver = productIdentityResolver;
+        this.ownershipMatchService = ownershipMatchService;
         this.statementContentService = statementContentService;
         this.accountRepository = accountRepository;
         this.accountService = accountService;
@@ -607,12 +610,14 @@ public class ImportService {
                     sectionConfirm.statementOpeningBalance(), sectionConfirm.statementClosingBalance(),
                     null, // a multi-section PDF was already unlocked once to be staged; no password to carry here
                     sectionConfirm.statementPeriodStart(), sectionConfirm.statementPeriodEnd(),
-                    sectionConfirm.totalAmountDue(), sectionConfirm.paymentDueDate());
+                    sectionConfirm.totalAmountDue(), sectionConfirm.paymentDueDate(),
+                    sectionConfirm.userConfirmedContinue());
             persisted.add(persistSection(userId, session.getFileName(), statementContentService.read(session), perAccountRequest, i,
                     session.getLayoutMetadataJson(), session.getLayoutFingerprint(), session.getActivatedCapabilitiesJson(),
                 // A multi-section import is CSV/PDF only -- a Gmail receipt is never
                 // multi-account -- so source is always null on this path, not session.getSource().
-                session.getUnparseableSummaryJson(), null, importSessionService.readCreditCardSummary(session)));
+                session.getUnparseableSummaryJson(), null, importSessionService.readCreditCardSummary(session),
+                stagedSection.detectedAccount() == null ? null : stagedSection.detectedAccount().accountHolderName()));
         }
 
         reconcileAcross(userId, persisted);
@@ -658,9 +663,11 @@ public class ImportService {
         // the same staged rows". Plausibly was not enough -- same count, entirely different rows
         // was accepted, and the ledger recorded transactions the stored document does not contain.
         ConfirmedRowIntegrity.requireSameRows(stagedRows, request.rows());
+        var detectedAccount = importSessionService.readDetectedAccount(session);
         return confirm(userId, session.getFileName(), statementContentService.read(session), request, null,
                 session.getLayoutMetadataJson(), session.getLayoutFingerprint(), session.getActivatedCapabilitiesJson(),
-                session.getUnparseableSummaryJson(), session.getSource(), importSessionService.readCreditCardSummary(session));
+                session.getUnparseableSummaryJson(), session.getSource(), importSessionService.readCreditCardSummary(session),
+                detectedAccount == null ? null : detectedAccount.accountHolderName());
     }
 
     /**
@@ -714,7 +721,7 @@ public class ImportService {
      */
     @Transactional
     public ConfirmResponse confirm(UUID userId, String fileName, byte[] fileContent, ConfirmRequest request) {
-        return confirm(userId, fileName, fileContent, request, null, null, null, null, null, null, null);
+        return confirm(userId, fileName, fileContent, request, null, null, null, null, null, null, null, null);
     }
 
     /**
@@ -726,7 +733,7 @@ public class ImportService {
      */
     @Transactional
     public ConfirmResponse confirm(UUID userId, String fileName, byte[] fileContent, ConfirmRequest request, Integer sourceSectionIndex) {
-        return confirm(userId, fileName, fileContent, request, sourceSectionIndex, null, null, null, null, null, null);
+        return confirm(userId, fileName, fileContent, request, sourceSectionIndex, null, null, null, null, null, null, null);
     }
 
     /**
@@ -744,15 +751,20 @@ public class ImportService {
      *
      * <p>{@code creditCardSummaryJson} (roadmap item 6 follow-up, PR #451): same "copied verbatim,
      * never recomputed" treatment, one more field.
+     *
+     * <p>{@code extractedHolderName} (docs/proposals/account-ownership-intelligence-proposal.md
+     * §3.1/§3.2): same "copied verbatim, never recomputed, null with no session" treatment as the
+     * rest of this list.
      */
     @Transactional
     public ConfirmResponse confirm(UUID userId, String fileName, byte[] fileContent, ConfirmRequest request, Integer sourceSectionIndex,
                                     String layoutMetadataJson, String layoutFingerprint, String activatedCapabilitiesJson,
                                     String unparseableSummaryJson, String source,
-                                    com.finora.imports.pdf.CreditCardSummaryExtractor.CreditCardSummaryEvidence creditCardSummary) {
+                                    com.finora.imports.pdf.CreditCardSummaryExtractor.CreditCardSummaryEvidence creditCardSummary,
+                                    String extractedHolderName) {
         PersistedSection section = persistSection(userId, fileName, fileContent, request, sourceSectionIndex,
                 layoutMetadataJson, layoutFingerprint, activatedCapabilitiesJson, unparseableSummaryJson, source,
-                creditCardSummary);
+                creditCardSummary, extractedHolderName);
         reconcileAcross(userId, List.of(section));
         return summarise(userId, section);
     }
@@ -814,7 +826,12 @@ public class ImportService {
                                     Integer sourceSectionIndex,
                                     String layoutMetadataJson, String layoutFingerprint, String activatedCapabilitiesJson,
                                     String unparseableSummaryJson, String source,
-                                    com.finora.imports.pdf.CreditCardSummaryExtractor.CreditCardSummaryEvidence creditCardSummary) {
+                                    com.finora.imports.pdf.CreditCardSummaryExtractor.CreditCardSummaryEvidence creditCardSummary,
+                                    // docs/proposals/account-ownership-intelligence-proposal.md §3.1/§3.2. Copied
+                                    // verbatim from the session's DetectedAccountInfo, same "never recomputed"
+                                    // discipline as layoutMetadataJson/layoutFingerprint above -- null on the
+                                    // byte-array reimport path, which has no session to read it from.
+                                    String extractedHolderName) {
         long startedAtMs = System.currentTimeMillis();
         List<String> accountsCreated = new ArrayList<>();
         // What was created, by PRODUCT rather than by account. The summary says "1 Savings, 1 Fixed
@@ -823,6 +840,12 @@ public class ImportService {
         Map<String, Integer> productsCreated = new LinkedHashMap<>();
 
         UUID accountId = resolveTargetAccount(userId, request, accountsCreated, productsCreated);
+        // Computed here, right after the account is known and before the new StatementImport row
+        // exists -- OwnershipMatchService.evaluate's account-continuity check
+        // (countByUserIdAndAccountId) must see only PRIOR statements, and this row doesn't exist
+        // yet to pollute that count.
+        StatementImport.OwnershipMatchStatus ownershipMatchStatus =
+                ownershipMatchService.evaluate(userId, accountId, extractedHolderName);
 
         long merchantsBefore = merchantRepository.countByUserId(userId);
 
@@ -954,6 +977,14 @@ public class ImportService {
         statementImport.setLayoutFingerprint(layoutFingerprint);
         statementImport.setActivatedCapabilitiesJson(activatedCapabilitiesJson);
         statementImport.setUnparseableSummaryJson(unparseableSummaryJson);
+        statementImport.setExtractedHolderName(extractedHolderName);
+        statementImport.setOwnershipMatchStatus(ownershipMatchStatus);
+        // Only meaningful when the warning actually fired -- a client-supplied true/false when
+        // ownershipMatchStatus isn't NAME_MISMATCH would be claiming a decision the user was never
+        // asked to make, same principle Transaction.notDuplicateConfirmedAt already follows.
+        statementImport.setUserConfirmedContinue(
+                ownershipMatchStatus == StatementImport.OwnershipMatchStatus.NAME_MISMATCH
+                        ? request.userConfirmedContinue() : null);
         // Object storage first, then the row -- the ordering §5.1 of the migration doc requires. A
         // failure throws before anything is persisted, so a row can never point at an object that
         // was never written.
@@ -1188,8 +1219,15 @@ public class ImportService {
                 && isMostRecentStatementForAccount(userId, accountId, maxDate, savedImport.getId());
         if (closingBalanceIsAuthoritative) {
             accountRepository.findById(accountId).ifPresent(account -> {
+                // Captured before the overwrite -- the only safe source for reversing this SET
+                // later (see StatementImport.balanceBeforeAbsoluteSet's own doc comment). Nothing
+                // about this statement's own rows or opening/closing arithmetic can reconstruct it
+                // after the fact.
+                java.math.BigDecimal priorBalance = account.getBalance();
                 account.setBalance(request.statementClosingBalance());
+                account.setLastAbsoluteSetStatementId(savedImport.getId());
                 accountRepository.save(account);
+                savedImport.setBalanceBeforeAbsoluteSet(priorBalance);
             });
         } else if (!toInsert.isEmpty()) {
             accountRepository.findById(accountId).ifPresent(account -> {
@@ -1230,6 +1268,25 @@ public class ImportService {
                         accountId, balanceDecision.reason(), balanceDecision.details().keySet());
             }
         }
+
+        // Phase 4 of the coverage proposal (§0.6): record the branch just taken, not just its
+        // effect, so a future supersede decision can read what actually happened here instead of
+        // recomputing it -- see StatementImport.BalanceApplicationMode's own doc comment for why
+        // recomputation is unsafe.
+        //
+        // No repository.save() call here, deliberately: savedImport is the MANAGED instance
+        // returned by the first save() (BaseEntity's own class comment explains why that save
+        // routes through merge(), not persist()), so it is already tracked by this transaction's
+        // persistence context -- a plain setter is picked up by ordinary dirty-checking at the next
+        // flush. An explicit second save() was tried first and broke coverageWarningsFor's
+        // metadata query a few lines below with a duplicate-key merge (Collectors.toMap) -- a
+        // second merge() on an already-managed instance is not the no-op it looks like, it produces
+        // a second row visible to a query issued later in the same persistence context.
+        savedImport.setBalanceApplicationMode(closingBalanceIsAuthoritative
+                ? StatementImport.BalanceApplicationMode.ABSOLUTE
+                : !toInsert.isEmpty()
+                        ? StatementImport.BalanceApplicationMode.ADDITIVE
+                        : StatementImport.BalanceApplicationMode.NONE);
 
         // Counted HERE rather than after reconciliation, which is where it used to sit. Nothing
         // between the two points creates merchants -- they are created while the rows above are
@@ -1354,6 +1411,11 @@ public class ImportService {
         if (section.openingBalanceDecision().carriedForward()) {
             warnings.add(section.openingBalanceDecision().reason());
         }
+        // Phase 2 of the statement continuity proposal (§11): a gap now bordering this statement,
+        // or an exact-duplicate period, both scoped to this one import -- see coverageWarningsFor's
+        // own comment for why an old, unrelated gap elsewhere on the account stays quiet.
+        CoverageWarningsResult coverageWarnings = coverageWarningsFor(userId, accountId, section.savedImport());
+        warnings.addAll(coverageWarnings.warnings());
 
         // Re-fetched (not the pre-import in-memory copy) so the summary reflects the balance
         // update above, if it applied. Falls back to AccountDto.from(a) (no statement/transaction
@@ -1376,7 +1438,83 @@ public class ImportService {
                 // user happened to look at. See persistSection's own comment for the precedence.
                 section.savedImport().getStatementPeriodStart(), section.savedImport().getStatementPeriodEnd(),
                 System.currentTimeMillis() - section.startedAtMs(),
-                "CSV");
+                "CSV", section.savedImport().getId(), coverageWarnings.duplicateOfStatementId());
+    }
+
+    /** {@link #coverageWarningsFor}'s two independent results: the prose warnings, and (Phase 4,
+     *  §0.3) the original statement's id when one of those warnings is an exact-duplicate-period
+     *  notice -- what "Import this one as a replacement?" would supersede. */
+    private record CoverageWarningsResult(List<String> warnings, UUID duplicateOfStatementId) {}
+
+    /**
+     * Fetches every statement with a printed period for this account (including the one just
+     * saved), runs {@link StatementCoverageAnalyzer}, and delegates to {@link CoverageWarnings} for
+     * which facts are worth telling the user about right now. Returns empty for a CSV import (no
+     * printed period, per that document's §3/§7 -- CSV coverage is a later, optional phase, not
+     * this one) rather than running an analysis with nothing to place on a timeline.
+     */
+    private CoverageWarningsResult coverageWarningsFor(UUID userId, UUID accountId, StatementImport savedImport) {
+        LocalDate newStart = savedImport.getStatementPeriodStart();
+        LocalDate newEnd = savedImport.getStatementPeriodEnd();
+        if (newStart == null || newEnd == null) {
+            return new CoverageWarningsResult(List.of(), null);
+        }
+
+        AccountCoverage coverage = accountCoverageFor(userId, accountId);
+        List<String> warnings = CoverageWarnings.forNewStatement(coverage.report(), savedImport.getId(), newStart, newEnd,
+                coverage.importedAtById());
+        UUID duplicateOfStatementId = CoverageWarnings.duplicateOfStatementId(coverage.report(), savedImport.getId());
+        return new CoverageWarningsResult(warnings, duplicateOfStatementId);
+    }
+
+    /** The account-wide inputs {@link CoverageWarnings}' static methods need -- the fetch-and-
+     *  analyze steps {@link #coverageWarningsFor} and {@link #duplicateOverlapsFor} both start
+     *  from, factored out so the latter (added for a confirmReimport bug fix -- see its own
+     *  comment) doesn't duplicate them. */
+    private record AccountCoverage(StatementCoverageAnalyzer.CoverageReport report,
+                                    Map<UUID, java.time.Instant> importedAtById) {}
+
+    private AccountCoverage accountCoverageFor(UUID userId, UUID accountId) {
+        List<StatementImportRepository.StatementMetadata> metadata =
+                statementImportRepository.findMetadataWithPeriodByUserIdAndAccountId(userId, accountId);
+        List<StatementCoverageAnalyzer.StatementPeriod> periods = metadata.stream()
+                .map(m -> new StatementCoverageAnalyzer.StatementPeriod(m.getId(), m.getStatementPeriodStart(),
+                        m.getStatementPeriodEnd(), m.getOpeningBalance(), m.getClosingBalance()))
+                .toList();
+        StatementCoverageAnalyzer.CoverageReport report = StatementCoverageAnalyzer.analyze(periods);
+
+        Map<UUID, java.time.Instant> importedAtById = metadata.stream()
+                .collect(java.util.stream.Collectors.toMap(
+                        StatementImportRepository.StatementMetadata::getId,
+                        StatementImportRepository.StatementMetadata::getImportedAt));
+        return new AccountCoverage(report, importedAtById);
+    }
+
+    /**
+     * Every exact-duplicate-period overlap {@code statementId} is currently involved in, each
+     * paired with the specific statement it duplicates. Bug fix (self-review, Phase 4 follow-up):
+     * {@code StatementImportService.confirmReimport} used to reconstruct this from the flattened
+     * {@code warnings}/{@code duplicateOfStatementId} a normal confirm response carries -- every
+     * duplicate sentence concatenated into one list, only the FIRST overlap's id kept -- which
+     * cannot tell "the overlap against the statement being reimported" apart from "a second,
+     * unrelated duplicate this same confirm also produced" once both exist: stripping the former
+     * by string prefix silently took the latter's sentence (and sometimes its id) with it, so a
+     * real, actionable duplicate could vanish from the response entirely with no warning and no
+     * way to supersede it.
+     *
+     * <p>Recomputes the account's coverage report a second time rather than threading this
+     * structured shape through {@link #summarise}'s whole confirm/persistSection/summarise call
+     * graph for the one caller that needs it -- the same trade-off {@code confirmReimport}'s
+     * warning-stripping already makes (see its own comment). Returns empty for a CSV-sourced
+     * statement (no printed period), same as {@link #coverageWarningsFor}.
+     */
+    public List<CoverageWarnings.DuplicateOverlap> duplicateOverlapsFor(
+            UUID userId, UUID accountId, UUID statementId, LocalDate periodStart, LocalDate periodEnd) {
+        if (periodStart == null || periodEnd == null) {
+            return List.of();
+        }
+        AccountCoverage coverage = accountCoverageFor(userId, accountId);
+        return CoverageWarnings.duplicateOverlaps(coverage.report(), statementId, coverage.importedAtById());
     }
 
     /**

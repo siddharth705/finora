@@ -2,7 +2,10 @@
 
 **Baselined:** 2026-08-29 · **Evidence base:** full sweep against `origin/main` @ `a6c96f29` (PR #506)
 · **Re-checked** against `64986ec0` before merge — a targeted diff, not a repeat of the full sweep, which
-added one row (custom categories, §3.1). The gap widens on its own as web ships; see §9.
+added one row (custom categories, §3.1). **Re-checked again 2026-08-30** against `9873e0a5` — another
+targeted diff, which escalated one row (email verification, §3.6) from P2 to P1 after confirming it
+fully blocks Google sign-in recovery on an unverified account; see §4.3. The gap widens on its own as
+web ships; see §9.
 **Owner decision recorded 2026-08-29:** mobile is intended to become a **full replacement** for the
 web application, not a companion experience. This document exists because that decision converts an
 open-ended gap into a bounded, prioritised backlog with a release criterion attached.
@@ -132,7 +135,7 @@ replacement-required · **P3** deferred / decision-gated.
 | Data statistics | ✅ | ✅ | — | |
 | **Change phone number** | `phoneChangeApi` | ❌ | P2 | mobile can verify a phone, not change one |
 | Reset password (from email link) | `ResetPassword.tsx` | ❌ | P2 | needs deep linking |
-| Verify email (from email link) | `VerifyEmail.tsx` | ❌ | P2 | needs deep linking |
+| **Verify email (from email link)** | `VerifyEmail.tsx` | ❌ | **P1** | See §4.3 — blocks Google sign-in recovery for an unverified account, not just a settings-page convenience gap |
 | App lock (biometric), screenshot guard, root/jailbreak warning | — | ✅ | — | **mobile-only**; no web equivalent |
 
 ### 3.7 Growth, billing, integrations
@@ -168,7 +171,7 @@ earlier number was an impression, this one is arithmetic.
 
 ---
 
-## 4. Two findings that are not ordinary backlog items
+## 4. Three findings that are not ordinary backlog items
 
 ### 4.1 In-app account deletion is probably a submission gate, not a parity item
 
@@ -196,6 +199,43 @@ This is a pricing and margin decision, not an engineering one, and it collides w
 scope, undefined)** and **D-28 (Plus/Premium billing, unreconciled)** — both open in
 `project-plan-v1.0.md` §11. Held at **P3, decision-gated**. It should not be scheduled until D-7 and
 D-28 resolve, and it is the one parity item that may be *deliberately* left web-only.
+
+### 4.3 Email verification is unreachable on mobile, and it fully blocks a real recovery path
+
+`grep -rln "verify-email|verifyEmail|emailVerified" mobile/src/` returns **zero matches** — no
+verify-email screen, no route, and the app never reads `emailVerified` at all. Confirmed against
+`origin/main` on a live device against the dev backend, 2026-08-30.
+
+This is not simply a missing settings-page nicety. `AuthService.loginWithGoogle`
+(`AuthService.java:843-846`, the V93 anti-pre-hijacking guard) refuses to auto-link a Google
+sign-in into an account whose email is unverified, and throws **HTTP 403**:
+
+> "An account with this email already exists but hasn't been verified yet... check your inbox,
+> then try Sign in with Google again."
+
+The verification link it mints points at the **web frontend**
+(`EmailProperties.resolveBaseUrl(null) + "/verify-email?token=" + ...`, `AuthService.java:237`).
+A mobile-only user who hits this guard has **no in-app path to complete verification** — the only
+way out is to open the web app, which is precisely what D-30 says mobile is meant to replace.
+
+**Priority: P1** (replacement-critical), not P2. A dead end inside the sign-in flow itself is more
+severe than an ordinary missing screen — it isn't delayed functionality, it's an account a mobile
+user cannot get into. **Cross-reference: Gate C** (§6) — this is the gate covering store-mandated /
+auth-completeness items; a reviewer exercising Google Sign-In against a pre-existing
+unverified-email account will hit the same 403 with no recoverable path in-app, which is exactly the
+kind of dead-end auth state store review tends to flag, even without a specific guideline citation
+the way §4.1 has one.
+
+**Related defect, independent of the mobile gap — worth its own fix regardless of who ships the
+verify-email screen.** `mintEmailVerificationToken()` calls
+`emailVerificationTokenRepository.markAllUnusedAsUsed(userId, now)` as its **first statement**
+(`AuthService.java`; see `EmailVerificationTokenRepository.java:20-22`), burning every previously
+unused verification link for that user before minting the new one. `loginWithGoogle`'s 403 message
+tells the user to "try Sign in with Google again" — but every retry mints a fresh token and
+silently invalidates whichever link is still sitting in their inbox. Only the most recently sent
+email is ever live; the message's own advice is the exact action that kills the link the user is
+about to click. Fix ideas: reuse an unexpired token instead of always minting a new one on retry, or
+stop telling the user to retry the action that invalidates their pending link.
 
 ---
 
@@ -257,6 +297,10 @@ Three distinct gates. Conflating them is what turns a 4-week beta into a 12-week
    Privacy, listings and screenshots.
 4. Android only: 12 testers × 14 continuous days on a **closed** track, then production access
    granted.
+5. **Recommended, not confirmed-mandatory:** email verification reachable in-app (§4.3) — unlike
+   §4.1, no specific guideline citation was found requiring this, but a Google Sign-In attempt
+   against a pre-existing unverified account is a dead end with no in-app recovery today. Verify
+   against live guidelines the same way §4.1 was before deciding whether this blocks submission.
 
 ### Gate D — "Mobile replaces web"
 **Every P1 and P2 row in §3 shipped and validated on both platforms**, or explicitly reclassified by
@@ -277,8 +321,8 @@ not. Discounted where mobile already has the primitives (`OptionPickerModal`, `D
 | Band | Items | Est. |
 |---|---|---|
 | **S** | In-app account deletion | 3–4 d |
-| **P1** | Add + edit + recategorise transaction; ledger filter set; custom category management; accounts CRUD; async import jobs; multi-account confirm | 17–23 d |
-| **P2** | Lifecycle (deactivate, export); explanation; Ask Once; import recovery + verification; Financial Journey; phone change; deep links; Gmail | 18–24 d |
+| **P1** | Add + edit + recategorise transaction; ledger filter set; custom category management; accounts CRUD; async import jobs; multi-account confirm; email verification deep link | 18–24 d |
+| **P2** | Lifecycle (deactivate, export); explanation; Ask Once; import recovery + verification; Financial Journey; phone change; password-reset deep link; Gmail | 17–23 d |
 | **P3** | Billing, referrals, entitlements, presentation | 6–9 d, decision-gated |
 | | **Gate D total (S + P1 + P2)** | **38–51 d** |
 

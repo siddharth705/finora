@@ -1,20 +1,42 @@
 import { useMemo, useState } from 'react';
 import {
-  ActivityIndicator, Alert, FlatList, Pressable, StyleSheet, Text, TextInput, View,
+  ActivityIndicator, Alert, FlatList, Pressable, ScrollView, StyleSheet, Text, TextInput, View,
 } from 'react-native';
 import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { transactionsApi, type TransactionFilters } from '../api/endpoints';
+import { transactionsApi, type PagedResponse, type TransactionFilters } from '../api/endpoints';
+import { SkeletonTransactionRow } from '../components/skeletons/Skeletons';
 import { invalidateFinancialData } from '../lib/invalidateFinancialData';
 import { toUserMessage } from '../lib/apiError';
+import { hapticError, hapticImpact } from '../lib/haptics';
 import { useDebouncedValue } from '../lib/useDebouncedValue';
 import { useLargeFontScale } from '../lib/useLargeFontScale';
 import { fmtCurrency } from '../lib/format';
 import { radius, spacing, useTheme } from '../theme';
 import type { Transaction } from '../types';
 
-const PAGE_SIZE = 20;
+export const LEDGER_PAGE_SIZE = 20;
 type TypeFilter = 'ALL' | 'INCOME' | 'EXPENSE';
+
+/**
+ * The exact filters this screen's own useInfiniteQuery below sends on a fresh mount (no search
+ * keyword typed, no type filter chosen). Exported so Dashboard's prefetch-on-focus hook
+ * (usePrefetchAdjacentScreens) can warm ['transactions', DEFAULT_LEDGER_FILTERS] under this EXACT
+ * key -- a prefetch built from a near-identical object is a cache miss with extra network calls,
+ * not a warm cache.
+ */
+export const DEFAULT_LEDGER_FILTERS: TransactionFilters = {
+  size: LEDGER_PAGE_SIZE,
+  sortField: 'date',
+  sortDir: 'desc',
+};
+
+/** Exported for the same reason as DEFAULT_LEDGER_FILTERS -- prefetchInfiniteQuery needs the
+ *  identical pagination cursor logic this screen's own useInfiniteQuery uses below, so a
+ *  prefetched page and a screen-fetched page agree on whether there's a next one. */
+export function getLedgerNextPageParam(lastPage: PagedResponse<Transaction>) {
+  return lastPage.page + 1 < lastPage.totalPages ? lastPage.page + 1 : undefined;
+}
 
 export function LedgerScreen() {
   const c = useTheme();
@@ -29,9 +51,7 @@ export function LedgerScreen() {
 
   const filters: TransactionFilters = useMemo(
     () => ({
-      size: PAGE_SIZE,
-      sortField: 'date',
-      sortDir: 'desc',
+      ...DEFAULT_LEDGER_FILTERS,
       keyword: debouncedKeyword || undefined,
       type: typeFilter === 'ALL' ? undefined : typeFilter,
     }),
@@ -53,14 +73,17 @@ export function LedgerScreen() {
     initialPageParam: 0,
     // The backend's PagedResponse carries a real totalPages, so "is there more" is answered by
     // the server rather than inferred from whether a page came back full.
-    getNextPageParam: (lastPage) =>
-      lastPage.page + 1 < lastPage.totalPages ? lastPage.page + 1 : undefined,
+    getNextPageParam: getLedgerNextPageParam,
   });
 
   const txns = data?.pages.flatMap((p) => p.content) ?? [];
   const totalElements = data?.pages[0]?.totalElements ?? 0;
 
   function confirmDelete(t: Transaction) {
+    // Before the alert, not after a choice is made -- the same convention iOS's own system apps
+    // use for a press that's about to open a destructive confirmation, so the gesture itself
+    // feels acknowledged rather than only its eventual outcome.
+    hapticImpact();
     // Alert.alert replaces the web's window.confirm(), which doesn't exist in React Native.
     Alert.alert(
       'Delete transaction?',
@@ -82,6 +105,7 @@ export function LedgerScreen() {
       invalidateFinancialData(queryClient);
     } catch (e) {
       setError(toUserMessage(e, 'Could not delete this transaction.'));
+      hapticError();
     } finally {
       setDeletingId(null);
     }
@@ -131,9 +155,15 @@ export function LedgerScreen() {
       {error ? <Text style={[styles.error, { color: c.danger }]}>{error}</Text> : null}
 
       {isLoading ? (
-        <View style={styles.centered}>
-          <ActivityIndicator size="large" color={c.primary} />
-        </View>
+        // ScrollView, not a plain View -- the FlatList is this screen's only other scrollable
+        // region and doesn't exist yet during this branch, so a plain View here would silently
+        // clip the bottom skeleton rows on shorter-viewport devices once search/filter chrome
+        // above eats into the available height.
+        <ScrollView contentContainerStyle={styles.listContent}>
+          {Array.from({ length: 8 }).map((_, i) => (
+            <SkeletonTransactionRow key={i} />
+          ))}
+        </ScrollView>
       ) : isError && txns.length === 0 ? (
         /**
          * A failed search must not fall through to ListEmptyComponent below. Without this branch
@@ -156,6 +186,14 @@ export function LedgerScreen() {
           testID="ledger-list"
           data={txns}
           keyExtractor={(t) => t.id}
+          // Mirrors ImportScreen's own tuning (same three props, same reasoning there). No
+          // getItemLayout: row height isn't fixed here -- it varies with description/merchant
+          // text length and with the user's font-scale setting (useLargeFontScale above), and a
+          // wrong precomputed offset would make FlatList jump to the wrong place on a long list,
+          // not just skip the optimization.
+          initialNumToRender={12}
+          windowSize={9}
+          removeClippedSubviews
           onEndReached={() => {
             if (hasNextPage && !isFetchingNextPage) void fetchNextPage();
           }}

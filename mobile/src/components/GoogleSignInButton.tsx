@@ -8,6 +8,7 @@ import {
   statusCodes,
 } from '@react-native-google-signin/google-signin';
 import { useThemeSetting } from '../theme';
+import { signOutOfGoogle } from '../lib/googleSession';
 
 /**
  * D-23 Phase 2. Native counterpart to frontend/src/components/GoogleSignInButton.tsx -- same
@@ -55,6 +56,9 @@ export function GoogleSignInButton({ onCredential, onError }: Props) {
       // docs. Surfaces Play Services' own "update Play Services" dialog rather than a confusing
       // downstream failure when a device's copy is missing or out of date.
       await GoogleSignin.hasPlayServices({ showPlayServicesUpdateDialog: true });
+      // Drop any cached account first, or the SDK signs the previous one in silently and never
+      // offers the picker -- see signOutOfGoogle's own comment for what that costs.
+      await signOutOfGoogle();
       const response = await GoogleSignin.signIn();
       if (!isSuccessResponse(response)) return; // user cancelled -- not an error state
       if (!response.data.idToken) {

@@ -116,6 +116,17 @@ public class Account extends BaseEntity {
     @Column(name = "ifsc_code")
     private String ifscCode;
 
+    /** Which {@code StatementImport} most recently SET (not added to) this account's balance --
+     *  null means either nothing ever has, or a manual balance edit ({@code AccountService
+     *  .update}) invalidated the previous claim. See the "absolute balance reversal" design spec's
+     *  "live anchor" section: this is what lets a later reversal tell "that statement's SET is
+     *  still live under the current balance" apart from "something else has already overwritten
+     *  it," without reconstructing history. Written by {@code ImportService.persistSection}'s
+     *  ABSOLUTE branch, {@code AccountService.update} (cleared on a manual edit), and {@code
+     *  StatementImportService.reverseAbsoluteContribution} (cleared after a successful reversal). */
+    @Column(name = "last_absolute_set_statement_id")
+    private UUID lastAbsoluteSetStatementId;
+
     public UUID getUserId() { return userId; }
     public void setUserId(UUID userId) { this.userId = userId; }
     public String getName() { return name; }
@@ -158,4 +169,6 @@ public class Account extends BaseEntity {
     public void setBranchName(String branchName) { this.branchName = branchName; }
     public String getIfscCode() { return ifscCode; }
     public void setIfscCode(String ifscCode) { this.ifscCode = ifscCode; }
+    public UUID getLastAbsoluteSetStatementId() { return lastAbsoluteSetStatementId; }
+    public void setLastAbsoluteSetStatementId(UUID lastAbsoluteSetStatementId) { this.lastAbsoluteSetStatementId = lastAbsoluteSetStatementId; }
 }

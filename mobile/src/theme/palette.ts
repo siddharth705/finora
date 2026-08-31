@@ -37,6 +37,11 @@ export const light = {
   onPrimary: '#FFFFFF',
   success: '#16a34a',
   successBg: '#dcfce7',
+  // `success` on `successBg` sits at ~3.00:1 -- under WCAG AA's 4.5:1 floor, the same shape of
+  // problem warningInk exists to fix just below. This green-800 clears ~6.49:1 on the same
+  // ground -- real margin, not just over the line. Needed for OfflineBanner's transient
+  // "back online" state.
+  successInk: '#166534',
   danger: '#dc2626',
   dangerBg: '#fee2e2',
   warning: '#d97706',
@@ -64,6 +69,9 @@ export const dark: typeof light = {
   onPrimary: '#15171C',
   success: '#22c55e',
   successBg: '#12301f',
+  // Dark theme's success already clears AA comfortably on successBg (~6.28:1), so this is the
+  // same value as success -- same reasoning as dark.warningInk/dark.mutedInk above.
+  successInk: '#22c55e',
   danger: '#f87171',
   dangerBg: '#3a1518',
   warning: '#fbbf24',

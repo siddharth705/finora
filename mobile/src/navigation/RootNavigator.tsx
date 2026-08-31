@@ -11,6 +11,7 @@ import { useAuth } from '../context/AuthContext';
 import { useTheme, useThemeSetting } from '../theme';
 import { useAuthStackInitialRoute } from './useAuthStackInitialRoute';
 import { useEmailChangeDeepLink } from './useEmailChangeDeepLink';
+import { useNavigationStatePersistence } from './useNavigationStatePersistence';
 import type { AppTabParamList, AuthStackParamList } from './types';
 
 const AuthStack = createNativeStackNavigator<AuthStackParamList>();
@@ -55,14 +56,20 @@ export function RootNavigator() {
   const c = useTheme();
   const { resolved } = useThemeSetting();
   const navigationRef = useNavigationContainerRef<AppTabParamList>();
-  // "Ready" here means AppTabs is actually the mounted tree -- token alone isn't enough, since a
+  // AppTabs is actually the mounted tree -- token alone isn't enough, since a
   // signed-in-but-unverified account gets the single-screen VerifyPhone AppStack instead, which
-  // has no route to More.VerifyEmailChange either.
-  const { onNavigationReady } = useEmailChangeDeepLink(navigationRef, token !== null && phoneVerified);
+  // has no route to More.VerifyEmailChange either. Shared below by the deep-link hook (its own
+  // "ready" gate) and the nav-state-persistence hook (its own "which tree does this state belong
+  // to" gate) -- both need exactly this condition, not a slightly different one.
+  const isAppTabsActive = token !== null && phoneVerified;
+  const { onNavigationReady } = useEmailChangeDeepLink(navigationRef, isAppTabsActive);
+  const navPersistence = useNavigationStatePersistence(bootstrapping, isAppTabsActive);
 
   // Session restore reads SecureStore asynchronously (see AuthContext). Rendering anything
   // route-dependent before it resolves would show Login to an already-signed-in user for a frame.
-  if (bootstrapping) {
+  // Also waits on navPersistence: reading its one AsyncStorage key is comparably fast, and folding
+  // it into the same spinner avoids a second, separate loading flash right after this one clears.
+  if (bootstrapping || !navPersistence.isReady) {
     return (
       <View style={[styles.splash, { backgroundColor: c.bg }]}>
         <ActivityIndicator size="large" color={c.primary} />
@@ -98,6 +105,14 @@ export function RootNavigator() {
       theme={navTheme}
       linking={{ prefixes: linkingPrefixes }}
       onReady={onNavigationReady}
+      // Both undefined whenever isAppTabsActive is false: navPersistence never populates
+      // initialState outside that condition (see the hook's own doc comment), and onStateChange
+      // itself no-ops via the same activeRef check. Passing them unconditionally rather than only
+      // inside the AppTabs branch below because NavigationContainer is the one component instance
+      // wrapping all three conditionally-rendered trees -- it can't take different props per
+      // child.
+      initialState={navPersistence.initialState}
+      onStateChange={navPersistence.onStateChange}
     >
       {token === null ? (
         // initialRouteName -- not just AuthEntry listed first -- because which screen this stack
