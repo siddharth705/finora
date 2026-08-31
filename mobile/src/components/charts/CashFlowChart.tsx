@@ -1,10 +1,11 @@
 import { StyleSheet, Text, View } from 'react-native';
-import Svg, { Line, Polyline, Circle } from 'react-native-svg';
+import Svg, { Line, Circle } from 'react-native-svg';
 import { fmtCurrency } from '../../lib/format';
 import {
-  CASHFLOW_HEIGHT, CASHFLOW_PAD_TOP, CASHFLOW_PLOT_HEIGHT, cashFlowScale,
+  CASHFLOW_HEIGHT, CASHFLOW_PAD_TOP, CASHFLOW_PLOT_HEIGHT, cashFlowScale, polylineLength,
 } from '../../lib/chartGeometry';
 import { spacing, useTheme } from '../../theme';
+import { CHART_REVEAL_DURATION, RevealPolyline } from './ChartReveal';
 
 export interface CashFlowPoint {
   label: string;
@@ -27,6 +28,8 @@ export function CashFlowChart({ points, width }: { points: CashFlowPoint[]; widt
   const { xAt, yAt } = cashFlowScale(points, width);
   const toPolyline = (pick: (p: CashFlowPoint) => number) =>
     points.map((p, i) => `${xAt(i)},${yAt(pick(p))}`).join(' ');
+  const toPoints = (pick: (p: CashFlowPoint) => number) =>
+    points.map((p, i) => ({ x: xAt(i), y: yAt(pick(p)) }));
 
   return (
     <View>
@@ -47,8 +50,21 @@ export function CashFlowChart({ points, width }: { points: CashFlowPoint[]; widt
             stroke={c.border}
             strokeWidth={1}
           />
-          <Polyline points={toPolyline((p) => p.income)} fill="none" stroke={c.success} strokeWidth={2} />
-          <Polyline points={toPolyline((p) => p.expense)} fill="none" stroke={c.danger} strokeWidth={2} />
+          <RevealPolyline
+            points={toPolyline((p) => p.income)}
+            length={polylineLength(toPoints((p) => p.income))}
+            color={c.success}
+            strokeWidth={2}
+          />
+          <RevealPolyline
+            points={toPolyline((p) => p.expense)}
+            length={polylineLength(toPoints((p) => p.expense))}
+            color={c.danger}
+            strokeWidth={2}
+            // Expense sweeps in just behind income, not simultaneously -- a small stagger reads
+            // as two distinct series arriving, not one blob.
+            delay={CHART_REVEAL_DURATION / 3}
+          />
           {points.map((p, i) => (
             <Circle key={`i-${p.label}`} cx={xAt(i)} cy={yAt(p.income)} r={3} fill={c.success} />
           ))}

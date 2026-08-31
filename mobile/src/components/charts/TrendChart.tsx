@@ -1,8 +1,11 @@
 import { StyleSheet, Text, View } from 'react-native';
-import Svg, { Circle, Line, Polyline } from 'react-native-svg';
+import Svg, { Circle, Line } from 'react-native-svg';
 import { fmtCurrency, fmtDate } from '../../lib/format';
-import { TREND_HEIGHT, TREND_PAD_TOP, TREND_PLOT_HEIGHT, trendScale } from '../../lib/chartGeometry';
+import {
+  TREND_HEIGHT, TREND_PAD_TOP, TREND_PLOT_HEIGHT, polylineLength, trendScale,
+} from '../../lib/chartGeometry';
 import { spacing, useTheme } from '../../theme';
+import { RevealPolyline } from './ChartReveal';
 
 export interface TrendPoint {
   /** "YYYY-MM-DD" -- a LocalDate from the net worth snapshot history. */
@@ -24,7 +27,8 @@ export function TrendChart({ points, width }: { points: TrendPoint[]; width: num
   }
 
   const { xAt, yAt } = trendScale(points.map((p) => p.value), width);
-  const polyline = points.map((p, i) => `${xAt(i)},${yAt(p.value)}`).join(' ');
+  const polylinePoints = points.map((p, i) => `${xAt(i)},${yAt(p.value)}`).join(' ');
+  const linePoints = points.map((p, i) => ({ x: xAt(i), y: yAt(p.value) }));
 
   const first = points[0];
   const last = points[points.length - 1];
@@ -51,7 +55,12 @@ export function TrendChart({ points, width }: { points: TrendPoint[]; width: num
             stroke={c.border}
             strokeWidth={1}
           />
-          <Polyline points={polyline} fill="none" stroke={c.primary} strokeWidth={2} />
+          <RevealPolyline
+            points={polylinePoints}
+            length={polylineLength(linePoints)}
+            color={c.primary}
+            strokeWidth={2}
+          />
           {points.map((p, i) => (
             <Circle key={p.date} cx={xAt(i)} cy={yAt(p.value)} r={3} fill={c.primary} />
           ))}

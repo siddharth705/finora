@@ -13,6 +13,7 @@ import { accountsApi, categoriesApi, importApi, statementImportsApi, type RNFile
 import { PDF_PASSWORD_INVALID, PDF_PASSWORD_REQUIRED } from '../../api/errorCodes';
 import { apiErrorCode, toUserMessage } from '../../lib/apiError';
 import { fmtCurrency } from '../../lib/format';
+import { hapticSuccess } from '../../lib/haptics';
 import { invalidateFinancialData } from '../../lib/invalidateFinancialData';
 import {
   buildNewAccountPayload, buildRowPayload, initialAccountForm, initialCategories,
@@ -275,6 +276,9 @@ export function ImportScreen() {
       setSummary(result);
       setStep('summary');
       invalidateFinancialData(queryClient);
+      // The moment the import actually lands, not when the button is pressed -- firing before
+      // the request resolves would celebrate a network failure too.
+      hapticSuccess();
     } catch (e) {
       setError(toUserMessage(e, 'Could not complete the import.'));
     } finally {

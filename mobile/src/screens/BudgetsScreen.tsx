@@ -3,6 +3,7 @@ import {
   Pressable, RefreshControl, ScrollView, StyleSheet, Text, View,
 } from 'react-native';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { AnimatedNumber } from '../components/AnimatedNumber';
 import { Button } from '../components/Button';
 import { Card, EmptyState } from '../components/Card';
 import { SkeletonBudgetCard } from '../components/skeletons/Skeletons';
@@ -12,6 +13,7 @@ import { TextField } from '../components/TextField';
 import { budgetsApi, categoriesApi } from '../api/endpoints';
 import { toUserMessage } from '../lib/apiError';
 import { fmtCurrency } from '../lib/format';
+import { hapticSuccess, hapticWarning } from '../lib/haptics';
 import { useSingleFlight } from '../lib/useSingleFlight';
 import { useTransientFlag } from '../lib/useTransientFlag';
 import { parsePositiveAmount } from '../lib/validation';
@@ -51,10 +53,12 @@ export function BudgetsScreen() {
     const amount = parsePositiveAmount(limit);
     if (!category) {
       setError('Pick a category first.');
+      hapticWarning();
       return;
     }
     if (amount === null) {
       setError('Monthly limit must be a number greater than zero.');
+      hapticWarning();
       return;
     }
     setError(null);
@@ -65,6 +69,7 @@ export function BudgetsScreen() {
         setCategory(null);
         setLimit('');
         confirmSaved();
+        hapticSuccess();
         // Dashboard's budget widget and the health score/notifications both read this -- see the
         // web page's own comment. 'budgets' alone would leave the Dashboard stale until its cache
         // aged out.
@@ -72,6 +77,7 @@ export function BudgetsScreen() {
         void queryClient.invalidateQueries({ queryKey: ['dashboard-summary'] });
       } catch (e) {
         setError(toUserMessage(e, 'Could not save this budget. Try again.'));
+        hapticWarning();
       } finally {
         setSaving(false);
       }
@@ -156,9 +162,11 @@ export function BudgetsScreen() {
                     <Text style={[styles.budgetName, { color: c.ink }]} numberOfLines={1}>
                       {b.categoryName}
                     </Text>
-                    <Text style={[styles.budgetAmounts, { color: c.muted }]}>
-                      {fmtCurrency(b.spentThisMonth)} / {fmtCurrency(b.monthlyLimit)}
-                    </Text>
+                    <View style={styles.budgetAmountsRow}>
+                      <AnimatedNumber value={b.spentThisMonth} style={[styles.budgetAmounts, { color: c.muted }]} />
+                      <Text style={[styles.budgetAmounts, { color: c.muted }]}> / </Text>
+                      <AnimatedNumber value={b.monthlyLimit} style={[styles.budgetAmounts, { color: c.muted }]} />
+                    </View>
                   </View>
                   <ProgressBar pct={pct} color={barColor} />
                   <Text style={[styles.budgetFoot, { color: remaining >= 0 ? c.muted : c.danger }]}>
@@ -215,6 +223,7 @@ const styles = StyleSheet.create({
     marginBottom: spacing.sm,
   },
   budgetName: { fontSize: 14, fontWeight: '600', flex: 1, marginRight: spacing.sm },
+  budgetAmountsRow: { flexDirection: 'row', alignItems: 'baseline' },
   budgetAmounts: { fontSize: 12 },
   budgetFoot: { fontSize: 11, marginTop: 6 },
 });
