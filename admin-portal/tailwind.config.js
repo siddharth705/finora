@@ -12,6 +12,7 @@ export default {
         bg: 'var(--color-bg)',
         card: 'var(--color-card)',
         border: 'var(--color-border)',
+        surface: 'var(--color-surface)',
         ink: 'rgb(var(--color-ink) / <alpha-value>)',
         muted: 'var(--color-muted)',
         primary: 'rgb(var(--color-primary) / <alpha-value>)',
