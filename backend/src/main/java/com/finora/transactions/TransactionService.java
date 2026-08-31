@@ -502,10 +502,34 @@ public class TransactionService {
      * <p>Reconciliation re-runs afterwards for the same reason every other write path re-runs it:
      * a row returning to OK can complete or break a pattern elsewhere, and a third genuinely
      * accidental copy must still be flagged against this one.
+     *
+     * <h2>Refused when the owning statement has since been superseded</h2>
+     *
+     * <p>{@code StatementImportService.supersede} only ever touches {@code OK}-status rows (see
+     * its own doc comment) -- a row already sitting at {@code DUPLICATE} is invisible to that
+     * filter, so it survives untouched when its statement is marked replaced, still reachable from
+     * the Dashboard's "detected duplicates" widget with no indication its statement is stale.
+     * Un-duplicating it here would resurrect a row from data Finora has already recorded as
+     * replaced -- into every report, and (see below) potentially into the balance a second time.
+     * {@code supersede} itself already refuses to act on an already-superseded statement; this is
+     * the same refusal from the other side.
      */
     @Transactional
     public TransactionDto confirmNotDuplicate(UUID userId, UUID txnId) {
         Transaction t = getOwned(userId, txnId);
+
+        if (t.getStatementImportId() != null) {
+            statementImportRepository.findById(t.getStatementImportId())
+                    .filter(si -> si.getSupersededBy() != null)
+                    .ifPresent(si -> {
+                        throw new ApiException(HttpStatus.BAD_REQUEST,
+                                "This transaction's statement has since been replaced by a later "
+                                        + "re-upload of the same period, so it cannot be confirmed as "
+                                        + "not a duplicate -- doing so would resurrect a row from "
+                                        + "data that has already been superseded. Check the "
+                                        + "replacement statement instead.");
+                    });
+        }
 
         t.setNotDuplicateConfirmedAt(java.time.Instant.now());
         t.setIsDuplicateOf(null);
