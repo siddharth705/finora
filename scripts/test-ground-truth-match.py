@@ -17,10 +17,12 @@ gt = importlib.util.module_from_spec(_s)
 _s.loader.exec_module(gt)
 
 
-def section(index, rows, product="SAVINGS", masked=None):
-    return {"index": index, "rows": rows, "detectedProduct": product,
-            "suggestedAccountType": product, "accountNumberMasked": masked,
-            "productConfidence": 0.9, "productNeedsReview": False, "verification": {}}
+def section(index, rows, product="SAVINGS", masked=None, **statement_fields):
+    s = {"index": index, "rows": rows, "detectedProduct": product,
+         "suggestedAccountType": product, "accountNumberMasked": masked,
+         "productConfidence": 0.9, "productNeedsReview": False, "verification": {}}
+    s.update(statement_fields)
+    return s
 
 
 def record(sections):
@@ -30,13 +32,15 @@ def record(sections):
             "derived": {"documentClassification": "PARSED_COMPLETE"}}
 
 
-def entity(eid, product, presence="DETECTED", txns=None, legit=None, masked=None):
+def entity(eid, product, presence="DETECTED", txns=None, legit=None, masked=None,
+           **expected_statement_fields):
     e = {"id": eid, "expectedPresence": presence, "expectedProduct": product,
          "expectedTransactions": txns}
     if legit is not None:
         e["zeroTransactionsLegitimate"] = {"value": legit, "evidence": {"source": "DOCUMENT"}}
     if masked:
         e["expectedIdentity"] = {"accountNumberMasked": masked}
+    e.update(expected_statement_fields)
     return e
 
 
@@ -234,6 +238,70 @@ class UnestablishedIsNotAgreement(unittest.TestCase):
 
         self.assertEqual(gt.FAIL, r["verdict"])
         self.assertIn("product", r["entities"][0]["detail"])
+
+
+class StatementLevelFacts(unittest.TestCase):
+    """Balance/period/credit-card-summary -- statement-level facts, not per-transaction ledger
+    detail, so unlike VALUE_DIMENSIONS these apply to a REAL_CORPUS observation exactly like
+    expectedProduct already does. Every field here is optional-to-assert: its absence from the
+    ground truth must never read as agreement or as a failure."""
+
+    # rows=1 throughout (not 0): a zero-row section triggers the separate zero-transactions-
+    # legitimacy check below, which is orthogonal to what these tests exercise and would fail them
+    # on an unrelated axis.
+
+    def test_a_matched_opening_balance_passes(self):
+        truth = {"entities": [entity("acct", "SAVINGS", txns="NOT_YET_ESTABLISHED",
+                                     expectedOpeningBalance="1000.00")]}
+        rec = record([section(0, 1, "SAVINGS", openingBalance="1000.00")])
+
+        self.assertEqual(gt.PASS, gt.match(truth, rec)["verdict"])
+
+    def test_a_mismatched_opening_balance_fails(self):
+        truth = {"entities": [entity("acct", "SAVINGS", txns="NOT_YET_ESTABLISHED",
+                                     expectedOpeningBalance="1000.00")]}
+        rec = record([section(0, 1, "SAVINGS", openingBalance="999.00")])
+
+        self.assertEqual(gt.FAIL, gt.match(truth, rec)["verdict"])
+
+    def test_an_unasserted_field_never_affects_the_verdict(self):
+        """No expectedOpeningBalance key at all -- must not be treated as an expected null."""
+        truth = {"entities": [entity("acct", "SAVINGS", txns="NOT_YET_ESTABLISHED")]}
+        rec = record([section(0, 1, "SAVINGS", openingBalance="1000.00")])
+
+        self.assertEqual(gt.PASS, gt.match(truth, rec)["verdict"])
+
+    def test_an_asserted_field_the_probe_never_observed_is_review_not_pass(self):
+        truth = {"entities": [entity("acct", "SAVINGS", txns="NOT_YET_ESTABLISHED",
+                                     expectedClosingBalance="1500.00")]}
+        rec = record([section(0, 1, "SAVINGS", closingBalance=None)])
+
+        self.assertEqual(gt.REVIEW, gt.match(truth, rec)["verdict"])
+
+    def test_every_statement_field_is_independently_asserted(self):
+        truth = {"entities": [entity(
+            "acct", "CREDIT_CARD", txns="NOT_YET_ESTABLISHED",
+            expectedCreditLimit="50000.00", expectedTotalAmountDue="4321.50",
+            expectedPaymentDueDate="2026-08-15",
+            expectedStatementPeriodStart="2026-07-01", expectedStatementPeriodEnd="2026-07-31")]}
+        rec = record([section(0, 1, "CREDIT_CARD",
+                              creditLimit="50000.00", totalAmountDue="4321.50",
+                              paymentDueDate="2026-08-15",
+                              statementPeriodStart="2026-07-01", statementPeriodEnd="2026-07-31")])
+
+        self.assertEqual(gt.PASS, gt.match(truth, rec)["verdict"])
+
+    def test_one_mismatched_statement_field_among_several_correct_ones_still_fails(self):
+        truth = {"entities": [entity(
+            "acct", "CREDIT_CARD", txns="NOT_YET_ESTABLISHED",
+            expectedCreditLimit="50000.00", expectedTotalAmountDue="4321.50")]}
+        rec = record([section(0, 1, "CREDIT_CARD",
+                              creditLimit="50000.00", totalAmountDue="WRONG")])
+
+        r = gt.match(truth, rec)
+
+        self.assertEqual(gt.FAIL, r["verdict"])
+        self.assertIn("totalAmountDue", r["entities"][0]["detail"])
 
 
 if __name__ == "__main__":

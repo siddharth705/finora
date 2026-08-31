@@ -32,6 +32,20 @@ REAL_CORPUS, SYNTHETIC = "REAL_CORPUS", "SYNTHETIC"
 # per-dimension and never swallows the whole entity.
 VALUE_DIMENSIONS = ("date", "amount", "direction", "currency")
 
+# Statement-level facts, not per-transaction ledger detail -- these apply to a REAL_CORPUS
+# observation exactly like expectedProduct already does (see match()), unlike VALUE_DIMENSIONS
+# above which stays refused for anything but a SYNTHETIC observation. (expected key on the
+# ground-truth entity, observed key on the CorpusProbe section.)
+STATEMENT_FIELDS = (
+    ("expectedOpeningBalance", "openingBalance"),
+    ("expectedClosingBalance", "closingBalance"),
+    ("expectedStatementPeriodStart", "statementPeriodStart"),
+    ("expectedStatementPeriodEnd", "statementPeriodEnd"),
+    ("expectedCreditLimit", "creditLimit"),
+    ("expectedTotalAmountDue", "totalAmountDue"),
+    ("expectedPaymentDueDate", "paymentDueDate"),
+)
+
 
 def _observation_source(record):
     """REAL_CORPUS unless a record says otherwise.
@@ -181,6 +195,18 @@ def match(truth, record):
                 and s.get("suggestedAccountType") != want_product:
             issues.append(f"product {s.get('suggestedAccountType')} != expected {want_product}")
             worst = FAIL
+
+        for expected_key, observed_key in STATEMENT_FIELDS:
+            if expected_key not in e:
+                continue                               # not asserted -- never fails, never passes
+            want = e[expected_key]
+            got = s.get(observed_key)
+            if got is None:
+                issues.append(f"{observed_key}: asserted {want} but not observed")
+                worst = REVIEW if worst == PASS else worst
+            elif str(got) != str(want):
+                issues.append(f"{observed_key}: observed {got}, expected {want}")
+                worst = FAIL
 
         # The value axis. Structural by construction: financial values are legal only on a
         # SYNTHETIC observation, so a real-corpus record cannot carry them even if a future probe
