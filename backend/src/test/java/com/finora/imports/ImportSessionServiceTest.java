@@ -332,6 +332,48 @@ class ImportSessionServiceTest {
     }
 
     /**
+     * The actual bug this method exists to fix (2026-08-31): a session created minutes-to-hours
+     * ago, still well within its 48h TTL, is NOT the double-click/retry case this dedup check was
+     * built for -- it's a genuinely later re-upload, and by then the parser that produced its
+     * staged rows may have been fixed. Confirmed against a real HDFC statement: a stale session
+     * kept replaying a 12-row result on every re-upload even after the parser was fixed to
+     * correctly extract all 243 rows. A session must be recent, not merely unexpired, to be
+     * replayed automatically.
+     */
+    @Test
+    void findLiveSessionByContentHash_deletesAStaleButUnexpiredMatch_andReportsNoneFound() {
+        ImportSession stale = sessionOwnedBy(userId, Instant.now().plusSeconds(600), ImportSession.STATUS_STAGED);
+        org.springframework.test.util.ReflectionTestUtils.setField(
+                stale, "createdAt", Instant.now().minus(java.time.Duration.ofMinutes(10)));
+        when(importSessionRepository.findFirstByUserIdAndContentHashAndStatusOrderByCreatedAtDesc(
+                userId, "hash-d", ImportSession.STATUS_STAGED)).thenReturn(Optional.of(stale));
+
+        Optional<ImportSession> found = service.findLiveSessionByContentHash(userId, "hash-d");
+
+        assertThat(found).isEmpty();
+        verify(importSessionRepository).delete(stale);
+    }
+
+    /**
+     * The dedup protection this method exists FOR must still work: a session created moments ago
+     * (a double-click, or a client retrying a request whose response was lost) is still returned
+     * as a match, not treated as stale.
+     */
+    @Test
+    void findLiveSessionByContentHash_stillReturnsAVeryRecentMatch_withinTheDedupWindow() {
+        ImportSession justCreated = sessionOwnedBy(userId, Instant.now().plusSeconds(600), ImportSession.STATUS_STAGED);
+        org.springframework.test.util.ReflectionTestUtils.setField(
+                justCreated, "createdAt", Instant.now().minusSeconds(5));
+        when(importSessionRepository.findFirstByUserIdAndContentHashAndStatusOrderByCreatedAtDesc(
+                userId, "hash-e", ImportSession.STATUS_STAGED)).thenReturn(Optional.of(justCreated));
+
+        Optional<ImportSession> found = service.findLiveSessionByContentHash(userId, "hash-e");
+
+        assertThat(found).contains(justCreated);
+        verify(importSessionRepository, never()).delete(any());
+    }
+
+    /**
      * The actual regression this method exists to prevent: a user with BOTH kinds staged used to
      * get an exception for their entire {@code GET /import/sessions} response, because
      * {@code listActiveSessions} included the MULTI_ACCOUNT session and the controller's
