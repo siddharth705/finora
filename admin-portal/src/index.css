@@ -16,6 +16,9 @@
   --color-bg: #F8FAFC;
   --color-card: #ffffff;
   --color-border: #E6EAF2;
+  /* Same token as the user frontend's src/index.css -- an inset-panel shade between `bg` and
+     `card`, for skeleton placeholder blocks (see design-system/Skeleton.tsx). */
+  --color-surface: #F1F4F9;
 
   --color-ink: 15 23 42;
   --color-muted: #64748B;
@@ -44,6 +47,7 @@
   --color-bg: #0B1220;
   --color-card: #151C2C;
   --color-border: #253044;
+  --color-surface: #1B2436;
 
   --color-ink: 226 232 240;
   --color-muted: #94A3B8;
