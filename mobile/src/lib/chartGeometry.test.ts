@@ -1,7 +1,8 @@
 import {
   CASHFLOW_PAD_TOP, CASHFLOW_PLOT_HEIGHT, DONUT_CENTER, DONUT_CIRCUMFERENCE, DONUT_RADIUS, DONUT_SIZE, DONUT_STROKE,
   TREND_PAD_TOP, TREND_PLOT_HEIGHT,
-  arcLength, arcPath, buildArcs, cashFlowScale, pointOnCircle, polylineLength, trendScale,
+  arcLength, arcPath, bucketTopSlices, buildArcs, cashFlowScale, pointOnCircle, polylineLength, toSvgPoints,
+  trendScale,
 } from './chartGeometry';
 
 describe('donut geometry', () => {
@@ -84,6 +85,47 @@ describe('donut geometry', () => {
     ]);
     expect(arcs).toHaveLength(2);
     expect(arcs[1].end).toBeCloseTo(360);
+  });
+});
+
+describe('bucketTopSlices', () => {
+  const colors = ['red', 'green', 'blue'];
+
+  it('returns one slice per entry, sorted by value descending, when there is room in the palette', () => {
+    const slices = bucketTopSlices([['b', 20], ['a', 30]], colors, 'Other');
+    expect(slices).toEqual([
+      { label: 'a', value: 30, color: 'red' },
+      { label: 'b', value: 20, color: 'green' },
+    ]);
+  });
+
+  it('folds everything past the palette size into a synthetic "Other" bucket', () => {
+    const slices = bucketTopSlices(
+      [['a', 40], ['b', 30], ['c', 20], ['d', 10]],
+      colors,
+      'Other'
+    );
+    expect(slices).toEqual([
+      { label: 'a', value: 40, color: 'red' },
+      { label: 'b', value: 30, color: 'green' },
+      { label: 'Other', value: 30, color: 'blue' }, // c (20) + d (10)
+    ]);
+  });
+
+  // The overflow bucket has to absorb a real entry of the same name rather than sit beside it --
+  // "Other" is a category/holding name real data can genuinely have, and two identically-labelled
+  // rows with different amounts is not something a reader can resolve.
+  it('merges the overflow into an existing entry literally named "Other" instead of creating a second row', () => {
+    const slices = bucketTopSlices(
+      [['a', 40], ['b', 30], ['Other', 5], ['d', 10]],
+      colors,
+      'Other'
+    );
+    expect(slices).toEqual([
+      { label: 'a', value: 40, color: 'red' },
+      { label: 'b', value: 30, color: 'green' },
+      { label: 'Other', value: 15, color: 'blue' }, // 5 (its own) + 10 (d, folded in)
+    ]);
   });
 });
 
@@ -193,5 +235,13 @@ describe('chart reveal geometry', () => {
   it('is zero for a single point or an empty series -- nothing to draw, nothing to animate', () => {
     expect(polylineLength([])).toBe(0);
     expect(polylineLength([{ x: 10, y: 10 }])).toBe(0);
+  });
+
+  it('renders points as the SVG polyline attribute string, from the same array polylineLength consumes', () => {
+    expect(toSvgPoints([{ x: 0, y: 0 }, { x: 3, y: 0 }, { x: 3, y: 4 }])).toBe('0,0 3,0 3,4');
+  });
+
+  it('is an empty string for an empty series', () => {
+    expect(toSvgPoints([])).toBe('');
   });
 });

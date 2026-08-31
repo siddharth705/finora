@@ -8,7 +8,7 @@ import { transactionsApi, type PagedResponse, type TransactionFilters } from '..
 import { SkeletonTransactionRow } from '../components/skeletons/Skeletons';
 import { invalidateFinancialData } from '../lib/invalidateFinancialData';
 import { toUserMessage } from '../lib/apiError';
-import { hapticImpact } from '../lib/haptics';
+import { hapticError, hapticImpact } from '../lib/haptics';
 import { useDebouncedValue } from '../lib/useDebouncedValue';
 import { useLargeFontScale } from '../lib/useLargeFontScale';
 import { fmtCurrency } from '../lib/format';
@@ -105,6 +105,7 @@ export function LedgerScreen() {
       invalidateFinancialData(queryClient);
     } catch (e) {
       setError(toUserMessage(e, 'Could not delete this transaction.'));
+      hapticError();
     } finally {
       setDeletingId(null);
     }

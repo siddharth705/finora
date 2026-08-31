@@ -2,7 +2,7 @@ import { StyleSheet, Text, View } from 'react-native';
 import Svg, { Line, Circle } from 'react-native-svg';
 import { fmtCurrency } from '../../lib/format';
 import {
-  CASHFLOW_HEIGHT, CASHFLOW_PAD_TOP, CASHFLOW_PLOT_HEIGHT, cashFlowScale, polylineLength,
+  CASHFLOW_HEIGHT, CASHFLOW_PAD_TOP, CASHFLOW_PLOT_HEIGHT, cashFlowScale, polylineLength, toSvgPoints,
 } from '../../lib/chartGeometry';
 import { spacing, useTheme } from '../../theme';
 import { CHART_REVEAL_DURATION, RevealPolyline } from './ChartReveal';
@@ -26,10 +26,12 @@ export function CashFlowChart({ points, width }: { points: CashFlowPoint[]; widt
   }
 
   const { xAt, yAt } = cashFlowScale(points, width);
-  const toPolyline = (pick: (p: CashFlowPoint) => number) =>
-    points.map((p, i) => `${xAt(i)},${yAt(pick(p))}`).join(' ');
-  const toPoints = (pick: (p: CashFlowPoint) => number) =>
+  // Each series' {x,y} pairs computed once, not once for the SVG points string and again for
+  // polylineLength -- both are derived from this same array.
+  const toSeries = (pick: (p: CashFlowPoint) => number) =>
     points.map((p, i) => ({ x: xAt(i), y: yAt(pick(p)) }));
+  const incomeSeries = toSeries((p) => p.income);
+  const expenseSeries = toSeries((p) => p.expense);
 
   return (
     <View>
@@ -51,14 +53,14 @@ export function CashFlowChart({ points, width }: { points: CashFlowPoint[]; widt
             strokeWidth={1}
           />
           <RevealPolyline
-            points={toPolyline((p) => p.income)}
-            length={polylineLength(toPoints((p) => p.income))}
+            points={toSvgPoints(incomeSeries)}
+            length={polylineLength(incomeSeries)}
             color={c.success}
             strokeWidth={2}
           />
           <RevealPolyline
-            points={toPolyline((p) => p.expense)}
-            length={polylineLength(toPoints((p) => p.expense))}
+            points={toSvgPoints(expenseSeries)}
+            length={polylineLength(expenseSeries)}
             color={c.danger}
             strokeWidth={2}
             // Expense sweeps in just behind income, not simultaneously -- a small stagger reads
