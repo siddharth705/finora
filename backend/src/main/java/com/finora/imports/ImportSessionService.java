@@ -41,6 +41,18 @@ public class ImportSessionService {
     // comfortably cover "I'll finish this tomorrow," not as a carefully measured number.
     private static final Duration SESSION_TTL = Duration.ofHours(48);
 
+    // How recent a staged session must be to count as "the same upload attempt" and get replayed
+    // automatically, rather than triggering a fresh parse. This is deliberately much shorter than
+    // SESSION_TTL: the two constants answer different questions. SESSION_TTL is "how long can a
+    // user wait before resuming a review they started" (correctly measured in days). This is "how
+    // long ago must this exact upload have happened for it to plausibly be a double-click or a
+    // retried request rather than a genuinely new upload" (correctly measured in minutes) --
+    // see findLiveSessionByContentHash's own doc comment for the incident that is why this exists:
+    // a session staged under an old, buggy parser kept getting replayed on every later re-upload
+    // of the same file, because "still within 48h" was being used as a proxy for "this is the same
+    // upload attempt", which it never was.
+    private static final Duration DUPLICATE_UPLOAD_DEDUP_WINDOW = Duration.ofMinutes(5);
+
     /** How many expired sessions one import may clean up. Bounds the cost this adds to a user's
      *  own upload; a backlog drains over the next few imports instead of in one long delete. */
     private static final int CLEANUP_BATCH_SIZE = 50;
@@ -425,7 +437,14 @@ public class ImportSessionService {
         if (match.isEmpty()) return Optional.empty();
 
         ImportSession session = match.get();
-        if (session.getExpiresAt().isAfter(Instant.now())) {
+        boolean expired = session.getExpiresAt().isBefore(Instant.now());
+        // Not "and not expired" the way the class comment above for expiry describes -- a second,
+        // independent reason to fall through to deletion. A session can be perfectly unexpired
+        // (days left on its 48h TTL) and still be the wrong thing to replay, because "unexpired"
+        // was never actually the question -- see DUPLICATE_UPLOAD_DEDUP_WINDOW's own doc comment.
+        boolean staleForDedup = session.getCreatedAt()
+                .isBefore(Instant.now().minus(DUPLICATE_UPLOAD_DEDUP_WINDOW));
+        if (!expired && !staleForDedup) {
             return Optional.of(session);
         }
         importSessionRepository.delete(session);
