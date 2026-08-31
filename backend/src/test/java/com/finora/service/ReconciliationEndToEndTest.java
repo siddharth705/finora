@@ -1,6 +1,8 @@
 package com.finora.service;
 
+import com.finora.entity.Account;
 import com.finora.entity.Transaction;
+import com.finora.repository.AccountRepository;
 import com.finora.repository.TransactionRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -26,6 +28,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -50,8 +53,10 @@ import static org.mockito.Mockito.when;
 class ReconciliationEndToEndTest {
 
     private TransactionRepository transactionRepository;
+    private AccountRepository accountRepository;
     private RelationshipService relationshipService;
     private AuditService auditService;
+    private TransactionGraphService transactionGraphService;
     private ReconciliationService reconciliationService;
 
     private final UUID userId = UUID.randomUUID();
@@ -61,9 +66,23 @@ class ReconciliationEndToEndTest {
     @BeforeEach
     void setUp() {
         transactionRepository = mock(TransactionRepository.class);
+        accountRepository = mock(AccountRepository.class);
         relationshipService = mock(RelationshipService.class);
         auditService = mock(AuditService.class);
-        reconciliationService = new ReconciliationService(transactionRepository, relationshipService, auditService);
+        transactionGraphService = mock(TransactionGraphService.class);
+        // Both fixture accounts (savings/creditCard) are live -- see reconcileForUser's
+        // deleted-account-leak fix (DashboardService.summarize's own fix is the original).
+        Account savingsAccount = new Account();
+        ReflectionTestUtils.setField(savingsAccount, "id", savings);
+        savingsAccount.setUserId(userId);
+        Account creditCardAccount = new Account();
+        ReflectionTestUtils.setField(creditCardAccount, "id", creditCard);
+        creditCardAccount.setUserId(userId);
+        when(accountRepository.findByUserId(userId)).thenReturn(List.of(savingsAccount, creditCardAccount));
+        reconciliationService = new ReconciliationService(transactionRepository, accountRepository, relationshipService, auditService,
+                transactionGraphService,
+                mock(com.finora.integrations.google.merchant.GmailReconciliationMatcher.class),
+                mock(com.finora.repository.StatementImportRepository.class));
     }
 
     private Transaction txn(UUID accountId, LocalDate date, String amount, Transaction.Type type,
@@ -139,7 +158,7 @@ class ReconciliationEndToEndTest {
 
     private Fixture runAgainstRealisticMonth() {
         Fixture f = realisticMonth();
-        when(transactionRepository.findByUserId(userId)).thenReturn(f.all());
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(f.all());
         reconciliationService.reconcileForUser(userId);
         return f;
     }
@@ -283,7 +302,7 @@ class ReconciliationEndToEndTest {
     @DisplayName("concurrent runs for the same user each reach the same verdicts")
     void concurrentRunsForOneUserConverge() throws Exception {
         Fixture f = realisticMonth();
-        when(transactionRepository.findByUserId(userId)).thenReturn(f.all());
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(f.all());
 
         int threads = 8;
         ExecutorService pool = Executors.newFixedThreadPool(threads);
@@ -333,7 +352,7 @@ class ReconciliationEndToEndTest {
         // marked and the other not -- which downstream totals would read as money vanishing, since
         // a TRANSFER is excluded from income and expense both.
         Fixture f = realisticMonth();
-        when(transactionRepository.findByUserId(userId)).thenReturn(f.all());
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(f.all());
 
         int rounds = 200;
         AtomicInteger oneSided = new AtomicInteger();

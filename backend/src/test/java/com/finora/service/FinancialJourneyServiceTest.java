@@ -1,9 +1,7 @@
 package com.finora.service;
 
 import com.finora.dto.FinancialJourneyDto;
-import com.finora.entity.Budget;
 import com.finora.entity.User;
-import com.finora.goals.Goal;
 import com.finora.goals.GoalRepository;
 import com.finora.repository.BudgetRepository;
 import com.finora.repository.StatementImportRepository;
@@ -13,7 +11,6 @@ import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.Instant;
-import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -23,10 +20,16 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 /**
- * D-25 PR3-B. Covers the five-milestone aggregation (ACCOUNT_CREATED/FIRST_IMPORT/FIRST_BUDGET/
- * FIRST_GOAL/FIRST_GOAL_ACHIEVED), that each milestone reports the EARLIEST qualifying timestamp
- * rather than the first one returned, and the below-floor "nothing yet" case. Mockito-based unit
- * tests against mocked repositories, matching DashboardServiceTest/GoalServiceTest's own pattern.
+ * D-25 PR3-B, revised: every milestone but ACCOUNT_CREATED is now a permanent behavioral fact
+ * once reached (see {@link FinancialJourneyService}'s own class doc for why), read from a native
+ * "earliest ever, regardless of later deletion" query per repository rather than filtered/min'd
+ * over a live entity list in this class. What this file used to cover as "picks the earliest, not
+ * whichever the repository returns first" and "only counts a goal that actually has a
+ * completedAt" is now SQL ({@code MIN(...)}, {@code WHERE completed_at IS NOT NULL}) on the other
+ * side of each {@code findEarliest...EverEpochMillis} call -- this covers what IS still this
+ * class's own logic: wiring each of the four repository calls to the right milestone, and
+ * converting a null epoch-millis result (no such event has ever happened) to an incomplete
+ * milestone rather than a bogus 1970-01-01 completedAt.
  */
 class FinancialJourneyServiceTest {
 
@@ -47,27 +50,10 @@ class FinancialJourneyServiceTest {
         service = new FinancialJourneyService(userRepository, statementImportRepository, budgetRepository, goalRepository);
 
         when(userRepository.findById(any())).thenReturn(Optional.empty());
-        when(statementImportRepository.findMetadataByUserIdOrderByImportedAtDesc(any())).thenReturn(List.of());
-        when(budgetRepository.findByUserId(any())).thenReturn(List.of());
-        when(goalRepository.findByUserId(any())).thenReturn(List.of());
-    }
-
-    private static StatementImportRepository.StatementMetadata importedAt(Instant at) {
-        StatementImportRepository.StatementMetadata m = mock(StatementImportRepository.StatementMetadata.class);
-        when(m.getImportedAt()).thenReturn(at);
-        return m;
-    }
-
-    private static Budget budgetCreatedAt(Instant at) {
-        Budget b = new Budget();
-        ReflectionTestUtils.setField(b, "createdAt", at);
-        return b;
-    }
-
-    private static Goal goalCreatedAt(Instant at) {
-        Goal g = new Goal();
-        ReflectionTestUtils.setField(g, "createdAt", at);
-        return g;
+        when(statementImportRepository.findEarliestImportedAtEverEpochMillis(any())).thenReturn(null);
+        when(budgetRepository.findEarliestCreatedAtEverEpochMillis(any())).thenReturn(null);
+        when(goalRepository.findEarliestCreatedAtEverEpochMillis(any())).thenReturn(null);
+        when(goalRepository.findEarliestCompletedAtEverEpochMillis(any())).thenReturn(null);
     }
 
     private FinancialJourneyDto.Milestone milestoneOf(FinancialJourneyDto dto, String type) {
@@ -80,14 +66,14 @@ class FinancialJourneyServiceTest {
         User user = new User();
         ReflectionTestUtils.setField(user, "createdAt", Instant.parse("2026-08-01T00:00:00Z"));
         when(userRepository.findById(userId)).thenReturn(Optional.of(user));
-        StatementImportRepository.StatementMetadata importMeta = importedAt(Instant.parse("2026-08-02T00:00:00Z"));
-        when(statementImportRepository.findMetadataByUserIdOrderByImportedAtDesc(userId))
-                .thenReturn(List.of(importMeta));
-        Budget budget = budgetCreatedAt(Instant.parse("2026-08-03T00:00:00Z"));
-        when(budgetRepository.findByUserId(userId)).thenReturn(List.of(budget));
-        Goal achievedGoal = goalCreatedAt(Instant.parse("2026-08-04T00:00:00Z"));
-        achievedGoal.setCompletedAt(Instant.parse("2026-08-10T00:00:00Z"));
-        when(goalRepository.findByUserId(userId)).thenReturn(List.of(achievedGoal));
+        when(statementImportRepository.findEarliestImportedAtEverEpochMillis(userId))
+                .thenReturn(Instant.parse("2026-08-02T00:00:00Z").toEpochMilli());
+        when(budgetRepository.findEarliestCreatedAtEverEpochMillis(userId))
+                .thenReturn(Instant.parse("2026-08-03T00:00:00Z").toEpochMilli());
+        when(goalRepository.findEarliestCreatedAtEverEpochMillis(userId))
+                .thenReturn(Instant.parse("2026-08-04T00:00:00Z").toEpochMilli());
+        when(goalRepository.findEarliestCompletedAtEverEpochMillis(userId))
+                .thenReturn(Instant.parse("2026-08-10T00:00:00Z").toEpochMilli());
 
         FinancialJourneyDto dto = service.build(userId);
 
@@ -117,33 +103,31 @@ class FinancialJourneyServiceTest {
     }
 
     @Test
-    void build_reportsTheEarliestImport_notWhicheverTheRepositoryReturnsFirst() {
-        // findMetadataByUserIdOrderByImportedAtDesc is ordered DESC -- the milestone must still
-        // report the EARLIEST one (the "first" import), not simply the last element of that list,
-        // so this deliberately hands the mock its rows already in DESC order like the real query.
+    void build_reportsFirstImport_fromTheNativeEarliestEverEpochMillisQuery() {
         Instant earliest = Instant.parse("2026-06-01T00:00:00Z");
-        Instant latest = Instant.parse("2026-08-01T00:00:00Z");
-        StatementImportRepository.StatementMetadata latestMeta = importedAt(latest);
-        StatementImportRepository.StatementMetadata earliestMeta = importedAt(earliest);
-        when(statementImportRepository.findMetadataByUserIdOrderByImportedAtDesc(userId))
-                .thenReturn(List.of(latestMeta, earliestMeta));
+        when(statementImportRepository.findEarliestImportedAtEverEpochMillis(userId))
+                .thenReturn(earliest.toEpochMilli());
 
         FinancialJourneyDto dto = service.build(userId);
 
+        assertThat(milestoneOf(dto, FinancialJourneyDto.FIRST_IMPORT).completed()).isTrue();
         assertThat(milestoneOf(dto, FinancialJourneyDto.FIRST_IMPORT).completedAt()).isEqualTo(earliest);
     }
 
     @Test
-    void build_goalAchieved_onlyCountsGoalsThatActuallyHaveACompletedAt() {
-        Goal notYetAchieved = goalCreatedAt(Instant.parse("2026-08-01T00:00:00Z"));
-        Goal achieved = goalCreatedAt(Instant.parse("2026-08-02T00:00:00Z"));
-        achieved.setCompletedAt(Instant.parse("2026-08-05T00:00:00Z"));
-        when(goalRepository.findByUserId(userId)).thenReturn(List.of(notYetAchieved, achieved));
+    void build_goalAchieved_reportsIncomplete_whenNoGoalHasEverBeenAchieved_evenIfFirstGoalIsComplete() {
+        // FIRST_GOAL and FIRST_GOAL_ACHIEVED are two independent repository calls (created_at vs.
+        // completed_at IS NOT NULL, both filtered in SQL) -- a user with an active, not-yet-achieved
+        // goal must show FIRST_GOAL complete and FIRST_GOAL_ACHIEVED still incomplete, not one
+        // bleeding into the other.
+        when(goalRepository.findEarliestCreatedAtEverEpochMillis(userId))
+                .thenReturn(Instant.parse("2026-08-01T00:00:00Z").toEpochMilli());
+        when(goalRepository.findEarliestCompletedAtEverEpochMillis(userId)).thenReturn(null);
 
         FinancialJourneyDto dto = service.build(userId);
 
         assertThat(milestoneOf(dto, FinancialJourneyDto.FIRST_GOAL).completed()).isTrue();
-        assertThat(milestoneOf(dto, FinancialJourneyDto.FIRST_GOAL_ACHIEVED).completedAt())
-                .isEqualTo(Instant.parse("2026-08-05T00:00:00Z"));
+        assertThat(milestoneOf(dto, FinancialJourneyDto.FIRST_GOAL_ACHIEVED).completed()).isFalse();
+        assertThat(milestoneOf(dto, FinancialJourneyDto.FIRST_GOAL_ACHIEVED).completedAt()).isNull();
     }
 }

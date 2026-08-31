@@ -95,6 +95,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
     private final RateLimiter loginLimiter;
     private final RateLimiter registerLimiter;
     private final RateLimiter forgotPasswordLimiter;
+    private final RateLimiter identifyLimiter;
     // Staging used to be memory-only (parse, return the response, nothing persisted) -- as of
     // ADR-0002 (persisted import sessions), every call writes a real row to import_sessions
     // INCLUDING the raw file bytes, bounded only by a 48h TTL and cleanup that only runs on that
@@ -117,6 +118,13 @@ public class RateLimitFilter extends OncePerRequestFilter {
     // enough for a legitimate user working through a few retries, tight enough to bound abuse of a
     // flow whose outcome is a real account-takeover vector.
     private final RateLimiter phoneChangeLimiter;
+    // Change Email, gated the same way password-change is and for the same cost-class reason:
+    // start() here does a real GoogleReauthVerifier check (bcrypt, or a fresh Google/Apple token
+    // verification) on every call, unlike phone-change's cheap indexed lookups. Same 15/10min
+    // ceiling as passwordChangeLimiter/phoneChangeLimiter, for the same reason: generous enough
+    // for a legitimate user working through a few retries, tight enough to bound abuse of a flow
+    // whose outcome is the account's own password-reset delivery channel.
+    private final RateLimiter emailChangeLimiter;
     // Bug fix: /auth/reset-password performs bcrypt work per call (hashing the new password, plus
     // the password-history comparison) and sat outside every limiter -- while this class's own
     // comment on passwordChangeLimiter names "a real bcrypt comparison" as "exactly the kind of
@@ -239,9 +247,15 @@ public class RateLimitFilter extends OncePerRequestFilter {
     static final int DEFAULT_LOGIN_MAX = 10, DEFAULT_LOGIN_WINDOW = 60;
     static final int DEFAULT_REGISTER_MAX = 5, DEFAULT_REGISTER_WINDOW = 300;
     static final int DEFAULT_FORGOT_MAX = 5, DEFAULT_FORGOT_WINDOW = 300;
+    // Auth/security review §2.2: tighter than loginLimiter's per-second rate (10/300s here vs
+    // 10/60s for login) -- unlike login, a hit here costs the caller nothing (no password to
+    // guess, no lockout risk), so it is the cheaper endpoint to script against and gets the
+    // tighter ceiling.
+    static final int DEFAULT_IDENTIFY_MAX = 10, DEFAULT_IDENTIFY_WINDOW = 300;
     static final int DEFAULT_IMPORT_STAGE_MAX = 10, DEFAULT_IMPORT_STAGE_WINDOW = 600;
     static final int DEFAULT_PASSWORD_CHANGE_MAX = 15, DEFAULT_PASSWORD_CHANGE_WINDOW = 600;
     static final int DEFAULT_PHONE_CHANGE_MAX = 15, DEFAULT_PHONE_CHANGE_WINDOW = 600;
+    static final int DEFAULT_EMAIL_CHANGE_MAX = 15, DEFAULT_EMAIL_CHANGE_WINDOW = 600;
     static final int DEFAULT_RESET_PASSWORD_MAX = 10, DEFAULT_RESET_PASSWORD_WINDOW = 600;
     static final int DEFAULT_DATA_EXPORT_MAX = 5, DEFAULT_DATA_EXPORT_WINDOW = 86400;
     static final int DEFAULT_DELETE_ACCOUNT_MAX = 5, DEFAULT_DELETE_ACCOUNT_WINDOW = 3600;
@@ -268,9 +282,11 @@ public class RateLimitFilter extends OncePerRequestFilter {
                 DEFAULT_LOGIN_MAX, DEFAULT_LOGIN_WINDOW,
                 DEFAULT_REGISTER_MAX, DEFAULT_REGISTER_WINDOW,
                 DEFAULT_FORGOT_MAX, DEFAULT_FORGOT_WINDOW,
+                DEFAULT_IDENTIFY_MAX, DEFAULT_IDENTIFY_WINDOW,
                 DEFAULT_IMPORT_STAGE_MAX, DEFAULT_IMPORT_STAGE_WINDOW,
                 DEFAULT_PASSWORD_CHANGE_MAX, DEFAULT_PASSWORD_CHANGE_WINDOW,
                 DEFAULT_PHONE_CHANGE_MAX, DEFAULT_PHONE_CHANGE_WINDOW,
+                DEFAULT_EMAIL_CHANGE_MAX, DEFAULT_EMAIL_CHANGE_WINDOW,
                 DEFAULT_RESET_PASSWORD_MAX, DEFAULT_RESET_PASSWORD_WINDOW,
                 DEFAULT_DATA_EXPORT_MAX, DEFAULT_DATA_EXPORT_WINDOW,
                 DEFAULT_DELETE_ACCOUNT_MAX, DEFAULT_DELETE_ACCOUNT_WINDOW,
@@ -302,12 +318,16 @@ public class RateLimitFilter extends OncePerRequestFilter {
             @Value("${app.rate-limit.register.window-seconds:300}") int registerWindow,
             @Value("${app.rate-limit.forgot-password.max:5}") int forgotMax,
             @Value("${app.rate-limit.forgot-password.window-seconds:300}") int forgotWindow,
+            @Value("${app.rate-limit.identify.max:10}") int identifyMax,
+            @Value("${app.rate-limit.identify.window-seconds:300}") int identifyWindow,
             @Value("${app.rate-limit.import-stage.max:10}") int importStageMax,
             @Value("${app.rate-limit.import-stage.window-seconds:600}") int importStageWindow,
             @Value("${app.rate-limit.password-change.max:15}") int passwordChangeMax,
             @Value("${app.rate-limit.password-change.window-seconds:600}") int passwordChangeWindow,
             @Value("${app.rate-limit.phone-change.max:15}") int phoneChangeMax,
             @Value("${app.rate-limit.phone-change.window-seconds:600}") int phoneChangeWindow,
+            @Value("${app.rate-limit.email-change.max:15}") int emailChangeMax,
+            @Value("${app.rate-limit.email-change.window-seconds:600}") int emailChangeWindow,
             @Value("${app.rate-limit.reset-password.max:10}") int resetPasswordMax,
             @Value("${app.rate-limit.reset-password.window-seconds:600}") int resetPasswordWindow,
             @Value("${app.rate-limit.data-export.max:5}") int dataExportMax,
@@ -328,9 +348,11 @@ public class RateLimitFilter extends OncePerRequestFilter {
         this.loginLimiter = new RateLimiter(loginMax, loginWindow);
         this.registerLimiter = new RateLimiter(registerMax, registerWindow);
         this.forgotPasswordLimiter = new RateLimiter(forgotMax, forgotWindow);
+        this.identifyLimiter = new RateLimiter(identifyMax, identifyWindow);
         this.importStageLimiter = new RateLimiter(importStageMax, importStageWindow);
         this.passwordChangeLimiter = new RateLimiter(passwordChangeMax, passwordChangeWindow);
         this.phoneChangeLimiter = new RateLimiter(phoneChangeMax, phoneChangeWindow);
+        this.emailChangeLimiter = new RateLimiter(emailChangeMax, emailChangeWindow);
         this.resetPasswordLimiter = new RateLimiter(resetPasswordMax, resetPasswordWindow);
         this.dataExportLimiter = new RateLimiter(dataExportMax, dataExportWindow);
         this.deleteAccountLimiter = new RateLimiter(deleteAccountMax, deleteAccountWindow);
@@ -344,16 +366,18 @@ public class RateLimitFilter extends OncePerRequestFilter {
                 new LimitedEndpoint(PARSER.parse("/api/v1/auth/register"), registerLimiter),
                 new LimitedEndpoint(PARSER.parse("/api/v1/auth/google"), googleLimiter),
                 new LimitedEndpoint(PARSER.parse("/api/v1/auth/apple"), appleLimiter),
+                new LimitedEndpoint(PARSER.parse("/api/v1/auth/identify"), identifyLimiter),
                 new LimitedEndpoint(PARSER.parse("/api/v1/auth/forgot-password"), forgotPasswordLimiter),
                 new LimitedEndpoint(PARSER.parse("/api/v1/auth/reset-password"), resetPasswordLimiter),
                 // BH-015. This class's comment above dismissed /auth/reset-password/phone as
                 // "cheap, no-real-cost" and left it unlimited -- reasoning about COST, on an
-                // endpoint whose problem is DISCLOSURE. It returns the account's full phone number
-                // to any holder of a valid reset token, and until the flow is inverted so the user
-                // supplies the number instead (see AuthService.resolveResetPasswordPhone, where
-                // masking is shown not to work), the ceiling on how often a token holder may ask
-                // is the only control there is. Shares resetPasswordLimiter because the two are
-                // steps of one flow and one bucket is the honest way to bound it.
+                // endpoint whose problem was DISCLOSURE. It used to return the account's full
+                // phone number to any holder of a valid reset token; now inverted (see
+                // AuthService.verifyResetPasswordPhone) so the user supplies a candidate number
+                // and the endpoint only confirms a match -- still a phone-number-guessing oracle,
+                // so this limiter remains the bound on how many guesses a token holder gets.
+                // Shares resetPasswordLimiter because the two are steps of one flow and one
+                // bucket is the honest way to bound it.
                 new LimitedEndpoint(PARSER.parse("/api/v1/auth/reset-password/phone"), resetPasswordLimiter),
                 // Shares resetPasswordLimiter for the same reason reset-password/phone does: an
                 // unguessable, single-use, short-TTL token gates the real cost here (issuing real
@@ -398,6 +422,9 @@ public class RateLimitFilter extends OncePerRequestFilter {
                 new LimitedEndpoint(PARSER.parse("/api/v1/users/me/phone-change/start"), phoneChangeLimiter),
                 new LimitedEndpoint(PARSER.parse("/api/v1/users/me/phone-change/verify-otp"), phoneChangeLimiter),
                 new LimitedEndpoint(PARSER.parse("/api/v1/users/me/phone-change/complete"), phoneChangeLimiter),
+                new LimitedEndpoint(PARSER.parse("/api/v1/users/me/email-change/start"), emailChangeLimiter),
+                new LimitedEndpoint(PARSER.parse("/api/v1/users/me/email-change/verify"), emailChangeLimiter),
+                new LimitedEndpoint(PARSER.parse("/api/v1/users/me/email-change/complete"), emailChangeLimiter),
                 new LimitedEndpoint(PARSER.parse("/api/v1/users/me/data-export"), dataExportLimiter),
                 new LimitedEndpoint(PARSER.parse("/api/v1/auth/mfa/verify"), mfaVerifyLimiter));
     }
@@ -406,6 +433,18 @@ public class RateLimitFilter extends OncePerRequestFilter {
     protected void doFilterInternal(@NonNull HttpServletRequest request,
                                      @NonNull HttpServletResponse response,
                                      @NonNull FilterChain filterChain) throws ServletException, IOException {
+        // A CORS preflight carries no side effect of its own -- the real cost is in the request
+        // it precedes, which is counted separately when that request itself arrives. This filter
+        // runs before Spring Security's own CORS/preflight handling (see corsConfigurationSource's
+        // field comment below), so a preflight that got short-circuited here with a 429 came back
+        // missing the Access-Control-Allow-Methods/-Headers a preflight response must carry --
+        // browsers then report the whole thing as a generic CORS failure, hiding that it was ever
+        // rate-limited at all.
+        if ("OPTIONS".equalsIgnoreCase(request.getMethod())) {
+            filterChain.doFilter(request, response);
+            return;
+        }
+
         String ip = clientIpResolver.resolve(request);
 
         RateLimiter limiter = limiterFor(request);

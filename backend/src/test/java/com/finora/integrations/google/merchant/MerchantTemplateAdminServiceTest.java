@@ -7,6 +7,9 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.List;
@@ -43,6 +46,7 @@ class MerchantTemplateAdminServiceTest {
         auditService = mock(AuditService.class);
         amazonParser = mock(MerchantEmailParser.class);
         when(amazonParser.canParse(anyString())).thenReturn(false);
+        when(amazonParser.claimsDomain(anyString())).thenReturn(false);
         // A real TemplateEmailParser instance (not a mock) so rejectIfClaimedByAnotherParser's own
         // "except TemplateEmailParser itself" exclusion is exercised against the real type, not a
         // mock that happens to answer canParse() a particular way.
@@ -67,6 +71,20 @@ class MerchantTemplateAdminServiceTest {
         entry.setEnabled(enabled);
         when(templates.findById(entry.getId())).thenReturn(Optional.of(entry));
         return entry;
+    }
+
+    /** Admin Portal, Merchant Templates list -- was an unconditional fetch-all (V103 alone seeds
+     *  50 rows). PageBounds.safePage/safeSize clamp before the query, same reasoning every other
+     *  admin list page's identical clamp test gives. */
+    @Test
+    void listAll_clampsAnOutOfRangePageAndSize() {
+        when(templates.findAllByOrderByMerchantNameAscMerchantDomainAsc(PageRequest.of(0, 100)))
+                .thenReturn(new PageImpl<>(List.of()));
+
+        Page<MerchantTemplate> result = service.listAll(-5, 500);
+
+        assertThat(result.getContent()).isEmpty();
+        verify(templates).findAllByOrderByMerchantNameAscMerchantDomainAsc(PageRequest.of(0, 100));
     }
 
     @Test
@@ -121,10 +139,38 @@ class MerchantTemplateAdminServiceTest {
     @Test
     @DisplayName("creating a template for a domain a hand-written parser already claims is refused")
     void create_refusesADomainAlreadyHandledByAHandWrittenParser() {
-        when(amazonParser.canParse("amazon.in")).thenReturn(true);
+        when(amazonParser.claimsDomain("amazon.in")).thenReturn(true);
 
         assertThatThrownBy(() -> service.create(adminId, "amazon.in", "Amazon",
                 "Order #", null, "Total: Rs. {amount}", "Date: {date}"))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("already handled");
+        verify(templates, never()).save(any());
+    }
+
+    /** Regression coverage for a real gap found in code review: the guard above must consult
+     *  {@code claimsDomain}, not {@code canParse}. A config-gated hand-written parser (PhonePe,
+     *  CRED, Paytm) answers {@code canParse} {@code false} while its feature flag is off -- which
+     *  is the default in every environment -- so guarding on {@code canParse} would let an admin
+     *  create and activate a template for a domain one of those parsers owns but simply hasn't been
+     *  switched on for yet, reproducing the exact wrong-attribution bug those parsers exist to fix.
+     *  Uses a real {@link PhonePeEmailParser} (not a mock) with its {@code enabled} flag left at
+     *  its production default (false), so this proves the actual class, not a stubbed stand-in. */
+    @Test
+    @DisplayName("a domain a disabled config-gated parser owns is still refused, not just an enabled one")
+    void create_refusesADomainOwnedByADisabledConfigGatedParser() {
+        PhonePeEmailParser disabledPhonePeParser = new PhonePeEmailParser();
+        assertThat(disabledPhonePeParser.canParse("phonepe.com"))
+                .as("sanity check: this parser is disabled, matching every real environment's default")
+                .isFalse();
+        TrustedSenderDomainRepository trustedSenders = mock(TrustedSenderDomainRepository.class);
+        when(trustedSenders.findByDomain(anyString())).thenReturn(Optional.empty());
+        MerchantTemplateAdminService serviceWithPhonePe = new MerchantTemplateAdminService(
+                templates, auditService, List.of(disabledPhonePeParser, templateParser),
+                trustedSenders);
+
+        assertThatThrownBy(() -> serviceWithPhonePe.create(adminId, "phonepe.com", "PhonePe",
+                "Payment Successful", null, "Amount Paid: Rs. {amount}", "Date: {date}"))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("already handled");
         verify(templates, never()).save(any());

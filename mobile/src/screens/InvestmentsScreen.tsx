@@ -12,13 +12,12 @@ import { OptionPickerModal } from '../components/OptionPickerModal';
 import { TextField } from '../components/TextField';
 import { accountsApi, networthApi } from '../api/endpoints';
 import { toUserMessage } from '../lib/apiError';
+import { CHART_PALETTE, bucketTopSlices } from '../lib/chartGeometry';
 import { fmtCurrency, fmtDate } from '../lib/format';
 import { useSingleFlight } from '../lib/useSingleFlight';
 import { parsePositiveAmount } from '../lib/validation';
 import { radius, spacing, useTheme } from '../theme';
 import type { Account } from '../types';
-
-const ALLOCATION_COLORS = ['#3b82f6', '#16a34a', '#f59e0b', '#8b5cf6', '#ef4444', '#94a3b8'];
 
 // Same options as the web page's <select>.
 const INVESTMENT_KINDS = ['Mutual Fund', 'Stocks', 'FD', 'PPF/NPS', 'Other'];
@@ -81,11 +80,19 @@ export function InvestmentsScreen() {
     void queryClient.invalidateQueries({ queryKey: ['networth'] });
   }
 
-  const slices: Slice[] = holdings.map((h, i) => ({
-    label: h.name,
-    value: h.balance,
-    color: ALLOCATION_COLORS[i % ALLOCATION_COLORS.length],
-  }));
+  /**
+   * Capped to the palette, same as DashboardScreen's donutSlices (both call the shared
+   * bucketTopSlices) -- an uncapped one-slice-per-holding mapping let the chart's reveal-in
+   * stagger (RevealArc's `delay`, one slice sweeping in after another) grow without bound as
+   * holdings accumulate, and past six colours the palette was silently reused, painting two
+   * different holdings the same colour. bucketTopSlices also merges the overflow into a holding a
+   * user has literally named "Other" rather than rendering two identically-labelled legend rows --
+   * holding names are free text, and "Other" is a plausible one to type.
+   */
+  const slices: Slice[] = useMemo(
+    () => bucketTopSlices(holdings.map((h) => [h.name, h.balance]), CHART_PALETTE, 'Other'),
+    [holdings]
+  );
   const totalInvestments = holdings.reduce((s, h) => s + h.balance, 0);
 
   async function addHolding() {

@@ -63,6 +63,44 @@ class GmailStagingBridgeTest {
         assertThat(row.confidence()).isEqualTo(0.9);
     }
 
+    @Test
+    @DisplayName("a receipt with a counterparty uses it as the description, not the raw domain")
+    void counterpartyNamePreferredOverDomainForDescription() {
+        ParsedReceipt receiptWithCounterparty = new ParsedReceipt("msg-1", "phonepe.com",
+                "Sunrise General Store", Money.of(new BigDecimal("480.00")),
+                LocalDate.of(2026, 7, 14), 0.9);
+
+        bridge.stage(userId, receiptWithCounterparty);
+
+        assertThat(capturedRows().get(0).description()).isEqualTo("Sunrise General Store");
+    }
+
+    @Test
+    @DisplayName("a receipt with no counterparty falls back to the raw domain, same as before")
+    void domainUsedWhenNoCounterparty() {
+        bridge.stage(userId, receipt("msg-1", "amazon.in",
+                Money.of(new BigDecimal("1299.00")), LocalDate.of(2026, 8, 10), 0.9));
+
+        assertThat(capturedRows().get(0).description()).isEqualTo("amazon.in");
+    }
+
+    /** Regression coverage from code review: a counterparty-capturing regex with a reluctant group
+     *  can in principle match a whitespace-only string (e.g. extra spaces where a name should be) —
+     *  {@link ParsedReceipt}'s own constructor deliberately allows a blank {@code counterpartyName}
+     *  since only null is a parser bug. A blank string is not a usable description, so it must fall
+     *  back to the domain the same way null does, rather than staging an empty transaction
+     *  description. */
+    @Test
+    @DisplayName("a receipt with a blank (not null) counterparty falls back to the raw domain too")
+    void domainUsedWhenCounterpartyIsBlank() {
+        ParsedReceipt receiptWithBlankCounterparty = new ParsedReceipt("msg-1", "phonepe.com",
+                "   ", Money.of(new BigDecimal("480.00")), LocalDate.of(2026, 7, 14), 0.9);
+
+        bridge.stage(userId, receiptWithBlankCounterparty);
+
+        assertThat(capturedRows().get(0).description()).isEqualTo("phonepe.com");
+    }
+
     /**
      * No merchant-to-category engine exists yet, and guessing one would be exactly the "wrong
      * answer nobody asked for" this codebase's own account-detection refuses to do elsewhere. This
@@ -108,7 +146,7 @@ class GmailStagingBridgeTest {
 
         assertThat(result).isEqualTo(GmailStagingBridge.Result.ALREADY_STAGED);
         verify(importSessionService, never())
-                .createSession(any(), anyString(), any(), any(), any(), any(), anyString());
+                .createSession(any(), anyString(), any(), any(), any(), any(), anyString(), anyString());
     }
 
     @Test
@@ -133,7 +171,7 @@ class GmailStagingBridgeTest {
 
         ArgumentCaptor<byte[]> contentCaptor = ArgumentCaptor.forClass(byte[].class);
         verify(importSessionService).createSession(
-                any(), anyString(), contentCaptor.capture(), any(), any(), any(), anyString());
+                any(), anyString(), contentCaptor.capture(), any(), any(), any(), anyString(), anyString());
         assertThat(new String(contentCaptor.getValue(), StandardCharsets.UTF_8)).isEqualTo("gmail:18ab39xyz");
     }
 
@@ -150,8 +188,23 @@ class GmailStagingBridgeTest {
 
         ArgumentCaptor<String> sourceCaptor = ArgumentCaptor.forClass(String.class);
         verify(importSessionService).createSession(
-                any(), anyString(), any(), any(), any(), any(), sourceCaptor.capture());
+                any(), anyString(), any(), any(), any(), any(), sourceCaptor.capture(), anyString());
         assertThat(sourceCaptor.getValue()).isEqualTo(com.finora.entity.ImportSession.SOURCE_GMAIL);
+    }
+
+    /** Regression coverage for the code-review fix: GmailReviewService needs the real authenticated
+     *  domain independent of the staged description, since a counterparty-bearing receipt's
+     *  description is no longer guaranteed to BE the domain. */
+    @Test
+    @DisplayName("the session's sourceDomain is the receipt's authenticated domain, even with a counterparty")
+    void theSessionSourceDomainIsTheAuthenticatedDomain() {
+        bridge.stage(userId, new ParsedReceipt("msg-1", "phonepe.com", "Sunrise General Store",
+                Money.of(new BigDecimal("480.00")), LocalDate.of(2026, 7, 14), 0.9));
+
+        ArgumentCaptor<String> sourceDomainCaptor = ArgumentCaptor.forClass(String.class);
+        verify(importSessionService).createSession(
+                any(), anyString(), any(), any(), any(), any(), anyString(), sourceDomainCaptor.capture());
+        assertThat(sourceDomainCaptor.getValue()).isEqualTo("phonepe.com");
     }
 
     /**
@@ -181,7 +234,7 @@ class GmailStagingBridgeTest {
                 Money.of(new BigDecimal("500.00")), LocalDate.of(2026, 8, 10), 0.9));
 
         verify(importSessionService).createSession(
-                any(), fileNameCaptor.capture(), any(), any(), any(), any(), anyString());
+                any(), fileNameCaptor.capture(), any(), any(), any(), any(), anyString(), anyString());
         assertThat(fileNameCaptor.getValue()).contains("amazon.in").contains("2026");
     }
 
@@ -232,19 +285,19 @@ class GmailStagingBridgeTest {
         @SuppressWarnings("unchecked")
         ArgumentCaptor<List<StagedRow>> rowsCaptor = ArgumentCaptor.forClass(List.class);
         verify(importSessionService).createSession(
-                any(), anyString(), any(), rowsCaptor.capture(), any(), any(), anyString());
+                any(), anyString(), any(), rowsCaptor.capture(), any(), any(), anyString(), anyString());
         return rowsCaptor.getValue();
     }
 
     private DetectedAccountInfo capturedAccount() {
         ArgumentCaptor<DetectedAccountInfo> accountCaptor = ArgumentCaptor.forClass(DetectedAccountInfo.class);
         verify(importSessionService).createSession(
-                any(), anyString(), any(), any(), accountCaptor.capture(), any(), anyString());
+                any(), anyString(), any(), any(), accountCaptor.capture(), any(), anyString(), anyString());
         return accountCaptor.getValue();
     }
 
     private static ParsedReceipt receipt(String gmailMessageId, String domain, Money amount,
                                          LocalDate date, double confidence) {
-        return new ParsedReceipt(gmailMessageId, domain, amount, date, confidence);
+        return new ParsedReceipt(gmailMessageId, domain, null, amount, date, confidence);
     }
 }

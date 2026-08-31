@@ -4,8 +4,11 @@ import com.finora.exception.ApiException;
 import com.finora.integrations.google.TrustedSenderDomain;
 import com.finora.integrations.google.TrustedSenderDomainRepository;
 import com.finora.service.AuditService;
+import com.finora.util.PageBounds;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -64,9 +67,13 @@ public class MerchantTemplateAdminService {
         return trustedSenders.findByDomain(domain).filter(TrustedSenderDomain::isActive).isPresent();
     }
 
+    /** Admin Portal, Merchant Templates list. Was an unconditional fetch-all -- V103 alone seeded
+     *  50 rows on top of whatever admins hand-author afterward, same reasoning as every other
+     *  page in this pagination rollout. */
     @Transactional(readOnly = true)
-    public List<MerchantTemplate> listAll() {
-        return templates.findAllByOrderByMerchantNameAscMerchantDomainAsc();
+    public Page<MerchantTemplate> listAll(int page, int size) {
+        return templates.findAllByOrderByMerchantNameAscMerchantDomainAsc(
+                PageRequest.of(PageBounds.safePage(page), PageBounds.safeSize(size)));
     }
 
     @Transactional(readOnly = true)
@@ -252,14 +259,22 @@ public class MerchantTemplateAdminService {
     /** No {@code @Order}/{@code Ordered} exists anywhere in this package, and
      *  {@code GmailReceiptExtractionService} picks the first parser whose {@code canParse} returns
      *  true -- so a template claiming a domain a hand-written parser (Amazon, Myntra, Ola,
-     *  Booking.com) already handles would create real, undocumented nondeterminism between the
-     *  two. Checked against every registered {@link MerchantEmailParser} except
-     *  {@link TemplateEmailParser} itself, which would otherwise always match nothing-yet-created
-     *  templates trivially. */
+     *  Booking.com, or a config-gated one like PhonePe/CRED/Paytm) already handles would create
+     *  real, undocumented nondeterminism between the two. Checked against every registered
+     *  {@link MerchantEmailParser} except {@link TemplateEmailParser} itself, which would otherwise
+     *  always match nothing-yet-created templates trivially.
+     *
+     *  <p>Deliberately calls {@link MerchantEmailParser#claimsDomain}, not {@code canParse} --
+     *  a config-gated parser's {@code canParse} is false while its feature flag is off, which is
+     *  the default for every parser that has one. Guarding on {@code canParse} here would let an
+     *  admin create and activate a template for a domain a hand-written parser owns but hasn't
+     *  been switched on for yet, reproducing the exact wrong-attribution bug those parsers exist
+     *  to fix the moment the flag flips. {@code claimsDomain} answers "whose domain is this"
+     *  independent of runtime enablement, which is what a collision guard actually needs. */
     private void rejectIfClaimedByAnotherParser(String domain) {
         boolean claimed = parsers.stream()
                 .filter(p -> !(p instanceof TemplateEmailParser))
-                .anyMatch(p -> p.canParse(domain));
+                .anyMatch(p -> p.claimsDomain(domain));
         if (claimed) {
             throw new ApiException(HttpStatus.CONFLICT,
                     domain + " is already handled by a hand-written parser -- a template for this "

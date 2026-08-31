@@ -19,7 +19,7 @@ function downloadCsv(report: ReportData) {
   // the browser's own read. Both used to be open-coded here and in endpoints.ts, identically
   // wrong in both places.
   const csv = toCsv([['Category', 'Amount'], ...report.categories.map((c) => [c.category, c.amount])]);
-  downloadBlob(new Blob([csv], { type: 'text/csv' }), `finora-report-${report.month}.csv`);
+  downloadBlob(new Blob([csv], { type: 'text/csv' }), `fynora-report-${report.month}.csv`);
 }
 
 export default function Reports() {

@@ -115,13 +115,16 @@ public class StatementValidator {
         // 2-day statement, persisted on StatementImport and shown to the user via AccountDto.
         //
         // The printed period is what the bank asserts the statement covers; transaction dates are
-        // only ever a lower bound on it. Same precedence as the PDF path now, so the two formats
-        // cannot disagree about the same statement.
+        // only ever a LOWER bound on it -- confirmed wrong against a real Kotak Mahindra Bank
+        // credit-card PDF, whose own earliest/latest transactions fall a day inside its printed
+        // period. The transaction-range fallback was removed from the PDF path for that reason
+        // (see PdfPreviewGenerator.buildDetectedAccountInfo's own comment); this stayed a guess here
+        // until now purely because nothing had re-checked it once the PDF path changed. This is
+        // exactly what was printed, or genuinely null when nothing was, never a guess reconstructed
+        // from the rows -- the same precedence as the PDF path, not just the same intent.
         LocalDate[] printedPeriod = printedStatementPeriod(allRows, headerIdx);
-        LocalDate statementStart = printedPeriod[0] != null ? printedPeriod[0]
-                : staged.stream().map(StagedRow::date).min(LocalDate::compareTo).orElse(null);
-        LocalDate statementEnd = printedPeriod[1] != null ? printedPeriod[1]
-                : staged.stream().map(StagedRow::date).max(LocalDate::compareTo).orElse(null);
+        LocalDate statementStart = printedPeriod[0];
+        LocalDate statementEnd = printedPeriod[1];
 
         // Phase 2G: was independent BalanceChainUtil.first(minDateGroup)/last(maxDateGroup) calls,
         // each only ever looking at its own boundary date in isolation. Silently wrong whenever a

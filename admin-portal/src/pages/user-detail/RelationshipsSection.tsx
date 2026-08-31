@@ -19,7 +19,7 @@ const BLANK_RELATIONSHIP_FORM: CreateRelationshipRequest = {
  *  than one and this keeps the form from ballooning; multi-identifier relationships created
  *  elsewhere still display and merge correctly here, editing just replaces down to one. */
 
-export function InlineRelationshipForm({
+function InlineRelationshipForm({
   initial, submitting, error, onCancel, onSubmit,
 }: {
   initial: CreateRelationshipRequest;
@@ -88,7 +88,7 @@ export function InlineRelationshipForm({
   );
 }
 
-export function RelationshipRow({ userId, relationship, allRelationships }: {
+function RelationshipRow({ userId, relationship, allRelationships }: {
   userId: string; relationship: RelationshipDto; allRelationships: RelationshipDto[];
 }) {
   const queryClient = useQueryClient();

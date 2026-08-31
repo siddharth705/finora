@@ -7,6 +7,7 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -44,13 +45,11 @@ import java.util.UUID;
  * <h2>Why a class and not a helper method on each caller</h2>
  *
  * <p>Because there were two copies of the one-sided filter and they were identical, which is how
- * they were both wrong. A third reader is coming ({@code BudgetService} — see below), and the rule
- * has to have one owner before it has three call sites.
- *
- * <p><b>{@code BudgetService} deliberately still does not use this.</b> It loads one calendar
- * month by date range, so the refund rows that offset its expenses are frequently outside the set
- * it queried, and wiring this in means changing that query. That is a real fix and a separate one;
- * it is named here so the remaining copy is a known gap rather than an oversight.
+ * they were both wrong. A third reader, {@code BudgetService}, now uses it too (Phase 1 of
+ * docs/proposals/reconciliation-evolution-roadmap-proposal.md) — it queries refund/reversal rows
+ * across all time via {@code findByUserIdAndReconciliationStatusIn} rather than the calendar-month
+ * window it reports spend in, same as {@code ReportService}/{@code AnalyticsService} already did,
+ * for the same reason: a refund routinely arrives in a later month than the purchase it reverses.
  */
 public final class RefundNetting {
 
@@ -85,16 +84,70 @@ public final class RefundNetting {
     }
 
     /**
+     * The rows a report should count at all, with no graph awareness -- callers that have not
+     * (yet) looked up {@link TransactionGraphService#ccPaymentFromTransactionIds} get the same
+     * answer as before that existed. Prefer the two-argument overload wherever a
+     * {@link TransactionGraphService} is already reachable.
+     */
+    public static List<Transaction> reportable(Collection<Transaction> transactions) {
+        return reportable(transactions, Set.of());
+    }
+
+    /**
      * The rows a report should count at all.
      *
      * <p>The filter the two callers each wrote by hand, minus the asymmetry: duplicates and
      * transfers are not real activity, and a refund leg is money coming back rather than income.
      * The purchase it reverses <em>stays</em>, and {@link #reportableAmount} is what makes that
      * correct.
+     *
+     * <p>{@code ccPaymentFromTransactionIds} extends the same rule to the transaction graph
+     * (docs/proposals/reconciliation-evolution-roadmap-proposal.md, Part 4/10 "Net worth & cash
+     * flow, graph-aware"): a savings-side payment that settles a credit card statement is, like a
+     * transfer, money moving between the user's own accounts rather than new spend -- the card
+     * charges it settles are the real spend, and they stay counted. Without this, a #511
+     * CC_PAYMENT match settling several charges left the payment itself still counted as its own
+     * expense on top of them, exactly the double-counting Part 4 of the roadmap names as the
+     * concrete goal to avoid. See {@link TransactionGraphService#ccPaymentFromTransactionIds} for
+     * which edge statuses qualify.
+     *
+     * <p>Deliberately does NOT drop {@code INVESTMENT_TRANSFER} rows -- unlike every exclusion
+     * above, an investment outflow still belongs to a real, meaningful category ("Investments")
+     * that a per-category budget or category-breakdown chart can legitimately track; dropping it
+     * here, upstream of every {@code reportable()} caller including the ones that group by
+     * category, would make that category silently vanish everywhere, budgets included, rather
+     * than just from the cross-category total this classification exists to correct. See
+     * {@link #excludingInvestmentTransfers} for the narrower, total-only cut every top-line
+     * spend/income sum should apply instead.
+     *
+     * <p>DOES drop {@code SUPERSEDED} rows -- unlike {@code INVESTMENT_TRANSFER}, a superseded
+     * statement's transactions are not a category that should still show up anywhere: they are the
+     * account's history as Finora used to understand it, before a later re-upload of the exact same
+     * period replaced it (docs/proposals/statement-continuity-and-coverage-integrity-proposal.md
+     * §0.6). The row stays on file rather than being deleted, same reasoning as every status this
+     * filter already excludes, but it must vanish from every report the way a TRANSFER row already
+     * does -- otherwise the replacement statement's transactions and the superseded original's both
+     * count, double-billing the same period.
      */
-    public static List<Transaction> reportable(Collection<Transaction> transactions) {
+    public static List<Transaction> reportable(Collection<Transaction> transactions,
+                                                 Set<UUID> ccPaymentFromTransactionIds) {
         return transactions.stream()
-                .filter(t -> t.getIsDuplicateOf() == null && !t.isTransfer() && !isRefundLeg(t))
+                .filter(t -> t.getIsDuplicateOf() == null && !t.isTransfer() && !isRefundLeg(t)
+                        && t.getReconciliationStatus() != Transaction.ReconciliationStatus.SUPERSEDED
+                        && (t.getId() == null || !ccPaymentFromTransactionIds.contains(t.getId())))
+                .toList();
+    }
+
+    /**
+     * The additional cut a cross-category total (total spend, total income, savings rate, cash
+     * flow) needs on top of {@link #reportable} -- excluding {@code INVESTMENT_TRANSFER} rows the
+     * same way {@code TRANSFER} already is, for the same reason: a SIP or other investment
+     * outflow is money moving into savings, not consumption. Never apply this before a
+     * category-grouping step; see {@link #reportable}'s own comment on why.
+     */
+    public static List<Transaction> excludingInvestmentTransfers(Collection<Transaction> transactions) {
+        return transactions.stream()
+                .filter(t -> t.getReconciliationStatus() != Transaction.ReconciliationStatus.INVESTMENT_TRANSFER)
                 .toList();
     }
 
@@ -120,8 +173,14 @@ public final class RefundNetting {
         return net.signum() < 0 ? BigDecimal.ZERO : net;
     }
 
-    /** True when this row is the income side of a matched refund. */
+    /**
+     * True when this row is the income side of a matched refund or reversal. Both statuses net
+     * the same way against the purchase they reverse -- REFUND vs. REVERSAL only records *why*
+     * the money came back (a merchant refund vs. a bank-side reversal), not whether it should be
+     * netted off the original expense, which is unconditionally yes for either.
+     */
     private static boolean isRefundLeg(Transaction t) {
-        return t.getReconciliationStatus() == Transaction.ReconciliationStatus.REFUND;
+        return t.getReconciliationStatus() == Transaction.ReconciliationStatus.REFUND
+                || t.getReconciliationStatus() == Transaction.ReconciliationStatus.REVERSAL;
     }
 }

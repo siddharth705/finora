@@ -8,7 +8,7 @@ import type { CreateRuleRequest, MerchantDto } from '../../types';
 import { errorMessage } from './errorMessage';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
 
-export function MerchantRow({
+function MerchantRow({
   userId, merchant, allMerchants, canManage,
 }: {
   userId: string;

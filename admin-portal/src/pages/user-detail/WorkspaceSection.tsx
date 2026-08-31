@@ -15,7 +15,7 @@ const WORKSPACE_CONFIDENCE_TIER_COLOR: Record<string, string> = {
   HIGH: '#16a34a', MEDIUM: '#f59e0b', LOW: '#ef4444', UNCONFIRMED: '#94a3b8',
 };
 
-export function fmtWorkspaceActivityAction(action: string) {
+function fmtWorkspaceActivityAction(action: string) {
   return action.toLowerCase().replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase());
 }
 

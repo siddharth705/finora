@@ -29,9 +29,22 @@ import java.util.Locale;
  * case is reported as {@link Match#PROBABLE} and belongs on the review screen. "Probably the same
  * FD" means ask, because silently merging two different deposits corrupts both, and silently
  * splitting one duplicates it.
+ *
+ * <h2>When there is no number at all</h2>
+ *
+ * A statement whose account-number extraction fails outright (no full number, no masked digits --
+ * see PNB's real incident: {@code PdfMetadataExtractor} had no pattern for its label at all) used
+ * to fall straight through to {@link Match#NONE}, indistinguishable from a genuinely new product.
+ * {@link #ifscCode}/{@link #accountHolderName} exist so "we have some evidence" and "we have none"
+ * stop collapsing into the same outcome: when neither side has a number to compare, but the same
+ * institution's IFSC and the same account holder name both agree, that is still real evidence
+ * worth a human's confirmation -- see {@link #matches}. Deliberately NOT scored or weighted against
+ * the masked-number case: an invented confidence number (see {@code ImportVerifier}'s own stance
+ * against this) is a guess wearing an authoritative face, and this class already has a place for
+ * "plausible but unproven" that doesn't need one.
  */
 public record ProductIdentity(String institutionId, FinancialProductType type, String strongKey,
-                              String maskedNumber) {
+                              String maskedNumber, String ifscCode, String accountHolderName) {
 
     /** How confident a match between two identities is. */
     public enum Match {
@@ -76,7 +89,16 @@ public record ProductIdentity(String institutionId, FinancialProductType type, S
     public static ProductIdentity of(String institutionId, FinancialProductType type,
                                      String fullNumber, String maskedNumber, String discriminator) {
         return new ProductIdentity(normalize(institutionId), type,
-                hash(institutionId, fullNumber, discriminator), normalizeDigits(maskedNumber));
+                hash(institutionId, fullNumber, discriminator), normalizeDigits(maskedNumber),
+                null, null);
+    }
+
+    /** Attaches the weak fallback signals (see this class's own "When there is no number at all"
+     *  doc section) to an already-built identity -- a separate step, not more factory parameters,
+     *  so callers that never have these values (most of them) are unaffected. */
+    public ProductIdentity withWeakSignals(String ifscCode, String accountHolderName) {
+        return new ProductIdentity(institutionId, type, strongKey, maskedNumber,
+                normalizeIfsc(ifscCode), normalizeHolderName(accountHolderName));
     }
 
     /**
@@ -114,7 +136,7 @@ public record ProductIdentity(String institutionId, FinancialProductType type, S
     public static ProductIdentity stored(String institutionId, FinancialProductType type,
                                          String strongKey, String maskedNumber) {
         return new ProductIdentity(normalize(institutionId), type, strongKey,
-                normalizeDigits(maskedNumber));
+                normalizeDigits(maskedNumber), null, null);
     }
 
     public Match matches(ProductIdentity other) {
@@ -148,6 +170,21 @@ public record ProductIdentity(String institutionId, FinancialProductType type, S
         boolean sameMasked = maskedNumber != null && maskedNumber.equals(other.maskedNumber);
         if (sameMasked && type == other.type) return Match.PROBABLE;
 
+        // No number-based evidence at all on this side (see this class's own "When there is no
+        // number at all" doc section) -- fall back to IFSC + account holder name together. Neither
+        // alone is specific enough (a branch's IFSC is shared by every customer there; a holder
+        // name is shared by every account someone holds) to ask a human about, let alone merge --
+        // but both agreeing is exactly the "we have SOME evidence" signal that must not collapse
+        // into the same NONE outcome as "we have nothing at all". Same type requirement as the
+        // masked fallback, for the same reason: a savings account and an FD at the same branch,
+        // held by the same person, are still two different products.
+        if (strongKey == null && maskedNumber == null
+                && ifscCode != null && ifscCode.equals(other.ifscCode)
+                && accountHolderName != null && accountHolderName.equals(other.accountHolderName)
+                && type == other.type) {
+            return Match.PROBABLE;
+        }
+
         return Match.NONE;
     }
 
@@ -178,6 +215,23 @@ public record ProductIdentity(String institutionId, FinancialProductType type, S
         if (raw == null) return null;
         String digits = raw.replaceAll("\\D", "");
         return digits.isEmpty() ? null : digits;
+    }
+
+    /** IFSC is printed with inconsistent casing across banks (see {@code PdfMetadataExtractor}'s
+     *  own {@code .toUpperCase()} on every IFSC it extracts) -- normalized the same way here so a
+     *  freshly discovered identity compares equal to one built from a stored account regardless of
+     *  which extraction path either went through. */
+    private static String normalizeIfsc(String raw) {
+        if (raw == null || raw.isBlank()) return null;
+        return raw.trim().toUpperCase(Locale.ROOT);
+    }
+
+    /** Same reasoning as {@link #normalizeIfsc}, plus whitespace collapsing -- a name re-typed on
+     *  the review screen or re-extracted from a later statement can legitimately differ only in
+     *  spacing ("JOHN  DOE" vs "JOHN DOE"), and that must not read as two different holders. */
+    private static String normalizeHolderName(String raw) {
+        if (raw == null || raw.isBlank()) return null;
+        return raw.trim().toUpperCase(Locale.ROOT).replaceAll("\\s+", " ");
     }
 
     private static String normalize(String id) {

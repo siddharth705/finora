@@ -1,6 +1,7 @@
 package com.finora.controller;
 
 import com.finora.dto.ApiResponse;
+import com.finora.dto.PagedResponse;
 import com.finora.rules.RuleDto;
 import com.finora.security.CurrentUser;
 import com.finora.service.RuleEngineService;
@@ -9,7 +10,6 @@ import jakarta.validation.Valid;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.List;
 import java.util.UUID;
 
 /**
@@ -38,8 +38,10 @@ public class AdminRuleController {
     }
 
     @GetMapping
-    public ApiResponse<List<RuleDto>> list() {
-        return ApiResponse.ok(ruleService.listGlobal());
+    public ApiResponse<PagedResponse<RuleDto>> list(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        return ApiResponse.ok(ruleService.listGlobal(page, size));
     }
 
     @PostMapping
@@ -48,7 +50,7 @@ public class AdminRuleController {
     }
 
     @PutMapping("/{id}")
-    public ApiResponse<RuleDto> update(@PathVariable UUID id, @RequestBody RuleDto.UpdateRequest request) {
+    public ApiResponse<RuleDto> update(@PathVariable UUID id, @Valid @RequestBody RuleDto.UpdateRequest request) {
         return ApiResponse.ok(ruleService.updateGlobal(currentUser.id(), id, request), "Global rule updated");
     }
 

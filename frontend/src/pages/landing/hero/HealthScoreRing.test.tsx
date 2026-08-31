@@ -19,4 +19,24 @@ describe('HealthScoreRing', () => {
       screen.getByRole('img', { name: `Financial health score ${heroScore.value} out of 100` })
     ).toBeInTheDocument();
   });
+
+  it('shows 0 before the checklist has started (step 0)', () => {
+    render(<HealthScoreRing step={0} totalSteps={4} intervalMs={550} />);
+    expect(screen.getByText('0')).toBeInTheDocument();
+    expect(screen.queryByText(String(heroScore.value))).not.toBeInTheDocument();
+  });
+
+  it('starts a continuous fill from 0, not the final value, the moment the checklist starts', () => {
+    // Regression test: an earlier version jumped in four discrete steps synced to each checkmark
+    // (reported as not looking natural). The fill must be ONE continuous animation starting at 0
+    // right when step first reaches 1, not a value already at some intermediate or final amount.
+    render(<HealthScoreRing step={1} totalSteps={4} intervalMs={550} />);
+    expect(screen.getByText('0')).toBeInTheDocument();
+    expect(screen.queryByText(String(heroScore.value))).not.toBeInTheDocument();
+  });
+
+  it('shows the final score immediately when rendered standalone (no animation to sync against)', () => {
+    render(<HealthScoreRing step={1} totalSteps={1} />);
+    expect(screen.getByText(String(heroScore.value))).toBeInTheDocument();
+  });
 });

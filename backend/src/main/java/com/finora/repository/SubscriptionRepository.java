@@ -1,6 +1,8 @@
 package com.finora.repository;
 
 import com.finora.entity.Subscription;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -15,6 +17,12 @@ public interface SubscriptionRepository extends JpaRepository<Subscription, UUID
     /** At most one row can ever match -- see V99's partial unique index
      *  (idx_subscriptions_one_active_per_user), enforced by the database, not just this query. */
     Optional<Subscription> findByUserIdAndStatusIn(UUID userId, List<String> statuses);
+
+    /** Admin Portal, Subscription Management list. This table grows roughly 1:1 with the user
+     *  base (every account gets one on signup, see SubscriptionService.provisionFreeSubscription)
+     *  -- SubscriptionService.listAll used to fetch every row unconditionally before this existed,
+     *  same fetch-all shape UserRepository.search replaced for Users a while earlier. */
+    Page<Subscription> findAllByOrderByCreatedAtDesc(Pageable pageable);
 
     default Optional<Subscription> findActiveOrTrial(UUID userId) {
         return findByUserIdAndStatusIn(userId, List.of(Subscription.STATUS_ACTIVE, Subscription.STATUS_TRIAL));

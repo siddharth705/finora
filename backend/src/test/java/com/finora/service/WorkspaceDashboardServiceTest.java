@@ -24,6 +24,8 @@ import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -42,6 +44,7 @@ class WorkspaceDashboardServiceTest {
     private WorkspaceDashboardService service;
 
     private final UUID userId = UUID.randomUUID();
+    private Account liveAccount;
 
     @BeforeEach
     void setUp() {
@@ -57,14 +60,21 @@ class WorkspaceDashboardServiceTest {
                 learningRepository, categoryRuleRepository, relationshipRepository, statementImportRepository,
                 auditLogRepository, new ConfidenceEngine());
 
-        when(accountRepository.findByUserId(userId)).thenReturn(List.of());
+        // Deleted-account leak (see DashboardService.summarize for the original fix): summarize()
+        // scopes its transaction/statement queries to the user's live account ids, so the default
+        // fixture needs at least one live account for every pre-existing test's transaction/
+        // statement stubs to actually be reached.
+        liveAccount = new Account();
+        ReflectionTestUtils.setField(liveAccount, "id", UUID.randomUUID());
+        liveAccount.setUserId(userId);
+        when(accountRepository.findByUserId(userId)).thenReturn(List.of(liveAccount));
         when(merchantRepository.findByUserId(userId)).thenReturn(List.of());
         when(learningRepository.findByUserId(userId)).thenReturn(List.of());
         when(categoryRuleRepository.findByUserIdAndEnabledTrueOrderByPriorityAsc(userId)).thenReturn(List.of());
         when(relationshipRepository.findByUserId(userId)).thenReturn(List.of());
-        when(statementImportRepository.countByUserId(userId)).thenReturn(0L);
+        when(statementImportRepository.countByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(0L);
         when(auditLogRepository.findTop5ByUserIdOrderByCreatedAtDesc(userId)).thenReturn(List.of());
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of());
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of());
     }
 
     private Transaction transaction(Transaction.ReconciliationStatus status, boolean manuallySet, boolean recurring) {
@@ -108,7 +118,7 @@ class WorkspaceDashboardServiceTest {
 
     @Test
     void summarize_computesAutomationRate_asShareOfTransactionsNotManuallyCorrected() {
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(
                 transaction(Transaction.ReconciliationStatus.OK, false, false),
                 transaction(Transaction.ReconciliationStatus.OK, false, false),
                 transaction(Transaction.ReconciliationStatus.OK, false, false),
@@ -122,7 +132,7 @@ class WorkspaceDashboardServiceTest {
 
     @Test
     void summarize_countsReconciliationStatusesIndependently() {
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(
                 transaction(Transaction.ReconciliationStatus.DUPLICATE, false, false),
                 transaction(Transaction.ReconciliationStatus.DUPLICATE, false, false),
                 transaction(Transaction.ReconciliationStatus.TRANSFER, false, false),
@@ -187,15 +197,46 @@ class WorkspaceDashboardServiceTest {
 
     @Test
     void summarize_countsAccountsRelationshipsAndStatementImports() {
-        when(accountRepository.findByUserId(userId)).thenReturn(List.of(new Account(), new Account()));
+        Account account1 = new Account();
+        ReflectionTestUtils.setField(account1, "id", UUID.randomUUID());
+        Account account2 = new Account();
+        ReflectionTestUtils.setField(account2, "id", UUID.randomUUID());
+        when(accountRepository.findByUserId(userId)).thenReturn(List.of(account1, account2));
         when(relationshipRepository.findByUserId(userId)).thenReturn(List.of(new Relationship()));
-        when(statementImportRepository.countByUserId(userId)).thenReturn(3L);
+        when(statementImportRepository.countByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(3L);
 
         var summary = service.summarize(userId);
 
         assertThat(summary.totalAccounts()).isEqualTo(2);
         assertThat(summary.relationships()).isEqualTo(1);
         assertThat(summary.statementsImported()).isEqualTo(3);
+    }
+
+    // Deleted-account leak (see DashboardService.summarize for the original fix): summarize()
+    // must scope its transaction/statement queries to exactly the live account ids, not just
+    // userId.
+    @Test
+    void summarize_scopesTransactionAndStatementQueries_toLiveAccountIdsOnly() {
+        service.summarize(userId);
+
+        org.mockito.Mockito.verify(transactionRepository)
+                .findByUserIdAndAccountIdIn(userId, List.of(liveAccount.getId()));
+        org.mockito.Mockito.verify(statementImportRepository)
+                .countByUserIdAndAccountIdIn(userId, List.of(liveAccount.getId()));
+    }
+
+    @Test
+    void summarize_withNoLiveAccounts_shortCircuitsToZero_withoutQueryingTransactionsOrStatements() {
+        when(accountRepository.findByUserId(userId)).thenReturn(List.of());
+
+        var summary = service.summarize(userId);
+
+        assertThat(summary.totalAccounts()).isZero();
+        assertThat(summary.statementsImported()).isZero();
+        assertThat(summary.totalTransactions()).isZero();
+        org.mockito.Mockito.verifyNoInteractions(transactionRepository);
+        org.mockito.Mockito.verify(statementImportRepository, org.mockito.Mockito.never())
+                .countByUserIdAndAccountIdIn(any(), any());
     }
 
     // --- Workspace Health ---
@@ -227,7 +268,7 @@ class WorkspaceDashboardServiceTest {
         Transaction original = transaction(Transaction.ReconciliationStatus.OK, false, false);
         Transaction duplicate = transaction(Transaction.ReconciliationStatus.DUPLICATE, false, false);
         duplicate.setIsDuplicateOf(original.getId());
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(original, duplicate));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(original, duplicate));
 
         var health = service.summarize(userId).health();
 
@@ -242,7 +283,7 @@ class WorkspaceDashboardServiceTest {
         // to catch it live if that ever regresses, or a future write path introduces a new gap.
         Transaction duplicate = transaction(Transaction.ReconciliationStatus.DUPLICATE, false, false);
         duplicate.setIsDuplicateOf(UUID.randomUUID()); // points at a transaction that isn't in the list at all
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(duplicate));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(duplicate));
 
         var health = service.summarize(userId).health();
 
@@ -253,7 +294,7 @@ class WorkspaceDashboardServiceTest {
     void health_reconciliationUnhealthy_whenARefundPointerDangles() {
         Transaction refundIncome = transaction(Transaction.ReconciliationStatus.REFUND, false, false);
         refundIncome.setRefundOfTransactionId(UUID.randomUUID());
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(refundIncome));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(refundIncome));
 
         var health = service.summarize(userId).health();
 
@@ -271,7 +312,7 @@ class WorkspaceDashboardServiceTest {
 
     @Test
     void health_auditLoggingUnhealthy_whenThereIsRealDataButNoActivityEverLogged() {
-        when(transactionRepository.findByUserId(userId))
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any()))
                 .thenReturn(List.of(transaction(Transaction.ReconciliationStatus.OK, false, false)));
         when(auditLogRepository.findTop5ByUserIdOrderByCreatedAtDesc(userId)).thenReturn(List.of());
 

@@ -159,7 +159,7 @@ export default function Landing() {
       {/* Sticky mobile action bar. Phone-only: at md+ the hero CTAs and the nav button are both
           still in reach, so a permanent bar would only cover content. */}
       <div className="m-mobile-cta md:hidden">
-        <MagneticLink to="/register" className="m-btn m-btn-primary w-full">
+        <MagneticLink to="/auth" className="m-btn m-btn-primary w-full">
           Import your first statement <ArrowRight size={16} />
         </MagneticLink>
       </div>

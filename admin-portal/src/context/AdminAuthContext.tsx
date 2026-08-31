@@ -48,6 +48,11 @@ export const ADMIN_PORTAL_PERMISSIONS = [
   // frontend always renders the "Credit Reward" button and only the backend rejects an
   // unauthorized attempt.
   'REFERRAL_MANAGEMENT_VIEW',
+  // Insight Explorer, Phase 2's Founder Operations Dashboard (docs/proposals/reconciliation-
+  // evolution-roadmap-proposal.md, Part 9). Its own permission rather than a reuse of USER_VIEW or
+  // RECONCILIATION_VIEW -- this is the first admin surface exposing a user's actual computed
+  // spend/category/merchant amounts (AdminInsightsExplorerController).
+  'INSIGHTS_EXPLORER_VIEW',
 ];
 
 export interface AdminAuthState {

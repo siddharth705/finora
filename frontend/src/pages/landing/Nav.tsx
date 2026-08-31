@@ -20,7 +20,7 @@ export function Logo({ invert = false }: { invert?: boolean }) {
         className="font-extrabold tracking-tight text-[17px]"
         style={{ fontFamily: "'Manrope', Inter, sans-serif", color: invert ? '#F8FAFC' : '#0F172A' }}
       >
-        Finora
+        Fynora
       </span>
     </Link>
   );
@@ -28,30 +28,39 @@ export function Logo({ invert = false }: { invert?: boolean }) {
 
 /**
  * `overHero` -- owned by Landing.tsx, driven by an IntersectionObserver watching the Hero
- * section (see the global chrome design spec) -- replaces the old scroll-position-based
- * `scrolled` state entirely. While over Hero the header is transparent with light/inverted
- * text so it reads against Hero's dark background; once the user scrolls past Hero it becomes
- * today's translucent-glass look. The crossfade is CSS-only (`transition-all`), deliberately not
- * Framer Motion -- the navbar is infrastructure, not a decorative element.
+ * section (see the global chrome design spec).
  *
- * `-mb-16` (negative margin equal to the header's own h-16) is what actually makes "transparent
- * over Hero" read correctly: a plain `sticky` header still reserves its own box in normal flow at
- * scrollY 0, so Hero would start BELOW that box, not behind it -- a transparent header would then
- * reveal the page's own white background through that gap, not Hero's dark gradient. The negative
- * margin collapses the reserved space so Hero (and every later section once scrolled) renders
- * starting at y=0, with the header overlapping its top 64px -- Hero's own top padding (pt-28/
- * pt-36, well over 64px) already keeps the headline clear of that overlap.
+ * The header does NOT overlap Hero. While `overHero` is true it sits in normal document flow,
+ * `position: static`, right above Hero -- it scrolls away with the page exactly like any other
+ * content, dark to match Hero's own background so the light text stays legible against it. The
+ * instant `overHero` flips false (Hero's bottom edge reaches the navbar's own height from the top
+ * of the viewport -- see Landing.tsx's rootMargin), the header switches to `position: sticky` and
+ * its normal white/opaque look, pinning at the top of the viewport for the rest of the page.
+ *
+ * This replaces an earlier "transparent header sticky-overlapping Hero's top 64px the whole time"
+ * design (a negative-margin trick) that visitors reported as a real, reproducible overlap glitch
+ * -- Hero's own floating elements (the dashboard preview card, badges) could end up visually
+ * colliding with navbar text once scrolled near the top of the viewport. Static-then-sticky avoids
+ * the whole class of bug: there is never a moment where the header and Hero's content occupy the
+ * same screen space at full opacity.
  */
 export function Nav({ overHero }: { overHero: boolean }) {
   const [open, setOpen] = useState(false);
 
   return (
     <header
-      className="sticky top-0 z-30 -mb-16 transition-all duration-300"
+      className="z-30 transition-all duration-300"
       style={{
-        background: overHero ? 'transparent' : 'rgb(255 255 255 / .88)',
+        position: overHero ? 'static' : 'sticky',
+        top: overHero ? undefined : 0,
+        // #16202E matches Hero's own gradient (see Hero.tsx: 'radial-gradient(... #16202E 0% ...)')
+        // at its top stop -- not an arbitrary dark tone. A mismatched flat color here (an earlier
+        // version used #0B1220, the gradient's 55%-stop color) left a visible seam where the
+        // navbar's flat box met Hero's actual top edge; matching the 0% stop makes the two read as
+        // one continuous surface instead of a bar sitting on top of Hero.
+        background: overHero ? '#16202E' : 'rgb(255 255 255 / .88)',
         backdropFilter: overHero ? 'none' : 'blur(12px)',
-        borderBottom: overHero ? '1px solid transparent' : '1px solid var(--m-line)',
+        borderBottom: overHero ? 'none' : '1px solid var(--m-line)',
         boxShadow: overHero ? 'none' : '0 1px 0 rgba(15,23,42,.06), 0 8px 24px -16px rgba(15,23,42,.25)',
       }}
     >
@@ -73,7 +82,7 @@ export function Nav({ overHero }: { overHero: boolean }) {
         </nav>
         <div className="flex items-center gap-3">
           <Link
-            to="/login"
+            to="/auth"
             className="hidden sm:block text-sm transition-colors"
             style={{ color: overHero ? 'rgba(248,250,252,0.85)' : 'var(--m-ink-2)' }}
             onMouseEnter={(e) => { e.currentTarget.style.color = overHero ? '#F8FAFC' : '#0F172A'; }}
@@ -81,7 +90,7 @@ export function Nav({ overHero }: { overHero: boolean }) {
           >
             Log in
           </Link>
-          <MagneticLink to="/register" className="m-btn m-btn-primary !min-h-[44px] !px-4 !text-sm">
+          <MagneticLink to="/auth" className="m-btn m-btn-primary !min-h-[44px] !px-4 !text-sm">
             Get started <ArrowRight size={14} />
           </MagneticLink>
           <button
@@ -116,7 +125,7 @@ export function Nav({ overHero }: { overHero: boolean }) {
             </a>
           ))}
           <Link
-            to="/login"
+            to="/auth"
             className="m-tap block text-sm"
             style={{ color: overHero ? '#F8FAFC' : 'var(--m-ink-2)' }}
           >

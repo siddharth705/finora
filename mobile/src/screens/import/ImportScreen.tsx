@@ -13,6 +13,7 @@ import { accountsApi, categoriesApi, importApi, statementImportsApi, type RNFile
 import { PDF_PASSWORD_INVALID, PDF_PASSWORD_REQUIRED } from '../../api/errorCodes';
 import { apiErrorCode, toUserMessage } from '../../lib/apiError';
 import { fmtCurrency } from '../../lib/format';
+import { hapticError, hapticSuccess } from '../../lib/haptics';
 import { invalidateFinancialData } from '../../lib/invalidateFinancialData';
 import {
   buildNewAccountPayload, buildRowPayload, initialAccountForm, initialCategories,
@@ -209,7 +210,7 @@ export function ImportScreen() {
       if ('multiAccount' in res && res.multiAccount) {
         await importApi.discardSession(res.sessionId).catch(() => {});
         setError(
-          'This statement covers more than one account. Multi-account statements can only be imported from the Finora web app for now.'
+          'This statement covers more than one account. Multi-account statements can only be imported from the Fynora web app for now.'
         );
         setUploadProgress(null);
         return;
@@ -275,8 +276,12 @@ export function ImportScreen() {
       setSummary(result);
       setStep('summary');
       invalidateFinancialData(queryClient);
+      // The moment the import actually lands, not when the button is pressed -- firing before
+      // the request resolves would celebrate a network failure too.
+      hapticSuccess();
     } catch (e) {
       setError(toUserMessage(e, 'Could not complete the import.'));
+      hapticError();
     } finally {
       setConfirming(false);
     }
@@ -334,7 +339,7 @@ export function ImportScreen() {
                   secureTextEntry
                   autoCapitalize="none"
                   autoCorrect={false}
-                  // The bank's password for one document, not a Finora credential -- it doesn't
+                  // The bank's password for one document, not a Fynora credential -- it doesn't
                   // belong in the OS keychain alongside real logins, and it changes every month.
                   autoComplete="off"
                   textContentType="none"
@@ -515,6 +520,7 @@ export function ImportScreen() {
                     onChangeText={(name) => setAccountForm((f) => ({ ...f, name }))}
                     placeholder="Imported Account"
                     placeholderTextColor={c.muted}
+                    accessibilityLabel="Account name"
                     style={[styles.input, { color: c.ink, borderColor: c.border, backgroundColor: c.inputBg }]}
                   />
                   <View style={styles.typeRow}>

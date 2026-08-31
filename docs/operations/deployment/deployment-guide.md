@@ -109,12 +109,12 @@ DB_NAME=<Railway Postgres database name>
 DB_USER=<Railway Postgres username>
 DB_PASSWORD=<Railway Postgres password>
 JWT_SECRET=<a real random 32+ char value — see "Generating JWT_SECRET" below; never reuse an example>
-CORS_ORIGINS=https://app.finoratech.info,https://admin.finoratech.info
-APP_BASE_URL=https://app.finoratech.info
-ADMIN_APP_BASE_URL=https://admin.finoratech.info
+CORS_ORIGINS=https://app.fynora.net,https://admin.fynora.net
+APP_BASE_URL=https://app.fynora.net
+ADMIN_APP_BASE_URL=https://admin.fynora.net
 RESEND_API_KEY=<your real Resend API key>
-EMAIL_FROM=noreply@finoratech.info
-EMAIL_FROM_NAME=Finora
+EMAIL_FROM=noreply@fynora.net
+EMAIL_FROM_NAME=Fynora
 # Either a mounted file path directly, or GOOGLE_APPLICATION_CREDENTIALS_BASE64 instead (see below
 # and the environment variable audit table above) -- Railway's Variables tab only stores strings.
 GOOGLE_APPLICATION_CREDENTIALS=/path/to/firebase-service-account.json
@@ -306,11 +306,44 @@ portal — the ids of the customers an admin was viewing. See `src/lib/monitorin
 for exactly what is stripped and why; the scrubbers are unit-tested, because scrubbing that
 silently stops working looks identical to scrubbing that works.
 
+### Sentry release tagging and source maps (both frontends)
+
+Optional, and everything above works fully without it -- a build without these still deploys and
+reports crashes exactly as described above, just with minified stack traces instead of real file
+and line numbers.
+
+**Release tagging needs nothing set here.** `vite.config.ts` in each app reads
+`CF_PAGES_COMMIT_SHA`, which Cloudflare Pages injects into the build environment automatically
+for every build (Production and Preview alike) -- no dashboard configuration needed. It's wired
+through as the Sentry release name (`__APP_RELEASE__` in `vite-env.d.ts`, consumed by
+`lib/monitoring.ts`'s `Sentry.init`) so an error groups by deploy rather than by "production" as a
+whole. The backend does the equivalent from Railway's own auto-injected `RAILWAY_GIT_COMMIT_SHA`
+-- see `sentry.release` in `application.yml`.
+
+**Source map upload needs three build environment variables**, set in Cloudflare Pages' project
+Settings -> Environment variables (recommended: Production bucket only -- every open PR's Preview
+build already shares Firebase Dev-tier config per the Dev environment section below, but there's
+no reason for every preview build to also upload a Sentry release):
+
+```
+SENTRY_ORG=<your org slug, from your Sentry URL>
+SENTRY_PROJECT=<your project slug, from your Sentry URL>
+SENTRY_AUTH_TOKEN=<a Sentry auth token with project:releases scope -- a real secret, never commit it>
+```
+
+`vite.config.ts` applies the `@sentry/vite-plugin` only when all three are present, the same
+"absent config degrades to no-op" posture as `VITE_SENTRY_DSN` above -- a build missing any of
+them still succeeds, it just doesn't upload maps. The uploaded `.js.map` files are deleted from
+the built output immediately after upload (`sourcemaps.filesToDeleteAfterUpload` in each
+`vite.config.ts`), so they never end up served publicly from `dist/` -- Sentry has its own copy by
+the time this deletes them, and the app's own bundle already only ships hidden-sourcemap
+references (`build.sourcemap: 'hidden'`), not maps anyone's browser would fetch.
+
 **Also verify `CORS_ORIGINS` on the Railway backend matches your ACTUAL deployed frontend
 origin(s) exactly** — scheme, host, no trailing slash. Cloudflare Pages assigns its own
 `<project-name>.pages.dev` domain (and a different one per preview deployment) by default; once a
-custom domain is attached (Pages project → Custom domains — e.g. `app.finoratech.info` /
-`admin.finoratech.info`, both proxied through the same Cloudflare account the apex domain's DNS
+custom domain is attached (Pages project → Custom domains — e.g. `app.fynora.net` /
+`admin.fynora.net`, both proxied through the same Cloudflare account the apex domain's DNS
 lives in), that becomes the real production origin and `CORS_ORIGINS`/`APP_BASE_URL`/
 `ADMIN_APP_BASE_URL` on the backend must be updated to match it — the `.pages.dev` origin keeps
 working alongside a custom domain (Cloudflare doesn't disable it), so nothing breaks immediately if
@@ -336,12 +369,50 @@ build — unlike a `VITE_*` variable change, this one takes effect without a red
   so it's the one step a domain cutover silently breaks if skipped: every OTP screen on the new
   domain fails with `auth/unauthorized-domain` while the rest of the app works normally.
 
+**`finoratech.info` is a hard cutover, not a graceful migration (2026-08-25).** This section
+used to describe setting up 301 redirects from `finoratech.info`/`app.finoratech.info`/
+`admin.finoratech.info`/`api.finoratech.info` to their `fynora.net` equivalents. That plan is
+dead: `finoratech.info` was sold to a third party — Railway's edge is healthy and reachable, but
+the domain's own nameserver delegation now points at the buyer's registrar (Afternic parking
+nameservers, confirmed via `dig +trace`), not at Cloudflare, no matter what records exist inside
+Cloudflare's dashboard for it. Nobody on this project can add a redirect, a DNS record, or
+anything else to a domain they no longer control. Treat every `finoratech.info` link, email, and
+API allowance as **untrusted**, not as a domain to migrate away from politely:
+
+- **CSP no longer allows `api.finoratech.info`.** `frontend/public/_headers` and
+  `admin-portal/public/_headers` used to keep it listed in `connect-src` "during the transition" —
+  removed. A CSP entry for a domain someone else now owns is an exfiltration path, not a
+  compatibility nicety, and there is no transition to keep it for.
+- **No redirects, ever, for this domain.** Any `finoratech.info` link already out in the world
+  (old emails, old bookmarks, search results) is simply broken now. That's the cost of the
+  domain changing hands, not something a config change here can fix.
+- **Google Cloud OAuth, Railway's custom domain, and Cloudflare Pages' custom domains** for
+  `finoratech.info` and its subdomains (`app.`, `admin.`, `api.`, and the `dev-*` tier — see "Dev
+  environment" below, which has its own live `finoratech.info` references still pointing at
+  infrastructure that needs to stop trusting that domain) all need removing directly in their
+  respective consoles — none of that is expressible in this repo.
+- **Search Console.** Add `fynora.net` as a property (Cloudflare's existing DNS makes domain-level
+  verification via a TXT record the fastest path), then use URL Inspection → Request Indexing on
+  the handful of pages that matter for organic traffic (landing, About, Careers) rather than
+  waiting on the crawl queue. There is no sitemap in this repo to submit — the site is small enough
+  that request-indexing the key pages directly is faster than building one. No point requesting
+  deindexing of the old domain's pages — that's now the buyer's content, not this project's to
+  manage either way.
+
 ## Dev environment (admin-portal, frontend, mobile)
 
-The backend already runs on two Railway environments — Production (`api.finoratech.info`) and Dev
-(`dev-api.finoratech.info`). This section covers giving the three client surfaces (admin-portal,
-frontend, mobile) a matching Dev tier, so a feature can be exercised end-to-end against a live
-backend before it ever touches production data, Firebase, or real Google accounts.
+The backend already runs on two Railway environments — Production (`api.fynora.net`) and Dev.
+The Dev environment's own custom domain and every `dev-*.finoratech.info` reference below are
+stale in the same way as the production ones above (see the hard-cutover note): they still name
+a domain this project no longer controls, and no `fynora.net` Dev-tier equivalent has been
+provisioned yet. Remove Dev's `finoratech.info` custom domain in Railway and the `dev-app.`/
+`dev-admin.` ones in Cloudflare Pages the same way as the production custom domains; re-add the
+`dev-*.fynora.net` equivalents (and update `CORS_ORIGINS`/`APP_BASE_URL`/`ADMIN_APP_BASE_URL`
+below, Cloudflare Pages' Preview env bucket, and `mobile/eas.json`'s `dev` profile — see
+`docs/engineering/mobile/mobile-setup.md`) once they exist. This section covers giving the three
+client surfaces (admin-portal, frontend, mobile) a matching Dev tier, so a feature can be
+exercised end-to-end against a live backend before it ever touches production data, Firebase, or
+real Google accounts.
 
 **Nothing shared with Production here — a deliberately separate Firebase project.** Production's
 convention (one Firebase project, same values in both `frontend/` and `admin-portal/` — see

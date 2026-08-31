@@ -1,5 +1,7 @@
 package com.finora.imports.pdf;
 
+import com.finora.imports.TestAccountRepositories;
+
 import com.finora.dto.ImportDto.StagedRow;
 import com.finora.imports.CsvParser;
 import com.finora.imports.DocumentContext;
@@ -77,9 +79,11 @@ class WrappedHeaderOnAScoringLinePdfTableLocatorTest {
                 .thenReturn(new CategorizationService.Suggestion("Other", "default", null, null, null));
         when(categorization.suggestReadOnly(any(), any(), any(), any(), any()))
                 .thenReturn(new CategorizationService.Suggestion("Other", "default", null, null, null));
+        when(categorization.suggestReadOnly(any(), any(), any(), any(), any(), any()))
+                .thenReturn(new CategorizationService.Suggestion("Other", "default", null, null, null));
         TransactionRepository transactions = mock(TransactionRepository.class);
-        when(transactions.findPotentialDuplicatesByUser(any(), any(), any(), any())).thenReturn(List.of());
-        return new TransactionNormalizer(categorization, new DuplicateDetector(transactions),
+        when(transactions.findPotentialDuplicatesByUserAndAccountIdIn(any(), any(), any(), any(), any())).thenReturn(List.of());
+        return new TransactionNormalizer(categorization, new DuplicateDetector(transactions, TestAccountRepositories.anyLive()),
                 com.finora.imports.TestRuleEngines.empty());
     }
 
@@ -206,8 +210,12 @@ class WrappedHeaderOnAScoringLinePdfTableLocatorTest {
         // {2, 6} before looksLikePaymentSummaryPanel: same panel shape, 2 rows dropped.
         expected.put("hdfc-credit-card-ledger-validation", new int[]{1, 4});
         expected.put("hdfc-savings-ledger-validation", new int[]{1, 331});
-        expected.put("hdfc-savings-multi-page-ledger", new int[]{1, 569});
-        expected.put("hdfc-savings-single-page-ledger", new int[]{1, 9});
+        // 569 -> 568: STATEMENT_SUMMARY_BLOCK_CLOSED removes a phantom trailing-summary row this
+        // trace's own trace used to form -- see SplitHeaderRunsPdfTableLocatorTest's own comment.
+        expected.put("hdfc-savings-multi-page-ledger", new int[]{1, 568});
+        // 9 -> 8: STATEMENT_SUMMARY_BLOCK_CLOSED removes a phantom trailing-summary row, same shape
+        // as hdfc-savings-multi-page-ledger above.
+        expected.put("hdfc-savings-single-page-ledger", new int[]{1, 8});
         expected.put("hdfc-txn-date-narration-header", new int[]{1, 5});
         expected.put("hsbc-savings-ledger-validation", new int[]{1, 2});
         // icici, kotak, sbi: post P-002 Fix 2 (commit pending) -- see HeaderProseRejectionTest.

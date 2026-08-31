@@ -14,7 +14,10 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.same;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
@@ -30,19 +33,23 @@ class TransactionNormalizerTest {
 
     private final UUID userId = UUID.randomUUID();
     private TransactionNormalizer normalizer;
+    private CategorizationService categorizationService;
 
     @BeforeEach
     void setUp() {
-        CategorizationService categorizationService = mock(CategorizationService.class);
+        categorizationService = mock(CategorizationService.class);
         when(categorizationService.suggestReadOnly(any(), any(), any(), any()))
                 .thenReturn(new CategorizationService.Suggestion("Other", "default", null, null, null));
         // Staging calls the rule-set overload (rules hoisted out of the per-row loop);
         // stubbed alongside the loading one so either path returns a real suggestion.
         when(categorizationService.suggestReadOnly(any(), any(), any(), any(), any()))
                 .thenReturn(new CategorizationService.Suggestion("Other", "default", null, null, null));
+        when(categorizationService.suggestReadOnly(any(), any(), any(), any(), any(), any()))
+                .thenReturn(new CategorizationService.Suggestion("Other", "default", null, null, null));
         TransactionRepository transactionRepository = mock(TransactionRepository.class);
-        when(transactionRepository.findPotentialDuplicatesByUser(any(), any(), any(), any())).thenReturn(List.of());
-        DuplicateDetector duplicateDetector = new DuplicateDetector(transactionRepository);
+        when(transactionRepository.findPotentialDuplicatesByUserAndAccountIdIn(any(), any(), any(), any(), any()))
+                .thenReturn(List.of());
+        DuplicateDetector duplicateDetector = new DuplicateDetector(transactionRepository, TestAccountRepositories.anyLive());
         normalizer = new TransactionNormalizer(categorizationService, duplicateDetector, com.finora.imports.TestRuleEngines.empty());
     }
 
@@ -52,6 +59,21 @@ class TransactionNormalizerTest {
             row.put(headerThenValuePairs[i], headerThenValuePairs[i + 1]);
         }
         return row;
+    }
+
+    // --- Category confidence ---
+
+    @Test
+    void normalize_populatesCategoryConfidence_fromTheSuggestion() {
+        when(categorizationService.suggestReadOnly(any(), any(), any(), any(), any(), any()))
+                .thenReturn(new CategorizationService.Suggestion("Dining", "rule", null,
+                        com.finora.entity.Transaction.DecisionSource.KEYWORD_MATCH, null, 70));
+
+        Map<String, String> row = rowOf(
+                "Date", "10/07/2026", "Description", "SWIGGY ORDER", "Amount", "486.00", "Type", "DR");
+        StagedRow result = normalizer.normalize(userId, row);
+
+        assertThat(result.categoryConfidence()).isEqualTo(70);
     }
 
     // --- Description column recognition ---
@@ -202,6 +224,40 @@ class TransactionNormalizerTest {
         Map<String, String> row = rowOf("Date", "12/07/2026", "Amount", "500", "Dr/Cr", "Cr", "Description", "x");
 
         assertThat(normalizer.normalize(userId, row).type()).isEqualTo("INCOME");
+    }
+
+    @Test
+    void normalize_readsDirectionFromTheRupeeArtifactColumn_onARealSbiCreditCardStatement() {
+        // Verified against a real SBI credit-card statement. PDFBox's extraction renders that
+        // document's "Amount (₹)" sub-column literally as "( ` )" -- the same font-substitution
+        // quirk CsvParser.parseNumeric's own "Rupee-as-C" comment describes, here landing on a
+        // column HEADER instead of a value -- and every transaction row's Credit/Debit marker (a
+        // bare "C" or "D", per the statement's own printed legend "C=Credit ; D=Debit") lands in
+        // that exact column. Six genuine credits (three "PAYMENT RECEIVED..." rows among them) on
+        // that real document were staged as EXPENSE before this fix, because normalizeHeaderCell
+        // strips a trailing parenthetical unconditionally -- "( ` )" collapses to the EMPTY
+        // string, the same key every genuinely blank/spacer column also produces, which is why
+        // this can't simply be added to TYPE_HINTS (a blank-header hint would match every
+        // unrelated spacer column in the corpus).
+        Map<String, String> credit = rowOf(
+                "Date", "12 Jul 26",
+                "Transaction Details", "PAYMENT RECEIVED 000000000DKT54ZH1PKPIID",
+                "Amount", "53,000.00",
+                "( ` )", "C");
+
+        StagedRow result = normalizer.normalize(userId, credit);
+
+        assertThat(result).isNotNull();
+        assertThat(result.type()).isEqualTo("INCOME");
+        assertThat(result.amount()).isEqualByComparingTo("53000.00");
+
+        Map<String, String> debit = rowOf(
+                "Date", "11 Jul 26",
+                "Transaction Details", "UPI-VMPL DEL 24",
+                "Amount", "390.00",
+                "( ` )", "D");
+
+        assertThat(normalizer.normalize(userId, debit).type()).isEqualTo("EXPENSE");
     }
 
     @Test
@@ -851,5 +907,92 @@ class TransactionNormalizerTest {
         assertThat(staged).isNotNull();
         assertThat(staged.kind()).isEqualTo(RowKind.TRANSACTION);
         assertThat(staged.amount()).isEqualByComparingTo("0.00");
+    }
+
+    // --- Merchant resolution during staging (Transaction Intelligence Phase A) ---
+
+    private TransactionNormalizer normalizerWithMerchantEngine(
+            com.finora.service.MerchantNormalizationEngine merchantNormalizationEngine) {
+        CategorizationService categorizationService = mock(CategorizationService.class);
+        when(categorizationService.suggestReadOnly(any(), any(), any(), any()))
+                .thenReturn(new CategorizationService.Suggestion("Food", "learned", null, null, null));
+        when(categorizationService.suggestReadOnly(any(), any(), any(), any(), any()))
+                .thenReturn(new CategorizationService.Suggestion("Food", "learned", null, null, null));
+        when(categorizationService.suggestReadOnly(any(), any(), any(), any(), any(), any()))
+                .thenReturn(new CategorizationService.Suggestion("Food", "learned", null, null, null));
+        TransactionRepository transactionRepository = mock(TransactionRepository.class);
+        when(transactionRepository.findPotentialDuplicatesByUserAndAccountIdIn(any(), any(), any(), any(), any()))
+                .thenReturn(List.of());
+        DuplicateDetector duplicateDetector = new DuplicateDetector(transactionRepository, TestAccountRepositories.anyLive());
+        return new TransactionNormalizer(
+                categorizationService, duplicateDetector, TestRuleEngines.empty(), merchantNormalizationEngine);
+    }
+
+    @Test
+    void normalize_leavesMerchantFieldsNull_whenNoMerchantNormalizationEngineIsWired() {
+        // The existing 3-arg constructor (every other test in this class uses it) must keep behaving
+        // exactly as before -- merchant resolution is additive, never required.
+        StagedRow row = normalizer.normalize(userId,
+                rowOf("Date", "01-01-2026", "Description", "UPI-SWIGGY-12345", "Amount", "350", "Type", "Dr"));
+
+        assertThat(row.merchant()).isNull();
+        assertThat(row.merchantConfidence()).isNull();
+    }
+
+    @Test
+    void normalize_resolvesAgainstAPreBuiltMerchantIndex_issuingNoLiveQuery() {
+        com.finora.entity.Merchant swiggy = new com.finora.entity.Merchant();
+        swiggy.setCanonicalName("SWIGGY");
+        com.finora.service.MerchantNormalizationEngine merchantNormalizationEngine =
+                mock(com.finora.service.MerchantNormalizationEngine.class);
+        com.finora.imports.MerchantIndex index = new com.finora.imports.MerchantIndex(Map.of(), Map.of());
+        when(merchantNormalizationEngine.resolveReadOnly(any(), any(), same(index)))
+                .thenReturn(java.util.Optional.of(swiggy));
+
+        TransactionNormalizer withMerchantResolution = normalizerWithMerchantEngine(merchantNormalizationEngine);
+
+        StagedRow row = withMerchantResolution.normalize(userId,
+                rowOf("Date", "01-01-2026", "Description", "UPI-SWIGGY-12345", "Amount", "350", "Type", "Dr"),
+                null, List.of(), null, index);
+
+        assertThat(row.merchant()).isEqualTo("SWIGGY");
+        assertThat(row.merchantConfidence()).isEqualTo(1.0);
+        // The whole point of passing an index: never call the un-indexed, per-row-costly overload.
+        verify(merchantNormalizationEngine, never()).resolveReadOnly(any(), any());
+    }
+
+    @Test
+    void normalize_fallsBackToALiveLookup_whenNoIndexWasHoisted() {
+        com.finora.entity.Merchant swiggy = new com.finora.entity.Merchant();
+        swiggy.setCanonicalName("SWIGGY");
+        com.finora.service.MerchantNormalizationEngine merchantNormalizationEngine =
+                mock(com.finora.service.MerchantNormalizationEngine.class);
+        when(merchantNormalizationEngine.resolveReadOnly(any(), any())).thenReturn(java.util.Optional.of(swiggy));
+
+        TransactionNormalizer withMerchantResolution = normalizerWithMerchantEngine(merchantNormalizationEngine);
+
+        StagedRow row = withMerchantResolution.normalize(userId,
+                rowOf("Date", "01-01-2026", "Description", "UPI-SWIGGY-12345", "Amount", "350", "Type", "Dr"));
+
+        assertThat(row.merchant()).isEqualTo("SWIGGY");
+        assertThat(row.merchantConfidence()).isEqualTo(1.0);
+    }
+
+    @Test
+    void normalize_leavesMerchantFieldsNull_whenIndexHasNoMatch() {
+        com.finora.service.MerchantNormalizationEngine merchantNormalizationEngine =
+                mock(com.finora.service.MerchantNormalizationEngine.class);
+        com.finora.imports.MerchantIndex index = new com.finora.imports.MerchantIndex(Map.of(), Map.of());
+        when(merchantNormalizationEngine.resolveReadOnly(any(), any(), same(index)))
+                .thenReturn(java.util.Optional.empty());
+
+        TransactionNormalizer withMerchantResolution = normalizerWithMerchantEngine(merchantNormalizationEngine);
+
+        StagedRow row = withMerchantResolution.normalize(userId,
+                rowOf("Date", "01-01-2026", "Description", "SOME BRAND NEW MERCHANT", "Amount", "350", "Type", "Dr"),
+                null, List.of(), null, index);
+
+        assertThat(row.merchant()).isNull();
+        assertThat(row.merchantConfidence()).isNull();
     }
 }

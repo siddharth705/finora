@@ -75,11 +75,109 @@ class HeaderReconstructionEngineTest {
                 .isEmpty();
     }
 
+    /**
+     * The real shape found on SBI Credit Card.PDF's page-2 repeat of this same header: identical to
+     * {@link #sbiShapedPartitionedHeader_recoversDescriptionColumnFromTheLineAbove} above, except
+     * the real document also prints a "for Statement Period: ..." caption on the accepted header's
+     * own physical row -- 2.36pt below its "( ` )" sub-label there, well within groupIntoRows'
+     * chain-based clustering tolerance (the same caption sits comfortably far from the header on
+     * this document's FIRST page instead, a genuine per-page rendering variance, which is why the
+     * first page never hits this).
+     *
+     * <p>Bug found investigating this shape: {@code reconstructHeader}'s own conflict-detection
+     * computes "established anchors" from headerRow AS GIVEN -- including this caption, which is not
+     * a real column and is filtered out later, by buildHeaderColumns' own containsEmbeddedDateRange
+     * check, but too late to help here. "Transaction Details" (x=180) sits only ~20pt from the
+     * caption's own x (~160) -- comfortably within HEADER_WRAP_MAX_COLUMN_JOIN (40pt) -- so the
+     * caption's mere presence among the established anchors makes reconstructHeader treat "Transaction
+     * Details" as if it would RENAME the caption rather than fill a genuinely empty column, and
+     * decline the whole reconstruction. Every one of the section's real transactions then buckets
+     * into just Date and Amount, with its description lost -- confirmed against the real document:
+     * SBI Credit Card.PDF's second cardholder section drops all 29 of its rows this way.
+     */
+    @Test
+    void sbiShapedPartitionedHeader_recoversDescriptionColumn_evenWithAnOrphanedCaptionOnTheAcceptedRow() {
+        List<PositionedText> positioned = new ArrayList<>();
+        positioned.add(run("Transaction Details", 180f, 90f, 100f));
+        positioned.add(run("Date", 40f, 30f, 108f));
+        positioned.add(run("Amount", 380f, 45f, 108f));
+        positioned.add(run("( Rs )", 428f, 30f, 109f));
+        // The orphaned caption -- present on the accepted header's own row, close enough in x to
+        // "Transaction Details" to trip reconstructHeader's conflict gate if not excluded first.
+        positioned.add(run("for Statement Period: 01 Aug 26 to 31 Aug 26", 160f, 140f, 111f));
+        positioned.addAll(dataRow("01 Aug 26", "SAMPLE ONLINE STORE PURCHASE", "1,250.00", 120f));
+        positioned.addAll(dataRow("03 Aug 26", "SAMPLE UTILITY BILL PAYMENT", "980.50", 128f));
+        positioned.addAll(dataRow("05 Aug 26", "SAMPLE GROCERY STORE PURCHASE", "540.00", 136f));
+        positioned.addAll(dataRow("07 Aug 26", "SAMPLE SUBSCRIPTION RENEWAL", "299.00", 144f));
+
+        DocumentContext ctx = new DocumentContext("PDF", "test");
+        PdfTableLocator.LocatedDocument doc = new PdfTableLocator().locateAll(positioned, ctx);
+
+        assertThat(doc.sections()).hasSize(1);
+        List<Map<String, String>> rows = doc.sections().get(0).rows();
+        assertThat(rows).hasSize(4);
+        assertThat(rows.get(0)).containsEntry("Date", "01 Aug 26");
+        assertThat(rows.get(0)).containsEntry("Transaction Details", "SAMPLE ONLINE STORE PURCHASE");
+        assertThat(rows.get(0)).containsEntry("Amount ( Rs )", "1,250.00");
+        assertThat(rows.get(3)).containsEntry("Transaction Details", "SAMPLE SUBSCRIPTION RENEWAL");
+
+        assertThat(ctx.capabilities().stream().map(c -> c.capability()))
+                .contains("HEADER_RECONSTRUCTED");
+    }
+
     private static List<PositionedText> dataRow(String date, String description, String amount, float y) {
         List<PositionedText> row = new ArrayList<>();
         row.add(run(date, 40f, 45f, y));
         row.add(run(description, 180f, description.length() * 5.0f, y));
         row.add(run(amount, 400f, 40f, y));
+        return row;
+    }
+
+    /**
+     * The real shape found on SBI Credit Card.PDF: the header's currency-symbol sub-label extracts
+     * as the literal font-artifact string "( ` )" (see TransactionNormalizer's
+     * RUPEE_ARTIFACT_TYPE_COLUMN, which relies on this exact column surviving as its OWN header
+     * name), and every real transaction row carries a bare Credit/Debit marker ("C"/"D") in that
+     * same column. "( ` )" sits immediately after "Amount" in the header's own row, close enough
+     * (well inside HEADER_RUN_JOIN_MAX_GAP) that coalesceHeaderRuns would ordinarily fold the two
+     * into one "Amount ( ` )" column -- correct, and desired, for an ordinary currency-unit suffix
+     * like "(Rs.)" or "(INR)" that carries no data of its own (see the other test above, which
+     * relies on exactly that merge for "( Rs )"). This literal artifact string is different: it is
+     * evidenced, from this same real document, to carry real per-row data. Left coalesced, a
+     * genuine transaction's marker value has nowhere of its own to bucket into and gets glued onto
+     * the amount value instead ("25.00 D"), which fails CsvParser.parseNumeric outright -- exactly
+     * the "every row silently vanishes" failure this test proves is fixed, on top of the
+     * Description-column recovery the other SBI-shaped test above already covers.
+     */
+    @Test
+    void sbiShapedPartitionedHeader_keepsTheRupeeArtifactColumnSeparateFromAmount() {
+        List<PositionedText> positioned = new ArrayList<>();
+        positioned.add(run("Transaction Details", 180f, 90f, 100f));
+        positioned.add(run("Date", 40f, 30f, 108f));
+        positioned.add(run("Amount", 380f, 45f, 108f));
+        positioned.add(run("( ` )", 428f, 30f, 109f));
+        positioned.addAll(markedDataRow("01 Aug 26", "SAMPLE ONLINE STORE PURCHASE", "1,250.00", "D", 120f));
+        positioned.addAll(markedDataRow("03 Aug 26", "SAMPLE UTILITY BILL PAYMENT", "980.50", "D", 128f));
+        positioned.addAll(markedDataRow("05 Aug 26", "SAMPLE GROCERY STORE PURCHASE", "540.00", "D", 136f));
+        positioned.addAll(markedDataRow("07 Aug 26", "PAYMENT RECEIVED SAMPLE REF", "5,000.00", "C", 144f));
+
+        DocumentContext ctx = new DocumentContext("PDF", "test");
+        PdfTableLocator.LocatedDocument doc = new PdfTableLocator().locateAll(positioned, ctx);
+
+        assertThat(doc.sections()).hasSize(1);
+        List<Map<String, String>> rows = doc.sections().get(0).rows();
+        assertThat(rows).hasSize(4);
+        assertThat(rows.get(0)).containsEntry("Transaction Details", "SAMPLE ONLINE STORE PURCHASE");
+        assertThat(rows.get(0)).containsEntry("Amount", "1,250.00");
+        assertThat(rows.get(0)).containsEntry("( ` )", "D");
+        assertThat(rows.get(3)).containsEntry("Amount", "5,000.00");
+        assertThat(rows.get(3)).containsEntry("( ` )", "C");
+    }
+
+    private static List<PositionedText> markedDataRow(
+            String date, String description, String amount, String marker, float y) {
+        List<PositionedText> row = new ArrayList<>(dataRow(date, description, amount, y));
+        row.add(run(marker, 430f, 15f, y));
         return row;
     }
 
@@ -127,6 +225,61 @@ class HeaderReconstructionEngineTest {
 
         assertThat(ctx.capabilities().stream().map(c -> c.capability()))
                 .contains("HEADER_RECONSTRUCTED");
+    }
+
+    /**
+     * Regression guard for a real bug found in self-review while building buildHeaderColumns'
+     * containsEmbeddedDateRange guard (Phase 2E.5, HSBC row-formation fix): buildHeaderColumns can
+     * run TWICE for the same physical header row -- once on the row as originally accepted, and
+     * again on {@code reconstructHeader}'s candidate when the first attempt is judged weak enough
+     * to trigger reconstruction. reconstructHeader's own candidate always starts from every
+     * non-blank fragment of the ORIGINAL header row verbatim, so an orphaned caption sitting on
+     * that row (chain-based clustering can now fold one onto it, the same mechanism
+     * OrphanedHeaderRowCaptionTest exercises) gets re-scanned by containsEmbeddedDateRange on the
+     * second call too -- and without a fix, appended to the section's auxiliary text a second time.
+     * Same header shape as multiCellPartitionedTierImmediatelyAbove_recoversAllFourColumns above
+     * (proven to trigger a successful reconstruction), with an orphaned caption added onto the
+     * accepted line's own physical row.
+     */
+    @Test
+    void orphanedCaptionOnAReconstructedHeadersOwnRow_isNotDuplicatedIntoAuxiliaryText() {
+        List<PositionedText> positioned = new ArrayList<>();
+        positioned.add(run("Particulars", 150f, 80f, 192f));
+        positioned.add(run("Debit", 280f, 40f, 192f));
+        positioned.add(run("Credit", 350f, 40f, 192f));
+        positioned.add(run("Balance", 420f, 50f, 192f));
+        positioned.add(run("Date", 40f, 30f, 200f));
+        positioned.add(run("Type", 500f, 50f, 200f));
+        // The orphaned caption: 1.5pt below the accepted line, well within groupIntoRows'
+        // chain-based ROW_Y_TOLERANCE, so it folds onto the SAME physical row as Date/Type above --
+        // exactly the shape OrphanedHeaderRowCaptionTest reproduces, just now also feeding a header
+        // that goes on to trigger reconstruction. x=600 deliberately clear of every tier-above
+        // anchor (150/280/350/420) by more than HEADER_WRAP_MAX_COLUMN_JOIN (40pt) -- reconstructHeader's
+        // own candidate starts from every non-blank cell of this row verbatim (unfiltered by
+        // buildHeaderColumns' containsEmbeddedDateRange, which only runs inside buildHeaderColumns
+        // itself), so a caption placed too close to one of those anchors would make reconstructHeader
+        // decline the tier above as a false rename-conflict -- a fixture-placement pitfall, not the
+        // duplication bug this test targets.
+        positioned.add(run("for Statement Period: 01 Jun 26 to 30 Jun 26", 600f, 220f, 201.5f));
+        positioned.addAll(iobRow("01 Aug 26", "SAMPLE ONLINE PURCHASE", "500.00", "", "9,500.00", "UPI", 212f));
+        positioned.addAll(iobRow("03 Aug 26", "SAMPLE SALARY CREDIT", "", "10,000.00", "19,500.00", "NEFT", 220f));
+        positioned.addAll(iobRow("05 Aug 26", "SAMPLE UTILITY PAYMENT", "1,200.00", "", "18,300.00", "UPI", 228f));
+        positioned.addAll(iobRow("07 Aug 26", "SAMPLE RENT PAYMENT", "6,000.00", "", "12,300.00", "UPI", 236f));
+
+        DocumentContext ctx = new DocumentContext("PDF", "test");
+        PdfTableLocator.LocatedDocument doc = new PdfTableLocator().locateAll(positioned, ctx);
+
+        assertThat(doc.sections()).hasSize(1);
+        PdfTableLocator.LocatedSection section = doc.sections().get(0);
+        assertThat(ctx.capabilities().stream().map(c -> c.capability()))
+                .as("reconstruction still succeeds -- this is a duplication check, not a regression "
+                        + "of the reconstruction itself")
+                .contains("HEADER_RECONSTRUCTED");
+        assertThat(section.auxiliaryText())
+                .as("the orphaned caption's text appears exactly once, not once per buildHeaderColumns "
+                        + "call")
+                .filteredOn(line -> line.contains("for Statement Period: 01 Jun 26 to 30 Jun 26"))
+                .hasSize(1);
     }
 
     private static List<PositionedText> iobRow(String date, String particulars, String debit,

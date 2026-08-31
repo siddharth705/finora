@@ -9,6 +9,7 @@ import com.finora.entity.MerchantCategoryLearning;
 import com.finora.entity.MerchantLearningAudit;
 import com.finora.entity.Transaction;
 import com.finora.exception.ApiException;
+import com.finora.repository.AccountRepository;
 import com.finora.repository.CategoryRepository;
 import com.finora.repository.MerchantAliasRepository;
 import com.finora.repository.MerchantCategoryLearningRepository;
@@ -53,6 +54,7 @@ public class MerchantService {
     private final MerchantLearningAuditRepository auditRepository;
     private final CategoryRepository categoryRepository;
     private final TransactionRepository transactionRepository;
+    private final AccountRepository accountRepository;
     private final ConfidenceEngine confidenceEngine;
     private final AuditService auditService;
 
@@ -62,6 +64,7 @@ public class MerchantService {
                             MerchantLearningAuditRepository auditRepository,
                             CategoryRepository categoryRepository,
                             TransactionRepository transactionRepository,
+                            AccountRepository accountRepository,
                             ConfidenceEngine confidenceEngine,
                             AuditService auditService) {
         this.merchantRepository = merchantRepository;
@@ -70,6 +73,7 @@ public class MerchantService {
         this.auditRepository = auditRepository;
         this.categoryRepository = categoryRepository;
         this.transactionRepository = transactionRepository;
+        this.accountRepository = accountRepository;
         this.confidenceEngine = confidenceEngine;
         this.auditService = auditService;
     }
@@ -104,7 +108,15 @@ public class MerchantService {
     public List<TransactionDto> transactionsFor(UUID userId, UUID merchantId) {
         requireOwnedMerchant(userId, merchantId); // ownership check, even though the query below is itself user-scoped
         Map<UUID, String> categoryNames = categoryNamesFor(userId);
-        return transactionRepository.findByUserIdAndMerchantId(userId, merchantId).stream()
+        // Deleted-account leak (see DashboardService.summarize for the original fix): a deleted
+        // account's transactions deliberately keep deleted_at unset, so the unscoped finder would
+        // keep surfacing them in this merchant detail view forever, not just during
+        // StatementImportService's 7-day grace window.
+        List<UUID> liveAccountIds = accountRepository.findByUserId(userId).stream()
+                .map(com.finora.entity.Account::getId).toList();
+        List<Transaction> transactions = liveAccountIds.isEmpty() ? List.of()
+                : transactionRepository.findByUserIdAndMerchantIdAndAccountIdIn(userId, merchantId, liveAccountIds);
+        return transactions.stream()
                 .sorted(Comparator.comparing(Transaction::getTxnDate).reversed())
                 .map(t -> TransactionDto.from(t, categoryNames.getOrDefault(t.getCategoryId(), "Uncategorized")))
                 .toList();

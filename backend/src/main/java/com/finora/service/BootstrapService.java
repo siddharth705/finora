@@ -117,9 +117,12 @@ public class BootstrapService implements ApplicationRunner {
         // account only ever needs to reach POST /api/v1/setup/complete.
         bootstrap.setPhoneVerified(true);
         // Legacy role string, not just the explicit roles row added below -- matches V16's own
-        // "backfill both" convention, and is what lets UserRepository.countByRoleNot(...) exclude
-        // this account from "total users" stats (AdminOperationalDashboardService/AdminStatsService)
-        // with a plain WHERE clause, not a schema change.
+        // "backfill both" convention. NOT what excludes this account from "total users" stats
+        // (AdminOperationalDashboardService/AdminStatsService) -- that used to read this column via
+        // UserRepository.countByRoleNot(...), but RoleService.revokeRole resets it to DEFAULT_ROLE
+        // the moment SetupService.completeSetup() revokes this role, so those counts now filter on
+        // BOOTSTRAP_IDENTIFIER (this account's email, set below) instead, via countByEmailNot(...) --
+        // see that method's own doc comment.
         bootstrap.setRole("BOOTSTRAP_ADMIN");
 
         // Resolved and attached BEFORE the save, so the users row and its user_roles grant go in

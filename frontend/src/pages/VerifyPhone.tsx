@@ -76,7 +76,7 @@ export default function VerifyPhone() {
 
   // The "Change Number" detour: for a user whose account phone number is wrong or unreachable
   // (see the sendError escape hatch below), with no other self-service way to fix it. A separate
-  // mode on this same page rather than a new route -- the surrounding FINORA/shield chrome stays
+  // mode on this same page rather than a new route -- the surrounding FYNORA/shield chrome stays
   // put, only the form content changes, and there's no reason to lose the original session
   // (confirmation/phoneNumber above) if the user backs out.
   const [mode, setMode] = useState<'verify' | 'enterNewNumber' | 'confirmNewNumber'>('verify');
@@ -177,7 +177,7 @@ export default function VerifyPhone() {
   // failed.
   function handleLogout() {
     logout();
-    void navigate('/login');
+    void navigate('/auth');
   }
 
   function startChangingNumber() {
@@ -286,7 +286,7 @@ export default function VerifyPhone() {
           <span className="w-7 h-7 rounded-lg bg-gradient-to-br from-primary to-primary-dark flex items-center justify-center">
             <Sparkles size={14} className="text-on-primary" strokeWidth={2.5} />
           </span>
-          <span className="font-extrabold tracking-wide text-ink">FINORA</span>
+          <span className="font-extrabold tracking-wide text-ink">FYNORA</span>
         </div>
 
         {mode === 'verify' && (

@@ -254,6 +254,7 @@ test.describe('Phase 10 — one user cannot see or shape another', () => {
       'regression it has hit yet.'
     ).toEqual([
       'category_rules',
+      'email_change_sessions',
       'password_change_sessions',
       'password_history',
       'phone_change_sessions',

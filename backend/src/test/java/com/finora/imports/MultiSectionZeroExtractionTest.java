@@ -113,8 +113,14 @@ class MultiSectionZeroExtractionTest {
                             // "Never lose information": every line of the document, prose included,
                             // is still recovered and offered for review -- a bigger number than
                             // before Fix 2, because the whole document is now one section instead of
-                            // eight, and every one of its lines counts as recovered text.
-                            .contains("213 line(s) of text were recovered");
+                            // eight, and every one of its lines counts as recovered text. 213 (Fix 2)
+                            // -> 195 under Phase 2E.5's HSBC row-formation fix: groupIntoRows' now
+                            // chain-based clustering (header-reconstruction-design.md §9.4) correctly
+                            // merges physical lines this document's own native-PDF layout had been
+                            // over-split into two, the same benign line-count reduction confirmed
+                            // against hdfc-composite-deposit-schedules and hdfc-txn-date-narration-
+                            // header in GoldenOutputSnapshotTest -- content merges, nothing is lost.
+                            .contains("195 line(s) of text were recovered");
                 });
     }
 
@@ -234,8 +240,12 @@ class MultiSectionZeroExtractionTest {
         // mechanism, does not parse as a transaction and is dropped at staging, same as before this
         // fix touched anything downstream of location.
         m.put("icici-savings-ledger-validation", 11);
+        m.put("kotak-credit-card-category-sections-and-page-footer", 21);
         m.put("pnb-savings-ledger-validation", 61);
         m.put("union-bank-savings-ledger-validation", 19);
+        m.put("cbi-account-discrepancy-disclaimer-trailer", 222);
+        m.put("pnb-one-account-discrepancy-disclaimer-trailer", 61);
+        m.put("bob-transaction-row-x-ordering", 53);
         return m;
     }
 
@@ -389,8 +399,8 @@ class MultiSectionZeroExtractionTest {
 
     private TransactionNormalizer normalizer(CategorizationService categorizationService) {
         TransactionRepository transactionRepository = mock(TransactionRepository.class);
-        when(transactionRepository.findPotentialDuplicatesByUser(any(), any(), any(), any())).thenReturn(List.of());
-        return new TransactionNormalizer(categorizationService, new DuplicateDetector(transactionRepository),
+        when(transactionRepository.findPotentialDuplicatesByUserAndAccountIdIn(any(), any(), any(), any(), any())).thenReturn(List.of());
+        return new TransactionNormalizer(categorizationService, new DuplicateDetector(transactionRepository, TestAccountRepositories.anyLive()),
                 TestRuleEngines.empty());
     }
 
@@ -399,6 +409,8 @@ class MultiSectionZeroExtractionTest {
         when(categorizationService.suggestReadOnly(any(), any(), any(), any()))
                 .thenReturn(new CategorizationService.Suggestion("Uncategorized", "default", null, null, null));
         when(categorizationService.suggestReadOnly(any(), any(), any(), any(), any()))
+                .thenReturn(new CategorizationService.Suggestion("Uncategorized", "default", null, null, null));
+        when(categorizationService.suggestReadOnly(any(), any(), any(), any(), any(), any()))
                 .thenReturn(new CategorizationService.Suggestion("Uncategorized", "default", null, null, null));
         return categorizationService;
     }
@@ -432,12 +444,12 @@ class MultiSectionZeroExtractionTest {
         CategorizationService categorizationService = categorization();
         TransactionNormalizer transactionNormalizer = normalizer(categorizationService);
         TransactionRepository transactionRepository = mock(TransactionRepository.class);
-        when(transactionRepository.findPotentialDuplicatesByUser(any(), any(), any(), any())).thenReturn(List.of());
-        DuplicateDetector duplicateDetector = new DuplicateDetector(transactionRepository);
+        when(transactionRepository.findPotentialDuplicatesByUserAndAccountIdIn(any(), any(), any(), any(), any())).thenReturn(List.of());
+        DuplicateDetector duplicateDetector = new DuplicateDetector(transactionRepository, TestAccountRepositories.anyLive());
         AccountRepository accountRepository = mock(AccountRepository.class);
         ImportSessionService importSessionService = mock(ImportSessionService.class);
-        when(importSessionService.createSession(any(), any(), any(), any(), any(), any())).thenReturn(session());
-        when(importSessionService.createMultiSection(any(), any(), any(), any(), any())).thenReturn(session());
+        when(importSessionService.createSession(any(), any(), any(), any(), any(), any(), any())).thenReturn(session());
+        when(importSessionService.createMultiSection(any(), any(), any(), any(), any(), any())).thenReturn(session());
 
         PreviewGenerator previewGenerator = new PreviewGenerator(new CsvParser(), transactionNormalizer,
                 new StatementValidator(com.finora.imports.product.ProductDiscovery.standard()), verifier(),
@@ -448,7 +460,8 @@ class MultiSectionZeroExtractionTest {
                 mock(ReconciliationService.class), mock(RecurringService.class), previewGenerator, duplicateDetector,
                 new ImportRuleLearningService(categorizationService), importSessionService, generatorFor(acquirer),
                 new com.finora.imports.product.ProductIdentityResolver(accountRepository),
-                new com.finora.imports.storage.StatementContentService(java.util.Optional.empty(), "", ""),
+                mock(com.finora.imports.ownership.OwnershipMatchService.class),
+                new com.finora.imports.storage.StatementContentService(java.util.Optional.empty(), mock(com.finora.security.crypto.EncryptionService.class), "", ""),
                 mock(StatementAnalysisRecorder.class), mock(ImportVerificationRecorder.class),
                 mock(com.finora.service.MerchantLearningEventPublisher.class), mock(LayoutRegistryService.class),
                 mock(com.finora.imports.evidence.ClosingBalanceEvidenceShadowObserver.class));

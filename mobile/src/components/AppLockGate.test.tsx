@@ -20,7 +20,7 @@ const mockedAuthenticateAsync = LocalAuthentication.authenticateAsync as jest.Mo
   typeof LocalAuthentication.authenticateAsync
 >;
 
-const LOCK_TEXT = /Finora is locked/i;
+const LOCK_TEXT = /Fynora is locked/i;
 
 /** Seeds a signed-in session the same way AuthContext.test.tsx does -- AuthProvider reads these
  *  SecureStore keys on its bootstrap effect, which AppLockGate waits on before it can lock. */

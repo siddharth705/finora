@@ -26,7 +26,7 @@ describe('Sidebar — collapse toggle', () => {
     renderSidebar();
 
     expect(screen.getByText('Dashboard')).toBeInTheDocument();
-    expect(screen.getByText('FINORA')).toBeInTheDocument();
+    expect(screen.getByText('FYNORA')).toBeInTheDocument();
   });
 
   it('hides nav labels and the wordmark, but keeps icons reachable by title, once collapsed', async () => {
@@ -36,7 +36,7 @@ describe('Sidebar — collapse toggle', () => {
     await user.click(screen.getByRole('button', { name: /collapse sidebar/i }));
 
     expect(screen.queryByText('Dashboard')).not.toBeInTheDocument();
-    expect(screen.queryByText('FINORA')).not.toBeInTheDocument();
+    expect(screen.queryByText('FYNORA')).not.toBeInTheDocument();
     // The nav link itself is still there and still reachable -- title carries the label as a
     // tooltip so a collapsed item isn't identifiable by icon shape alone.
     expect(screen.getByTitle('Dashboard')).toBeInTheDocument();

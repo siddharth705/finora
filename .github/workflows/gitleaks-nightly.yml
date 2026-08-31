@@ -1,0 +1,46 @@
+name: Secret scan (nightly, full history)
+
+# ci.yml's secret-scan job only ever sees one PR's diff. A secret that entered the repository
+# before that job existed -- or through a push straight to main, or through a merge whose diff
+# gitleaks-action's range-detection missed -- would never surface there. This job re-scans the
+# entire commit history on a schedule instead of a diff, so that gap doesn't depend on catching
+# everything at the moment it was introduced.
+#
+# 03:30 UTC, offset from e2e-nightly.yml's 03:00 run for no reason beyond keeping the two
+# schedules visibly distinct in the Actions history -- both run on GitHub-hosted runners with a
+# fresh VM each, so there's no shared-machine contention to avoid the way there was in the
+# self-hosted period (see e2e-nightly.yml's header for that history).
+on:
+  schedule:
+    - cron: '30 3 * * *'
+  workflow_dispatch:
+
+# A scheduled run that is still going when the next one fires should not be joined by it.
+concurrency:
+  group: gitleaks-nightly
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  full-history-scan:
+    name: gitleaks (full history)
+    runs-on: ubuntu-latest
+    # A full-history scan of ~1200 commits takes low single-digit minutes locally; this is a hang
+    # detector; it should never fire because the scan itself got slow.
+    timeout-minutes: 15
+    steps:
+      # fetch-depth: 0 -- without full history this job would silently degrade into re-scanning
+      # only what a shallow checkout happens to carry, which defeats the reason it exists.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@v3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # No PR to comment on for a scheduled run; see ci.yml's secret-scan job for why comments
+          # are off there too.
+          GITLEAKS_ENABLE_COMMENTS: false

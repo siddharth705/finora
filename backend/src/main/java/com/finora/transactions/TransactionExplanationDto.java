@@ -1,6 +1,7 @@
 package com.finora.transactions;
 
 import java.util.List;
+import java.util.UUID;
 
 /**
  * "Why this category?" for one transaction — surfaced on demand, not on every list row.
@@ -23,5 +24,41 @@ import java.util.List;
 public record TransactionExplanationDto(
         String decisionSource,
         String summary,
-        List<String> evidence
-) {}
+        List<String> evidence,
+        /** 0-100, or null -- {@link com.finora.entity.Transaction#getDecisionConfidence()} read
+         *  straight through, same "surfacing, not a new intelligence layer" contract as every
+         *  other field on this record. Null for MANUAL/FILE_PROVIDED (see that field's own doc
+         *  comment) and for any transaction that predates Transaction Intelligence Phase B. */
+        Integer confidence,
+        /**
+         * "Why this match?" -- Phase 1 of docs/proposals/reconciliation-evolution-roadmap-proposal.md.
+         * Null when {@code reconciliationStatus} is {@code OK} (the overwhelming majority of rows,
+         * and there is nothing to explain about a row nothing matched). Same surfacing-only
+         * contract as the rest of this record: every field here was already written by {@link
+         * com.finora.service.ReconciliationService} at match time, via {@link
+         * com.finora.service.ReconciliationExplanation} -- this reads it back, it computes nothing.
+         */
+        ReconciliationExplanationDto reconciliation
+) {
+    /**
+     * @param status               {@code Transaction.ReconciliationStatus} name (DUPLICATE,
+     *                             TRANSFER, REFUND, or REVERSAL -- never OK, see above).
+     * @param matchedTransactionId the counterpart transaction this row was matched against --
+     *                             {@code isDuplicateOf}, {@code transferPairId}, or {@code
+     *                             refundOfTransactionId} depending on {@code status}, read
+     *                             directly off the entity rather than re-parsed out of the JSON
+     *                             explanation, so it's never out of sync with it.
+     * @param summary              one plain-English sentence.
+     * @param evidence             the individual signals the matching pass weighed, as short
+     *                             bullet lines -- same spirit as the categorization {@code
+     *                             evidence} field above. Empty, not null, for a transaction that
+     *                             predates the reconciliation_explanation column (V55) and
+     *                             therefore has a status but no recorded reasoning.
+     */
+    public record ReconciliationExplanationDto(
+            String status,
+            UUID matchedTransactionId,
+            String summary,
+            List<String> evidence
+    ) {}
+}
