@@ -24,8 +24,7 @@ export function InsightsScreen() {
     ],
   });
 
-  const loading = insightsQ.isLoading || recurringQ.isLoading;
-  const refreshing = deriveRefreshing([insightsQ, recurringQ], loading);
+  const refreshing = deriveRefreshing([insightsQ, recurringQ], insightsQ.isLoading || recurringQ.isLoading);
   const sentences = insightsQ.data?.sentences ?? [];
   const recurring = recurringQ.data ?? [];
   const movers = (insightsQ.data?.movers ?? []).filter((m) => m.pctChange !== null).slice(0, 6);
@@ -52,100 +51,105 @@ export function InsightsScreen() {
         </Text>
       </View>
 
-      {loading ? (
-        <>
-          <SkeletonCard style={styles.section} lines={3} />
-          <SkeletonCard style={styles.section} lines={4} />
-          <SkeletonCard style={styles.section} lines={3} />
-        </>
+      {/* Each card gates on only the query its own data comes from -- Observations and Category
+          Movers both read insightsQ, Recurring Payments reads recurringQ -- so a slow one doesn't
+          hold the others on their skeleton after their own data has already arrived. */}
+      {insightsQ.isLoading ? (
+        <SkeletonCard style={styles.section} lines={3} />
       ) : (
-        <>
-          <Card style={styles.section}>
-            <SectionHeading title="This Month's Observations" />
-            {insightsQ.isError ? (
-              <Text style={[styles.error, { color: c.danger }]}>
-                Couldn&apos;t load your insights — pull down to try again.
-              </Text>
-            ) : sentences.length === 0 ? (
-              <EmptyState message="Nothing stands out this month yet — observations appear as more transactions land." />
-            ) : (
-              // Keyed by position: these sentences carry no id, the list never reorders or
-              // filters, and two identical observations would collide on the text itself.
-              sentences.map((s, i) => (
-                <View key={i} style={[styles.observation, { borderLeftColor: c.border }]}>
-                  <Text style={[styles.observationText, { color: c.ink }]}>{s}</Text>
-                </View>
-              ))
-            )}
-          </Card>
+        <Card style={styles.section}>
+          <SectionHeading title="This Month's Observations" />
+          {insightsQ.isError ? (
+            <Text style={[styles.error, { color: c.danger }]}>
+              Couldn&apos;t load your insights — pull down to try again.
+            </Text>
+          ) : sentences.length === 0 ? (
+            <EmptyState message="Nothing stands out this month yet — observations appear as more transactions land." />
+          ) : (
+            // Keyed by position: these sentences carry no id, the list never reorders or
+            // filters, and two identical observations would collide on the text itself.
+            sentences.map((s, i) => (
+              <View key={i} style={[styles.observation, { borderLeftColor: c.border }]}>
+                <Text style={[styles.observationText, { color: c.ink }]}>{s}</Text>
+              </View>
+            ))
+          )}
+        </Card>
+      )}
 
-          <Card style={styles.section}>
-            <SectionHeading title="Recurring Payments & Subscriptions" />
-            {recurringQ.isError ? (
-              <Text style={[styles.error, { color: c.danger }]}>
-                Couldn&apos;t load recurring payments — pull down to try again.
-              </Text>
-            ) : recurring.length === 0 ? (
-              <EmptyState message="No recurring payments detected yet — this needs at least 2 charges from the same merchant on a regular interval to spot a pattern." />
-            ) : (
-              recurring.map((r) => (
-                <View
-                  key={r.merchant}
-                  style={[styles.row, { borderBottomColor: c.border }]}
-                  accessible
-                  accessibilityLabel={`${r.merchant}, ${r.label}. ${fmtCurrency(r.averageAmount)} on average, seen ${
-                    r.occurrences
-                  } times. Next expected around ${fmtDate(r.nextEstimate) ?? r.nextEstimate}`}
-                >
-                  <View style={styles.rowMain}>
-                    <Text style={[styles.rowTitle, { color: c.ink }]} numberOfLines={1}>
-                      {r.merchant}
-                    </Text>
-                    <Text style={[styles.rowMeta, { color: c.mutedInk }]}>
-                      {fmtCurrency(r.averageAmount)} · seen {r.occurrences}×
-                    </Text>
-                  </View>
-                  <View style={styles.rowRight}>
-                    <Text style={[styles.badge, { color: c.primary, backgroundColor: c.primaryLight }]}>{r.label}</Text>
-                    <Text style={[styles.rowMeta, { color: c.mutedInk }]}>next ~{fmtDate(r.nextEstimate) ?? r.nextEstimate}</Text>
-                  </View>
-                </View>
-              ))
-            )}
-          </Card>
-
-          <Card style={styles.section}>
-            <SectionHeading title="Category Movers" />
-            {insightsQ.isError ? null : movers.length === 0 ? (
-              <EmptyState message="Not enough history yet to compare trends — add a few months of transactions." />
-            ) : (
-              movers.map((m) => (
-                <View
-                  key={m.category}
-                  style={[styles.row, { borderBottomColor: c.border }]}
-                  accessible
-                  accessibilityLabel={`${m.category}: ${fmtCurrency(m.current)} versus a usual ${fmtCurrency(
-                    m.priorAverage
-                  )}, ${(m.pctChange ?? 0) >= 0 ? 'up' : 'down'} ${Math.abs(m.pctChange ?? 0).toFixed(0)} percent`}
-                >
-                  <View style={styles.rowMain}>
-                    <Text style={[styles.rowTitle, { color: c.ink }]} numberOfLines={1}>
-                      {m.category}
-                    </Text>
-                    <Text style={[styles.rowMeta, { color: c.mutedInk }]}>
-                      {fmtCurrency(m.current)} vs usual {fmtCurrency(m.priorAverage)}
-                    </Text>
-                  </View>
-                  {/* Spending more is the bad direction here, so up is danger -- the inverse of
-                      the Dashboard's income KPI. Same convention as the web page. */}
-                  <Text style={[styles.delta, { color: (m.pctChange ?? 0) >= 0 ? c.danger : c.success }]}>
-                    {(m.pctChange ?? 0) >= 0 ? '▲' : '▼'} {Math.abs(m.pctChange ?? 0).toFixed(0)}%
+      {recurringQ.isLoading ? (
+        <SkeletonCard style={styles.section} lines={4} />
+      ) : (
+        <Card style={styles.section}>
+          <SectionHeading title="Recurring Payments & Subscriptions" />
+          {recurringQ.isError ? (
+            <Text style={[styles.error, { color: c.danger }]}>
+              Couldn&apos;t load recurring payments — pull down to try again.
+            </Text>
+          ) : recurring.length === 0 ? (
+            <EmptyState message="No recurring payments detected yet — this needs at least 2 charges from the same merchant on a regular interval to spot a pattern." />
+          ) : (
+            recurring.map((r) => (
+              <View
+                key={r.merchant}
+                style={[styles.row, { borderBottomColor: c.border }]}
+                accessible
+                accessibilityLabel={`${r.merchant}, ${r.label}. ${fmtCurrency(r.averageAmount)} on average, seen ${
+                  r.occurrences
+                } times. Next expected around ${fmtDate(r.nextEstimate) ?? r.nextEstimate}`}
+              >
+                <View style={styles.rowMain}>
+                  <Text style={[styles.rowTitle, { color: c.ink }]} numberOfLines={1}>
+                    {r.merchant}
+                  </Text>
+                  <Text style={[styles.rowMeta, { color: c.mutedInk }]}>
+                    {fmtCurrency(r.averageAmount)} · seen {r.occurrences}×
                   </Text>
                 </View>
-              ))
-            )}
-          </Card>
-        </>
+                <View style={styles.rowRight}>
+                  <Text style={[styles.badge, { color: c.primary, backgroundColor: c.primaryLight }]}>{r.label}</Text>
+                  <Text style={[styles.rowMeta, { color: c.mutedInk }]}>next ~{fmtDate(r.nextEstimate) ?? r.nextEstimate}</Text>
+                </View>
+              </View>
+            ))
+          )}
+        </Card>
+      )}
+
+      {insightsQ.isLoading ? (
+        <SkeletonCard style={styles.section} lines={3} />
+      ) : (
+        <Card style={styles.section}>
+          <SectionHeading title="Category Movers" />
+          {insightsQ.isError ? null : movers.length === 0 ? (
+            <EmptyState message="Not enough history yet to compare trends — add a few months of transactions." />
+          ) : (
+            movers.map((m) => (
+              <View
+                key={m.category}
+                style={[styles.row, { borderBottomColor: c.border }]}
+                accessible
+                accessibilityLabel={`${m.category}: ${fmtCurrency(m.current)} versus a usual ${fmtCurrency(
+                  m.priorAverage
+                )}, ${(m.pctChange ?? 0) >= 0 ? 'up' : 'down'} ${Math.abs(m.pctChange ?? 0).toFixed(0)} percent`}
+              >
+                <View style={styles.rowMain}>
+                  <Text style={[styles.rowTitle, { color: c.ink }]} numberOfLines={1}>
+                    {m.category}
+                  </Text>
+                  <Text style={[styles.rowMeta, { color: c.mutedInk }]}>
+                    {fmtCurrency(m.current)} vs usual {fmtCurrency(m.priorAverage)}
+                  </Text>
+                </View>
+                {/* Spending more is the bad direction here, so up is danger -- the inverse of
+                    the Dashboard's income KPI. Same convention as the web page. */}
+                <Text style={[styles.delta, { color: (m.pctChange ?? 0) >= 0 ? c.danger : c.success }]}>
+                  {(m.pctChange ?? 0) >= 0 ? '▲' : '▼'} {Math.abs(m.pctChange ?? 0).toFixed(0)}%
+                </Text>
+              </View>
+            ))
+          )}
+        </Card>
       )}
     </ScrollView>
   );
