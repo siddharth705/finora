@@ -116,6 +116,28 @@ class CapabilityCorpusCoverageTest {
         DECLARED_WITHOUT_A_TRACE.put("GRID_METADATA_TRAILING_LABEL", "no trace");
         DECLARED_WITHOUT_A_TRACE.put("FINANCIAL_PRODUCT_CLASSIFICATION", "no trace");
         DECLARED_WITHOUT_A_TRACE.put("PRINTED_SUMMARY_TOTALS", "no trace; newly registered");
+        DECLARED_WITHOUT_A_TRACE.put("CHEQUE_PAYABLE_FOOTER_CLOSED",
+                "no trace yet -- evidenced from the real axis-credit-card-statement document, which HAS "
+                        + "a committed trace, but that trace predates this trigger and was captured before "
+                        + "the document's own true-end footer text was known to matter -- re-capturing it "
+                        + "is a separate task from adding the trigger. Real-corpus behavior verified "
+                        + "directly via CorpusGarbageSweep against the original file instead.");
+        DECLARED_WITHOUT_A_TRACE.put("NEUCOINS_FOOTNOTE_CLOSED",
+                "no trace yet -- evidenced from a real HDFC \"Tata Neu Plus\" credit-card statement with "
+                        + "no committed trace in this corpus. Real-corpus behavior verified directly via "
+                        + "CorpusGarbageSweep against the original file instead.");
+        DECLARED_WITHOUT_A_TRACE.put("SAVINGS_AND_BENEFITS_SECTION_CLOSED",
+                "no trace yet -- evidenced from the real sbi-credit-card-statement document, which HAS a "
+                        + "committed trace, but that trace predates this trigger for the same reason as "
+                        + "CHEQUE_PAYABLE_FOOTER_CLOSED above. Real-corpus behavior verified directly via "
+                        + "CorpusGarbageSweep against the original file instead.");
+        DECLARED_WITHOUT_A_TRACE.put("PRINTED_TRANSACTION_TABLE_DATE_RANGE",
+                "no trace -- same scoping gap as GRID_METADATA_FALLBACK above: this fires in "
+                        + "TransactionTableDateRangeExtractor, called from PdfPreviewGenerator, never from "
+                        + "PdfTableLocator.locateAll -- the one call this test (via TraceValidator) ever "
+                        + "makes against a committed trace. Covered instead by "
+                        + "KotakCreditCardCategoryAndFooterRegressionTest, run directly against the same "
+                        + "committed trace through TransactionTableDateRangeExtractor.extract.");
         DECLARED_WITHOUT_A_TRACE.put("CREDIT_CARD_SUMMARY_TOTALS",
                 "no trace yet -- CreditCardSummaryExtractorTest exercises the GRID strategy on "
                         + "synthetic fixtures reproducing real observed shapes (a clean stacked grid, "
@@ -194,6 +216,24 @@ class CapabilityCorpusCoverageTest {
                         + "preserved for a trace to exercise this, which the Synthetic Fixture Policy "
                         + "requires be synthesized, not preserved. Covered instead by "
                         + "PdfMetadataExtractorTest's fully hand-synthesized fixtures.");
+        DECLARED_WITHOUT_A_TRACE.put("STATEMENT_PERIOD_IN_SENTENCE",
+                "no trace CAN cover it here, for the same reason as "
+                        + "ACCOUNT_PRODUCT_BANNER_IDENTITY below: capabilitiesTheCorpusExercises "
+                        + "drives PdfTableLocator.locateAll only and never runs "
+                        + "PdfMetadataExtractor, so no metadata-extractor capability can be "
+                        + "recorded through this harness. Covered instead by "
+                        + "PdfMetadataExtractorTest's fully hand-synthesized fixtures, including "
+                        + "the year-boundary case.");
+        DECLARED_WITHOUT_A_TRACE.put("ACCOUNT_PRODUCT_BANNER_IDENTITY",
+                "no trace CAN cover it here, for a different reason than the entries above: "
+                        + "capabilitiesTheCorpusExercises drives PdfTableLocator.locateAll only, and "
+                        + "never runs PdfMetadataExtractor, so no metadata-extractor capability can "
+                        + "ever be recorded through this harness regardless of the corpus. This one "
+                        + "is genuinely exercised by a committed trace -- the "
+                        + "bob-repeated-account-banner golden snapshot asserts the account number it "
+                        + "resolves -- so unlike CARD_ENDING_DIGITS_IDENTITY above, the gap is in "
+                        + "this harness's reach, not in the corpus. Widening it to run the metadata "
+                        + "extractor would let both entries be deleted.");
         // BLANK_COLUMN_NAME_QUALIFIED and RECOVERED_MISSING_DESCRIPTION_COLUMN are deliberately
         // NOT listed here: the already-committed sbi-credit-card-statement trace turns out to
         // exercise both for real (its own "( ` )" blank-currency cell, and a genuine missing-
@@ -205,30 +245,21 @@ class CapabilityCorpusCoverageTest {
                 "no trace, and none is planned -- same reasoning as BLANK_COLUMN_NAME_QUALIFIED, "
                         + "same real document. Covered instead by HeaderColumnRecoveryTest's fully "
                         + "hand-synthesized fixtures.");
-        DECLARED_WITHOUT_A_TRACE.put("HEADER_RECONSTRUCTED",
-                "no trace, deliberately -- motivated by a real SBI Credit Card statement's "
-                        + "supplementary-cardholder section (Phase 2E.1/2E.2), whose header prints one "
-                        + "column alone on the physical line above the row that gets accepted on its "
-                        + "own. Real-corpus verified directly against the committed "
-                        + "sbi-credit-card-statement.trace during development, and does not fire on it, "
-                        + "for two independent reasons found while widening this gate. First: this "
-                        + "engine is deliberately scoped to exactly ONE orphaned single-cell fragment "
-                        + "(PdfTableLocator.reconstructHeader's nonBlankCount(above) != 1 guard) -- a "
-                        + "real ICICI savings statement in the same corpus has a genuine THREE-cell "
-                        + "second tier one line above ITS accepted header, and composing all three in "
-                        + "unresolved recovered some real transactions but left the statement's own "
-                        + "aggregate balance-total check failing, a partial result this phase is not "
-                        + "scoped to ship (the general, multi-tier composition case is explicitly "
-                        + "deferred, design doc §8). Second, independently: even within scope, this "
-                        + "engine's row-compatibility validation (does the candidate's date column "
-                        + "bucket cleanly, with no two raw values colliding into one cell, across the "
-                        + "section's real rows) correctly refuses to prefer a reconstruction it cannot "
-                        + "verify improves anything, and the SBI trace's own redacted dates are not "
-                        + "parseable at all -- the same refusal a genuinely bad candidate would get, "
-                        + "which is the point: the engine cannot and must not tell those two cases "
-                        + "apart from evidence alone. Covered instead by HeaderReconstructionEngineTest's "
-                        + "fully hand-synthesized fixtures, which reproduce the single-fragment shape "
-                        + "with realistic, parseable dates.");
+        // PAGE_LEGEND_BLOCK_SUPPRESSED was DECLARED_WITHOUT_A_TRACE here -- the real SBI Credit
+        // Card.PDF it was originally evidenced from has no committed trace in this corpus. Entry
+        // deleted per this test's own ratchet: kotak-credit-card-category-sections-and-page-footer
+        // now exercises it for real too (a second, independently-evidenced real document's own
+        // page-1 payment-instructions legend, added to PAGE_LEGEND_BLOCK_START alongside the
+        // original SBI phrasing -- see PdfTableLocator.PAGE_LEGEND_BLOCK_START).
+        // HEADER_RECONSTRUCTED was DECLARED_WITHOUT_A_TRACE through Phase 2E.2, when
+        // reconstructHeader was deliberately scoped to exactly one orphaned single-cell fragment
+        // and the real ICICI savings statement's genuine three-cell second tier couldn't be composed
+        // without breaking its balance-total check. Phase 2E.5 generalized reconstructHeader to a
+        // multi-tier backward-composition walk, and icici-savings-ledger-validation now exercises it
+        // for real: composing that three-cell tier recovers the leading transaction correctly, with
+        // the balance chain and statement totals both verified. Entry deleted per this test's own
+        // ratchet -- see SplitHeaderRunsPdfTableLocatorTest and
+        // WrappedHeaderOnAScoringLinePdfTableLocatorTest for the row-count evidence.
     }
 
     /**

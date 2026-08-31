@@ -17,8 +17,8 @@
 
 export const hero = {
   headline: 'Money tells a story.',
-  headlineAccent: 'Finora helps you read it.',
-  blurb: 'Understand every rupee, not just your balance. Upload a statement — Finora does the rest.',
+  headlineAccent: 'Fynora helps you read it.',
+  blurb: 'Understand every rupee, not just your balance. Upload a statement — Fynora does the rest.',
   primaryCta: 'Import your first statement',
   secondaryCta: 'See how it works',
   assurances: [
@@ -76,7 +76,7 @@ export const importSection = {
   eyebrow: 'Import anything',
   title: 'Upload once.',
   titleLine2: 'Everything else is automatic.',
-  blurb: "Finora reads the statement, finds the accounts, sorts the transactions and has it ready before you've put the kettle on.",
+  blurb: "Fynora reads the statement, finds the accounts, sorts the transactions and has it ready before you've put the kettle on.",
   supported: ['PDF', 'CSV', 'Password-protected', 'Multiple accounts', 'Composite statements'],
 };
 
@@ -131,7 +131,7 @@ export const journey = {
 
 export const trust = {
   eyebrow: 'Complete transparency',
-  title: 'What Finora Will Never Do.',
+  title: 'What Fynora Will Never Do.',
   never: [
     'Sell your financial data',
     'Push loans at you',
@@ -163,17 +163,17 @@ export const security = {
   eyebrow: 'Security & privacy',
   title: 'You never hand us your bank login.',
   blurb:
-    'Finora reads statements you upload. There is no standing connection to your bank, so there is nothing for anyone to misuse.',
+    'Fynora reads statements you upload. There is no standing connection to your bank, so there is nothing for anyone to misuse.',
   chain: [
     { title: 'You', body: 'Your device, your statement.' },
     { title: 'HTTPS', body: 'Encrypted the whole way across.' },
-    { title: 'Finora', body: 'Checks it is really you, every request.' },
+    { title: 'Fynora', body: 'Checks it is really you, every request.' },
     { title: 'Private storage', body: 'Your files, fingerprinted and verified.' },
     { title: 'Your data only', body: 'Every query bound to your account.' },
   ],
   footnote: 'Passwords are hashed and never stored in readable form — not even we can see them.',
   ownership: 'Your financial data belongs to you.',
-  ownershipAccent: 'Finora exists to help you understand it — not to profit from it.',
+  ownershipAccent: 'Fynora exists to help you understand it — not to profit from it.',
 };
 
 export const showcase = {
@@ -196,7 +196,7 @@ export const everywhere = {
   // Update this note and the section wording together, never just the note.
   nativeStatus: 'In development',
   nativeNote:
-    'Finora runs in any browser today. Native iOS and Android apps are being built and are not on the app stores yet.',
+    'Fynora runs in any browser today. Native iOS and Android apps are being built and are not on the app stores yet.',
 };
 
 export const useCases = {
@@ -220,8 +220,8 @@ export const faq = {
       'Passwords are hashed with bcrypt and never stored in readable form, sessions use short-lived access tokens with rotating refresh tokens, and every request to a protected endpoint is verified server-side. Traffic is encrypted in transit over HTTPS, and uploaded statements are fingerprinted so a corrupted or swapped file is detected rather than served. Your data is never sold or shared.',
     ],
     [
-      'Does Finora connect to my bank account?',
-      'No, and that is deliberate. Finora never asks for your net-banking credentials and holds no connection to your bank — it reads only the statements you upload yourself. There is no standing access for anyone to misuse.',
+      'Does Fynora connect to my bank account?',
+      'No, and that is deliberate. Fynora never asks for your net-banking credentials and holds no connection to your bank — it reads only the statements you upload yourself. There is no standing access for anyone to misuse.',
     ],
     [
       'Can I import several bank accounts?',
@@ -229,11 +229,11 @@ export const faq = {
     ],
     [
       'Can I upload password-protected PDFs?',
-      'Yes. Most Indian banks e-mail statements locked with a password — enter it during upload and Finora opens the file to read it. The password travels in the request body, never in a URL, and is not stored afterwards, so a later re-import will ask again.',
+      'Yes. Most Indian banks e-mail statements locked with a password — enter it during upload and Fynora opens the file to read it. The password travels in the request body, never in a URL, and is not stored afterwards, so a later re-import will ask again.',
     ],
     [
       'How does categorization get better?',
-      'Correct a transaction once and Finora remembers that merchant, applying your preference on future imports. It records how confident each suggestion was and which signals matched, and anything below your confidence threshold waits for you rather than being filed quietly. It is always a suggestion, never a decision you cannot see or change.',
+      'Correct a transaction once and Fynora remembers that merchant, applying your preference on future imports. It records how confident each suggestion was and which signals matched, and anything below your confidence threshold waits for you rather than being filed quietly. It is always a suggestion, never a decision you cannot see or change.',
     ],
     [
       'Can I export or delete my data?',
@@ -245,7 +245,7 @@ export const faq = {
 export const finalCta = {
   title: 'Your next bank statement',
   titleLine2: "doesn't have to be another PDF.",
-  blurb: 'Let Finora turn it into clarity.',
+  blurb: 'Let Fynora turn it into clarity.',
   primary: 'Start free',
   footnote: 'Free forever for the core product. No credit card required.',
 };

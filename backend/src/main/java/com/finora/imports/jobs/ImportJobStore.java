@@ -72,6 +72,13 @@ public class ImportJobStore {
         this.repository = repository;
     }
 
+    /** Unencrypted, for callers with no key id to record (tests, mainly -- see
+     *  {@link ImportJob}'s equivalent constructor overload). */
+    public ImportJob enqueue(UUID userId, String fileName, String contentHash, String objectKey,
+                             StatementUpload.Format sourceFormat) {
+        return enqueue(userId, fileName, contentHash, objectKey, sourceFormat, null);
+    }
+
     /**
      * Records work to do, inside the caller's transaction.
      *
@@ -79,8 +86,9 @@ public class ImportJobStore {
      * precisely the property that breaks it.
      */
     public ImportJob enqueue(UUID userId, String fileName, String contentHash, String objectKey,
-                             StatementUpload.Format sourceFormat) {
-        return repository.save(new ImportJob(userId, fileName, contentHash, objectKey, sourceFormat.name()));
+                             StatementUpload.Format sourceFormat, String encryptionKeyId) {
+        return repository.save(new ImportJob(userId, fileName, contentHash, objectKey, sourceFormat.name(),
+                encryptionKeyId));
     }
 
     /**

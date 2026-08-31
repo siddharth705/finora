@@ -6,8 +6,9 @@ import { AuthProvider } from '../context/AuthContext';
 import { ThemeProvider } from '../context/ThemeContext';
 import { axeViolations, summarise } from '../test/a11y.measure';
 import Landing from './Landing';
-import Login from './Login';
-import Register from './Register';
+import AuthEntry from './AuthEntry';
+import { PasswordStep } from './auth-entry/PasswordStep';
+import { RegisterStep } from './auth-entry/RegisterStep';
 import ForgotPassword from './ForgotPassword';
 
 /**
@@ -45,10 +46,15 @@ function renderPage(ui: React.ReactElement) {
   );
 }
 
+// AuthEntry replaces the old Login/Register page-level checks (D-26 unified entry, 2026-08-24) --
+// it only ever renders the identify step on a fresh mount, so PasswordStep/RegisterStep (the
+// steps AuthEntry switches into) are checked directly below for equivalent, actually-narrower
+// coverage than the old two-page setup gave.
 const PUBLIC_PAGES: ReadonlyArray<readonly [string, () => React.ReactElement]> = [
   ['Landing', () => <Landing />],
-  ['Login', () => <Login />],
-  ['Register', () => <Register />],
+  ['AuthEntry (identify step)', () => <AuthEntry />],
+  ['PasswordStep', () => <PasswordStep identifier="jane@example.com" banner={null} onSuccess={() => {}} onNotYou={() => {}} />],
+  ['RegisterStep', () => <RegisterStep prefill={{}} referralCode={undefined} onSuccess={() => {}} onAccountExists={() => {}} />],
   ['ForgotPassword', () => <ForgotPassword />],
 ];
 

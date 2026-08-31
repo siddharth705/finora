@@ -136,7 +136,7 @@ function NeedsAttentionSection({ data }: { data: NeedsAttentionDto }) {
  * D-27 PR3-D. Signup -> first import -> first budget -> first goal, the owner's own named
  * sequence -- a simple snapshot (each bar is "how many users have EVER reached this stage",
  * against the platform right now), not a cohort/time-series. See backend ActivationFunnelDto's
- * own doc comment for why stages aren't guaranteed to be strict subsets of each other -- Finora
+ * own doc comment for why stages aren't guaranteed to be strict subsets of each other -- Fynora
  * doesn't require an import before a budget, so a later bar can in principle exceed an earlier
  * one, and that's shown as-is rather than corrected into a falsely monotonic funnel.
  */
@@ -219,7 +219,11 @@ const QUICK_ACTIONS = [
  * today -- there is no rate to report, not a perfect or a failing one.
  */
 function ImportSuccessRateCard({ importsToday, importsWithSkippedRowsToday }: { importsToday: number; importsWithSkippedRowsToday: number }) {
-  const cleanImports = importsToday - importsWithSkippedRowsToday;
+  // Clamped defensively: the two backend counts use slightly different boundary comparisons at
+  // the exact-instant edge (see StatementImportRepository.countByImportedAtAfter vs
+  // .countWithSkippedRowsAfter), so a negative value is theoretically possible even though
+  // "with skipped rows" is meant to be a subset of "all imports."
+  const cleanImports = Math.max(0, importsToday - importsWithSkippedRowsToday);
   const rate = importsToday > 0 ? Math.round((cleanImports / importsToday) * 100) : null;
   return (
     <div className="flex items-center gap-3 bg-card border border-border rounded-xl2 shadow-card px-4 py-3.5">
@@ -249,7 +253,7 @@ function InactiveUsersCard({ count }: { count: number }) {
 }
 
 /**
- * The Operational Dashboard -- "Is Finora healthy?" as one screen, meant to be this app's actual
+ * The Operational Dashboard -- "Is Fynora healthy?" as one screen, meant to be this app's actual
  * home rather than a launchpad into other pages. Alerts and system status come entirely from
  * AdminHealthRegistryService's extensible provider registry (see com.finora.health
  * .HealthProvider's class comment) -- adding a new module's observability later means the
@@ -486,7 +490,7 @@ export default function Dashboard() {
   const canSeeDashboard = hasPermission('PLATFORM_STATS_VIEW');
 
   return (
-    <AdminLayout title="Operational Dashboard" subtitle="Is Finora healthy? Real-time platform status">
+    <AdminLayout title="Operational Dashboard" subtitle="Is Fynora healthy? Real-time platform status">
       {canSeeDashboard ? (
         <DashboardContent />
       ) : (

@@ -31,6 +31,9 @@ interface AuthState {
   // already verified -- true for an auto-linked existing account, always false for a newly
   // created one (Google sign-in never carries a phone number; see D-23).
   loginWithGoogle: (idToken: string) => Promise<boolean>;
+  // Same shape as loginWithGoogle -- fullName is only present on Apple's first authorization for
+  // a given account/client id pair, so callers pass whatever the popup handed back (often null).
+  loginWithApple: (idToken: string, fullName: string | null) => Promise<boolean>;
   setPhoneVerified: (verified: boolean) => void;
   logout: () => void;
 }
@@ -130,6 +133,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return res.data.phoneVerified;
   }
 
+  async function loginWithApple(idToken: string, fullName: string | null): Promise<boolean> {
+    const res = await authApi.apple(idToken, fullName);
+    persist(res.data);
+    return res.data.phoneVerified;
+  }
+
   function setPhoneVerified(verified: boolean) {
     safeStorage.setItem('finora_phone_verified', String(verified));
     setPhoneVerifiedState(verified);
@@ -209,7 +218,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ token, bootstrapping, email, fullName, phoneVerified, login, reactivate, register, loginWithGoogle, setPhoneVerified, logout }}>
+    <AuthContext.Provider value={{ token, bootstrapping, email, fullName, phoneVerified, login, reactivate, register, loginWithGoogle, loginWithApple, setPhoneVerified, logout }}>
       {children}
     </AuthContext.Provider>
   );

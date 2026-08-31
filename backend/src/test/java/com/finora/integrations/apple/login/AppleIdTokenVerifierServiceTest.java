@@ -34,7 +34,7 @@ import static org.mockito.Mockito.*;
 class AppleIdTokenVerifierServiceTest {
 
     private static final String KEY_ID = "test-key-1";
-    private static final String BUNDLE_ID = "com.finoratech.app";
+    private static final String BUNDLE_ID = "com.fynora.app";
     private static final String ISSUER = "https://appleid.apple.com";
 
     private RSAPrivateKey privateKey;

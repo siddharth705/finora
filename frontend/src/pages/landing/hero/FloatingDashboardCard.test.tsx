@@ -25,7 +25,7 @@ describe('FloatingDashboardCard', () => {
     // DashboardMock's own aria-label for level="simple" -- see DashboardMock.tsx's LEVEL_LABEL.
     expect(
       screen.getByRole('img', {
-        name: /The Finora dashboard showing income, expenses, savings and cash flow/,
+        name: /The Fynora dashboard showing income, expenses, savings and cash flow/,
       })
     ).toBeInTheDocument();
   });
@@ -35,7 +35,7 @@ describe('FloatingDashboardCard', () => {
     render(<FloatingDashboardCard />);
     expect(
       screen.getByRole('img', {
-        name: /The Finora dashboard showing income, expenses, savings and cash flow/,
+        name: /The Fynora dashboard showing income, expenses, savings and cash flow/,
       })
     ).toBeInTheDocument();
   });
@@ -46,7 +46,7 @@ describe('FloatingDashboardCard', () => {
     render(<FloatingDashboardCard />);
     expect(
       screen.getByRole('img', {
-        name: /The Finora dashboard showing income, expenses, savings and cash flow/,
+        name: /The Fynora dashboard showing income, expenses, savings and cash flow/,
       })
     ).toBeInTheDocument();
   });

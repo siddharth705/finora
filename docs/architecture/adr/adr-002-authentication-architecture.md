@@ -153,12 +153,12 @@ authentication logic does not.
 HttpOnly · Secure · SameSite=Lax · Path=/api/v1/auth · no Domain
 ```
 
-*Host-only* — no `Domain`. `Domain=.finoratech.info` would send the durable credential to every
+*Host-only* — no `Domain`. `Domain=.fynora.net` would send the durable credential to every
 present and future subdomain when only the API host that issued it ever needs it. The frontend
 never reads the cookie, so sharing it buys nothing.
 
 *`SameSite=Lax` suffices* because `app.` and `api.` share the registrable domain
-`finoratech.info` — same-site though cross-origin. This only became possible when the API moved
+`fynora.net` — same-site though cross-origin. This only became possible when the API moved
 onto that domain. The alternative, `SameSite=None`, is what browsers are progressively restricting
 as third-party cookies, so a credential depending on it ships with a deprecation clock.
 
@@ -183,7 +183,7 @@ localStorage write" reads like a one-line change and is not one.
    holds its refresh token in `SecureStore` and installed builds will keep sending the field.
 
 2. **CSRF, still.** `SameSite=Lax` stops a cross-*site* POST, but `app.` and `api.` are same-site by
-   design, so any present or future `finoratech.info` subdomain can reach `/auth/refresh` with the
+   design, so any present or future `fynora.net` subdomain can reach `/auth/refresh` with the
    cookie attached. CORS stops it *reading* the response, which bounds the impact to forcing a
    rotation — but a forced rotation makes the victim's real tab replay a rotated token, which is the
    theft signal, which signs them out everywhere. The mitigation is the required custom header named

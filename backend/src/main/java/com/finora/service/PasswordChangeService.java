@@ -88,7 +88,7 @@ public class PasswordChangeService {
             // Reachable today only for a Google Sign-In account that verified above but has not
             // yet gone through VerifyPhone.tsx's own "Add your phone number" flow -- every other
             // account has a phone number required at registration. See
-            // AuthService.resolveResetPasswordPhone for the identical guard on the reset-password
+            // AuthService.verifyResetPasswordPhone for the identical guard on the reset-password
             // path.
             throw new ApiException(HttpStatus.BAD_REQUEST,
                     "Add a phone number to your account before changing your password or deleting your account.");

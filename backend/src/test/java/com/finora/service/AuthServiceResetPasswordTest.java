@@ -2,7 +2,7 @@ package com.finora.service;
 
 import com.finora.config.EmailProperties;
 import com.finora.dto.AuthDtos.ResetPasswordRequest;
-import com.finora.dto.AuthDtos.ResolveResetPasswordPhoneRequest;
+import com.finora.dto.AuthDtos.VerifyResetPasswordPhoneRequest;
 import com.finora.entity.PasswordResetToken;
 import com.finora.entity.User;
 import com.finora.exception.ApiException;
@@ -31,8 +31,9 @@ import static org.mockito.Mockito.*;
  * itself -- a reset link alone (proof of email access) is no longer sufficient to change a
  * password, matching the same two-factor principle VerifyPhone already applies elsewhere. Covers
  * the original token-validation cases (valid/used/expired/unknown) plus the Firebase requirement
- * (matching phone succeeds, mismatched phone is rejected) and resolveResetPasswordPhone() (the
- * endpoint that reveals the real phone number the frontend hands to Firebase directly).
+ * (matching phone succeeds, mismatched phone is rejected) and verifyResetPasswordPhone() (BH-015
+ * fix: confirms a user-typed phone number against the account server-side, before the client is
+ * allowed to hand that same number to Firebase -- never reveals the real number itself).
  */
 class AuthServiceResetPasswordTest {
 
@@ -70,6 +71,7 @@ class AuthServiceResetPasswordTest {
                 mock(com.finora.config.RequestMetadata.class),
                 mock(com.finora.service.SubscriptionService.class),
                 mock(com.finora.service.ReferralService.class),
+                mock(com.finora.service.MerchantSeedService.class),
                 // SEC-07: same-thread executor -- runs the dispatched email/audit work
                 // synchronously so assertions against it don't race a real background thread.
                 Runnable::run,
@@ -207,36 +209,73 @@ class AuthServiceResetPasswordTest {
         verify(userRepository, never()).save(any());
     }
 
+    /**
+     * BH-015 fix: the endpoint no longer reveals the account's real phone number. The user types
+     * their own number; this only confirms whether it matches (so the client may proceed to call
+     * Firebase with the SAME number the user just typed, never a value the backend handed back).
+     */
     @Test
-    void resolveResetPasswordPhone_withValidToken_returnsTheAccountsPhoneNumber() {
+    void verifyResetPasswordPhone_withValidTokenAndMatchingPhone_succeedsAndDoesNotConsumeToken() {
         String rawToken = "valid-raw-token";
         PasswordResetToken prt = tokenRecord(rawToken, Instant.now().plusSeconds(900), null);
         when(resetTokenRepository.findByTokenHash(TokenHasher.sha256(rawToken))).thenReturn(Optional.of(prt));
         User user = existingUser();
         when(userRepository.findById(userId)).thenReturn(Optional.of(user));
 
-        var response = authService.resolveResetPasswordPhone(new ResolveResetPasswordPhoneRequest(rawToken));
+        var response = authService.verifyResetPasswordPhone(new VerifyResetPasswordPhoneRequest(rawToken, "+919999999999"));
 
-        assertThat(response.phoneNumber()).isEqualTo("+919999999999");
-        // Requesting the phone number must NOT consume the reset token itself -- only a fully
-        // completed reset (resetPassword()) does that, so a user who looks it up but never
-        // finishes can still use the same link again within its normal expiry.
+        assertThat(response.message()).isNotBlank();
+        // Verifying the phone number must NOT consume the reset token itself -- only a fully
+        // completed reset (resetPassword()) does that, so a user who verifies but never finishes
+        // can still use the same link again within its normal expiry.
         assertThat(prt.getUsedAt()).isNull();
     }
 
     @Test
-    void resolveResetPasswordPhone_withExpiredToken_throwsBeforeRevealingAnything() {
+    void verifyResetPasswordPhone_toleratesAMissingCountryCodePrefix_sameAsResetPasswordsOwnFirebaseCheck() {
+        // Reuses phoneNumbersMatch() -- the exact digit-only comparison resetPassword() already
+        // applies to the Firebase-verified number -- so this should tolerate the same "+91" vs
+        // bare-digits difference a typed number could plausibly have.
+        String rawToken = "valid-raw-token";
+        PasswordResetToken prt = tokenRecord(rawToken, Instant.now().plusSeconds(900), null);
+        when(resetTokenRepository.findByTokenHash(TokenHasher.sha256(rawToken))).thenReturn(Optional.of(prt));
+        User user = existingUser();
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+
+        var response = authService.verifyResetPasswordPhone(new VerifyResetPasswordPhoneRequest(rawToken, "919999999999"));
+
+        assertThat(response.message()).isNotBlank();
+    }
+
+    @Test
+    void verifyResetPasswordPhone_withValidTokenButMismatchedPhone_throwsAGenericErrorAndDoesNotConsumeTheToken() {
+        String rawToken = "valid-raw-token";
+        PasswordResetToken prt = tokenRecord(rawToken, Instant.now().plusSeconds(900), null);
+        when(resetTokenRepository.findByTokenHash(TokenHasher.sha256(rawToken))).thenReturn(Optional.of(prt));
+        when(userRepository.findById(userId)).thenReturn(Optional.of(existingUser()));
+
+        assertThatThrownBy(() -> authService.verifyResetPasswordPhone(new VerifyResetPasswordPhoneRequest(rawToken, "+911111111111")))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("doesn't match");
+
+        assertThat(prt.getUsedAt()).isNull();
+    }
+
+    @Test
+    void verifyResetPasswordPhone_withExpiredToken_throwsBeforeCheckingThePhoneNumber() {
         String rawToken = "expired-token";
         PasswordResetToken prt = tokenRecord(rawToken, Instant.now().minusSeconds(60), null);
         when(resetTokenRepository.findByTokenHash(TokenHasher.sha256(rawToken))).thenReturn(Optional.of(prt));
 
-        assertThatThrownBy(() -> authService.resolveResetPasswordPhone(new ResolveResetPasswordPhoneRequest(rawToken)))
+        assertThatThrownBy(() -> authService.verifyResetPasswordPhone(new VerifyResetPasswordPhoneRequest(rawToken, "+919999999999")))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("expired");
+
+        verify(userRepository, never()).findById(any());
     }
 
     @Test
-    void resolveResetPasswordPhone_onAGoogleAccountWithNoPhoneNumberOnFile_pointsToGoogleSignInInsteadOfAnAdministrator() {
+    void verifyResetPasswordPhone_onAGoogleAccountWithNoPhoneNumberOnFile_pointsToGoogleSignInInsteadOfAnAdministrator() {
         // A null phoneNumber (no NOT NULL constraint at the DB level, V8) means a Google Sign-In
         // account today -- AuthService.createGoogleUserRecord is the only writer that leaves it
         // unset. Such an account also has no password of its own to reset, so the message should
@@ -249,13 +288,13 @@ class AuthServiceResetPasswordTest {
         user.setSignInMethod(User.SIGN_IN_METHOD_GOOGLE);
         when(userRepository.findById(userId)).thenReturn(Optional.of(user));
 
-        assertThatThrownBy(() -> authService.resolveResetPasswordPhone(new ResolveResetPasswordPhoneRequest(rawToken)))
+        assertThatThrownBy(() -> authService.verifyResetPasswordPhone(new VerifyResetPasswordPhoneRequest(rawToken, "+919999999999")))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("Sign in with Google");
     }
 
     @Test
-    void resolveResetPasswordPhone_onAPasswordAccountWithNoPhoneNumberOnFile_stillPointsAtAnAdministratorNotGoogle() {
+    void verifyResetPasswordPhone_onAPasswordAccountWithNoPhoneNumberOnFile_stillPointsAtAnAdministratorNotGoogle() {
         // The "real, if unlikely" case this guard was originally written for: a PASSWORD-method
         // account somehow missing its phone number (no DB-level NOT NULL). It has a real
         // password and no Google identity to fall back to, so it must NOT get the Google-Sign-In
@@ -269,7 +308,7 @@ class AuthServiceResetPasswordTest {
         user.setSignInMethod(User.SIGN_IN_METHOD_PASSWORD);
         when(userRepository.findById(userId)).thenReturn(Optional.of(user));
 
-        assertThatThrownBy(() -> authService.resolveResetPasswordPhone(new ResolveResetPasswordPhoneRequest(rawToken)))
+        assertThatThrownBy(() -> authService.verifyResetPasswordPhone(new VerifyResetPasswordPhoneRequest(rawToken, "+919999999999")))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("Contact an administrator")
                 .hasMessageNotContaining("Sign in with Google");

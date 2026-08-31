@@ -2,6 +2,10 @@ package com.finora.config;
 
 import org.junit.jupiter.api.Test;
 
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -45,6 +49,65 @@ class RateLimiterTest {
         assertThat(limiter.allow("client-e")).isFalse();
         Thread.sleep(1100);
         assertThat(limiter.allow("client-e")).isTrue();
+    }
+
+    /**
+     * Deterministic version of the sliding-window boundary, via the injectable-clock seam instead
+     * of a real sleep(). Strict expiry rule under test: a timestamp is retained while
+     * {@code now - timestamp < windowSeconds} -- so a batch of maxRequests all sent at t=0 must
+     * still fully count against the limit at t=windowSeconds-1 (age windowSeconds-1, still
+     * retained), and must have fully expired by t=windowSeconds (age windowSeconds exactly, which
+     * the strict rule expires) -- freeing the limit back up.
+     */
+    @Test
+    void allow_treatsABatchAsExpiredOnlyOnceItIsAFullWindowOld() {
+        MutableClock clock = new MutableClock(Instant.ofEpochSecond(0));
+        int maxRequests = 3;
+        long windowSeconds = 10;
+        RateLimiter limiter = new RateLimiter(maxRequests, windowSeconds, RateLimiter.DEFAULT_SWEEP_INTERVAL_SECONDS, clock);
+
+        for (int i = 0; i < maxRequests; i++) {
+            assertThat(limiter.allow("client-f")).isTrue();
+        }
+
+        clock.advanceTo(Instant.ofEpochSecond(windowSeconds - 1));
+        assertThat(limiter.allow("client-f"))
+                .as("the original batch is windowSeconds-1 old -- still within the rolling window")
+                .isFalse();
+
+        clock.advanceTo(Instant.ofEpochSecond(windowSeconds));
+        assertThat(limiter.allow("client-f"))
+                .as("the original batch is now exactly windowSeconds old -- expired under the strict rule")
+                .isTrue();
+    }
+
+    /** Test-only seam for {@link RateLimiter}'s injectable-clock constructor -- lets a test move
+     *  time to an exact boundary instead of sleeping past it. */
+    private static final class MutableClock extends Clock {
+        private Instant instant;
+
+        MutableClock(Instant start) {
+            this.instant = start;
+        }
+
+        void advanceTo(Instant next) {
+            this.instant = next;
+        }
+
+        @Override
+        public ZoneId getZone() {
+            return ZoneOffset.UTC;
+        }
+
+        @Override
+        public Clock withZone(ZoneId zone) {
+            throw new UnsupportedOperationException("not needed by RateLimiter, which only reads instant()");
+        }
+
+        @Override
+        public Instant instant() {
+            return instant;
+        }
     }
 
     /**

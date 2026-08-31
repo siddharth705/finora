@@ -26,27 +26,34 @@ class CorsConfigTest {
     @Test
     void singleOrigin_isRegisteredExactly() {
         CorsConfiguration config = configFor("http://localhost:5173");
-        assertThat(config.getAllowedOrigins()).containsExactly("http://localhost:5173");
+        assertThat(config.getAllowedOriginPatterns()).containsExactly("http://localhost:5173");
     }
 
     @Test
     void multipleOrigins_withASpaceAfterTheComma_areAllRegisteredTrimmed() {
         CorsConfiguration config = configFor("http://localhost:5173, https://app.finora.example");
-        assertThat(config.getAllowedOrigins())
+        assertThat(config.getAllowedOriginPatterns())
                 .containsExactly("http://localhost:5173", "https://app.finora.example");
     }
 
     @Test
     void multipleOrigins_withNoSpaceAfterTheComma_areAllRegistered() {
         CorsConfiguration config = configFor("http://localhost:5173,https://app.finora.example");
-        assertThat(config.getAllowedOrigins())
+        assertThat(config.getAllowedOriginPatterns())
                 .containsExactly("http://localhost:5173", "https://app.finora.example");
     }
 
     @Test
     void aTrailingComma_doesNotProduceABlankOriginEntry() {
         CorsConfiguration config = configFor("http://localhost:5173,https://app.finora.example,");
-        assertThat(config.getAllowedOrigins())
+        assertThat(config.getAllowedOriginPatterns())
                 .containsExactly("http://localhost:5173", "https://app.finora.example");
+    }
+
+    @Test
+    void wildcardSubdomainPattern_isRegisteredForCloudflarePagesPreviews() {
+        CorsConfiguration config = configFor("https://*.finora-cng.pages.dev");
+        assertThat(config.getAllowedOriginPatterns())
+                .containsExactly("https://*.finora-cng.pages.dev");
     }
 }

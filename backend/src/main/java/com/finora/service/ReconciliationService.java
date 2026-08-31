@@ -1,6 +1,9 @@
 package com.finora.service;
 
+import com.finora.entity.StatementImport;
 import com.finora.entity.Transaction;
+import com.finora.entity.TransactionRelationship;
+import com.finora.repository.AccountRepository;
 import com.finora.repository.TransactionRepository;
 import com.finora.util.CategoryRules;
 import org.slf4j.Logger;
@@ -12,6 +15,7 @@ import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -33,8 +37,16 @@ public class ReconciliationService {
     // the refund pass below. Deliberately not folded into CategoryRules (util package): that
     // table drives the CATEGORY suggestion ("Fees/Interest", "Transfer", ...), this drives
     // RECONCILIATION status, a different concern evaluated at a different point in the pipeline.
+    //
+    // "reversal" used to live in this set. Split out below (Phase 1 of the reconciliation
+    // roadmap, docs/proposals/reconciliation-evolution-roadmap-proposal.md) because a bank-side
+    // reversal ("this payment bounced") and a merchant refund ("this order was returned") are
+    // different real-world events that were producing an identical REFUND verdict -- the pass's
+    // matching mechanism (same account, refund window, capacity tracking) is unchanged, only the
+    // final classification now distinguishes them.
     private static final Set<String> REFUND_KEYWORDS = Set.of(
-            "refund", "reversal", "returned", "chargeback", "credit adjustment", "cancelled", "canceled");
+            "refund", "returned", "chargeback", "credit adjustment", "cancelled", "canceled");
+    private static final Set<String> REVERSAL_KEYWORDS = Set.of("reversal", "payment reversed");
 
     // A run past this is worth a log line on its own. Chosen against the measurement in
     // scaling-triggers.md rather than picked as a round number: the windowed passes take ~105 ms
@@ -44,15 +56,36 @@ public class ReconciliationService {
 
     private static final Logger log = LoggerFactory.getLogger(ReconciliationService.class);
 
+    // The roadmap doc's needs-review cutoff (Part 5): any match scoring below this becomes a
+    // CANDIDATE edge instead of AUTO_CONFIRMED -- reusing TransactionRelationship.Status rather
+    // than adding a separate needs_review column, since CANDIDATE already means exactly "written,
+    // not yet trusted enough to stand on its own." This governs only the graph edge's status; the
+    // Transaction row's own reconciliationStatus/legacy pointer is unaffected -- those stay the
+    // simple, always-authoritative signal they have always been, and it is the more sophisticated
+    // graph layer that carries the confidence-aware distinction for whatever review surface Phase
+    // 2's Founder Operations Dashboard item eventually builds on top of it.
+    private static final int NEEDS_REVIEW_THRESHOLD = 80;
+
     private final TransactionRepository transactionRepository;
+    private final AccountRepository accountRepository;
     private final RelationshipService relationshipService;
     private final AuditService auditService;
+    private final TransactionGraphService transactionGraphService;
+    private final com.finora.integrations.google.merchant.GmailReconciliationMatcher gmailReconciliationMatcher;
+    private final com.finora.repository.StatementImportRepository statementImportRepository;
 
-    public ReconciliationService(TransactionRepository transactionRepository, RelationshipService relationshipService,
-                                  AuditService auditService) {
+    public ReconciliationService(TransactionRepository transactionRepository, AccountRepository accountRepository,
+                                  RelationshipService relationshipService,
+                                  AuditService auditService, TransactionGraphService transactionGraphService,
+                                  com.finora.integrations.google.merchant.GmailReconciliationMatcher gmailReconciliationMatcher,
+                                  com.finora.repository.StatementImportRepository statementImportRepository) {
         this.transactionRepository = transactionRepository;
+        this.accountRepository = accountRepository;
         this.relationshipService = relationshipService;
         this.auditService = auditService;
+        this.transactionGraphService = transactionGraphService;
+        this.gmailReconciliationMatcher = gmailReconciliationMatcher;
+        this.statementImportRepository = statementImportRepository;
     }
 
     /**
@@ -70,7 +103,14 @@ public class ReconciliationService {
      *    routinely differs entirely from the original purchase's.
      */
     public void reconcileForUser(UUID userId) {
-        List<Transaction> all = transactionRepository.findByUserId(userId);
+        // Deleted-account leak (see DashboardService.summarize for the original fix): a deleted
+        // account's transactions deliberately keep deleted_at unset, so findByUserId alone would
+        // keep re-matching them against a still-live account's rows forever, not just during
+        // StatementImportService's 7-day grace window.
+        List<UUID> liveAccountIds = accountRepository.findByUserId(userId).stream()
+                .map(com.finora.entity.Account::getId).toList();
+        List<Transaction> all = liveAccountIds.isEmpty() ? List.of()
+                : transactionRepository.findByUserIdAndAccountIdIn(userId, liveAccountIds);
         // alwaysRecord=false: this is the per-edit path. See reconcile()'s emission block.
         reconcile(userId, all, Map.of("transactionsProcessed", all.size()), false);
     }
@@ -107,7 +147,13 @@ public class ReconciliationService {
         }
         LocalDate from = earliestImported.minusDays(ReconciliationPolicy.CANDIDATE_WINDOW_DAYS);
         LocalDate to = latestImported.plusDays(ReconciliationPolicy.CANDIDATE_WINDOW_DAYS);
-        List<Transaction> candidates = transactionRepository.findByUserIdAndTxnDateBetween(userId, from, to);
+        // Deleted-account leak (see reconcileForUser above for the original fix): a deleted
+        // account's transactions deliberately keep deleted_at unset, so the unscoped finder would
+        // keep re-matching them against a still-live account's rows forever.
+        List<UUID> liveAccountIds = accountRepository.findByUserId(userId).stream()
+                .map(com.finora.entity.Account::getId).toList();
+        List<Transaction> candidates = liveAccountIds.isEmpty() ? List.of()
+                : transactionRepository.findByUserIdAndTxnDateBetweenAndAccountIdIn(userId, from, to, liveAccountIds);
         // candidatesLoaded, NOT transactionsProcessed. The unbounded path's field means "how many
         // transactions this user has", and a scaling trend built on it would silently change
         // meaning the day an import started reporting a window instead. Two names, two meanings,
@@ -137,6 +183,51 @@ public class ReconciliationService {
                            boolean alwaysRecord) {
         long startedAtNanos = System.nanoTime();
 
+        // General retroactive edge cleanup (docs/proposals/reconciliation-evolution-roadmap-
+        // proposal.md, Part 3's supersession gap). AccountService.delete() rejects graph edges for
+        // every account deleted from now on, but an account deleted BEFORE that existed -- or
+        // through any path that doesn't go through AccountService.delete -- can leave a live edge
+        // of ANY relationship type (TRANSFER, REFUND, DUPLICATE, a Gmail cross-source match,
+        // CC_PAYMENT) sitting in the graph, pointing at a transaction whose account the user can no
+        // longer even see. Deliberately not scoped to one relationship type the way an earlier
+        // version of this fix was: a stale edge from any pass has the identical failure mode
+        // (excluding real, currently-visible money from cash flow to "net against" spend that no
+        // longer exists anywhere the user can see it), so the fix belongs at this shared level, not
+        // duplicated per pass.
+        //
+        // `all` is not a substitute for this lookup: reconcileForUser already excludes dead-account
+        // rows from it, so there is nothing left in `all` to diff against; reconcileForImport
+        // leaves every account in scope deliberately (see that method's own doc comment), so `all`
+        // there can already contain dead-account rows without saying which ones. Both cases need
+        // the same direct question answered the same way: an unscoped fetch of every transaction
+        // this user has, checked against which accounts are still live.
+        //
+        // Real, not free: unlike the passes below, which all read the already-fetched `all`, this
+        // is a genuinely new round trip on every single call -- this method runs synchronously
+        // after every transaction create, update, delete, import confirm and statement delete, so
+        // that cost lands on every one of them, for every user, indefinitely, not just for users
+        // who have ever deleted an account. Accepted deliberately: the alternative (skip this and
+        // leave the CC_PAYMENT-only version of the fix in place) traded correctness for that
+        // saved query on every OTHER relationship type, and a wrong reconciliation number is worse
+        // than one more indexed lookup. Revisit if SLOW_RUN_WARN_MS starts firing because of it --
+        // narrowing this to run only when an account was actually just deleted (event-driven, the
+        // way AccountService.delete's own forward-looking half already is) would remove the
+        // per-call cost entirely, at the price of no longer self-healing data from before this fix.
+        List<com.finora.entity.Account> liveAccounts = accountRepository.findByUserId(userId);
+        Set<UUID> liveAccountIds = liveAccounts.stream()
+                .map(com.finora.entity.Account::getId).collect(java.util.stream.Collectors.toSet());
+        // Kept (not just the id set above) so the CC_PAYMENT pass below can read a card account's
+        // own accountNumberMasked for last-4 matching without a second accountRepository round
+        // trip -- see that pass's own comment.
+        Map<UUID, com.finora.entity.Account> accountsById = liveAccounts.stream()
+                .collect(java.util.stream.Collectors.toMap(com.finora.entity.Account::getId, a -> a));
+        List<UUID> deadAccountTransactionIds = transactionRepository.findByUserId(userId).stream()
+                .filter(t -> !liveAccountIds.contains(t.getAccountId()))
+                .map(Transaction::getId)
+                .toList();
+        int staleEdgesRejected = deadAccountTransactionIds.isEmpty() ? 0
+                : transactionGraphService.rejectEdgesTouchingTransactions(deadAccountTransactionIds);
+
         // 1) Duplicates -- grouped in-memory over the already-fetched `all` list rather than one
         // findPotentialDuplicates() query per transaction (the original shape of this pass, and
         // a real N+1: a user re-importing statements ends up re-running this after every import,
@@ -157,7 +248,8 @@ public class ReconciliationService {
         // Dashboard's duplicateMatches/transferMatches/refundMatches already show, computed
         // fresh on every read -- this is a different, complementary number: how much did the
         // most recent run actually do).
-        int newDuplicates = 0, newTransfers = 0, newRefunds = 0;
+        int newDuplicates = 0, newTransfers = 0, newRefunds = 0, newReversals = 0, newGmailMatches = 0,
+                newCcPaymentMatches = 0, newInvestmentTransfers = 0;
 
         // Every row the passes below touch, written once at the end instead of one save() per
         // match. A large first import can flag hundreds of duplicates, and each save() was its own
@@ -172,33 +264,67 @@ public class ReconciliationService {
         // subject of the duplicate pass).
         Set<Transaction> dirty = new LinkedHashSet<>();
 
+        // Every graph edge the four passes below produce, written once via TransactionGraphService
+        // .linkAll(...) at the end -- same reasoning as `dirty` above, and for the same run: an
+        // import that flags hundreds of duplicates would otherwise mean hundreds of individual
+        // exists-check-plus-save round trips against transaction_relationships.
+        List<TransactionGraphService.PendingEdge> pendingEdges = new java.util.ArrayList<>();
+
         Map<String, List<Transaction>> byDuplicateKey = new HashMap<>();
         for (Transaction t : all) {
             if (t.getIsDuplicateOf() != null) continue; // already resolved by a prior run
             byDuplicateKey.computeIfAbsent(duplicateKey(t), k -> new java.util.ArrayList<>()).add(t);
         }
-        for (List<Transaction> group : byDuplicateKey.values()) {
-            if (group.size() < 2) continue;
-            Transaction earliest = group.stream().min(Comparator.comparing(Transaction::getCreatedAt)).orElseThrow();
-            for (Transaction t : group) {
-                if (t == earliest || t.getIsDuplicateOf() != null) continue;
-                // A human already ruled on this row and said it is a real, separate transaction.
-                // Nothing this pass can observe outranks that: it sees identical date, amount and
-                // description and cannot distinguish "the same statement uploaded twice" from "two
-                // metro fares on one day", which is why it needs to be told rather than left to
-                // infer. Marking it anyway is what made the ledger and the dashboard disagree by
-                // exactly the rows the user had asked for -- see V65.
-                //
-                // Checked here, inside the marking loop, rather than by excluding these rows from
-                // the grouping above: a confirmed row still belongs in its group so it can serve as
-                // `earliest`, and so a THIRD, genuinely accidental copy still gets flagged against
-                // it. Skipping the mark is the whole of the change; skipping the row is not.
-                if (t.getNotDuplicateConfirmedAt() != null) continue;
-                t.setIsDuplicateOf(earliest.getId());
-                t.setReconciliationStatus(Transaction.ReconciliationStatus.DUPLICATE);
-                t.setReconciliationExplanation(ReconciliationExplanation.duplicate(earliest.getId()));
-                dirty.add(t);
-                newDuplicates++;
+        for (List<Transaction> coarseGroup : byDuplicateKey.values()) {
+            if (coarseGroup.size() < 2) continue;
+            for (List<Transaction> group : splitByDiscriminator(coarseGroup)) {
+                if (group.size() < 2) continue;
+                // Canonical selection: higher SourceTrust wins outright (Phase 1 of the reconciliation
+                // roadmap); creation order is only the tiebreak between two rows from the same source,
+                // which is what this comparison degrades to when SourceTrust can't distinguish them --
+                // exactly the behavior this pass had before source trust existed.
+                Transaction canonical = group.stream()
+                        .min(Comparator.<Transaction>comparingInt(t -> -SourceTrust.of(t.getSource()))
+                                .thenComparing(Transaction::getCreatedAt))
+                        .orElseThrow();
+                for (Transaction t : group) {
+                    if (t == canonical || t.getIsDuplicateOf() != null) continue;
+                    // A human already ruled on this row and said it is a real, separate transaction.
+                    // Nothing this pass can observe outranks that: it sees identical date, amount and
+                    // description and cannot distinguish "the same statement uploaded twice" from "two
+                    // metro fares on one day", which is why it needs to be told rather than left to
+                    // infer. Marking it anyway is what made the ledger and the dashboard disagree by
+                    // exactly the rows the user had asked for -- see V65.
+                    //
+                    // Checked here, inside the marking loop, rather than by excluding these rows from
+                    // the grouping above: a confirmed row still belongs in its group so it can serve as
+                    // `canonical`, and so a THIRD, genuinely accidental copy still gets flagged against
+                    // it. Skipping the mark is the whole of the change; skipping the row is not.
+                    if (t.getNotDuplicateConfirmedAt() != null) continue;
+                    t.setIsDuplicateOf(canonical.getId());
+                    t.setReconciliationStatus(Transaction.ReconciliationStatus.DUPLICATE);
+                    // t and canonical are members of the same splitByDiscriminator sub-group, so
+                    // when that group was split by balance/reference, EVERY member (both of these
+                    // included) shares the identical value by construction -- a direct pairwise
+                    // comparison here is equivalent to asking "was this group split by X" without
+                    // splitByDiscriminator needing to report its own provenance back to callers.
+                    boolean sameBalance = t.getBalanceAfter() != null && canonical.getBalanceAfter() != null
+                            && t.getBalanceAfter().compareTo(canonical.getBalanceAfter()) == 0;
+                    boolean sameReferenceNumber = t.getReferenceNumber() != null && canonical.getReferenceNumber() != null
+                            && t.getReferenceNumber().equals(canonical.getReferenceNumber());
+                    Map<String, Object> explanation = ReconciliationExplanation.duplicate(
+                            canonical.getId(), sameBalance, sameReferenceNumber);
+                    t.setReconciliationExplanation(explanation);
+                    dirty.add(t);
+                    newDuplicates++;
+                    // Exact composite-key match: no amount delta, no date window to decay across.
+                    int duplicateConfidence = ConfidenceScorer.score(ConfidenceScorer.MatchType.EXACT,
+                            t.getAmount(), BigDecimal.ZERO, 0, 0);
+                    pendingEdges.add(new TransactionGraphService.PendingEdge(userId, t.getId(), canonical.getId(),
+                            TransactionRelationship.RelationshipType.DUPLICATE, t.getAmount(), duplicateConfidence,
+                            SourceTrust.of(t.getSource()), statusFor(duplicateConfidence),
+                            TransactionRelationship.DetectionMethod.RULE_ENGINE, explanation));
+                }
             }
         }
 
@@ -264,8 +390,8 @@ public class ReconciliationService {
                 if (looksLikeSalary.getOrDefault(b.getId(), false)) continue; // same guard, other side of the pair
                 if (a.getAccountId().equals(b.getAccountId()) || a.getTxnType() == b.getTxnType()) continue;
 
-                boolean sameAmount = a.getAmount().subtract(b.getAmount()).abs()
-                        .compareTo(ReconciliationPolicy.TRANSFER_AMOUNT_TOLERANCE) < 0;
+                BigDecimal amountDelta = a.getAmount().subtract(b.getAmount()).abs();
+                boolean sameAmount = amountDelta.compareTo(ReconciliationPolicy.TRANSFER_AMOUNT_TOLERANCE) < 0;
                 long daysApart = Math.abs(ChronoUnit.DAYS.between(a.getTxnDate(), b.getTxnDate()));
 
                 boolean relationshipMatch = aOwnAccountMatch || ownAccountMatch.getOrDefault(b.getId(), false);
@@ -279,16 +405,62 @@ public class ReconciliationService {
                     // Both sides get their own explanation, each naming the other. A transfer is
                     // one decision but two rows, and someone looking at either row should not have
                     // to fetch the partner to find out why this one was excluded from totals.
-                    a.setReconciliationExplanation(
-                            ReconciliationExplanation.transfer(a, b, dayWindow, relationshipMatch));
-                    b.setReconciliationExplanation(
-                            ReconciliationExplanation.transfer(b, a, dayWindow, relationshipMatch));
+                    Map<String, Object> explanationA = ReconciliationExplanation.transfer(a, b, dayWindow, relationshipMatch);
+                    Map<String, Object> explanationB = ReconciliationExplanation.transfer(b, a, dayWindow, relationshipMatch);
+                    a.setReconciliationExplanation(explanationA);
+                    b.setReconciliationExplanation(explanationB);
                     dirty.add(a);
                     dirty.add(b);
                     newTransfers++; // one pair = one match, not two (see WorkspaceSummaryDto's own note on this asymmetry)
+                    // One edge per direction, matching transferPairId's own symmetric shape (see
+                    // V114's backfill comment) rather than picking an arbitrary canonical side.
+                    // MERCHANT_AND_AMOUNT tier: matched on amount + date window (+ an own-account
+                    // relationship identifier when relationshipMatch is true), not a free-text
+                    // merchant-name comparison -- there is no merchant on either side of a transfer
+                    // -- but it's the closest of the roadmap's three tiers to "two independent
+                    // structured signals agreeing," which is what this match actually is.
+                    int confidenceA = ConfidenceScorer.score(ConfidenceScorer.MatchType.MERCHANT_AND_AMOUNT,
+                            a.getAmount(), amountDelta, daysApart, dayWindow);
+                    int confidenceB = ConfidenceScorer.score(ConfidenceScorer.MatchType.MERCHANT_AND_AMOUNT,
+                            b.getAmount(), amountDelta, daysApart, dayWindow);
+                    pendingEdges.add(new TransactionGraphService.PendingEdge(userId, a.getId(), b.getId(),
+                            TransactionRelationship.RelationshipType.TRANSFER, a.getAmount(), confidenceA,
+                            SourceTrust.of(a.getSource()), statusFor(confidenceA),
+                            TransactionRelationship.DetectionMethod.RULE_ENGINE, explanationA));
+                    pendingEdges.add(new TransactionGraphService.PendingEdge(userId, b.getId(), a.getId(),
+                            TransactionRelationship.RelationshipType.TRANSFER, b.getAmount(), confidenceB,
+                            SourceTrust.of(b.getSource()), statusFor(confidenceB),
+                            TransactionRelationship.DetectionMethod.RULE_ENGINE, explanationB));
                     break;
                 }
             }
+        }
+
+        // 2b) Investment transfers -- roadmap Phase 4's "investment... detection" item, scoped
+        // down after checking this project's own real bank-statement corpus rather than building
+        // all six enum-only relationship types speculatively (docs/proposals/
+        // reconciliation-evolution-roadmap-proposal.md Part 10 explicitly defers all six until
+        // "actual usage data ... shows which of the six users actually need first"). Every real
+        // investment outflow in that corpus (UPI-GROWW INVEST TECH, UPI-ICCLGROWW-GROWW-BSE...)
+        // was a single-entry savings-side debit with no matching credit-side Transaction anywhere
+        // in Finora -- the user never imports the broker's own statement. A transaction_relationships
+        // edge needs a real Transaction on both ends (see that entity's own doc comment), so this
+        // deliberately does NOT write one; it reuses CategoryRules' existing "Investments" category
+        // (already recognizes Groww/Zerodha/mutual fund/SIP/etc, no new keyword list duplicated
+        // here) to exclude these rows from cash flow, the same way TRANSFER already is.
+        //
+        // Reads `candidates` (not `all`): those objects were already mutated in place by the
+        // transfer pass above, so `t.isTransfer()` here reflects this run's own transfer matches,
+        // not just ones from a prior run -- same reasoning the refund pass below applies to the
+        // same list.
+        for (Transaction t : candidates) {
+            if (t.getTxnType() != Transaction.Type.EXPENSE) continue;
+            if (t.isTransfer() || t.getReconciliationStatus() != Transaction.ReconciliationStatus.OK) continue;
+            if (!"Investments".equals(CategoryRules.suggestCategory(t.getDescription()))) continue;
+            t.setReconciliationStatus(Transaction.ReconciliationStatus.INVESTMENT_TRANSFER);
+            t.setReconciliationExplanation(ReconciliationExplanation.investmentTransfer(t));
+            dirty.add(t);
+            newInvestmentTransfers++;
         }
 
         // 3) Refunds -- re-filters candidates fresh (not reusing the list above) because step 2
@@ -302,21 +474,24 @@ public class ReconciliationService {
         // EXPENSE", and both get marked REFUND: ₹1,000 of real income silently excluded from every
         // total on the strength of one ₹500 purchase.
         //
-        // Seeded from already-resolved REFUND rows already sitting in refundCandidates (skipped by
-        // the `getReconciliationStatus() != OK` check below, same as a resolved duplicate is
-        // skipped in pass 1), not just accumulated fresh in this loop -- a prior run's match must
-        // count against this run's capacity too, not only matches made in the same pass.
+        // Seeded from already-resolved REFUND/REVERSAL rows already sitting in refundCandidates
+        // (skipped by the `getReconciliationStatus() != OK` check below, same as a resolved
+        // duplicate is skipped in pass 1), not just accumulated fresh in this loop -- a prior
+        // run's match must count against this run's capacity too, not only matches made in the
+        // same pass. Both statuses draw against the same expense's capacity: which of the two an
+        // income row became doesn't change how much of the original purchase it accounts for.
         //
         // Correct across BOTH entry points without a new query: CANDIDATE_WINDOW_DAYS is
         // Math.max(REFUND_WINDOW_DAYS, ...), so it is never smaller than REFUND_WINDOW_DAYS by
-        // construction. Any prior REFUND row that could compete for the same expense as a NEW
-        // income row in this run must itself sit within REFUND_WINDOW_DAYS of that expense --
-        // which means it is provably inside reconcileForImport's own fetch window too, so it is
-        // always present in `all`/`refundCandidates` here, never silently missing.
+        // construction. Any prior REFUND/REVERSAL row that could compete for the same expense as
+        // a NEW income row in this run must itself sit within REFUND_WINDOW_DAYS of that expense
+        // -- which means it is provably inside reconcileForImport's own fetch window too, so it
+        // is always present in `all`/`refundCandidates` here, never silently missing.
         Map<UUID, BigDecimal> refundedSoFarByExpenseId = new HashMap<>();
         for (Transaction t : refundCandidates) {
-            if (t.getReconciliationStatus() == Transaction.ReconciliationStatus.REFUND
-                    && t.getRefundOfTransactionId() != null) {
+            boolean isResolvedRefundLeg = t.getReconciliationStatus() == Transaction.ReconciliationStatus.REFUND
+                    || t.getReconciliationStatus() == Transaction.ReconciliationStatus.REVERSAL;
+            if (isResolvedRefundLeg && t.getRefundOfTransactionId() != null) {
                 refundedSoFarByExpenseId.merge(t.getRefundOfTransactionId(), t.getAmount(), BigDecimal::add);
             }
         }
@@ -326,8 +501,12 @@ public class ReconciliationService {
             if (income.getReconciliationStatus() != Transaction.ReconciliationStatus.OK) continue;
 
             boolean refundKeyword = looksLikeRefund(income.getDescription());
+            // Computed once per income row, same as refundKeyword above -- both are properties of
+            // the income's own description, not of any particular candidate expense.
+            boolean reversalKeyword = looksLikeReversal(income.getDescription());
             Transaction bestMatch = null;
             boolean bestMatchSameMerchant = false;
+            long bestMatchDaysBetween = 0;
             // A refund lands at or after its purchase and within REFUND_WINDOW_DAYS of it, so the
             // only expenses worth looking at sit in [income.date - 180, income.date]. Both of
             // those bounds are still re-checked inside the loop; this only avoids walking the
@@ -346,10 +525,12 @@ public class ReconciliationService {
                 // Need at least one real signal -- either the description says "refund"/
                 // "reversal"/etc, or the (already-resolved, see Transaction.merchant) merchant
                 // token matches the original purchase's. Neither alone is required everywhere;
-                // both being absent means there's no actual evidence this is a refund at all.
+                // all three being absent means there's no actual evidence this is a refund (or a
+                // reversal) at all. The matching mechanism itself doesn't care which of the two
+                // this turns out to be -- that's decided once, after a match is found, below.
                 boolean sameMerchant = expense.getMerchant() != null && !expense.getMerchant().isBlank()
                         && expense.getMerchant().equalsIgnoreCase(income.getMerchant());
-                if (!refundKeyword && !sameMerchant) continue;
+                if (!refundKeyword && !reversalKeyword && !sameMerchant) continue;
 
                 // BH-007: capacity is what's LEFT of the expense, not its original amount -- an
                 // expense already fully claimed by an earlier match (this pass or a prior one) has
@@ -365,28 +546,230 @@ public class ReconciliationService {
                     // re-deriving a signal the pass had already established -- exactly the
                     // after-the-fact reconstruction this explanation exists to avoid.
                     bestMatchSameMerchant = sameMerchant;
+                    bestMatchDaysBetween = daysBetween;
                 }
             }
 
             if (bestMatch != null) {
-                income.setReconciliationStatus(Transaction.ReconciliationStatus.REFUND);
+                // Classification, not matching: the loop above found the same candidate expense
+                // either way, using the same window/capacity/tiebreak rules. reversalKeyword takes
+                // priority when present -- "reversal" is a specific bank-side signal, so a
+                // description that happens to carry both a refund word and a reversal word (rare)
+                // is read as the more specific claim. sameMerchant-only matches (no keyword at
+                // all) stay REFUND, since a merchant match alone says nothing about *why* the
+                // money came back.
+                TransactionRelationship.RelationshipType edgeType;
+                Map<String, Object> explanation;
+                if (reversalKeyword) {
+                    income.setReconciliationStatus(Transaction.ReconciliationStatus.REVERSAL);
+                    explanation = ReconciliationExplanation.reversal(income, bestMatch, bestMatchSameMerchant);
+                    income.setReconciliationExplanation(explanation);
+                    newReversals++;
+                    edgeType = TransactionRelationship.RelationshipType.REVERSAL;
+                } else {
+                    income.setReconciliationStatus(Transaction.ReconciliationStatus.REFUND);
+                    explanation = ReconciliationExplanation.refund(income, bestMatch, refundKeyword, bestMatchSameMerchant);
+                    income.setReconciliationExplanation(explanation);
+                    newRefunds++;
+                    edgeType = TransactionRelationship.RelationshipType.REFUND;
+                }
                 income.setRefundOfTransactionId(bestMatch.getId());
-                income.setReconciliationExplanation(
-                        ReconciliationExplanation.refund(income, bestMatch, refundKeyword, bestMatchSameMerchant));
                 dirty.add(income);
-                newRefunds++;
+                // MERCHANT_AND_AMOUNT tier: matched on a refund/reversal keyword or merchant
+                // identity, plus an amount that can't exceed the original purchase. matchedAmount
+                // is the purchase's own amount (what there was to account for), not the income's --
+                // a small partial refund against a large purchase should score lower than a full
+                // one, which is exactly what amount_factor's delta-over-matchedAmount captures.
+                BigDecimal refundAmountDelta = bestMatch.getAmount().subtract(income.getAmount()).abs();
+                int refundConfidence = ConfidenceScorer.score(ConfidenceScorer.MatchType.MERCHANT_AND_AMOUNT,
+                        bestMatch.getAmount(), refundAmountDelta, bestMatchDaysBetween, REFUND_WINDOW_DAYS);
+                pendingEdges.add(new TransactionGraphService.PendingEdge(userId, income.getId(), bestMatch.getId(),
+                        edgeType, income.getAmount(), refundConfidence, SourceTrust.of(income.getSource()),
+                        statusFor(refundConfidence), TransactionRelationship.DetectionMethod.RULE_ENGINE, explanation));
                 // Claims this income's amount against the expense's capacity immediately, so the
                 // NEXT income row in this same pass sees the reduced remainder rather than the
                 // original amount -- this is what makes two ₹500 incomes against one ₹500 expense
-                // resolve to one REFUND and one OK, not two REFUNDs.
+                // resolve to one REFUND/REVERSAL and one OK, not two.
                 refundedSoFarByExpenseId.merge(bestMatch.getId(), income.getAmount(), BigDecimal::add);
             }
+        }
+
+        // 4) Gmail cross-source matches -- docs/proposals/reconciliation-evolution-roadmap-
+        // proposal.md Part 5's confidence engine, extended to the one pass Phase 2's earlier PR
+        // deliberately left out: GmailReconciliationMatcher already fuzzy-matches a Gmail receipt
+        // against the bank ledger at STAGING time (amount exact, date window, Levenshtein merchant
+        // similarity), but that match was never persisted -- confirming the receipt anyway created
+        // a fully independent Transaction with no link back to the bank row it duplicates. This
+        // makes that signal durable: a FUZZY-tier graph edge, the same infrastructure the other
+        // three passes above already write to.
+        //
+        // Graph edge ONLY -- deliberately does NOT set isDuplicateOf/reconciliationStatus the way
+        // the exact-match duplicate pass (1, above) does. That pass's legacy-column write is safe
+        // unconditionally because its match is a deterministic composite-key equality; FUZZY is
+        // this codebase's lowest confidence tier by design (Levenshtein threshold 0.6 admits real
+        // ambiguity), and its score will almost always land below NEEDS_REVIEW_THRESHOLD -- auto-
+        // excluding a legitimate expense from a user's spend totals off a fuzzy text match would be
+        // a real correctness risk this first slice does not take. A CANDIDATE edge is visible in
+        // the graph/explainability layer for review; today's dashboard totals are unchanged by this
+        // pass. Whether a high-scoring Gmail match should ever auto-confirm is a follow-up decision,
+        // not this one.
+        List<Transaction> gmailExpenses = all.stream()
+                .filter(t -> t.getSource() == Transaction.Source.GMAIL_IMPORT)
+                .filter(t -> t.getTxnType() == Transaction.Type.EXPENSE)
+                .toList();
+        if (!gmailExpenses.isEmpty()) {
+            Map<BigDecimal, List<Transaction>> bankExpensesByAmount = all.stream()
+                    .filter(t -> t.getSource() != Transaction.Source.GMAIL_IMPORT)
+                    .filter(t -> t.getTxnType() == Transaction.Type.EXPENSE)
+                    .collect(java.util.stream.Collectors.groupingBy(Transaction::getAmount));
+            int gmailWindowDays = com.finora.integrations.google.merchant.GmailReconciliationMatcher.DATE_WINDOW_DAYS;
+            int[] gmailMatchesThisRun = {0};
+            for (Transaction gmailTxn : gmailExpenses) {
+                List<Transaction> gmailCandidates = bankExpensesByAmount
+                        .getOrDefault(gmailTxn.getAmount(), List.of()).stream()
+                        .filter(t -> Math.abs(ChronoUnit.DAYS.between(gmailTxn.getTxnDate(), t.getTxnDate())) <= gmailWindowDays)
+                        .toList();
+                if (gmailCandidates.isEmpty()) continue;
+
+                gmailReconciliationMatcher.findMatchAmongTransactions(gmailTxn, gmailCandidates).ifPresent(matched -> {
+                    long daysIntoWindow = Math.abs(ChronoUnit.DAYS.between(gmailTxn.getTxnDate(), matched.getTxnDate()));
+                    // Exact-amount candidates only (see the groupingBy above), so amount_factor is
+                    // always 1.0 here -- date_decay across the window is what actually varies.
+                    int gmailConfidence = ConfidenceScorer.score(ConfidenceScorer.MatchType.FUZZY,
+                            gmailTxn.getAmount(), BigDecimal.ZERO, daysIntoWindow, gmailWindowDays);
+                    Map<String, Object> explanation = new java.util.LinkedHashMap<>();
+                    explanation.put("type", "GMAIL_CROSS_SOURCE_MATCH");
+                    explanation.put("matchedTransactionId", matched.getId().toString());
+                    explanation.put("daysApart", daysIntoWindow);
+                    pendingEdges.add(new TransactionGraphService.PendingEdge(userId, gmailTxn.getId(), matched.getId(),
+                            TransactionRelationship.RelationshipType.DUPLICATE, gmailTxn.getAmount(), gmailConfidence,
+                            SourceTrust.of(gmailTxn.getSource()), statusFor(gmailConfidence),
+                            TransactionRelationship.DetectionMethod.RULE_ENGINE, explanation));
+                    gmailMatchesThisRun[0]++;
+                });
+            }
+            newGmailMatches = gmailMatchesThisRun[0];
+        }
+
+        // 5) Credit card payment matches -- roadmap Phase 3, "Credit card settlement" (docs/
+        // proposals/reconciliation-evolution-roadmap-proposal.md Part 4). Phase 1 already extracts
+        // a credit-card statement's totalAmountDue/paymentDueDate onto StatementImport at confirm
+        // time; nothing has read them since. This pass links a savings-side payment to the specific
+        // card transactions it settles -- CC_PAYMENT edges from the payment to every transaction
+        // findByStatementImportId returns for that statement, since a CC_PAYMENT edge (like every
+        // TransactionRelationship) needs a real Transaction on both ends and "the statement" itself
+        // is scalar fields, not a row; the individual charges it billed are.
+        //
+        // CANDIDATE ONLY, unconditionally -- deliberately does NOT call statusFor(confidence) the
+        // way every earlier pass does. Two reasons, not one: first, the same correctness argument
+        // as the Gmail pass above (a wrong match here would silently exclude or double-count real
+        // money -- and even with the last-4 disambiguation below, this pass still has no
+        // destination-account-type check, and a last-4 match is real but bank-dependent evidence,
+        // not a guarantee, per last4CandidatesIn's own doc comment); second, this pass runs AFTER
+        // the TRANSFER pass in this same method specifically so it can read `!isTransfer()` and skip
+        // anything TRANSFER already claimed -- a real credit-card bill payment is, today, already
+        // caught by TRANSFER's generic "payment"-keyword/same-amount heuristic, so this pass only
+        // ever sees the transactions TRANSFER left alone. AUTO_CONFIRMED status is not part of this
+        // slice at all; see the roadmap doc and this pass's own PR description for why.
+        // Unlike `all` above, deliberately NOT windowed by reconcileForImport's date range -- a
+        // user's credit-card statement count is small (a handful per card per year), so scanning
+        // every one of them on every run is cheap, and windowing it correctly would mean a second
+        // date axis (statement period vs. payment date) this v1 slice doesn't need yet. Accepted
+        // simplification, not an oversight; revisit if SLOW_RUN_WARN_MS ever fires because of it.
+        List<StatementImport> ccStatements = statementImportRepository.findByUserIdAndTotalAmountDueIsNotNull(userId);
+        // Deleted-account leak, same shape as reconcileForUser's own top-level fix (and the same
+        // `liveAccountIds` computed there, above) -- a deleted account's transactions deliberately
+        // keep deleted_at unset, so findByStatementImportId below would still return a dead card's
+        // charges forever, not just during StatementImportService's 7-day grace window. Unlike
+        // `all` (already scoped by reconcileForUser, but NOT by reconcileForImport -- see that
+        // method's own doc comment on why it deliberately leaves every account in scope), this
+        // statement lookup and the settledCharges lookup inside the loop both bypass account
+        // scoping entirely. Without this filter, a dead card's statement stays processed, a live
+        // savings-side payment gets claimed and excluded from cash flow to "settle" charges the
+        // user can no longer even see -- real, currently-visible expense money silently vanishing
+        // from reporting. The SAME liveness check is applied to paymentCandidates below, for a
+        // mirror-image reason: reconcileForImport's `all` is deliberately account-unscoped, so a
+        // stray payment sitting on a deleted SAVINGS account could otherwise win the closest-to-
+        // due-date tiebreak over the real, live payment -- leaving the real payment un-excluded
+        // from cash flow and the original double-count bug back, just reached through the import
+        // path instead of the per-edit one.
+        //
+        // Any pre-existing CC_PAYMENT edge pointing at one of these dead statements' charges is
+        // already handled -- the general cleanup above rejects it regardless of relationship type,
+        // so this pass doesn't need its own copy of that retroactive step.
+        if (!ccStatements.isEmpty()) {
+            // Deterministic order for the claim-tracking below: findByUserIdAndTotalAmountDueIsNotNull
+            // carries no ORDER BY, so without this, which statement wins a same-due-date/same-amount
+            // coincidence (see claimedPaymentIds below) could vary run to run, writing a CC_PAYMENT
+            // edge to a different charge set each time -- and since nothing supersedes the earlier
+            // edge, contradictory live edges from one payment would accumulate across runs even
+            // though any single run stays internally consistent. Earliest due date first (settle
+            // the oldest bill first) is a reasonable tiebreak, not just an arbitrary stable one;
+            // statement id breaks a further tie on the same due date.
+            ccStatements = ccStatements.stream()
+                    .filter(s -> liveAccountIds.contains(s.getAccountId()))
+                    .sorted(Comparator.comparing(StatementImport::getPaymentDueDate,
+                                    Comparator.nullsLast(Comparator.naturalOrder()))
+                            .thenComparing(StatementImport::getId))
+                    .toList();
+        }
+        if (!ccStatements.isEmpty()) {
+            int[] ccMatchesThisRun = {0};
+            Set<UUID> claimedPaymentIds = new HashSet<>();
+            // Real card fragment matching (roadmap Part 4's "issuer-name + last-4-digit
+            // matching"), confirmed feasible against this project's own real bank-statement
+            // corpus rather than assumed -- see last4CandidatesIn's own doc comment for the ICICI
+            // example that proved it and the HDFC one that didn't. Built once per run, not per
+            // statement: every OTHER live card's last-4 needs to be known too, so a payment
+            // description naming a DIFFERENT card can be excluded as a candidate, not just
+            // deprioritized.
+            Map<UUID, String> cardLast4ByAccountId = new java.util.HashMap<>();
+            for (StatementImport s : ccStatements) {
+                com.finora.entity.Account cardAccount = accountsById.get(s.getAccountId());
+                String last4 = cardAccount == null ? null : last4Of(cardAccount.getAccountNumberMasked());
+                if (last4 != null) cardLast4ByAccountId.put(s.getAccountId(), last4);
+            }
+            // signum() <= 0 excludes a statement with nothing owed (already paid off, or a $0
+            // print) -- no payment to find in the first place, and would otherwise divide by
+            // zero inside matchCcStatement's ratio check.
+            List<StatementImport> validStatements = ccStatements.stream()
+                    .filter(s -> s.getTotalAmountDue() != null && s.getTotalAmountDue().signum() > 0
+                            && s.getPaymentDueDate() != null)
+                    .toList();
+            // Two phases, not one -- see matchCcStatement's own doc comment for why the widened
+            // ratio window (partial payment/overpayment matching, below) makes this necessary:
+            // an exact match anywhere must be claimed before any partial/overpayment search runs
+            // at all, or an earlier-due-date statement's wide search can steal a payment that is
+            // actually EXACT for a different, later-due-date statement.
+            Set<UUID> settledStatementIds = new HashSet<>();
+            for (StatementImport statement : validStatements) {
+                if (matchCcStatement(userId, statement, all, liveAccountIds, claimedPaymentIds,
+                        cardLast4ByAccountId, true, pendingEdges)) {
+                    settledStatementIds.add(statement.getId());
+                    ccMatchesThisRun[0]++;
+                }
+            }
+            for (StatementImport statement : validStatements) {
+                if (settledStatementIds.contains(statement.getId())) continue;
+                if (matchCcStatement(userId, statement, all, liveAccountIds, claimedPaymentIds,
+                        cardLast4ByAccountId, false, pendingEdges)) {
+                    ccMatchesThisRun[0]++;
+                }
+            }
+            newCcPaymentMatches = ccMatchesThisRun[0];
         }
 
         // One write for the whole run. Ordered and de-duplicated by the LinkedHashSet above, so
         // Hibernate's configured batch_size/order_updates can actually apply -- they could do
         // nothing when this was a save() per match.
         if (!dirty.isEmpty()) transactionRepository.saveAll(dirty);
+        // Captured rather than discarded: linkAll returns only the edges it actually wrote, never
+        // the ones its own idempotent dedup skipped (see that method's own doc comment) -- the
+        // Gmail pass above re-evaluates every GMAIL_IMPORT transaction on every run with no
+        // persisted "already matched" flag of its own, so pendingEdges is routinely non-empty on a
+        // run that writes nothing new. writtenEdges is what changedSomething below actually needs.
+        List<TransactionRelationship> writtenEdges = pendingEdges.isEmpty()
+                ? List.of() : transactionGraphService.linkAll(pendingEdges);
 
         long elapsedMs = (System.nanoTime() - startedAtNanos) / 1_000_000;
 
@@ -445,7 +828,20 @@ public class ReconciliationService {
         //
         // The scope fields come from the caller (see reconcileForImport on why the windowed path
         // reports candidatesLoaded rather than reusing transactionsProcessed).
-        boolean changedSomething = !dirty.isEmpty();
+        // !writtenEdges.isEmpty() joins this check because of the Gmail pass above: it is the
+        // first pass that can write a real change (a graph edge) WITHOUT also touching `dirty` --
+        // every earlier pass sets a legacy column alongside its edge, so dirty was always non-empty
+        // whenever a NEW edge was written until now. writtenEdges (not pendingEdges) is what to
+        // check: the Gmail pass has no persisted "already matched" flag of its own, so it
+        // re-proposes the same edge on every run regardless of whether anything is actually new --
+        // pendingEdges.isEmpty() would make nearly every future edit for a user with any Gmail
+        // match audit-record, exactly the BH-044 noise this file spent real effort eliminating.
+        // staleEdgesRejected joins this check for the same reason writtenEdges does: rejecting an
+        // edge is a real graph mutation with no legacy-column counterpart, so a run that ONLY
+        // rejected stale edges (no new dirty rows, no new written edges) would otherwise vanish
+        // from the audit trail exactly the way BH-044 was originally worried about -- except here
+        // the change is real, not noise.
+        boolean changedSomething = !dirty.isEmpty() || !writtenEdges.isEmpty() || staleEdgesRejected > 0;
         boolean wasSlow = elapsedMs >= SLOW_RUN_WARN_MS;
         String recordedBecause = changedSomething ? "reclassified"
                 : wasSlow ? "slow"
@@ -456,6 +852,11 @@ public class ReconciliationService {
             details.put("duplicatesFound", newDuplicates);
             details.put("transfersMatched", newTransfers);
             details.put("refundsMatched", newRefunds);
+            details.put("reversalsMatched", newReversals);
+            details.put("investmentTransfersFound", newInvestmentTransfers);
+            details.put("gmailMatchesFound", newGmailMatches);
+            details.put("ccPaymentMatchesFound", newCcPaymentMatches);
+            details.put("staleEdgesRejected", staleEdgesRejected);
             details.put("rowsWritten", dirty.size());
             details.put("durationMs", elapsedMs);
             // Says which condition put this row here, so a reader of the trail can tell "this run
@@ -481,10 +882,232 @@ public class ReconciliationService {
         }
     }
 
+    private static TransactionRelationship.Status statusFor(int confidence) {
+        return confidence >= NEEDS_REVIEW_THRESHOLD
+                ? TransactionRelationship.Status.AUTO_CONFIRMED
+                : TransactionRelationship.Status.CANDIDATE;
+    }
+
+    /**
+     * Finds and links a single CC_PAYMENT match for one statement, returning whether it found
+     * one. Extracted out of {@code reconcile()}'s CC_PAYMENT pass so that pass can run this
+     * twice -- {@code requireExactAmount=true} for every statement first, then {@code false}
+     * (partial payment/overpayment, roadmap Part 4) only for what's still unsettled.
+     *
+     * <p><b>Why two phases, not one.</b> The widened ratio window partial/overpayment matching
+     * needs (roadmap Part 4) means a single payment amount can now be a PLAUSIBLE candidate for
+     * statements with totally different printed totals -- not just ones it happens to share an
+     * exact amount with. Searching every statement with the wide window in one pass, in due-date
+     * order, let an earlier-due-date statement's own partial/overpayment search claim a payment
+     * that was actually the EXACT match for a different, later-due-date statement, before that
+     * statement ever got a chance to see it: e.g. a ₹2,500 payment sitting exactly at one card's
+     * ₹1,000 statement's 2.5x overpayment ceiling, while also being precisely another card's
+     * ₹2,500 statement -- the ₹1,000 statement, being due earlier and searched first, would
+     * otherwise take a payment that unambiguously belongs to the other one. Resolving every
+     * EXACT match globally first, across every statement, guarantees a partial/overpayment
+     * search can only ever consume a payment no statement could exactly claim.
+     */
+    private boolean matchCcStatement(UUID userId, StatementImport statement, List<Transaction> all,
+                                      Set<UUID> liveAccountIds, Set<UUID> claimedPaymentIds,
+                                      Map<UUID, String> cardLast4ByAccountId, boolean requireExactAmount,
+                                      List<TransactionGraphService.PendingEdge> pendingEdges) {
+        String thisCardLast4 = cardLast4ByAccountId.get(statement.getAccountId());
+        List<Transaction> paymentCandidates = all.stream()
+                .filter(t -> t.getTxnType() == Transaction.Type.EXPENSE)
+                .filter(t -> !t.isTransfer())
+                .filter(t -> !claimedPaymentIds.contains(t.getId()))
+                .filter(t -> liveAccountIds.contains(t.getAccountId()))
+                .filter(t -> !t.getAccountId().equals(statement.getAccountId()))
+                .filter(t -> requireExactAmount
+                        ? t.getAmount().compareTo(statement.getTotalAmountDue()) == 0
+                        : amountRatioInRange(t.getAmount(), statement.getTotalAmountDue()))
+                .filter(t -> Math.abs(ChronoUnit.DAYS.between(t.getTxnDate(), statement.getPaymentDueDate()))
+                        <= ReconciliationPolicy.CC_PAYMENT_DUE_DATE_WINDOW_DAYS)
+                // A candidate whose OWN description names a DIFFERENT known card is excluded
+                // outright -- real evidence it belongs elsewhere, not just a weaker candidate. A
+                // candidate with no identifiable fragment at all, or one that matches THIS card,
+                // is unaffected here; see the tiebreak below for how a match to THIS card is
+                // preferred among what's left.
+                .filter(t -> {
+                    Set<String> descriptionLast4s = last4CandidatesIn(t.getDescription());
+                    if (descriptionLast4s.isEmpty() || descriptionLast4s.contains(thisCardLast4)) return true;
+                    return cardLast4ByAccountId.entrySet().stream()
+                            .noneMatch(e -> !e.getKey().equals(statement.getAccountId())
+                                    && descriptionLast4s.contains(e.getValue()));
+                })
+                .toList();
+        if (paymentCandidates.isEmpty()) return false;
+
+        // A candidate whose description names THIS card wins outright over one that doesn't,
+        // even if the non-matching one is closer to the due date -- real evidence beats a
+        // coincidence. Failing that, an EXACT-amount candidate beats a partial/overpaid one --
+        // relevant only in the requireExactAmount=false phase, since the true-amount phase never
+        // sees a partial/overpaid candidate at all. Among whatever's left tied on both, closest
+        // to the printed due date wins, same tiebreak shape as the other passes above.
+        Transaction payment = paymentCandidates.stream()
+                .min(Comparator
+                        .comparing((Transaction t) -> thisCardLast4 == null
+                                || !last4CandidatesIn(t.getDescription()).contains(thisCardLast4))
+                        .thenComparing((Transaction t) -> t.getAmount().compareTo(statement.getTotalAmountDue()) != 0)
+                        .thenComparingLong(t -> Math.abs(ChronoUnit.DAYS.between(t.getTxnDate(), statement.getPaymentDueDate()))))
+                .orElseThrow();
+        boolean matchedByLast4 = thisCardLast4 != null
+                && last4CandidatesIn(payment.getDescription()).contains(thisCardLast4);
+
+        // EXPENSE only -- findByStatementImportId returns every transaction this statement's
+        // confirm wrote, which can include an INCOME-type row for a credit/refund printed on the
+        // same statement. A payment settles charges, not credits; an edge to a credit row would
+        // be a nonsensical "this payment settles this refund" claim.
+        List<Transaction> settledCharges = transactionRepository.findByStatementImportId(statement.getId())
+                .stream().filter(t -> t.getTxnType() == Transaction.Type.EXPENSE).toList();
+        if (settledCharges.isEmpty()) return false; // nothing on the card side to point the edge at -- payment stays unclaimed
+        claimedPaymentIds.add(payment.getId());
+
+        long daysFromDue = Math.abs(ChronoUnit.DAYS.between(payment.getTxnDate(), statement.getPaymentDueDate()));
+        // EXACT, not MERCHANT_AND_AMOUNT, when the payment's own description names this specific
+        // card -- real positive evidence, not just amount+date proximity (see matchedByLast4
+        // above). MERCHANT_AND_AMOUNT otherwise, unchanged reasoning: the TRANSFER pass's own
+        // precedent for reusing this tier for a non-merchant, structural signal. Status stays
+        // CANDIDATE regardless either way -- see this pass's own comment above (in reconcile())
+        // on why AUTO_CONFIRMED is out of scope for this slice; neither a last-4 match nor an
+        // exact amount changes that verdict.
+        ConfidenceScorer.MatchType matchType = matchedByLast4
+                ? ConfidenceScorer.MatchType.EXACT : ConfidenceScorer.MatchType.MERCHANT_AND_AMOUNT;
+        // The real gap between what was paid and what was owed, not the zero this pass hardcoded
+        // before partial/overpayment matching existed -- ConfidenceScorer's own amountFactor
+        // already scores a partial/overpaid match lower than an exact one (floored at 0.5, never
+        // below); this just wires the real number in instead of pretending every match is exact.
+        // matchedAmount is the STATEMENT's total, not the payment's own amount -- amountFactor's
+        // own doc comment: it's "how much was there to account for" that anchors the ratio, the
+        // same reasoning a partial refund's delta is measured against the original expense, not
+        // the smaller amount refunded.
+        BigDecimal amountDelta = payment.getAmount().subtract(statement.getTotalAmountDue()).abs();
+        int ccConfidence = ConfidenceScorer.score(matchType,
+                statement.getTotalAmountDue(), amountDelta, daysFromDue, ReconciliationPolicy.CC_PAYMENT_DUE_DATE_WINDOW_DAYS);
+        // FULL / PARTIAL / OVERPAID for the explainability trail (roadmap Part 4) -- this pass
+        // doesn't attempt per-charge pro-rated netting the roadmap's original design sketched
+        // (the shipped v1 slice nets by excluding the PAYMENT transaction from cash flow
+        // entirely, not by partially discounting each charge -- see
+        // RefundNetting/ccPaymentFromTransactionIds), so a partial payment still links to every
+        // settled charge below, same as a full one; this field is what tells a reader of the
+        // graph that the link doesn't mean "the whole bill was paid."
+        String paymentStatus = amountDelta.signum() == 0 ? "FULL"
+                : payment.getAmount().compareTo(statement.getTotalAmountDue()) < 0 ? "PARTIAL" : "OVERPAID";
+        Map<String, Object> explanation = new java.util.LinkedHashMap<>();
+        explanation.put("type", "CC_PAYMENT_MATCH");
+        explanation.put("statementImportId", statement.getId().toString());
+        explanation.put("totalAmountDue", statement.getTotalAmountDue().toPlainString());
+        explanation.put("paymentDueDate", statement.getPaymentDueDate().toString());
+        explanation.put("daysFromDueDate", daysFromDue);
+        explanation.put("matchedByLast4", matchedByLast4);
+        explanation.put("paymentStatus", paymentStatus);
+        for (Transaction charge : settledCharges) {
+            if (charge.getId().equals(payment.getId())) continue; // a payment cannot settle itself
+            pendingEdges.add(new TransactionGraphService.PendingEdge(userId, payment.getId(), charge.getId(),
+                    TransactionRelationship.RelationshipType.CC_PAYMENT, payment.getAmount(), ccConfidence,
+                    SourceTrust.of(payment.getSource()), TransactionRelationship.Status.CANDIDATE,
+                    TransactionRelationship.DetectionMethod.RULE_ENGINE, explanation));
+        }
+        return true;
+    }
+
+    private static boolean amountRatioInRange(BigDecimal paymentAmount, BigDecimal totalAmountDue) {
+        BigDecimal ratio = paymentAmount.divide(totalAmountDue, 4, java.math.RoundingMode.HALF_UP);
+        return ratio.compareTo(ReconciliationPolicy.CC_PAYMENT_MIN_PARTIAL_RATIO) >= 0
+                && ratio.compareTo(ReconciliationPolicy.CC_PAYMENT_MAX_OVERPAYMENT_RATIO) <= 0;
+    }
+
+    private static final java.util.regex.Pattern DIGIT_RUN = java.util.regex.Pattern.compile("\\d{4,}");
+
+    /**
+     * Every trailing-4-digit window from each run of 4+ consecutive digits in {@code text} -- the
+     * shape a masked or reference-style card fragment takes in a real bank narration (roadmap
+     * Part 4's "issuer-name + last-4-digit matching", verified against this project's own real
+     * bank-statement corpus rather than assumed: an ICICI savings-side payment read
+     * "BIL/INFT/.../CC BillPay-5001/Self" and the paid card's own printed number was
+     * "5241XXXXXXXX5001" -- masking characters or a separator (hyphen, slash) already isolate the
+     * real last-4 at the right boundary, so no bank-specific parsing is needed. Not every bank's
+     * narration carries this (an HDFC sample's trailing digits did NOT match its own card's real
+     * last-4, evidently a payment reference number instead) -- and a pure reference number
+     * produces the identical shape with no way to tell it apart from a real card fragment by this
+     * alone. See the caller: only a match against a transaction's OWN known card counts as
+     * positive evidence; an unmatched candidate is treated as unknown, never as counter-evidence.
+     */
+    private static Set<String> last4CandidatesIn(String text) {
+        if (text == null || text.isBlank()) return Set.of();
+        Set<String> candidates = new HashSet<>();
+        java.util.regex.Matcher m = DIGIT_RUN.matcher(text);
+        while (m.find()) {
+            String run = m.group();
+            candidates.add(run.substring(run.length() - 4));
+        }
+        return candidates;
+    }
+
+    /**
+     * The real last four digits of a masked account number, however the source bank formats the
+     * mask -- "652925XXXXXX3123", "5241XXXXXXXX5001", "XXXX1234" all reduce correctly by simply
+     * discarding every non-digit character and keeping the last four: a masking character is
+     * never a digit, and every masked format this project has actually seen (PdfMetadataExtractor)
+     * ends in the genuine trailing digits, never in mask characters. Null if there aren't at least
+     * four digits to take -- an unmasked, malformed, or absent value.
+     */
+    private static String last4Of(String accountNumberMasked) {
+        if (accountNumberMasked == null) return null;
+        String digitsOnly = accountNumberMasked.replaceAll("[^0-9]", "");
+        return digitsOnly.length() >= 4 ? digitsOnly.substring(digitsOnly.length() - 4) : null;
+    }
+
     private String duplicateKey(Transaction t) {
         if (t.getDescription() == null) return "no-desc-" + t.getId();
         return t.getAccountId() + "|" + t.getTxnDate() + "|"
                 + t.getAmount().stripTrailingZeros().toPlainString() + "|" + t.getDescription();
+    }
+
+    /**
+     * Bug fix. Same account+date+amount+description is not always the same transaction: a bank
+     * can legitimately present several separate transactions on one day that share all four --
+     * confirmed against two independent real statements (a PNB savings account with four ACH
+     * mandate debits, and an HDFC savings account with four mutual-fund SIP installments), both
+     * distinguished in the statement only by a declining running balance or a per-row reference
+     * number. Grouping every one of them as a single duplicate cluster silently dropped the real
+     * ones from every total.
+     *
+     * <p>Splits a {@code duplicateKey}-matched group by {@code balanceAfter} (the stronger
+     * signal -- present whenever the statement prints a running balance, true for nearly every
+     * savings-account import) or, failing that, {@code referenceNumber} (covers statements with a
+     * per-row reference but no balance column, most commonly credit-card statements). Both are
+     * best-effort, nullable staging-time extractions already carried on {@link Transaction} (see
+     * its own doc comment) -- this does not change what is captured, only uses what was already
+     * there.
+     *
+     * <p><b>Only splits when EVERY member of the group carries the discriminator.</b> Not "when
+     * present" -- a group is split by a field only when every row in it has a value for that
+     * field, never partially. A Gmail receipt import never captures a balance or reference
+     * number; a later bank-statement import of that SAME real transaction does. Splitting
+     * whenever either side merely lacks the value (rather than when the two sides actively
+     * disagree) would leave that genuine duplicate unmatched -- silently double-counting it in
+     * income/expense totals and the account balance, a worse failure than the false-positive
+     * grouping this method exists to fix. A group with incomplete discriminator data is left
+     * exactly as it was before this method existed: one cluster, matching everything else this
+     * pass already did.
+     */
+    private static List<List<Transaction>> splitByDiscriminator(List<Transaction> group) {
+        if (group.stream().allMatch(t -> t.getBalanceAfter() != null)) {
+            return groupBy(group, t -> "bal:" + t.getBalanceAfter().stripTrailingZeros().toPlainString());
+        }
+        if (group.stream().allMatch(t -> t.getReferenceNumber() != null && !t.getReferenceNumber().isBlank())) {
+            return groupBy(group, t -> "ref:" + t.getReferenceNumber());
+        }
+        return List.of(group);
+    }
+
+    private static List<List<Transaction>> groupBy(List<Transaction> group, java.util.function.Function<Transaction, String> keyFn) {
+        Map<String, List<Transaction>> byKey = new HashMap<>();
+        for (Transaction t : group) {
+            byKey.computeIfAbsent(keyFn.apply(t), k -> new java.util.ArrayList<>()).add(t);
+        }
+        return new java.util.ArrayList<>(byKey.values());
     }
 
     // --- Date-windowed candidate lookup -------------------------------------------------------
@@ -538,6 +1161,11 @@ public class ReconciliationService {
     private boolean looksLikeRefund(String description) {
         String normalized = CategoryRules.normalize(description);
         return REFUND_KEYWORDS.stream().anyMatch(normalized::contains);
+    }
+
+    private boolean looksLikeReversal(String description) {
+        String normalized = CategoryRules.normalize(description);
+        return REVERSAL_KEYWORDS.stream().anyMatch(normalized::contains);
     }
 
     /** Exact-amount matches always outrank partial-amount matches; among equally-good matches,

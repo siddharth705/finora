@@ -38,6 +38,17 @@ yarn-error.*
 # Each developer downloads their own from the Firebase Console; see .env.example / app.config.ts.
 GoogleService-Info.plist
 google-services.json
+# Same files for the dev Firebase project (APP_VARIANT=development). The rules above match exact
+# names, so these need their own lines or a dev download lands in a commit.
+GoogleService-Info.dev.plist
+google-services.dev.json
+
+# EAS local-credentials config. Holds the path to a release keystore AND its store/key passwords
+# in plaintext, so it is a credential file even though it is only JSON. Ignored pre-emptively:
+# nothing uses it today (credentials are EAS-remote), and the moment someone runs
+# `eas credentials` and picks local credentials, this file appears with passwords in it.
+# *.jks above already covers the keystore itself -- this covers the thing that unlocks it.
+credentials.json
 
 # typescript
 *.tsbuildinfo

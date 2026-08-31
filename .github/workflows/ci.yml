@@ -78,6 +78,78 @@ permissions:
 # extra provisioning step -- unlike the self-hosted Mac, which needed Docker Desktop kept running
 # by hand.
 jobs:
+  # Complementary to GitHub's native push protection, not a replacement for it: push protection
+  # blocks a small set of high-confidence provider patterns (AWS keys, Stripe keys, and similar) at
+  # push time and only looks at the current push. This job runs gitleaks' much broader,
+  # entropy-based ruleset against the PR's actual commit range, so a secret pattern push protection
+  # doesn't recognize still gets caught before merge. The nightly job in
+  # .github/workflows/gitleaks-nightly.yml covers the complementary gap this one can't: full
+  # repository history, not just this PR's diff.
+  #
+  # fetch-depth: 0, same reasoning as the backend job's PII check above -- the action needs the
+  # base commit to compute the PR's diff range, and a shallow checkout doesn't have it.
+  #
+  # False positives already found in this repo's history are recorded in .gitleaksignore by
+  # fingerprint (commit:file:rule:line), not by path or pattern, so a new secret in one of those
+  # same files still gets caught -- see that file for the specific findings and why each is safe.
+  secret-scan:
+    name: Secret scan (gitleaks)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@v3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # PR comments need `pull-requests: write`, which this workflow deliberately doesn't
+          # grant (see the file-level `permissions:` block and its reasoning). The job's own
+          # red/green status is the signal; a second notification channel isn't worth widening the
+          # token for.
+          GITLEAKS_ENABLE_COMMENTS: false
+
+  # Catches copy-pasted logic between the two web apps -- or within one of them -- before it
+  # drifts into two variants of the same bug fixed in only one place. Scoped to frontend/src and
+  # admin-portal/src only: mobile is a different language surface (React Native, not web) with its
+  # own conventions, and the backend's duplication needs Java-aware detection this tool doesn't do
+  # well.
+  #
+  # Test files are excluded (.jscpd.json's `ignore`) -- repeated arrange/act/assert shape across
+  # tests is normal and not the kind of duplication this check exists to catch; flagging it would
+  # just be noise a reviewer has to read past on every run.
+  #
+  # .jscpd.json's threshold (7) is calibrated against this tree's actual duplication as measured
+  # when this job was added (~5.7% of lines across the two scoped directories, test files
+  # excluded), not against zero -- the 100-plus clones already in the codebase at that point are
+  # not something this job retroactively fails on, per the "an established threshold, not blind
+  # refactoring of every existing match" scope decision behind adding it. The gate exists to catch
+  # meaningfully *new* duplication from here on, with headroom for ordinary week-to-week movement
+  # in the baseline rather than requiring every existing clone to be resolved first. A genuine
+  # false positive -- two blocks that must legitimately look identical -- can be scoped out with a
+  # `// jscpd:ignore-start` / `// jscpd:ignore-end` comment pair around it, rather than by raising
+  # the threshold repo-wide.
+  duplication-scan:
+    name: Code duplication (jscpd)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: jscpd
+        run: npm run dupes
+
   backend:
     # No test count in the name: it was "934" while the suite was already at 936, because a
     # hardcoded total goes stale on the very next commit that adds a test and nothing fails when
@@ -722,6 +794,15 @@ jobs:
           RATE_LIMIT_REGISTER_MAX: 10000
           RATE_LIMIT_LOGIN_MAX: 10000
           RATE_LIMIT_IMPORT_STAGE_MAX: 10000
+          # The unified /auth entry screen calls POST /auth/identify before every sign-in, which
+          # the suite's signIn() fixture now does too -- raised for the same reason as LOGIN above.
+          RATE_LIMIT_IDENTIFY_MAX: 10000
+          # AuthContext's bootstrap effect calls POST /auth/refresh on every page load (unrelated
+          # to this PR -- see that effect's own comment). The default ceiling (15/300s) was never
+          # hit before because the suite's userPage/adminPage fixtures create a fresh page per
+          # test; investigating a smoke-job 429, the backend log showed exactly 15 refresh calls
+          # went through before the next one tripped it. Raised for the same reason as the others.
+          RATE_LIMIT_REFRESH_MAX: 10000
         run: |
           java -jar target/finora-backend-*.jar > "$RUNNER_TEMP/backend.log" 2>&1 &
           for _ in $(seq 1 60); do

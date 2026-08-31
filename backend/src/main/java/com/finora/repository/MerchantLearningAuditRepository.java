@@ -2,6 +2,7 @@ package com.finora.repository;
 
 import com.finora.entity.MerchantLearningAudit;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -55,6 +56,34 @@ public interface MerchantLearningAuditRepository extends JpaRepository<MerchantL
 
     /** AccountPurgeSweepService -- hard delete, no soft-delete concern on this entity. */
     void deleteByUserId(UUID userId);
+
+    /**
+     * Category deletion. {@code merchant_learning_audit.previous_category_id} and
+     * {@code new_category_id} both {@code REFERENCES categories(id)} with NO explicit
+     * {@code ON DELETE} (V7), which in Postgres means {@code NO ACTION} -- so deleting a category
+     * any merchant ever learned against is refused outright with a foreign-key violation. That is
+     * every category a user has actually used, since {@code TransactionService.updateCategory}
+     * writes an audit row on every manual recategorization.
+     *
+     * <p>Nulled rather than repointed at the reassignment target on purpose. This is an audit
+     * trail: "the user moved this merchant to Groceries on the 3rd" is a fact, and rewriting it to
+     * name a category the user never picked would fabricate history. A null column reads as "the
+     * category involved here no longer exists", which is exactly what happened. The action, the
+     * merchant and the timestamp -- everything the trail is actually consulted for -- survive.
+     *
+     * <p>Scoped by userId as well as category id for the same reason every other query here is:
+     * category ids are per-user, but an unscoped bulk UPDATE is a landmine regardless.
+     */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("UPDATE MerchantLearningAudit a SET a.previousCategoryId = NULL "
+            + "WHERE a.userId = :userId AND a.previousCategoryId = :categoryId")
+    int clearPreviousCategoryReferences(@Param("userId") UUID userId, @Param("categoryId") UUID categoryId);
+
+    /** @see #clearPreviousCategoryReferences */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("UPDATE MerchantLearningAudit a SET a.newCategoryId = NULL "
+            + "WHERE a.userId = :userId AND a.newCategoryId = :categoryId")
+    int clearNewCategoryReferences(@Param("userId") UUID userId, @Param("categoryId") UUID categoryId);
 
     // Admin Portal, Learning Engine module -- platform-wide action counts for the aggregate
     // stats tile. Cheap grouped COUNT, same "simple indexed counts, not a new reporting

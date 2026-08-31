@@ -1,10 +1,12 @@
 package com.finora.service;
 
+import com.finora.entity.Account;
 import com.finora.entity.Category;
 import com.finora.entity.Merchant;
 import com.finora.entity.MerchantCategoryLearning;
 import com.finora.entity.MerchantLearningAudit;
 import com.finora.entity.Transaction;
+import com.finora.repository.AccountRepository;
 import com.finora.repository.CategoryRepository;
 import com.finora.repository.MerchantCategoryLearningRepository;
 import com.finora.repository.MerchantLearningAuditRepository;
@@ -23,6 +25,7 @@ import java.time.LocalDate;
 import java.time.YearMonth;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -35,6 +38,7 @@ import static org.mockito.Mockito.when;
 class AnalyticsServiceTest {
 
     private TransactionRepository transactionRepository;
+    private AccountRepository accountRepository;
     private UserRepository userRepository;
     private MerchantRepository merchantRepository;
     private MerchantCategoryLearningRepository learningRepository;
@@ -43,10 +47,12 @@ class AnalyticsServiceTest {
     private StatementImportRepository statementImportRepository;
     private AnalyticsService analyticsService;
     private final UUID userId = UUID.randomUUID();
+    private Account liveAccount;
 
     @BeforeEach
     void setUp() {
         transactionRepository = mock(TransactionRepository.class);
+        accountRepository = mock(AccountRepository.class);
         merchantRepository = mock(MerchantRepository.class);
         learningRepository = mock(MerchantCategoryLearningRepository.class);
         learningAuditRepository = mock(MerchantLearningAuditRepository.class);
@@ -59,9 +65,17 @@ class AnalyticsServiceTest {
         // already assumed, without having to seed a user row.
         userRepository = mock(UserRepository.class);
         when(userRepository.findById(any())).thenReturn(Optional.empty());
-        analyticsService = new AnalyticsService(transactionRepository, merchantRepository,
+        TransactionGraphService transactionGraphService = mock(TransactionGraphService.class);
+        when(transactionGraphService.ccPaymentFromTransactionIds(any())).thenReturn(Set.of());
+
+        liveAccount = new Account();
+        ReflectionTestUtils.setField(liveAccount, "id", UUID.randomUUID());
+        liveAccount.setUserId(userId);
+        when(accountRepository.findByUserId(userId)).thenReturn(List.of(liveAccount));
+
+        analyticsService = new AnalyticsService(transactionRepository, accountRepository, merchantRepository,
                 learningRepository, learningAuditRepository, categoryRepository, statementImportRepository,
-                new ConfidenceEngine(), userRepository);
+                new ConfidenceEngine(), userRepository, transactionGraphService);
     }
 
     private Transaction expense(UUID merchantId, LocalDate date, BigDecimal amount) {
@@ -90,7 +104,7 @@ class AnalyticsServiceTest {
     void topMerchants_ranksByTotalSpendDescending() {
         UUID amazon = UUID.randomUUID();
         UUID swiggy = UUID.randomUUID();
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(
                 expense(amazon, LocalDate.of(2026, 7, 1), new BigDecimal("5000")),
                 expense(swiggy, LocalDate.of(2026, 7, 2), new BigDecimal("400")),
                 expense(swiggy, LocalDate.of(2026, 7, 3), new BigDecimal("300"))
@@ -117,7 +131,7 @@ class AnalyticsServiceTest {
         Transaction duplicate = expense(amazon, LocalDate.of(2026, 7, 3), new BigDecimal("9000"));
         duplicate.setIsDuplicateOf(UUID.randomUUID());
 
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(real, transfer, duplicate));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(real, transfer, duplicate));
         when(merchantRepository.findByUserId(userId)).thenReturn(List.of(merchant(amazon, "Amazon")));
 
         var result = analyticsService.topMerchants(userId, null);
@@ -134,7 +148,7 @@ class AnalyticsServiceTest {
         // bound is what's actually requested. The June row here would never even be fetched now,
         // but keeping it in the stub still proves the July-only assertion holds either way.
         UUID amazon = UUID.randomUUID();
-        when(transactionRepository.findByUserIdAndTxnDateBetween(eq(userId), any(), any())).thenReturn(List.of(
+        when(transactionRepository.findByUserIdAndTxnDateBetweenAndAccountIdIn(eq(userId), any(), any(), any())).thenReturn(List.of(
                 expense(amazon, LocalDate.of(2026, 7, 15), new BigDecimal("500"))
         ));
         when(merchantRepository.findByUserId(userId)).thenReturn(List.of(merchant(amazon, "Amazon")));
@@ -156,7 +170,7 @@ class AnalyticsServiceTest {
 
         org.mockito.ArgumentCaptor<LocalDate> fromCaptor = org.mockito.ArgumentCaptor.forClass(LocalDate.class);
         org.mockito.ArgumentCaptor<LocalDate> toCaptor = org.mockito.ArgumentCaptor.forClass(LocalDate.class);
-        verify(transactionRepository).findByUserIdAndTxnDateBetween(eq(userId), fromCaptor.capture(), toCaptor.capture());
+        verify(transactionRepository).findByUserIdAndTxnDateBetweenAndAccountIdIn(eq(userId), fromCaptor.capture(), toCaptor.capture(), any());
 
         assertThat(fromCaptor.getValue()).isEqualTo(LocalDate.of(2026, 7, 1));
         assertThat(toCaptor.getValue()).isEqualTo(LocalDate.of(2026, 7, 31));
@@ -167,15 +181,15 @@ class AnalyticsServiceTest {
     void topMerchants_givenNoMonth_stillQueriesTheEntireHistory() {
         analyticsService.topMerchants(userId, null);
 
-        verify(transactionRepository).findByUserId(userId);
+        verify(transactionRepository).findByUserIdAndAccountIdIn(userId, List.of(liveAccount.getId()));
         verify(transactionRepository, org.mockito.Mockito.never())
-                .findByUserIdAndTxnDateBetween(any(), any(), any());
+                .findByUserIdAndTxnDateBetweenAndAccountIdIn(any(), any(), any(), any());
     }
 
     @Test
     void topMerchants_ignoresTransactionsWithNoResolvedMerchant() {
         Transaction noMerchant = expense(null, LocalDate.of(2026, 7, 1), new BigDecimal("1000"));
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(noMerchant));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(noMerchant));
         when(merchantRepository.findByUserId(userId)).thenReturn(List.of());
 
         assertThat(analyticsService.topMerchants(userId, null)).isEmpty();
@@ -190,7 +204,7 @@ class AnalyticsServiceTest {
         // findByUserIdAndTxnDateBetween instead of loading the user's whole history, so the stub
         // moves to that method -- see merchantTrend_queriesOnlyItsOwnWindow_notTheEntireHistory
         // below for the test that actually proves the window is what's requested.
-        when(transactionRepository.findByUserIdAndTxnDateBetween(eq(userId), any(), any())).thenReturn(List.of(
+        when(transactionRepository.findByUserIdAndTxnDateBetweenAndAccountIdIn(eq(userId), any(), any(), any())).thenReturn(List.of(
                 expense(amazon, LocalDate.of(2026, 7, 10), new BigDecimal("500"))
         ));
         when(merchantRepository.findByUserId(userId)).thenReturn(List.of(merchant(amazon, "Amazon")));
@@ -208,7 +222,7 @@ class AnalyticsServiceTest {
     void merchantTrend_sumsMultipleMerchantsWithinTheSameMonth() {
         UUID amazon = UUID.randomUUID();
         UUID swiggy = UUID.randomUUID();
-        when(transactionRepository.findByUserIdAndTxnDateBetween(eq(userId), any(), any())).thenReturn(List.of(
+        when(transactionRepository.findByUserIdAndTxnDateBetweenAndAccountIdIn(eq(userId), any(), any(), any())).thenReturn(List.of(
                 expense(amazon, LocalDate.of(2026, 7, 5), new BigDecimal("500")),
                 expense(swiggy, LocalDate.of(2026, 7, 20), new BigDecimal("300"))
         ));
@@ -230,10 +244,46 @@ class AnalyticsServiceTest {
 
         org.mockito.ArgumentCaptor<LocalDate> fromCaptor = org.mockito.ArgumentCaptor.forClass(LocalDate.class);
         org.mockito.ArgumentCaptor<LocalDate> toCaptor = org.mockito.ArgumentCaptor.forClass(LocalDate.class);
-        verify(transactionRepository).findByUserIdAndTxnDateBetween(eq(userId), fromCaptor.capture(), toCaptor.capture());
+        verify(transactionRepository).findByUserIdAndTxnDateBetweenAndAccountIdIn(eq(userId), fromCaptor.capture(), toCaptor.capture(), any());
 
         assertThat(fromCaptor.getValue()).isEqualTo(LocalDate.of(2026, 2, 1)); // 6 months back from July, inclusive
         assertThat(toCaptor.getValue()).isEqualTo(LocalDate.of(2026, 7, 31));
+    }
+
+    // --- Deleted-account leak (see DashboardService.summarize for the original fix): a deleted
+    // account's transactions deliberately keep deleted_at unset, so the date-bounded window (used
+    // by topMerchants(userId, month) and merchantTrend) and refundsFor must scope their fetches to
+    // exactly the user's live account ids, not just their userId. ---
+
+    @Test
+    void topMerchants_givenASpecificMonth_scopesTransactionFetch_toExactlyTheLiveAccountIds() {
+        analyticsService.topMerchants(userId, YearMonth.of(2026, 7));
+
+        verify(transactionRepository).findByUserIdAndTxnDateBetweenAndAccountIdIn(
+                eq(userId), any(), any(), eq(List.of(liveAccount.getId())));
+    }
+
+    @Test
+    void topMerchants_givenASpecificMonth_withNoLiveAccounts_shortCircuits_withoutQueryingTransactions() {
+        when(accountRepository.findByUserId(userId)).thenReturn(List.of());
+
+        assertThat(analyticsService.topMerchants(userId, YearMonth.of(2026, 7))).isEmpty();
+
+        verify(transactionRepository, org.mockito.Mockito.never())
+                .findByUserIdAndTxnDateBetweenAndAccountIdIn(any(), any(), any(), any());
+    }
+
+    @Test
+    void refundsFor_scopesTransactionFetch_toExactlyTheLiveAccountIds() {
+        UUID amazon = UUID.randomUUID();
+        Transaction purchase = expense(amazon, LocalDate.of(2026, 7, 1), new BigDecimal("1000"));
+        when(transactionRepository.findByUserIdAndTxnDateBetweenAndAccountIdIn(any(), any(), any(), any()))
+                .thenReturn(List.of(purchase));
+
+        analyticsService.topMerchants(userId, YearMonth.of(2026, 7));
+
+        verify(transactionRepository).findByUserIdAndReconciliationStatusInAndAccountIdIn(
+                eq(userId), any(), eq(List.of(liveAccount.getId())));
     }
 
     // --- categoryConfidence ---
@@ -312,7 +362,7 @@ class AnalyticsServiceTest {
         excludedTransfer.setCategoryId(shoppingId);
         excludedTransfer.setTransfer(true);
 
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(shoppingTxn, diningTxn, excludedTransfer));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(shoppingTxn, diningTxn, excludedTransfer));
 
         Category shopping = new Category();
         ReflectionTestUtils.setField(shopping, "id", shoppingId);
@@ -336,8 +386,10 @@ class AnalyticsServiceTest {
     void importStatistics_sumsAcrossAllImports_lastImportedAtFromTheMostRecent() {
         StatementImportRepository.StatementMetadata older = statementImport(20, 2, Instant.parse("2026-01-01T00:00:00Z"));
         StatementImportRepository.StatementMetadata newer = statementImport(35, 1, Instant.parse("2026-06-01T00:00:00Z"));
-        // findMetadataByUserIdOrderByImportedAtDesc -- newest first, same as the real query's contract
-        when(statementImportRepository.findMetadataByUserIdOrderByImportedAtDesc(userId)).thenReturn(List.of(newer, older));
+        // findMetadataByUserIdAndAccountIdInOrderByImportedAtDesc -- newest first, same as the real
+        // query's contract (see the deleted-account leak tests below for the scoping itself)
+        when(statementImportRepository.findMetadataByUserIdAndAccountIdInOrderByImportedAtDesc(eq(userId), any()))
+                .thenReturn(List.of(newer, older));
 
         var result = analyticsService.importStatistics(userId);
 
@@ -349,12 +401,39 @@ class AnalyticsServiceTest {
 
     @Test
     void importStatistics_noImportsYet_lastImportedAtIsNull_notEpochZero() {
-        when(statementImportRepository.findMetadataByUserIdOrderByImportedAtDesc(userId)).thenReturn(List.of());
+        when(statementImportRepository.findMetadataByUserIdAndAccountIdInOrderByImportedAtDesc(eq(userId), any()))
+                .thenReturn(List.of());
 
         var result = analyticsService.importStatistics(userId);
 
         assertThat(result.totalStatements()).isZero();
         assertThat(result.lastImportedAt()).isNull();
+    }
+
+    // --- Deleted-account leak (see DashboardService.summarize for the original fix): a deleted
+    // account's statements deliberately keep deleted_at unset, so importStatistics must scope its
+    // fetch to exactly the user's live account ids, not just their userId. ---
+
+    @Test
+    void importStatistics_scopesStatementFetch_toExactlyTheLiveAccountIds() {
+        when(statementImportRepository.findMetadataByUserIdAndAccountIdInOrderByImportedAtDesc(eq(userId), any()))
+                .thenReturn(List.of());
+
+        analyticsService.importStatistics(userId);
+
+        verify(statementImportRepository).findMetadataByUserIdAndAccountIdInOrderByImportedAtDesc(
+                userId, List.of(liveAccount.getId()));
+    }
+
+    @Test
+    void importStatistics_withNoLiveAccounts_shortCircuits_withoutQueryingStatements() {
+        when(accountRepository.findByUserId(userId)).thenReturn(List.of());
+
+        var result = analyticsService.importStatistics(userId);
+
+        assertThat(result.totalStatements()).isZero();
+        verify(statementImportRepository, org.mockito.Mockito.never())
+                .findMetadataByUserIdAndAccountIdInOrderByImportedAtDesc(any(), any());
     }
 
     // --- learningGrowth ---

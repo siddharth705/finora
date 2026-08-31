@@ -131,6 +131,9 @@ async function startBackend() {
       RATE_LIMIT_REGISTER_MAX: '10000',
       RATE_LIMIT_LOGIN_MAX: '10000',
       RATE_LIMIT_IMPORT_STAGE_MAX: '10000',
+      // The unified /auth entry screen calls POST /auth/identify before every sign-in, which
+      // signIn() in fixtures/test.ts now does too -- raised for the same reason as LOGIN above.
+      RATE_LIMIT_IDENTIFY_MAX: '10000',
       // BH-050: forgot-password is deliberately NOT raised, and must stay that way. The
       // negative phase asserts that rate limiting is actually ENFORCED, and it needs one
       // endpoint whose ceiling it can reach -- otherwise its assertion is unreachable and
@@ -140,6 +143,10 @@ async function startBackend() {
       // Nothing else in the suite spends this budget.
       RATE_LIMIT_PASSWORD_CHANGE_MAX: '10000',
       RATE_LIMIT_RESET_PASSWORD_MAX: '10000',
+      // AuthContext's bootstrap effect calls POST /auth/refresh on every page load, and the
+      // suite's userPage/adminPage fixtures create a fresh page per test -- the default ceiling
+      // (15/300s) is reachable well before the suite is, unrelated to whether the product works.
+      RATE_LIMIT_REFRESH_MAX: '10000',
     },
   });
   child.unref();

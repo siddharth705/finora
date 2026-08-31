@@ -68,7 +68,7 @@ class AdminSubscriptionControllerIT extends AbstractIntegrationTest {
                 "/api/v1/admin/subscriptions", HttpMethod.GET, new HttpEntity<>(bearerFor(admin)), String.class);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
-        JsonNode data = mapper.readTree(response.getBody()).get("data");
+        JsonNode data = mapper.readTree(response.getBody()).get("data").get("content");
         boolean found = false;
         for (JsonNode row : data) {
             if (row.get("userId").asText().equals(target.getId().toString())) {
@@ -105,7 +105,7 @@ class AdminSubscriptionControllerIT extends AbstractIntegrationTest {
 
         ResponseEntity<String> listResponse = restTemplate.exchange(
                 "/api/v1/admin/subscriptions", HttpMethod.GET, new HttpEntity<>(bearerFor(admin)), String.class);
-        JsonNode data = mapper.readTree(listResponse.getBody()).get("data");
+        JsonNode data = mapper.readTree(listResponse.getBody()).get("data").get("content");
         boolean confirmed = false;
         for (JsonNode row : data) {
             if (row.get("userId").asText().equals(target.getId().toString())) {

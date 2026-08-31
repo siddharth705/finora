@@ -4,15 +4,20 @@ import com.finora.dto.InsightsDto;
 import com.finora.entity.Budget;
 import com.finora.entity.Category;
 import com.finora.entity.Transaction;
+import com.finora.imports.StatementCoverageAnalyzer;
+import com.finora.repository.AccountRepository;
 import com.finora.repository.BudgetRepository;
 import com.finora.repository.CategoryRepository;
+import com.finora.repository.StatementImportRepository;
 import com.finora.repository.TransactionRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.LocalDate;
 import java.time.YearMonth;
+import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.stream.Collectors;
 import com.finora.repository.UserRepository;
@@ -31,7 +36,29 @@ import java.util.Locale;
 @Service
 public class InsightsService {
 
+    /** Below this, month-to-month variance in a category is more likely to be ordinary noise
+     *  than a genuine trend worth surfacing -- gates both the mover sentences and the budget
+     *  recommendation. */
+    private static final double MOVER_SIGNIFICANCE_THRESHOLD_PCT = 15.0;
+
+    /** How many months of prior activity to average "recent average" against -- long enough to
+     *  smooth out one unusual month, short enough to still reflect recent habits rather than a
+     *  stale pattern from a year ago. */
+    private static final int PRIOR_MONTHS_WINDOW = 4;
+
+    /** How many category-mover sentences to include per report -- enough to be useful without
+     *  flooding the Dashboard's condensed preview, which shows only the first three sentences of
+     *  the whole list regardless of type. */
+    private static final int MAX_MOVER_SENTENCES = 3;
+
+    /** Grouping key for a transaction with neither a merchant nor a description. Excluded from
+     *  ever winning "top merchant" below: several unrelated blank-labeled transactions summing
+     *  past a real, identified merchant is a misleading answer to "who did you spend the most
+     *  with", not a genuine one. */
+    private static final String UNKNOWN_MERCHANT = "Unknown";
+
     private final TransactionRepository transactionRepository;
+    private final AccountRepository accountRepository;
     private final CategoryRepository categoryRepository;
     private final BudgetRepository budgetRepository;
     /** Only so "this month" can be resolved against the user's own calendar -- see build(). Every
@@ -39,53 +66,47 @@ public class InsightsService {
      *  (DashboardService, BudgetService, GoalService, AnalyticsService, NetWorthService); this one
      *  performed no calendar resolution at all. */
     private final UserRepository userRepository;
+    private final TransactionGraphService transactionGraphService;
+    /** Phase 3 of docs/proposals/statement-continuity-and-coverage-integrity-proposal.md (§8) --
+     *  Insights consumes coverage, it doesn't own it: {@link StatementCoverageAnalyzer} stays a
+     *  pure function with no repository of its own, so this is the same repository call Phase 1's
+     *  AccountCoverageService already makes, not a new data source. */
+    private final StatementImportRepository statementImportRepository;
 
-    public InsightsService(TransactionRepository transactionRepository, CategoryRepository categoryRepository,
-                            BudgetRepository budgetRepository, UserRepository userRepository) {
+    public InsightsService(TransactionRepository transactionRepository, AccountRepository accountRepository,
+                            CategoryRepository categoryRepository,
+                            BudgetRepository budgetRepository, UserRepository userRepository,
+                            TransactionGraphService transactionGraphService,
+                            StatementImportRepository statementImportRepository) {
         this.transactionRepository = transactionRepository;
+        this.accountRepository = accountRepository;
         this.categoryRepository = categoryRepository;
         this.budgetRepository = budgetRepository;
         this.userRepository = userRepository;
+        this.transactionGraphService = transactionGraphService;
+        this.statementImportRepository = statementImportRepository;
     }
 
     @Transactional(readOnly = true)
     public InsightsDto build(UUID userId) {
-        // BH-005, fourth copy -- and the one that did not even have the REFUND clause, so a
-        // refunded purchase was counted at full price in every insight and every budget
-        // recommendation derived from them. RefundNetting owns both halves: the refund's income
-        // leg is dropped and the purchase is reported at what it actually cost.
-        List<Transaction> all = transactionRepository.findByUserId(userId);
-        RefundNetting refunds = RefundNetting.from(all);
-        List<Transaction> txns = RefundNetting.reportable(all).stream()
-                .filter(t -> t.getTxnType() == Transaction.Type.EXPENSE)
-                .toList();
-
-        if (txns.isEmpty()) {
-            return new InsightsDto(List.of("Upload or add transactions to see spending insights."), List.of());
+        Optional<Pipeline> maybePipeline = pipeline(userId);
+        if (maybePipeline.isEmpty()) {
+            return new InsightsDto(List.of("Upload or add transactions to see spending insights."), List.of(), null);
         }
-
-        Map<UUID, Category> categoriesById = categoryRepository.findByUserId(userId).stream()
-                .collect(Collectors.toMap(Category::getId, c -> c));
-
-        List<String> months = txns.stream().map(t -> YearMonth.from(t.getTxnDate()).toString()).distinct().sorted().toList();
-        // The newest month the user actually has data for. Still the right REPORTING period: an
-        // empty "this month" would be a worse answer than last month's real figures, and for
-        // someone importing statements in arrears -- the normal pattern for this product -- the
-        // newest data month is routinely not the current one.
-        //
-        // Bug fix: what was wrong was the LABEL, not the choice. Sentences below asserted "this
-        // month" over whichever month this happens to be, so a user who had not yet transacted in
-        // August read July's figures as August's, and the "versus your recent average" window
-        // silently shifted with it. reportingMonthIsCurrent resolves the real calendar month in
-        // the USER's timezone -- this service was the only one reporting on a period that never
-        // did -- and the wording follows it.
-        String currentMonth = months.get(months.size() - 1);
-        boolean reportingMonthIsCurrent =
-                currentMonth.equals(YearMonth.now(UserZone.forUser(userRepository, userId)).toString());
-        String periodLabel = reportingMonthIsCurrent ? "this month" : "in " + currentMonth;
-        List<String> priorMonths = months.size() > 1
-                ? months.subList(Math.max(0, months.size() - 4), months.size() - 1)
-                : List.of();
+        Pipeline pipeline = maybePipeline.get();
+        List<Transaction> txns = pipeline.txns();
+        Map<UUID, Category> categoriesById = pipeline.categoriesById();
+        RefundNetting refunds = pipeline.refunds();
+        String currentMonth = pipeline.currentMonth();
+        String periodLabel = pipeline.reportingMonthIsCurrent() ? "this month" : "in " + currentMonth;
+        // §8: a prior month with a known, unacknowledged coverage gap is excluded from the
+        // baseline entirely -- not diluted, not annotated -- rather than silently averaging in a
+        // month the account's own statement history says is incomplete. (No acknowledgment
+        // mechanism exists yet -- Phase 5 -- so every gap found here is "unacknowledged" by
+        // definition; this is the correct, safe default until that table exists.)
+        List<String> priorMonths = pipeline.priorMonths().stream()
+                .filter(m -> !monthIntersectsAnyGap(m, pipeline.gaps()))
+                .toList();
 
         Map<String, BigDecimal> currentByCat = groupByCategory(txns, currentMonth, categoriesById, refunds);
         Map<String, BigDecimal> priorByCat = new HashMap<>();
@@ -116,9 +137,42 @@ public class InsightsService {
         sentences.add(String.format(Locale.ENGLISH, "In %s, total spend was \u20b9%,.0f across %d categories.",
                 currentMonth, total, currentByCat.size()));
 
+        // \u00a78: the current reporting month itself intersecting a gap is a caveat about the number
+        // just stated above, not a mover -- placed right after it rather than at the end, the same
+        // "state the fact, then its caveat" ordering a reader expects. Reuses PR #589's own
+        // pattern for the new-category sentence: gate on data presence, degrade gracefully, one
+        // clear sentence rather than reworking every existing one.
+        List<StatementCoverageAnalyzer.CoverageGap> currentMonthGaps = pipeline.gaps().stream()
+                .filter(g -> monthIntersects(currentMonth, g))
+                .toList();
+        InsightsDto.CoverageCaveat coverageCaveat = currentMonthGaps.isEmpty() ? null
+                : new InsightsDto.CoverageCaveat(currentMonth, currentMonthGaps.stream()
+                        .map(g -> new InsightsDto.CoverageCaveat.GapWindow(g.gapStart(), g.gapEnd()))
+                        .toList());
+        if (coverageCaveat != null) {
+            sentences.add(String.format(Locale.ENGLISH,
+                    "Some transactions for %s may be missing \u2014 import that statement to complete your history.",
+                    YearMonth.parse(currentMonth).format(DateTimeFormatter.ofPattern("MMMM yyyy", Locale.ENGLISH))));
+        }
+
         currentByCat.entrySet().stream().max(Map.Entry.comparingByValue())
                 .ifPresent(top -> sentences.add(String.format(Locale.ENGLISH,
                         "%s was your biggest category at \u20b9%,.0f.", top.getKey(), top.getValue())));
+
+        // Bug fix: a category with real spend but no prior-month history got pctChange == null
+        // (nothing to compute a % change from), and every mover-based sentence below filters on
+        // pctChange != null -- so a genuinely new spending pattern, often the most notable thing
+        // to say, was silently invisible everywhere. Only fires when there IS a prior-month
+        // baseline for something to be new against: with none (a user's very first month of
+        // data), every category would trivially satisfy pctChange == null, and flagging all of
+        // them as "new" would not be a meaningful observation, just the absence of history yet.
+        if (!priorMonths.isEmpty()) {
+            movers.stream()
+                    .filter(m -> m.pctChange() == null)
+                    .max(Comparator.comparing(InsightsDto.CategoryMover::current))
+                    .ifPresent(m -> sentences.add(String.format(Locale.ENGLISH,
+                            "%s is a new category this month, totaling \u20b9%,.0f.", m.category(), m.current())));
+        }
 
         // The one real "recommendation" in this list: a category trending up with no budget set
         // for it yet is exactly the situation Budgets exists to help with, and it's grounded in
@@ -130,7 +184,7 @@ public class InsightsService {
         Map<String, UUID> categoryIdByName = categoriesById.entrySet().stream()
                 .collect(Collectors.toMap(e -> e.getValue().getName(), Map.Entry::getKey, (a, b) -> a));
         movers.stream()
-                .filter(m -> m.pctChange() != null && m.pctChange() >= 15)
+                .filter(m -> m.pctChange() != null && m.pctChange() >= MOVER_SIGNIFICANCE_THRESHOLD_PCT)
                 .filter(m -> {
                     UUID categoryId = categoryIdByName.get(m.category());
                     return categoryId == null || !categoryIdsWithBudget.contains(categoryId);
@@ -139,12 +193,15 @@ public class InsightsService {
                 .ifPresent(m -> sentences.add(String.format(Locale.ENGLISH,
                         "Consider setting a budget for %s — it's trending up and doesn't have one yet.", m.category())));
 
-        movers.stream().filter(m -> m.pctChange() != null && Math.abs(m.pctChange()) >= 15).limit(3).forEach(m -> {
-            String dir = m.pctChange() > 0 ? "more" : "less";
-            sentences.add(String.format(Locale.ENGLISH,
-                    "%s spend was %.0f%% %s than your recent average (\u20b9%,.0f vs usual \u20b9%,.0f).",
-                    m.category(), Math.abs(m.pctChange()), dir, m.current(), m.priorAverage()));
-        });
+        movers.stream()
+                .filter(m -> m.pctChange() != null && Math.abs(m.pctChange()) >= MOVER_SIGNIFICANCE_THRESHOLD_PCT)
+                .limit(MAX_MOVER_SENTENCES)
+                .forEach(m -> {
+                    String dir = m.pctChange() > 0 ? "more" : "less";
+                    sentences.add(String.format(Locale.ENGLISH,
+                            "%s spend was %.0f%% %s than your recent average (\u20b9%,.0f vs usual \u20b9%,.0f).",
+                            m.category(), Math.abs(m.pctChange()), dir, m.current(), m.priorAverage()));
+                });
 
         // Bug fix: falling back from merchant to description still isn't guaranteed non-null --
         // description is optional on transaction creation (TransactionDto.CreateRequest has no
@@ -156,13 +213,21 @@ public class InsightsService {
                 .collect(Collectors.groupingBy(
                         t -> Optional.ofNullable(t.getMerchant()).filter(s -> !s.isBlank())
                                 .or(() -> Optional.ofNullable(t.getDescription()).filter(s -> !s.isBlank()))
-                                .orElse("Unknown"),
+                                .orElse(UNKNOWN_MERCHANT),
                         Collectors.reducing(BigDecimal.ZERO, refunds::reportableAmount, BigDecimal::add)));
-        merchantTotals.entrySet().stream().max(Map.Entry.comparingByValue())
+        // Bug fix: several unrelated transactions that merely lack a merchant/description all
+        // collapse into the same UNKNOWN_MERCHANT bucket and get summed together -- if that sum
+        // happened to be the largest, the sentence named a fabricated "merchant" (the literal
+        // word "Unknown") that never actually existed, rather than a real answer to "who did you
+        // spend the most with". Excluded outright; if nothing else has a real name this month,
+        // the sentence is omitted, not wrong.
+        merchantTotals.entrySet().stream()
+                .filter(e -> !UNKNOWN_MERCHANT.equals(e.getKey()))
+                .max(Map.Entry.comparingByValue())
                 .ifPresent(top -> sentences.add(String.format(Locale.ENGLISH,
                         "Your top merchant %s was \"%s\" at \u20b9%,.0f.", periodLabel, top.getKey(), top.getValue())));
 
-        return new InsightsDto(sentences, movers);
+        return new InsightsDto(sentences, movers, coverageCaveat);
     }
 
     /** BH-005: the netting is a parameter rather than a field because it is derived per request
@@ -176,4 +241,98 @@ public class InsightsService {
                         t -> categoriesById.containsKey(t.getCategoryId()) ? categoriesById.get(t.getCategoryId()).getName() : "Uncategorized",
                         Collectors.reducing(BigDecimal.ZERO, refunds::reportableAmount, BigDecimal::add)));
     }
+
+    /**
+     * The part of {@link #build} that decides WHICH transactions count and for which month --
+     * every downstream number is a reduction over exactly this set, so this is also the
+     * reusable seam {@link InsightsExplorerService} recomputes from for the Insight Explorer's
+     * trace (docs/proposals/reconciliation-evolution-roadmap-proposal.md, Part 9): "re-run that
+     * computation in a debug mode that logs its inputs instead of just returning the final
+     * number." Package-private and returned as data rather than duplicated -- the reportable-set
+     * logic (RefundNetting + the EXPENSE filter + the newest-data-month resolution) is the part
+     * that has carried real bugs before (BH-005); a second hand-written copy in the explorer would
+     * be exactly the kind of drift this trace exists to catch, not avoid.
+     */
+    Optional<Pipeline> pipeline(UUID userId) {
+        // Deleted-account leak (see DashboardService.summarize for the original fix): a deleted
+        // account's transactions deliberately keep deleted_at unset, so findByUserId alone would
+        // keep feeding these insights forever, not just during StatementImportService's 7-day
+        // grace window.
+        List<UUID> liveAccountIds = accountRepository.findByUserId(userId).stream()
+                .map(com.finora.entity.Account::getId).toList();
+        List<Transaction> all = liveAccountIds.isEmpty() ? List.of()
+                : transactionRepository.findByUserIdAndAccountIdIn(userId, liveAccountIds);
+        RefundNetting refunds = RefundNetting.from(all);
+        // excludingInvestmentTransfers applies here (unlike DashboardService/ReportService, which
+        // keep a separate category-breakdown list): every number this whole method produces --
+        // the headline "total spend" sentence, the category movers, the top-merchant callout -- is
+        // itself framed as "spending", and an Investments-tagged SIP appearing as "your biggest
+        // category" or a spend-trend mover would contradict the very point of this exclusion. See
+        // RefundNetting.excludingInvestmentTransfers's own comment on the narrower, budget-safe cut.
+        List<Transaction> txns = RefundNetting.excludingInvestmentTransfers(
+                        RefundNetting.reportable(all, transactionGraphService.ccPaymentFromTransactionIds(all))).stream()
+                .filter(t -> t.getTxnType() == Transaction.Type.EXPENSE)
+                .toList();
+
+        if (txns.isEmpty()) {
+            return Optional.empty();
+        }
+
+        Map<UUID, Category> categoriesById = categoryRepository.findByUserId(userId).stream()
+                .collect(Collectors.toMap(Category::getId, c -> c));
+
+        List<String> months = txns.stream().map(t -> YearMonth.from(t.getTxnDate()).toString()).distinct().sorted().toList();
+        String currentMonth = months.get(months.size() - 1);
+        boolean reportingMonthIsCurrent =
+                currentMonth.equals(YearMonth.now(UserZone.forUser(userRepository, userId)).toString());
+        List<String> priorMonths = months.size() > 1
+                ? months.subList(Math.max(0, months.size() - PRIOR_MONTHS_WINDOW), months.size() - 1)
+                : List.of();
+
+        List<StatementCoverageAnalyzer.CoverageGap> gaps = coverageGapsAcross(userId, liveAccountIds);
+
+        return Optional.of(new Pipeline(currentMonth, reportingMonthIsCurrent, priorMonths, txns, categoriesById,
+                refunds, gaps));
+    }
+
+    /**
+     * Every gap across every one of the user's live accounts, unioned into one flat list -- a
+     * month is untrustworthy for the aggregate the moment ANY account has a gap touching it,
+     * regardless of which account's data is actually missing. {@link StatementCoverageAnalyzer}
+     * stays a pure function with no repository access of its own (its own class comment);
+     * this is the same {@code findMetadataWithPeriodByUserIdAndAccountId} query Phase 1's
+     * AccountCoverageService already calls per account, run here once per account in scope.
+     */
+    private List<StatementCoverageAnalyzer.CoverageGap> coverageGapsAcross(UUID userId, List<UUID> liveAccountIds) {
+        List<StatementCoverageAnalyzer.CoverageGap> gaps = new ArrayList<>();
+        for (UUID accountId : liveAccountIds) {
+            List<StatementImportRepository.StatementMetadata> metadata =
+                    statementImportRepository.findMetadataWithPeriodByUserIdAndAccountId(userId, accountId);
+            if (metadata.isEmpty()) continue;
+            List<StatementCoverageAnalyzer.StatementPeriod> periods = metadata.stream()
+                    .map(m -> new StatementCoverageAnalyzer.StatementPeriod(m.getId(), m.getStatementPeriodStart(),
+                            m.getStatementPeriodEnd(), m.getOpeningBalance(), m.getClosingBalance()))
+                    .toList();
+            gaps.addAll(StatementCoverageAnalyzer.analyze(periods).gaps());
+        }
+        return gaps;
+    }
+
+    /** Whether a {@code "yyyy-MM"} month bucket shares any calendar day with a coverage gap. */
+    private static boolean monthIntersects(String yearMonth, StatementCoverageAnalyzer.CoverageGap gap) {
+        YearMonth ym = YearMonth.parse(yearMonth);
+        LocalDate monthStart = ym.atDay(1);
+        LocalDate monthEnd = ym.atEndOfMonth();
+        return !gap.gapEnd().isBefore(monthStart) && !gap.gapStart().isAfter(monthEnd);
+    }
+
+    private static boolean monthIntersectsAnyGap(String yearMonth, List<StatementCoverageAnalyzer.CoverageGap> gaps) {
+        return gaps.stream().anyMatch(g -> monthIntersects(yearMonth, g));
+    }
+
+    /** See {@link #pipeline}. {@code gaps} (Phase 3, §8) is every coverage gap across the user's
+     *  live accounts -- {@link #build} decides how to use it; this record only carries it. */
+    record Pipeline(String currentMonth, boolean reportingMonthIsCurrent, List<String> priorMonths,
+                     List<Transaction> txns, Map<UUID, Category> categoriesById, RefundNetting refunds,
+                     List<StatementCoverageAnalyzer.CoverageGap> gaps) {}
 }

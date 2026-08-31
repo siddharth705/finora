@@ -35,7 +35,7 @@ export interface ReimportNavState {
  *  §3.2) -- a completed queued job already has a staged session, the exact same one "Continue
  *  previous import" already knows how to open, so this reuses `resumeSession` rather than
  *  reimplementing it for a second arrival route. */
-export interface ResumeSessionNavState {
+interface ResumeSessionNavState {
   kind: 'resume';
   resumeSessionId: string;
 }
@@ -58,7 +58,7 @@ export interface ResumeSessionNavState {
  *  `'retryWithBytes'`) once a retained session exists server-side, rather than growing optional
  *  fields onto this one -- that would reintroduce the exact "field sometimes present" ambiguity
  *  the `kind` tag exists to eliminate. */
-export interface RetryFailedImportNavState {
+interface RetryFailedImportNavState {
   kind: 'retry';
   retryFileName: string;
   retryFailureCode: string | null;

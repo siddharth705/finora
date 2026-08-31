@@ -88,6 +88,13 @@ public interface AuditLogRepository extends JpaRepository<AuditLog, UUID> {
     // than fetching this user's entire audit history just to take(5) in memory.
     List<AuditLog> findTop5ByUserIdOrderByCreatedAtDesc(UUID userId);
 
+    // Self-service login history (Phase 2 audit hardening / user-security-center-proposal.md
+    // §3.1) -- filtered to just the login-family actions (see LoginHistoryController), same
+    // Top-N-pushed-to-the-database reasoning as findTop5ByUserIdOrderByCreatedAtDesc above:
+    // this is a user reviewing recent activity, not a bulk export, so an unbounded list isn't
+    // warranted the way it is for the admin-gated findByUserIdOrderByCreatedAtDesc.
+    List<AuditLog> findTop50ByUserIdAndActionInOrderByCreatedAtDesc(UUID userId, List<String> actions);
+
     /**
      * Admin Portal Phase 4 (EntityDrawer reference implementation, Banks page's Audit tab) --
      * BANK_CREATED/BANK_UPDATED/BANK_DELETED all record entityId as null (Bank.id is a String

@@ -23,7 +23,7 @@ function renderProtected(allowUnverified?: boolean) {
             </ProtectedRoute>
           }
         />
-        <Route path="/login" element={<div>Login page</div>} />
+        <Route path="/auth" element={<div>Auth page</div>} />
         <Route path="/verify-phone" element={<div>Verify phone page</div>} />
       </Routes>
     </MemoryRouter>
@@ -35,12 +35,12 @@ describe('ProtectedRoute', () => {
     vi.mocked(useAuth).mockReset();
   });
 
-  it('redirects to /login when there is no token', () => {
+  it('redirects to /auth when there is no token', () => {
     vi.mocked(useAuth).mockReturnValue({ token: null, bootstrapping: false, phoneVerified: false } as ReturnType<typeof useAuth>);
 
     renderProtected();
 
-    expect(screen.getByText('Login page')).toBeInTheDocument();
+    expect(screen.getByText('Auth page')).toBeInTheDocument();
     expect(screen.queryByText('Protected content')).not.toBeInTheDocument();
   });
 
@@ -58,7 +58,7 @@ describe('ProtectedRoute', () => {
     renderProtected();
 
     expect(screen.queryByText('Protected content')).not.toBeInTheDocument();
-    expect(screen.queryByText('Login page')).not.toBeInTheDocument();
+    expect(screen.queryByText('Auth page')).not.toBeInTheDocument();
     expect(screen.queryByText('Verify phone page')).not.toBeInTheDocument();
   });
 

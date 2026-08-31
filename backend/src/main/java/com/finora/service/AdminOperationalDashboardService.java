@@ -108,7 +108,7 @@ public class AdminOperationalDashboardService {
         Instant startOfToday = LocalDate.now(zone).atStartOfDay(zone).toInstant();
         Instant startOfYesterday = LocalDate.now(zone).minusDays(1).atStartOfDay(zone).toInstant();
 
-        long totalUsers = userRepository.countByRoleNot("BOOTSTRAP_ADMIN");
+        long totalUsers = userRepository.countByEmailNot(BootstrapService.BOOTSTRAP_IDENTIFIER);
         long activeUsersToday = auditLogRepository.countDistinctUsersByActionSince("USER_LOGIN", startOfToday);
         long transactionsToday = transactionRepository.countByCreatedAtAfter(startOfToday);
         long importsToday = statementImportRepository.countByImportedAtAfter(startOfToday);
@@ -132,7 +132,9 @@ public class AdminOperationalDashboardService {
                 transactionRepository.countByIsDuplicateOfIsNotNull());
 
         // Insights row -- inverse of activeUsersToday's own query, same window this class already
-        // uses for "today," just walked back INACTIVITY_WINDOW_DAYS instead of one.
+        // uses for "today," just walked back INACTIVITY_WINDOW_DAYS instead of one. See
+        // countWithNoAuditActionSince's own doc comment for why this also requires the account to
+        // predate the cutoff -- otherwise a signup from an hour ago counts as "inactive."
         Instant inactivityCutoff = LocalDate.now(zone).minusDays(INACTIVITY_WINDOW_DAYS).atStartOfDay(zone).toInstant();
         long inactiveUsersLast7Days = userRepository.countWithNoAuditActionSince(
                 "USER_LOGIN", inactivityCutoff, BootstrapService.BOOTSTRAP_IDENTIFIER);
@@ -150,14 +152,14 @@ public class AdminOperationalDashboardService {
     }
 
     /** D-27 PR3-D. See {@link ActivationFunnelDto}'s own class doc for exactly what "reached" and
-     *  "simple snapshot" mean here. countByRoleNot("BOOTSTRAP_ADMIN") reused as-is rather than a
-     *  new query -- the same totalUsers definition {@link #overview()} already uses, so this
-     *  funnel's own "signed up" figure agrees with the Operational Dashboard's totalUsers tile
-     *  rather than quietly defining "total users" a second, different way. */
+     *  "simple snapshot" mean here. countByEmailNot(BootstrapService.BOOTSTRAP_IDENTIFIER) reused
+     *  as-is rather than a new query -- the same totalUsers definition {@link #overview()} already
+     *  uses, so this funnel's own "signed up" figure agrees with the Operational Dashboard's
+     *  totalUsers tile rather than quietly defining "total users" a second, different way. */
     @Transactional(readOnly = true)
     public ActivationFunnelDto activationFunnel() {
         return new ActivationFunnelDto(
-                userRepository.countByRoleNot("BOOTSTRAP_ADMIN"),
+                userRepository.countByEmailNot(BootstrapService.BOOTSTRAP_IDENTIFIER),
                 statementImportRepository.countDistinctUsersEverActivated(),
                 budgetRepository.countDistinctUsersEverActivated(),
                 goalRepository.countDistinctUsersEverActivated());

@@ -1,5 +1,7 @@
 package com.finora.imports.pdf;
 
+import com.finora.imports.TestAccountRepositories;
+
 import com.finora.dto.ImportDto.StagedRow;
 import com.finora.imports.CsvParser;
 import com.finora.imports.DocumentContext;
@@ -76,9 +78,11 @@ class SplitHeaderRunsPdfTableLocatorTest {
                 .thenReturn(new CategorizationService.Suggestion("Other", "default", null, null, null));
         when(categorization.suggestReadOnly(any(), any(), any(), any(), any()))
                 .thenReturn(new CategorizationService.Suggestion("Other", "default", null, null, null));
+        when(categorization.suggestReadOnly(any(), any(), any(), any(), any(), any()))
+                .thenReturn(new CategorizationService.Suggestion("Other", "default", null, null, null));
         TransactionRepository transactions = mock(TransactionRepository.class);
-        when(transactions.findPotentialDuplicatesByUser(any(), any(), any(), any())).thenReturn(List.of());
-        return new TransactionNormalizer(categorization, new DuplicateDetector(transactions),
+        when(transactions.findPotentialDuplicatesByUserAndAccountIdIn(any(), any(), any(), any(), any())).thenReturn(List.of());
+        return new TransactionNormalizer(categorization, new DuplicateDetector(transactions, TestAccountRepositories.anyLive()),
                 com.finora.imports.TestRuleEngines.empty());
     }
 
@@ -162,7 +166,13 @@ class SplitHeaderRunsPdfTableLocatorTest {
         TransactionNormalizer normalizer = normalizer();
         // Before the fix: 0 / 1 / 1 rows were recognized as credits across the three documents,
         // and every genuine deposit staged as an EXPENSE. Measured after: 30 / 34 / 2.
-        List<Integer> expectedCredits = List.of(30, 34, 2);
+        //
+        // hdfc-savings-multi-page-ledger's count moved 34 -> 33, and hdfc-savings-single-page-ledger's
+        // 2 -> 1, both when STATEMENT_SUMMARY_BLOCK_CLOSED removed each trace's own phantom
+        // trailing-summary row (see theRowsThemselvesAreUnchangedInNumber's own comment) -- each
+        // phantom row's Deposit Amt. cell held the recap grid's own aggregate credit total, not a
+        // genuine deposit.
+        List<Integer> expectedCredits = List.of(30, 33, 1);
 
         for (int i = 0; i < HDFC_SAVINGS_TRACES.size(); i++) {
             String trace = HDFC_SAVINGS_TRACES.get(i);
@@ -230,7 +240,13 @@ class SplitHeaderRunsPdfTableLocatorTest {
         // -- a row whose date can never parse stages nothing regardless of what its amount cell
         // resolves to, so this is the same "boilerplate/unparseable either way" shape as the two
         // moves above, not a new loss of accuracy on any real transaction.
-        List<Integer> expected = List.of(241, 360, 9);
+        // hdfc-savings-multi-page-ledger's count moved once more, 360 -> 359, and
+        // hdfc-savings-single-page-ledger's 9 -> 8, both when STATEMENT_SUMMARY_BLOCK_CLOSED was
+        // added: each trace's own trailing "Statement Summary :" recap block used to form an entire
+        // PHANTOM transaction (no real date, but its aggregate debit/credit totals landed in real
+        // amount columns), which is exactly the one row each count drops. See
+        // theRowsThemselvesAreUnchangedInNumber below for the full before/after content.
+        List<Integer> expected = List.of(241, 359, 8);
         String[] transactionAmountColumns = {"withdrawal amt", "deposit amt", "amount", "debit",
                 "credit", "deposit", "withdrawal", "deposits", "withdrawals"};
 
@@ -249,7 +265,21 @@ class SplitHeaderRunsPdfTableLocatorTest {
     void theRowsThemselvesAreUnchangedInNumber() {
         // Fix A renames columns; it must not find or lose a single row. These are the counts the
         // pre-fix engine produced, asserted so a "fix" that quietly changed the table is visible.
-        List<Integer> expected = List.of(331, 569, 9);
+        //
+        // hdfc-savings-multi-page-ledger's count moved 569 -> 568, and hdfc-savings-single-page-ledger's
+        // 9 -> 8, both when STATEMENT_SUMMARY_BLOCK_CLOSED was added (see
+        // PdfTableLocator.STATEMENT_SUMMARY_BLOCK_MARKER). Verified directly (diffing the located
+        // rows before and after) for the multi-page trace: the trigger removes exactly one PHANTOM
+        // row that used to form from this document's own trailing "Statement Summary :-" recap block
+        // -- its Date/Narration cells were the recap heading and disclaimer prose fused together (no
+        // real date anywhere in them), and its Withdrawal Amt./Deposit Amt. cells held the recap
+        // grid's own aggregate totals (368,759.09 / 374,644.91) as if they were one more genuine
+        // debit and credit. The genuinely last real transaction (31/10/25, 350.00) survives as its
+        // own clean row -- previously that same real row ALSO carried the recap heading text merged
+        // onto its own narration ("...FROM PHONE Opening Balance Debits Closing Xxx"), which the fix
+        // strips too, without changing which row it is. The single-page trace's own trailing
+        // "STATEMENT SUMMARY :-" block is the identical shape from the same bank/export layout.
+        List<Integer> expected = List.of(331, 568, 8);
         for (int i = 0; i < HDFC_SAVINGS_TRACES.size(); i++) {
             assertThat(locate(HDFC_SAVINGS_TRACES.get(i)).size())
                     .as("%s", HDFC_SAVINGS_TRACES.get(i)).isEqualTo(expected.get(i));
@@ -410,7 +440,13 @@ class SplitHeaderRunsPdfTableLocatorTest {
                 // always was. See HeaderProseRejectionTest for the full before/after and the
                 // pollution checks proving the rejected prose didn't leak into these rows.
                 Map.entry("icici-credit-card-statement", List.of(1, 6)),
-                Map.entry("icici-savings-ledger-validation", List.of(1, 2)),
+                // 2 before Phase 2E.5's leading-narration fix, 12 after -- the fix now attaches the
+                // narration-only line right under the header to the transaction it belongs to instead
+                // of swallowing it as a false-header prose block. All 11 real transactions verified via
+                // BALANCE_CHAIN and STATEMENT_TOTALS with zero discrepancies; the 12th row is the
+                // pre-existing flushPendingLeading mechanism carrying page-2 glossary content, not new
+                // behavior. See LeadingNarrationBeforeFirstAnchorPdfTableLocatorTest.
+                Map.entry("icici-savings-ledger-validation", List.of(1, 12)),
                 Map.entry("kotak-credit-card-ledger-validation", List.of(0)),
                 Map.entry("kotak-savings-ledger-validation", List.of(1, 2)),
                 Map.entry("pnb-savings-ledger-validation", List.of(1, 62)),

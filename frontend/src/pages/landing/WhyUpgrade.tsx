@@ -27,7 +27,7 @@ export function WhyUpgrade() {
       <SectionHeading
         eyebrow="Growing with you"
         title={<>Built for today.<br />Ready for tomorrow.</>}
-        blurb="Start with the core experience, free. As your financial life gets more complicated, Finora is built to get more capable — not to start charging for what already worked."
+        blurb="Start with the core experience, free. As your financial life gets more complicated, Fynora is built to get more capable — not to start charging for what already worked."
       />
 
       <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4 max-w-5xl mx-auto">
@@ -63,7 +63,7 @@ export function WhyUpgrade() {
 
       <Reveal delayMs={280}>
         <p className="text-center text-sm mt-8" style={{ color: 'var(--m-ink-3)' }}>
-          Only the first step exists today. The rest is where Finora is going — published here so
+          Only the first step exists today. The rest is where Fynora is going — published here so
           you can hold us to it.
         </p>
       </Reveal>

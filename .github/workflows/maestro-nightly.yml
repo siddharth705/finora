@@ -1,0 +1,270 @@
+name: Mobile E2E (Maestro)
+
+# See mobile/.maestro/README.md for the full "why" -- this header covers only the CI-shaped
+# decisions.
+#
+# PER-PR (path-filtered), NOT a required check yet -- promoted from nightly-only after this job's
+# first-ever fully green run (2026-08-28, run 33162043620 -- synthetic-ok: a public GitHub
+# Actions run ID, not financial/customer data), which took 9 attempts and 5 separate
+# infra fixes to reach: JDK selection, an adb-install race, a `script:` block that never actually
+# ran as one shell session under reactivecircus/android-emulator-runner, missing KVM group
+# permissions, and two real Maestro-flow bugs (a keyboard hijack, two below-the-fold scroll gaps).
+# That history is exactly why this isn't wired into main's required status checks yet -- a still-
+# possible infra flake shouldn't be able to block an unrelated PR from merging until this has run
+# clean across more than one day. `paths: mobile/**` keeps the ~25-minute emulator boot off every
+# PR that can't have touched this, matching ci.yml's own path-scoping reasoning for its jobs. The
+# nightly schedule stays on as a full-repo safety net regardless of what changed -- the same trade
+# e2e-nightly.yml makes for the web suite, just no longer the ONLY trigger. `workflow_dispatch`
+# still exists so a release can force a run on demand.
+#
+# 03:15 UTC, offset from e2e-nightly.yml's 03:00 and gitleaks-nightly.yml's 03:30 for the same
+# reason those two are offset from each other: keeping schedules visibly distinct in the Actions
+# history, not because the jobs would conflict (GitHub-hosted runners give every job its own VM).
+on:
+  pull_request:
+    paths:
+      - 'mobile/**'
+      - '.github/workflows/maestro-nightly.yml'
+  schedule:
+    - cron: '15 3 * * *'
+  workflow_dispatch:
+
+# Per-ref, not the single global lane this had while nightly-only -- that would have serialised
+# every open PR's run behind one queue once this started triggering on pull_request. Matches
+# ci.yml's own group exactly: a new push supersedes the in-flight run on any branch except main,
+# where every run's result (nightly or workflow_dispatch) is worth keeping rather than discarding.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+jobs:
+  maestro:
+    name: Login / Dashboard / Import (Android emulator)
+    runs-on: ubuntu-latest
+    # Generous: a from-scratch native Android build (first-ever measured run: ~4 min for a debug
+    # build, ~6.5 min for the release build these flows actually need) plus AVD boot plus three
+    # flows. A hang detector, not a performance budget -- see the backend job's own comment on that
+    # distinction.
+    timeout-minutes: 45
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: finora
+          POSTGRES_USER: finora
+          POSTGRES_PASSWORD: finora
+        ports:
+          - 5435:5432
+        options: >-
+          --health-cmd="pg_isready -U finora -d finora"
+          --health-interval=2s
+          --health-timeout=5s
+          --health-retries=30
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # Two JDKs: 25 for the backend (matches backend/pom.xml, same as every other job that
+      # packages it), 21 for the Android Gradle build specifically -- JDK 25 fails that build on a
+      # CMake/toolchain issue (see mobile/.maestro/README.md point 1). setup-java's multi-version
+      # form installs both and exposes JAVA_HOME_25_X64 / JAVA_HOME_21_X64 so each step below picks
+      # the one it needs rather than fighting over a single JAVA_HOME.
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: |
+            25
+            21
+          cache: maven
+          cache-dependency-path: backend/pom.xml
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: mobile/package-lock.json
+
+      # -DskipTests: the backend job in ci.yml already ran them on this commit.
+      - name: Build the backend
+        working-directory: backend
+        env:
+          JAVA_HOME: ${{ env.JAVA_HOME_25_X64 }}
+        run: ./mvnw -B -DskipTests package
+
+      # Same throwaway-credential shape as ci.yml's "Production classpath check" step, and for the
+      # identical reason: GOOGLE_APPLICATION_CREDENTIALS gates FirebaseConfig, and without it every
+      # phone-OTP-adjacent endpoint 503s. None of the three flows below touch one -- see
+      # mobile/.maestro/README.md -- but the backend boots the same way regardless of what a client
+      # is about to exercise, so it gets the same treatment as every other job that starts it.
+      - name: Generate throwaway Firebase credentials
+        run: |
+          set -euo pipefail
+          openssl genrsa -out "$RUNNER_TEMP/maestro-key.pem" 2048 2>/dev/null
+          python3 - "$RUNNER_TEMP/maestro-key.pem" "$RUNNER_TEMP/maestro-creds.json" <<'PYTHON'
+          import json, sys
+          key = open(sys.argv[1]).read()
+          json.dump({
+              "type": "service_account",
+              "project_id": "finora-maestro-ci",
+              "private_key_id": "0" * 40,
+              "private_key": key,
+              "client_email": "maestro-ci@example.invalid",
+              "client_id": "0" * 21,
+              "token_uri": "https://oauth2.googleapis.com/token",
+          }, open(sys.argv[2], "w"))
+          PYTHON
+
+      # PORT 18090, distinct from ci.yml's 18081/18086/18088 and e2e-nightly.yml's 18081 -- no
+      # collision is possible (every job gets its own VM) but a distinct number keeps logs
+      # unambiguous if more than one workflow's output is being read side by side.
+      #
+      # Rate limits raised for the same reason every other job that registers accounts and stages
+      # statements raises them: production per-IP ceilings would stop this run partway through
+      # regardless of whether the product works. IMPORT_STAGE specifically because import.yaml
+      # stages a statement; the others are raised defensively, matching ci.yml's smoke job.
+      #
+      # $JAVA_HOME/bin/java, not bare `java` -- setting the JAVA_HOME env var does NOT change what
+      # `java` on PATH resolves to. setup-java's multi-version install only puts the LAST-listed
+      # version (21, for the Android Gradle build) on PATH by default; the jar above was built with
+      # JDK 25 above via mvnw, which does honor JAVA_HOME internally. A bare `java` here loads a
+      # JDK-25-compiled class file with a JDK 21 runtime and dies immediately with "has been
+      # compiled by a more recent version of the Java Runtime" -- confirmed by hitting exactly that
+      # in this workflow's first real run.
+      - name: Start the backend
+        working-directory: backend
+        env:
+          JAVA_HOME: ${{ env.JAVA_HOME_25_X64 }}
+          SPRING_PROFILES_ACTIVE: dev
+          SERVER_PORT: 18090
+          DB_PORT: 5435
+          RATE_LIMIT_REGISTER_MAX: 10000
+          RATE_LIMIT_LOGIN_MAX: 10000
+          RATE_LIMIT_IMPORT_STAGE_MAX: 10000
+          RATE_LIMIT_IDENTIFY_MAX: 10000
+          RATE_LIMIT_REFRESH_MAX: 10000
+        run: |
+          GOOGLE_APPLICATION_CREDENTIALS="$RUNNER_TEMP/maestro-creds.json" \
+            "$JAVA_HOME/bin/java" -jar target/finora-backend-*.jar > "$RUNNER_TEMP/backend.log" 2>&1 &
+          for _ in $(seq 1 60); do
+            if curl -sf http://localhost:18090/actuator/health | grep -q '"UP"'; then
+              echo "backend up"; exit 0
+            fi
+            sleep 2
+          done
+          echo "The backend never reported healthy. Last 50 lines:"
+          tail -50 "$RUNNER_TEMP/backend.log"
+          exit 1
+
+      # See mobile/.maestro/seed-test-user.sh's own doc comment for why this is SQL rather than the
+      # product: phone verification cannot be completed without real Firebase credentials, the same
+      # gap e2e/fixtures/accounts.ts fills for the Playwright suite.
+      - name: Seed the Maestro test account
+        env:
+          MAESTRO_API_ORIGIN: http://localhost:18090
+          MAESTRO_DB_URL: postgresql://finora:finora@localhost:5435/finora
+        run: ./mobile/.maestro/seed-test-user.sh
+
+      - name: Install mobile dependencies
+        working-directory: mobile
+        run: npm ci
+
+      # --clean: this job's runner has no prior android/ to incrementally update, and a stale one
+      # from actions/cache (not used here for that reason) could carry yesterday's
+      # usesCleartextTraffic setting into today's build.
+      #
+      # MAESTRO_ALLOW_CLEARTEXT has to be set HERE, not on the gradle step below -- it gates
+      # app.config.ts's `expo-build-properties` plugin, which only runs during prebuild and bakes
+      # `android:usesCleartextTraffic` into the generated AndroidManifest.xml once. Setting it only
+      # at gradle-build time (an actual first draft of this job did) compiles a manifest with
+      # cleartext still blocked, and every request the app makes fails with axios's ERR_NETWORK --
+      # the request never leaves the device, so it looks identical to a backend that isn't running.
+      - name: Prebuild the native Android project
+        working-directory: mobile
+        env:
+          GOOGLE_SERVICES_JSON: ${{ github.workspace }}/mobile/.maestro/google-services.placeholder.json
+          MAESTRO_ALLOW_CLEARTEXT: 'true'
+        run: npx expo prebuild -p android --clean --no-install
+
+      # assembleRelease, not assembleDebug: a debug build is the expo-dev-client shell, which shows
+      # its own "start a local dev server" screen and never reaches this app's UI without a live
+      # Metro connection -- see mobile/.maestro/README.md point 2. 10.0.2.2 is the Android
+      # emulator's fixed alias for the runner's own localhost, where the backend above is listening.
+      # EXPO_PUBLIC_API_BASE_URL belongs here, not on the prebuild step above: it's read by
+      # mobile/src/api/client.ts, which Metro inlines into the JS bundle as part of THIS step's own
+      # `createBundleReleaseJsAndAssets` task -- prebuild never touches application JS at all.
+      - name: Build the release APK
+        working-directory: mobile/android
+        env:
+          JAVA_HOME: ${{ env.JAVA_HOME_21_X64 }}
+          EXPO_PUBLIC_API_BASE_URL: http://10.0.2.2:18090
+        run: ./gradlew assembleRelease --no-daemon
+
+      - name: Install Maestro CLI
+        run: curl -fsSL "https://get.maestro.mobile.dev" | bash
+
+      # /dev/kvm exists on GitHub-hosted Linux runners but the runner user isn't always a member
+      # of the group that owns it -- this job's first two real runs both hit
+      # "ProbeKVM: This user doesn't have permissions to use KVM (/dev/kvm)" (empty membership in
+      # `[kvm:x:993:]`), which silently falls back to unaccelerated `-accel off` emulation and
+      # either times out waiting to boot or blows the job's overall time budget mid-flow. This is
+      # reactivecircus/android-emulator-runner's own documented fix, not something specific to
+      # this repo: a permissive udev rule so the runner user (already in the `kvm` group per
+      # /etc/group above) actually gets the access that membership implies.
+      - name: Enable KVM group perms
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      # reactivecircus/android-emulator-runner creates the AVD, boots it with KVM acceleration
+      # (GitHub-hosted Linux runners support nested virtualization), and tears it down when the
+      # script block below exits -- the install/push/test sequence has to live inside that block
+      # because it's the only place in the job with a running emulator.
+      - name: Run the Login / Dashboard / Import flows
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          # No window needed on a headless runner; -no-audio/-no-boot-anim shave a few seconds off
+          # boot the same way they do in mobile/.maestro/README.md's local instructions.
+          emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect
+          disable-animations: true
+          # A single command, not an inline multi-line block: this action does not run a
+          # multi-line `script:` as one shell session -- it executes each line as its own separate
+          # `sh -c` invocation, confirmed by a real run where a `for attempt in 1 2 3 4 5; do` line
+          # failed on its own with "Syntax error: end of file unexpected (expecting done)" because
+          # its `done` never arrived in the same invocation. The retry loop needs a real shell
+          # session, so it lives in run-flows.sh instead. See that file's own comment.
+          script: ./mobile/.maestro/run-flows.sh
+
+      # Screenshots and the full UI hierarchy at the point of failure -- without them a failed
+      # assertion is a one-line message and nobody can tell what the screen actually looked like.
+      # Maestro writes each run's artifacts under ~/.maestro/tests/<timestamp>/.
+      - name: Upload Maestro debug artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: maestro-debug-artifacts
+          path: ~/.maestro/tests
+          retention-days: 30
+
+      - name: Upload the backend log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: maestro-backend-log
+          path: ${{ runner.temp }}/backend.log
+          retention-days: 30
+
+      # Same reasoning as ci.yml's smoke job and e2e-nightly.yml: Postgres is a `services:`
+      # container GitHub tears down with the job, but the backend was started with `&` and needs an
+      # explicit kill. `always()`, not `!cancelled()`, because a cancelled run is exactly when a
+      # backgrounded jar most needs killing.
+      - name: Tear down the backend
+        if: always()
+        run: pkill -f 'finora-backend-.*\.jar' >/dev/null 2>&1 || true

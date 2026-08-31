@@ -193,16 +193,3 @@ export function useStagedReveal(steps: number, intervalMs = 620) {
 
   return { ref, step };
 }
-
-/** The → between flow-diagram nodes. Decorative: the reading order already implies sequence. */
-export function FlowArrow({ vertical = false }: { vertical?: boolean }) {
-  return (
-    <span
-      aria-hidden="true"
-      className={`text-slate-300 select-none ${vertical ? 'py-1' : 'px-1'}`}
-      style={{ lineHeight: 1 }}
-    >
-      {vertical ? '↓' : '→'}
-    </span>
-  );
-}

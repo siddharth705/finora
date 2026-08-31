@@ -3,7 +3,7 @@ import { PieChart } from 'lucide-react';
 import { adminUserAnalyticsApi } from '../../api/endpoints';
 import type { CategoryConfidencePoint, LearningGrowthPoint, TopCategoryPoint, TopMerchantPoint, TrendPoint } from '../../types';
 
-export function fmtCurrency(n: number) {
+function fmtCurrency(n: number) {
   return (n < 0 ? '-₹' : '₹') + Math.abs(n).toLocaleString('en-IN', { maximumFractionDigits: 0 });
 }
 
@@ -12,7 +12,7 @@ export function fmtCurrency(n: number) {
  *  (admin-portal has none today; the removed self-service Analytics.tsx used chart.js in the
  *  User Portal only). Deliberately simple bars, not a line chart -- good enough for a
  *  support-assisted glance at one user's spend, not a general-purpose dashboard. */
-export function BarListRow({ label, value, max, formattedValue }: { label: string; value: number; max: number; formattedValue: string }) {
+function BarListRow({ label, value, max, formattedValue }: { label: string; value: number; max: number; formattedValue: string }) {
   // Bug fix: Math.max(..., 2) floored every row to a visible 2%-width bar, including a genuine
   // zero -- indistinguishable from a small nonzero value. Only floor when there's an actual
   // nonzero value to make visible at all.

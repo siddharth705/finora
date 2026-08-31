@@ -170,7 +170,7 @@ export function ImportTimeline({
             className={`text-xs ${timeline.userStatus === 'ACTION_REQUIRED' ? 'text-warning' : 'text-danger'}`}
             data-testid="import-timeline-failure-reason"
           >
-            {failureMessage ?? "Finora couldn't complete this import. Please try again."}
+            {failureMessage ?? "Fynora couldn't complete this import. Please try again."}
           </p>
           {onDismiss && (
             <button

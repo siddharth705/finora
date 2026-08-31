@@ -142,4 +142,29 @@ describe('ReportsScreen', () => {
 
     expect(await screen.findByText(/Couldn't load this month's report/)).toBeTruthy();
   });
+
+  describe('skeleton loading', () => {
+    it('shows a skeleton shell instead of a spinner while the month list is loading', () => {
+      api.availableMonths.mockReset().mockReturnValue(new Promise(() => {}));
+      renderScreen();
+
+      expect(screen.getAllByTestId('shimmer-block', { hidden: true }).length).toBeGreaterThan(0);
+    });
+
+    it('skeletons the report body on an uncached month, keeping the month picker usable', async () => {
+      renderScreen();
+      await loadedReport();
+
+      api.forMonth.mockReset().mockReturnValue(new Promise(() => {}));
+      fireEvent.press(screen.getByLabelText(/Month: Jul 26/));
+      await settle();
+      fireEvent.press(screen.getByText('2026-05'));
+      await settle();
+
+      expect(screen.getAllByTestId('shimmer-block', { hidden: true }).length).toBeGreaterThan(0);
+      // The month picker -- part of the shell -- must stay mounted and usable while the new
+      // month's report is still in flight.
+      expect(screen.getByLabelText(/Month: May 26/)).toBeTruthy();
+    });
+  });
 });

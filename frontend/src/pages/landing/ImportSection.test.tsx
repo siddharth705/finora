@@ -15,7 +15,7 @@ describe('ImportSection', () => {
     expect(screen.getByText(importSection.blurb)).toBeInTheDocument();
   });
 
-  it('renders the scroll-story scene', () => {
+  it('renders the reveal-once scene', () => {
     const { container } = render(<ImportSection />);
     expect(container.querySelector('[aria-hidden="true"]')).toBeInTheDocument();
   });
