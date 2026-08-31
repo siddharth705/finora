@@ -452,16 +452,27 @@ public class PdfTableLocator {
             new TrailingContentTrigger(ACCOUNT_DISCREPANCY_DISCLAIMER_MARKER,
                     "ACCOUNT_DISCREPANCY_DISCLAIMER_CLOSED"),
             new TrailingContentTrigger(STATEMENT_SUMMARY_BLOCK_MARKER, "STATEMENT_SUMMARY_BLOCK_CLOSED"),
-            new TrailingContentTrigger(CHEQUE_PAYABLE_FOOTER_MARKER, "CHEQUE_PAYABLE_FOOTER_CLOSED"),
             new TrailingContentTrigger(NEUCOINS_FOOTNOTE_MARKER, "NEUCOINS_FOOTNOTE_CLOSED"),
             new TrailingContentTrigger(SAVINGS_AND_BENEFITS_SECTION_MARKER,
                     "SAVINGS_AND_BENEFITS_SECTION_CLOSED"));
 
-    /** The capability name of the first {@link #TRAILING_CONTENT_TRIGGERS} entry matching {@code
-     *  rowLine}, or null if none match. A dedicated method (rather than the boolean-chain shape
-     *  this replaced) so a fifth real-document-evidenced trigger is a one-line addition to the list
-     *  above, not another `!a && !b && ...` clause to get right. */
-    private static String trailingContentTriggerCapability(String rowLine) {
+    /** The capability name the first matching trigger should record for {@code rowLine}, or null
+     *  if none match. {@code pageIndex}/{@code lastPageIndex} exist only for
+     *  CHEQUE_PAYABLE_FOOTER_CLOSED -- see its own check below for why. */
+    private static String trailingContentTriggerCapability(String rowLine, int pageIndex, int lastPageIndex) {
+        // CHEQUE_PAYABLE_FOOTER_CLOSED needs one more check than every other entry below: unlike
+        // those (each confirmed single-occurrence AND genuinely at their evidencing document's true
+        // end), this exact sentence was found on a SECOND real Axis Bank credit-card statement,
+        // printed on page 1 of 3 as part of an ordinary payment-instructions panel next to the
+        // summary -- not a closing block. "Single occurrence" alone does not distinguish an early
+        // informational panel from a genuine document-closing footer; the two real Axis documents
+        // this pattern has now been evidenced against disagree on where it prints. Requiring it to
+        // sit on the document's own actual last page is the one thing a true closing block and this
+        // false-positive panel cannot both satisfy at once, and it needs no new vocabulary -- the
+        // page position is already known to the caller.
+        if (CHEQUE_PAYABLE_FOOTER_MARKER.matcher(rowLine).find()) {
+            return pageIndex == lastPageIndex ? "CHEQUE_PAYABLE_FOOTER_CLOSED" : null;
+        }
         for (TrailingContentTrigger trigger : TRAILING_CONTENT_TRIGGERS) {
             if (trigger.pattern().matcher(rowLine).find()) return trigger.capability();
         }
@@ -782,11 +793,9 @@ public class PdfTableLocator {
      *  OFFSET_COLUMN_ANCHORS) onto {@code ctx} as they fire (Phase 1 "capture facts" --
      *  docs/engineering/financial-document-intelligence-principles.md). {@code ctx} is nullable. */
     public LocatedDocument locateAll(List<PositionedText> positionedText, DocumentContext ctx) {
-        if (ctx != null) {
-            int maxPageIndex = -1;
-            for (PositionedText t : positionedText) maxPageIndex = Math.max(maxPageIndex, t.pageIndex());
-            ctx.recordPages(maxPageIndex + 1);
-        }
+        int lastPageIndex = -1;
+        for (PositionedText t : positionedText) lastPageIndex = Math.max(lastPageIndex, t.pageIndex());
+        if (ctx != null) ctx.recordPages(lastPageIndex + 1);
         List<List<PositionedText>> rows = groupIntoRows(positionedText);
         PhysicalRowFormationEvidence physicalRowFormationEvidence =
                 measurePhysicalRowFormation(positionedText.size(), rows);
@@ -916,7 +925,8 @@ public class PdfTableLocator {
                 pendingAuxiliary.add(rowLine);
                 continue;
             }
-            String trailingContentTrigger = trailingContentTriggerCapability(rowLine);
+            int rowPageIndex = row.isEmpty() ? -1 : row.get(0).pageIndex();
+            String trailingContentTrigger = trailingContentTriggerCapability(rowLine, rowPageIndex, lastPageIndex);
             if (trailingContentTrigger != null) {
                 trailingContentSuppressed = true;
                 // Closes whatever REAL section is open exactly the same way the header-signature
@@ -4535,6 +4545,10 @@ public class PdfTableLocator {
         Map<String, String> currentAnchor = null;
         int continuationCount = 0;
         String previousTransactionLine = null;
+        int lastPageIndex = -1;
+        for (List<PositionedText> r : allRows) {
+            if (!r.isEmpty()) lastPageIndex = Math.max(lastPageIndex, r.get(0).pageIndex());
+        }
         for (List<PositionedText> row : allRows) {
             String rowLine = lineOf(row);
             if (PAGE_FOOTER.matcher(rowLine).find()) continue;
@@ -4548,7 +4562,8 @@ public class PdfTableLocator {
             // was added to TRAILING_CONTENT_TRIGGERS, because this loop never consulted that list.
             // A permanent break, same as every trigger's meaning in the header-based path -- none of
             // these markers is a per-page, resumable thing the way PAGE_FOOTER is.
-            String trailingTrigger = trailingContentTriggerCapability(rowLine);
+            int rowPageIndex = row.isEmpty() ? -1 : row.get(0).pageIndex();
+            String trailingTrigger = trailingContentTriggerCapability(rowLine, rowPageIndex, lastPageIndex);
             if (trailingTrigger != null) {
                 recordTrailingContentTrigger(ctx, trailingTrigger);
                 break;
