@@ -220,16 +220,43 @@ function DisableFlow({ onDisabled, onCancel }: { onDisabled: () => void; onCance
   const notify = useNotify();
   const { data: me } = useQuery({ queryKey: ['admin-me-signin-method'], queryFn: () => userApi.get() });
   const [currentPassword, setCurrentPassword] = useState('');
+  // A live TOTP code or a recovery code -- same proof-of-possession of the second factor that
+  // turning MFA on required, so turning it off can't be done with just the account
+  // password/Google credential (see AdminMfaService.disable's own doc comment on why: that alone
+  // would mean a stolen live session plus the account password is enough to strip MFA).
+  const [code, setCode] = useState('');
   const [error, setError] = useState<string | null>(null);
 
   const disableMutation = useMutation({
-    mutationFn: (googleIdToken: string | null) => adminMfaApi.disable(googleIdToken ? null : currentPassword, googleIdToken),
+    mutationFn: (googleIdToken: string | null) =>
+      adminMfaApi.disable(googleIdToken ? null : currentPassword, googleIdToken, code.trim()),
     onSuccess: () => {
       notify.success('Two-factor authentication disabled.');
       onDisabled();
     },
-    onError: (err: any) => setError(err?.response?.data?.message ?? 'Current credential could not be verified.'),
+    onError: (err: any) =>
+      setError(
+        errorCodeOf(err) === AUTH_MFA_INVALID_CODE
+          ? "That code didn't work. Check your authenticator app or use a recovery code."
+          : (err?.response?.data?.message ?? 'Current credential could not be verified.')),
   });
+
+  const codeField = (
+    <div className="max-w-xs">
+      <label htmlFor="mfa-disable-code" className="block text-sm font-medium text-ink mb-1.5">
+        Authenticator code or recovery code
+      </label>
+      <input
+        id="mfa-disable-code"
+        type="text"
+        autoComplete="one-time-code"
+        value={code}
+        onChange={(e) => { setCode(e.target.value); setError(null); }}
+        placeholder="123456 or a recovery code"
+        className="w-full bg-bg border border-border rounded-lg px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+      />
+    </div>
+  );
 
   return (
     <div className="space-y-3 border-t border-border pt-4">
@@ -237,10 +264,17 @@ function DisableFlow({ onDisabled, onCancel }: { onDisabled: () => void; onCance
       {!me ? (
         <p className="text-sm text-muted">Loading…</p>
       ) : me.signInMethod === 'GOOGLE' ? (
-        <GoogleReauthPrompt
-          onCredential={(idToken) => disableMutation.mutate(idToken)}
-          onError={setError}
-        />
+        <div className="max-w-xs space-y-3">
+          {codeField}
+          {code.trim().length === 0 ? (
+            <p className="text-xs text-muted">Enter a code above, then verify with Google.</p>
+          ) : (
+            <GoogleReauthPrompt
+              onCredential={(idToken) => disableMutation.mutate(idToken)}
+              onError={setError}
+            />
+          )}
+        </div>
       ) : (
         <div className="max-w-xs space-y-3">
           <PasswordInput
@@ -249,10 +283,11 @@ function DisableFlow({ onDisabled, onCancel }: { onDisabled: () => void; onCance
             placeholder="Current password"
             className="w-full bg-bg border border-border rounded-lg px-3.5 py-2.5 pr-10 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
           />
+          {codeField}
           <button
             type="button"
             onClick={() => disableMutation.mutate(null)}
-            disabled={disableMutation.isPending || currentPassword.length === 0}
+            disabled={disableMutation.isPending || currentPassword.length === 0 || code.trim().length === 0}
             className="inline-flex items-center gap-1.5 bg-danger hover:opacity-90 text-white text-sm font-semibold rounded-lg px-4 py-2.5 disabled:opacity-50"
           >
             {disableMutation.isPending && <Loader2 size={14} className="animate-spin" />}

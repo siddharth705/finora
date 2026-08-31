@@ -115,7 +115,7 @@ class StatementImportServiceSupersedeTest {
     @Test
     void additive_reversesTheOriginalsNetContribution() {
         StatementImport old = statement(oldId, StatementImport.BalanceApplicationMode.ADDITIVE);
-        stub(old, statement(newId, StatementImport.BalanceApplicationMode.ABSOLUTE));
+        stub(old, statement(newId, StatementImport.BalanceApplicationMode.ADDITIVE));
         Transaction expense = transaction(oldId, "500.00", Transaction.ReconciliationStatus.OK);
         when(transactionRepository.findByStatementImportId(oldId)).thenReturn(List.of(expense));
         Account account = account(new BigDecimal("9500.00"));
@@ -138,7 +138,7 @@ class StatementImportServiceSupersedeTest {
         // it must not be summed into the reversal here too -- doing so would move the balance a
         // second time for a row that never really counted.
         StatementImport old = statement(oldId, StatementImport.BalanceApplicationMode.ADDITIVE);
-        stub(old, statement(newId, StatementImport.BalanceApplicationMode.ABSOLUTE));
+        stub(old, statement(newId, StatementImport.BalanceApplicationMode.ADDITIVE));
         Transaction realExpense = transaction(oldId, "500.00", Transaction.ReconciliationStatus.OK);
         Transaction alreadyDuplicate = transaction(oldId, "300.00", Transaction.ReconciliationStatus.DUPLICATE);
         alreadyDuplicate.setIsDuplicateOf(UUID.randomUUID());
@@ -150,6 +150,27 @@ class StatementImportServiceSupersedeTest {
 
         // Reversing only the real 500 expense's contribution -- not 500 + 300.
         assertThat(account.getBalance()).isEqualByComparingTo("10000.00");
+    }
+
+    @Test
+    void additive_skipsReversalWhenReplacementIsAbsolute() {
+        // Mirror image of the ABSOLUTE-original reversal case below, but this direction needs no
+        // special handling: ABSOLUTE mode does not ADD to Account.balance, it OVERWRITES it with
+        // replacement's own stated closing balance (ImportService.persistSection) -- discarding
+        // original's still-unreversed ADDITIVE contribution along with everything else that
+        // predated it. The overwrite already leaves the balance correct on its own, so there's
+        // simply nothing left here to reverse.
+        StatementImport old = statement(oldId, StatementImport.BalanceApplicationMode.ADDITIVE);
+        stub(old, statement(newId, StatementImport.BalanceApplicationMode.ABSOLUTE));
+        when(transactionRepository.findByStatementImportId(oldId))
+                .thenReturn(List.of(transaction(oldId, "500.00", Transaction.ReconciliationStatus.OK)));
+
+        SupersedeResult result = service.supersede(userId, oldId, newId);
+
+        assertThat(result.balanceReversed()).isFalse();
+        assertThat(result.warning()).isNull();
+        verify(accountRepository, never()).save(any());
+        verify(statementImportRepository).save(old);
     }
 
     @Test

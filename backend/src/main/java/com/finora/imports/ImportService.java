@@ -99,6 +99,7 @@ public class ImportService {
     private final ImportSessionService importSessionService;
     private final com.finora.imports.pdf.PdfPreviewGenerator pdfPreviewGenerator;
     private final ProductIdentityResolver productIdentityResolver;
+    private final com.finora.imports.ownership.OwnershipMatchService ownershipMatchService;
     private final StatementAnalysisRecorder analysisRecorder;
     /** Keeps the verification rules' findings, which until now reached the staging response and
      *  were then discarded -- see ImportVerificationRecorder and milestone-2 item 6. */
@@ -126,6 +127,7 @@ public class ImportService {
                           ImportSessionService importSessionService,
                           com.finora.imports.pdf.PdfPreviewGenerator pdfPreviewGenerator,
                           ProductIdentityResolver productIdentityResolver,
+                          com.finora.imports.ownership.OwnershipMatchService ownershipMatchService,
                           com.finora.imports.storage.StatementContentService statementContentService,
                           StatementAnalysisRecorder analysisRecorder,
                           com.finora.imports.analysis.ImportVerificationRecorder verificationRecorder,
@@ -137,6 +139,7 @@ public class ImportService {
         this.analysisRecorder = analysisRecorder;
         this.verificationRecorder = verificationRecorder;
         this.productIdentityResolver = productIdentityResolver;
+        this.ownershipMatchService = ownershipMatchService;
         this.statementContentService = statementContentService;
         this.accountRepository = accountRepository;
         this.accountService = accountService;
@@ -607,12 +610,14 @@ public class ImportService {
                     sectionConfirm.statementOpeningBalance(), sectionConfirm.statementClosingBalance(),
                     null, // a multi-section PDF was already unlocked once to be staged; no password to carry here
                     sectionConfirm.statementPeriodStart(), sectionConfirm.statementPeriodEnd(),
-                    sectionConfirm.totalAmountDue(), sectionConfirm.paymentDueDate());
+                    sectionConfirm.totalAmountDue(), sectionConfirm.paymentDueDate(),
+                    sectionConfirm.userConfirmedContinue());
             persisted.add(persistSection(userId, session.getFileName(), statementContentService.read(session), perAccountRequest, i,
                     session.getLayoutMetadataJson(), session.getLayoutFingerprint(), session.getActivatedCapabilitiesJson(),
                 // A multi-section import is CSV/PDF only -- a Gmail receipt is never
                 // multi-account -- so source is always null on this path, not session.getSource().
-                session.getUnparseableSummaryJson(), null, importSessionService.readCreditCardSummary(session)));
+                session.getUnparseableSummaryJson(), null, importSessionService.readCreditCardSummary(session),
+                stagedSection.detectedAccount() == null ? null : stagedSection.detectedAccount().accountHolderName()));
         }
 
         reconcileAcross(userId, persisted);
@@ -658,9 +663,11 @@ public class ImportService {
         // the same staged rows". Plausibly was not enough -- same count, entirely different rows
         // was accepted, and the ledger recorded transactions the stored document does not contain.
         ConfirmedRowIntegrity.requireSameRows(stagedRows, request.rows());
+        var detectedAccount = importSessionService.readDetectedAccount(session);
         return confirm(userId, session.getFileName(), statementContentService.read(session), request, null,
                 session.getLayoutMetadataJson(), session.getLayoutFingerprint(), session.getActivatedCapabilitiesJson(),
-                session.getUnparseableSummaryJson(), session.getSource(), importSessionService.readCreditCardSummary(session));
+                session.getUnparseableSummaryJson(), session.getSource(), importSessionService.readCreditCardSummary(session),
+                detectedAccount == null ? null : detectedAccount.accountHolderName());
     }
 
     /**
@@ -714,7 +721,7 @@ public class ImportService {
      */
     @Transactional
     public ConfirmResponse confirm(UUID userId, String fileName, byte[] fileContent, ConfirmRequest request) {
-        return confirm(userId, fileName, fileContent, request, null, null, null, null, null, null, null);
+        return confirm(userId, fileName, fileContent, request, null, null, null, null, null, null, null, null);
     }
 
     /**
@@ -726,7 +733,7 @@ public class ImportService {
      */
     @Transactional
     public ConfirmResponse confirm(UUID userId, String fileName, byte[] fileContent, ConfirmRequest request, Integer sourceSectionIndex) {
-        return confirm(userId, fileName, fileContent, request, sourceSectionIndex, null, null, null, null, null, null);
+        return confirm(userId, fileName, fileContent, request, sourceSectionIndex, null, null, null, null, null, null, null);
     }
 
     /**
@@ -744,15 +751,20 @@ public class ImportService {
      *
      * <p>{@code creditCardSummaryJson} (roadmap item 6 follow-up, PR #451): same "copied verbatim,
      * never recomputed" treatment, one more field.
+     *
+     * <p>{@code extractedHolderName} (docs/proposals/account-ownership-intelligence-proposal.md
+     * §3.1/§3.2): same "copied verbatim, never recomputed, null with no session" treatment as the
+     * rest of this list.
      */
     @Transactional
     public ConfirmResponse confirm(UUID userId, String fileName, byte[] fileContent, ConfirmRequest request, Integer sourceSectionIndex,
                                     String layoutMetadataJson, String layoutFingerprint, String activatedCapabilitiesJson,
                                     String unparseableSummaryJson, String source,
-                                    com.finora.imports.pdf.CreditCardSummaryExtractor.CreditCardSummaryEvidence creditCardSummary) {
+                                    com.finora.imports.pdf.CreditCardSummaryExtractor.CreditCardSummaryEvidence creditCardSummary,
+                                    String extractedHolderName) {
         PersistedSection section = persistSection(userId, fileName, fileContent, request, sourceSectionIndex,
                 layoutMetadataJson, layoutFingerprint, activatedCapabilitiesJson, unparseableSummaryJson, source,
-                creditCardSummary);
+                creditCardSummary, extractedHolderName);
         reconcileAcross(userId, List.of(section));
         return summarise(userId, section);
     }
@@ -814,7 +826,12 @@ public class ImportService {
                                     Integer sourceSectionIndex,
                                     String layoutMetadataJson, String layoutFingerprint, String activatedCapabilitiesJson,
                                     String unparseableSummaryJson, String source,
-                                    com.finora.imports.pdf.CreditCardSummaryExtractor.CreditCardSummaryEvidence creditCardSummary) {
+                                    com.finora.imports.pdf.CreditCardSummaryExtractor.CreditCardSummaryEvidence creditCardSummary,
+                                    // docs/proposals/account-ownership-intelligence-proposal.md §3.1/§3.2. Copied
+                                    // verbatim from the session's DetectedAccountInfo, same "never recomputed"
+                                    // discipline as layoutMetadataJson/layoutFingerprint above -- null on the
+                                    // byte-array reimport path, which has no session to read it from.
+                                    String extractedHolderName) {
         long startedAtMs = System.currentTimeMillis();
         List<String> accountsCreated = new ArrayList<>();
         // What was created, by PRODUCT rather than by account. The summary says "1 Savings, 1 Fixed
@@ -823,6 +840,12 @@ public class ImportService {
         Map<String, Integer> productsCreated = new LinkedHashMap<>();
 
         UUID accountId = resolveTargetAccount(userId, request, accountsCreated, productsCreated);
+        // Computed here, right after the account is known and before the new StatementImport row
+        // exists -- OwnershipMatchService.evaluate's account-continuity check
+        // (countByUserIdAndAccountId) must see only PRIOR statements, and this row doesn't exist
+        // yet to pollute that count.
+        StatementImport.OwnershipMatchStatus ownershipMatchStatus =
+                ownershipMatchService.evaluate(userId, accountId, extractedHolderName);
 
         long merchantsBefore = merchantRepository.countByUserId(userId);
 
@@ -954,6 +977,14 @@ public class ImportService {
         statementImport.setLayoutFingerprint(layoutFingerprint);
         statementImport.setActivatedCapabilitiesJson(activatedCapabilitiesJson);
         statementImport.setUnparseableSummaryJson(unparseableSummaryJson);
+        statementImport.setExtractedHolderName(extractedHolderName);
+        statementImport.setOwnershipMatchStatus(ownershipMatchStatus);
+        // Only meaningful when the warning actually fired -- a client-supplied true/false when
+        // ownershipMatchStatus isn't NAME_MISMATCH would be claiming a decision the user was never
+        // asked to make, same principle Transaction.notDuplicateConfirmedAt already follows.
+        statementImport.setUserConfirmedContinue(
+                ownershipMatchStatus == StatementImport.OwnershipMatchStatus.NAME_MISMATCH
+                        ? request.userConfirmedContinue() : null);
         // Object storage first, then the row -- the ordering §5.1 of the migration doc requires. A
         // failure throws before anything is persisted, so a row can never point at an object that
         // was never written.

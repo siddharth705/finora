@@ -9,6 +9,7 @@ import { BankLogo } from '../components/BankLogo';
 import { MaskedAccountNumber } from '../components/MaskedAccountNumber';
 import { VerificationPanel } from '../components/VerificationPanel';
 import { matchExistingAccount } from '../lib/accountMatch';
+import { isLikelyMatch } from '../lib/holderNameMatcher';
 import { DuplicateReview } from '../components/DuplicateReview';
 import { ImportProgress } from '../components/ImportProgress';
 import { ImportTimeline } from '../components/ImportTimeline';
@@ -26,6 +27,7 @@ import {
 import { toNewAccountPayload } from '../lib/newAccountPayload';
 import { ConfirmDialog } from '../design-system';
 import type { ImportNavState } from '../lib/importNavState';
+import { useAuth } from '../context/AuthContext';
 import type { Account, DetectedAccountInfo, VerificationReport, ImportSummary, StagedAccountSection, StagedRow, SupersedeResult, UnparseableRow } from '../types';
 import { formatDate, formatDateDDMMMYYYY } from '../utils/date';
 
@@ -117,6 +119,7 @@ export default function Import() {
   const navigate = useNavigate();
   const location = useLocation();
   const queryClient = useQueryClient();
+  const { fullName } = useAuth();
 
   // "Re-import Statement" (from the Statement History page) lands here with the original file's
   // staging result already computed server-side — see StatementImportService.reimport(). There's
@@ -186,6 +189,15 @@ export default function Import() {
   const [summary, setSummary] = useState<ImportSummary | null>(null);
   const [multiSummary, setMultiSummary] = useState<ImportSummary[] | null>(null);
   const [confirming, setConfirming] = useState(false);
+
+  // docs/proposals/account-ownership-intelligence-proposal.md §3.1. A client-side pre-check only
+  // -- it decides whether to show the "Statement Check" dialog before confirming; the backend
+  // independently computes and persists the authoritative OwnershipMatchStatus at confirm time
+  // (see OwnershipMatchService), which is the source of truth for audit purposes. Reset per
+  // upload via the effects that already clear detectedAccount, so a second file in the same
+  // session gets its own check.
+  const [ownershipWarningOpen, setOwnershipWarningOpen] = useState(false);
+  const [ownershipWarningAcknowledged, setOwnershipWarningAcknowledged] = useState(false);
 
   // Set only for a multi-account PDF upload (see SectionState above) -- null the rest of the
   // time, and the single flat rows/detectedAccount/etc. state above is what's used instead.
@@ -545,8 +557,32 @@ export default function Import() {
   const toggleRowIncluded = (index: number, include: boolean) =>
     setReview((r) => setIncluded(r, index, include));
 
-  async function confirmImport() {
+  // docs/proposals/account-ownership-intelligence-proposal.md §3.1 point 1: the extracted name is
+  // untrusted input, not ground truth -- this is why a mismatch only ever opens a non-blocking
+  // dialog here, never blocks confirmImport() outright.
+  function ownershipNameMismatch(): boolean {
+    const holder = detectedAccount?.accountHolderName;
+    if (!holder) return false;
+    // fullName is genuinely nullable (Apple Sign-In only supplies it on the first authorization --
+    // see AuthContext's loginWithApple). Nothing on the profile side to compare against means
+    // nothing to warn about, same "don't guess" principle OwnershipMatchService follows for this
+    // exact case on the backend -- without this guard, a user with no profile name would see this
+    // warning on every single import, and the dialog would show "null" as their profile name.
+    if (!fullName) return false;
+    return !isLikelyMatch(holder, fullName);
+  }
+
+  // ownershipAcknowledgedNow is an explicit override, not just a read of ownershipWarningAcknowledged
+  // state -- the dialog's own "Continue Import" handler calls this function again immediately after
+  // setting that state, and a React state update isn't visible in the same render's closure yet. The
+  // override sidesteps that; the state still exists for the payload sent to the backend below.
+  async function confirmImport(ownershipAcknowledgedNow = false) {
     if (!reimportState && !sessionId) return;
+    const ownershipAcknowledged = ownershipWarningAcknowledged || ownershipAcknowledgedNow;
+    if (!ownershipAcknowledged && ownershipNameMismatch()) {
+      setOwnershipWarningOpen(true);
+      return;
+    }
     setConfirming(true);
     clearError();
     try {
@@ -575,6 +611,7 @@ export default function Import() {
             totalAmountDue: detectedAccount?.totalAmountDue ?? null,
             paymentDueDate: detectedAccount?.paymentDueDate ?? null,
             password: reimportState.password,
+            userConfirmedContinue: ownershipAcknowledged ? true : undefined,
           })
         : await importApi.confirm({
             sessionId: sessionId!,
@@ -587,6 +624,7 @@ export default function Import() {
             statementPeriodEnd: detectedAccount?.statementPeriodEnd ?? null,
             totalAmountDue: detectedAccount?.totalAmountDue ?? null,
             paymentDueDate: detectedAccount?.paymentDueDate ?? null,
+            userConfirmedContinue: ownershipAcknowledged ? true : undefined,
           });
       setSummary(result);
       setStep('summary');
@@ -676,6 +714,8 @@ export default function Import() {
     setPendingPdf(null);
     setPdfPassword('');
     setPasswordState(null);
+    setOwnershipWarningOpen(false);
+    setOwnershipWarningAcknowledged(false);
     accountsApi.list().then(setExistingAccounts).catch((e) => console.error('Failed to load accounts', e));
     clearArrivalState();
   }
@@ -875,6 +915,24 @@ export default function Import() {
             void discardStagedSession(id);
           }}
           onCancel={() => setConfirmDiscardId(null)}
+        />
+      )}
+
+      {ownershipWarningOpen && (
+        <ConfirmDialog
+          title="Statement Check"
+          message={`The statement holder name ("${detectedAccount?.accountHolderName}") differs from your Finora profile name ("${fullName}"). Please confirm you've selected the correct statement before continuing.`}
+          confirmLabel="Continue Import"
+          cancelLabel="Upload Different Statement"
+          onConfirm={() => {
+            setOwnershipWarningOpen(false);
+            setOwnershipWarningAcknowledged(true);
+            void confirmImport(true);
+          }}
+          onCancel={() => {
+            setOwnershipWarningOpen(false);
+            startOver();
+          }}
         />
       )}
 
@@ -1187,7 +1245,7 @@ export default function Import() {
             />
 
             <button
-              onClick={confirmImport}
+              onClick={() => void confirmImport()}
               disabled={
                 confirming ||
                 (!reimportState && !sessionId) ||

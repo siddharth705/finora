@@ -60,6 +60,36 @@ public class StatementImport extends BaseEntity implements com.finora.imports.st
         UNKNOWN_LEGACY
     }
 
+    /**
+     * docs/proposals/account-ownership-intelligence-proposal.md §3.2 -- the outcome of comparing
+     * this statement's extracted holder name against the confirming user's Finora profile name,
+     * computed once at confirm time by {@code OwnershipMatchService} and never recomputed. Nullable,
+     * with no legacy/unknown member: unlike {@link BalanceApplicationMode}, nothing here needs
+     * backfilling on old rows -- a statement imported before this field existed simply has no value,
+     * which the comparison logic already treats as "nothing to check" (no backfill was ever the
+     * proposal's own decision, §4/§5 of that document).
+     *
+     * <p>{@code NAME_MATCH}/{@code NAME_MISMATCH}, not the shorter {@code MATCH}/{@code MISMATCH}: a
+     * bare {@code MATCH} reads as stronger than what this actually records (two strings compared
+     * favorably) and invites treating it as ownership proof, which it is not -- see the design
+     * doc's own principle: this is a data-quality system, not an identity-verification one.
+     */
+    public enum OwnershipMatchStatus {
+        /** Strong name similarity against the profile -- no warning shown. */
+        NAME_MATCH,
+        /** Low name similarity -- the non-blocking warning was shown (see {@code
+         *  userConfirmedContinue} for whether the user proceeded past it). */
+        NAME_MISMATCH,
+        /** Extraction found no holder name on the statement to compare at all. */
+        NO_HOLDER_FOUND,
+        /** This import resolved to an account that already had at least one prior statement import
+         *  -- the comparison was skipped entirely, since that continuity already vouches for the
+         *  account being the same one imported before. Re-running the check on every routine
+         *  monthly statement would be pure noise. Tradeoff, stated once in the design doc and not
+         *  repeated here: this assumes the account's first-ever import was itself correct. */
+        SKIPPED_EXISTING_ACCOUNT
+    }
+
     @Column(name = "user_id", nullable = false)
     private UUID userId;
 
@@ -274,6 +304,23 @@ public class StatementImport extends BaseEntity implements com.finora.imports.st
     @Column(name = "balance_before_absolute_set")
     private java.math.BigDecimal balanceBeforeAbsoluteSet;
 
+    /** Snapshot of what {@code PdfMetadataExtractor} saw for this statement's account holder at
+     *  confirm time -- see {@link OwnershipMatchStatus}'s class doc. Never recomputed after the
+     *  fact, same "best-effort, left null on a path with no session" discipline as
+     *  {@link #layoutMetadataJson}/{@link #layoutFingerprint} above. */
+    @Column(name = "extracted_holder_name")
+    private String extractedHolderName;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "ownership_match_status", length = 30)
+    private OwnershipMatchStatus ownershipMatchStatus;
+
+    /** Whether the user clicked "Continue Import" after seeing the ownership warning. Null when the
+     *  warning never fired ({@code ownershipMatchStatus} is anything other than {@code
+     *  NAME_MISMATCH}) -- there was nothing to confirm past. */
+    @Column(name = "user_confirmed_continue")
+    private Boolean userConfirmedContinue;
+
     public UUID getUserId() { return userId; }
     public void setUserId(UUID userId) { this.userId = userId; }
     public UUID getAccountId() { return accountId; }
@@ -347,4 +394,10 @@ public class StatementImport extends BaseEntity implements com.finora.imports.st
     public void setBalanceApplicationMode(BalanceApplicationMode balanceApplicationMode) { this.balanceApplicationMode = balanceApplicationMode; }
     public java.math.BigDecimal getBalanceBeforeAbsoluteSet() { return balanceBeforeAbsoluteSet; }
     public void setBalanceBeforeAbsoluteSet(java.math.BigDecimal balanceBeforeAbsoluteSet) { this.balanceBeforeAbsoluteSet = balanceBeforeAbsoluteSet; }
+    public String getExtractedHolderName() { return extractedHolderName; }
+    public void setExtractedHolderName(String extractedHolderName) { this.extractedHolderName = extractedHolderName; }
+    public OwnershipMatchStatus getOwnershipMatchStatus() { return ownershipMatchStatus; }
+    public void setOwnershipMatchStatus(OwnershipMatchStatus ownershipMatchStatus) { this.ownershipMatchStatus = ownershipMatchStatus; }
+    public Boolean getUserConfirmedContinue() { return userConfirmedContinue; }
+    public void setUserConfirmedContinue(Boolean userConfirmedContinue) { this.userConfirmedContinue = userConfirmedContinue; }
 }

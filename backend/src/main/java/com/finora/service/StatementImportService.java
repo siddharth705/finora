@@ -514,6 +514,14 @@ public class StatementImportService {
      * a reversal is still possible: it is a no-op when replacement's own confirm ALSO landed in
      * ABSOLUTE mode (its own SET already fully overwrote original's), and reverses correctly
      * otherwise. See that method's own doc comment.
+     *
+     * <p><b>ADDITIVE original skips its own reversal against an ABSOLUTE replacement, for the
+     * mirror-image reason.</b> ABSOLUTE mode does not add to {@code Account.balance} -- it
+     * OVERWRITES it with the statement's own stated closing balance ({@code
+     * ImportService.persistSection}), discarding whatever value was there before, original's
+     * still-live ADDITIVE contribution included. Unlike the ABSOLUTE-original case above, this one
+     * isn't refused: the overwrite already leaves the balance correct on its own, so there's simply
+     * nothing left to reverse -- see the ADDITIVE case below.
      */
     @Transactional
     public com.finora.dto.StatementImportDto.SupersedeResult supersede(UUID userId, UUID originalId, UUID replacementId) {
@@ -557,25 +565,35 @@ public class StatementImportService {
         String warning = null;
         switch (original.getBalanceApplicationMode()) {
             case ADDITIVE -> {
-                // Excludes an already-DUPLICATE-flagged row: its contribution to Account.balance
-                // was already reversed once, at the original statement's own confirm time
-                // (ImportService.summarise's BH-003 correction) -- summing it again here would
-                // move the balance a second time for a row that currently contributes nothing.
-                // TRANSFER/REFUND/REVERSAL/INVESTMENT_TRANSFER rows stay included: those
-                // classifications only affect expense/income REPORTING (RefundNetting.reportable),
-                // not Account.balance -- the cash genuinely moved, so the balance still reflects it.
-                List<Transaction> stillContributing = originalTransactions.stream()
-                        .filter(t -> t.getIsDuplicateOf() == null)
-                        .toList();
-                if (!stillContributing.isEmpty()) {
-                    Optional<Account> account = accountRepository.findById(original.getAccountId());
-                    if (account.isPresent()) {
-                        BigDecimal reversal = AccountBalanceConvention
-                                .netDelta(account.get().getAccountType(), stillContributing).negate();
-                        if (reversal.signum() != 0) {
-                            account.get().setBalance(account.get().getBalance().add(reversal));
-                            accountRepository.save(account.get());
-                            balanceReversed = true;
+                // Skip entirely when replacement is ABSOLUTE: that mode doesn't add to
+                // Account.balance, it OVERWRITES it with replacement's own stated closing balance
+                // (ImportService.persistSection) -- discarding original's ADDITIVE contribution
+                // along with everything else that predates it. Reversing original's delta against a
+                // balance that already discarded it (rather than one it was layered on top of) would
+                // move the balance by that amount for no reason; see this method's own doc comment
+                // and SupersedeSkipsReversalWhenReplacementOverwritesTheBalanceIT for the concrete
+                // numeric case.
+                if (replacement.getBalanceApplicationMode() != StatementImport.BalanceApplicationMode.ABSOLUTE) {
+                    // Excludes an already-DUPLICATE-flagged row: its contribution to Account.balance
+                    // was already reversed once, at the original statement's own confirm time
+                    // (ImportService.summarise's BH-003 correction) -- summing it again here would
+                    // move the balance a second time for a row that currently contributes nothing.
+                    // TRANSFER/REFUND/REVERSAL/INVESTMENT_TRANSFER rows stay included: those
+                    // classifications only affect expense/income REPORTING (RefundNetting.reportable),
+                    // not Account.balance -- the cash genuinely moved, so the balance still reflects it.
+                    List<Transaction> stillContributing = originalTransactions.stream()
+                            .filter(t -> t.getIsDuplicateOf() == null)
+                            .toList();
+                    if (!stillContributing.isEmpty()) {
+                        Optional<Account> account = accountRepository.findById(original.getAccountId());
+                        if (account.isPresent()) {
+                            BigDecimal reversal = AccountBalanceConvention
+                                    .netDelta(account.get().getAccountType(), stillContributing).negate();
+                            if (reversal.signum() != 0) {
+                                account.get().setBalance(account.get().getBalance().add(reversal));
+                                accountRepository.save(account.get());
+                                balanceReversed = true;
+                            }
                         }
                     }
                 }
