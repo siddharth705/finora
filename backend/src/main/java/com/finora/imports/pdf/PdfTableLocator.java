@@ -1256,6 +1256,24 @@ public class PdfTableLocator {
                 continue;
             }
 
+            // Bug fix, 2026-08-31: pageLegendBlockActive's only resume signal used to be a newly
+            // recognized header row (see the pageLegendBlockActive = false call sites above). That
+            // assumption silently broke on any real document whose per-page legend/footer sits
+            // under a table that does NOT reprint its header on every page -- a real HDFC savings
+            // statement (24 pages) prints its header exactly once, on page 1, and never again; once
+            // its own per-page footer ("Closing balance includes funds earmarked...", part of
+            // PAGE_LEGEND_BLOCK_START above) set this flag on page 1, there was no "next header"
+            // ever again to reset it, and every one of the document's remaining 23 pages -- 231 of
+            // 243 real transactions -- was silently suppressed for the rest of the document. A
+            // second, independent resume signal: a row that is unambiguously transaction-shaped
+            // (isTransactionShapedRow -- has both a date and an amount, the same admission test the
+            // headerless path already trusts) can only be genuine data, never legend/footer
+            // boilerplate, so it is always safe to treat as proof the block has ended, with or
+            // without a header row in between.
+            if (pageLegendBlockActive && isTransactionShapedRow(row)) {
+                pageLegendBlockActive = false;
+            }
+
             if (currentRows == null) {
                 // Row-accounting evidence: no section has opened yet, so this row is about to be
                 // folded into pendingAuxiliary with no trace at all -- the same silent-loss shape
