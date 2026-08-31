@@ -2,6 +2,7 @@ package com.finora.imports;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import com.finora.config.BuildVersionResolver;
 import com.finora.dto.ImportDto.DetectedAccountInfo;
 import com.finora.dto.ImportDto.StagedRow;
 import com.finora.entity.ImportSession;
@@ -36,6 +37,7 @@ import org.springframework.data.domain.Pageable;
 class ImportSessionServiceTest {
 
     private ImportSessionRepository importSessionRepository;
+    private BuildVersionResolver buildVersionResolver;
     private ImportSessionService service;
     private final UUID userId = UUID.randomUUID();
     private final UUID otherUserId = UUID.randomUUID();
@@ -44,7 +46,13 @@ class ImportSessionServiceTest {
     void setUp() {
         importSessionRepository = mock(ImportSessionRepository.class);
         ObjectMapper objectMapper = new ObjectMapper().registerModule(new JavaTimeModule());
-        service = new ImportSessionService(importSessionRepository, objectMapper);
+        buildVersionResolver = mock(BuildVersionResolver.class);
+        // Every EXISTING test in this class (including all the Phase 1A dedup-window tests) was
+        // written against a world with no version concept at all -- defaulting to null here makes
+        // them exercise the fallback-window path Phase 1B preserves for that case, unchanged,
+        // rather than silently starting to exercise the new version-comparison path instead.
+        when(buildVersionResolver.currentCommit()).thenReturn(null);
+        service = new ImportSessionService(importSessionRepository, objectMapper, buildVersionResolver);
         when(importSessionRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
     }
 
@@ -329,6 +337,133 @@ class ImportSessionServiceTest {
 
         assertThat(service.findLiveSessionByContentHash(userId, "hash-c")).isEmpty();
         verify(importSessionRepository, never()).delete(any());
+    }
+
+    /**
+     * The actual bug this method exists to fix (2026-08-31): a session created minutes-to-hours
+     * ago, still well within its 48h TTL, is NOT the double-click/retry case this dedup check was
+     * built for -- it's a genuinely later re-upload, and by then the parser that produced its
+     * staged rows may have been fixed. Confirmed against a real HDFC statement: a stale session
+     * kept replaying a 12-row result on every re-upload even after the parser was fixed to
+     * correctly extract all 243 rows. A session must be recent, not merely unexpired, to be
+     * replayed automatically.
+     */
+    @Test
+    void findLiveSessionByContentHash_deletesAStaleButUnexpiredMatch_andReportsNoneFound() {
+        ImportSession stale = sessionOwnedBy(userId, Instant.now().plusSeconds(600), ImportSession.STATUS_STAGED);
+        org.springframework.test.util.ReflectionTestUtils.setField(
+                stale, "createdAt", Instant.now().minus(java.time.Duration.ofMinutes(10)));
+        when(importSessionRepository.findFirstByUserIdAndContentHashAndStatusOrderByCreatedAtDesc(
+                userId, "hash-d", ImportSession.STATUS_STAGED)).thenReturn(Optional.of(stale));
+
+        Optional<ImportSession> found = service.findLiveSessionByContentHash(userId, "hash-d");
+
+        assertThat(found).isEmpty();
+        verify(importSessionRepository).delete(stale);
+    }
+
+    /**
+     * The dedup protection this method exists FOR must still work: a session created moments ago
+     * (a double-click, or a client retrying a request whose response was lost) is still returned
+     * as a match, not treated as stale.
+     */
+    @Test
+    void findLiveSessionByContentHash_stillReturnsAVeryRecentMatch_withinTheDedupWindow() {
+        ImportSession justCreated = sessionOwnedBy(userId, Instant.now().plusSeconds(600), ImportSession.STATUS_STAGED);
+        org.springframework.test.util.ReflectionTestUtils.setField(
+                justCreated, "createdAt", Instant.now().minusSeconds(5));
+        when(importSessionRepository.findFirstByUserIdAndContentHashAndStatusOrderByCreatedAtDesc(
+                userId, "hash-e", ImportSession.STATUS_STAGED)).thenReturn(Optional.of(justCreated));
+
+        Optional<ImportSession> found = service.findLiveSessionByContentHash(userId, "hash-e");
+
+        assertThat(found).contains(justCreated);
+        verify(importSessionRepository, never()).delete(any());
+    }
+
+    /**
+     * Phase 1B: the actual fix for the gap Phase 1A's window still left open -- a session created
+     * moments before a parser fix deploys was still replayed for the rest of that 5-minute window.
+     * Version comparison has no such gap: a mismatch is a mismatch regardless of age.
+     */
+    @Test
+    void findLiveSessionByContentHash_deletesAVersionMismatchedMatch_evenIfCreatedSecondsAgo() {
+        when(buildVersionResolver.currentCommit()).thenReturn("newcommit");
+        ImportSession session = sessionOwnedBy(userId, Instant.now().plusSeconds(600), ImportSession.STATUS_STAGED);
+        org.springframework.test.util.ReflectionTestUtils.setField(session, "createdAt", Instant.now());
+        session.setParserVersion("oldcommit");
+        when(importSessionRepository.findFirstByUserIdAndContentHashAndStatusOrderByCreatedAtDesc(
+                userId, "hash-f", ImportSession.STATUS_STAGED)).thenReturn(Optional.of(session));
+
+        Optional<ImportSession> found = service.findLiveSessionByContentHash(userId, "hash-f");
+
+        assertThat(found).isEmpty();
+        verify(importSessionRepository).delete(session);
+    }
+
+    /**
+     * A session staged before this feature shipped has parserVersion == null, which must never
+     * equal a real resolved commit -- otherwise every pre-existing staged session would look like
+     * it matches the current build by coincidence of both being "unset".
+     */
+    @Test
+    void findLiveSessionByContentHash_treatsANullStoredVersion_asAMismatch() {
+        when(buildVersionResolver.currentCommit()).thenReturn("newcommit");
+        ImportSession session = sessionOwnedBy(userId, Instant.now().plusSeconds(600), ImportSession.STATUS_STAGED);
+        org.springframework.test.util.ReflectionTestUtils.setField(session, "createdAt", Instant.now());
+        // parserVersion left null -- the default for a session built via sessionOwnedBy.
+        when(importSessionRepository.findFirstByUserIdAndContentHashAndStatusOrderByCreatedAtDesc(
+                userId, "hash-g", ImportSession.STATUS_STAGED)).thenReturn(Optional.of(session));
+
+        Optional<ImportSession> found = service.findLiveSessionByContentHash(userId, "hash-g");
+
+        assertThat(found).isEmpty();
+        verify(importSessionRepository).delete(session);
+    }
+
+    /**
+     * The other half: when the version DOES match, the session replays even if it's old (though
+     * still unexpired) -- proving version comparison, not age, is now the real freshness signal
+     * whenever a version can be resolved at all.
+     */
+    @Test
+    void findLiveSessionByContentHash_returnsAVersionMatchedMatch_evenIfCreatedDaysAgo() {
+        when(buildVersionResolver.currentCommit()).thenReturn("samecommit");
+        ImportSession session = sessionOwnedBy(userId, Instant.now().plusSeconds(600), ImportSession.STATUS_STAGED);
+        org.springframework.test.util.ReflectionTestUtils.setField(
+                session, "createdAt", Instant.now().minus(java.time.Duration.ofHours(40)));
+        session.setParserVersion("samecommit");
+        when(importSessionRepository.findFirstByUserIdAndContentHashAndStatusOrderByCreatedAtDesc(
+                userId, "hash-h", ImportSession.STATUS_STAGED)).thenReturn(Optional.of(session));
+
+        Optional<ImportSession> found = service.findLiveSessionByContentHash(userId, "hash-h");
+
+        assertThat(found).contains(session);
+        verify(importSessionRepository, never()).delete(any());
+    }
+
+    /** createSession stamps the resolved build version onto every newly-staged session. */
+    @Test
+    void createSession_stampsTheCurrentParserVersion() {
+        when(buildVersionResolver.currentCommit()).thenReturn("stampedcommit");
+
+        ImportSession created = service.createSession(userId, "statement.csv", new byte[]{1, 2, 3},
+                List.of(sampleRow()), sampleDetected());
+
+        assertThat(created.getParserVersion()).isEqualTo("stampedcommit");
+    }
+
+    /** createMultiSection stamps it too -- a separate code path, not covered by the assertion above. */
+    @Test
+    void createMultiSection_stampsTheCurrentParserVersion() {
+        when(buildVersionResolver.currentCommit()).thenReturn("stampedcommit");
+        var section = new com.finora.dto.ImportDto.StagedAccountSection(
+                sampleDetected(), List.of(sampleRow()), 1, 0, List.of());
+
+        ImportSession created = service.createMultiSection(userId, "composite.pdf",
+                new byte[]{1, 2, 3}, List.of(section));
+
+        assertThat(created.getParserVersion()).isEqualTo("stampedcommit");
     }
 
     /**

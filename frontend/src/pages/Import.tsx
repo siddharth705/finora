@@ -236,6 +236,10 @@ export default function Import() {
   // (ConfirmDialog) instead of the browser's own confirm(), which rendered as unstyled OS chrome
   // (literally titled with the page's own origin) rather than looking like part of the product.
   const [confirmDiscardId, setConfirmDiscardId] = useState<string | null>(null);
+  // Same idea, for the review screen's own "discard and start over" button rather than an entry
+  // in the unfinished-imports list -- a plain boolean, since the review screen only ever has one
+  // current session to discard.
+  const [confirmDiscardReviewOpen, setConfirmDiscardReviewOpen] = useState(false);
   const { data: unfinishedSessions } = useQuery({
     queryKey: ['import-sessions'],
     queryFn: () => importApi.listSessions(),
@@ -440,7 +444,7 @@ export default function Import() {
     }
   }
 
-  async function discardStagedSession(id: string) {
+  async function discardStagedSession(id: string): Promise<boolean> {
     // Bug fix, caught by review: this function never cleared the banner on success, unlike every
     // other action on this page -- an unrelated error left showing (e.g. an ACTION_REQUIRED parse
     // failure, amber-colored) would sit there indefinitely, now misleadingly still reading as
@@ -450,11 +454,24 @@ export default function Import() {
     try {
       await importApi.discardSession(id);
       await queryClient.invalidateQueries({ queryKey: ['import-sessions'] });
+      return true;
     } catch {
       showError('Could not discard this staged import.');
+      return false;
     } finally {
       setDiscardingSessionId(null);
     }
+  }
+
+  /** The review screen's own discard action -- distinct from discardStagedSession's other caller
+   *  (the "Continue previous import" list) because only this one needs to leave the review screen
+   *  afterward. Only calls startOver() when the discard actually succeeded -- if it failed,
+   *  discardStagedSession already showed the error, and resetting the review state on top of an
+   *  unresolved failure would silently discard what the user was looking at for no reason. */
+  async function discardReviewSessionAndStartOver() {
+    if (!sessionId) return;
+    const discarded = await discardStagedSession(sessionId);
+    if (discarded) startOver();
   }
 
   async function upload(file: File, isPdf: boolean, password: string | undefined) {
@@ -918,6 +935,20 @@ export default function Import() {
         />
       )}
 
+      {confirmDiscardReviewOpen && (
+        <ConfirmDialog
+          title="Discard this import and start over?"
+          message="This clears everything parsed from this file. You can upload the statement again right after."
+          confirmLabel="Discard"
+          danger
+          onConfirm={() => {
+            setConfirmDiscardReviewOpen(false);
+            void discardReviewSessionAndStartOver();
+          }}
+          onCancel={() => setConfirmDiscardReviewOpen(false)}
+        />
+      )}
+
       {ownershipWarningOpen && (
         <ConfirmDialog
           title="Statement Check"
@@ -1049,9 +1080,20 @@ export default function Import() {
             <h2 className="font-semibold text-ink text-sm mb-1">
               This statement covers {multiSections.length} accounts
             </h2>
-            <p className="text-xs text-muted">
-              We found {multiSections.length} separate accounts in this file — review each one below, then confirm
-              them all together.
+            <p className="text-xs text-muted flex items-center gap-2 flex-wrap">
+              <span>
+                We found {multiSections.length} separate accounts in this file — review each one below, then confirm
+                them all together.
+              </span>
+              {sessionId && (
+                <button
+                  type="button"
+                  onClick={() => setConfirmDiscardReviewOpen(true)}
+                  className="text-xs text-muted underline flex-shrink-0"
+                >
+                  Not what you expected? Discard and start over
+                </button>
+              )}
             </p>
           </div>
 
@@ -1224,6 +1266,15 @@ export default function Import() {
                 <span className="text-[10px] uppercase font-semibold text-muted border border-border rounded px-1.5 py-0.5 flex items-center gap-1 flex-shrink-0">
                   {fileFormat === 'PDF' ? <FileText size={11} /> : <FileSpreadsheet size={11} />} {fileFormat}
                 </span>
+              )}
+              {sessionId && !reimportState && (
+                <button
+                  type="button"
+                  onClick={() => setConfirmDiscardReviewOpen(true)}
+                  className="text-xs text-muted underline flex-shrink-0"
+                >
+                  Not what you expected? Discard and start over
+                </button>
               )}
             </p>
             <TransactionPreviewTable
