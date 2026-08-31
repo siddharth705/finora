@@ -52,17 +52,21 @@ CLASSPATH_CACHE = BACKEND / "target" / "corpus-classpath.txt"
 NOT_ESTABLISHED = "NOT_ESTABLISHED"
 
 
-def _refuse_if_inside_repo(path: Path, what: str) -> None:
+def _refuse_if_inside_repo(path: Path, what: str, allow_in_repo_synthetic_corpus: bool = False) -> None:
     """Same guard corpus-run.py already applies, reused verbatim for a second path.
 
     A ground-truth file is exactly as sensitive as the corpus it describes (expected transaction
     counts and product types are still customer financial facts), so it gets the identical refusal,
-    not a weaker one.
+    not a weaker one. The one exception, same as corpus-run.py's: a committed, reviewed SYNTHETIC
+    fixture corpus and its ground truth, opted into explicitly.
     """
+    if allow_in_repo_synthetic_corpus:
+        return
     if str(path).startswith(str(REPO_ROOT)):
         sys.exit(f"REFUSED: {path} is inside the repository.\n"
                  f"The {what} must live outside the working tree. Keep it elsewhere and pass an "
-                 "absolute path.")
+                 "absolute path, or pass --allow-in-repo-synthetic-corpus for a committed synthetic "
+                 "fixture corpus.")
 
 
 def build_classpath(quiet: bool) -> str:
@@ -83,12 +87,20 @@ def build_classpath(quiet: bool) -> str:
     return f"{test_classes}:{BACKEND / 'target' / 'classes'}:{CLASSPATH_CACHE.read_text().strip()}"
 
 
-def probe(classpath: str, pdf: Path, timeout: int) -> dict:
-    """One statement -> one CorpusProbe record. Identical invocation to corpus-run.py's probe()."""
+def probe(classpath: str, pdf: Path, timeout: int, synthetic: bool = False) -> dict:
+    """One statement -> one CorpusProbe record. Identical invocation to corpus-run.py's probe().
+
+    `synthetic` threads through to CorpusProbe's own --synthetic flag -- only ever set when this
+    script's --allow-in-repo-synthetic-corpus was passed, which is the only situation where
+    per-row transaction content (the "description" dimension VALUE_DIMENSIONS now compares) is
+    safe to reveal at all.
+    """
+    cmd = ["java", "-cp", classpath, PROBE_CLASS]
+    if synthetic:
+        cmd.append("--synthetic")
+    cmd.append(str(pdf))
     try:
-        result = subprocess.run(
-            ["java", "-cp", classpath, PROBE_CLASS, str(pdf)],
-            capture_output=True, text=True, timeout=timeout)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired:
         return {"schema": 1, "file": pdf.name, "status": "error",
                 "error": {"type": "Timeout", "message": f"probe exceeded {timeout}s"}}
@@ -136,15 +148,19 @@ def main() -> int:
                           "(default: <corpus>/ground-truth)")
     ap.add_argument("--timeout", type=int, default=180, help="per-statement probe timeout in seconds")
     ap.add_argument("--quiet", action="store_true")
+    ap.add_argument("--allow-in-repo-synthetic-corpus", action="store_true",
+                     help="skip the in-repo refusal for a committed, reviewed SYNTHETIC fixture "
+                          "corpus, and probe with CorpusProbe's --synthetic flag. Never pass this "
+                          "for a real-statement corpus.")
     args = ap.parse_args()
 
     corpus = args.corpus.resolve()
     if not corpus.is_dir():
         sys.exit(f"not a directory: {corpus}")
-    _refuse_if_inside_repo(corpus, "corpus")
+    _refuse_if_inside_repo(corpus, "corpus", args.allow_in_repo_synthetic_corpus)
 
     ground_truth_dir = (args.ground_truth or (corpus / "ground-truth")).resolve()
-    _refuse_if_inside_repo(ground_truth_dir, "ground-truth directory")
+    _refuse_if_inside_repo(ground_truth_dir, "ground-truth directory", args.allow_in_repo_synthetic_corpus)
 
     pdfs = sorted(corpus.glob("*.pdf"), key=lambda p: p.name)
     if not pdfs:
@@ -159,7 +175,7 @@ def main() -> int:
         for i, pdf in enumerate(pdfs, 1):
             if not args.quiet:
                 print(f"  {i:>2}/{len(pdfs)} {pdf.name}", file=sys.stderr)
-            record = probe(classpath, pdf, args.timeout)
+            record = probe(classpath, pdf, args.timeout, args.allow_in_repo_synthetic_corpus)
 
             gt_file = ground_truth_dir / (pdf.stem + ".json")
             if not gt_file.is_file():
