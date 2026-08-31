@@ -77,7 +77,7 @@ class CorpusProbeTest {
     private static CorpusProbe.Section sec(int index, int rows, String product, String type) {
         return new CorpusProbe.Section(index, rows, product, type, null, 0.5, false,
                 Map.of("BALANCE_CHAIN", "VERIFIED"),
-                null, null, null, null, null, null, null, null);
+                null, null, null, null, null, null, null, null, List.of());
     }
 
     // ------------------------------------------------- statement-level financial facts (Task 1)
@@ -88,7 +88,7 @@ class CorpusProbeTest {
                 0, 3, "SAVINGS", "SAVINGS", "****1234", 0.9, false, Map.of(),
                 new BigDecimal("1000.00"), new BigDecimal("1500.00"),
                 LocalDate.of(2026, 7, 1), LocalDate.of(2026, 7, 31),
-                null, null, null, null);
+                null, null, null, null, List.of());
 
         String json = CorpusProbe.sectionsJson(List.of(section));
 
@@ -106,7 +106,8 @@ class CorpusProbeTest {
         CorpusProbe.Section section = new CorpusProbe.Section(
                 0, 3, "CREDIT_CARD", "CREDIT_CARD", null, 0.9, false, Map.of(),
                 null, null, null, null,
-                new BigDecimal("50000.00"), new BigDecimal("4321.50"), LocalDate.of(2026, 8, 15), null);
+                new BigDecimal("50000.00"), new BigDecimal("4321.50"), LocalDate.of(2026, 8, 15), null,
+                List.of());
 
         String json = CorpusProbe.sectionsJson(List.of(section));
 
@@ -166,10 +167,10 @@ class CorpusProbeTest {
         String json = CorpusProbe.sectionsJson(List.of(
                 new CorpusProbe.Section(0, 75, "UNKNOWN", "SAVINGS", null, 0.5, false,
                         Map.of("COLUMN_AMBIGUITY", "VERIFIED"),
-                        null, null, null, null, null, null, null, null),
+                        null, null, null, null, null, null, null, null, List.of()),
                 new CorpusProbe.Section(1, 0, "UNKNOWN", "SAVINGS", null, 0.5, true,
                         Map.of("COLUMN_AMBIGUITY", "WARNING"),
-                        null, null, null, null, null, null, null, null)));
+                        null, null, null, null, null, null, null, null, List.of())));
 
         assertThat(json).contains("\"WARNING\"").contains("\"VERIFIED\"");
         assertThat(json.indexOf("VERIFIED")).isLessThan(json.indexOf("WARNING"));
@@ -180,7 +181,7 @@ class CorpusProbeTest {
     void missingAccountIdentityRendersNull() {
         String json = CorpusProbe.sectionsJson(List.of(
                 new CorpusProbe.Section(0, 0, null, null, null, 0.0, false, Map.of(),
-                        null, null, null, null, null, null, null, null)));
+                        null, null, null, null, null, null, null, null, List.of())));
 
         assertThat(json).contains("\"detectedProduct\":null")
                 .contains("\"accountNumberMasked\":null")
@@ -232,5 +233,81 @@ class CorpusProbeTest {
         assertThat(json).contains("\"transactions\":[");
         assertThat(json).contains("\"description\":\"Coffee shop\"");
         assertThat(json).contains("\"direction\":\"DEBIT\"");
+    }
+
+    // ------------------------------------------------- description hashes (Task 7)
+
+    private static Path twoRowFixture(Path tempDir) throws Exception {
+        var definition = new SyntheticStatementDefinition("corpus-probe-hashes-001", List.of(
+                new ExpectedEntity("savings-primary", "SAVINGS", Presence.DETECTED, "••••4321",
+                        ZeroTransactions.FALSE, List.of(
+                                new Row(LocalDate.of(2026, 7, 1), "Coffee shop",
+                                        new BigDecimal("100.00"), false),
+                                new Row(LocalDate.of(2026, 7, 2), "Salary credit",
+                                        new BigDecimal("50000.00"), true)))),
+                List.of());
+        Path pdf = tempDir.resolve("corpus-probe-hashes-001.pdf");
+        Files.write(pdf, PdfFixtureBuilder.render(definition));
+        return pdf;
+    }
+
+    @Test
+    void sectionsJson_emitsOneDescriptionHashPerRow_neverTheRawText(@TempDir Path tempDir) throws Exception {
+        Path pdf = twoRowFixture(tempDir);
+
+        // Unconditional -- not gated by --synthetic, since a hash cannot be reversed to the text.
+        String json = CorpusProbe.probe(pdf, false);
+
+        assertThat(json).doesNotContain("Coffee shop");
+        assertThat(json).doesNotContain("Salary credit");
+        assertThat(json).contains("\"descriptionHashes\":[");
+
+        String hashesSegment = json.substring(json.indexOf("\"descriptionHashes\":["),
+                json.indexOf(']', json.indexOf("\"descriptionHashes\":[")) + 1);
+        long hashCount = hashesSegment.chars().filter(c -> c == ',').count() + 1;
+        assertThat(hashCount).isEqualTo(2);
+    }
+
+    @Test
+    void sectionsJson_producesTheSameHash_forTheSameDescription_everyTime(@TempDir Path tempDir) throws Exception {
+        Path pdf = twoRowFixture(tempDir);
+
+        String first = CorpusProbe.probe(pdf, false);
+        String second = CorpusProbe.probe(pdf, false);
+
+        assertThat(first).isEqualTo(second);
+    }
+
+    @Test
+    void sectionsJson_producesADifferentHash_forADifferentDescription(@TempDir Path tempDir) throws Exception {
+        var oneWord = new SyntheticStatementDefinition("hash-diff-a", List.of(
+                new ExpectedEntity("acct", "SAVINGS", Presence.DETECTED, "••••1111",
+                        ZeroTransactions.FALSE, List.of(
+                                new Row(LocalDate.of(2026, 7, 1), "Alpha",
+                                        new BigDecimal("10.00"), false)))),
+                List.of());
+        var otherWord = new SyntheticStatementDefinition("hash-diff-b", List.of(
+                new ExpectedEntity("acct", "SAVINGS", Presence.DETECTED, "••••1111",
+                        ZeroTransactions.FALSE, List.of(
+                                new Row(LocalDate.of(2026, 7, 1), "Beta",
+                                        new BigDecimal("10.00"), false)))),
+                List.of());
+        Path pdfA = tempDir.resolve("a.pdf");
+        Path pdfB = tempDir.resolve("b.pdf");
+        Files.write(pdfA, PdfFixtureBuilder.render(oneWord));
+        Files.write(pdfB, PdfFixtureBuilder.render(otherWord));
+
+        String jsonA = CorpusProbe.probe(pdfA, false);
+        String jsonB = CorpusProbe.probe(pdfB, false);
+
+        String hashA = descriptionHash(jsonA);
+        String hashB = descriptionHash(jsonB);
+        assertThat(hashA).isNotEqualTo(hashB);
+    }
+
+    private static String descriptionHash(String json) {
+        int start = json.indexOf("\"descriptionHashes\":[") + "\"descriptionHashes\":[".length();
+        int end = json.indexOf(']', start);
+        return json.substring(start, end);
     }
 }

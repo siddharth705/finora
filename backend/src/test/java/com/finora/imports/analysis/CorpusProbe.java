@@ -13,10 +13,14 @@ import org.apache.pdfbox.text.PDFTextStripper;
 
 import java.io.File;
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -167,7 +171,8 @@ public final class CorpusProbe {
                     account == null ? null : account.creditLimit(),
                     account == null ? null : account.totalAmountDue(),
                     account == null ? null : account.paymentDueDate(),
-                    transactions));
+                    transactions,
+                    descriptionHashesOf(section)));
         }
 
         String fingerprint = generated.documentContext() == null ? "unknown"
@@ -234,6 +239,32 @@ public final class CorpusProbe {
     }
 
     /**
+     * One SHA-256 digest per row's description, in row order -- computed unconditionally, on every
+     * probe (real corpus included), because a hash is one-way: it cannot be turned back into the
+     * text it came from, so recording it carries none of the risk raw description content would.
+     * This is CHANGE detection, never VALUE disclosure -- see {@code corpus-diff.py}'s
+     * {@code compare_description_drift}, the only consumer, which never sees or reports the text
+     * either, only whether the hash at a given row position differs between two runs.
+     */
+    private static List<String> descriptionHashesOf(StagedAccountSection section) {
+        List<String> hashes = new ArrayList<>();
+        for (var row : section.rows()) {
+            hashes.add(sha256(row.description() == null ? "" : row.description()));
+        }
+        return hashes;
+    }
+
+    private static String sha256(String text) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] hash = digest.digest(text.getBytes(StandardCharsets.UTF_8));
+            return HexFormat.of().formatHex(hash, 0, 8);
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 unavailable", e);
+        }
+    }
+
+    /**
      * The normalizer with its two collaborators stubbed, mirroring
      * {@code PdfPipelineDiagnostic.realTransactionNormalizer()}.
      *
@@ -276,7 +307,11 @@ public final class CorpusProbe {
                    BigDecimal creditLimit, BigDecimal totalAmountDue, LocalDate paymentDueDate,
                    /** Null on every real-corpus probe. Only {@code --synthetic} ever populates
                     *  this -- see {@code transactionsOf} and {@code probe}'s own doc comment. */
-                   List<Map<String, String>> transactions) {}
+                   List<Map<String, String>> transactions,
+                   /** Populated unconditionally, real corpus included -- see
+                    *  {@code descriptionHashesOf}'s own doc comment for why a one-way hash carries
+                    *  none of {@code transactions}'s disclosure risk. */
+                   List<String> descriptionHashes) {}
 
     /**
      * Renders sections as an ordered JSON array.
@@ -310,6 +345,7 @@ public final class CorpusProbe {
              .append(",\"creditLimit\":").append(s.creditLimit() == null ? "null" : quote(s.creditLimit().toPlainString()))
              .append(",\"totalAmountDue\":").append(s.totalAmountDue() == null ? "null" : quote(s.totalAmountDue().toPlainString()))
              .append(",\"paymentDueDate\":").append(s.paymentDueDate() == null ? "null" : quote(s.paymentDueDate().toString()))
+             .append(",\"descriptionHashes\":").append(stringArray(s.descriptionHashes()))
              .append(s.transactions() == null ? "" : ",\"transactions\":" + transactionsJson(s.transactions()))
              .append('}');
         }
