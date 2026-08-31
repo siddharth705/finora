@@ -65,7 +65,7 @@ class StatementImportServiceReimportIntegrityTest {
                 mock(CategoryRepository.class), mock(TransactionRepository.class),
                 mock(ReconciliationService.class), mock(RecurringService.class),
                 importService, mock(AuditService.class), mock(BankManagementService.class),
-                new com.finora.imports.storage.StatementContentService(Optional.empty(), "", ""));
+                new com.finora.imports.storage.StatementContentService(Optional.empty(), mock(com.finora.security.crypto.EncryptionService.class), "", ""));
 
         Account account = new Account();
         ReflectionTestUtils.setField(account, "id", accountId);
@@ -132,15 +132,42 @@ class StatementImportServiceReimportIntegrityTest {
 
         ConfirmResponse expected = new ConfirmResponse(1, 0, 0, 0, 0, List.of(), java.util.Map.of(),
                 java.util.Map.of(), List.of(), null, BigDecimal.ZERO, new BigDecimal("150.00"), null, null,
-                null, null, 0L, "CSV");
+                null, null, 0L, "CSV", UUID.randomUUID(), null);
         when(importService.confirm(eq(userId), eq("hdfc_statement.csv"), any(byte[].class), any(ConfirmRequest.class)))
                 .thenReturn(expected);
 
         ConfirmResponse result = service.confirmReimport(userId, statementImportId, request);
 
-        assertThat(result).isSameAs(expected);
+        // Value equality, not isSameAs: confirmReimport now always reconstructs the response via
+        // ConfirmResponse.withWarnings (see confirmReimport_stripsTheDuplicatePeriodWarning... below
+        // for why), so it's never literally the same object -- but must carry the same values.
+        assertThat(result).isEqualTo(expected);
         verify(importService).confirm(eq(userId), eq("hdfc_statement.csv"), any(byte[].class), argThat(scoped ->
                 scoped.rows().equals(List.of(echoed)) && scoped.existingAccountId().equals(accountId)));
+    }
+
+    @Test
+    void confirmReimport_forwardsTheRequestsTotalAmountDueAndPaymentDueDate_totheScopedRequest() throws Exception {
+        // Bug fix: the scoped ConfirmRequest this method builds used to stop at
+        // statementPeriodStart/End, silently dropping totalAmountDue/paymentDueDate even though
+        // the incoming request carries them -- every re-import of a credit-card statement wiped
+        // its own total-due/due-date on the new StatementImport row.
+        mockFreshParseReturns(GENUINE_ROW);
+        ConfirmedRow echoed = confirming(GENUINE_ROW);
+        ConfirmRequest request = new ConfirmRequest(null, List.of(echoed), null, null, null, null, null,
+                null, null, new BigDecimal("12450.75"), LocalDate.of(2026, 8, 5));
+
+        ConfirmResponse expected = new ConfirmResponse(1, 0, 0, 0, 0, List.of(), java.util.Map.of(),
+                java.util.Map.of(), List.of(), null, BigDecimal.ZERO, new BigDecimal("150.00"), null, null,
+                null, null, 0L, "CSV", UUID.randomUUID(), null);
+        when(importService.confirm(eq(userId), eq("hdfc_statement.csv"), any(byte[].class), any(ConfirmRequest.class)))
+                .thenReturn(expected);
+
+        service.confirmReimport(userId, statementImportId, request);
+
+        verify(importService).confirm(eq(userId), eq("hdfc_statement.csv"), any(byte[].class), argThat(scoped ->
+                scoped.totalAmountDue().equals(new BigDecimal("12450.75"))
+                        && scoped.paymentDueDate().equals(LocalDate.of(2026, 8, 5))));
     }
 
     @Test
@@ -201,7 +228,7 @@ class StatementImportServiceReimportIntegrityTest {
         ConfirmedRow echoed = confirming(GENUINE_ROW);
         ConfirmResponse expected = new ConfirmResponse(1, 0, 0, 0, 0, List.of(), java.util.Map.of(),
                 java.util.Map.of(), List.of(), null, BigDecimal.ZERO, new BigDecimal("150.00"), null, null,
-                null, null, 0L, "PDF");
+                null, null, 0L, "PDF", UUID.randomUUID(), null);
         when(importService.confirm(eq(userId), eq("sbi_statement.pdf"), any(byte[].class), any(ConfirmRequest.class)))
                 .thenReturn(expected);
 
@@ -209,8 +236,119 @@ class StatementImportServiceReimportIntegrityTest {
 
         ConfirmResponse result = service.confirmReimport(userId, statementImportId, request);
 
-        assertThat(result).isSameAs(expected);
+        // Value equality, not isSameAs: confirmReimport now always reconstructs the response via
+        // ConfirmResponse.withWarnings (see confirmReimport_stripsTheDuplicatePeriodWarning... below
+        // for why), so it's never literally the same object -- but must carry the same values.
+        assertThat(result).isEqualTo(expected);
         verify(importService).parseAndStageAnyFormat(eq(userId), eq("PDF"), eq("sbi_statement.pdf"), any(),
                 eq((Integer) null), eq("AAAA1234"));
+    }
+
+    /**
+     * BUG found via self-review: {@link ImportService#confirm} always creates a genuinely new
+     * {@code StatementImport} row for a reimport-confirm, same period as {@code original} -- which
+     * {@code confirmReimport} never deletes (see this class's own confirmReimport comment, and this
+     * proposal's own §0.3: statement supersession is a real, separate gap, not fixed until Phase 4).
+     * So the moment {@code CoverageWarnings} shipped, every reimport started tripping its own
+     * exact-duplicate-period detection against the very statement it was correcting -- confusing,
+     * since the user's action just succeeded. Confirmed the fix strips exactly that warning, and
+     * only that one -- an unrelated warning must survive untouched.
+     *
+     * <p>{@code duplicateOverlapsFor} is stubbed here (rather than left unstubbed, which Mockito
+     * would default to an empty list -- and would have made this test pass either way, hiding
+     * exactly the gap {@link #confirmReimport_keepsAnUnrelatedDuplicatesWarningAndId_whenAlsoDuplicatingTheOriginal}
+     * below exists to catch) so this genuinely exercises the id-based filter, not Mockito's default.
+     */
+    @Test
+    void confirmReimport_stripsTheDuplicatePeriodWarningAgainstTheStatementBeingReimported() throws Exception {
+        mockFreshParseReturns(GENUINE_ROW);
+        ConfirmedRow echoed = confirming(GENUINE_ROW);
+        ConfirmRequest request = new ConfirmRequest(null, List.of(echoed), null, null, null, null, null);
+
+        UUID newStatementImportId = UUID.randomUUID();
+        String selfDuplicateWarning = com.finora.imports.CoverageWarnings.DUPLICATE_PERIOD_WARNING_PREFIX
+                + ", imported on 2026-08-01.";
+        ConfirmResponse expected = new ConfirmResponse(1, 0, 0, 0, 0, List.of(), java.util.Map.of(),
+                java.util.Map.of(),
+                List.of(selfDuplicateWarning,
+                        "This account's balance was updated from the imported transactions rather than from "
+                                + "the statement's stated closing balance: unrelated reason"),
+                null, BigDecimal.ZERO, new BigDecimal("150.00"), null, null,
+                LocalDate.of(2026, 8, 1), LocalDate.of(2026, 8, 1), 0L, "CSV",
+                newStatementImportId, statementImportId);
+        when(importService.confirm(eq(userId), eq("hdfc_statement.csv"), any(byte[].class), any(ConfirmRequest.class)))
+                .thenReturn(expected);
+        when(importService.duplicateOverlapsFor(eq(userId), eq(accountId), eq(newStatementImportId), any(), any()))
+                .thenReturn(List.of(new com.finora.imports.CoverageWarnings.DuplicateOverlap(
+                        statementImportId, selfDuplicateWarning)));
+
+        ConfirmResponse result = service.confirmReimport(userId, statementImportId, request);
+
+        assertThat(result.warnings())
+                .as("the duplicate-period notice against the statement being reimported must be stripped")
+                .noneMatch(w -> w.startsWith(com.finora.imports.CoverageWarnings.DUPLICATE_PERIOD_WARNING_PREFIX));
+        assertThat(result.warnings())
+                .as("an unrelated warning on the same response must survive untouched")
+                .anyMatch(w -> w.contains("unrelated reason"));
+        assertThat(result.duplicateOfStatementId())
+                .as("the id behind the stripped warning must be cleared too, or the frontend could "
+                        + "offer to supersede the very statement this reimport just corrected")
+                .isNull();
+    }
+
+    /**
+     * BUG found via self-review (Phase 4 follow-up, after the fix above shipped): the original
+     * fix stripped EVERY duplicate-period-prefixed warning by string match, and cleared
+     * duplicateOfStatementId only when it happened to equal `original`'s own id -- two
+     * independently-flattened views of "possibly several overlaps" with no way to stay in
+     * agreement. When a reimport ALSO exact-duplicates a second, unrelated statement (a real,
+     * actionable finding -- the whole reason "Import this one as a replacement?" exists), that
+     * second duplicate's warning and id could be dropped entirely, or kept as an id with no
+     * warning to explain it (and the frontend never renders the button without a warning
+     * present). Proves the fix instead: only the overlap against `original` is removed -- the
+     * OTHER duplicate's sentence AND id both survive, exactly as an ordinary (non-reimport)
+     * confirm's response would carry them.
+     */
+    @Test
+    void confirmReimport_keepsAnUnrelatedDuplicatesWarningAndId_whenAlsoDuplicatingTheOriginal() throws Exception {
+        mockFreshParseReturns(GENUINE_ROW);
+        ConfirmedRow echoed = confirming(GENUINE_ROW);
+        ConfirmRequest request = new ConfirmRequest(null, List.of(echoed), null, null, null, null, null);
+
+        UUID newStatementImportId = UUID.randomUUID();
+        UUID unrelatedStatementId = UUID.randomUUID();
+        String selfDuplicateWarning = com.finora.imports.CoverageWarnings.DUPLICATE_PERIOD_WARNING_PREFIX
+                + ", imported on 2026-08-01.";
+        String unrelatedDuplicateWarning = com.finora.imports.CoverageWarnings.DUPLICATE_PERIOD_WARNING_PREFIX
+                + ", imported on 2025-01-15.";
+        // CoverageWarnings.duplicateOfStatementId only ever reports the FIRST overlap it scans --
+        // here that happens to be the unrelated one, which is exactly the branch that used to
+        // leave a dangling id with its explaining warning stripped.
+        ConfirmResponse expected = new ConfirmResponse(1, 0, 0, 0, 0, List.of(), java.util.Map.of(),
+                java.util.Map.of(),
+                List.of(unrelatedDuplicateWarning, selfDuplicateWarning),
+                null, BigDecimal.ZERO, new BigDecimal("150.00"), null, null,
+                LocalDate.of(2026, 8, 1), LocalDate.of(2026, 8, 1), 0L, "CSV",
+                newStatementImportId, unrelatedStatementId);
+        when(importService.confirm(eq(userId), eq("hdfc_statement.csv"), any(byte[].class), any(ConfirmRequest.class)))
+                .thenReturn(expected);
+        when(importService.duplicateOverlapsFor(eq(userId), eq(accountId), eq(newStatementImportId), any(), any()))
+                .thenReturn(List.of(
+                        new com.finora.imports.CoverageWarnings.DuplicateOverlap(unrelatedStatementId, unrelatedDuplicateWarning),
+                        new com.finora.imports.CoverageWarnings.DuplicateOverlap(statementImportId, selfDuplicateWarning)));
+
+        ConfirmResponse result = service.confirmReimport(userId, statementImportId, request);
+
+        assertThat(result.warnings())
+                .as("the self-duplicate notice against the statement being reimported must be stripped")
+                .noneMatch(w -> w.equals(selfDuplicateWarning));
+        assertThat(result.warnings())
+                .as("the genuinely unrelated duplicate's own notice must survive")
+                .anyMatch(w -> w.equals(unrelatedDuplicateWarning));
+        assertThat(result.duplicateOfStatementId())
+                .as("the unrelated duplicate's id must survive so \"Import this one as a replacement?\" "
+                        + "can still target it -- not be cleared just because a DIFFERENT overlap "
+                        + "(against the statement being reimported) also existed on this same confirm")
+                .isEqualTo(unrelatedStatementId);
     }
 }

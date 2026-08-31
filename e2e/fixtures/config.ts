@@ -15,10 +15,6 @@ export const API_BASE = `${API_ORIGIN}/api/v1`;
 export const USER_APP = process.env.FINORA_E2E_USER_APP ?? 'http://localhost:5173';
 export const ADMIN_APP = process.env.FINORA_E2E_ADMIN_APP ?? 'http://localhost:5174';
 
-/** Long enough for a Spring Boot backend under a cold JIT to answer an import, short enough that a
- *  genuinely hung request fails the test rather than the whole run's timeout. */
-export const IMPORT_TIMEOUT = 30_000;
-
 export async function backendReachable(): Promise<boolean> {
   try {
     const response = await fetch(`${API_ORIGIN}/actuator/health`);

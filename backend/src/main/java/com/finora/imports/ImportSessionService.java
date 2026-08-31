@@ -150,21 +150,52 @@ public class ImportSessionService {
     public ImportSession createSession(UUID userId, String fileName, byte[] fileContent,
                                         List<StagedRow> rows, DetectedAccountInfo detectedAccount,
                                         DocumentContext documentContext) {
-        return createSession(userId, fileName, fileContent, rows, detectedAccount, documentContext, null);
+        return createSession(userId, fileName, fileContent, rows, detectedAccount, documentContext, null, null);
     }
 
     /**
      * Same as {@link #createSession(UUID, String, byte[], List, DetectedAccountInfo,
      * DocumentContext)}, plus records where this session came from (C5-B) --
      * {@link ImportSession#SOURCE_GMAIL} or null, per {@link ImportSession#getSource()}'s own doc
-     * comment. The only caller with a non-null value is {@code GmailStagingBridge}; every CSV/PDF
-     * caller keeps going through one of the two overloads above and this stays null for them,
-     * unchanged from before this parameter existed.
+     * comment -- and, independently, the authenticated domain a Gmail receipt actually came from
+     * (C5 follow-up, see V108's migration comment for why this is separate from the staged row's
+     * own description). The only caller with non-null values for either is {@code
+     * GmailStagingBridge}; every CSV/PDF caller keeps going through one of the two overloads above
+     * and both stay null for them, unchanged from before these parameters existed.
      */
     @Transactional
     public ImportSession createSession(UUID userId, String fileName, byte[] fileContent,
                                         List<StagedRow> rows, DetectedAccountInfo detectedAccount,
-                                        DocumentContext documentContext, String source) {
+                                        DocumentContext documentContext, String source,
+                                        String sourceDomain) {
+        return createSession(userId, fileName, fileContent, rows, detectedAccount, documentContext,
+                source, sourceDomain, null);
+    }
+
+    /**
+     * Same as {@link #createSession(UUID, String, byte[], List, DetectedAccountInfo,
+     * DocumentContext)}, plus the credit-card statement entity's balance breakdown (roadmap item 6
+     * follow-up, PR #451) -- {@code CreditCardSummaryEvidence}, the same document-level reading
+     * {@code PdfPreviewGenerator} already computed and attached to every section's {@code
+     * DetectedAccountInfo.totalAmountDue}, carried here in full so the rest of it (previousBalance/
+     * purchases/cashAdvances/fees/paymentsAndCredits) survives to confirm too. The only caller is
+     * the PDF single-section staging path -- CSV has no such panel to read, and Gmail's own
+     * overload (source/sourceDomain, above) never carries one either.
+     */
+    @Transactional
+    public ImportSession createSession(UUID userId, String fileName, byte[] fileContent,
+                                        List<StagedRow> rows, DetectedAccountInfo detectedAccount,
+                                        DocumentContext documentContext,
+                                        com.finora.imports.pdf.CreditCardSummaryExtractor.CreditCardSummaryEvidence creditCardSummary) {
+        return createSession(userId, fileName, fileContent, rows, detectedAccount, documentContext,
+                null, null, creditCardSummary);
+    }
+
+    private ImportSession createSession(UUID userId, String fileName, byte[] fileContent,
+                                        List<StagedRow> rows, DetectedAccountInfo detectedAccount,
+                                        DocumentContext documentContext, String source,
+                                        String sourceDomain,
+                                        com.finora.imports.pdf.CreditCardSummaryExtractor.CreditCardSummaryEvidence creditCardSummary) {
         // BH-047: the expired-session sweep used to run here, inside this transaction. It is a
         // scheduled job now -- see sweepExpiredSessions(). Housekeeping on other users' rows has
         // no business being part of this user's upload.
@@ -180,6 +211,14 @@ public class ImportSessionService {
         session.setExpiresAt(Instant.now().plus(SESSION_TTL));
         applyDocumentContext(session, documentContext);
         session.setSource(source);
+        session.setSourceDomain(sourceDomain);
+        // NONE (never null, see that constant's own doc comment) is written as null rather than as
+        // an all-fields-null JSON blob -- persistSection's own read side treats "no panel found"
+        // and "never computed at all" identically, so there's no reason to distinguish them here.
+        if (creditCardSummary != null
+                && creditCardSummary != com.finora.imports.pdf.CreditCardSummaryExtractor.CreditCardSummaryEvidence.NONE) {
+            session.setCreditCardSummaryJson(writeJson(creditCardSummary));
+        }
         return importSessionRepository.save(session);
     }
 
@@ -202,6 +241,19 @@ public class ImportSessionService {
     @Transactional
     public ImportSession createMultiSection(UUID userId, String fileName, byte[] fileContent,
                                              List<StagedAccountSection> sections, DocumentContext documentContext) {
+        return createMultiSection(userId, fileName, fileContent, sections, documentContext, null);
+    }
+
+    /** Same as {@link #createMultiSection(UUID, String, byte[], List, DocumentContext)}, plus the
+     *  credit-card statement entity's balance breakdown -- see {@link #createSession(UUID, String,
+     *  byte[], List, DetectedAccountInfo, DocumentContext,
+     *  com.finora.imports.pdf.CreditCardSummaryExtractor.CreditCardSummaryEvidence)}'s own doc
+     *  comment. Document-level, same as {@code documentContext} -- a genuinely multi-account PDF
+     *  with a credit-card section still has only one billing-summary panel to read. */
+    @Transactional
+    public ImportSession createMultiSection(UUID userId, String fileName, byte[] fileContent,
+                                             List<StagedAccountSection> sections, DocumentContext documentContext,
+                                             com.finora.imports.pdf.CreditCardSummaryExtractor.CreditCardSummaryEvidence creditCardSummary) {
         // BH-047: the expired-session sweep used to run here, inside this transaction. It is a
         // scheduled job now -- see sweepExpiredSessions(). Housekeeping on other users' rows has
         // no business being part of this user's upload.
@@ -214,6 +266,10 @@ public class ImportSessionService {
         session.setSectionsJson(writeJson(sections));
         session.setExpiresAt(Instant.now().plus(SESSION_TTL));
         applyDocumentContext(session, documentContext);
+        if (creditCardSummary != null
+                && creditCardSummary != com.finora.imports.pdf.CreditCardSummaryExtractor.CreditCardSummaryEvidence.NONE) {
+            session.setCreditCardSummaryJson(writeJson(creditCardSummary));
+        }
         return importSessionRepository.save(session);
     }
 
@@ -421,6 +477,18 @@ public class ImportSessionService {
     public List<StagedAccountSection> readSections(ImportSession session) {
         requireKind(session, ImportSession.KIND_MULTI_ACCOUNT);
         return readJson(session.getSectionsJson(), new TypeReference<List<StagedAccountSection>>() {});
+    }
+
+    /** Credit-card statement entity, roadmap item 6 follow-up (PR #451) -- {@link
+     *  ImportSession#getCreditCardSummaryJson()} deserialized back, or {@code
+     *  CreditCardSummaryEvidence.NONE} when the column is null (no summary panel was found, or this
+     *  session predates the column). No kind guard, unlike the three methods above: a credit-card
+     *  panel is document-level and applies equally to a SINGLE_ACCOUNT or MULTI_ACCOUNT session --
+     *  see {@code createMultiSection}'s own doc comment. */
+    public com.finora.imports.pdf.CreditCardSummaryExtractor.CreditCardSummaryEvidence readCreditCardSummary(ImportSession session) {
+        String json = session.getCreditCardSummaryJson();
+        if (json == null) return com.finora.imports.pdf.CreditCardSummaryExtractor.CreditCardSummaryEvidence.NONE;
+        return readJson(json, com.finora.imports.pdf.CreditCardSummaryExtractor.CreditCardSummaryEvidence.class);
     }
 
     /** Guards against reading the wrong pair of JSON columns for a session's actual kind --

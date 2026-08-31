@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import type { FormEvent } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Sparkles } from 'lucide-react';
@@ -11,12 +11,11 @@ import {
   friendlySendError,
 } from '../lib/phoneAuth';
 import { reportHandledError } from '../lib/monitoring';
-import { maskPhone } from '../lib/maskPhone';
 import type { ConfirmationResult } from 'firebase/auth';
 
 const RECAPTCHA_CONTAINER_ID = 'reset-password-recaptcha';
 
-// Same heuristic as Register.tsx's passwordStrength — kept identical so the meter means the
+// Same heuristic as Register.tsx's passwordStrength -- kept identical so the meter means the
 // same thing wherever a user sets a password in this app.
 function passwordStrength(pw: string): { score: number; label: string; color: string } {
   let score = 0;
@@ -40,21 +39,36 @@ function friendlyFirebaseError(err: any): string {
   }
 }
 
+// Mirrors Register.tsx's identical helper -- kept as its own local copy rather than a shared
+// module, same as Register.tsx's own (there's no third caller yet to justify extracting one).
+const PHONE_PATTERN = /^[6-9][0-9]{9}$/;
+function sanitizeLocalPhoneNumber(raw: string): string {
+  return raw.replace(/[^0-9]/g, '').slice(0, 10);
+}
+
 /**
- * A reset link alone (proof of email access) is not sufficient to change a password -- a phone
- * OTP (proof of phone access) via Firebase Phone Authentication is also required, same principle
- * VerifyPhone already applies elsewhere. The account's real phone number for a valid, unused
- * reset link is fetched from the backend (authApi.resolveResetPasswordPhone -- the backend never
- * sends the OTP itself, only reveals the number so this page can hand it to Firebase directly),
- * then Firebase sends and confirms the code entirely client-side; the backend only ever sees the
- * resulting ID token.
+ * BH-015 fix. A reset link alone (proof of email access) is not sufficient to change a password
+ * -- a phone OTP (proof of phone access) via Firebase Phone Authentication is also required, same
+ * principle VerifyPhone already applies elsewhere. Previously the account's real phone number was
+ * fetched from the backend and handed straight to Firebase -- meaning anyone holding a valid reset
+ * link learned the account's real phone number even without ever completing the reset. Now
+ * inverted: the USER types their own number; authApi.verifyResetPasswordPhone confirms it matches
+ * the account server-side (never returning the real number) BEFORE this page is allowed to hand
+ * that same, user-supplied number to Firebase. Firebase then sends and confirms the code entirely
+ * client-side, same as before; the backend only ever sees the resulting ID token.
  */
 export default function ResetPassword() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const token = searchParams.get('token');
+
+  const [phoneLocal, setPhoneLocal] = useState('');
+  const [phoneConfirmed, setPhoneConfirmed] = useState(false);
+  const [verifyingPhone, setVerifyingPhone] = useState(false);
+  const [phoneError, setPhoneError] = useState<string | null>(null);
+  const phoneValid = PHONE_PATTERN.test(phoneLocal);
+
   const [otp, setOtp] = useState('');
-  const [phoneNumber, setPhoneNumber] = useState<string | null>(null);
   const [confirmation, setConfirmation] = useState<ConfirmationResult | null>(null);
   const [otpError, setOtpError] = useState<string | null>(null);
   const [sendingOtp, setSendingOtp] = useState(false);
@@ -65,42 +79,45 @@ export default function ResetPassword() {
   const [loading, setLoading] = useState(false);
   const [done, setDone] = useState(false);
 
-  async function requestOtp() {
-    if (!token) return;
+  async function sendOtp(fullPhoneNumber: string) {
     setSendingOtp(true);
     setOtpError(null);
     setOtp('');
     setConfirmation(null);
     try {
-      const res = await authApi.resolveResetPasswordPhone(token);
-      setPhoneNumber(res.phoneNumber);
-      const result = await sendPhoneVerificationCode(res.phoneNumber, RECAPTCHA_CONTAINER_ID);
+      const result = await sendPhoneVerificationCode(fullPhoneNumber, RECAPTCHA_CONTAINER_ID);
       setConfirmation(result);
     } catch (err: any) {
-      // Logged, not just displayed -- same reasoning as VerifyPhone.tsx's own fix. A backend
-      // rejection (invalid/expired token) carries err.response and needs no Firebase-specific
-      // logging; a Firebase send failure does not, and is exactly the case that previously had no
-      // trace anywhere outside one user's browser console.
-      if (!err.response) {
-        console.error('ResetPassword: requestOtp failed', err);
-        reportHandledError(err, 'reset-password-send-otp');
-      }
+      // Logged, not just displayed -- same reasoning as VerifyPhone.tsx's own fix.
+      console.error('ResetPassword: sendOtp failed', err);
+      reportHandledError(err, 'reset-password-send-otp');
       // Same fix ChangePasswordModal.tsx already carries -- see resetPhoneVerification's own doc
-      // comment: a consumed/expired invisible-reCAPTCHA widget throws on reuse, so a retry needs a
-      // fresh verifier regardless of which of the two failure shapes above just happened.
+      // comment: a consumed/expired invisible-reCAPTCHA widget throws on reuse, so a retry needs
+      // a fresh verifier regardless of what just failed.
       resetPhoneVerification();
-      setOtpError(err.response?.data?.message ?? friendlySendError(err));
+      setOtpError(friendlySendError(err));
     } finally {
       setSendingOtp(false);
     }
   }
 
-  useEffect(() => {
-    if (!token) return;
-    void requestOtp();
-    return () => resetPhoneVerification();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token]);
+  async function submitPhoneNumber(e: FormEvent) {
+    e.preventDefault();
+    setTouched((t) => ({ ...t, phone: true }));
+    if (!token || !phoneValid) return;
+    setPhoneError(null);
+    setVerifyingPhone(true);
+    const fullPhoneNumber = `+91${phoneLocal}`;
+    try {
+      await authApi.verifyResetPasswordPhone(token, fullPhoneNumber);
+      setPhoneConfirmed(true);
+      await sendOtp(fullPhoneNumber);
+    } catch (err: any) {
+      setPhoneError(err.response?.data?.message ?? 'Could not verify that phone number. Please try again.');
+    } finally {
+      setVerifyingPhone(false);
+    }
+  }
 
   const passwordLongEnough = password.length >= 8;
   const passwordsMatch = confirm.length > 0 && confirm === password;
@@ -114,7 +131,7 @@ export default function ResetPassword() {
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
-    setTouched({ password: true, confirm: true, otp: true });
+    setTouched((t) => ({ ...t, password: true, confirm: true, otp: true }));
     if (!token) { setError('No reset token found in the link.'); return; }
     if (!confirmation) { setError('Enter the 6-digit verification code sent to your phone.'); return; }
     if (!otpValid) { setError('Enter the 6-digit verification code sent to your phone.'); return; }
@@ -127,8 +144,15 @@ export default function ResetPassword() {
       await authApi.resetPassword(token, firebaseIdToken, password);
       setDone(true);
       setTimeout(() => {
-        void navigate('/login', {
-          state: { message: 'Password reset successfully. Please sign in using your new password.' },
+        // D-26 unified entry: skips straight to /auth's password step rather than the identify
+        // step, since this user just proved phone ownership for an account that definitely
+        // exists. No `identifier` to prefill with, though -- ResetPasswordResponse only ever
+        // carries a message, never the account's email.
+        void navigate('/auth', {
+          state: {
+            banner: 'Password reset successfully. Please sign in using your new password.',
+            skipToPassword: true,
+          },
         });
       }, 2000);
     } catch (err: any) {
@@ -145,58 +169,108 @@ export default function ResetPassword() {
           <span className="w-7 h-7 rounded-lg bg-gradient-to-br from-primary to-primary-dark flex items-center justify-center">
             <Sparkles size={14} className="text-on-primary" strokeWidth={2.5} />
           </span>
-          <span className="font-extrabold tracking-wide text-ink">FINORA</span>
+          <span className="font-extrabold tracking-wide text-ink">FYNORA</span>
         </div>
+
+        {/* Anchor for Firebase's invisible reCAPTCHA -- rendered once, outside the phone/otp
+            step conditional below, and never unmounted while this page is up. sendOtp() (called
+            from BOTH the phone step's submit and the otp step's "Resend code") constructs
+            Firebase's RecaptchaVerifier synchronously against this exact DOM node the first time
+            it's called; a copy of this anchor duplicated into each step's own branch would get
+            swapped out from under an in-flight verifier the instant setPhoneConfirmed(true)
+            triggers the step transition, since React doesn't guarantee the old node survives
+            until Firebase finishes attaching to it. One persistent anchor sidesteps that race
+            entirely instead of depending on how the two effects happen to interleave. */}
+        <div id={RECAPTCHA_CONTAINER_ID} />
 
         {done ? (
           <>
             <h1 className="text-2xl font-bold mb-3 text-ink">Password updated</h1>
             <p className="text-sm text-muted">Redirecting you to sign in…</p>
           </>
+        ) : !token ? (
+          <p className="text-xs text-danger">
+            No reset token found in the link — this page normally opens from the email link.
+          </p>
+        ) : !phoneConfirmed ? (
+          <form onSubmit={submitPhoneNumber} noValidate>
+            <h1 className="text-2xl font-bold mb-2 text-ink">Confirm your phone number</h1>
+            <p className="text-xs text-muted mb-4">
+              Enter the mobile number on this account. We'll use it to send a verification code.
+            </p>
+            {phoneError && <p className="text-danger text-sm mb-4">{phoneError}</p>}
+
+            <label htmlFor="reset-phone" className="block text-xs font-medium text-muted mb-1">Mobile number</label>
+            <div className="relative mb-1">
+              <div className="absolute left-3 top-1/2 -translate-y-1/2 flex items-center gap-1.5 text-sm text-ink pointer-events-none select-none">
+                <span>+91</span>
+                <span className="w-px h-4 bg-border" />
+              </div>
+              <input
+                id="reset-phone"
+                type="tel"
+                inputMode="numeric"
+                value={phoneLocal}
+                onChange={(e) => { setPhoneLocal(sanitizeLocalPhoneNumber(e.target.value)); setPhoneError(null); }}
+                onBlur={() => markTouched('phone')}
+                placeholder="XXXXXXXXXX"
+                maxLength={10}
+                className="w-full border border-border rounded-lg pl-[3.75rem] pr-3 py-2.5 text-sm bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-primary/30"
+              />
+            </div>
+            <p className="text-[11px] mb-4 h-3.5">
+              {touched.phone && !phoneValid && <span className="text-danger">Enter a valid 10-digit mobile number.</span>}
+            </p>
+
+            <button
+              type="submit"
+              disabled={verifyingPhone || !phoneValid}
+              className="w-full bg-primary hover:bg-primary-dark text-on-primary rounded-lg py-2.5 text-sm font-semibold disabled:opacity-50"
+            >
+              {verifyingPhone ? 'Confirming…' : 'Continue'}
+            </button>
+
+            <p className="text-sm mt-4 text-center">
+              <Link to="/auth" className="text-primary font-medium">Back to sign in</Link>
+            </p>
+          </form>
         ) : (
           <form onSubmit={handleSubmit} noValidate>
             <h1 className="text-2xl font-bold mb-2 text-ink">Set a new password</h1>
-            {!token && (
-              <p className="text-xs text-danger mb-4">
-                No reset token found in the link — this page normally opens from the email link.
-              </p>
-            )}
             {error && <p className="text-danger text-sm mb-4">{error}</p>}
 
-            {token && (
-              <div className="mb-4">
-                <label htmlFor="reset-otp" className="block text-xs font-medium text-muted mb-1">Verification code</label>
-                <p className="text-xs text-muted mb-2">
-                  {confirmation
-                    ? `Enter the 6-digit code sent to ${phoneNumber ? maskPhone(phoneNumber) : 'the phone number on file'}.`
-                    : 'Sending a verification code…'}
+            <div className="mb-4">
+              <label htmlFor="reset-otp" className="block text-xs font-medium text-muted mb-1">Verification code</label>
+              <p className="text-xs text-muted mb-2">
+                {confirmation
+                  ? `Enter the 6-digit code sent to +91${phoneLocal}.`
+                  : 'Sending a verification code…'}
+              </p>
+              {otpError && <p className="text-danger text-xs mb-2">{otpError}</p>}
+              <input
+                id="reset-otp"
+                value={otp}
+                onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                onBlur={() => markTouched('otp')}
+                inputMode="numeric"
+                placeholder="123456"
+                disabled={!confirmation}
+                className="bg-white text-gray-900 w-full border border-border rounded-lg px-3 py-2.5 text-center text-lg tracking-[0.4em] font-mono focus:outline-none focus:ring-2 focus:ring-primary/30 mb-1 disabled:opacity-50"
+              />
+              <div className="flex items-center justify-between">
+                <p className="text-[11px] h-3.5">
+                  {touched.otp && !otpValid && <span className="text-danger">Enter the 6-digit code.</span>}
                 </p>
-                {otpError && <p className="text-danger text-xs mb-2">{otpError}</p>}
-                <input
-                  id="reset-otp"
-                  value={otp}
-                  onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                  onBlur={() => markTouched('otp')}
-                  inputMode="numeric"
-                  placeholder="123456"
-                  disabled={!confirmation}
-                  className="bg-white text-gray-900 w-full border border-border rounded-lg px-3 py-2.5 text-center text-lg tracking-[0.4em] font-mono focus:outline-none focus:ring-2 focus:ring-primary/30 mb-1 disabled:opacity-50"
-                />
-                <div className="flex items-center justify-between">
-                  <p className="text-[11px] h-3.5">
-                    {touched.otp && !otpValid && <span className="text-danger">Enter the 6-digit code.</span>}
-                  </p>
-                  <button
-                    type="button"
-                    onClick={requestOtp}
-                    disabled={sendingOtp}
-                    className="text-[11px] text-primary font-medium"
-                  >
-                    {sendingOtp ? 'Sending…' : 'Resend code'}
-                  </button>
-                </div>
+                <button
+                  type="button"
+                  onClick={() => void sendOtp(`+91${phoneLocal}`)}
+                  disabled={sendingOtp}
+                  className="text-[11px] text-primary font-medium"
+                >
+                  {sendingOtp ? 'Sending…' : 'Resend code'}
+                </button>
               </div>
-            )}
+            </div>
 
             <label htmlFor="reset-new-password" className="block text-xs font-medium text-muted mb-1">New password</label>
             <PasswordInput
@@ -208,7 +282,7 @@ export default function ResetPassword() {
               minLength={8}
               maxLength={72}
               autoComplete="new-password"
-              className="w-full border border-border rounded-lg px-3 py-2.5 pr-10 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+              className="w-full border border-border rounded-lg px-3 py-2.5 pr-10 text-sm bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-primary/30"
             />
             {password.length > 0 && (
               <div className="mt-2 mb-1">
@@ -234,7 +308,7 @@ export default function ResetPassword() {
               onBlur={() => markTouched('confirm')}
               required
               autoComplete="new-password"
-              className="w-full border border-border rounded-lg px-3 py-2.5 pr-10 mb-1 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+              className="w-full border border-border rounded-lg px-3 py-2.5 pr-10 mb-1 text-sm bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-primary/30"
             />
             <p className="text-[11px] mb-4 h-3.5">
               {touched.confirm && !passwordsMatch && <span className="text-danger">Passwords don't match.</span>}
@@ -249,12 +323,8 @@ export default function ResetPassword() {
             </button>
 
             <p className="text-sm mt-4 text-center">
-              <Link to="/login" className="text-primary font-medium">Back to sign in</Link>
+              <Link to="/auth" className="text-primary font-medium">Back to sign in</Link>
             </p>
-
-            {/* Anchor for Firebase's invisible reCAPTCHA -- never visibly rendered, but must
-                exist in the DOM before sendPhoneVerificationCode() runs. */}
-            <div id={RECAPTCHA_CONTAINER_ID} />
           </form>
         )}
       </div>

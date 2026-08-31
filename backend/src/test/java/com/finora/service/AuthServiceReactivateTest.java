@@ -68,6 +68,7 @@ class AuthServiceReactivateTest {
                 mock(PasswordHistoryService.class), new IdentityLookup(userRepository), requestMetadata,
                 mock(com.finora.service.SubscriptionService.class),
                 mock(com.finora.service.ReferralService.class),
+                mock(com.finora.service.MerchantSeedService.class),
                 // SEC-07: same-thread executor -- runs the dispatched email/audit work
                 // synchronously so assertions against it don't race a real background thread.
                 Runnable::run,
@@ -106,7 +107,7 @@ class AuthServiceReactivateTest {
         assertThat(u.getStatus()).isEqualTo(User.STATUS_ACTIVE);
         assertThat(response.refreshToken()).isEqualTo("new-refresh-token");
         verify(auditService).record(eq(userId), eq("ACCOUNT_REACTIVATED"), eq("User"), eq(userId), any());
-        verify(auditService).record(userId, "USER_LOGIN", "User", userId);
+        verify(auditService).record(eq(userId), eq("USER_LOGIN"), eq("User"), eq(userId), any());
     }
 
     @Test

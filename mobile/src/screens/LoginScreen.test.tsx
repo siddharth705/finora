@@ -167,3 +167,46 @@ describe('LoginScreen reactivation', () => {
     await waitFor(() => expect(mockNavigate).toHaveBeenCalledWith('Register'));
   });
 });
+
+// Phase 3B: AuthEntryScreen sends the identifier it already resolved via route params -- so this
+// screen doesn't ask the user to retype it.
+//
+// Phase 7 (resolved 2026-08-23): this used to also carry the account's sign-in method and hide
+// the password field/forgot-password link for a known GOOGLE/APPLE account. That branching --
+// and its tests -- were removed along with nextAction no longer revealing which method an
+// account uses; the password field and Google/Apple buttons are always shown together now,
+// matching a direct visit to this screen.
+describe('LoginScreen prefill from AuthEntry', () => {
+  function renderWithParams(params: { identifier?: string }) {
+    const navigation = { navigate: mockNavigate } as unknown as Props['navigation'];
+    const route = { key: 'Login', name: 'Login', params } as Props['route'];
+    return render(
+      <ThemeProvider>
+        <LoginScreen navigation={navigation} route={route} />
+      </ThemeProvider>
+    );
+  }
+
+  beforeEach(() => {
+    mockNavigate.mockReset();
+  });
+
+  it('prefills the identifier field when arriving with route params from AuthEntry', () => {
+    renderWithParams({ identifier: 'jane@example.com' });
+
+    expect(screen.getByLabelText('Email or mobile number').props.value).toBe('jane@example.com');
+  });
+
+  it('shows the ordinary password form and Google/Apple buttons on a direct visit with no route params', () => {
+    const navigation = { navigate: mockNavigate } as unknown as Props['navigation'];
+    const route = { key: 'Login', name: 'Login', params: undefined } as Props['route'];
+    render(
+      <ThemeProvider>
+        <LoginScreen navigation={navigation} route={route} />
+      </ThemeProvider>
+    );
+
+    expect(screen.getByLabelText('Password')).toBeTruthy();
+    expect(screen.getByText('Forgot password?')).toBeTruthy();
+  });
+});

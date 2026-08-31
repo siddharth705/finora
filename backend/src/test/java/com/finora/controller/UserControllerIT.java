@@ -76,7 +76,7 @@ class UserControllerIT extends AbstractIntegrationTest {
     void exportData_wrongPassword_rejectsWithoutRequestingOrStreamingAnExport() {
         String requestId = "wrong-pw-" + UUID.randomUUID();
         HttpEntity<ExportDataRequest> entity = new HttpEntity<>(
-                new ExportDataRequest("definitely-the-wrong-password", null), headersFor(user, requestId));
+                new ExportDataRequest("definitely-the-wrong-password", null, null), headersFor(user, requestId));
 
         ResponseEntity<String> response = restTemplate.exchange(
                 "/api/v1/users/me/data-export", HttpMethod.POST, entity, String.class);
@@ -92,7 +92,7 @@ class UserControllerIT extends AbstractIntegrationTest {
     void exportData_correctPassword_streamsAWellFormedZip_withAttachmentHeaders() throws Exception {
         String requestId = "happy-path-" + UUID.randomUUID();
         HttpEntity<ExportDataRequest> entity = new HttpEntity<>(
-                new ExportDataRequest(PASSWORD, null), headersFor(user, requestId));
+                new ExportDataRequest(PASSWORD, null, null), headersFor(user, requestId));
 
         ResponseEntity<byte[]> response = restTemplate.exchange(
                 "/api/v1/users/me/data-export", HttpMethod.POST, entity, byte[].class);
@@ -100,7 +100,7 @@ class UserControllerIT extends AbstractIntegrationTest {
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(response.getHeaders().getContentType()).isEqualTo(MediaType.parseMediaType("application/zip"));
         String disposition = response.getHeaders().getFirst(HttpHeaders.CONTENT_DISPOSITION);
-        assertThat(disposition).contains("attachment").contains("finora-data-export-").contains(".zip");
+        assertThat(disposition).contains("attachment").contains("fynora-data-export-").contains(".zip");
 
         List<String> entryNames = new java.util.ArrayList<>();
         try (ZipInputStream zis = new ZipInputStream(new ByteArrayInputStream(response.getBody()))) {
@@ -131,7 +131,7 @@ class UserControllerIT extends AbstractIntegrationTest {
     void exportData_correctPassword_auditsRequestedThenExported_bothCarryingTheSameRequestId() throws InterruptedException {
         String requestId = "mdc-propagation-" + UUID.randomUUID();
         HttpEntity<ExportDataRequest> entity = new HttpEntity<>(
-                new ExportDataRequest(PASSWORD, null), headersFor(user, requestId));
+                new ExportDataRequest(PASSWORD, null, null), headersFor(user, requestId));
 
         ResponseEntity<byte[]> response = restTemplate.exchange(
                 "/api/v1/users/me/data-export", HttpMethod.POST, entity, byte[].class);

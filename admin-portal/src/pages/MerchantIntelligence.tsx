@@ -73,7 +73,7 @@ function MerchantIntelligenceContent() {
  * the platform catalog above (email domains and extraction outcomes, not the categorization
  * catalog), shown on the same page because it's the same MERCHANT_MANAGE audience asking the same
  * kind of question: "which merchants need attention?" The problem this answers: a merchant
- * changes their email template, a parser's success rate silently collapses, and today Finora
+ * changes their email template, a parser's success rate silently collapses, and today Fynora
  * finds out when a user complains rather than before.
  *
  * <p>Sorted worst-success-rate-first by the backend, so the domains most worth a look are already
@@ -120,7 +120,7 @@ function GmailParserStatsContent() {
   return (
     <div className="space-y-6">
       <p className="text-sm text-muted max-w-xl">
-        Every trusted-sender email Finora's Gmail sync has processed in the last {GMAIL_STATS_WINDOW_DAYS} days,
+        Every trusted-sender email Fynora's Gmail sync has processed in the last {GMAIL_STATS_WINDOW_DAYS} days,
         grouped by sending domain. "No parser" is coverage the platform doesn't have yet, not a
         fault -- it has no success rate to report. A domain with a real rate that drops is the
         signal worth acting on: the merchant likely changed their email template.

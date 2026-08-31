@@ -131,7 +131,7 @@ class AdminReferralControllerIT extends AbstractIntegrationTest {
     }
 
     private JsonNode findRow(ResponseEntity<String> response, UUID referredUserId) throws Exception {
-        JsonNode data = mapper.readTree(response.getBody()).get("data");
+        JsonNode data = mapper.readTree(response.getBody()).get("data").get("content");
         for (JsonNode row : data) {
             if (row.get("referredUserId").asText().equals(referredUserId.toString())) return row;
         }

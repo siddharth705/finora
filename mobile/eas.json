@@ -5,29 +5,42 @@
   },
   "build": {
     "development": {
+      "environment": "development",
       "developmentClient": true,
-      "distribution": "internal",
-      "android": {
-        "buildType": "apk"
-      }
-    },
-    "preview": {
-      "distribution": "internal",
-      "android": {
-        "buildType": "apk"
-      }
-    },
-    "dev": {
       "distribution": "internal",
       "android": {
         "buildType": "apk"
       },
       "env": {
-        "EXPO_PUBLIC_API_BASE_URL": "https://dev-api.finoratech.info"
+        "APP_VARIANT": "development"
+      }
+    },
+    "preview": {
+      "environment": "preview",
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk"
+      },
+      "env": {
+        "APP_VARIANT": "production"
+      }
+    },
+    "dev": {
+      "environment": "development",
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk"
+      },
+      "env": {
+        "APP_VARIANT": "development"
       }
     },
     "production": {
-      "autoIncrement": true
+      "environment": "production",
+      "autoIncrement": true,
+      "env": {
+        "APP_VARIANT": "production"
+      }
     }
   },
   "submit": {

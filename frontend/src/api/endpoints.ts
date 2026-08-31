@@ -3,7 +3,7 @@ import { downloadBlob } from '../lib/download';
 import type {
 
   Account, AccountStatementGroup, BankInfo, Budget, DashboardSummary, DetectedAccountInfo, FinancialJourney, Goal,
-  ImportSummary, ReimportResult, StagedAccountSection, StagedRow, StatementSummary, Transaction,
+  ImportSummary, MerchantGroup, ReimportResult, StagedAccountSection, StagedRow, StatementSummary, SupersedeResult, Transaction,
   WorkspaceSettings, UnparseableRow, VerificationReport,
 } from '../types';
 
@@ -62,13 +62,22 @@ export const authApi = {
   // account's real email before authenticating.
   login: (identifier: string, password: string) =>
     api.post<AuthResponseDto>('/auth/login', { identifier, password, scope: PORTAL_SCOPE }),
+  // Identifier-first entry step (auth/security review §2.2) -- resolves an email or mobile
+  // number to what the frontend should show next, without a raw exists boolean. See
+  // AuthService.identify on the backend: nextAction is 'EXISTS' for an existing account
+  // (Phase 7, resolved 2026-08-23: no longer distinguishes which sign-in method it uses), or
+  // 'CONTINUE' when there isn't one yet.
+  identify: (identifier: string) =>
+    api.post<{ nextAction: string }>('/auth/identify', { identifier }).then((r) => r.data),
   forgotPassword: (email: string) =>
     api.post<{ message: string; devResetLink: string | null }>('/auth/forgot-password', { email, scope: PORTAL_SCOPE }).then((r) => r.data),
-  // Reveals the account's real phone number for a valid, unused reset link -- needed to call
-  // Firebase Phone Authentication directly (Firebase's own client SDK sends the OTP; this
-  // backend never does). token is the same raw reset-link token from forgotPassword.
-  resolveResetPasswordPhone: (token: string) =>
-    api.post<{ phoneNumber: string }>('/auth/reset-password/phone', { token }).then((r) => r.data),
+  // BH-015 fix: confirms a user-typed phone number against the account tied to a valid, unused
+  // reset link -- never reveals the account's real number. On success, this page hands the SAME
+  // number the user just typed to Firebase Phone Authentication directly (Firebase's own client
+  // SDK sends the OTP; this backend never does). token is the same raw reset-link token from
+  // forgotPassword.
+  verifyResetPasswordPhone: (token: string, phoneNumber: string) =>
+    api.post<{ message: string }>('/auth/reset-password/phone', { token, phoneNumber }).then((r) => r.data),
   // firebaseIdToken is the second factor -- proof of phone access via Firebase Phone
   // Authentication, verified server-side (see AuthService.resetPassword on the backend).
   resetPassword: (token: string, firebaseIdToken: string, newPassword: string) =>
@@ -94,6 +103,12 @@ export const authApi = {
   // Google-verified email, or creates one, and returns the same AuthResponseDto shape either way.
   google: (idToken: string) =>
     api.post<AuthResponseDto>('/auth/google', { idToken }),
+  // D-26 (web). Same shape as google() -- idToken is what AppleSignInButton's signIn() promise
+  // resolves with, verified server-side (AppleIdTokenVerifierService), never trusted as-is.
+  // fullName is only ever present on the FIRST authorization for a given Apple ID/client id pair
+  // (Apple's own constraint, not this client's) -- forwarded through unvalidated, same as native.
+  apple: (idToken: string, fullName: string | null) =>
+    api.post<AuthResponseDto>('/auth/apple', { idToken, fullName }),
   // token is the raw verification token from a /verify-email?token=... link (register(), or a
   // fresh one loginWithGoogle sends when it finds a matching but not-yet-verified account -- see
   // VerifyEmail.tsx). Not authenticated: the token itself is the proof.
@@ -203,12 +218,27 @@ export interface TransactionExplanation {
   decisionSource: string;
   summary: string;
   evidence: string[];
+  // 0-100, or absent -- see TransactionExplanationDto's own doc comment for which decision
+  // sources populate this (never MANUAL/FILE_PROVIDED).
+  confidence?: number;
+  // "Why this match?" -- absent for the common case (reconciliationStatus OK, nothing matched
+  // this row). See TransactionExplanationDto.ReconciliationExplanationDto.
+  reconciliation?: TransactionReconciliationExplanation;
+}
+
+export interface TransactionReconciliationExplanation {
+  status: 'DUPLICATE' | 'TRANSFER' | 'REFUND' | 'REVERSAL';
+  matchedTransactionId: string | null;
+  summary: string;
+  evidence: string[];
 }
 
 export const transactionsApi = {
   search: (filters: TransactionFilters) =>
     api.get<PagedResponse<Transaction>>('/transactions', { params: filters }).then((r) => r.data),
   needsReview: () => api.get<Transaction[]>('/transactions/needs-review').then((r) => r.data),
+  groupsNeedsReview: () =>
+    api.get<MerchantGroup[]>('/transactions/groups/needs-review').then((r) => r.data),
   explanation: (id: string) =>
     api.get<TransactionExplanation>(`/transactions/${id}/explanation`).then((r) => r.data),
   create: (body: CreateTransactionPayload) => api.post<Transaction>('/transactions', body).then((r) => r.data),
@@ -222,6 +252,10 @@ export const transactionsApi = {
   bulkDelete: (ids: string[]) => api.post('/transactions/bulk-delete', { ids }),
   bulkRecategorize: (ids: string[], category: string) =>
     api.post('/transactions/bulk-category', { ids, category }),
+  // BH-027: "no, these really are two separate transactions." Records a human ruling that
+  // outranks the reconciliation engine's own guess -- see TransactionService.confirmNotDuplicate.
+  confirmNotDuplicate: (id: string) =>
+    api.post<Transaction>(`/transactions/${id}/not-duplicate`).then((r) => r.data),
 };
 
 export interface ConfirmedRowPayload {
@@ -233,6 +267,9 @@ export interface ConfirmedRowPayload {
   include: boolean;
   categorySource: string;
   ruleId: string | null;
+  categoryConfidence: number | null;
+  /** Echoed from StagedRow.rowPosition unchanged -- see that field's own doc comment. */
+  rowPosition: number | null;
   /** What the engine guessed. */
   likelyDuplicate: boolean;
   /**
@@ -300,19 +337,38 @@ export interface ConfirmPayload {
   newAccount: NewAccountPayload | null;
   statementOpeningBalance: number | null;
   statementClosingBalance: number | null;
+  // Echoed back from DetectedAccountInfo.statementPeriodStart/End, same round-trip as the
+  // opening/closing balance fields above -- see ConfirmRequest's own doc comment on the backend
+  // for the bug this closes (persistSection used to silently re-derive the period from the
+  // confirmed rows' own date range instead of the printed period shown on the review screen).
+  statementPeriodStart: string | null;
+  statementPeriodEnd: string | null;
+  // Echoed back from DetectedAccountInfo.totalAmountDue/paymentDueDate, same round-trip as the
+  // statement period above -- see ConfirmRequest's own doc comment on the backend.
+  // credit-card-statement-entity-design.md. Both null for a non-credit-card statement.
+  totalAmountDue: number | null;
+  paymentDueDate: string | null;
   // Only meaningful to confirmReimport, for a statement whose stored bytes are a password-protected
   // PDF -- see ConfirmRequest's own doc comment on the backend. Every other confirm path ignores it.
   password?: string;
+  // docs/proposals/account-ownership-intelligence-proposal.md §3.1/§3.2. Whether the user clicked
+  // "Continue Import" after the client-side ownership warning fired -- see ConfirmRequest's own
+  // doc comment on the backend. Omitted (not just false) when the warning never fired.
+  userConfirmedContinue?: boolean;
 }
 
 // One account's worth of reviewed rows within a MultiAccountConfirmPayload -- same shape as
 // ConfirmPayload minus sessionId (shared once at the top level instead of repeated per section).
-export interface SectionConfirmPayload {
+interface SectionConfirmPayload {
   rows: ConfirmedRowPayload[];
   existingAccountId: string | null;
   newAccount: NewAccountPayload | null;
   statementOpeningBalance: number | null;
   statementClosingBalance: number | null;
+  statementPeriodStart: string | null;
+  statementPeriodEnd: string | null;
+  totalAmountDue: number | null;
+  paymentDueDate: string | null;
 }
 
 export interface MultiAccountConfirmPayload {
@@ -558,6 +614,11 @@ export const statementImportsApi = {
   confirmReimport: (id: string, payload: Omit<ConfirmPayload, 'newAccount' | 'sessionId'>) =>
     api.post<ImportSummary>(`/statement-imports/${id}/reimport/confirm`, { ...payload, newAccount: null }).then((r) => r.data),
   remove: (id: string) => api.delete(`/statement-imports/${id}`),
+  // "Import this one as a replacement?" (Phase 4, §0.3) -- `id` is the ORIGINAL statement, already
+  // marked superseded rather than deleted; `supersededByStatementId` must already be confirmed as
+  // its own statement (a normal confirm call) before this is called.
+  supersede: (id: string, supersededByStatementId: string) =>
+    api.post<SupersedeResult>(`/statement-imports/${id}/supersede`, { supersededByStatementId }).then((r) => r.data),
 };
 
 export const budgetsApi = {
@@ -578,9 +639,33 @@ export interface CategoryOption {
   id: string;
   name: string;
   isSystem: boolean;
+  icon: string;
+  color: string;
 }
+
+export interface CategoryOptions {
+  icons: { token: string; label: string }[];
+  colors: { token: string; label: string }[];
+}
+
 export const categoriesApi = {
   list: () => api.get<CategoryOption[]>('/categories').then((r) => r.data),
+  options: () => api.get<CategoryOptions>('/categories/options').then((r) => r.data),
+  create: (name: string, icon?: string, color?: string) =>
+    api.post<CategoryOption>('/categories', { name, icon, color }).then((r) => r.data),
+  update: (id: string, changes: { name?: string; icon?: string; color?: string }) =>
+    api.patch<CategoryOption>(`/categories/${id}`, changes).then((r) => r.data),
+  delete: (id: string, reassignTo?: string) =>
+    api.delete(`/categories/${id}`, { params: reassignTo ? { reassignTo } : undefined }),
+  usage: (id: string) =>
+    api.get<{
+      transactionCount: number;
+      hasBudget: boolean;
+      ruleCount: number;
+      learningRowCount: number;
+    }>(
+      `/categories/${id}/usage`,
+    ).then((r) => r.data),
 };
 
 export const dashboardApi = {
@@ -588,7 +673,7 @@ export const dashboardApi = {
   journey: () => api.get<FinancialJourney>('/dashboard/journey').then((r) => r.data),
 };
 
-export interface NetWorthSnapshotPoint {
+interface NetWorthSnapshotPoint {
   date: string;
   netWorth: number;
 }
@@ -603,7 +688,7 @@ export const networthApi = {
   saveSnapshot: () => api.post<NetWorthData>('/networth/snapshot').then((r) => r.data),
 };
 
-export interface CategoryMover {
+interface CategoryMover {
   category: string;
   current: number;
   priorAverage: number;
@@ -727,6 +812,30 @@ export const phoneChangeApi = {
     ).then((r) => r.data),
 };
 
+// The step-up-gated Change Email flow -- see EmailChangeService on the backend for the full
+// start -> verify -> complete state machine. Unlike phoneChangeApi, DOES have a "prove you still
+// are who you say you are" first step (currentPassword/googleIdToken/appleIdToken, same shape as
+// passwordChangeApi.start): email is the account's password-reset delivery channel, so
+// authorizing a change to it on phone-change's lower bar would be worse, not better. Unlike
+// verifyOtp above, verify here proves control of the new address via a link the backend emailed
+// to it (see VerifyEmailChange.tsx) rather than an in-app Firebase OTP -- appleIdToken is always
+// null from this web client (Apple Sign-In has no web frontend counterpart here, see
+// GoogleReauthPrompt's own doc comment).
+export const emailChangeApi = {
+  start: (currentPassword: string | null, googleIdToken: string | null, appleIdToken: string | null, newEmail: string) =>
+    api.post<{ sessionId: string; devVerifyLink: string | null }>(
+      '/users/me/email-change/start', { currentPassword, googleIdToken, appleIdToken, newEmail }
+    ).then((r) => r.data),
+  verify: (sessionId: string, token: string) =>
+    api.post<{ message: string }>(
+      '/users/me/email-change/verify', { sessionId, token }
+    ).then((r) => r.data),
+  complete: (sessionId: string) =>
+    api.post<{ message: string; email: string }>(
+      '/users/me/email-change/complete', { sessionId }
+    ).then((r) => r.data),
+};
+
 // The self-service account lifecycle -- see UserAccountLifecycleService on the backend for
 // deactivate (today) and delete-request/purge (Phase B, to follow).
 export const accountLifecycleApi = {
@@ -741,14 +850,13 @@ export const accountLifecycleApi = {
     api.post<{ message: string }>('/users/me/account/delete', { sessionId }).then((r) => r.data),
   // Phase C (Download My Data). POST with the password in the body -- responseType: 'blob' since
   // the response is a streamed ZIP, not JSON (see UserController.exportData/DataExportService on
-  // the backend). The filename mirrors the backend's own "finora-data-export-<date>.zip" pattern
-  // rather than being read back out of Content-Disposition -- nothing else in this codebase parses
-  // that header either (statementImportsApi.downloadFile above takes its filename from the caller
-  // instead), and the two dates can only disagree by the moment the request straddles midnight.
+  // the backend). The filename is chosen client-side rather than read back out of
+  // Content-Disposition -- nothing else in this codebase parses that header either
+  // (statementImportsApi.downloadFile above takes its filename from the caller instead).
   exportData: async (currentPassword: string | null, googleIdToken: string | null) => {
     try {
       const res = await api.post('/users/me/data-export', { currentPassword, googleIdToken }, { responseType: 'blob' });
-      downloadBlob(res.data as Blob, `finora-data-export-${new Date().toISOString().slice(0, 10)}.zip`);
+      downloadBlob(res.data as Blob, `fynora-data-export-${new Date().toISOString().slice(0, 10)}.zip`);
     } catch (err) {
       // responseType: 'blob' applies to error responses too -- see withBlobErrorMessage's own doc
       // comment above (statementImportsApi.downloadFile hits the identical issue).

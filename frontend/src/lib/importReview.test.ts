@@ -215,7 +215,10 @@ describe('toConfirmedRows', () => {
 
   it('carries the staged fields review does not own', () => {
     const rows = [
-      row('METRO FARE', false, { ruleId: 'rule-1', referenceNumber: 'REF/9981', balanceAfter: 1200.5 }),
+      row('METRO FARE', false, {
+        ruleId: 'rule-1', referenceNumber: 'REF/9981', balanceAfter: 1200.5, categoryConfidence: 70,
+        rowPosition: 3,
+      }),
     ];
 
     const payload = toConfirmedRows(rows, beginReview(rows), ['Transport']);
@@ -230,6 +233,8 @@ describe('toConfirmedRows', () => {
       likelyDuplicate: false,
       referenceNumber: 'REF/9981',
       balanceAfter: 1200.5,
+      categoryConfidence: 70,
+      rowPosition: 3,
     });
   });
 });

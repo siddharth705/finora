@@ -163,7 +163,7 @@ describe('ImportTimeline', () => {
     await advance(100);
 
     expect(screen.getByTestId('import-timeline-failure-reason')).toHaveTextContent(
-      "Finora couldn't complete this import"
+      "Fynora couldn't complete this import"
     );
   });
 

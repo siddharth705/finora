@@ -1,7 +1,7 @@
-import { Link } from 'react-router-dom';
 import { ArrowRight } from 'lucide-react';
 import { Reveal } from './primitives';
 import { finalCta } from './landing-config';
+import { MagneticLink } from './MagneticLink';
 
 /**
  * Closes on the object the visitor already has sitting in their inbox, rather than on an abstract
@@ -25,9 +25,9 @@ export function FinalCta() {
           </h2>
           <p className="text-lg mb-9" style={{ color: 'rgb(255 255 255 / .82)' }}>{finalCta.blurb}</p>
           <div className="flex justify-center">
-            <Link to="/register" className="m-btn w-full sm:w-auto bg-white text-[var(--m-brand-deep)] hover:bg-slate-50">
+            <MagneticLink to="/auth" className="m-btn w-full sm:w-auto bg-white text-[var(--m-brand-deep)] hover:bg-slate-50">
               {finalCta.primary} <ArrowRight size={16} />
-            </Link>
+            </MagneticLink>
           </div>
           <p className="text-sm mt-5" style={{ color: 'rgb(255 255 255 / .7)' }}>{finalCta.footnote}</p>
         </Reveal>

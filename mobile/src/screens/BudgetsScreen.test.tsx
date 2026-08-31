@@ -2,12 +2,19 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { BudgetsScreen } from './BudgetsScreen';
 import { budgetsApi, categoriesApi } from '../api/endpoints';
+import { hapticSuccess, hapticWarning } from '../lib/haptics';
 import type { Budget } from '../types';
 
 jest.mock('../api/endpoints', () => ({
   budgetsApi: { list: jest.fn(), upsert: jest.fn() },
   categoriesApi: { list: jest.fn() },
 }));
+
+// Automocked (no factory) rather than hand-listing exports: BudgetsScreen's category picker
+// renders the real OptionPickerModal, which calls hapticSelection too, and a hand-written factory
+// silently omitting a function a component actually calls is exactly the bug that happened here
+// once already. Automock covers every current AND future export of the module for free.
+jest.mock('../lib/haptics');
 
 const api = budgetsApi as jest.Mocked<typeof budgetsApi>;
 const categories = categoriesApi as jest.Mocked<typeof categoriesApi>;
@@ -71,6 +78,27 @@ describe('BudgetsScreen', () => {
     await settle();
 
     await waitFor(() => expect(api.upsert).toHaveBeenCalledWith('Groceries', 12000));
+    expect(hapticSuccess).toHaveBeenCalledTimes(1);
+  });
+
+  // Client-side validation failures (empty category, bad limit) already warn haptically below --
+  // a genuine server-side failure is the same "this didn't work" moment for the user and must too.
+  it('warns haptically, not just success, when the save itself fails', async () => {
+    api.upsert.mockRejectedValueOnce(new Error('network down'));
+    renderScreen();
+    await screen.findByText('₹6,000 left this month');
+
+    fireEvent.press(screen.getByLabelText('Choose a category'));
+    await settle();
+    fireEvent.press(screen.getByRole('button', { name: 'Groceries' }));
+    await settle();
+    fireEvent.changeText(screen.getByLabelText(/Monthly limit/i), '12000');
+    fireEvent.press(screen.getByText('Set Budget'));
+    await settle();
+
+    expect(await screen.findByText('Could not save this budget. Try again.')).toBeTruthy();
+    expect(hapticWarning).toHaveBeenCalledTimes(1);
+    expect(hapticSuccess).not.toHaveBeenCalled();
   });
 
   // The web page takes the category as free text, so a typo silently creates a budget nothing is
@@ -85,6 +113,7 @@ describe('BudgetsScreen', () => {
 
     expect(api.upsert).not.toHaveBeenCalled();
     expect(screen.getByText('Pick a category first.')).toBeTruthy();
+    expect(hapticWarning).toHaveBeenCalledTimes(1);
   });
 
   it('refuses a limit that is not a positive number', async () => {
@@ -104,6 +133,7 @@ describe('BudgetsScreen', () => {
     }
 
     expect(api.upsert).not.toHaveBeenCalled();
+    expect(hapticWarning).toHaveBeenCalledTimes(3);
   });
 
   it('says so plainly when no budgets are set', async () => {
@@ -111,5 +141,19 @@ describe('BudgetsScreen', () => {
     renderScreen();
 
     expect(await screen.findByText(/No budgets set yet/)).toBeTruthy();
+  });
+});
+
+describe('skeleton loading', () => {
+  it('shows skeleton budget cards on first load, with the add-budget form already usable', () => {
+    api.list.mockReset().mockReturnValue(new Promise(() => {}));
+    categories.list.mockReset().mockResolvedValue([{ id: 'c-1', name: 'Groceries', isSystem: true }]);
+
+    renderScreen();
+
+    // The shell -- category picker and Set Budget button -- must not wait on the budgets list.
+    expect(screen.getByLabelText('Choose a category')).toBeTruthy();
+    expect(screen.getByText('Set Budget')).toBeTruthy();
+    expect(screen.getAllByTestId('skeleton-budget-card', { hidden: true }).length).toBeGreaterThan(0);
   });
 });

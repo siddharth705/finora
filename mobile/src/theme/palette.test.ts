@@ -72,4 +72,21 @@ describe('theme palette contrast', () => {
     expect(light.muted).toBe('#64748B');
     expect(dark.muted).toBe('#94A3B8');
   });
+
+  it.each([
+    ['light', light],
+    ['dark', dark],
+  ])('%s: successInk clears WCAG AA (4.5:1) against successBg', (_name, p) => {
+    expect(contrastRatio(p.successInk, p.successBg)).toBeGreaterThanOrEqual(AA_SMALL_TEXT);
+  });
+
+  it('light.successInk has a real margin over light.success, not just a token rename', () => {
+    const before = contrastRatio(light.success, light.successBg);
+    const after = contrastRatio(light.successInk, light.successBg);
+    expect(after).toBeGreaterThan(before + 2.0);
+  });
+
+  it('dark.successInk intentionally equals dark.success, since dark theme already clears AA', () => {
+    expect(dark.successInk).toBe(dark.success);
+  });
 });

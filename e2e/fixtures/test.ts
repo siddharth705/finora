@@ -1,7 +1,7 @@
 import { test as base, expect, type Page, type ConsoleMessage } from '@playwright/test';
 import { Api } from './api';
 import { createAdmin, createUser, type TestUser } from './accounts';
-import { ADMIN_APP, USER_APP } from './config';
+import { ADMIN_APP, API_BASE, USER_APP } from './config';
 
 /**
  * The suite's fixtures.
@@ -169,11 +169,36 @@ function assertClean(errors: string[]) {
 }
 
 export async function signIn(page: Page, appOrigin: string, email: string, password: string) {
-  await page.goto(`${appOrigin}/login`);
+  // The admin portal is a separate app that this PR does not touch -- it still has its own plain
+  // /login form, one step, no identify/continue split. Only the user-facing app got the unified
+  // /auth entry screen.
+  if (appOrigin === ADMIN_APP) {
+    await page.goto(`${appOrigin}/login`);
+    await page.getByLabel(/email|phone/i).first().fill(email);
+    await page.getByLabel(/password/i).first().fill(password);
+    await page.getByRole('button', { name: /sign in|log in/i }).click();
+    await expect(page, `sign-in for ${email} never left /login`).not.toHaveURL(/\/login/, { timeout: 20_000 });
+    return;
+  }
+
+  await page.goto(`${appOrigin}/auth`);
   await page.getByLabel(/email|phone/i).first().fill(email);
+  await page.getByRole('button', { name: /continue/i }).click();
   await page.getByLabel(/password/i).first().fill(password);
   await page.getByRole('button', { name: /sign in|log in/i }).click();
-  await expect(page, `sign-in for ${email} never left /login`).not.toHaveURL(/\/login/, { timeout: 20_000 });
+  await expect(page, `sign-in for ${email} never left /auth`).not.toHaveURL(/\/auth$/, { timeout: 20_000 });
+}
+
+/**
+ * Ends the current session for real. Since SEC-01 (#187) the access token is in-memory only and
+ * the session that matters lives in an HttpOnly refresh cookie -- `localStorage.clear()` /
+ * `sessionStorage.clear()` doesn't touch it, so a page that merely cleared storage would still
+ * sail through the next silent `/auth/refresh` and land right back on an app route. `page.request`
+ * shares the browsing context's cookies, so this hits the real endpoint the same way the app's own
+ * logout button does (AuthContext.tsx's `logout()`), revoking the refresh token server-side.
+ */
+export async function endSession(page: Page) {
+  await page.request.post(`${API_BASE}/auth/logout`);
 }
 
 /**
@@ -198,59 +223,3 @@ export async function uploadStatement(
 }
 
 export { expect };
-
-/**
- * Finds a row in a paginated admin list, walking forward until it appears.
- *
- * The Merchant Review Center is ordered oldest-first on purpose — its repository method is named
- * `findByLifecycleStatusInOrderByCreatedAtAsc` and carries the reasoning: a newest-first queue
- * buries the oldest outstanding work forever. Correct for an operator, awkward for a test, because
- * a freshly seeded account's merchants are always on the last page.
- *
- * Walking is also the only option available: the screen has no search or filter, so finding one
- * account's merchants means paging. That is a real operator cost, not just a test inconvenience —
- * it is the productivity gap recorded as WI4A.
- */
-export async function findRowAcrossPages(page: Page, text: string, maxPages = 40) {
-  const rowOn = () => page.getByRole('row').filter({ hasText: text }).first();
-  const next = () => page.getByRole('button', { name: /next/i }).first();
-
-  /**
-   * Which page the list believes it is on.
-   *
-   * Read from the "Page N of M" indicator rather than inferred from how many times Next was
-   * clicked. The list is server-paged and React re-renders asynchronously, so a click can be issued
-   * against a control that has not settled -- the walker then thought it had reached the end while
-   * still looking at page one, and reported a row missing that was simply further along. Asking the
-   * page where it is removes the guess.
-   */
-  const position = async () => {
-    const label = await page.getByText(/Page \d+ of \d+/).first().textContent().catch(() => null);
-    const match = label?.match(/Page (\d+) of (\d+)/);
-    return match ? { current: Number(match[1]), total: Number(match[2]) } : null;
-  };
-
-  const here = async () =>
-    rowOn().waitFor({ state: 'visible', timeout: 2000 }).then(() => true).catch(() => false);
-
-  for (let visited = 0; visited < maxPages; visited++) {
-    if (await here()) return rowOn();
-
-    const at = await position();
-    if (!at || at.current >= at.total) break;
-
-    await next().click();
-    // Wait for the indicator to actually move. Without this the loop can read the page it just
-    // left, conclude the row is absent, and walk off the end of a list it never really paged.
-    await expect
-      .poll(async () => (await position())?.current ?? at.current, { timeout: 5000 })
-      .toBeGreaterThan(at.current);
-  }
-
-  const at = await position();
-  throw new Error(
-    `No row containing "${text}". The list reports ${at ? `page ${at.current} of ${at.total}` : 'no pagination'}.
-` +
-    `This screen has no search, so a test (and an operator) can only page through it -- see WI4A.`
-  );
-}

@@ -65,9 +65,37 @@ export function buildArcs(slices: { label: string; value: number }[]): ArcSlice[
     });
 }
 
+export const DONUT_CIRCUMFERENCE = 2 * Math.PI * DONUT_RADIUS;
+
+/**
+ * Arc length in px for a slice of the donut's fixed radius, given its sweep in degrees --
+ * used to size a progressive draw-in's strokeDasharray/strokeDashoffset pair to exactly this
+ * slice's own length, so slices don't visually overlap mid-animation. Exact, not approximated:
+ * DONUT_RADIUS is constant and every slice is a true circular arc.
+ */
+export function arcLength(sweepDegrees: number): number {
+  return DONUT_RADIUS * ((sweepDegrees * Math.PI) / 180);
+}
+
+/**
+ * Cumulative straight-line length through a polyline's points -- the line-chart counterpart to
+ * arcLength, sizing the same strokeDasharray/strokeDashoffset draw-in technique for
+ * CashFlowChart's and TrendChart's polylines. Zero for zero or one points: there is nothing to
+ * draw, so nothing to animate.
+ */
+export function polylineLength(points: { x: number; y: number }[]): number {
+  let total = 0;
+  for (let i = 1; i < points.length; i++) {
+    const dx = points[i].x - points[i - 1].x;
+    const dy = points[i].y - points[i - 1].y;
+    total += Math.sqrt(dx * dx + dy * dy);
+  }
+  return total;
+}
+
 export const CASHFLOW_HEIGHT = 150;
 export const CASHFLOW_PAD_TOP = 8;
-export const CASHFLOW_PAD_BOTTOM = 22;
+const CASHFLOW_PAD_BOTTOM = 22;
 export const CASHFLOW_PLOT_HEIGHT = CASHFLOW_HEIGHT - CASHFLOW_PAD_TOP - CASHFLOW_PAD_BOTTOM;
 
 export interface CashFlowScale {
@@ -98,7 +126,7 @@ export function cashFlowScale(
 
 export const TREND_HEIGHT = 150;
 export const TREND_PAD_TOP = 8;
-export const TREND_PAD_BOTTOM = 22;
+const TREND_PAD_BOTTOM = 22;
 export const TREND_PLOT_HEIGHT = TREND_HEIGHT - TREND_PAD_TOP - TREND_PAD_BOTTOM;
 
 export interface TrendScale {

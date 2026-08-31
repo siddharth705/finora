@@ -332,7 +332,7 @@ function ReimportPasswordModal({
           <SectionHeading title="Unlock this statement" />
           <Text style={[styles.body, { color: c.muted }]}>
             <Text style={{ color: c.ink }}>{prompt.statement.fileName}</Text> is password protected.
-            Finora doesn&apos;t store statement passwords, so re-importing needs it again.
+            Fynora doesn&apos;t store statement passwords, so re-importing needs it again.
           </Text>
 
           <Text style={[styles.fieldLabel, { color: c.ink }]}>Statement password</Text>
@@ -343,7 +343,7 @@ function ReimportPasswordModal({
             autoCapitalize="none"
             autoCorrect={false}
             autoFocus
-            // The bank's password for one document, not a Finora credential -- it does not belong
+            // The bank's password for one document, not a Fynora credential -- it does not belong
             // in the OS keychain alongside real logins, and it changes every statement.
             autoComplete="off"
             textContentType="none"

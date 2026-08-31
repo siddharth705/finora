@@ -91,7 +91,7 @@ class VerificationSurvivesStagingConversionTest {
         AccountRepository accountRepository = mock(AccountRepository.class);
         AccountService accountService = mock(AccountService.class);
         TransactionRepository transactionRepository = mock(TransactionRepository.class);
-        when(transactionRepository.findPotentialDuplicatesByUser(any(), any(), any(), any())).thenReturn(List.of());
+        when(transactionRepository.findPotentialDuplicatesByUserAndAccountIdIn(any(), any(), any(), any(), any())).thenReturn(List.of());
         MerchantRepository merchantRepository = mock(MerchantRepository.class);
         StatementImportRepository statementImportRepository = mock(StatementImportRepository.class);
         CategorizationService categorizationService = mock(CategorizationService.class);
@@ -99,13 +99,15 @@ class VerificationSurvivesStagingConversionTest {
                 .thenReturn(new CategorizationService.Suggestion("Uncategorized", "default", null, null, null));
         when(categorizationService.suggestReadOnly(any(), any(), any(), any(), any()))
                 .thenReturn(new CategorizationService.Suggestion("Uncategorized", "default", null, null, null));
+        when(categorizationService.suggestReadOnly(any(), any(), any(), any(), any(), any()))
+                .thenReturn(new CategorizationService.Suggestion("Uncategorized", "default", null, null, null));
         ReconciliationService reconciliationService = mock(ReconciliationService.class);
         RecurringService recurringService = mock(RecurringService.class);
         importSessionService = mock(ImportSessionService.class);
-        when(importSessionService.createSession(any(), any(), any(), any(), any(), any())).thenReturn(session());
-        when(importSessionService.createMultiSection(any(), any(), any(), any(), any())).thenReturn(session());
+        when(importSessionService.createSession(any(), any(), any(), any(), any(), any(), any())).thenReturn(session());
+        when(importSessionService.createMultiSection(any(), any(), any(), any(), any(), any())).thenReturn(session());
 
-        DuplicateDetector duplicateDetector = new DuplicateDetector(transactionRepository);
+        DuplicateDetector duplicateDetector = new DuplicateDetector(transactionRepository, TestAccountRepositories.anyLive());
         TransactionNormalizer transactionNormalizer = new TransactionNormalizer(categorizationService,
                 duplicateDetector, TestRuleEngines.empty());
         StatementValidator statementValidator = new StatementValidator(
@@ -121,7 +123,8 @@ class VerificationSurvivesStagingConversionTest {
                 merchantRepository, statementImportRepository, categorizationService, reconciliationService,
                 recurringService, previewGenerator, duplicateDetector, ruleLearningService, importSessionService,
                 pdfPreviewGenerator, new com.finora.imports.product.ProductIdentityResolver(accountRepository),
-                new com.finora.imports.storage.StatementContentService(java.util.Optional.empty(), "", ""),
+                mock(com.finora.imports.ownership.OwnershipMatchService.class),
+                new com.finora.imports.storage.StatementContentService(java.util.Optional.empty(), mock(com.finora.security.crypto.EncryptionService.class), "", ""),
                 mock(StatementAnalysisRecorder.class), verificationRecorder,
                 mock(com.finora.service.MerchantLearningEventPublisher.class), mock(LayoutRegistryService.class),
                 mock(com.finora.imports.evidence.ClosingBalanceEvidenceShadowObserver.class));
@@ -130,7 +133,8 @@ class VerificationSurvivesStagingConversionTest {
     private void stubSections(List<StagedAccountSection> sections) throws Exception {
         when(pdfPreviewGenerator.generateSectionsWithContext(any(), any(), any(), any())).thenReturn(
                 new com.finora.imports.pdf.PdfPreviewGenerator.PdfGenerationResult(sections,
-                        new DocumentContext("PDF", "test")));
+                        new DocumentContext("PDF", "test"),
+                        com.finora.imports.pdf.CreditCardSummaryExtractor.CreditCardSummaryEvidence.NONE));
         when(pdfPreviewGenerator.generateSections(any(), any(), any(), any())).thenReturn(sections);
     }
 

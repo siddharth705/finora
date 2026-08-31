@@ -1,6 +1,7 @@
 package com.finora.service;
 
 import com.finora.dto.BillingDtos.SubscriptionSummaryDto;
+import com.finora.dto.PagedResponse;
 import com.finora.entity.Plan;
 import com.finora.entity.PlanChange;
 import com.finora.entity.Subscription;
@@ -12,6 +13,9 @@ import com.finora.repository.PlanRepository;
 import com.finora.repository.SubscriptionEventRepository;
 import com.finora.repository.SubscriptionRepository;
 import com.finora.repository.UserRepository;
+import com.finora.util.PageBounds;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -77,16 +81,24 @@ public class SubscriptionService {
         subscriptionEventRepository.save(event);
     }
 
+    /** Admin Portal, Subscription Management. Was an unconditional {@code findAll()} across the
+     *  whole table -- this grows roughly 1:1 with the user base (every signup provisions one, see
+     *  {@link #provisionFreeSubscription}), so that scaled directly with total users rather than
+     *  with anything an admin actually needed to see at once. The plan/user joins below still run
+     *  per page, not per row: {@code planRepository.findAll()} stays unconditional because plans
+     *  are a small fixed catalog (FREE/PLUS/PREMIUM), and the user batch-fetch is already scoped
+     *  to only the userIds on this one page. */
     @Transactional(readOnly = true)
-    public List<SubscriptionSummaryDto> listAll() {
-        List<Subscription> subscriptions = subscriptionRepository.findAll();
+    public PagedResponse<SubscriptionSummaryDto> listAll(int page, int size) {
+        Page<Subscription> subscriptions = subscriptionRepository.findAllByOrderByCreatedAtDesc(
+                PageRequest.of(PageBounds.safePage(page), PageBounds.safeSize(size)));
         Map<UUID, Plan> plansById = planRepository.findAll().stream()
                 .collect(Collectors.toMap(Plan::getId, p -> p));
         Map<UUID, User> usersById = userRepository.findAllById(
-                subscriptions.stream().map(Subscription::getUserId).distinct().toList()
+                subscriptions.getContent().stream().map(Subscription::getUserId).distinct().toList()
         ).stream().collect(Collectors.toMap(User::getId, u -> u));
 
-        return subscriptions.stream().map(s -> {
+        return PagedResponse.of(subscriptions.map(s -> {
             Plan plan = plansById.get(s.getPlanId());
             User user = usersById.get(s.getUserId());
             return new SubscriptionSummaryDto(
@@ -94,7 +106,7 @@ public class SubscriptionService {
                     user != null ? user.getEmail() : null, user != null ? user.getFullName() : null,
                     plan != null ? plan.getCode() : null, plan != null ? plan.getName() : null,
                     s.getStatus(), s.getStartDate(), s.getEndDate(), s.getRenewalDate());
-        }).toList();
+        }));
     }
 
     /** Admin-only, manual (proposal §10: upgrade/downgrade timing and refund policy are still

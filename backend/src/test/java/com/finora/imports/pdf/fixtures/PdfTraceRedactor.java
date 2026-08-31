@@ -81,6 +81,17 @@ public final class PdfTraceRedactor {
 
     private static final Pattern DATE_LIKE = Pattern.compile(
             "\\d{1,4}[-/.]\\d{1,2}[-/.]\\d{1,4}");
+    // A real Kotak Mahindra Bank credit-card statement states every pre-table metadata date
+    // ("16-Feb-2026", "02-Apr-2026") in this named-month shape rather than DATE_LIKE's all-numeric
+    // one. Without this, the day and year survive as bare digit tokens (neither DATE_LIKE nor
+    // AMOUNT_LIKE matches a lone "16" or "2026" with no decimal fraction) but the month name does
+    // not -- it is not in STRUCTURAL_WORDS -- so the whole date silently degrades to "99-Xxx-9999"
+    // and a trace meant to regression-test parsing this exact format carries no real date to parse.
+    // Matched and preserved WHOLE, the same "dates are structure, not identity" reasoning DATE_LIKE
+    // above already applies.
+    private static final Pattern NAMED_MONTH_DATE_LIKE = Pattern.compile(
+            "\\d{1,2}-(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)-\\d{2,4}",
+            Pattern.CASE_INSENSITIVE);
     private static final Pattern AMOUNT_LIKE = Pattern.compile(
             "\\(?-?[\\d,]+\\.\\d{1,2}\\)?");
     /** Account numbers, card numbers and payment references. Never preserved, whatever else the
@@ -128,7 +139,69 @@ public final class PdfTraceRedactor {
             // no identity on their own -- the counterparty that follows them is what gets masked.
             "upi", "neft", "imps", "rtgs", "ach", "atm", "pos", "ecs", "nach", "int", "chgs",
             // generic connective words that carry no identity on their own
-            "a", "an", "and", "or", "the", "for", "is", "not", "applicable", "yes", "y", "n"));
+            "a", "an", "and", "or", "the", "for", "is", "not", "applicable", "yes", "y", "n",
+            // Credit-card ledger category headers and payment-instruction furniture. Added after a
+            // real Kotak Mahindra Bank credit-card statement was found to have its own
+            // "Payments and Other Credits"/"Primary Card Transactions"/"Retail Purchases and Cash
+            // Transactions" section-header vocabulary masked away by capture -- the exact bare,
+            // dateless label lines the row-continuation merge needs to recognize and drop rather
+            // than sweep into an adjacent transaction's description, gone from the fixture meant to
+            // regression-test that. Same for the document's "Remember to pay by <date>"/"Pay your
+            // Credit card bills using the following:" sentences, neither a "Due Date" label nor any
+            // already-covered trailing-content marker. None of these identify anybody.
+            "payments", "other", "primary", "transactions", "retail", "purchases", "cash",
+            "remember", "pay", "by", "your", "bills", "using", "following",
+            // "Rs" -- the Indian Rupee abbreviation this same statement's own amount-column header
+            // uses ("Amount (Rs.)R", the trailing "R" its own separate text run), distinct from
+            // "inr" above (already allowlisted).
+            "rs",
+            // ACCOUNT_DISCREPANCY_DISCLAIMER_CLOSED's own trigger vocabulary. A real Central Bank of
+            // India export and a real PNB ONE export each close with a regulatory-boilerplate sentence
+            // ("Unless a constituent notifies the Bank immediately of any discrepancy...") that the
+            // trigger pattern itself matches on -- masking any of these words away leaves a captured
+            // trace unable to exercise the trigger it exists to protect. None of these identify
+            // anybody; it is the same fixed regulatory disclosure on both documents.
+            "unless", "constituent", "notifies", "immediately", "any", "discrepancy"));
+
+    /**
+     * A bare single letter immediately trailing an already-preserved currency marker WITHIN THE
+     * SAME run -- e.g. this same real Kotak Mahindra Bank statement's "Amount" column header, whose
+     * own text is one single {@code PositionedText} run reading {@code "(Rs.)R"} (verified against
+     * the real PDF's own positioned output; the closing paren is what splits it into the two tokens
+     * {@code "Rs."} and {@code "R"} that {@link #redactText} processes). The trailing "R" is a
+     * rendering artifact of the rupee glyph, not a word this class's word-level allowlist could
+     * ever recognize on its own -- {@link #STRUCTURAL_WORDS} above is deliberately word-shaped.
+     *
+     * <p><b>Why masking it broke a whole column, not just cosmetics.</b> {@link #redact} zeroes the
+     * WIDTH of any run whose redacted text differs from the original at all (see that method's own
+     * doc comment) -- correct for a run that is genuinely hidden, but this run is 5/6ths real text
+     * ("(Rs.)") and one masked letter, and the whole run's width -- this header cell's own trailing
+     * edge -- paid for that one letter. {@code PdfTableLocator}'s RIGHT_ALIGNED_AMOUNTS correction
+     * -- the mechanism that reassigns a right-aligned numeric value from its naive nearest-header
+     * bucket to the column its printed position actually lines up with -- is itself guarded on
+     * {@code width() > 0} (see that capability's own real-corpus history in
+     * CapabilityCoverageService), so it silently declined to run for this column at all. Every one
+     * of this section's 20 real purchase rows landed under a phantom "(Rs.)" column instead of
+     * "Amount" -- the one name {@code TransactionNormalizer.AMOUNT_HINTS} actually recognizes -- and
+     * staged as unparseable "no column recognized as an amount or balance" in the trace-driven
+     * regression suite, even though the real (unredacted) document parses every one of them
+     * correctly. A redaction-fixture artifact, not a production defect -- confirmed by running the
+     * real PDF bytes (not the trace) through the identical pipeline.
+     *
+     * <p>Deliberately its own narrow check rather than a bare "r" added to STRUCTURAL_WORDS: an
+     * unconditional single-letter allowance would preserve a stray initial anywhere in a document (a
+     * genuine, if low-information, piece of PII), where this scopes the exception to the one real
+     * shape that motivates it -- immediately following a currency marker's own closing paren, not
+     * any lone letter anywhere.
+     */
+    private static final java.util.regex.Pattern TRAILING_CURRENCY_MARKER_LETTER =
+            Pattern.compile("^[A-Za-z]$");
+
+    private static boolean isTrailingCurrencyMarkerLetter(String token, StringBuilder alreadyBuilt) {
+        if (!TRAILING_CURRENCY_MARKER_LETTER.matcher(token).matches()) return false;
+        String precedingLower = alreadyBuilt.toString().toLowerCase(Locale.ROOT);
+        return precedingLower.endsWith("rs.)") || precedingLower.endsWith("rs)");
+    }
 
     /**
      * Redacts every run, preserving the measured width of runs redaction left byte-identical and
@@ -197,7 +270,11 @@ public final class PdfTraceRedactor {
             if (Character.isLetterOrDigit(c)) {
                 int start = i;
                 while (i < text.length() && isTokenChar(text.charAt(i))) i++;
-                out.append(redactToken(text.substring(start, i), vocabulary));
+                String token = text.substring(start, i);
+                // See TRAILING_CURRENCY_MARKER_LETTER's own doc comment -- checked ahead of the
+                // ordinary vocabulary/date/amount rules below, against what THIS SAME redaction
+                // pass has already appended for this run, not a separate lookup.
+                out.append(isTrailingCurrencyMarkerLetter(token, out) ? token : redactToken(token, vocabulary));
             } else {
                 out.append(c);
                 i++;
@@ -222,7 +299,8 @@ public final class PdfTraceRedactor {
         // Order matters: a long digit run is an account or reference number even when it would
         // otherwise pass as an amount, so it is checked first and always redacted.
         if (LONG_DIGIT_RUN.matcher(bare).find()) return mask(token);
-        if (DATE_LIKE.matcher(bare).matches() || AMOUNT_LIKE.matcher(bare).matches()) return token;
+        if (DATE_LIKE.matcher(bare).matches() || AMOUNT_LIKE.matcher(bare).matches()
+                || NAMED_MONTH_DATE_LIKE.matcher(bare).matches()) return token;
         if (vocabulary.contains(bare.toLowerCase(Locale.ROOT))) return token;
 
         // '/' and '-' are part of a token so that dates and amounts are judged whole, which also

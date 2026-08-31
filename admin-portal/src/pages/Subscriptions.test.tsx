@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import Subscriptions from './Subscriptions';
@@ -57,6 +58,10 @@ function subscription(overrides: Partial<SubscriptionSummaryDto> = {}): Subscrip
   };
 }
 
+function pageOf(...rows: SubscriptionSummaryDto[]) {
+  return { content: rows, page: 0, size: 20, totalElements: rows.length, totalPages: 1 };
+}
+
 describe('Subscriptions', () => {
   beforeEach(() => {
     vi.mocked(useAdminAuth).mockReset();
@@ -66,7 +71,7 @@ describe('Subscriptions', () => {
 
   it('shows an access-denied message when the account lacks SUBSCRIPTION_MANAGEMENT_VIEW', () => {
     mockAuth([]);
-    vi.mocked(adminSubscriptionsApi.list).mockResolvedValue([]);
+    vi.mocked(adminSubscriptionsApi.list).mockResolvedValue(pageOf());
 
     renderPage();
 
@@ -75,7 +80,7 @@ describe('Subscriptions', () => {
 
   it('renders every subscription with the user, plan, and status', async () => {
     mockAuth(['SUBSCRIPTION_MANAGEMENT_VIEW']);
-    vi.mocked(adminSubscriptionsApi.list).mockResolvedValue([subscription()]);
+    vi.mocked(adminSubscriptionsApi.list).mockResolvedValue(pageOf(subscription()));
 
     renderPage();
 
@@ -86,7 +91,7 @@ describe('Subscriptions', () => {
 
   it('changes a plan and refetches the list on success', async () => {
     mockAuth(['SUBSCRIPTION_MANAGEMENT_VIEW']);
-    vi.mocked(adminSubscriptionsApi.list).mockResolvedValue([subscription()]);
+    vi.mocked(adminSubscriptionsApi.list).mockResolvedValue(pageOf(subscription()));
     vi.mocked(adminSubscriptionsApi.changePlan).mockResolvedValue({} as any);
 
     renderPage();
@@ -100,5 +105,23 @@ describe('Subscriptions', () => {
       'user-1', 'PLUS', 'Admin manual override'
     ));
     await waitFor(() => expect(adminSubscriptionsApi.list).toHaveBeenCalledTimes(2));
+  });
+
+  /** This table grows roughly 1:1 with the user base (SubscriptionService.listAll's own doc
+   *  comment) -- the whole reason this page was moved off a fetch-all list. Proves the page state
+   *  actually drives the next request, not just that Pagination renders. */
+  it('requests the next page of subscriptions when Pagination is clicked', async () => {
+    mockAuth(['SUBSCRIPTION_MANAGEMENT_VIEW']);
+    vi.mocked(adminSubscriptionsApi.list).mockResolvedValue(
+      { content: [subscription()], page: 0, size: 20, totalElements: 25, totalPages: 2 }
+    );
+
+    renderPage();
+    await waitFor(() => expect(screen.getByText('Jane Doe')).toBeInTheDocument());
+    expect(screen.getByText('Page 1 of 2')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Next page' }));
+
+    await waitFor(() => expect(adminSubscriptionsApi.list).toHaveBeenCalledWith(1, 20));
   });
 });

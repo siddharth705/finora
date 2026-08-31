@@ -6,6 +6,7 @@ import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -259,6 +260,33 @@ public class PdfTableLocator {
     // exact literal string, since the surrounding asterisk padding is decorative and could vary.
     private static final Pattern STATEMENT_CLOSING_MARKER = Pattern.compile("(?i)end\\s+of\\s+statement");
 
+    // PAGE_LEGEND_BLOCK_SUPPRESSED's own opening line -- see pageLegendBlockActive's doc comment
+    // for the mechanism this seeds. Matched against this real SBI credit-card statement's exact
+    // observed phrasing, the same evidence-before-capability discipline TRAILING_CONTENT_TRIGGERS'
+    // own patterns above follow -- narrow to the one real sentence rather than broadened to a
+    // generic "legend" or "disclaimer" heading a genuine transaction narration could plausibly echo.
+    private static final Pattern PAGE_LEGEND_BLOCK_START = Pattern.compile(
+            "(?i)transactions\\s+highlighted\\s+in\\s+grey\\s+color"
+                    // A real Kotak Mahindra Bank credit-card statement opens a per-page
+                    // payment-methods legend with this sentence, printed at the bottom of page 1
+                    // and set beside a second, side-by-side "What you must know!" box. A
+                    // page-boundary block, not the document's true end (real transactions resume
+                    // on page 2), so this belongs here rather than among TRAILING_CONTENT_TRIGGERS'
+                    // permanently-closing markers. Without it, the whole block -- fragmented across
+                    // several narration-only physical rows by the two-column layout -- glued onto
+                    // whichever real transaction row on either side of the page break sat closest,
+                    // confirmed via CorpusProbe against the real document.
+                    + "|pay\\s+your\\s+credit\\s+card\\s+bills\\s+using\\s+the\\s+following"
+                    // Three real HDFC savings-account statements (independently uploaded) open a
+                    // per-page footer with this exact sentence -- "*Closing balance includes funds
+                    // earmarked for hold and uncleared funds", followed by an address-correctness
+                    // disclaimer and the bank's GSTIN/registered-office boilerplate, at the bottom
+                    // of every page. Same page-boundary shape as the two triggers above: without
+                    // it, this block glued onto the last real transaction above each page break --
+                    // confirmed via CorpusGarbageSweep against all three real documents, which share
+                    // the identical layout (same bank, same export format).
+                    + "|closing\\s+balance\\s+includes\\s+funds\\s+earmarked");
+
     // ILLUSTRATIVE_BLOCK_SUPPRESSED. A real AU Small Finance Bank credit-card statement carries a
     // fee/interest-calculation appendix -- "Illustration for calculating Interest & Late Payment
     // Charges" -- containing THREE fictional worked-example tables, each introduced by "The
@@ -298,6 +326,27 @@ public class PdfTableLocator {
     private static final Pattern TRANSACTION_TABLE_TOTAL_MARKER = Pattern.compile(
             "(?i)total\\s+purchase\\s*&\\s*other\\s+charges");
 
+    // TRANSACTION_CATEGORY_HEADER_SUPPRESSED. A real Kotak Mahindra Bank credit-card statement
+    // groups its own ledger into sub-categories mid-table -- "Payments and Other Credits", then a
+    // card-identity aside ("Primary Card Transactions- <masked card>"), then "Retail Purchases and
+    // Cash Transactions" -- each a bare heading line with no date and no amount of its own, printed
+    // between two real transaction rows (never before the header, and never at the document's true
+    // end, so neither PAGE_LEGEND_BLOCK_START's per-page reset nor TRAILING_CONTENT_TRIGGERS'
+    // permanent one is the right shape). Without recognizing these, the ordinary leading/trailing
+    // narration merge -- which has no notion of "this dateless line is a category divider, not
+    // prose" -- swept one onto the transaction printed before it and the other onto the transaction
+    // printed after it, by nothing more than which row it happened to sit closer to. Confirmed via
+    // CorpusProbe against the real document: one category header ended up prepended to the first
+    // purchase row's own narration, and another appended to an unrelated payment row's.
+    //
+    // Anchored to the whole line (never a mid-sentence match) and narrow to these three real
+    // observed phrases, same "evidence before capability" discipline as every other trigger in this
+    // class -- a genuine transaction narration never consists of nothing but one of these phrases.
+    private static final Pattern CREDIT_CARD_CATEGORY_HEADER = Pattern.compile(
+            "(?i)^\\s*(?:payments\\s+and\\s+other\\s+credits"
+                    + "|primary\\s+card\\s+transactions\\b.*"
+                    + "|retail\\s+purchases\\s+and\\s+cash\\s+transactions)\\s*$");
+
     // MITC_SECTION_CLOSED. A real ICICI Bank credit-card statement prints "MOST IMPORTANT TERMS AND
     // CONDITIONS (MITC)" as an all-caps section heading immediately after the last real transaction
     // and its rewards summary, opening a multi-page legal/T&C appendix. Same failure shape as
@@ -317,18 +366,96 @@ public class PdfTableLocator {
     private static final Pattern MITC_SECTION_MARKER = Pattern.compile(
             "MOST IMPORTANT TERMS AND CONDITIONS");
 
+    // ACCOUNT_DISCREPANCY_DISCLAIMER_CLOSED. Two real, independently-uploaded savings-account
+    // statements (a Central Bank of India export and a PNB ONE export) each open their document's
+    // true closing disclaimer block with a regulatory-boilerplate sentence about notifying the bank
+    // of a discrepancy -- CBI's "Unless a constituent notifies the Bank immediately of any
+    // discrepancy...", PNB's "Unless constituent notifies the bank immediately of any
+    // discrepancy...". Same failure shape as every other TRAILING_CONTENT_TRIGGERS entry: this
+    // sentence sits BEFORE either document's own true end-of-statement marker (CBI's literal "END
+    // OF STATEMENT", PNB's own bulleted disclaimer list has no such marker at all), so it had
+    // already been swept into the last real transaction's trailing narration by the time any
+    // existing trigger got a chance to fire. Matched on the invariant core across both real
+    // documents' minor wording differences ("a constituent"/"constituent", "Bank"/"bank") rather
+    // than either one verbatim -- both are the same regulatory-mandated disclosure, not two
+    // coincidentally similar sentences.
+    private static final Pattern ACCOUNT_DISCREPANCY_DISCLAIMER_MARKER = Pattern.compile(
+            "(?i)constituent\\s+notifies\\s+the\\s+bank\\s+immediately\\s+of\\s+any\\s+discrepancy");
+
+    // STATEMENT_SUMMARY_BLOCK_CLOSED. Three real, independently-uploaded savings-account statements
+    // (an HDFC single-page export, an SBI export, and a much longer 38-page HDFC export) each close
+    // with a "Statement Summary :" block -- opening/closing balance, debit/credit counts and
+    // totals, then a security disclaimer -- printed directly after the last real transaction, with
+    // no other recognized closing marker anywhere in any of the three. Same failure shape as every
+    // other TRAILING_CONTENT_TRIGGERS entry: without it, the block's own header row ("Opening
+    // Balance Dr Count Cr Count Debits Credits Closing Bal") and the security disclaimer that
+    // follows it both got swept into the last real transaction's trailing narration -- and on the
+    // 38-page document specifically, the summary grid's own VALUE row (its aggregate debit/credit
+    // totals, e.g. "368,759.09"/"374,644.91") was severe enough to also form an entire PHANTOM
+    // transaction of its own: a fabricated row with no real date, carrying those aggregate totals
+    // as if they were one more genuine debit and credit. See
+    // SplitHeaderRunsPdfTableLocatorTest's own updated counts for the exact before/after row this
+    // eliminated.
+    //
+    // Bug fix: bare "statement summary" (no trailing colon) collided with a real ICICI credit-card
+    // statement's own PRE-table payment-summary panel heading ("STATEMENT SUMMARY", immediately
+    // followed by "Total Amount due"/"Closing Balance" fields, verified alone on its own physical
+    // row near the top of the document) -- an entirely different, legitimate use of the same two
+    // words, and matching it discarded the ICICI document's whole transaction table as if the
+    // panel heading were the document's true end. Both real evidencing documents happen to punctuate
+    // their own heading with a colon right after "Summary" ("STATEMENT SUMMARY :-", "Statement
+    // Summary : 01-07-2026 To..."); ICICI's does not. Requiring it is what tells apart "this IS the
+    // closing recap" from "this MENTIONS a summary," the same discipline MITC_SECTION_MARKER's own
+    // case-sensitivity requirement already applies for an analogous real collision.
+    private static final Pattern STATEMENT_SUMMARY_BLOCK_MARKER = Pattern.compile(
+            "(?i)statement\\s+summary\\s*:");
+
+    // CHEQUE_PAYABLE_FOOTER_CLOSED. A real Axis Bank credit-card statement's own true end opens
+    // with "Your cheque should be payable to Axis Bank Card No.<masked>...", immediately followed
+    // by a "Dear Customer, pay your Axis Bank Credit Card bill..." ECS-registration sentence and an
+    // "IMPORTANT MESSAGE" legal/GST disclaimer block -- confirmed single-occurrence (`grep`), never
+    // repeated per page, so this is the document's true end, not a page legend. Without it, the
+    // whole block was swept into the last real transaction's trailing narration.
+    private static final Pattern CHEQUE_PAYABLE_FOOTER_MARKER = Pattern.compile(
+            "(?i)cheque\\s+should\\s+be\\s+payable\\s+to");
+
+    // NEUCOINS_FOOTNOTE_CLOSED. A real HDFC "Tata Neu Plus" credit-card statement's own transaction
+    // table ends with a "Note:" footnote explaining how its "Base NeuCoins" rewards column is
+    // calculated -- confirmed single-occurrence (`grep`), directly beneath the last real
+    // transaction, before a page break and the MITC/fees appendix. Without it, the whole footnote
+    // was swept into the last real transaction's trailing narration.
+    private static final Pattern NEUCOINS_FOOTNOTE_MARKER = Pattern.compile(
+            "(?i)base\\s+neucoins.{0,20}are\\s+calculated\\s+as");
+
+    // SAVINGS_AND_BENEFITS_SECTION_CLOSED. A real SBI credit-card statement (the same document
+    // HEADER_RECONSTRUCTED/PAGE_LEGEND_BLOCK_SUPPRESSED are evidenced from) closes its supplementary
+    // cardholder section's transaction table with a "SAVINGS AND BENEFITS SECTION" heading,
+    // introducing a Cash Back / Petrol Surcharge Waiver / Reward Points recap grid -- confirmed
+    // single-occurrence in this section (`grep`), directly beneath the last real transaction.
+    // Without it, the grid's own header/value rows were swept into that transaction's trailing
+    // narration.
+    private static final Pattern SAVINGS_AND_BENEFITS_SECTION_MARKER = Pattern.compile(
+            "(?i)savings\\s+and\\s+benefits\\s+section");
+
     /** One row-shaped trigger the trailing-content suppression gate checks for, paired with the
      *  capability name to record when it fires -- see {@link #trailingContentTriggerCapability}. */
     private record TrailingContentTrigger(Pattern pattern, String capability) {}
 
     // Checked in this order, first match wins -- order has no behavioral significance among these
-    // four (each is evidenced from a different real document and none has been found to overlap
+    // entries (each is evidenced from a different real document and none has been found to overlap
     // with another's territory), but a stable order keeps a diff of this list reviewable.
     private static final List<TrailingContentTrigger> TRAILING_CONTENT_TRIGGERS = List.of(
             new TrailingContentTrigger(ILLUSTRATIVE_EXAMPLE_MARKER, "ILLUSTRATIVE_BLOCK_SUPPRESSED"),
             new TrailingContentTrigger(STATEMENT_CLOSING_MARKER, "TRANSACTION_TABLE_CLOSED"),
             new TrailingContentTrigger(TRANSACTION_TABLE_TOTAL_MARKER, "TRANSACTION_TABLE_TOTAL_CLOSED"),
-            new TrailingContentTrigger(MITC_SECTION_MARKER, "MITC_SECTION_CLOSED"));
+            new TrailingContentTrigger(MITC_SECTION_MARKER, "MITC_SECTION_CLOSED"),
+            new TrailingContentTrigger(ACCOUNT_DISCREPANCY_DISCLAIMER_MARKER,
+                    "ACCOUNT_DISCREPANCY_DISCLAIMER_CLOSED"),
+            new TrailingContentTrigger(STATEMENT_SUMMARY_BLOCK_MARKER, "STATEMENT_SUMMARY_BLOCK_CLOSED"),
+            new TrailingContentTrigger(CHEQUE_PAYABLE_FOOTER_MARKER, "CHEQUE_PAYABLE_FOOTER_CLOSED"),
+            new TrailingContentTrigger(NEUCOINS_FOOTNOTE_MARKER, "NEUCOINS_FOOTNOTE_CLOSED"),
+            new TrailingContentTrigger(SAVINGS_AND_BENEFITS_SECTION_MARKER,
+                    "SAVINGS_AND_BENEFITS_SECTION_CLOSED"));
 
     /** The capability name of the first {@link #TRAILING_CONTENT_TRIGGERS} entry matching {@code
      *  rowLine}, or null if none match. A dedicated method (rather than the boolean-chain shape
@@ -359,6 +486,11 @@ public class PdfTableLocator {
             case "TRANSACTION_TABLE_CLOSED" -> ctx.record("TRANSACTION_TABLE_CLOSED");
             case "TRANSACTION_TABLE_TOTAL_CLOSED" -> ctx.record("TRANSACTION_TABLE_TOTAL_CLOSED");
             case "MITC_SECTION_CLOSED" -> ctx.record("MITC_SECTION_CLOSED");
+            case "ACCOUNT_DISCREPANCY_DISCLAIMER_CLOSED" -> ctx.record("ACCOUNT_DISCREPANCY_DISCLAIMER_CLOSED");
+            case "STATEMENT_SUMMARY_BLOCK_CLOSED" -> ctx.record("STATEMENT_SUMMARY_BLOCK_CLOSED");
+            case "CHEQUE_PAYABLE_FOOTER_CLOSED" -> ctx.record("CHEQUE_PAYABLE_FOOTER_CLOSED");
+            case "NEUCOINS_FOOTNOTE_CLOSED" -> ctx.record("NEUCOINS_FOOTNOTE_CLOSED");
+            case "SAVINGS_AND_BENEFITS_SECTION_CLOSED" -> ctx.record("SAVINGS_AND_BENEFITS_SECTION_CLOSED");
             default -> throw new IllegalStateException(
                     "Unknown trailing-content trigger capability: " + capability);
         }
@@ -744,6 +876,22 @@ public class PdfTableLocator {
         // shared Phase 2A/2C investigation this whole family of triggers comes from.
         boolean trailingContentSuppressed = false;
 
+        // PAGE_LEGEND_BLOCK_SUPPRESSED. The resumption case trailingContentSuppressed's own comment
+        // above anticipated: a real SBI credit-card statement prints a legal/legend block ("Transactions
+        // highlighted in grey color...", the "C=Credit ; D=Debit..." abbreviation key, an "Important
+        // Messages" heading, then open-ended late-payment-charges prose) at the BOTTOM OF EVERY PAGE,
+        // not once at the true end of the table -- unlike TRAILING_CONTENT_TRIGGERS' own markers
+        // (MITC, "End of Statement", etc.), which really do mean nothing genuine follows for the rest
+        // of the document. Left unrecognized, each of this block's lines has no date and no
+        // structural meaning of its own, so the ordinary trailing-continuation merge glues the whole
+        // block onto the last real transaction above the page break -- confirmed on the real document:
+        // "UPI-VMPL DEL 24 390.00" gained the entire legend paragraph as if it were a wrapped
+        // description. Unlike trailingContentSuppressed, this resets the moment a genuine header is
+        // recognized again (repeated or new) -- see every reset site below -- so the real transactions
+        // that resume on the NEXT page are not silently discarded along with the boilerplate between
+        // them and the last one.
+        boolean pageLegendBlockActive = false;
+
         for (int rowIndex = 0; rowIndex < rows.size(); rowIndex++) {
             List<PositionedText> row = rows.get(rowIndex);
             String rowLine = lineOf(row);
@@ -836,7 +984,19 @@ public class PdfTableLocator {
                     pendingHeaderReconstructionVocab = closed.headerReconstructionVocab();
                     if (ctx != null) ctx.record("COMPOSITE_STATEMENT");
                 } else {
-                    pendingAuxiliary = new ArrayList<>();
+                    // Bug fix, 2026-08-29: pendingAuxiliary used to be reset to empty here, discarding
+                    // whatever front matter (page-1 letterhead: branch name, portfolio-summary figures,
+                    // etc.) had accumulated before the document's FIRST section marker. A marker that
+                    // closes a PRIOR section (the currentRows != null branch above) already carries its
+                    // pendingAuxiliary forward via closeCurrentSection -- the first marker has no prior
+                    // section to attribute front matter to, but that is a reason to hand it to the
+                    // section this marker is about to OPEN, not to discard it outright. Found via a
+                    // real HSBC composite statement whose own "Branch Name"/"Total Deposits and
+                    // Investments" letterhead fields were silently lost this way once the
+                    // PdfTableLocator.lineOf X-ordering fix (docs/superpowers/specs/
+                    // 2026-08-29-lineof-x-ordering-fix-design.md) let this document's SECTION_MARKER
+                    // banner correctly match for the first time -- previously it never matched at all,
+                    // so this discard path was never reached for this document.
                     pendingDroppedCandidates = new ArrayList<>();
                     pendingHeaderReconstructionVocab = new ArrayList<>();
                 }
@@ -854,6 +1014,7 @@ public class PdfTableLocator {
                 pendingLeading = null;
                 pendingLeadingFromProximity = false;
                 leadingCount = 0;
+                pageLegendBlockActive = false;
                 pendingAuxiliary.add(rowLine);
                 continue;
             }
@@ -961,6 +1122,29 @@ public class PdfTableLocator {
                         previousRowY = row.get(0).y();
                     }
                 }
+                // Bug fix, verified against a real SBI credit-card statement: a "for Statement
+                // Period: ..." caption prints on THIS page's repeat of the header's own physical row
+                // (a per-page rendering variance -- the same caption sits comfortably far from the
+                // header on the document's first page instead). Left in row, it corrupted two
+                // downstream steps that both need "only genuine column names" here, not just the one
+                // buildHeaderColumns already guards (see its own containsEmbeddedDateRange comment):
+                // headerSignature (just below) hashes the RAW cells, so this document's own repeated
+                // header stopped matching itself and opened a spurious new section
+                // (COMPOSITE_STATEMENT) on a single-account statement; and reconstructHeader's own
+                // conflict gate (HeaderReconstructionEngineTest's
+                // ...evenWithAnOrphanedCaptionOnTheAcceptedRow) treats every cell of headerRow AS
+                // GIVEN as an "established anchor" a fill-empty fragment must stay clear of -- with
+                // the caption still in there, the real "Transaction Details" fragment on the line
+                // above sat within HEADER_WRAP_MAX_COLUMN_JOIN of it and was wrongly declined as if
+                // it would rename the caption, losing the Description column (and with it every real
+                // row's narration) on all 29 of that section's transactions. Stripped here, once,
+                // before either consumer -- not inside buildHeaderColumns, which runs AFTER
+                // headerSignature and is called a second time on reconstructHeader's own candidate
+                // (seeing this row unfiltered there would also make buildHeaderColumns' own
+                // orphanedHeaderRowText double-count this same caption).
+                List<String> orphanedCaptions = new ArrayList<>();
+                row = stripStandaloneEmbeddedDateRangeCaptions(row, orphanedCaptions);
+                pendingAuxiliary.addAll(orphanedCaptions);
                 Set<String> signature = headerSignature(row);
                 // An unresolved ACCOUNT_IDENTITY_LINE mismatch overrides "same shape, keep
                 // appending" -- this is the actual B1 danger zone: two different accounts sharing
@@ -970,6 +1154,7 @@ public class PdfTableLocator {
                 boolean identityContradicts = currentRows != null && pendingIdentityMismatch;
                 if (currentRows != null && signature.equals(currentHeaderSignature) && !identityContradicts) {
                     if (ctx != null) ctx.record("REPEATED_HEADER");
+                    pageLegendBlockActive = false;
                     continue; // repeated header of the table already in progress -- not a data row
                 }
                 if (currentRows != null) {
@@ -1015,7 +1200,19 @@ public class PdfTableLocator {
                 // resolved to Amount, skipping over Transaction Details entirely, and the whole
                 // description merged into the amount cell -- silently defeating every real amount on
                 // the statement.
-                buildHeaderColumns(row, headerNames, headerAnchors, headerEnds, rows, rowIndex, ctx);
+                // orphanedHeaderRowText is captured into a LOCAL list here, not pendingAuxiliary
+                // directly -- buildHeaderColumns can run a second time just below, on
+                // reconstructHeader's candidate, which always starts from every non-blank fragment
+                // of THIS SAME row verbatim (see reconstructHeader's own doc comment). Without a
+                // local list, an orphaned caption sitting on the header's own physical row would be
+                // scanned by containsEmbeddedDateRange twice and appended to auxiliaryText twice --
+                // a real duplicate-text bug found in self-review, not yet backed by a real corpus
+                // trace (none in the current committed corpus combines an embedded-date-range
+                // caption with a header that also independently triggers reconstruction), but
+                // reproduced directly via HeaderReconstructionEngineTest.
+                // orphanedCaptionOnAReconstructedHeadersOwnRow_isNotDuplicatedIntoAuxiliaryText.
+                List<String> orphanedHeaderRowText = new ArrayList<>();
+                buildHeaderColumns(row, headerNames, headerAnchors, headerEnds, rows, rowIndex, ctx, orphanedHeaderRowText);
                 // Header Quality Gate + Reconstruction Engine (Phase 2E.2 prototype) -- runs AFTER
                 // the recovery pipeline just above, evaluating what it actually produced, never
                 // before it. recoverMissingDescriptionColumn already tries to solve exactly this
@@ -1038,10 +1235,12 @@ public class PdfTableLocator {
                         headerNames = new ArrayList<>();
                         headerAnchors = new ArrayList<>();
                         headerEnds = new ArrayList<>();
-                        buildHeaderColumns(reconstructed, headerNames, headerAnchors, headerEnds, rows, rowIndex, ctx);
+                        orphanedHeaderRowText = new ArrayList<>();
+                        buildHeaderColumns(reconstructed, headerNames, headerAnchors, headerEnds, rows, rowIndex, ctx, orphanedHeaderRowText);
                         if (ctx != null) ctx.record("HEADER_RECONSTRUCTED");
                     }
                 }
+                pendingAuxiliary.addAll(orphanedHeaderRowText);
                 if (ctx != null) ctx.recordHeaders(headerNames);
                 currentHeaderSignature = signature;
                 currentRows = new ArrayList<>();
@@ -1053,6 +1252,7 @@ public class PdfTableLocator {
                 pendingLeading = null;
                 pendingLeadingFromProximity = false;
                 leadingCount = 0;
+                pageLegendBlockActive = false;
                 continue;
             }
 
@@ -1078,6 +1278,25 @@ public class PdfTableLocator {
                 // BUCKET_EMPTY/PAGE_FOOTER_OR_CLOSING_MARKER/REPEATED_ACCOUNT_BANNER do not.
                 recordIfFinancialActivityCandidate(row, "PRE_HEADER_ACTIVITY_CANDIDATE", pendingDroppedCandidates);
                 pendingAuxiliary.add(rowLine);
+            } else if (pageLegendBlockActive) {
+                // Still inside the legend/disclaimer block -- see pageLegendBlockActive's own doc
+                // comment. Every line here is boilerplate until the next header resets the flag.
+                // Deliberately NOT added to pendingAuxiliary -- same choice PAGE_FOOTER makes just
+                // below, and for the same reason found here specifically: this exact legend line
+                // spells out "Monthly Installments"/"Total Amount Due" as abbreviation-key LABELS,
+                // not genuine statement fields, and ProductDiscovery reads auxiliaryText as if it
+                // were the latter -- surfaced by testing this fix against the real document, where
+                // routing the block there flipped the primary cardholder's own section from a
+                // confident CREDIT_CARD detection to UNKNOWN (INSTALLMENT_FIELD/EMI_FIELD/
+                // MINIMUM_DUE_FIELD all reading as CONTRADICTORY evidence against every candidate
+                // product, credit card included). recordIfTransactionShaped below is this content's
+                // own "never lose information" trace, same as PAGE_FOOTER_OR_CLOSING_MARKER's.
+                continue;
+            } else if (PAGE_LEGEND_BLOCK_START.matcher(rowLine).find()) {
+                pageLegendBlockActive = true;
+                if (ctx != null) ctx.record("PAGE_LEGEND_BLOCK_SUPPRESSED");
+                recordIfTransactionShaped(row, "PAGE_LEGEND_BLOCK_SUPPRESSED", pendingDroppedCandidates);
+                continue;
             } else if (PAGE_FOOTER.matcher(rowLine).find() || STATEMENT_CLOSING_MARKER.matcher(rowLine).find()) {
                 if (ctx != null) ctx.record("PAGE_BOUNDARY_ISOLATION");
                 // Row-accounting evidence: acknowledged, real risk (see this pattern's own doc
@@ -1085,6 +1304,14 @@ public class PdfTableLocator {
                 // loose page-footer shape would otherwise vanish with zero trace at all.
                 recordIfTransactionShaped(row, "PAGE_FOOTER_OR_CLOSING_MARKER", pendingDroppedCandidates);
                 continue; // a page-number line or closing marker is never a transaction or a continuation of one
+            } else if (CREDIT_CARD_CATEGORY_HEADER.matcher(rowLine).find()) {
+                // See CREDIT_CARD_CATEGORY_HEADER's own doc comment. Dropped outright, not merged
+                // either direction and not buffered as leading/trailing narration -- a category
+                // divider describes the table, not one transaction in it, so no single row is the
+                // right place for it to land.
+                if (ctx != null) ctx.record("TRANSACTION_CATEGORY_HEADER_SUPPRESSED");
+                recordIfTransactionShaped(row, "TRANSACTION_CATEGORY_HEADER_SUPPRESSED", pendingDroppedCandidates);
+                continue;
             } else {
                 Map<String, String> bucketed = bucketRow(row, headerNames, headerAnchors, headerEnds, ctx);
                 if (bucketed.isEmpty()) {
@@ -1150,21 +1377,78 @@ public class PdfTableLocator {
                     lastRowY = row.get(0).y();
                     blockPitch = null;
                     trailingCountSinceLastAnchor = 0;
-                } else if (currentRows.isEmpty()) {
+                } else if (currentRows.isEmpty() && (!isNarrationOnly(bucketed)
+                        // A row that populates MORE THAN ONE column, even carrying no date/number
+                        // value of its own, reads as a genuine structured summary/identity row (a
+                        // real ICICI Credit Card statement's own masked cardholder-identity line,
+                        // two columns wide) rather than free-text transaction narration -- which
+                        // never spans more than the one column it was typed into. Found regression-
+                        // testing the lookahead below against the full real corpus: without this,
+                        // a genuine identity row got deferred and merged into an unrelated later
+                        // transaction merely because one happened to exist within the lookahead
+                        // window, corrupting that transaction's own row.
+                        || bucketed.size() > 1
+                        // Content alone still cannot tell "defer -- a real transaction is coming"
+                        // apart from "stand alone -- nothing ever claims this," verified against
+                        // real SBI Card (a header missing its narration column squishes a real
+                        // transaction's date and merchant name into one bucketed cell that fails
+                        // the same numeric check a genuine caption does) and real AU Credit Card
+                        // (a perfectly well-formed header can still open a section with no
+                        // transaction in it at all -- an EMI-disclosure panel, pure narration). The
+                        // only signal that told these apart from the one real ICICI savings
+                        // document this whole gate exists for: whether a genuine hasDateValue row
+                        // actually follows, within a bounded lookahead.
+                        || !anchorFollowsWithinSection(rows, rowIndex + 1, headerNames, headerAnchors, headerEnds)
+                        // A real anchor existing somewhere ahead still is not enough on its own --
+                        // found on a real HDFC Credit Card statement: a genuine two-line merchant
+                        // caption, printed LOOSELY spaced above its own tightly-spaced pair with the
+                        // transaction below, is single-column and does have an anchor within the
+                        // lookahead window, yet baseline stands its first line alone and this
+                        // document's own regression-guard test locks that in. What told it apart
+                        // from the one real ICICI savings document this gate exists for: that
+                        // document's narration sits at the SAME line pitch as the anchor's own
+                        // wrapped continuation (5.1pt vs 5.0pt) -- a single, consistently-set block
+                        // -- while HDFC's first line's gap to its second (11pt) is nothing like the
+                        // second line's gap to the real anchor (4.3pt), a genuine pitch break. Only
+                        // checked when something sits between this row and the anchor -- a row
+                        // immediately adjacent to the anchor has no prior chain pitch to break.
+                        || !firstHopIsPitchConsistentOrDirect(rows, rowIndex, headerNames, headerAnchors, headerEnds))) {
                     // Nothing to attach to at all yet (e.g. an "Opening Balance" summary line
                     // before any real transaction) -- stands on its own, same as before. Closed to
                     // trailing continuation immediately: a summary row isn't a transaction, and
                     // narration that follows it belongs to the FIRST real transaction as leading
                     // content, not to this row as trailing content.
+                    //
+                    // Gated on carrying a real value, spanning multiple columns, or nothing real
+                    // ever following (see above), found on a real ICICI savings statement whose
+                    // table has no such summary row at all: the very first bucketed content is the
+                    // first transaction's OWN leading narration, with nothing yet in currentRows.
+                    // Before this gate, it fell into this branch and stood alone as a bare, dateless
+                    // row -- the same shape this class's leading-narration buffer already exists to
+                    // solve everywhere else in a section, just never reached because
+                    // currentRows.isEmpty() is checked first. samePage is false here (lastRowPage is
+                    // still null, reset when this section opened), so a narration-only row now
+                    // safely falls through this branch and the trailing-continuation branch below it
+                    // (whose own samePage check is also false) into the leading-narration branch at
+                    // the bottom, unchanged.
                     currentRows.add(bucketed);
                     lastRowPage = row.isEmpty() ? lastRowPage : row.get(0).pageIndex();
                     lastRowY = row.isEmpty() ? lastRowY : row.get(0).y();
                     blockPitch = null;
                     blockSeparation = null;
                     trailingCountSinceLastAnchor = MAX_TRAILING_CONTINUATION_ROWS;
-                } else if (samePage
+                } else if (!currentRows.isEmpty() && samePage
+                        // Explicit currentRows.isEmpty() guard, found via a real corpus crash: with
+                        // TWO+ consecutive narration-only lines before the first anchor, the first
+                        // one's own leading-narration bookkeeping already sets lastRowPage/lastRowY
+                        // (the same fields every branch here updates), which makes samePage true for
+                        // the second one even though currentRows is still genuinely empty --
+                        // crashing this branch's own currentRows.get(currentRows.size() - 1) on an
+                        // empty list. "Trailing continuation" only means anything once something
+                        // real exists to trail from.
                         && (continuesTheBlock(row, lastRowY, blockPitch, blockSeparation,
                                     trailingCountSinceLastAnchor)
+                            || isChequeReferenceTrailer(rowLine)
                             || (trailingCountSinceLastAnchor < MAX_TRAILING_CONTINUATION_ROWS
                                 && (!isNarrationOnly(bucketed)
                                     || belongsToTheRowAbove(gapFromPreviousRow, gapToNextRow))))) {
@@ -1175,7 +1459,10 @@ public class PdfTableLocator {
                         blockPitch = row.get(0).y() - lastRowY;
                     }
                     mergeInto(currentRows.get(currentRows.size() - 1), bucketed, headerNames);
-                    if (ctx != null) ctx.record("WRAPPED_DESCRIPTION");
+                    if (ctx != null) {
+                        ctx.record("WRAPPED_DESCRIPTION");
+                        if (isChequeReferenceTrailer(rowLine)) ctx.record("CHEQUE_REFERENCE_TRAILER_RECOVERED");
+                    }
                     trailingCountSinceLastAnchor++;
                     lastRowPage = row.get(0).pageIndex();
                     lastRowY = row.get(0).y();
@@ -1340,6 +1627,32 @@ public class PdfTableLocator {
             if (value != null && CsvParser.parseNumeric(value.trim()) != null) return false;
         }
         return true;
+    }
+
+    // CHEQUE_REFERENCE_TRAILER_RECOVERED. A real Canara Bank statement (Manas Chaturvedi's own
+    // upload -- a different real document from the one MAX_TRAILING_CONTINUATION_ROWS was tuned
+    // against) wraps EVERY transaction's own narration across 4 dateless lines before its date
+    // row, then closes with up to THREE dateless lines after it: a reference-number continuation,
+    // a time-of-day line, and finally a bare "Chq: <the same reference>" line -- one more than
+    // MAX_TRAILING_CONTINUATION_ROWS admits. That third line was falling through to the
+    // leading-narration branch and attaching to the NEXT transaction instead: confirmed via
+    // CorpusGarbageSweep, every "Chq: <number>" trailer in this real document ended up prepended to
+    // the wrong transaction's description, its own reference number never matching what followed it.
+    //
+    // Raising MAX_TRAILING_CONTINUATION_ROWS itself was rejected for the same reason that constant's
+    // own doc comment already gives for Bandhan Bank: a DIFFERENT real Canara document needs the
+    // boundary at exactly 2, where its own third dateless row genuinely IS the next transaction's
+    // leading narration -- the two real documents are irreconcilable by count alone. This is a
+    // content-shape exception instead, not a wider cap: a bare "Chq: <digits>" line can only ever be
+    // a reference trailer for the transaction printed immediately above it -- a cheque or reference
+    // number describes a completed instrument, never introduces the next one -- so it is always safe
+    // to admit as one more trailing continuation regardless of the count already reached. Unlike
+    // continuesTheBlock's pitch-based extension, this needs no evidence the document "separates its
+    // blocks": the shape alone is the evidence.
+    private static final Pattern CHEQUE_REFERENCE_TRAILER = Pattern.compile("(?i)^\\s*chq[:.]?\\s*\\d+\\s*$");
+
+    private boolean isChequeReferenceTrailer(String rowLine) {
+        return CHEQUE_REFERENCE_TRAILER.matcher(rowLine).matches();
     }
 
     /** Vertical distance between two visual rows, or null when either is missing or they are on
@@ -1829,6 +2142,15 @@ public class PdfTableLocator {
         });
 
 
+        // Chain-based clustering: currentRowY tracks the MOST RECENTLY ADDED member's y, not the
+        // row's first member -- confirmed necessary against real HSBC DB.pdf (OCR) evidence, see
+        // header-reconstruction-design.md §9.4. A fixed first-member anchor has no way to accumulate
+        // a chain of small, individually-tolerable gaps: OCR's per-word y-jitter across HSBC's one
+        // printed header line totals more than ROW_Y_TOLERANCE end to end even though every
+        // individual consecutive gap stays under it, so an anchor-based comparison split one visual
+        // line into two physical rows before header logic ever ran. Comparing each run to the
+        // previous one instead tolerates that same accumulated drift, since no single step ever
+        // exceeds the tolerance.
         List<List<PositionedText>> rows = new ArrayList<>();
         List<PositionedText> current = new ArrayList<>();
         Float currentRowY = null;
@@ -1839,10 +2161,10 @@ public class PdfTableLocator {
             if (!sameRow) {
                 if (!current.isEmpty()) rows.add(current);
                 current = new ArrayList<>();
-                currentRowY = t.y();
                 currentPage = t.pageIndex();
             }
             current.add(t);
+            currentRowY = t.y();
         }
         if (!current.isEmpty()) rows.add(current);
         return rows;
@@ -2274,11 +2596,39 @@ public class PdfTableLocator {
      *  exactly once per row it is actually given, so nothing about their own behavior changes. */
     private void buildHeaderColumns(List<PositionedText> row, List<String> headerNames, List<Float> headerAnchors,
                                      List<Float> headerEnds, List<List<PositionedText>> rows, int rowIndex,
-                                     DocumentContext ctx) {
+                                     DocumentContext ctx, List<String> orphanedHeaderRowText) {
         List<PositionedText> coalesced = new ArrayList<>(coalesceHeaderRuns(stripEmbeddedDateRange(row)));
         coalesced.sort(Comparator.comparing(PositionedText::x));
         for (PositionedText t : coalesced) {
-            headerNames.add(t.text().trim());
+            String text = t.text().trim();
+            // Phase 2E.5's HSBC row-formation fix (groupIntoRows' chain-based clustering, see
+            // header-reconstruction-design.md §9.4) can now correctly fold a nearby caption line
+            // onto an accepted header's own physical row -- confirmed live on a real SBI credit
+            // card statement, where "for Statement Period: 99 Xxx 99 to 99 Xxx 99" sits 2.36pt
+            // below the header's own "( ` )" sub-label, well within ROW_Y_TOLERANCE measured
+            // chain-wise, even though it is a genuinely different printed line, not a real column
+            // name. Every cell on the header's physical row otherwise becomes a column name
+            // unconditionally, so without this check that caption became a phantom column no real
+            // transaction data was ever near enough to populate -- and since headerNames are never
+            // exposed in LocatedSection's own returned data, its real text vanished from the
+            // document entirely: not a row, not auxiliary text, nothing.
+            //
+            // Deliberately narrow: containsEmbeddedDateRange, not a blanket vocabulary check.
+            // Tried filtering on "matches no HEADER_HINTS/DATE_HINTS word at all" first -- it also
+            // excluded Axis's genuine, merely-uncatalogued "XXXXXXXX XXXXXXXX" column and (worse)
+            // SBI's/ICICI's own blank-shaped currency-unit cell ("(Rs.)") that
+            // resolveBlankColumnNames exists specifically to qualify into a real column further
+            // down this same pipeline -- filtering before that recovery step got its chance broke
+            // Axis down to 25 of its normal 108 staged rows. A cell embedding a literal "<date> to
+            // <date>" range, by contrast, is never a real column name in this corpus (verified
+            // against two independent real documents: this SBI caption and the already-established
+            // Kotak case stripEmbeddedDateRange above exists for) and never something
+            // resolveBlankColumnNames-style qualification would want to keep.
+            if (containsEmbeddedDateRange(text)) {
+                orphanedHeaderRowText.add(text);
+                continue;
+            }
+            headerNames.add(text);
             headerAnchors.add(t.x());
             headerEnds.add(t.endX());
         }
@@ -2289,31 +2639,35 @@ public class PdfTableLocator {
     }
 
     /**
-     * Phase 2E.2 prototype of the Header Reconstruction Engine (design doc §4.6-4.9), narrowed to
-     * exactly the one shape this phase was scoped to prove out: SBI's Section 1, where the real
-     * header's OTHER column lives one physical line ABOVE the row that gets accepted, not below it
-     * -- {@link #wrappedHeaderAt} only ever looks forward, so it never finds this. Deliberately does
-     * NOT attempt {@code wrappedHeaderAt}'s forward composition too (IOB's shape, and the general
-     * multi-directional case): per the design doc's non-goals and the explicit scope for this phase,
-     * a document needing that is left exactly as it is today -- retained as
-     * {@code HeaderReconstructionFinding}, never a forced guess.
+     * Header Reconstruction Engine (design doc §4.6-4.9, generalized per §9.3's correction in
+     * Phase 2E.5): composes a header from fragments that live on physical lines ABOVE the row that
+     * gets accepted, not below it -- {@link #wrappedHeaderAt} only ever looks forward, so it never
+     * finds this shape. Originally a Phase 2E.2 prototype narrowed to exactly one orphaned
+     * single-cell fragment one line above {@code headerRow} (SBI's Section 1); generalized here to a
+     * genuine multi-tier backward walk so a real multi-cell second tier -- e.g. IOB's forward
+     * composition shape and ICICI savings' genuine three-cell tier, both of which the single-fragment
+     * prototype declined outright -- can be composed too, bounded by {@link #HEADER_WRAP_MAX_LINES}
+     * and gated line-by-line against renaming an already-established column (see the walk's own
+     * inline comment for the fill-empty-vs-qualify distinction and the real ICICI regression that
+     * distinction exists to prevent).
      *
      * <p>Steps, matching the design doc's numbering:
      * <ol>
-     *   <li><b>Collect fragments (§4.6).</b> The one line immediately above {@code headerRow}, if
-     *       (and only if) it is itself a plausible orphaned header fragment: EXACTLY one non-blank
-     *       cell (not zero, not a genuine multi-cell second tier -- see the scope note at this
-     *       method's own {@code nonBlankCount(above) != 1} check for why that boundary is drawn
-     *       here specifically), no date/number of its own, not a structural line, and within the
-     *       same physical-adjacency window {@link #wrapsOnto} already uses for the forward case --
-     *       reusing that method rather than a second copy of its gap/page checks.</li>
+     *   <li><b>Collect fragments (§4.6).</b> Walk backward from {@code headerRow} one physical line
+     *       at a time, each line admitted only if it is itself a plausible orphaned header fragment
+     *       (no date/number of its own, not a structural line, within the same physical-adjacency
+     *       window {@link #wrapsOnto} already uses for the forward case) and every one of its
+     *       fragments sits nowhere near a column this composition already has an anchor for. The
+     *       walk stops -- declining that line and everything further back -- the instant a line
+     *       conflicts, or reaches {@code HEADER_WRAP_MAX_LINES}, or nothing was ever safely
+     *       composable.</li>
      *   <li><b>Classify vocabulary (§4.7).</b> Reuses {@link #looksLikeHeaderRow} directly: the
      *       composed candidate must clear the exact same bar every other accepted header in this
      *       document does, not a looser one built just for reconstructed headers.</li>
-     *   <li><b>Build the candidate (§4.8).</b> Exactly one candidate, for this narrowed scope: every
-     *       non-blank fragment from both lines as its own column, x-sorted -- the "no line refines
-     *       another, every fragment is independent" reading the design doc's §2 describes as what
-     *       {@code mergeHeaderLines} has no model for at all.</li>
+     *   <li><b>Build the candidate (§4.8).</b> Every non-blank fragment from every admitted line as
+     *       its own column, x-sorted -- the "no line refines another, every fragment is independent"
+     *       reading the design doc's §2 describes as what {@code mergeHeaderLines} has no model for
+     *       at all.</li>
      *   <li><b>Validate against real rows (§4.9).</b> Accepted only if it explains STRICTLY MORE of
      *       the sampled sample than {@code headerRow} did -- never a tie, never "looks more
      *       complete." A composition that does not demonstrably improve row fit is not an
@@ -2330,31 +2684,58 @@ public class PdfTableLocator {
                                                      List<List<PositionedText>> rows, int headerIndex,
                                                      int wrappedHeaderLines) {
         if (headerIndex <= 0) return null;
-        List<PositionedText> above = rows.get(headerIndex - 1);
-        if (above.isEmpty() || !carriesNoDataValue(above) || carriesStructuralMeaning(above)) return null;
-        // Scoped, deliberately, to exactly one orphaned fragment -- a SINGLE cell sitting alone one
-        // physical line above the accepted header, SBI's real shape and the only shape this phase
-        // was scoped to prove out. A multi-cell line above is a genuine second header TIER (a
-        // real, more complex shape -- found on a real ICICI savings statement while widening this
-        // gate: its middle tier is three cells, "Sr No." / "Ref No" / "Particulars", and composing
-        // all three in unresolved this simply as extra columns recovered SOME real transactions but
-        // left the aggregate statement-total check failing, a partial, unvalidated result this
-        // phase is not scoped to ship). A multi-cell tier needs the general, multi-directional
-        // composition the design doc's non-goals defer (§8) -- not a wider version of this narrower
-        // mechanism. Mirrors the same single-vs-multi-cell distinction
-        // {@link #recoverMissingColumn}'s OWN admission rule already draws, from the opposite side:
-        // that method requires >= 2 cells because a lone cell is too ambiguous for IT to trust on
-        // vocabulary alone; this engine's extra evidence (row compatibility, validated below) is
-        // what earns a lone cell trust that mechanism cannot give it -- but only when there genuinely
-        // is just one, not when the real shape is a whole additional tier this phase cannot yet
-        // validate as thoroughly.
-        if (nonBlankCount(above) != 1) return null;
-        if (!wrapsOnto(above, headerRow)) return null;
 
+        // Walk backward one physical line at a time, collecting fragments -- generalizes the
+        // original single-line, single-fragment prototype (Phase 2E.2) to a genuine multi-tier
+        // region, per design doc §4.6-4.9 and §9.3's correction. Each candidate fragment must be a
+        // FILL-EMPTY addition -- sitting nowhere near a column this composition already has an
+        // anchor for -- never a QUALIFY/rename of one, which this engine still does not attempt
+        // (that is resolveDuplicateColumnNames's job, in buildHeaderColumns, run separately before
+        // this is ever reached). The walk stops the instant a line has ANY fragment within
+        // HEADER_WRAP_MAX_COLUMN_JOIN of an already-established anchor -- not just skipping that one
+        // fragment, but declining the whole line and everything further back, since a line this
+        // close to being a rename is exactly the shape a naive fill-empty read gets wrong (see the
+        // real ICICI regression this design's correction documents: composing a qualify-shaped tier
+        // as brand-new columns recovers some rows while corrupting the statement's own reconciliation
+        // check). Anchored at headerRow -- the row the ordinary per-row loop already accepted -- so,
+        // unlike a forward walk seeded at an early, not-yet-accepted row, this can never settle for a
+        // worse composition just because an earlier starting point happened to look valid in
+        // isolation.
         List<PositionedText> candidate = new ArrayList<>();
-        for (PositionedText t : above) if (!t.text().isBlank()) candidate.add(t);
         for (PositionedText t : headerRow) if (!t.text().isBlank()) candidate.add(t);
-        if (candidate.size() <= nonBlankCount(headerRow)) return null; // nothing new to compose
+        List<Float> establishedAnchors = new ArrayList<>();
+        for (PositionedText t : candidate) establishedAnchors.add(t.x());
+
+        List<PositionedText> mostRecentlyIncluded = headerRow;
+        int added = 0;
+        for (int back = 1; back < HEADER_WRAP_MAX_LINES && headerIndex - back >= 0; back++) {
+            List<PositionedText> line = rows.get(headerIndex - back);
+            if (line.isEmpty() || !carriesNoDataValue(line) || carriesStructuralMeaning(line)) break;
+            if (!wrapsOnto(line, mostRecentlyIncluded)) break;
+
+            List<PositionedText> fragments = new ArrayList<>();
+            for (PositionedText t : line) if (!t.text().isBlank()) fragments.add(t);
+            if (fragments.isEmpty()) break;
+
+            boolean conflict = false;
+            for (PositionedText fragment : fragments) {
+                for (float anchor : establishedAnchors) {
+                    if (Math.abs(fragment.x() - anchor) < HEADER_WRAP_MAX_COLUMN_JOIN) {
+                        conflict = true;
+                        break;
+                    }
+                }
+                if (conflict) break;
+            }
+            if (conflict) break; // this line -- and anything further back -- would rename, not fill
+
+            candidate.addAll(fragments);
+            for (PositionedText t : fragments) establishedAnchors.add(t.x());
+            mostRecentlyIncluded = line;
+            added++;
+        }
+        if (added == 0) return null; // nothing safely composable -- decline, same as today
+
         candidate.sort(Comparator.comparing(PositionedText::x));
 
         if (!looksLikeHeaderRow(candidate)) return null;
@@ -2394,6 +2775,72 @@ public class PdfTableLocator {
     }
 
     private record HeaderColumns(List<String> names, List<Float> anchors, List<Float> ends) {}
+
+    /**
+     * True when a genuine {@link #hasDateValue} anchor exists later in this section, within a
+     * bounded lookahead -- the only signal that reliably tells "defer this narration-only row, a
+     * real transaction is coming to claim it" apart from "stand it alone now, nothing ever claims
+     * it," verified by tracing three real documents. {@link #isNarrationOnly} alone cannot make
+     * this distinction: a header missing its narration column squishes a real transaction's date
+     * and merchant name into one bucketed cell that fails the same numeric check a genuine caption
+     * does (a real SBI Card section), and a perfectly well-formed header can still open a section
+     * with no transaction in it at all (a real AU Credit Card EMI-disclosure panel). Bucketed
+     * against the CURRENT header's own columns, with a null {@code ctx} -- this is a speculative
+     * peek, not the real bucketing pass, and must not record capability signals for rows it may
+     * never actually process this way. Bounded by {@link #MAX_LEADING_CONTINUATION_ROWS}, the same
+     * cap the leading-narration buffer itself gives up at: if an anchor would not turn up within
+     * that many rows, the buffer would not successfully claim one either, so there is no reason to
+     * look further.
+     */
+    private boolean anchorFollowsWithinSection(List<List<PositionedText>> rows, int fromIndex,
+            List<String> headerNames, List<Float> headerAnchors, List<Float> headerEnds) {
+        int scanLimit = Math.min(rows.size(), fromIndex + MAX_LEADING_CONTINUATION_ROWS);
+        for (int i = Math.max(fromIndex, 0); i < scanLimit; i++) {
+            List<PositionedText> row = rows.get(i);
+            if (row.isEmpty()) continue;
+            if (carriesStructuralMeaning(row)) return false;
+            if (hasDateValue(bucketRow(row, headerNames, headerAnchors, headerEnds, null))) return true;
+        }
+        return false;
+    }
+
+    /**
+     * True when either nothing sits between {@code rows.get(rowIndex)} and whatever claims it next
+     * (nothing to contradict), or the gap from it to the very next row matches the gap from THAT
+     * row to the one after -- a single, consistently-set block rather than a genuinely separate,
+     * loosely-spaced caption sitting above a tighter pair. The only signal, found by comparing real
+     * gaps across two real documents, that distinguishes a real ICICI savings narration line (whose
+     * gap to its anchor matches the anchor's own established line pitch almost exactly) from a real
+     * HDFC Credit Card merchant caption (whose gap to the next line is nothing like that next
+     * line's own gap to the real anchor below it) -- both single-column, both with a real anchor
+     * somewhere ahead, yet only one of them the anchor's own leading narration.
+     */
+    private boolean firstHopIsPitchConsistentOrDirect(List<List<PositionedText>> rows, int rowIndex,
+            List<String> headerNames, List<Float> headerAnchors, List<Float> headerEnds) {
+        List<PositionedText> current = rows.get(rowIndex);
+        int nextIndex = rowIndex + 1;
+        while (nextIndex < rows.size() && rows.get(nextIndex).isEmpty()) nextIndex++;
+        if (nextIndex >= rows.size()) return true; // nothing follows to contradict
+        List<PositionedText> next = rows.get(nextIndex);
+        // The very next row IS the anchor -- directly adjacent, exactly the one real ICICI
+        // savings document's own shape, with no intervening line to measure a pitch against at
+        // all. A DIFFERENT transaction's anchor two rows down (as in this class's own simplest
+        // synthetic fixture, whose second real transaction sits at its own, unrelated pitch) must
+        // never be used as a reference here -- only a genuine chain of narration awaiting the SAME
+        // anchor gives a meaningful pitch to compare against.
+        if (hasDateValue(bucketRow(next, headerNames, headerAnchors, headerEnds, null))) return true;
+        int nextNextIndex = nextIndex + 1;
+        while (nextNextIndex < rows.size() && rows.get(nextNextIndex).isEmpty()) nextNextIndex++;
+        if (nextNextIndex >= rows.size()) return true; // no reference pitch available
+        List<PositionedText> nextNext = rows.get(nextNextIndex);
+        if (current.get(0).pageIndex() != next.get(0).pageIndex()
+                || next.get(0).pageIndex() != nextNext.get(0).pageIndex()) {
+            return true; // a page break is not evidence of a pitch break
+        }
+        float firstHop = next.get(0).y() - current.get(0).y();
+        float secondHop = nextNext.get(0).y() - next.get(0).y();
+        return Math.abs(firstHop - secondHop) <= BLOCK_PITCH_TOLERANCE;
+    }
 
     /** Up to {@code maxCount} of this section's own upcoming rows that plausibly carry real
      *  transaction data -- skips rows that carry no date/number of their own (repeated headers,
@@ -2887,8 +3334,74 @@ public class PdfTableLocator {
         return row;
     }
 
+    /** True when {@code text} embeds a literal "&lt;date&gt; to &lt;date&gt;" range within a
+     *  SINGLE fused text run -- the shape {@link #stripEmbeddedDateRange} already handles when the
+     *  same range arrives as four SEPARATE runs (a real Kotak credit-card statement's "from
+     *  16-Feb-2026 to 15-Mar-2026"), generalized here for when PDFBox emits the whole phrase as one
+     *  continuous run instead (a real SBI credit-card statement's "for Statement Period: 99 Xxx 99
+     *  to 99 Xxx 99"). Scans for the literal word "to", then tries windows of 1-3 tokens
+     *  immediately before and after it for a parseable date -- 1-3 tokens because a real date can
+     *  print as one hyphenated token ("16-Feb-2026") or as three separate ones ("99 Xxx 99").
+     *  Deliberately narrow, matching only this one real shape found so far: a genuine column name
+     *  is never itself a literal date range, so this never touches a real header cell -- see
+     *  buildHeaderColumns' own comment on this call site for why a broader "matches no known
+     *  vocabulary" version was tried and rejected (it excluded Axis's genuine, merely-uncatalogued
+     *  column and SBI/ICICI's own blank currency-unit cell that a later recovery step needs intact). */
+    private boolean containsEmbeddedDateRange(String text) {
+        String[] tokens = text.split("\\s+");
+        for (int i = 0; i < tokens.length; i++) {
+            if (!tokens[i].equalsIgnoreCase("to")) continue;
+            if (dateEndingAt(tokens, i - 1) && dateStartingAt(tokens, i + 1)) return true;
+        }
+        return false;
+    }
+
+    private boolean dateEndingAt(String[] tokens, int end) {
+        for (int width = 1; width <= 3; width++) {
+            int start = end - width + 1;
+            if (start < 0) break;
+            if (CsvParser.parseDate(String.join(" ", Arrays.asList(tokens).subList(start, end + 1))) != null) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean dateStartingAt(String[] tokens, int start) {
+        for (int width = 1; width <= 3; width++) {
+            int end = start + width; // exclusive
+            if (end > tokens.length) break;
+            if (CsvParser.parseDate(String.join(" ", Arrays.asList(tokens).subList(start, end))) != null) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private boolean isWord(PositionedText t, String word) {
         return t.text().trim().equalsIgnoreCase(word);
+    }
+
+    /** Removes any run in {@code row} whose OWN text alone already matches {@link
+     *  #containsEmbeddedDateRange} -- the removed text is appended to {@code orphanedCaptions}, in
+     *  row order. Called once, at header acceptance, before anything downstream treats {@code row}'s
+     *  cells as real column identity: see the call site's own comment for the two consumers
+     *  (headerSignature, reconstructHeader) this exists to protect, neither of which is the
+     *  buildHeaderColumns' own containsEmbeddedDateRange check further down this class -- that one
+     *  stays as a safety net for a caption that only becomes a fused single cell AFTER coalescing,
+     *  which this single-run check cannot see (this runs before coalescing). */
+    private List<PositionedText> stripStandaloneEmbeddedDateRangeCaptions(
+            List<PositionedText> row, List<String> orphanedCaptions) {
+        List<PositionedText> kept = new ArrayList<>();
+        for (PositionedText t : row) {
+            String text = t.text().trim();
+            if (containsEmbeddedDateRange(text)) {
+                orphanedCaptions.add(text);
+                continue;
+            }
+            kept.add(t);
+        }
+        return kept;
     }
 
     private List<PositionedText> coalesceHeaderRuns(List<PositionedText> row) {
@@ -2909,6 +3422,25 @@ public class PdfTableLocator {
         return cells;
     }
 
+    // Bug fix, verified against a real SBI credit-card statement: this exact literal string is
+    // PDFBox's font-substitution rendering of a currency-symbol sub-label ("Amount (₹)" split into
+    // "Amount" + this cell) -- the same class of quirk as parseNumeric's own "Rupee-as-C" comment,
+    // here on a header cell rather than a value. On MOST layouts (and on this SAME document's own
+    // first page, purely by extraction-order coincidence) it never reaches joinsOntoHeaderCell at
+    // all. But it sits close enough to "Amount" that, whenever it does, coalescing would ordinarily
+    // fold it in -- correct and desired for an ordinary decorative currency suffix like "(Rs.)" or
+    // "(INR)", which carries no data of its own (see TransactionNormalizer.RUPEE_ARTIFACT_TYPE_COLUMN's
+    // own doc comment for the flip side of this same evidence). This one is different: every real
+    // transaction row on that document carries a bare Credit/Debit marker ("C"/"D") in this exact
+    // column, per the statement's own printed legend "C=Credit ; D=Debit". Coalesced away, that
+    // marker has nowhere of its own to bucket into and gets glued onto the amount value instead
+    // ("25.00 D"), which fails CsvParser.parseNumeric outright -- every one of that document's
+    // second-cardholder transactions silently vanished this way. Scoped to the single literal
+    // artifact string, not a general "any currency-symbol cell" rule -- see
+    // HeaderReconstructionEngineTest.sbiShapedPartitionedHeader_keepsTheRupeeArtifactColumnSeparateFromAmount
+    // for the other (legitimate-merge) shape this must not disturb.
+    private static final String RUPEE_ARTIFACT_MARKER_COLUMN = "( ` )";
+
     /** Whether {@code right} is the continuation of the same header cell {@code left} begins. */
     private boolean joinsOntoHeaderCell(PositionedText left, PositionedText right) {
         if (left.pageIndex() != right.pageIndex()) return false;
@@ -2916,6 +3448,7 @@ public class PdfTableLocator {
         float gap = right.x() - left.endX();
         // Negative means the runs overlap, which is not the one-space adjacency this looks for.
         if (gap < 0 || gap > HEADER_RUN_JOIN_MAX_GAP) return false;
+        if (RUPEE_ARTIFACT_MARKER_COLUMN.equals(right.text().trim())) return false;
         return !carriesAValue(left) && !carriesAValue(right);
     }
 
@@ -3409,9 +3942,24 @@ public class PdfTableLocator {
         return lines;
     }
 
+    /** Joins a row's members left-to-right by x -- NOT in whatever order {@link #groupIntoRows}'
+     *  Y-primary sort happened to leave them in. Row membership (which runs share a physical line)
+     *  is decided entirely by groupIntoRows and is correct; this method only decides read order
+     *  within an already-correct row. Sorts a defensive copy (stable, so genuinely tied x -- e.g.
+     *  overlapping/stacked glyphs -- keeps its prior relative order rather than being reshuffled)
+     *  so callers holding the original row list see no side effect.
+     *
+     *  <p>Found via a real SBI branch-code field whose colon ran a hair below its label's y --
+     *  common sub-point baseline jitter between punctuation and letters/digits on the same printed
+     *  line -- which Y-primary sort placed before the label despite x making the true order
+     *  unambiguous. Corpus-wide measurement (2026-08-29, real 27-doc corpus) found this affects
+     *  22/27 documents and 7.9% of all physical rows, including transaction-shaped rows in at
+     *  least one document previously believed clean -- not a rare edge case. */
     private String lineOf(List<PositionedText> row) {
+        List<PositionedText> ordered = new ArrayList<>(row);
+        ordered.sort(Comparator.comparing(PositionedText::x));
         StringBuilder line = new StringBuilder();
-        for (PositionedText t : row) {
+        for (PositionedText t : ordered) {
             if (!line.isEmpty()) line.append(' ');
             line.append(t.text());
         }
@@ -3972,7 +4520,21 @@ public class PdfTableLocator {
         for (List<PositionedText> row : allRows) {
             String rowLine = lineOf(row);
             if (PAGE_FOOTER.matcher(rowLine).find()) continue;
-            if (STATEMENT_CLOSING_MARKER.matcher(rowLine).find()) break;
+            // Every TRAILING_CONTENT_TRIGGERS marker, not just STATEMENT_CLOSING_MARKER alone --
+            // this headerless path used to check only that one trigger, so a document that falls
+            // back to headerless inference (no recognized column vocabulary at all) got none of the
+            // other real-document-evidenced closing markers the header-based path already has.
+            // Confirmed on a real SBI savings statement (Sanjay SBI.pdf): its own "Statement
+            // Summary" balance-recap block, printed after the last real transaction, was swept into
+            // that transaction's own trailing narration here even after STATEMENT_SUMMARY_BLOCK_MARKER
+            // was added to TRAILING_CONTENT_TRIGGERS, because this loop never consulted that list.
+            // A permanent break, same as every trigger's meaning in the header-based path -- none of
+            // these markers is a per-page, resumable thing the way PAGE_FOOTER is.
+            String trailingTrigger = trailingContentTriggerCapability(rowLine);
+            if (trailingTrigger != null) {
+                recordTrailingContentTrigger(ctx, trailingTrigger);
+                break;
+            }
             if (isTransactionShapedRow(row)) {
                 if (rowLine.equals(previousTransactionLine)) {
                     recordIfTransactionShaped(row, "REPEATED_PHYSICAL_ROW_REMOVED", droppedTransactionCandidates);

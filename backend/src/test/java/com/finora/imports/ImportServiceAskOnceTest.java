@@ -70,9 +70,14 @@ class ImportServiceAskOnceTest {
         merchantRepository = mock(MerchantRepository.class);
         statementImportRepository = mock(StatementImportRepository.class);
         categorizationService = mock(CategorizationService.class);
+        // Preserves every existing test's expectation (needsCategoryReview mirrors the row's
+        // unresolved-guess flag alone) by default; tests specifically exercising the
+        // confidence-threshold behaviour override this per-test.
+        when(categorizationService.needsCategoryReview(any(), anyBoolean(), any()))
+                .thenAnswer(inv -> inv.getArgument(1));
         reconciliationService = mock(ReconciliationService.class);
         recurringService = mock(RecurringService.class);
-        DuplicateDetector duplicateDetector = new DuplicateDetector(transactionRepository);
+        DuplicateDetector duplicateDetector = new DuplicateDetector(transactionRepository, TestAccountRepositories.anyLive());
         CsvParser csvParser = new CsvParser();
         TransactionNormalizer transactionNormalizer = new TransactionNormalizer(categorizationService, duplicateDetector, com.finora.imports.TestRuleEngines.empty());
         StatementValidator statementValidator = new StatementValidator(com.finora.imports.product.ProductDiscovery.standard());
@@ -89,7 +94,9 @@ class ImportServiceAskOnceTest {
                 merchantRepository, statementImportRepository, categorizationService, reconciliationService,
                 recurringService, previewGenerator, duplicateDetector, ruleLearningService,
                 mock(ImportSessionService.class), mock(com.finora.imports.pdf.PdfPreviewGenerator.class),
-                new com.finora.imports.product.ProductIdentityResolver(accountRepository), new com.finora.imports.storage.StatementContentService(java.util.Optional.empty(), "", ""),
+                new com.finora.imports.product.ProductIdentityResolver(accountRepository),
+                mock(com.finora.imports.ownership.OwnershipMatchService.class),
+                new com.finora.imports.storage.StatementContentService(java.util.Optional.empty(), mock(com.finora.security.crypto.EncryptionService.class), "", ""),
                 mock(com.finora.imports.analysis.StatementAnalysisRecorder.class),
                 mock(com.finora.imports.analysis.ImportVerificationRecorder.class),
                 learningEventPublisher, mock(LayoutRegistryService.class),
@@ -159,6 +166,19 @@ class ImportServiceAskOnceTest {
         ArgumentCaptor<List<Transaction>> captor = ArgumentCaptor.forClass(List.class);
         verify(transactionRepository).saveAll(captor.capture());
         assertThat(captor.getValue().get(0).isNeedsCategoryReview()).isTrue();
+    }
+
+    @Test
+    void confirm_persistsDecisionConfidence_fromTheConfirmedRowsCategoryConfidence() throws Exception {
+        var row = new ConfirmedRow(LocalDate.of(2026, 7, 10), "SWIGGY ORDER", BigDecimal.valueOf(486),
+                "EXPENSE", "Dining", true, "rule", null, false, null, null, false, 70);
+
+        importService.confirm(userId, dummyFile(), requestWith(row));
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<Transaction>> captor = ArgumentCaptor.forClass(List.class);
+        verify(transactionRepository).saveAll(captor.capture());
+        assertThat(captor.getValue().get(0).getDecisionConfidence()).isEqualTo(70);
     }
 
     @Test
@@ -465,6 +485,105 @@ class ImportServiceAskOnceTest {
     }
 
     @Test
+    void confirm_prefersRequestSuppliedStatementPeriod_overTheConfirmedRowsDateRange() throws Exception {
+        // A printed "Statement Period" can be wider than the rows a user actually has
+        // transactions for (e.g. no activity in the first few days of the cycle) --
+        // PdfPreviewGenerator/StatementValidator already compute and surface this correctly at
+        // staging time (see their own buildDetectedAccountInfo), but until now ConfirmRequest had
+        // nowhere to carry it back, so persistSection silently re-derived the period from
+        // minDate/maxDate of the confirmed rows alone, discarding the printed period the user was
+        // shown on the review screen.
+        var row1 = new ConfirmedRow(LocalDate.of(2026, 7, 10), "SWIGGY*ORDR9182 BLR",
+                BigDecimal.valueOf(486), "EXPENSE", "Dining", true, "rule", null, false, null, null);
+        var row2 = new ConfirmedRow(LocalDate.of(2026, 7, 12), "ZOMATO ORDER",
+                BigDecimal.valueOf(300), "EXPENSE", "Dining", true, "rule", null, false, null, null);
+        var request = new ConfirmRequest(null, List.of(row1, row2), accountId, null, null, null, null,
+                LocalDate.of(2026, 7, 1), LocalDate.of(2026, 7, 31));
+
+        importService.confirm(userId, dummyFile(), request);
+
+        ArgumentCaptor<StatementImport> captor = ArgumentCaptor.forClass(StatementImport.class);
+        verify(statementImportRepository).save(captor.capture());
+        assertThat(captor.getValue().getStatementPeriodStart()).isEqualTo(LocalDate.of(2026, 7, 1));
+        assertThat(captor.getValue().getStatementPeriodEnd()).isEqualTo(LocalDate.of(2026, 7, 31));
+    }
+
+    @Test
+    void confirm_reportsTheRequestSuppliedStatementPeriod_onTheImmediateSummaryResponse() throws Exception {
+        // Same fix as above, but for the response the user actually sees first -- the "Statement
+        // period: ..." line on the post-confirm summary screen (Import.tsx) reads
+        // ConfirmResponse.statementPeriodStart/End directly, not the persisted StatementImport row.
+        var row1 = new ConfirmedRow(LocalDate.of(2026, 7, 10), "SWIGGY*ORDR9182 BLR",
+                BigDecimal.valueOf(486), "EXPENSE", "Dining", true, "rule", null, false, null, null);
+        var row2 = new ConfirmedRow(LocalDate.of(2026, 7, 12), "ZOMATO ORDER",
+                BigDecimal.valueOf(300), "EXPENSE", "Dining", true, "rule", null, false, null, null);
+        var request = new ConfirmRequest(null, List.of(row1, row2), accountId, null, null, null, null,
+                LocalDate.of(2026, 7, 1), LocalDate.of(2026, 7, 31));
+
+        var response = importService.confirm(userId, dummyFile(), request);
+
+        assertThat(response.statementPeriodStart()).isEqualTo(LocalDate.of(2026, 7, 1));
+        assertThat(response.statementPeriodEnd()).isEqualTo(LocalDate.of(2026, 7, 31));
+    }
+
+    @Test
+    void confirm_leavesTheStatementPeriodNull_whenTheRequestCarriesNoStatementPeriod() throws Exception {
+        // Bug fix: this used to fall back to the confirmed rows' own min/max date -- which is only
+        // ever a LOWER bound on the statement's true period whenever a cycle has no activity near
+        // its own printed boundary dates. Confirmed wrong against a real Kotak Mahindra Bank
+        // credit-card statement, whose own earliest/latest transactions fall inside its printed
+        // period rather than at its edges (see PdfPreviewGenerator.buildDetectedAccountInfo's own
+        // comment, which had and removed the identical fallback). No genuine period was ever printed
+        // here (the request carries none), so this stays null rather than guessing one from the rows.
+        var row1 = new ConfirmedRow(LocalDate.of(2026, 7, 10), "SWIGGY*ORDR9182 BLR",
+                BigDecimal.valueOf(486), "EXPENSE", "Dining", true, "rule", null, false, null, null);
+        var row2 = new ConfirmedRow(LocalDate.of(2026, 7, 12), "ZOMATO ORDER",
+                BigDecimal.valueOf(300), "EXPENSE", "Dining", true, "rule", null, false, null, null);
+        var request = new ConfirmRequest(null, List.of(row1, row2), accountId, null, null, null, null);
+
+        importService.confirm(userId, dummyFile(), request);
+
+        ArgumentCaptor<StatementImport> captor = ArgumentCaptor.forClass(StatementImport.class);
+        verify(statementImportRepository).save(captor.capture());
+        assertThat(captor.getValue().getStatementPeriodStart()).isNull();
+        assertThat(captor.getValue().getStatementPeriodEnd()).isNull();
+    }
+
+    @Test
+    void confirm_persistsTotalAmountDueAndPaymentDueDate_echoedFromTheRequest() throws Exception {
+        // Same round-trip as the statement-period fields above: DetectedAccountInfo.totalAmountDue/
+        // paymentDueDate (CreditCardSummaryExtractor / PdfMetadataExtractor at staging time) has
+        // nowhere to land at confirm without the request echoing it back -- see
+        // credit-card-statement-entity-design.md.
+        var row1 = new ConfirmedRow(LocalDate.of(2026, 7, 10), "SWIGGY*ORDR9182 BLR",
+                BigDecimal.valueOf(486), "EXPENSE", "Dining", true, "rule", null, false, null, null);
+        var request = new ConfirmRequest(null, List.of(row1), accountId, null, null, null, null,
+                LocalDate.of(2026, 7, 1), LocalDate.of(2026, 7, 31),
+                BigDecimal.valueOf(12450.75), LocalDate.of(2026, 8, 5));
+
+        importService.confirm(userId, dummyFile(), request);
+
+        ArgumentCaptor<StatementImport> captor = ArgumentCaptor.forClass(StatementImport.class);
+        verify(statementImportRepository).save(captor.capture());
+        assertThat(captor.getValue().getTotalAmountDue()).isEqualByComparingTo(BigDecimal.valueOf(12450.75));
+        assertThat(captor.getValue().getPaymentDueDate()).isEqualTo(LocalDate.of(2026, 8, 5));
+    }
+
+    @Test
+    void confirm_leavesTotalAmountDueAndPaymentDueDateNull_forANonCreditCardImport() throws Exception {
+        var row1 = new ConfirmedRow(LocalDate.of(2026, 7, 10), "SWIGGY*ORDR9182 BLR",
+                BigDecimal.valueOf(486), "EXPENSE", "Dining", true, "rule", null, false, null, null);
+        var request = new ConfirmRequest(null, List.of(row1), accountId, null, null, null, null);
+
+        importService.confirm(userId, dummyFile(), request);
+
+        ArgumentCaptor<StatementImport> captor = ArgumentCaptor.forClass(StatementImport.class);
+        verify(statementImportRepository).save(captor.capture());
+        assertThat(captor.getValue().getTotalAmountDue()).isNull();
+        assertThat(captor.getValue().getPaymentDueDate()).isNull();
+    }
+
+    @Test
     void confirm_appliesSideEffectRules_andReflectsTheOverriddenCategoryInTheTallyAndTheSavedTransaction() throws Exception {
         // A matching MARK_INVESTMENT rule overrides whatever category was staged for this row --
         // CategorizationService.applySideEffectRules returns the new Category, and confirm() must
@@ -480,7 +599,8 @@ class ImportServiceAskOnceTest {
         ReflectionTestUtils.setField(investments, "id", UUID.randomUUID());
         investments.setUserId(userId);
         investments.setName("Investments");
-        when(categorizationService.applySideEffectRules(eq(userId), any(Transaction.class))).thenReturn(investments);
+        when(categorizationService.applySideEffectRules(eq(userId), any(Transaction.class), any()))
+                .thenReturn(investments);
 
         var row = new ConfirmedRow(LocalDate.of(2026, 7, 10), "SIP MUTUAL FUND DEDUCTION",
                 BigDecimal.valueOf(5000), "EXPENSE", "Shopping", true, "rule", null, false, null, null);
@@ -508,6 +628,8 @@ class ImportServiceAskOnceTest {
     void parseAndStage_classifiesDebitCreditRowAsExpense_whenCreditColumnIsBlank() throws Exception {
         when(categorizationService.suggestReadOnly(anyList(), eq(userId), anyString(), any(), any()))
                 .thenReturn(new CategorizationService.Suggestion("Dining", "rule", UUID.randomUUID(), Transaction.DecisionSource.KEYWORD_MATCH, null));
+        when(categorizationService.suggestReadOnly(anyList(), eq(userId), anyString(), any(), any(), any()))
+                .thenReturn(new CategorizationService.Suggestion("Dining", "rule", UUID.randomUUID(), Transaction.DecisionSource.KEYWORD_MATCH, null));
 
         String csv = "Date,Description,Debit,Credit\n2026-07-10,SWIGGY ORDER,486.00,\n";
         MockMultipartFile file = new MockMultipartFile("file", "statement.csv", "text/csv",
@@ -528,6 +650,8 @@ class ImportServiceAskOnceTest {
         // ever reached.
         when(categorizationService.suggestReadOnly(anyList(), eq(userId), anyString(), any(), any()))
                 .thenReturn(new CategorizationService.Suggestion("Salary", "rule", UUID.randomUUID(), Transaction.DecisionSource.KEYWORD_MATCH, null));
+        when(categorizationService.suggestReadOnly(anyList(), eq(userId), anyString(), any(), any(), any()))
+                .thenReturn(new CategorizationService.Suggestion("Salary", "rule", UUID.randomUUID(), Transaction.DecisionSource.KEYWORD_MATCH, null));
 
         String csv = "Date,Description,Debit,Credit\n2026-07-10,SALARY,,50000.00\n";
         MockMultipartFile file = new MockMultipartFile("file", "statement.csv", "text/csv",
@@ -540,12 +664,19 @@ class ImportServiceAskOnceTest {
     }
 
     /**
-     * Statement Import v2: opening/closing balance and statement period should be derivable
-     * whenever the file has a running-balance column, without needing the user to type anything.
+     * Statement Import v2: opening/closing balance should be derivable whenever the file has a
+     * running-balance column, without needing the user to type anything.
+     *
+     * <p>Bug fix: this test used to also assert the statement PERIOD was derived from the same two
+     * transaction dates -- exactly the "transaction range as a guessed period" fallback removed from
+     * StatementValidator.buildDetectedAccountInfo (see that method's own comment). This CSV prints no
+     * period anywhere, so the correct, honest answer is null, not the two transaction dates.
      */
     @Test
     void parseAndStage_derivesOpeningAndClosingBalance_fromARunningBalanceColumn() throws Exception {
         when(categorizationService.suggestReadOnly(anyList(), eq(userId), anyString(), any(), any()))
+                .thenReturn(new CategorizationService.Suggestion("Dining", "rule", UUID.randomUUID(), Transaction.DecisionSource.KEYWORD_MATCH, null));
+        when(categorizationService.suggestReadOnly(anyList(), eq(userId), anyString(), any(), any(), any()))
                 .thenReturn(new CategorizationService.Suggestion("Dining", "rule", UUID.randomUUID(), Transaction.DecisionSource.KEYWORD_MATCH, null));
 
         // Opening balance 10000 -> -486 (debit) -> 9514 -> +2000 (credit) -> 11514
@@ -559,8 +690,8 @@ class ImportServiceAskOnceTest {
 
         assertThat(response.detectedAccount().openingBalance()).isEqualByComparingTo("10000.00");
         assertThat(response.detectedAccount().closingBalance()).isEqualByComparingTo("11514.00");
-        assertThat(response.detectedAccount().statementPeriodStart()).isEqualTo(LocalDate.of(2026, 7, 10));
-        assertThat(response.detectedAccount().statementPeriodEnd()).isEqualTo(LocalDate.of(2026, 7, 12));
+        assertThat(response.detectedAccount().statementPeriodStart()).isNull();
+        assertThat(response.detectedAccount().statementPeriodEnd()).isNull();
     }
 
     @Test
@@ -569,6 +700,8 @@ class ImportServiceAskOnceTest {
         // this test's assertion is only about the detected account name, but parseRow() still
         // calls categorizationService.suggestReadOnly() for every row on the way there.
         when(categorizationService.suggestReadOnly(anyList(), eq(userId), anyString(), any(), any()))
+                .thenReturn(new CategorizationService.Suggestion("Salary", "rule", UUID.randomUUID(), Transaction.DecisionSource.KEYWORD_MATCH, null));
+        when(categorizationService.suggestReadOnly(anyList(), eq(userId), anyString(), any(), any(), any()))
                 .thenReturn(new CategorizationService.Suggestion("Salary", "rule", UUID.randomUUID(), Transaction.DecisionSource.KEYWORD_MATCH, null));
 
         String csv = "Date,Description,Amount\n2026-07-10,SALARY,50000.00\n";
@@ -599,6 +732,8 @@ class ImportServiceAskOnceTest {
     @Test
     void parseAndStage_handlesRealBankExport_withMetadataPreambleRaggedRowsAndCrSuffixedBalance() throws Exception {
         when(categorizationService.suggestReadOnly(anyList(), eq(userId), anyString(), any(), any()))
+                .thenReturn(new CategorizationService.Suggestion("Other", "default", null, Transaction.DecisionSource.MERCHANT_DEFAULT, null));
+        when(categorizationService.suggestReadOnly(anyList(), eq(userId), anyString(), any(), any(), any()))
                 .thenReturn(new CategorizationService.Suggestion("Other", "default", null, Transaction.DecisionSource.MERCHANT_DEFAULT, null));
 
         String csv = String.join("\n",
@@ -641,6 +776,8 @@ class ImportServiceAskOnceTest {
     @Test
     void parseAndStage_detectsAccountHolderName_fromAccountHolderColumn() throws Exception {
         when(categorizationService.suggestReadOnly(anyList(), eq(userId), anyString(), any(), any()))
+                .thenReturn(new CategorizationService.Suggestion("Other", "default", null, Transaction.DecisionSource.MERCHANT_DEFAULT, null));
+        when(categorizationService.suggestReadOnly(anyList(), eq(userId), anyString(), any(), any(), any()))
                 .thenReturn(new CategorizationService.Suggestion("Other", "default", null, Transaction.DecisionSource.MERCHANT_DEFAULT, null));
 
         String csv = String.join("\n",
@@ -701,6 +838,8 @@ class ImportServiceAskOnceTest {
     void parseAndStage_asksTheSuggestionEngine_forIncomeRowsToo_insteadOfHardcodingSalary() throws Exception {
         when(categorizationService.suggestReadOnly(anyList(), eq(userId), anyString(), any(), any()))
                 .thenReturn(new CategorizationService.Suggestion("Other", "default", null, Transaction.DecisionSource.MERCHANT_DEFAULT, null));
+        when(categorizationService.suggestReadOnly(anyList(), eq(userId), anyString(), any(), any(), any()))
+                .thenReturn(new CategorizationService.Suggestion("Other", "default", null, Transaction.DecisionSource.MERCHANT_DEFAULT, null));
 
         String description = "UPI/CR/900022223333/SAMPLEP/ICIC/samplepayer98-/U";
         String csv = "Date,Description,Debit,Credit\n2026-07-13," + description + ",,38.00\n";
@@ -713,10 +852,10 @@ class ImportServiceAskOnceTest {
         assertThat(response.rows().get(0).type()).isEqualTo("INCOME");
         assertThat(response.rows().get(0).suggestedCategory()).isEqualTo("Other");
         assertThat(response.rows().get(0).categorySource()).isEqualTo("default");
-        // suggestReadOnly, and the rules-carrying overload: staging asks the engine for income rows
-        // exactly like expense rows, and does so WITHOUT writing (WI3) against a rule set the
-        // preview generator fetched once (Bug 35's sibling fix).
-        verify(categorizationService).suggestReadOnly(anyList(), eq(userId), eq(description), any(), any());
+        // suggestReadOnly, and the rules-and-merchant-index-carrying overload: staging asks the
+        // engine for income rows exactly like expense rows, and does so WITHOUT writing (WI3)
+        // against a rule set the preview generator fetched once (Bug 35's sibling fix).
+        verify(categorizationService).suggestReadOnly(anyList(), eq(userId), eq(description), any(), any(), any());
     }
 
     /**
@@ -731,6 +870,8 @@ class ImportServiceAskOnceTest {
     @Test
     void parseAndStage_recognizesCurrencySuffixedHeaders_andSkipsOpeningClosingBalanceRows() throws Exception {
         when(categorizationService.suggestReadOnly(anyList(), eq(userId), anyString(), any(), any()))
+                .thenReturn(new CategorizationService.Suggestion("Other", "default", null, Transaction.DecisionSource.MERCHANT_DEFAULT, null));
+        when(categorizationService.suggestReadOnly(anyList(), eq(userId), anyString(), any(), any(), any()))
                 .thenReturn(new CategorizationService.Suggestion("Other", "default", null, Transaction.DecisionSource.MERCHANT_DEFAULT, null));
 
         String csv = String.join("\n",
@@ -771,6 +912,8 @@ class ImportServiceAskOnceTest {
     @Test
     void confirm_neverPersistsADatedBalanceMarkerRow_evenWhenTheClientIncludesEveryStagedRow() throws Exception {
         when(categorizationService.suggestReadOnly(anyList(), eq(userId), anyString(), any(), any()))
+                .thenReturn(new CategorizationService.Suggestion("Other", "default", null, Transaction.DecisionSource.MERCHANT_DEFAULT, null));
+        when(categorizationService.suggestReadOnly(anyList(), eq(userId), anyString(), any(), any(), any()))
                 .thenReturn(new CategorizationService.Suggestion("Other", "default", null, Transaction.DecisionSource.MERCHANT_DEFAULT, null));
 
         String csv = String.join("\n",
@@ -832,6 +975,8 @@ class ImportServiceAskOnceTest {
     void confirm_neverPersistsAZeroPaddedBalanceMarkerRow_evenWhenTheClientIncludesEveryStagedRow() throws Exception {
         when(categorizationService.suggestReadOnly(anyList(), eq(userId), anyString(), any(), any()))
                 .thenReturn(new CategorizationService.Suggestion("Other", "default", null, Transaction.DecisionSource.MERCHANT_DEFAULT, null));
+        when(categorizationService.suggestReadOnly(anyList(), eq(userId), anyString(), any(), any(), any()))
+                .thenReturn(new CategorizationService.Suggestion("Other", "default", null, Transaction.DecisionSource.MERCHANT_DEFAULT, null));
 
         String csv = String.join("\n",
                 "Date,Description,Debit,Credit,Balance",
@@ -882,6 +1027,8 @@ class ImportServiceAskOnceTest {
     @Test
     void parseAndStage_routesUnrecognizedColumnRowToUnparseable_insteadOfSilentlyDroppingIt() throws Exception {
         when(categorizationService.suggestReadOnly(anyList(), eq(userId), anyString(), any(), any()))
+                .thenReturn(new CategorizationService.Suggestion("Other", "default", null, Transaction.DecisionSource.MERCHANT_DEFAULT, null));
+        when(categorizationService.suggestReadOnly(anyList(), eq(userId), anyString(), any(), any(), any()))
                 .thenReturn(new CategorizationService.Suggestion("Other", "default", null, Transaction.DecisionSource.MERCHANT_DEFAULT, null));
 
         // Withdrawal/Deposit are included, blank, purely so CsvParser.findHeaderRowIndex (a

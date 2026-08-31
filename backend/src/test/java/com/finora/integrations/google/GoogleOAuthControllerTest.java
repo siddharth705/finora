@@ -31,7 +31,7 @@ class GoogleOAuthControllerTest {
     @DisplayName("the default post-connect redirect targets the real frontend route, /app/settings")
     void defaultPostConnectRedirectTargetsTheRealRoute() {
         assertThat(new GoogleOAuthProperties().getPostConnectRedirect())
-                .isEqualTo("https://app.finoratech.info/app/settings");
+                .isEqualTo("https://app.fynora.net/app/settings");
     }
 
     @Test
@@ -41,7 +41,7 @@ class GoogleOAuthControllerTest {
 
         assertThat(response.getHeaders().getLocation()).isNotNull();
         assertThat(response.getHeaders().getLocation().toString())
-                .startsWith("https://app.finoratech.info/app/settings")
+                .startsWith("https://app.fynora.net/app/settings")
                 .contains("gmail=invalid");
     }
 
@@ -51,7 +51,7 @@ class GoogleOAuthControllerTest {
         ResponseEntity<Void> response = controller().callback(null, null, "access_denied");
 
         assertThat(response.getHeaders().getLocation().toString())
-                .startsWith("https://app.finoratech.info/app/settings")
+                .startsWith("https://app.fynora.net/app/settings")
                 .contains("gmail=declined");
     }
 }

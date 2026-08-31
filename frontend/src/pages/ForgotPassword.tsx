@@ -39,7 +39,7 @@ export default function ForgotPassword() {
           <span className="w-7 h-7 rounded-lg bg-gradient-to-br from-primary to-primary-dark flex items-center justify-center">
             <Sparkles size={14} className="text-on-primary" strokeWidth={2.5} />
           </span>
-          <span className="font-extrabold tracking-wide text-ink">FINORA</span>
+          <span className="font-extrabold tracking-wide text-ink">FYNORA</span>
         </div>
 
         {submitted ? (
@@ -58,7 +58,7 @@ export default function ForgotPassword() {
                 <a href={devLink} className="underline break-all text-primary">{devLink}</a>
               </div>
             )}
-            <Link to="/login" className="text-sm text-primary font-medium">Back to sign in</Link>
+            <Link to="/auth" className="text-sm text-primary font-medium">Back to sign in</Link>
           </>
         ) : (
           <form onSubmit={handleSubmit} noValidate>
@@ -90,7 +90,7 @@ export default function ForgotPassword() {
             </button>
 
             <p className="text-sm mt-4 text-center">
-              <Link to="/login" className="text-primary font-medium">Back to sign in</Link>
+              <Link to="/auth" className="text-primary font-medium">Back to sign in</Link>
             </p>
           </form>
         )}

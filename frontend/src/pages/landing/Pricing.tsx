@@ -1,7 +1,7 @@
-import { Link } from 'react-router-dom';
 import { Check, Minus } from 'lucide-react';
 import { Reveal, Section, SectionHeading } from './primitives';
 import { AVAILABILITY_LABEL, AVAILABILITY_STYLE, COMPARISON, PRICING_CARDS } from './plans';
+import { MagneticLink } from './MagneticLink';
 
 /**
  * Pricing, with a paid tier advertised but not pretended into existence.
@@ -68,7 +68,7 @@ export function Pricing() {
               </ul>
 
               {plan.availability === 'available' ? (
-                <Link to="/register" className="m-btn m-btn-primary w-full">Start free</Link>
+                <MagneticLink to="/auth" className="m-btn m-btn-primary w-full">Start free</MagneticLink>
               ) : (
                 // A statement, not a control. See the note at the top of this file.
                 <p className="text-center text-sm py-3" style={{ color: 'var(--m-ink-3)' }}>

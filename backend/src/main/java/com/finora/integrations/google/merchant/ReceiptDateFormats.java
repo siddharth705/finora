@@ -19,7 +19,16 @@ import java.util.Locale;
  */
 final class ReceiptDateFormats {
 
+    /**
+     * "MMM d, yyyy" (abbreviated month) is tried before "MMMM d, yyyy" (full month) deliberately —
+     * the two are mutually exclusive for any real input (a captured string is either abbreviated or
+     * full, never both), so the order only affects how many guaranteed-to-fail attempts a call
+     * burns before its actual format succeeds, never which format wins. PhonePe/CRED both only ever
+     * produce the abbreviated form; putting it first means their (now two of six) callers succeed
+     * on the first try instead of the second.
+     */
     private static final List<DateTimeFormatter> FORMATS = List.of(
+            DateTimeFormatter.ofPattern("MMM d, yyyy", Locale.ENGLISH),
             DateTimeFormatter.ofPattern("MMMM d, yyyy", Locale.ENGLISH),
             DateTimeFormatter.ISO_LOCAL_DATE,
             DateTimeFormatter.ofPattern("d MMMM yyyy", Locale.ENGLISH),

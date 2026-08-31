@@ -5,6 +5,7 @@ import { AdminLayout } from '../components/AdminLayout';
 import { RequirePermission } from '../components/ProtectedRoute';
 import { FormPanel } from '../components/FormPanel';
 import { DataTable, type DataTableColumn } from '../components/DataTable';
+import { Pagination } from '../components/Pagination';
 import { useNotify } from '../context/NotificationContext';
 import { adminMerchantTemplatesApi } from '../api/endpoints';
 import type { CreateMerchantTemplateRequest, MerchantTemplateDto, TestMerchantTemplateResult } from '../types';
@@ -12,6 +13,8 @@ import type { CreateMerchantTemplateRequest, MerchantTemplateDto, TestMerchantTe
 const BLANK_FORM: CreateMerchantTemplateRequest = {
   merchantDomain: '', merchantName: '', receiptMarker: '', nonReceiptMarker: '', amountPattern: '', datePattern: '',
 };
+
+const PAGE_SIZE = 20;
 
 function errorMessage(err: any, fallback: string) {
   return err?.response?.data?.message ?? fallback;
@@ -218,6 +221,11 @@ function TemplateForm({
             onChange={(e) => setForm({ ...form, nonReceiptMarker: e.target.value })}
             className="w-full bg-bg border border-border rounded-lg px-3 py-2 text-sm"
           />
+          <p className="text-[11px] text-muted mt-1">
+            Safety check, applied before the receipt marker above: a matching email (a refund,
+            return, exchange, or cancellation notice) is never staged as an expense, even if it
+            also contains a valid-looking amount and date.
+          </p>
         </div>
         <div>
           <label htmlFor={`${id}-amount`} className="text-xs font-medium text-muted mb-1 block">Amount pattern</label>
@@ -298,10 +306,11 @@ function MerchantTemplatesContent() {
   const [showCreate, setShowCreate] = useState(false);
   const [editing, setEditing] = useState<MerchantTemplateDto | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
+  const [page, setPage] = useState(0);
 
   const { data: templates, isLoading } = useQuery({
-    queryKey: ['admin-merchant-templates'],
-    queryFn: () => adminMerchantTemplatesApi.list(),
+    queryKey: ['admin-merchant-templates', page],
+    queryFn: () => adminMerchantTemplatesApi.list(page, PAGE_SIZE),
   });
 
   function invalidate() {
@@ -473,11 +482,20 @@ function MerchantTemplatesContent() {
 
       <DataTable
         columns={columns}
-        rows={templates}
+        rows={templates?.content ?? []}
         keyFor={(t) => t.id}
         loading={isLoading}
         emptyMessage="No merchant templates yet."
       />
+      {templates && (
+        <Pagination
+          page={page}
+          totalPages={templates.totalPages}
+          totalElements={templates.totalElements}
+          pageSize={PAGE_SIZE}
+          onPageChange={setPage}
+        />
+      )}
     </div>
   );
 }

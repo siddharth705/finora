@@ -57,7 +57,8 @@ class ScopedIdentityLookupTest {
             // USER-scope rows together), and scoping them would silently change what "total users"
             // means rather than fix an identity-resolution bug.
             "countByEmailNot",
-            "countByStatusAndEmailNot");
+            "countByStatusAndEmailNot",
+            "countByEmailNotAndCreatedAtBetween");
 
     @GuardianRule(
             id = "FG-027",

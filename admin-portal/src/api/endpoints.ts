@@ -1,10 +1,12 @@
 import { api, rawApi, type ApiEnvelope } from './client';
 import type {
 
-  AccountDto, ActivationFunnelDto, AdminReferralSummaryDto, AdminUpdateUserRequest, AuditLogDto, BankDto, CategoryConfidencePoint,
+  AccountDto, ActivationFunnelDto, ActivityTrendPointDto, AdminReferralSummaryDto, AdminUpdateUserRequest, AuditLogDto, BankDto, CategoryConfidencePoint,
+  CoverageDto,
   CreateAccountRequest, CreateBankRequest, CreateMerchantTemplateRequest, CreateRelationshipRequest,
   CreateRuleRequest, CreateUserRequest, FeatureFlagDto, GmailMerchantParserStatDto, LearningGrowthPoint, LearningPlatformStatsDto, LearningSummaryDto,
   LearningTimelineEntry,
+  IntegrationsOverviewDto,
   MeAccessDto, MerchantDto, MerchantMergeRequest, MerchantStatDto, MerchantTemplateDto,
   MerchantUpdateRequest, OperationalDashboardDto, PagedResponse, PermissionDto, PlatformAnalyticsDto,
   PlatformDiagnosticsDto, PlatformSettingsDto, PlatformStatsDto, ReconciliationStatsDto, RecentImportDto,
@@ -25,7 +27,10 @@ import type {
   LayoutTimelinePoint,
   LayoutEvidenceReport,
   ImportTrace,
+  ImportRowTrace,
   CustomerFailureSummary,
+  ReconciliationExplorerTrace,
+  InsightsExplorerTrace,
 } from '../types';
 
 // Which portal this account belongs to. The same person may hold a USER account and an ADMIN
@@ -97,8 +102,8 @@ export const adminMfaApi = {
   status: () => api.get<{ enabled: boolean }>('/admin-mfa/status').then((r) => r.data),
   enroll: () => api.post<{ secret: string; provisioningUri: string }>('/admin-mfa/enroll').then((r) => r.data),
   confirm: (code: string) => api.post<{ recoveryCodes: string[] }>('/admin-mfa/confirm', { code }).then((r) => r.data),
-  disable: (currentPassword: string | null, googleIdToken: string | null) =>
-    api.post<void>('/admin-mfa/disable', { currentPassword, googleIdToken }).then((r) => r.data),
+  disable: (currentPassword: string | null, googleIdToken: string | null, code: string) =>
+    api.post<void>('/admin-mfa/disable', { currentPassword, googleIdToken, code }).then((r) => r.data),
 };
 
 // Just one endpoint now -- there's no backend-triggered "send" step (Firebase's own client SDK
@@ -165,7 +170,8 @@ export const banksApi = {
 };
 
 export const adminBanksApi = {
-  list: () => api.get<BankDto[]>('/admin/banks').then((r) => r.data),
+  list: (page: number, size: number) =>
+    api.get<PagedResponse<BankDto>>('/admin/banks', { params: { page, size } }).then((r) => r.data),
   create: (request: CreateBankRequest) =>
     api.post<BankDto>('/admin/banks', request).then((r) => r.data),
   update: (id: string, request: UpdateBankRequest) =>
@@ -186,6 +192,11 @@ export const adminAccountsApi = {
     api.put<AccountDto>(`/admin/users/${userId}/accounts/${accountId}`, request).then((r) => r.data),
   delete: (userId: string, accountId: string) =>
     api.delete(`/admin/users/${userId}/accounts/${accountId}`),
+  // Phase 1 of docs/proposals/statement-continuity-and-coverage-integrity-proposal.md (§0.14) --
+  // by accountId alone, not nested under a userId path, matching AdminImportTraceController's own
+  // by-reference lookup shape.
+  coverage: (accountId: string) =>
+    api.get<CoverageDto>(`/admin/accounts/${accountId}/coverage`).then((r) => r.data),
 };
 
 export const adminTransactionsApi = {
@@ -196,7 +207,8 @@ export const adminTransactionsApi = {
 };
 
 export const adminRulesApi = {
-  list: () => api.get<RuleDto[]>('/admin/rules').then((r) => r.data),
+  list: (page: number, size: number) =>
+    api.get<PagedResponse<RuleDto>>('/admin/rules', { params: { page, size } }).then((r) => r.data),
   create: (request: CreateRuleRequest) =>
     api.post<RuleDto>('/admin/rules', request).then((r) => r.data),
   update: (id: string, request: UpdateRuleRequest) =>
@@ -262,19 +274,22 @@ export const adminStatsApi = {
 export const adminDashboardApi = {
   overview: () => api.get<OperationalDashboardDto>('/admin/dashboard/overview').then((r) => r.data),
   activationFunnel: () => api.get<ActivationFunnelDto>('/admin/dashboard/activation-funnel').then((r) => r.data),
+  activityTrend: () => api.get<ActivityTrendPointDto[]>('/admin/dashboard/activity-trend').then((r) => r.data),
 };
 
 // D-28 PR4-A. SUBSCRIPTION_MANAGEMENT_VIEW/_MANAGE-gated (V99) -- its own permission, not folded
 // into PLATFORM_STATS_VIEW, same reasoning as PLATFORM_ANALYTICS_VIEW's own separation.
 export const adminSubscriptionsApi = {
-  list: () => api.get<SubscriptionSummaryDto[]>('/admin/subscriptions').then((r) => r.data),
+  list: (page: number, size: number) =>
+    api.get<PagedResponse<SubscriptionSummaryDto>>('/admin/subscriptions', { params: { page, size } }).then((r) => r.data),
   changePlan: (userId: string, planCode: string, reason: string) =>
     api.put(`/admin/subscriptions/${userId}/plan`, { planCode, reason }),
 };
 
 // D-28 PR4-C. REFERRAL_MANAGEMENT_VIEW/_MANAGE-gated (V101), same split as adminSubscriptionsApi.
 export const adminReferralsApi = {
-  list: () => api.get<AdminReferralSummaryDto[]>('/admin/referrals').then((r) => r.data),
+  list: (page: number, size: number) =>
+    api.get<PagedResponse<AdminReferralSummaryDto>>('/admin/referrals', { params: { page, size } }).then((r) => r.data),
   creditReward: (referralId: string, amount: number, reason: string) =>
     api.post(`/admin/referrals/${referralId}/credit`, { amount, reason }),
 };
@@ -291,6 +306,13 @@ export const adminSystemApi = {
 // backend doc comment. Shares the SYSTEM_SETTINGS gate with adminSystemApi above.
 export const adminDiagnosticsApi = {
   overview: () => api.get<PlatformDiagnosticsDto>('/admin/diagnostics').then((r) => r.data),
+};
+
+// Integrations page -- which third-party services Finora talks to, their live status (reusing
+// the same health registry adminDashboardApi's overview.health draws from), and what's planned
+// but not yet built. Shares PLATFORM_DIAGNOSTICS_VIEW with adminSystemApi/adminDiagnosticsApi.
+export const adminIntegrationsApi = {
+  overview: () => api.get<IntegrationsOverviewDto>('/admin/integrations').then((r) => r.data),
 };
 
 /** The merchant learning queue (WI2). Every list row already carries the correlation an operator
@@ -352,7 +374,8 @@ export const adminMerchantsApi = {
  *  class doc for why. New templates come back disabled; activate is a separate call, always
  *  taken only after a successful test (see MerchantTemplates.tsx's own TestTemplatePanel). */
 export const adminMerchantTemplatesApi = {
-  list: () => api.get<MerchantTemplateDto[]>('/admin/merchant-templates').then((r) => r.data),
+  list: (page: number, size: number) =>
+    api.get<PagedResponse<MerchantTemplateDto>>('/admin/merchant-templates', { params: { page, size } }).then((r) => r.data),
   create: (request: CreateMerchantTemplateRequest) =>
     api.post<MerchantTemplateDto>('/admin/merchant-templates', request).then((r) => r.data),
   update: (id: string, request: UpdateMerchantTemplateRequest) =>
@@ -435,6 +458,27 @@ export const adminReconciliationApi = {
   platformStats: () => api.get<ReconciliationStatsDto>('/admin/reconciliation/stats').then((r) => r.data),
 };
 
+/** One transaction, traced from raw to final classification -- Phase 2's Founder Operations
+ *  Dashboard, Reconciliation Explorer (AdminReconciliationExplorerController). Same
+ *  RECONCILIATION_VIEW permission as adminReconciliationApi above; a 404 means no transaction
+ *  with that id exists, not a permission problem. */
+export const adminReconciliationExplorerApi = {
+  trace: (transactionId: string) =>
+    api.get<ReconciliationExplorerTrace>(`/admin/reconciliation/explorer/${encodeURIComponent(transactionId)}`)
+      .then((r) => r.data),
+};
+
+/** One user's dashboard insights, traced back to the transaction set and formula that produced
+ *  each number -- Phase 2's Founder Operations Dashboard, Insight Explorer
+ *  (AdminInsightsExplorerController). Gated on INSIGHTS_EXPLORER_VIEW, its own permission -- see
+ *  that controller's own comment for why this isn't folded into USER_VIEW or
+ *  RECONCILIATION_VIEW. A 404 means no user with that id exists, not a permission problem. */
+export const adminInsightsExplorerApi = {
+  trace: (userId: string) =>
+    api.get<InsightsExplorerTrace>(`/admin/insights/explorer/${encodeURIComponent(userId)}`)
+      .then((r) => r.data),
+};
+
 /** Admin, read-only Reconciliation Monitor + Workspace Health for a specific user --
  *  AdminUserWorkspaceController proxies the same WorkspaceDashboardService.summarize() the
  *  self-service Workspace Dashboard used. Reconciliation runs fully automatically (see
@@ -511,6 +555,15 @@ export const adminImportTraceApi = {
       .then((r) => r.data),
   byJob: (jobId: string) =>
     api.get<ImportTrace>(`/admin/imports/traces/by-job/${encodeURIComponent(jobId)}`)
+      .then((r) => r.data),
+};
+
+/** One import, row by row -- Founder Operations Dashboard, Import Row Trace
+ *  (AdminImportRowTraceController). Same PLATFORM_DIAGNOSTICS_VIEW permission as
+ *  adminImportTraceApi above; a 404 means no statement import with that id exists. */
+export const adminImportRowTraceApi = {
+  trace: (statementImportId: string) =>
+    api.get<ImportRowTrace>(`/admin/imports/row-trace/${encodeURIComponent(statementImportId)}`)
       .then((r) => r.data),
 };
 

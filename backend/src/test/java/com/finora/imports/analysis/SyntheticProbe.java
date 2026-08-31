@@ -1,5 +1,7 @@
 package com.finora.imports.analysis;
 
+import com.finora.imports.TestAccountRepositories;
+
 import com.finora.dto.ImportDto.StagedAccountSection;
 import com.finora.dto.ImportDto.StagedRow;
 import com.finora.imports.*;
@@ -47,10 +49,12 @@ public final class SyntheticProbe {
                 .thenReturn(new CategorizationService.Suggestion("Uncategorized", "default", null, null, null));
         when(cat.suggestReadOnly(any(), any(), any(), any(), any()))
                 .thenReturn(new CategorizationService.Suggestion("Uncategorized", "default", null, null, null));
+        when(cat.suggestReadOnly(any(), any(), any(), any(), any(), any()))
+                .thenReturn(new CategorizationService.Suggestion("Uncategorized", "default", null, null, null));
         TransactionRepository repo = mock(TransactionRepository.class);
-        when(repo.findPotentialDuplicatesByUser(any(), any(), any(), any())).thenReturn(List.of());
+        when(repo.findPotentialDuplicatesByUserAndAccountIdIn(any(), any(), any(), any(), any())).thenReturn(List.of());
         return new PdfPreviewGenerator(new PdfTextExtractor(), new PdfTableLocator(), new PdfMetadataExtractor(),
-                new TransactionNormalizer(cat, new DuplicateDetector(repo), TestRuleEngines.empty()),
+                new TransactionNormalizer(cat, new DuplicateDetector(repo, TestAccountRepositories.anyLive()), TestRuleEngines.empty()),
                 ProductDiscovery.standard(), new ProductAttributeExtractor(),
                 new ImportVerifier(new BalanceChainValidator(), new StatementTotalsValidator(),
                         new SummaryTotalsValidator(), new ColumnAmbiguityValidator(), new RowAccountingValidator(), new com.finora.imports.CreditCardStatementTotalsValidator(), new com.finora.imports.CreditCardFlowReconciliationValidator()),

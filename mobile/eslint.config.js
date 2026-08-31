@@ -10,11 +10,49 @@
 // no-unused-vars on is what found the dead ActivityIndicator import in ImportScreen.tsx.
 const { defineConfig } = require('eslint/config');
 const expoConfig = require('eslint-config-expo/flat');
+const a11yPlugin = require('eslint-plugin-react-native-a11y');
 
 module.exports = defineConfig([
   expoConfig,
   {
     ignores: ['dist/*', '.expo/*', 'node_modules/*'],
+  },
+  {
+    // eslint-plugin-react-native-a11y predates ESLint 9's flat config -- its own peerDependencies
+    // still caps at ^8, which is why package.json's `overrides` has an entry pinning what THIS
+    // package sees as its "eslint" peer to the one actually installed here ($eslint). That's
+    // narrower than `--legacy-peer-deps` on the whole install: it was tried first and dropped a
+    // real transitive dependency (@react-native/jest-preset) from the resolved tree with no error,
+    // which broke every test in the suite silently until `npm test` was run and caught it -- the
+    // override affects only this one package's own peer resolution, nothing else in the tree. It
+    // ships plain CommonJS rule objects with no flat export at all, so it's wired in by hand:
+    // `plugins` takes the rule-defining module directly (flat config's
+    // {name: module} shape, not the old eslintrc `plugins: ['react-native-a11y']` string form its
+    // own `configs.*` objects still use -- those aren't spread here for that reason), and `rules`
+    // starts from `configs.all.rules` -- every rule the plugin ships -- rather than listing rules
+    // one by one, so a future plugin version adding a rule is opted in by default like every other
+    // preset in this file, not silently skipped.
+    //
+    // Confirmed compatible in practice, not just assumed from the peer range being conservative: a
+    // scratch config that turned on every rule in `configs.all` was run against the full mobile
+    // src/ tree, and it found and correctly reported four real, pre-existing gaps (two inputs
+    // missing an accessible name, an invalid accessibilityValue combining min/max/now with text,
+    // and a stepper whose two Pressables were unreachable to a screen reader once the parent View
+    // became a single accessible unit) -- all four fixed alongside this config landing.
+    plugins: { 'react-native-a11y': a11yPlugin },
+    rules: {
+      ...a11yPlugin.configs.all.rules,
+
+      // The one rule turned off, not enabled-then-suppressed per file: it demands an
+      // accessibilityHint on every element that already has an accessibilityLabel, which is
+      // guidance about what to WRITE, not a bug class -- unlike every rule left on above, which
+      // catches a missing accessible name, an invalid accessibilityValue shape, or a nested
+      // touchable a screen reader genuinely cannot reach. Turning it on would have meant writing
+      // hint text for every existing accessibilityLabel in one pass just to turn the check on,
+      // which is exactly the "blind refactor to satisfy a linter" this repo's other rule-off
+      // decisions in this file avoid.
+      'react-native-a11y/has-accessibility-hint': 'off',
+    },
   },
   {
     rules: {

@@ -14,6 +14,7 @@ import { InsightsScreen } from '../screens/InsightsScreen';
 import { InvestmentsScreen } from '../screens/InvestmentsScreen';
 import { ProfileScreen } from '../screens/ProfileScreen';
 import { SettingsScreen } from '../screens/SettingsScreen';
+import { VerifyEmailChangeScreen } from '../screens/settings/VerifyEmailChangeScreen';
 import { useTheme } from '../theme';
 import type { AppTabParamList, MoreStackParamList } from './types';
 
@@ -46,6 +47,10 @@ function MoreNavigator() {
       <MoreStack.Screen name="Investments" component={InvestmentsScreen} />
       <MoreStack.Screen name="Profile" component={ProfileScreen} />
       <MoreStack.Screen name="Settings" component={SettingsScreen} />
+      {/* Header hidden, same as MoreHome/Accounts/Statements above: this screen renders its own
+          full-screen AuthScreenLayout card, and it's reached via a deep link rather than a normal
+          in-app push, so there's no prior screen for a native back button to imply. */}
+      <MoreStack.Screen name="VerifyEmailChange" component={VerifyEmailChangeScreen} options={{ headerShown: false }} />
     </MoreStack.Navigator>
   );
 }
