@@ -123,7 +123,7 @@ class ImportServiceStorageDualWriteTest {
                 merchantRepository, statementImportRepository, categorizationService, mock(ReconciliationService.class),
                 mock(RecurringService.class), previewGenerator, duplicateDetector, ruleLearningService,
                 importSessionService, mock(com.finora.imports.pdf.PdfPreviewGenerator.class),
-                productIdentityResolver, statementContentService,
+                productIdentityResolver, mock(com.finora.imports.ownership.OwnershipMatchService.class), statementContentService,
                 mock(com.finora.imports.analysis.StatementAnalysisRecorder.class),
                 mock(com.finora.imports.analysis.ImportVerificationRecorder.class),
                 mock(com.finora.service.MerchantLearningEventPublisher.class), mock(LayoutRegistryService.class),

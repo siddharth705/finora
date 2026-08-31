@@ -351,6 +351,10 @@ export interface ConfirmPayload {
   // Only meaningful to confirmReimport, for a statement whose stored bytes are a password-protected
   // PDF -- see ConfirmRequest's own doc comment on the backend. Every other confirm path ignores it.
   password?: string;
+  // docs/proposals/account-ownership-intelligence-proposal.md §3.1/§3.2. Whether the user clicked
+  // "Continue Import" after the client-side ownership warning fired -- see ConfirmRequest's own
+  // doc comment on the backend. Omitted (not just false) when the warning never fired.
+  userConfirmedContinue?: boolean;
 }
 
 // One account's worth of reviewed rows within a MultiAccountConfirmPayload -- same shape as
