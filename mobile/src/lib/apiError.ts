@@ -26,7 +26,15 @@ const FIREBASE_MESSAGES: Record<string, string> = {
   'auth/quota-exceeded': 'Verification is temporarily unavailable. Try again shortly.',
   'auth/network-request-failed': "Can't reach the verification service. Check your connection.",
   'auth/missing-client-identifier':
-    'This build can’t verify your device. Its Firebase setup is incomplete — see docs/engineering/mobile-setup.md.',
+    'This build can’t verify your device. Its Firebase setup is incomplete — see docs/engineering/mobile/mobile-setup.md.',
+  // The three below all presented as the caller's generic fallback until 2026-08-30, which is why
+  // a phone-auth outage had to be diagnosed by probing Identity Toolkit directly.
+  'auth/billing-not-enabled':
+    'Phone verification isn’t available on this build — its Firebase project needs the Blaze plan. See docs/engineering/mobile/mobile-setup.md.',
+  'auth/operation-not-allowed':
+    'Phone sign-in is switched off for this build — enable the Phone provider in Firebase Authentication.',
+  'auth/app-not-authorized':
+    'This build isn’t authorised for phone verification. Its signing certificate is not registered in Firebase — see docs/engineering/mobile/mobile-setup.md.',
 };
 
 const OFFLINE_MESSAGE = "Can't reach Fynora. Check your connection and try again.";
@@ -67,7 +75,13 @@ export function toUserMessage(err: unknown, fallback: string): string {
   // Firebase errors aren't axios errors and carry their own `code`.
   const code = (err as { code?: unknown } | null)?.code;
   if (typeof code === 'string' && code.startsWith('auth/')) {
-    return FIREBASE_MESSAGES[code] ?? fallback;
+    const mapped = FIREBASE_MESSAGES[code];
+    if (mapped) return mapped;
+    // The map will always trail Firebase's own list. Losing the code is the part that hurt: the
+    // fallback sentence fits every possible cause, so a build failure, a disabled provider and an
+    // unpaid plan all read identically on screen and leave nothing behind to tell them apart.
+    console.warn(`[auth] unmapped Firebase error code: ${code}`);
+    return fallback;
   }
 
   if (axios.isAxiosError(err)) {
