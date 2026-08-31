@@ -89,7 +89,9 @@ jobs:
       # for a single-app job's own cache-dependency-path.
       - uses: actions/setup-node@v7
         with:
-          node-version: '20'
+          # See ci.yml's user frontend job for why this moved off Node 20 (jsdom 30's Node
+          # requirement, discovered via admin-portal's dependabot bump).
+          node-version: '22'
           cache: 'npm'
           cache-dependency-path: |
             frontend/package-lock.json
