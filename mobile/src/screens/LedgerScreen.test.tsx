@@ -1,7 +1,8 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react-native';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { LedgerScreen } from './LedgerScreen';
+import { DEFAULT_LEDGER_FILTERS, LEDGER_PAGE_SIZE, LedgerScreen, getLedgerNextPageParam } from './LedgerScreen';
 import { transactionsApi } from '../api/endpoints';
+import { hapticImpact } from '../lib/haptics';
 import type { Transaction } from '../types';
 
 /**
@@ -28,6 +29,8 @@ jest.mock('../api/endpoints', () => ({
 jest.mock('../lib/invalidateFinancialData', () => ({
   invalidateFinancialData: jest.fn(),
 }));
+
+jest.mock('../lib/haptics');
 
 const transactions = transactionsApi as jest.Mocked<typeof transactionsApi>;
 
@@ -162,5 +165,49 @@ describe('a failure while paging', () => {
     // reading must survive a failed page.
     expect(screen.getByText('First page row')).toBeTruthy();
     expect(screen.queryByText(/No transactions yet/i)).toBeNull();
+  });
+});
+
+describe('skeleton loading', () => {
+  it('shows skeleton placeholder rows while the first page is loading, not a spinner', async () => {
+    let resolveSearch: (value: unknown) => void = () => {};
+    transactions.search.mockReturnValue(new Promise((resolve) => { resolveSearch = resolve as typeof resolveSearch; }));
+
+    renderScreen();
+
+    expect(screen.getAllByTestId('skeleton-transaction-row', { hidden: true }).length).toBeGreaterThan(0);
+    expect(screen.queryByTestId('ledger-list')).toBeNull();
+
+    await act(async () => resolveSearch(page([])));
+  });
+});
+
+describe('DEFAULT_LEDGER_FILTERS export (for Dashboard prefetch)', () => {
+  it('matches exactly what a fresh mount searches with', async () => {
+    transactions.search.mockResolvedValue(page([]) as never);
+
+    renderScreen();
+
+    await screen.findByText(/No transactions yet/i);
+    expect(transactions.search).toHaveBeenCalledWith({ ...DEFAULT_LEDGER_FILTERS, page: 0 });
+  });
+
+  it('exposes the page size and pagination cursor logic LedgerScreen itself uses', () => {
+    expect(LEDGER_PAGE_SIZE).toBe(20);
+    expect(DEFAULT_LEDGER_FILTERS).toEqual({ size: 20, sortField: 'date', sortDir: 'desc' });
+    expect(getLedgerNextPageParam({ content: [], page: 0, size: 20, totalElements: 40, totalPages: 2 })).toBe(1);
+    expect(getLedgerNextPageParam({ content: [], page: 1, size: 20, totalElements: 40, totalPages: 2 })).toBeUndefined();
+  });
+});
+
+describe('long-press haptic', () => {
+  it('acknowledges the long press with an impact haptic before offering to delete', async () => {
+    transactions.search.mockResolvedValue(page([txn()]) as never);
+    renderScreen();
+    await waitFor(() => screen.getByText('Grocery run'));
+
+    fireEvent(screen.getByRole('button', { name: /Grocery run/ }), 'longPress');
+
+    expect(hapticImpact).toHaveBeenCalledTimes(1);
   });
 });

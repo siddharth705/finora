@@ -31,14 +31,13 @@ Don't redo these:
 - `@react-native-firebase/app` + `/auth` installed and registered as config plugins in
   `mobile/app.config.ts`, with `expo-build-properties` set to `useFrameworks: static` and
   `forceStaticLinking: ['RNFBApp', 'RNFBAuth']` (required for RNFirebase on iOS).
-- Bundle identifiers set to `com.finoratech.app` on **both** platforms (`ios.bundleIdentifier`,
-  `android.package`) in `mobile/app.config.ts`. Renamed from the original `com.finora.app` (still
-  visible in git history) after it turned out to be unavailable to register as an App ID under
-  this project's Apple Developer team (either a genuine third-party collision, or residue from the
-  Organization/DUNS enrollment attempt abandoned in favor of an Individual account — see the plan
-  doc's D-14/R-16). Both platforms were renamed together rather than leaving iOS and Android on
-  different identifiers. **Confirm this before the first store submission — it is effectively
-  permanent afterwards.**
+- Bundle identifiers set to `com.fynora.app` on **both** platforms (`ios.bundleIdentifier`,
+  `android.package`) in `mobile/app.config.ts`. This is the third identifier the project has had —
+  `com.finora.app` (unavailable under this Apple team), then `com.finoratech.app` (named after a
+  domain since sold and cut over), now `com.fynora.app`, matching the product name. See
+  [Bundle identifier migration](#bundle-identifier-migration) for what a change costs and the
+  console steps it requires. **Nothing has been submitted to either store yet, which is the only
+  reason this was still free to change — after first submission it is effectively permanent.**
 - `mobile/eas.json` with `development`, `preview`, and `production` profiles.
 - `app.config.ts` references `GoogleService-Info.plist` / `google-services.json` only when those
   files are actually present, so commands don't error before you've downloaded them.
@@ -354,7 +353,7 @@ Needed before phone verification will work. In the Firebase Console, on **the sa
 backend's `GOOGLE_APPLICATION_CREDENTIALS` service account belongs to**:
 
 1. Project Settings → Your apps → Add app → Android.
-2. Package name: `com.finoratech.app` (must match `android.package` exactly).
+2. Package name: `com.fynora.app` (must match `android.package` exactly).
 3. Download `google-services.json` → place it at `mobile/google-services.json`.
    It is gitignored on purpose — same rule as the backend's service-account key. Every developer
    downloads their own.
@@ -386,7 +385,7 @@ installing it).
 ### Firebase iOS app
 
 1. Firebase Console → Project Settings → Your apps → Add app → iOS.
-2. Bundle ID: `com.finoratech.app` (must match `ios.bundleIdentifier`).
+2. Bundle ID: `com.fynora.app` (must match `ios.bundleIdentifier`).
 3. Download `GoogleService-Info.plist` → place at `mobile/GoogleService-Info.plist` (also
    gitignored).
 4. **APNs key** — this is the step most easily missed, and phone auth silently fails without it.
@@ -459,12 +458,16 @@ To re-create it:
 cd mobile && npx eas env:create --environment production --name GOOGLE_SERVICES_JSON --type file --value ./google-services.json --visibility secret
 ```
 
-### Signing fingerprints — two keystores, not one
+### Signing fingerprints — three certificates, not two
 
-Firebase phone auth attests the app by its signing certificate, so **every** keystore that produces
-a build needs its SHA-1 and SHA-256 registered in Firebase Console → Project Settings → the
-`com.finoratech.app` Android app. There are two, and forgetting the second is the usual way phone auth
-"works locally and fails on the installed build":
+Firebase phone auth attests the app by its signing certificate, and Google Sign-In keys its Android
+OAuth client off the same fingerprint. So **every** certificate that ends up on a device needs its
+SHA-1 *and* SHA-256 registered in Firebase Console → Project Settings → the `com.fynora.app`
+Android app.
+
+There are **three**. This section said "two" until 2026-08-30, which is correct right up until the
+first Play upload and wrong immediately afterwards — see [The third certificate](#the-third-certificate--play-app-signing)
+below. Missing any of them fails as a Firebase error rather than a configuration one:
 
 - **The local debug keystore** at `~/.android/debug.keystore`, created on first build with the
   well-known `android`/`androiddebugkey` credentials. Not a secret; it signs debug builds only.
@@ -474,7 +477,12 @@ a build needs its SHA-1 and SHA-256 registered in Firebase Console → Project S
   ```
 
 - **The EAS-managed keystore**, generated on the first cloud build and held by EAS. Different
-  certificate, different fingerprints.
+  certificate, different fingerprints. It covers **both** `eas build` and `eas build --local` —
+  `--local` runs the same pipeline on your machine and pulls the same keystore from EAS, so
+  alternating between cloud and local builds (for example, to stretch a monthly build quota) does
+  not change the signing identity and needs no second registration. A bare `./gradlew` release
+  build would, which is the reason not to do one: `mobile/android` is gitignored and regenerated by
+  prebuild, so there is nowhere durable to put a signing config anyway.
 
   ```bash
   cd mobile && npx eas credentials --platform android
@@ -487,8 +495,52 @@ a build needs its SHA-1 and SHA-256 registered in Firebase Console → Project S
   keytool -printcert -jarfile <downloaded>.apk
   ```
 
-Phone auth fails on any build whose fingerprints are missing, and the failure looks like a Firebase
-error rather than a configuration one.
+#### The third certificate — Play App Signing
+
+**Google re-signs your app.** With Play App Signing (the default for new apps, and not optional for
+new Play accounts), the key you upload with is *not* the key users' devices see. Google holds an
+**app signing key**, re-signs the delivered artifact with it, and that is the certificate Firebase
+is asked to attest against on every install from Play — including internal and closed testing
+tracks.
+
+The practical consequence, and the reason this is worth its own heading: **Google Sign-In and phone
+auth will work perfectly on every build you have ever made, and then fail the first time someone
+installs from Play.** Nothing changed in the app; the signature did.
+
+The key does not exist until the first upload, so it cannot be registered in advance. Immediately
+after that upload:
+
+1. Play Console → Test and release → Setup → **App integrity** → App signing key certificate.
+2. Copy the SHA-1 **and** SHA-256.
+3. Add both to the `com.fynora.app` Android app in Firebase.
+4. **Re-download `google-services.json`** and update the `GOOGLE_SERVICES_JSON` EAS environment
+   variable (see [Where the build actually reads these files from](#where-the-build-actually-reads-these-files-from)).
+
+Treat this as part of the upload, not as follow-up work.
+
+#### Where the build actually reads these files from
+
+`google-services.json` and `GoogleService-Info.plist` are **gitignored on purpose** — same rule as
+the backend's service-account key. That means a fresh download is not "done" when the file is in
+`mobile/`:
+
+- **Local builds** read `mobile/google-services.json` directly.
+- **EAS builds — cloud *and* `--local` — do not.** `app.config.ts` reads the `GOOGLE_SERVICES_JSON`
+  and `GOOGLE_SERVICES_PLIST` environment variables, which are stored as EAS **secret files**. A
+  fresh download that is only placed in `mobile/` leaves every EAS build on the previous copy.
+
+So every fingerprint change, and the bundle-identifier migration, needs **two** updates: the local
+file and the EAS secret. Updating the EAS secret file:
+
+```bash
+cd mobile
+npx eas-cli env:update GOOGLE_SERVICES_JSON --environment preview --type file --value ./google-services.json
+npx eas-cli env:update GOOGLE_SERVICES_JSON --environment production --type file --value ./google-services.json
+```
+
+The mismatch does not fail gracefully: the Google Services Gradle plugin aborts the build when the
+file's `package_name` does not match `android.package`, and it names neither the environment
+variable nor the environment it came from.
 
 ### Producing a build
 
@@ -702,3 +754,160 @@ Android behaves the same way with `google-services.json`.
   verify the app during phone auth.
 - **Password reset completes on the web app**, not in-app — the emailed link points at
   `APP_BASE_URL`. Deep-linking it is deferred until there's evidence the hand-off is real friction.
+
+---
+
+## Bundle identifier migration
+
+Written for the `com.finoratech.app` → `com.fynora.app` change (plan doc D-31), and kept because
+the project has now done this twice and will want the checklist if it ever happens again.
+
+**A bundle identifier is not a name — it is the primary key three external systems join on.**
+Changing the two lines in `app.config.ts` is the smallest part of the work, and on its own it
+produces a build that compiles, installs, and cannot sign in.
+
+### Why it was worth doing now
+
+Once an app has been submitted to either store the identifier is effectively permanent: changing it
+afterwards means a new App Store listing and a new Play listing, with ratings, reviews and install
+counts starting from zero. Nothing has been submitted, so the change costs a day instead of a
+product's history.
+
+### Do this first — everything else is wasted if it fails
+
+**Register `com.fynora.app` as an App ID in Apple Developer → Certificates, Identifiers & Profiles.**
+`com.finora.app` was refused as unavailable, which is what caused the previous rename, so
+availability is not a formality. If it is refused, stop and pick another candidate before any of
+the steps below.
+
+### What the code change does and does not cover
+
+Covered by the repo change: `ios.bundleIdentifier`, `android.package`, the three Maestro flow
+`appId`s, the Maestro `google-services.placeholder.json` package name, the backend's Apple
+verifier tests and config comments.
+
+**Not covered — console and environment work, none of which the repo can do:**
+
+1. **Firebase — register both apps under the new identifier.** Project Settings → Your apps → Add
+   app, once for iOS (`com.fynora.app`) and once for Android (`com.fynora.app`). Download the fresh
+   `GoogleService-Info.plist` and `google-services.json` and replace the local copies. Both are
+   gitignored, so every developer repeats this.
+2. **Re-register the Android signing fingerprints.** SHA-1 *and* SHA-256, for **both** keystores
+   (local debug and EAS upload), against the new Firebase Android app — see
+   [Signing fingerprints](#signing-fingerprints--two-keystores-not-one). The old app's fingerprints
+   do not carry over, and phone auth fails on the installed build if this is missed.
+3. **Re-associate the APNs key** with the new Firebase iOS app, or iOS phone auth silently fails —
+   see the APNs step under [Firebase iOS app](#firebase-ios-app).
+4. **`APPLE_LOGIN_CLIENT_IDS` on the backend, in every deployed environment.** Apple's `aud` claim
+   on a natively-minted token *is* the bundle identifier (see `AppleLoginProperties`), so a token
+   from the new build fails verification against the old value. **Set both during the cutover:**
+
+   ```
+   APPLE_LOGIN_CLIENT_IDS=com.fynora.app,com.finoratech.app
+   ```
+
+   The property is a list precisely so this does not have to be a synchronised swap. Deploy the
+   two-value form **before** shipping a build with the new identifier, then drop the old value once
+   no build carrying it is still in anyone's hands. A hard swap leaves a window where one of the
+   two cannot sign in with Apple, and which one depends on deploy ordering.
+5. **Google Sign-In.** No code change: the app configures `GoogleSignin` with
+   `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID`, and the *web* OAuth client is not bundle-scoped. But the
+   **native** iOS/Android OAuth clients are, and they are created by step 1 — so step 1 is what
+   makes Google sign-in work again, not a separate action.
+6. **EAS credentials.** The iOS provisioning profile and Android upload key are bound to the old
+   identifier; EAS will provision new ones on the next build. Expect the first build after this
+   change to prompt for credentials rather than reuse cached ones.
+
+### Left deliberately unchanged
+
+- **`scheme: 'finora'`** — the custom URL scheme, used for deep links. Changing it is a separate
+  decision with its own blast radius (any registered OAuth redirect URI), and no deep links are
+  implemented yet. Cheap to change now, cheap to change later; not bundled into this migration
+  without a decision.
+- **`slug: 'finora-mobile'`** — the EAS project slug. It identifies the project on EAS, not the app
+  on a device; changing it re-points the EAS project and is not something to do incidentally.
+
+---
+
+## Dev and production variants
+
+Two variants of one app, selected by the `APP_VARIANT` environment variable, set per profile in
+`mobile/eas.json`.
+
+| | Production | Development |
+|---|---|---|
+| `APP_VARIANT` | `production` (or unset) | `development` |
+| Identifier (both platforms) | `com.fynora.app` | `com.fynora.app.dev` |
+| Display name | Fynora | Fynora Dev |
+| URL scheme | `finora` | `finora-dev` |
+| Firebase project | Fynora (`finora-88346`) | Fynora Dev (`finora-dev-55602`) |
+| API | `api.fynora.net` | `dev-api.fynora.net` |
+| EAS profiles | `preview`, `production` | `development`, `dev` |
+
+**Production is the default when `APP_VARIANT` is unset.** Anything that resolves the config without
+opting in — `expo config`, a local gradle build, the Maestro flows, CI — keeps the identifiers it had
+before variants existed. A dev build is something you ask for, never something you get by forgetting
+to ask.
+
+### Why the identifiers differ — this is not cosmetic
+
+Google resolves an OAuth client from the **(package name, SHA-1) pair**, and that pair must be unique
+across Firebase projects.
+
+Registering `com.fynora.app` in both the production and dev projects did not merely produce the
+console's "already in use" warning. **Firebase declined to create the dev project's Android OAuth
+clients at all**: the downloaded `google-services.json` came back with a `client_type: 3` web client
+and nothing else — no `client_type: 1` entry, no `certificate_hash`. A build using it cannot do
+Google Sign-In (no native client to resolve) or phone auth (no registered certificate).
+
+Re-registering under `com.fynora.app.dev` produced both Android clients immediately, one per
+fingerprint. The suffix is what makes the pairs unique.
+
+### The keystore consequence, which is easy to miss
+
+**EAS credentials are keyed per application identifier.** `com.fynora.app.dev` has no keystore, so
+the first dev build generates a new one — with **new fingerprints that are not the production upload
+key's**.
+
+So the production upload key's SHA-1 (`6F:DE:…`), even if it was registered against the dev Firebase
+app, does not match anything a dev EAS build produces. After the first dev build:
+
+1. `npx eas-cli credentials -p android` with `APP_VARIANT=development` → read the new keystore's
+   SHA-1 and SHA-256.
+2. Add both to the **`com.fynora.app.dev`** app in the **Fynora Dev** project.
+3. Re-download `google-services.json` and update the `GOOGLE_SERVICES_JSON` EAS variable in the
+   `development` environment.
+
+The local debug keystore is shared across packages, so its fingerprint carries over unchanged — which
+is why a locally-built dev debug binary can work while an EAS-built one does not.
+
+### Config files
+
+Dev uses its own, and they are gitignored the same way:
+
+| Variant | Android | iOS |
+|---|---|---|
+| Production | `mobile/google-services.json` | `mobile/GoogleService-Info.plist` |
+| Development | `mobile/google-services.dev.json` | `mobile/GoogleService-Info.dev.plist` |
+
+`GOOGLE_SERVICES_JSON` / `GOOGLE_SERVICES_PLIST` override both when set, which is how EAS builds get
+them — see [Where the build actually reads these files from](#where-the-build-actually-reads-these-files-from).
+The `development` environment needs **four** variables, not two:
+
+```
+EXPO_PUBLIC_API_BASE_URL=https://dev-api.fynora.net
+EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID=<dev project's web client id>
+GOOGLE_SERVICES_JSON=<dev google-services.json, as a secret file>
+GOOGLE_SERVICES_PLIST=<dev GoogleService-Info.plist, as a secret file>
+```
+
+Setting only the first two leaves the build falling back to the **production** Firebase files: a
+binary whose web client id says dev and whose native config says prod, failing in a way that reads
+like a backend audience bug.
+
+### Backend
+
+The dev backend's `GOOGLE_LOGIN_CLIENT_IDS` must contain the **dev** project's web client id, and
+must not contain production's — a dev backend that accepts production-audience tokens defeats the
+separation. `APPLE_LOGIN_CLIENT_IDS` on dev is `com.fynora.app.dev`, for the same reason it is
+`com.fynora.app` on production: Apple's `aud` on a natively-minted token is the bundle identifier.

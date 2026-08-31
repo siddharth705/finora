@@ -62,6 +62,10 @@ const EXISTING_TEMPLATE = {
   domainIsTrusted: true,
 };
 
+function pageOf(...rows: typeof EXISTING_TEMPLATE[]) {
+  return { content: rows, page: 0, size: 20, totalElements: rows.length, totalPages: 1 };
+}
+
 describe('MerchantTemplates', () => {
   beforeEach(() => {
     vi.mocked(useAdminAuth).mockReset();
@@ -75,7 +79,7 @@ describe('MerchantTemplates', () => {
 
   it('shows an access-denied message when the account lacks MERCHANT_MANAGE', () => {
     mockAuth([]);
-    vi.mocked(adminMerchantTemplatesApi.list).mockResolvedValue([]);
+    vi.mocked(adminMerchantTemplatesApi.list).mockResolvedValue(pageOf());
 
     renderPage();
 
@@ -84,7 +88,7 @@ describe('MerchantTemplates', () => {
 
   it('renders an existing template', async () => {
     mockAuth(['MERCHANT_MANAGE']);
-    vi.mocked(adminMerchantTemplatesApi.list).mockResolvedValue([EXISTING_TEMPLATE]);
+    vi.mocked(adminMerchantTemplatesApi.list).mockResolvedValue(pageOf(EXISTING_TEMPLATE));
 
     renderPage();
 
@@ -95,7 +99,7 @@ describe('MerchantTemplates', () => {
 
   it('shows the empty message when there are no templates yet', async () => {
     mockAuth(['MERCHANT_MANAGE']);
-    vi.mocked(adminMerchantTemplatesApi.list).mockResolvedValue([]);
+    vi.mocked(adminMerchantTemplatesApi.list).mockResolvedValue(pageOf());
 
     renderPage();
 
@@ -104,7 +108,7 @@ describe('MerchantTemplates', () => {
 
   it('the test panel reports a parsed result without creating or persisting a template', async () => {
     mockAuth(['MERCHANT_MANAGE']);
-    vi.mocked(adminMerchantTemplatesApi.list).mockResolvedValue([]);
+    vi.mocked(adminMerchantTemplatesApi.list).mockResolvedValue(pageOf());
     vi.mocked(adminMerchantTemplatesApi.test).mockResolvedValue({
       status: 'PARSED', reason: null, amount: 499, transactionDate: '2026-08-12',
       confidence: 0.9, violations: [],
@@ -138,7 +142,7 @@ describe('MerchantTemplates', () => {
 
   it('the test panel reports not-a-receipt with a reason when the non-receipt marker matches', async () => {
     mockAuth(['MERCHANT_MANAGE']);
-    vi.mocked(adminMerchantTemplatesApi.list).mockResolvedValue([]);
+    vi.mocked(adminMerchantTemplatesApi.list).mockResolvedValue(pageOf());
     vi.mocked(adminMerchantTemplatesApi.test).mockResolvedValue({
       status: 'NOT_A_RECEIPT', reason: 'matched non-receipt marker "Refund Processed"',
       amount: null, transactionDate: null, confidence: null, violations: [],
@@ -174,7 +178,7 @@ describe('MerchantTemplates', () => {
 
   it('shows a success notification after creating a template, disabled', async () => {
     mockAuth(['MERCHANT_MANAGE']);
-    vi.mocked(adminMerchantTemplatesApi.list).mockResolvedValue([]);
+    vi.mocked(adminMerchantTemplatesApi.list).mockResolvedValue(pageOf());
     vi.mocked(adminMerchantTemplatesApi.create).mockResolvedValue({ ...EXISTING_TEMPLATE, enabled: false });
     const user = userEvent.setup();
 
@@ -198,7 +202,7 @@ describe('MerchantTemplates', () => {
 
   it('shows an error notification when creating a template fails', async () => {
     mockAuth(['MERCHANT_MANAGE']);
-    vi.mocked(adminMerchantTemplatesApi.list).mockResolvedValue([]);
+    vi.mocked(adminMerchantTemplatesApi.list).mockResolvedValue(pageOf());
     vi.mocked(adminMerchantTemplatesApi.create).mockRejectedValue({
       response: { data: { message: 'amazon.in is already handled by a hand-written parser.' } },
     });
@@ -227,7 +231,7 @@ describe('MerchantTemplates', () => {
   it('Activate stays disabled for a disabled template until a test passes', async () => {
     mockAuth(['MERCHANT_MANAGE']);
     const disabled = { ...EXISTING_TEMPLATE, enabled: false };
-    vi.mocked(adminMerchantTemplatesApi.list).mockResolvedValue([disabled]);
+    vi.mocked(adminMerchantTemplatesApi.list).mockResolvedValue(pageOf(disabled));
     vi.mocked(adminMerchantTemplatesApi.test).mockResolvedValue({
       status: 'PARSED', reason: null, amount: 255, transactionDate: '2026-08-12',
       confidence: 0.9, violations: [],
@@ -252,7 +256,7 @@ describe('MerchantTemplates', () => {
   it('activating calls the API and shows a success notification', async () => {
     mockAuth(['MERCHANT_MANAGE']);
     const disabled = { ...EXISTING_TEMPLATE, enabled: false };
-    vi.mocked(adminMerchantTemplatesApi.list).mockResolvedValue([disabled]);
+    vi.mocked(adminMerchantTemplatesApi.list).mockResolvedValue(pageOf(disabled));
     vi.mocked(adminMerchantTemplatesApi.test).mockResolvedValue({
       status: 'PARSED', reason: null, amount: 255, transactionDate: '2026-08-12',
       confidence: 0.9, violations: [],
@@ -284,7 +288,7 @@ describe('MerchantTemplates', () => {
   it('does not enable Activate if the receipt marker changes while a test is still in flight', async () => {
     mockAuth(['MERCHANT_MANAGE']);
     const disabled = { ...EXISTING_TEMPLATE, enabled: false };
-    vi.mocked(adminMerchantTemplatesApi.list).mockResolvedValue([disabled]);
+    vi.mocked(adminMerchantTemplatesApi.list).mockResolvedValue(pageOf(disabled));
     let resolveTest: ((result: TestMerchantTemplateResult) => void) | undefined;
     vi.mocked(adminMerchantTemplatesApi.test).mockImplementationOnce(
       () => new Promise((resolve) => { resolveTest = resolve; })
@@ -318,5 +322,23 @@ describe('MerchantTemplates', () => {
     // The bug: this used to pass, because onSuccess read the (by-then-changed) marker straight
     // out of props instead of the mutation's own variables.
     await waitFor(() => expect(screen.getByRole('button', { name: 'Activate' })).toBeDisabled());
+  });
+
+  /** V103 alone seeds 50 templates, on top of whatever admins hand-author afterward -- the
+   *  whole reason this page was moved off a fetch-all list. Proves the page state actually
+   *  drives the next request, not just that Pagination renders. */
+  it('requests the next page of templates when Pagination is clicked', async () => {
+    mockAuth(['MERCHANT_MANAGE']);
+    vi.mocked(adminMerchantTemplatesApi.list).mockResolvedValue(
+      { content: [EXISTING_TEMPLATE], page: 0, size: 20, totalElements: 25, totalPages: 2 }
+    );
+
+    renderPage();
+    await waitFor(() => expect(screen.getByText(/Uber/)).toBeInTheDocument());
+    expect(screen.getByText('Page 1 of 2')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Next page' }));
+
+    await waitFor(() => expect(adminMerchantTemplatesApi.list).toHaveBeenCalledWith(1, 20));
   });
 });

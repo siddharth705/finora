@@ -34,7 +34,15 @@ public class Transaction extends BaseEntity {
     // -- both matched on the same REFUND_KEYWORDS set in ReconciliationService and produced
     // identical REFUND rows. No DB CHECK constrains this column (plain VARCHAR(20) since V1, see
     // Source below), so adding a value here needed no migration.
-    public enum ReconciliationStatus { OK, DUPLICATE, TRANSFER, REFUND, REVERSAL }
+    //
+    // INVESTMENT_TRANSFER added for the roadmap's Phase 4 "investment... detection" item, scoped
+    // down after checking real usage data (see ReconciliationService's investment-transfer pass
+    // for why this is a category-driven exclusion rather than a transaction_relationships edge).
+    // SUPERSEDED: this row's own statement was replaced by a later re-upload of the exact same
+    // period (StatementImportService.supersede) -- excluded from RefundNetting.reportable() the
+    // same way INVESTMENT_TRANSFER already is, but the row itself is never deleted, same
+    // reasoning as every other status here.
+    public enum ReconciliationStatus { OK, DUPLICATE, TRANSFER, REFUND, REVERSAL, INVESTMENT_TRANSFER, SUPERSEDED }
     // GMAIL_IMPORT added C5-B. PDF-sourced transactions are still tagged CSV_IMPORT (a pre-existing
     // gap -- ImportService.persistSection hardcodes CSV_IMPORT regardless of upload format), which
     // this does not fix; it is not repeated for Gmail. No DB CHECK constrains this column (plain

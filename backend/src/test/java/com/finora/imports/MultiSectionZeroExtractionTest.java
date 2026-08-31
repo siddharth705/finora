@@ -245,6 +245,7 @@ class MultiSectionZeroExtractionTest {
         m.put("union-bank-savings-ledger-validation", 19);
         m.put("cbi-account-discrepancy-disclaimer-trailer", 222);
         m.put("pnb-one-account-discrepancy-disclaimer-trailer", 61);
+        m.put("bob-transaction-row-x-ordering", 53);
         return m;
     }
 
@@ -398,8 +399,8 @@ class MultiSectionZeroExtractionTest {
 
     private TransactionNormalizer normalizer(CategorizationService categorizationService) {
         TransactionRepository transactionRepository = mock(TransactionRepository.class);
-        when(transactionRepository.findPotentialDuplicatesByUser(any(), any(), any(), any())).thenReturn(List.of());
-        return new TransactionNormalizer(categorizationService, new DuplicateDetector(transactionRepository),
+        when(transactionRepository.findPotentialDuplicatesByUserAndAccountIdIn(any(), any(), any(), any(), any())).thenReturn(List.of());
+        return new TransactionNormalizer(categorizationService, new DuplicateDetector(transactionRepository, TestAccountRepositories.anyLive()),
                 TestRuleEngines.empty());
     }
 
@@ -443,8 +444,8 @@ class MultiSectionZeroExtractionTest {
         CategorizationService categorizationService = categorization();
         TransactionNormalizer transactionNormalizer = normalizer(categorizationService);
         TransactionRepository transactionRepository = mock(TransactionRepository.class);
-        when(transactionRepository.findPotentialDuplicatesByUser(any(), any(), any(), any())).thenReturn(List.of());
-        DuplicateDetector duplicateDetector = new DuplicateDetector(transactionRepository);
+        when(transactionRepository.findPotentialDuplicatesByUserAndAccountIdIn(any(), any(), any(), any(), any())).thenReturn(List.of());
+        DuplicateDetector duplicateDetector = new DuplicateDetector(transactionRepository, TestAccountRepositories.anyLive());
         AccountRepository accountRepository = mock(AccountRepository.class);
         ImportSessionService importSessionService = mock(ImportSessionService.class);
         when(importSessionService.createSession(any(), any(), any(), any(), any(), any(), any())).thenReturn(session());
@@ -459,6 +460,7 @@ class MultiSectionZeroExtractionTest {
                 mock(ReconciliationService.class), mock(RecurringService.class), previewGenerator, duplicateDetector,
                 new ImportRuleLearningService(categorizationService), importSessionService, generatorFor(acquirer),
                 new com.finora.imports.product.ProductIdentityResolver(accountRepository),
+                mock(com.finora.imports.ownership.OwnershipMatchService.class),
                 new com.finora.imports.storage.StatementContentService(java.util.Optional.empty(), mock(com.finora.security.crypto.EncryptionService.class), "", ""),
                 mock(StatementAnalysisRecorder.class), mock(ImportVerificationRecorder.class),
                 mock(com.finora.service.MerchantLearningEventPublisher.class), mock(LayoutRegistryService.class),

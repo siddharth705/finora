@@ -110,12 +110,44 @@ public final class RefundNetting {
      * expense on top of them, exactly the double-counting Part 4 of the roadmap names as the
      * concrete goal to avoid. See {@link TransactionGraphService#ccPaymentFromTransactionIds} for
      * which edge statuses qualify.
+     *
+     * <p>Deliberately does NOT drop {@code INVESTMENT_TRANSFER} rows -- unlike every exclusion
+     * above, an investment outflow still belongs to a real, meaningful category ("Investments")
+     * that a per-category budget or category-breakdown chart can legitimately track; dropping it
+     * here, upstream of every {@code reportable()} caller including the ones that group by
+     * category, would make that category silently vanish everywhere, budgets included, rather
+     * than just from the cross-category total this classification exists to correct. See
+     * {@link #excludingInvestmentTransfers} for the narrower, total-only cut every top-line
+     * spend/income sum should apply instead.
+     *
+     * <p>DOES drop {@code SUPERSEDED} rows -- unlike {@code INVESTMENT_TRANSFER}, a superseded
+     * statement's transactions are not a category that should still show up anywhere: they are the
+     * account's history as Finora used to understand it, before a later re-upload of the exact same
+     * period replaced it (docs/proposals/statement-continuity-and-coverage-integrity-proposal.md
+     * §0.6). The row stays on file rather than being deleted, same reasoning as every status this
+     * filter already excludes, but it must vanish from every report the way a TRANSFER row already
+     * does -- otherwise the replacement statement's transactions and the superseded original's both
+     * count, double-billing the same period.
      */
     public static List<Transaction> reportable(Collection<Transaction> transactions,
                                                  Set<UUID> ccPaymentFromTransactionIds) {
         return transactions.stream()
                 .filter(t -> t.getIsDuplicateOf() == null && !t.isTransfer() && !isRefundLeg(t)
+                        && t.getReconciliationStatus() != Transaction.ReconciliationStatus.SUPERSEDED
                         && (t.getId() == null || !ccPaymentFromTransactionIds.contains(t.getId())))
+                .toList();
+    }
+
+    /**
+     * The additional cut a cross-category total (total spend, total income, savings rate, cash
+     * flow) needs on top of {@link #reportable} -- excluding {@code INVESTMENT_TRANSFER} rows the
+     * same way {@code TRANSFER} already is, for the same reason: a SIP or other investment
+     * outflow is money moving into savings, not consumption. Never apply this before a
+     * category-grouping step; see {@link #reportable}'s own comment on why.
+     */
+    public static List<Transaction> excludingInvestmentTransfers(Collection<Transaction> transactions) {
+        return transactions.stream()
+                .filter(t -> t.getReconciliationStatus() != Transaction.ReconciliationStatus.INVESTMENT_TRANSFER)
                 .toList();
     }
 

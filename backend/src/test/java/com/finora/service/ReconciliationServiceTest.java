@@ -14,9 +14,11 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -165,6 +167,11 @@ class ReconciliationServiceTest {
         assertThat(original.getIsDuplicateOf()).isNull();
         assertThat(duplicate.getIsDuplicateOf()).isEqualTo(original.getId());
         assertThat(duplicate.getReconciliationStatus()).isEqualTo(Transaction.ReconciliationStatus.DUPLICATE);
+        // Neither row has a balance or reference number, so the match never needed either
+        // signal -- the explanation must not claim a check that never ran.
+        @SuppressWarnings("unchecked")
+        Map<String, Object> reason = (Map<String, Object>) duplicate.getReconciliationExplanation().get("reason");
+        assertThat(reason).doesNotContainKeys("sameBalance", "sameReferenceNumber");
     }
 
     /**
@@ -250,6 +257,127 @@ class ReconciliationServiceTest {
         reconciliationService.reconcileForUser(userId);
 
         assertThat(duplicate.getIsDuplicateOf()).isEqualTo(original.getId());
+    }
+
+    // --- Batch-processed same-day/same-amount/same-description rows are not one duplicate group.
+    // Real bug: a PNB statement with four separate ACH mandate debits of ₹500 each on the same
+    // day, identical description ("ACH/INDIAN CLEARING CORP/30473", no per-row reference number
+    // printed), distinguished ONLY by their declining running balance. The old key (account+date+
+    // amount+description) grouped all four as one duplicate cluster and silently dropped three
+    // real transactions from every total. A second, independent real statement (HDFC, four SIP
+    // installments to the same mutual fund on one day, same amount, same narration) reproduces the
+    // identical collision -- confirming this is a general class of bug, not one bank's quirk. ---
+
+    @Test
+    void reconcileForUser_doesNotFlagAsDuplicate_whenBalanceAfterDiffers_evenWithIdenticalDateAmountDescription() {
+        UUID accountId = UUID.randomUUID();
+        LocalDate date = LocalDate.of(2026, 7, 28);
+
+        Transaction first = txn(UUID.randomUUID(), accountId, date, new BigDecimal("500.00"),
+                Transaction.Type.EXPENSE, "ACH/INDIAN CLEARING CORP/30473", Instant.parse("2026-08-01T10:00:00Z"));
+        first.setBalanceAfter(new BigDecimal("9575.86"));
+        Transaction second = txn(UUID.randomUUID(), accountId, date, new BigDecimal("500.00"),
+                Transaction.Type.EXPENSE, "ACH/INDIAN CLEARING CORP/30473", Instant.parse("2026-08-01T10:00:01Z"));
+        second.setBalanceAfter(new BigDecimal("9075.86"));
+        Transaction third = txn(UUID.randomUUID(), accountId, date, new BigDecimal("500.00"),
+                Transaction.Type.EXPENSE, "ACH/INDIAN CLEARING CORP/30473", Instant.parse("2026-08-01T10:00:02Z"));
+        third.setBalanceAfter(new BigDecimal("8575.86"));
+        Transaction fourth = txn(UUID.randomUUID(), accountId, date, new BigDecimal("500.00"),
+                Transaction.Type.EXPENSE, "ACH/INDIAN CLEARING CORP/30473", Instant.parse("2026-08-01T10:00:03Z"));
+        fourth.setBalanceAfter(new BigDecimal("8075.86"));
+
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any()))
+                .thenReturn(List.of(first, second, third, fourth));
+
+        reconciliationService.reconcileForUser(userId);
+
+        assertThat(first.getIsDuplicateOf()).isNull();
+        assertThat(second.getIsDuplicateOf()).isNull();
+        assertThat(third.getIsDuplicateOf()).isNull();
+        assertThat(fourth.getIsDuplicateOf()).isNull();
+    }
+
+    @Test
+    void reconcileForUser_stillFlagsAsDuplicate_whenBalanceAfterAlsoMatches() {
+        // The true re-import case must not regress: the same statement uploaded twice produces
+        // identical balanceAfter both times, and must still collapse to one duplicate group.
+        UUID accountId = UUID.randomUUID();
+        LocalDate date = LocalDate.of(2026, 7, 28);
+
+        Transaction original = txn(UUID.randomUUID(), accountId, date, new BigDecimal("500.00"),
+                Transaction.Type.EXPENSE, "ACH/INDIAN CLEARING CORP/30473", Instant.parse("2026-08-01T10:00:00Z"));
+        original.setBalanceAfter(new BigDecimal("9575.86"));
+        Transaction reimported = txn(UUID.randomUUID(), accountId, date, new BigDecimal("500.00"),
+                Transaction.Type.EXPENSE, "ACH/INDIAN CLEARING CORP/30473", Instant.parse("2026-08-02T10:00:00Z"));
+        reimported.setBalanceAfter(new BigDecimal("9575.86"));
+
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any()))
+                .thenReturn(List.of(original, reimported));
+
+        reconciliationService.reconcileForUser(userId);
+
+        assertThat(reimported.getIsDuplicateOf()).isEqualTo(original.getId());
+        @SuppressWarnings("unchecked")
+        Map<String, Object> reason = (Map<String, Object>) reimported.getReconciliationExplanation().get("reason");
+        assertThat(reason)
+                .as("the group needed splitting by balance to reach this pairing -- the evidence should say so")
+                .containsEntry("sameBalance", true);
+    }
+
+    @Test
+    void reconcileForUser_doesNotFlagAsDuplicate_whenReferenceNumberDiffers_andNeitherHasABalance() {
+        // Credit-card-style statements often print a per-row reference/auth code but no running
+        // balance column -- the reference number is the only available discriminator there.
+        UUID accountId = UUID.randomUUID();
+        LocalDate date = LocalDate.of(2026, 7, 27);
+
+        Transaction first = txn(UUID.randomUUID(), accountId, date, new BigDecimal("2500.00"),
+                Transaction.Type.EXPENSE, "NET PAYIN TO NSE MF A/C -11111111111111-",
+                Instant.parse("2026-08-01T10:00:00Z"));
+        first.setReferenceNumber("0000000000000001");
+        Transaction second = txn(UUID.randomUUID(), accountId, date, new BigDecimal("2500.00"),
+                Transaction.Type.EXPENSE, "NET PAYIN TO NSE MF A/C -11111111111111-",
+                Instant.parse("2026-08-01T10:00:01Z"));
+        second.setReferenceNumber("0000000000000002");
+
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any()))
+                .thenReturn(List.of(first, second));
+
+        reconciliationService.reconcileForUser(userId);
+
+        assertThat(first.getIsDuplicateOf()).isNull();
+        assertThat(second.getIsDuplicateOf()).isNull();
+    }
+
+    @Test
+    void reconcileForUser_stillFlagsAsDuplicate_whenOnlyOneSideHasABalance() {
+        // Regression guard for the balance/reference discriminator above: a Gmail receipt import
+        // never captures a running balance, but a later bank-statement import of the SAME real
+        // transaction does. Splitting the duplicate key whenever either side merely LACKS the
+        // discriminator (rather than when the two sides actively disagree) would silently double
+        // this transaction into income/expense totals and the account balance -- worse than the
+        // bug this discriminator was added to fix.
+        UUID accountId = UUID.randomUUID();
+        LocalDate date = LocalDate.of(2026, 7, 10);
+
+        Transaction gmailReceipt = txn(UUID.randomUUID(), accountId, date, new BigDecimal("499.00"),
+                Transaction.Type.EXPENSE, "AMAZON ORDER 4471", Instant.parse("2026-07-10T09:00:00Z"));
+        gmailReceipt.setSource(Transaction.Source.GMAIL_IMPORT);
+        // No balanceAfter, no referenceNumber -- Gmail receipts never carry either.
+
+        Transaction bankStatement = txn(UUID.randomUUID(), accountId, date, new BigDecimal("499.00"),
+                Transaction.Type.EXPENSE, "AMAZON ORDER 4471", Instant.parse("2026-07-10T18:00:00Z"));
+        bankStatement.setSource(Transaction.Source.CSV_IMPORT);
+        bankStatement.setBalanceAfter(new BigDecimal("12345.67"));
+
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any()))
+                .thenReturn(List.of(gmailReceipt, bankStatement));
+
+        reconciliationService.reconcileForUser(userId);
+
+        assertThat(gmailReceipt.getIsDuplicateOf())
+                .as("still the same real transaction -- one side simply has no balance to compare")
+                .isEqualTo(bankStatement.getId());
     }
 
     @Test
@@ -1066,6 +1194,51 @@ class ReconciliationServiceTest {
         return s;
     }
 
+    /** Sets the masked account number on a card account already registered via {@link
+     *  #ccStatement}, for tests exercising last-4 disambiguation. */
+    private void maskCardAccount(UUID cardAccountId, String accountNumberMasked) {
+        liveAccounts.stream().filter(a -> a.getId().equals(cardAccountId)).findFirst()
+                .orElseThrow(() -> new IllegalStateException("call ccStatement() first"))
+                .setAccountNumberMasked(accountNumberMasked);
+    }
+
+    @Test
+    void reconcileForUser_doesNotThrow_whenTwoCandidatePaymentsHaveNoDescriptionAndTheCardIsUnmasked() {
+        // Regression: paymentCandidates.stream().min(comparator) only invokes the comparator when
+        // there are 2+ candidates -- with exactly one, min() short-circuits and never calls it, so
+        // this path is silent until a REAL collision happens. thisCardLast4 is null here (no
+        // maskCardAccount call -- an unmasked card is the common case per StatementImport's own
+        // best-effort mask population). last4CandidatesIn(null) returns the immutable Set.of()
+        // (its short-circuit for a null/blank description specifically -- a non-blank, merely
+        // digit-free description returns a safe mutable HashSet instead, so this needs a null
+        // description exactly, not just a description with no digits), and Set.of().contains(null)
+        // throws (the same class of bug RefundNetting hit earlier this session). The nearer-to-
+        // due-date candidate must still win, unchanged from before this feature existed.
+        UUID cardAccountId = UUID.randomUUID();
+        UUID savingsAccountId = UUID.randomUUID();
+        com.finora.entity.StatementImport statement =
+                ccStatement(UUID.randomUUID(), cardAccountId, new BigDecimal("2500.00"), LocalDate.of(2026, 7, 15));
+        Transaction closerPayment = txn(UUID.randomUUID(), savingsAccountId, LocalDate.of(2026, 7, 14),
+                new BigDecimal("2500.00"), Transaction.Type.EXPENSE, null,
+                Instant.parse("2026-07-14T10:00:00Z"));
+        Transaction furtherPayment = txn(UUID.randomUUID(), savingsAccountId, LocalDate.of(2026, 7, 10),
+                new BigDecimal("2500.00"), Transaction.Type.EXPENSE, null,
+                Instant.parse("2026-07-10T10:00:00Z"));
+        Transaction charge = txn(UUID.randomUUID(), cardAccountId, LocalDate.of(2026, 6, 20),
+                new BigDecimal("2500.00"), Transaction.Type.EXPENSE, "AMAZON", Instant.parse("2026-06-20T10:00:00Z"));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any()))
+                .thenReturn(List.of(closerPayment, furtherPayment, charge));
+        when(statementImportRepository.findByUserIdAndTotalAmountDueIsNotNull(userId)).thenReturn(List.of(statement));
+        when(transactionRepository.findByStatementImportId(statement.getId())).thenReturn(List.of(charge));
+
+        assertThatCode(() -> reconciliationService.reconcileForUser(userId)).doesNotThrowAnyException();
+
+        List<TransactionGraphService.PendingEdge> ccEdges = capturePendingEdges().stream()
+                .filter(e -> e.relationshipType() == TransactionRelationship.RelationshipType.CC_PAYMENT).toList();
+        assertThat(ccEdges).hasSize(1);
+        assertThat(ccEdges.get(0).fromTransactionId()).isEqualTo(closerPayment.getId());
+    }
+
     @Test
     void reconcileForUser_writesACcPaymentEdge_fromThePaymentToEachSettledCharge() {
         UUID cardAccountId = UUID.randomUUID();
@@ -1142,6 +1315,188 @@ class ReconciliationServiceTest {
                 .linkAll(org.mockito.ArgumentMatchers.anyList());
         org.mockito.Mockito.verify(transactionRepository, org.mockito.Mockito.never())
                 .findByStatementImportId(org.mockito.ArgumentMatchers.any());
+    }
+
+    // --- Partial payment / overpayment (roadmap Part 4) -- was exact-amount-only, so a real user
+    // paying just the minimum due, or clearing an old balance on top of this one, matched nothing
+    // at all: both the payment AND the full unpaid statement balance were double-counted as real
+    // spend. See ReconciliationPolicy.CC_PAYMENT_MIN_PARTIAL_RATIO/MAX_OVERPAYMENT_RATIO for the
+    // bounds. ---
+
+    @Test
+    void reconcileForUser_matchesAPartialPayment_atTheMinimumDueRatioFloor() {
+        // 5% of 2500.00 = 125.00, exactly CC_PAYMENT_MIN_PARTIAL_RATIO's own floor -- a plausible
+        // minimum-due-only payment, not an exact settlement.
+        UUID cardAccountId = UUID.randomUUID();
+        UUID savingsAccountId = UUID.randomUUID();
+        com.finora.entity.StatementImport statement =
+                ccStatement(UUID.randomUUID(), cardAccountId, new BigDecimal("2500.00"), LocalDate.of(2026, 7, 15));
+        Transaction minimumDuePayment = txn(UUID.randomUUID(), savingsAccountId, LocalDate.of(2026, 7, 14),
+                new BigDecimal("125.00"), Transaction.Type.EXPENSE, "CREDIT CARD PAYMENT",
+                Instant.parse("2026-07-14T10:00:00Z"));
+        Transaction charge = txn(UUID.randomUUID(), cardAccountId, LocalDate.of(2026, 6, 20),
+                new BigDecimal("1500.00"), Transaction.Type.EXPENSE, "AMAZON", Instant.parse("2026-06-20T10:00:00Z"));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(minimumDuePayment));
+        when(statementImportRepository.findByUserIdAndTotalAmountDueIsNotNull(userId)).thenReturn(List.of(statement));
+        when(transactionRepository.findByStatementImportId(statement.getId())).thenReturn(List.of(charge));
+
+        reconciliationService.reconcileForUser(userId);
+
+        List<TransactionGraphService.PendingEdge> ccEdges = capturePendingEdges().stream()
+                .filter(e -> e.relationshipType() == TransactionRelationship.RelationshipType.CC_PAYMENT).toList();
+        assertThat(ccEdges).hasSize(1);
+        assertThat(ccEdges.get(0).fromTransactionId()).isEqualTo(minimumDuePayment.getId());
+        assertThat(ccEdges.get(0).explanation()).containsEntry("paymentStatus", "PARTIAL");
+        // amountFactor = 1 - (2375/2500) = 0.05, floored at 0.5 per ConfidenceScorer's own comment
+        // -- MERCHANT_AND_AMOUNT(0.90) * 0.5 * dateDecay(1,10)=0.97 -> round(90*0.5*0.97) = 44.
+        assertThat(ccEdges.get(0).confidence()).isEqualTo(44);
+    }
+
+    @Test
+    void reconcileForUser_ignoresAPayment_belowTheMinimumPartialRatio() {
+        UUID cardAccountId = UUID.randomUUID();
+        UUID savingsAccountId = UUID.randomUUID();
+        com.finora.entity.StatementImport statement =
+                ccStatement(UUID.randomUUID(), cardAccountId, new BigDecimal("2500.00"), LocalDate.of(2026, 7, 15));
+        // 4.99% of 2500.00 -- just under the 5% floor.
+        Transaction tooSmallPayment = txn(UUID.randomUUID(), savingsAccountId, LocalDate.of(2026, 7, 14),
+                new BigDecimal("124.00"), Transaction.Type.EXPENSE, "SOME OTHER EXPENSE",
+                Instant.parse("2026-07-14T10:00:00Z"));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(tooSmallPayment));
+        when(statementImportRepository.findByUserIdAndTotalAmountDueIsNotNull(userId)).thenReturn(List.of(statement));
+
+        reconciliationService.reconcileForUser(userId);
+
+        org.mockito.Mockito.verify(transactionGraphService, org.mockito.Mockito.never())
+                .linkAll(org.mockito.ArgumentMatchers.anyList());
+    }
+
+    @Test
+    void reconcileForUser_matchesAnOverpayment_upToTheMaxRatioCeiling() {
+        // 2.5x of 2500.00 = 6250.00, exactly CC_PAYMENT_MAX_OVERPAYMENT_RATIO's own ceiling --
+        // plausible if this payment also cleared an old balance.
+        UUID cardAccountId = UUID.randomUUID();
+        UUID savingsAccountId = UUID.randomUUID();
+        com.finora.entity.StatementImport statement =
+                ccStatement(UUID.randomUUID(), cardAccountId, new BigDecimal("2500.00"), LocalDate.of(2026, 7, 15));
+        Transaction overpayment = txn(UUID.randomUUID(), savingsAccountId, LocalDate.of(2026, 7, 14),
+                new BigDecimal("6250.00"), Transaction.Type.EXPENSE, "CREDIT CARD PAYMENT",
+                Instant.parse("2026-07-14T10:00:00Z"));
+        Transaction charge = txn(UUID.randomUUID(), cardAccountId, LocalDate.of(2026, 6, 20),
+                new BigDecimal("1500.00"), Transaction.Type.EXPENSE, "AMAZON", Instant.parse("2026-06-20T10:00:00Z"));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(overpayment));
+        when(statementImportRepository.findByUserIdAndTotalAmountDueIsNotNull(userId)).thenReturn(List.of(statement));
+        when(transactionRepository.findByStatementImportId(statement.getId())).thenReturn(List.of(charge));
+
+        reconciliationService.reconcileForUser(userId);
+
+        List<TransactionGraphService.PendingEdge> ccEdges = capturePendingEdges().stream()
+                .filter(e -> e.relationshipType() == TransactionRelationship.RelationshipType.CC_PAYMENT).toList();
+        assertThat(ccEdges).hasSize(1);
+        assertThat(ccEdges.get(0).fromTransactionId()).isEqualTo(overpayment.getId());
+        assertThat(ccEdges.get(0).explanation()).containsEntry("paymentStatus", "OVERPAID");
+    }
+
+    @Test
+    void reconcileForUser_ignoresAPayment_aboveTheMaxOverpaymentRatio() {
+        UUID cardAccountId = UUID.randomUUID();
+        UUID savingsAccountId = UUID.randomUUID();
+        com.finora.entity.StatementImport statement =
+                ccStatement(UUID.randomUUID(), cardAccountId, new BigDecimal("2500.00"), LocalDate.of(2026, 7, 15));
+        // 2.51x of 2500.00 -- just over the 2.5x ceiling.
+        Transaction tooLargePayment = txn(UUID.randomUUID(), savingsAccountId, LocalDate.of(2026, 7, 14),
+                new BigDecimal("6275.00"), Transaction.Type.EXPENSE, "SOME UNRELATED LARGE PAYMENT",
+                Instant.parse("2026-07-14T10:00:00Z"));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(tooLargePayment));
+        when(statementImportRepository.findByUserIdAndTotalAmountDueIsNotNull(userId)).thenReturn(List.of(statement));
+
+        reconciliationService.reconcileForUser(userId);
+
+        org.mockito.Mockito.verify(transactionGraphService, org.mockito.Mockito.never())
+                .linkAll(org.mockito.ArgumentMatchers.anyList());
+    }
+
+    @Test
+    void reconcileForUser_doesNotLetAnEarlierStatementsPartialWindowSteal_aPaymentThatIsExactForALaterOne() {
+        // Real cross-statement collision the widened ratio window creates: a payment can now be a
+        // PLAUSIBLE candidate (partial or overpaid) for a statement whose total is completely
+        // unrelated to it, not just one it coincidentally shares an exact amount with. Card A's
+        // due (1000.00) is processed first (earlier due date); the payment (2500.00) sits exactly
+        // at A's 2.5x overpayment ceiling, so a naive per-statement search would let A claim it as
+        // an "overpayment" -- even though it is EXACTLY card B's own total, processed second. An
+        // exact match anywhere must never lose a payment to a same-window partial/over candidate
+        // for a DIFFERENT statement, the same way it never loses to one for the SAME statement
+        // (see the due-date-tiebreak test above) -- exact claims must be resolved globally, before
+        // any partial/overpayment search runs at all.
+        UUID cardAccountA = UUID.randomUUID();
+        UUID cardAccountB = UUID.randomUUID();
+        UUID savingsAccountId = UUID.randomUUID();
+        com.finora.entity.StatementImport statementA =
+                ccStatement(UUID.randomUUID(), cardAccountA, new BigDecimal("1000.00"), LocalDate.of(2026, 7, 10));
+        com.finora.entity.StatementImport statementB =
+                ccStatement(UUID.randomUUID(), cardAccountB, new BigDecimal("2500.00"), LocalDate.of(2026, 7, 20));
+        // Dated 5 days from EACH due date -- deliberately not closer to one than the other, so the
+        // due-date tiebreak alone cannot be what saves this test.
+        Transaction payment = txn(UUID.randomUUID(), savingsAccountId, LocalDate.of(2026, 7, 15),
+                new BigDecimal("2500.00"), Transaction.Type.EXPENSE, "CREDIT CARD PAYMENT",
+                Instant.parse("2026-07-15T10:00:00Z"));
+        // Card A has a genuine, unrelated charge of its own -- without this, A's own
+        // settledCharges lookup returns empty and A self-excludes before the real bug can
+        // manifest, which is exactly why this fixture matters: a card with no charges at all
+        // isn't the realistic case this test needs to prove.
+        Transaction chargeA = txn(UUID.randomUUID(), cardAccountA, LocalDate.of(2026, 6, 15),
+                new BigDecimal("1000.00"), Transaction.Type.EXPENSE, "GROCERIES", Instant.parse("2026-06-15T10:00:00Z"));
+        Transaction chargeB = txn(UUID.randomUUID(), cardAccountB, LocalDate.of(2026, 6, 20),
+                new BigDecimal("2500.00"), Transaction.Type.EXPENSE, "AMAZON", Instant.parse("2026-06-20T10:00:00Z"));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any()))
+                .thenReturn(List.of(payment, chargeA, chargeB));
+        when(statementImportRepository.findByUserIdAndTotalAmountDueIsNotNull(userId))
+                .thenReturn(List.of(statementA, statementB));
+        when(transactionRepository.findByStatementImportId(statementA.getId())).thenReturn(List.of(chargeA));
+        when(transactionRepository.findByStatementImportId(statementB.getId())).thenReturn(List.of(chargeB));
+
+        reconciliationService.reconcileForUser(userId);
+
+        List<TransactionGraphService.PendingEdge> ccEdges = capturePendingEdges().stream()
+                .filter(e -> e.relationshipType() == TransactionRelationship.RelationshipType.CC_PAYMENT).toList();
+        assertThat(ccEdges)
+                .as("the payment settles the card it's exactly right for, not the one it merely falls within range of")
+                .hasSize(1);
+        assertThat(ccEdges.get(0).toTransactionId()).isEqualTo(chargeB.getId());
+        assertThat(ccEdges.get(0).explanation()).containsEntry("paymentStatus", "FULL");
+    }
+
+    @Test
+    void reconcileForUser_prefersAnExactMatch_overACloserByDatePartialPayment() {
+        // The partial payment is dated EXACTLY on the due date (closest possible); the exact
+        // payment is one day off. The plain due-date tiebreak would pick the partial one --
+        // exactness must override that, the same way a last-4 match overrides date proximity.
+        UUID cardAccountId = UUID.randomUUID();
+        UUID savingsAccountId = UUID.randomUUID();
+        com.finora.entity.StatementImport statement =
+                ccStatement(UUID.randomUUID(), cardAccountId, new BigDecimal("2500.00"), LocalDate.of(2026, 7, 15));
+        Transaction partialPayment = txn(UUID.randomUUID(), savingsAccountId, LocalDate.of(2026, 7, 15),
+                new BigDecimal("500.00"), Transaction.Type.EXPENSE, "CREDIT CARD PAYMENT",
+                Instant.parse("2026-07-15T10:00:00Z"));
+        Transaction exactPayment = txn(UUID.randomUUID(), savingsAccountId, LocalDate.of(2026, 7, 14),
+                new BigDecimal("2500.00"), Transaction.Type.EXPENSE, "CREDIT CARD PAYMENT",
+                Instant.parse("2026-07-14T10:00:00Z"));
+        Transaction charge = txn(UUID.randomUUID(), cardAccountId, LocalDate.of(2026, 6, 20),
+                new BigDecimal("1500.00"), Transaction.Type.EXPENSE, "AMAZON", Instant.parse("2026-06-20T10:00:00Z"));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any()))
+                .thenReturn(List.of(partialPayment, exactPayment));
+        when(statementImportRepository.findByUserIdAndTotalAmountDueIsNotNull(userId)).thenReturn(List.of(statement));
+        when(transactionRepository.findByStatementImportId(statement.getId())).thenReturn(List.of(charge));
+
+        reconciliationService.reconcileForUser(userId);
+
+        List<TransactionGraphService.PendingEdge> ccEdges = capturePendingEdges().stream()
+                .filter(e -> e.relationshipType() == TransactionRelationship.RelationshipType.CC_PAYMENT).toList();
+        assertThat(ccEdges).hasSize(1);
+        assertThat(ccEdges.get(0).fromTransactionId())
+                .as("the exact match wins despite being a day further from the due date")
+                .isEqualTo(exactPayment.getId());
+        assertThat(ccEdges.get(0).explanation()).containsEntry("paymentStatus", "FULL");
     }
 
     @Test
@@ -1401,6 +1756,142 @@ class ReconciliationServiceTest {
         assertThat(ccEdges.get(0).toTransactionId()).isEqualTo(earlierCharge.getId());
     }
 
+    // --- Last-4 disambiguation (roadmap Part 4's "issuer-name + last-4-digit matching"),
+    // verified feasible against this project's own real bank-statement corpus: an ICICI
+    // savings-side payment narration ("BIL/INFT/.../CC BillPay-5001/Self") embedded the exact
+    // real last-4 ("5241XXXXXXXX5001") of the card it settled. Not every bank's narration carries
+    // this, so it's a positive-evidence override on top of the due-date tiebreak above, never a
+    // requirement -- these tests cover both the override and the unaffected fallback. ---
+
+    @Test
+    void reconcileForUser_prefersTheLast4Match_overTheCloserByDateCandidate() {
+        // The LATER statement's due date is closer to the ambiguous payment's date than the
+        // EARLIER statement's -- so the plain due-date tiebreak (see the test above) would pick
+        // the wrong one here. The payment's own description names the earlier card's real last-4,
+        // which must override that.
+        UUID earlierCardAccount = UUID.randomUUID();
+        UUID laterCardAccount = UUID.randomUUID();
+        UUID savingsAccountId = UUID.randomUUID();
+        com.finora.entity.StatementImport earlierStatement =
+                ccStatement(UUID.randomUUID(), earlierCardAccount, new BigDecimal("2500.00"), LocalDate.of(2026, 7, 10));
+        com.finora.entity.StatementImport laterStatement =
+                ccStatement(UUID.randomUUID(), laterCardAccount, new BigDecimal("2500.00"), LocalDate.of(2026, 7, 20));
+        maskCardAccount(earlierCardAccount, "5241XXXXXXXX5001");
+        maskCardAccount(laterCardAccount, "652925XXXXXX3123");
+        // Dated closest to the LATER statement's due date -- would win the plain tiebreak.
+        Transaction payment = txn(UUID.randomUUID(), savingsAccountId, LocalDate.of(2026, 7, 19),
+                new BigDecimal("2500.00"), Transaction.Type.EXPENSE, "BIL/INFT/FH21799066/CC BillPay-5001/Self",
+                Instant.parse("2026-07-19T10:00:00Z"));
+        Transaction earlierCharge = txn(UUID.randomUUID(), earlierCardAccount, LocalDate.of(2026, 6, 20),
+                new BigDecimal("2500.00"), Transaction.Type.EXPENSE, "AMAZON", Instant.parse("2026-06-20T10:00:00Z"));
+        Transaction laterCharge = txn(UUID.randomUUID(), laterCardAccount, LocalDate.of(2026, 6, 25),
+                new BigDecimal("2500.00"), Transaction.Type.EXPENSE, "FLIPKART", Instant.parse("2026-06-25T10:00:00Z"));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any()))
+                .thenReturn(List.of(payment, earlierCharge, laterCharge));
+        when(statementImportRepository.findByUserIdAndTotalAmountDueIsNotNull(userId))
+                .thenReturn(List.of(earlierStatement, laterStatement));
+        when(transactionRepository.findByStatementImportId(earlierStatement.getId())).thenReturn(List.of(earlierCharge));
+        when(transactionRepository.findByStatementImportId(laterStatement.getId())).thenReturn(List.of(laterCharge));
+
+        reconciliationService.reconcileForUser(userId);
+
+        List<TransactionGraphService.PendingEdge> ccEdges = capturePendingEdges().stream()
+                .filter(e -> e.relationshipType() == TransactionRelationship.RelationshipType.CC_PAYMENT).toList();
+        assertThat(ccEdges)
+                .as("the card the payment's own description names wins, despite being further from its due date")
+                .hasSize(1);
+        assertThat(ccEdges.get(0).toTransactionId()).isEqualTo(earlierCharge.getId());
+        assertThat(ccEdges.get(0).explanation()).containsEntry("matchedByLast4", true);
+        // EXACT tier (0.99 base), not MERCHANT_AND_AMOUNT (0.90) -- real evidence, not just
+        // amount+date proximity. 9 days from due date (window 10) decays to 0.73x per
+        // ConfidenceScorer's own dateDecay -- round(99 * 0.73) = 72, strictly above the 66 the
+        // 0.90 tier would give at the identical distance (round(90 * 0.73) = 66).
+        assertThat(ccEdges.get(0).confidence()).isEqualTo(72);
+    }
+
+    @Test
+    void reconcileForUser_excludesACandidate_whoseDescriptionNamesADifferentKnownCard() {
+        // Only one statement this time -- but the closer-by-date candidate's own description
+        // names a DIFFERENT live card entirely. That's real evidence it belongs elsewhere, not
+        // just a weaker candidate, so it must be excluded outright rather than merely
+        // deprioritized -- leaving the further, unidentified candidate to win instead.
+        UUID thisCardAccount = UUID.randomUUID();
+        UUID otherCardAccount = UUID.randomUUID();
+        UUID savingsAccountId = UUID.randomUUID();
+        com.finora.entity.StatementImport statement =
+                ccStatement(UUID.randomUUID(), thisCardAccount, new BigDecimal("2500.00"), LocalDate.of(2026, 7, 15));
+        // otherCardAccount has no statement of its own in this run, but is still a known live
+        // card (e.g. its own statement just hasn't been imported yet this run) -- ccStatement()
+        // only registers accounts it's called for, so register this one directly.
+        maskCardAccount(thisCardAccount, "652925XXXXXX3123");
+        com.finora.entity.StatementImport otherStatement =
+                ccStatement(UUID.randomUUID(), otherCardAccount, new BigDecimal("9999.00"), LocalDate.of(2026, 1, 1));
+        maskCardAccount(otherCardAccount, "5241XXXXXXXX5001");
+        Transaction wrongCardPayment = txn(UUID.randomUUID(), savingsAccountId, LocalDate.of(2026, 7, 15),
+                new BigDecimal("2500.00"), Transaction.Type.EXPENSE, "BIL/INFT/FH21799066/CC BillPay-5001/Self",
+                Instant.parse("2026-07-15T10:00:00Z"));
+        Transaction unidentifiedPayment = txn(UUID.randomUUID(), savingsAccountId, LocalDate.of(2026, 7, 10),
+                new BigDecimal("2500.00"), Transaction.Type.EXPENSE, "CREDIT CARD PAYMENT",
+                Instant.parse("2026-07-10T10:00:00Z"));
+        Transaction charge = txn(UUID.randomUUID(), thisCardAccount, LocalDate.of(2026, 6, 20),
+                new BigDecimal("2500.00"), Transaction.Type.EXPENSE, "AMAZON", Instant.parse("2026-06-20T10:00:00Z"));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any()))
+                .thenReturn(List.of(wrongCardPayment, unidentifiedPayment, charge));
+        when(statementImportRepository.findByUserIdAndTotalAmountDueIsNotNull(userId))
+                .thenReturn(List.of(statement, otherStatement));
+        when(transactionRepository.findByStatementImportId(statement.getId())).thenReturn(List.of(charge));
+        when(transactionRepository.findByStatementImportId(otherStatement.getId())).thenReturn(List.of());
+
+        reconciliationService.reconcileForUser(userId);
+
+        List<TransactionGraphService.PendingEdge> ccEdges = capturePendingEdges().stream()
+                .filter(e -> e.relationshipType() == TransactionRelationship.RelationshipType.CC_PAYMENT).toList();
+        assertThat(ccEdges).hasSize(1);
+        assertThat(ccEdges.get(0).fromTransactionId())
+                .as("the payment naming a different card is excluded outright, not just deprioritized")
+                .isEqualTo(unidentifiedPayment.getId());
+        assertThat(ccEdges.get(0).explanation()).containsEntry("matchedByLast4", false);
+    }
+
+    @Test
+    void reconcileForUser_fallsBackToDueDateTiebreak_whenNoDescriptionHasAnIdentifiableFragment() {
+        // The common case, per last4CandidatesIn's own doc comment: most banks' narrations carry
+        // no identifiable card fragment at all. Behavior must be byte-for-byte the pre-existing
+        // due-date tiebreak in that case -- this mirrors the coincidence test above but with the
+        // card accounts' masks populated, to prove the masks alone don't change the outcome
+        // absent a matching fragment in the description.
+        UUID earlierCardAccount = UUID.randomUUID();
+        UUID laterCardAccount = UUID.randomUUID();
+        UUID savingsAccountId = UUID.randomUUID();
+        com.finora.entity.StatementImport laterStatement =
+                ccStatement(UUID.randomUUID(), laterCardAccount, new BigDecimal("2500.00"), LocalDate.of(2026, 7, 20));
+        com.finora.entity.StatementImport earlierStatement =
+                ccStatement(UUID.randomUUID(), earlierCardAccount, new BigDecimal("2500.00"), LocalDate.of(2026, 7, 10));
+        maskCardAccount(earlierCardAccount, "652925XXXXXX3123");
+        maskCardAccount(laterCardAccount, "5241XXXXXXXX5001");
+        Transaction payment = txn(UUID.randomUUID(), savingsAccountId, LocalDate.of(2026, 7, 12),
+                new BigDecimal("2500.00"), Transaction.Type.EXPENSE, "CREDIT CARD PAYMENT",
+                Instant.parse("2026-07-12T10:00:00Z"));
+        Transaction earlierCharge = txn(UUID.randomUUID(), earlierCardAccount, LocalDate.of(2026, 6, 20),
+                new BigDecimal("2500.00"), Transaction.Type.EXPENSE, "AMAZON", Instant.parse("2026-06-20T10:00:00Z"));
+        Transaction laterCharge = txn(UUID.randomUUID(), laterCardAccount, LocalDate.of(2026, 6, 25),
+                new BigDecimal("2500.00"), Transaction.Type.EXPENSE, "FLIPKART", Instant.parse("2026-06-25T10:00:00Z"));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any()))
+                .thenReturn(List.of(payment, earlierCharge, laterCharge));
+        when(statementImportRepository.findByUserIdAndTotalAmountDueIsNotNull(userId))
+                .thenReturn(List.of(laterStatement, earlierStatement));
+        when(transactionRepository.findByStatementImportId(earlierStatement.getId())).thenReturn(List.of(earlierCharge));
+        when(transactionRepository.findByStatementImportId(laterStatement.getId())).thenReturn(List.of(laterCharge));
+
+        reconciliationService.reconcileForUser(userId);
+
+        List<TransactionGraphService.PendingEdge> ccEdges = capturePendingEdges().stream()
+                .filter(e -> e.relationshipType() == TransactionRelationship.RelationshipType.CC_PAYMENT).toList();
+        assertThat(ccEdges).hasSize(1);
+        assertThat(ccEdges.get(0).toTransactionId()).isEqualTo(earlierCharge.getId());
+        assertThat(ccEdges.get(0).explanation()).containsEntry("matchedByLast4", false);
+    }
+
     @Test
     void reconcileForUser_writesNoEdge_whenTheStatementHasNoSettledChargesToLinkTo() {
         UUID cardAccountId = UUID.randomUUID();
@@ -1426,5 +1917,77 @@ class ReconciliationServiceTest {
                 org.mockito.ArgumentCaptor.forClass(List.class);
         org.mockito.Mockito.verify(transactionGraphService).linkAll(captor.capture());
         return captor.getValue();
+    }
+
+    // --- Investment transfers (roadmap Phase 4, scoped down after checking the real bank-
+    // statement corpus -- see ReconciliationService's investment-transfer pass for why this is a
+    // category-driven exclusion with no graph edge, unlike every other pass in this file) ---
+
+    @Test
+    void reconcileForUser_excludesAnInvestmentOutflow_fromCashFlowByReconciliationStatus() {
+        UUID savingsAccount = UUID.randomUUID();
+        Transaction sip = txn(UUID.randomUUID(), savingsAccount, LocalDate.of(2026, 6, 6),
+                new BigDecimal("3000.00"), Transaction.Type.EXPENSE, "UPI-GROWW INVEST TECH", Instant.now());
+
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(sip));
+
+        reconciliationService.reconcileForUser(userId);
+
+        assertThat(sip.getReconciliationStatus()).isEqualTo(Transaction.ReconciliationStatus.INVESTMENT_TRANSFER);
+        assertThat(sip.isTransfer()).isFalse(); // no counterpart transaction -- never claimed by the TRANSFER pass
+        assertThat(sip.getReconciliationExplanation()).containsEntry("type", "INVESTMENT_TRANSFER");
+        // No graph edge: there is no counterpart transaction in Finora to link to (see the pass's
+        // own comment) -- pendingEdges stays empty and linkAll is never called for this alone.
+        org.mockito.Mockito.verify(transactionGraphService, org.mockito.Mockito.never())
+                .linkAll(org.mockito.ArgumentMatchers.anyList());
+    }
+
+    @Test
+    void reconcileForUser_doesNotReclassifyAnInvestmentOutflow_thatWasAlreadyClaimedAsATransfer() {
+        // If the user also tracks the receiving INVESTMENT account in Finora, the existing TRANSFER
+        // pass already pairs the two legs -- a real, higher-fidelity match this pass must not
+        // override with a lesser, edge-free classification.
+        UUID savingsAccount = UUID.randomUUID();
+        UUID investmentAccount = UUID.randomUUID();
+        Transaction debit = txn(UUID.randomUUID(), savingsAccount, LocalDate.of(2026, 6, 6),
+                new BigDecimal("3000.00"), Transaction.Type.EXPENSE, "Payment to GROWW investment account", Instant.now());
+        Transaction credit = txn(UUID.randomUUID(), investmentAccount, LocalDate.of(2026, 6, 7),
+                new BigDecimal("3000.00"), Transaction.Type.INCOME, "Payment received", Instant.now());
+
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(debit, credit));
+
+        reconciliationService.reconcileForUser(userId);
+
+        assertThat(debit.isTransfer()).isTrue();
+        assertThat(debit.getReconciliationStatus()).isEqualTo(Transaction.ReconciliationStatus.TRANSFER);
+    }
+
+    @Test
+    void reconcileForUser_leavesANonInvestmentExpense_atOk() {
+        UUID account = UUID.randomUUID();
+        Transaction groceries = txn(UUID.randomUUID(), account, LocalDate.of(2026, 6, 6),
+                new BigDecimal("1200.00"), Transaction.Type.EXPENSE, "BIGBASKET ORDER", Instant.now());
+
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(groceries));
+
+        reconciliationService.reconcileForUser(userId);
+
+        assertThat(groceries.getReconciliationStatus()).isEqualTo(Transaction.ReconciliationStatus.OK);
+    }
+
+    @Test
+    void reconcileForUser_doesNotTreatAnInvestmentCreditRow_asAnOutflow() {
+        // Only EXPENSE rows are candidate investment outflows -- a dividend/credit row landing in
+        // the Investments category by keyword coincidence is income, not spend, and has nothing to
+        // exclude from cash flow.
+        UUID account = UUID.randomUUID();
+        Transaction dividend = txn(UUID.randomUUID(), account, LocalDate.of(2026, 6, 6),
+                new BigDecimal("10.00"), Transaction.Type.INCOME, "ACH C- NSDL FINDIV", Instant.now());
+
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(dividend));
+
+        reconciliationService.reconcileForUser(userId);
+
+        assertThat(dividend.getReconciliationStatus()).isEqualTo(Transaction.ReconciliationStatus.OK);
     }
 }

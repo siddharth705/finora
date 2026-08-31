@@ -87,6 +87,34 @@ public final class ReconciliationPolicy {
     public static final long CC_PAYMENT_DUE_DATE_WINDOW_DAYS = OWN_ACCOUNT_MATCH_DAY_WINDOW;
 
     /**
+     * The lowest fraction of a statement's printed total a payment can be and still count as a
+     * candidate settlement of it -- roadmap Part 4's "partial payment (minimum due only)" case.
+     * Exact-amount was the only match this pass made until now; a real user routinely pays just
+     * the minimum due instead, and with no match at all for that, both the minimum-due payment AND
+     * the full unpaid statement balance were double-counted as real spend.
+     *
+     * <p>5% (0.05), because a card's minimum due is conventionally set around that fraction of the
+     * statement balance by Indian issuers -- a documented anchor, not an arbitrary number, chosen
+     * to admit genuine minimum-due payments while still excluding a coincidentally-timed, unrelated
+     * small transaction most of the way down the amount scale. This project does not extract
+     * minimum_due itself yet (see the credit-card-statement-entity-design doc's own note on why),
+     * so this is a floor on the RATIO, not a check against the real minimum -- a real weakness this
+     * ratio-based approach accepts rather than blocks on that extraction work.
+     */
+    public static final BigDecimal CC_PAYMENT_MIN_PARTIAL_RATIO = new BigDecimal("0.05");
+
+    /**
+     * The highest multiple of a statement's printed total a payment can be and still count as a
+     * candidate settlement of it -- roadmap Part 4's "overpayment (paying more than the statement,
+     * e.g. clearing an old balance too)" case.
+     *
+     * <p>2.5x, not unbounded: the roadmap's own example is clearing one old balance on top of this
+     * one, which is roughly double: this floor leaves headroom for that plus rounding/fees without
+     * accepting an arbitrarily large, likely-unrelated payment as evidence for a specific card.
+     */
+    public static final BigDecimal CC_PAYMENT_MAX_OVERPAYMENT_RATIO = new BigDecimal("2.5");
+
+    /**
      * How far either side of an import's own date range the candidate set has to reach for a
      * windowed reconciliation to find everything an unbounded one would.
      *

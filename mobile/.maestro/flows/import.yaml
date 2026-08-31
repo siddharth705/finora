@@ -10,7 +10,7 @@
 # and the review step's duplicate-detection notices they already exist. IMPORT_STAGE rate limiting
 # aside, that's a second real code path being exercised, not a bug in the flow -- but it does mean
 # CI seeds a fresh database per run rather than re-running this against a long-lived one.
-appId: com.finoratech.app
+appId: com.fynora.app
 env:
   TEST_EMAIL: maestro-test@finora.test
   TEST_PASSWORD: MaestroSeedPass2026

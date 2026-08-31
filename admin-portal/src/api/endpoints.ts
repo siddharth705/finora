@@ -2,6 +2,7 @@ import { api, rawApi, type ApiEnvelope } from './client';
 import type {
 
   AccountDto, ActivationFunnelDto, ActivityTrendPointDto, AdminReferralSummaryDto, AdminUpdateUserRequest, AuditLogDto, BankDto, CategoryConfidencePoint,
+  CoverageDto,
   CreateAccountRequest, CreateBankRequest, CreateMerchantTemplateRequest, CreateRelationshipRequest,
   CreateRuleRequest, CreateUserRequest, FeatureFlagDto, GmailMerchantParserStatDto, LearningGrowthPoint, LearningPlatformStatsDto, LearningSummaryDto,
   LearningTimelineEntry,
@@ -101,8 +102,8 @@ export const adminMfaApi = {
   status: () => api.get<{ enabled: boolean }>('/admin-mfa/status').then((r) => r.data),
   enroll: () => api.post<{ secret: string; provisioningUri: string }>('/admin-mfa/enroll').then((r) => r.data),
   confirm: (code: string) => api.post<{ recoveryCodes: string[] }>('/admin-mfa/confirm', { code }).then((r) => r.data),
-  disable: (currentPassword: string | null, googleIdToken: string | null) =>
-    api.post<void>('/admin-mfa/disable', { currentPassword, googleIdToken }).then((r) => r.data),
+  disable: (currentPassword: string | null, googleIdToken: string | null, code: string) =>
+    api.post<void>('/admin-mfa/disable', { currentPassword, googleIdToken, code }).then((r) => r.data),
 };
 
 // Just one endpoint now -- there's no backend-triggered "send" step (Firebase's own client SDK
@@ -169,7 +170,8 @@ export const banksApi = {
 };
 
 export const adminBanksApi = {
-  list: () => api.get<BankDto[]>('/admin/banks').then((r) => r.data),
+  list: (page: number, size: number) =>
+    api.get<PagedResponse<BankDto>>('/admin/banks', { params: { page, size } }).then((r) => r.data),
   create: (request: CreateBankRequest) =>
     api.post<BankDto>('/admin/banks', request).then((r) => r.data),
   update: (id: string, request: UpdateBankRequest) =>
@@ -190,6 +192,11 @@ export const adminAccountsApi = {
     api.put<AccountDto>(`/admin/users/${userId}/accounts/${accountId}`, request).then((r) => r.data),
   delete: (userId: string, accountId: string) =>
     api.delete(`/admin/users/${userId}/accounts/${accountId}`),
+  // Phase 1 of docs/proposals/statement-continuity-and-coverage-integrity-proposal.md (§0.14) --
+  // by accountId alone, not nested under a userId path, matching AdminImportTraceController's own
+  // by-reference lookup shape.
+  coverage: (accountId: string) =>
+    api.get<CoverageDto>(`/admin/accounts/${accountId}/coverage`).then((r) => r.data),
 };
 
 export const adminTransactionsApi = {
@@ -200,7 +207,8 @@ export const adminTransactionsApi = {
 };
 
 export const adminRulesApi = {
-  list: () => api.get<RuleDto[]>('/admin/rules').then((r) => r.data),
+  list: (page: number, size: number) =>
+    api.get<PagedResponse<RuleDto>>('/admin/rules', { params: { page, size } }).then((r) => r.data),
   create: (request: CreateRuleRequest) =>
     api.post<RuleDto>('/admin/rules', request).then((r) => r.data),
   update: (id: string, request: UpdateRuleRequest) =>
@@ -272,14 +280,16 @@ export const adminDashboardApi = {
 // D-28 PR4-A. SUBSCRIPTION_MANAGEMENT_VIEW/_MANAGE-gated (V99) -- its own permission, not folded
 // into PLATFORM_STATS_VIEW, same reasoning as PLATFORM_ANALYTICS_VIEW's own separation.
 export const adminSubscriptionsApi = {
-  list: () => api.get<SubscriptionSummaryDto[]>('/admin/subscriptions').then((r) => r.data),
+  list: (page: number, size: number) =>
+    api.get<PagedResponse<SubscriptionSummaryDto>>('/admin/subscriptions', { params: { page, size } }).then((r) => r.data),
   changePlan: (userId: string, planCode: string, reason: string) =>
     api.put(`/admin/subscriptions/${userId}/plan`, { planCode, reason }),
 };
 
 // D-28 PR4-C. REFERRAL_MANAGEMENT_VIEW/_MANAGE-gated (V101), same split as adminSubscriptionsApi.
 export const adminReferralsApi = {
-  list: () => api.get<AdminReferralSummaryDto[]>('/admin/referrals').then((r) => r.data),
+  list: (page: number, size: number) =>
+    api.get<PagedResponse<AdminReferralSummaryDto>>('/admin/referrals', { params: { page, size } }).then((r) => r.data),
   creditReward: (referralId: string, amount: number, reason: string) =>
     api.post(`/admin/referrals/${referralId}/credit`, { amount, reason }),
 };
@@ -364,7 +374,8 @@ export const adminMerchantsApi = {
  *  class doc for why. New templates come back disabled; activate is a separate call, always
  *  taken only after a successful test (see MerchantTemplates.tsx's own TestTemplatePanel). */
 export const adminMerchantTemplatesApi = {
-  list: () => api.get<MerchantTemplateDto[]>('/admin/merchant-templates').then((r) => r.data),
+  list: (page: number, size: number) =>
+    api.get<PagedResponse<MerchantTemplateDto>>('/admin/merchant-templates', { params: { page, size } }).then((r) => r.data),
   create: (request: CreateMerchantTemplateRequest) =>
     api.post<MerchantTemplateDto>('/admin/merchant-templates', request).then((r) => r.data),
   update: (id: string, request: UpdateMerchantTemplateRequest) =>

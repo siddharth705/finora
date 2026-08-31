@@ -60,7 +60,7 @@ class AdminOperationalDashboardServiceTest {
         service = new AdminOperationalDashboardService(userRepository, transactionRepository,
                 statementImportRepository, budgetRepository, goalRepository, auditLogRepository, healthRegistryService);
 
-        when(userRepository.countByRoleNot("BOOTSTRAP_ADMIN")).thenReturn(0L);
+        when(userRepository.countByEmailNot(BootstrapService.BOOTSTRAP_IDENTIFIER)).thenReturn(0L);
         when(auditLogRepository.countDistinctUsersByActionSince(any(), any())).thenReturn(0L);
         when(auditLogRepository.countDistinctUsersByActionBetween(any(), any(), any())).thenReturn(0L);
         when(transactionRepository.countByCreatedAtAfter(any())).thenReturn(0L);
@@ -182,7 +182,7 @@ class AdminOperationalDashboardServiceTest {
     // D-27 PR3-D.
     @Test
     void activationFunnel_reportsEachStageFromItsOwnDistinctUserCount() {
-        when(userRepository.countByRoleNot("BOOTSTRAP_ADMIN")).thenReturn(100L);
+        when(userRepository.countByEmailNot(BootstrapService.BOOTSTRAP_IDENTIFIER)).thenReturn(100L);
         when(statementImportRepository.countDistinctUsersEverActivated()).thenReturn(72L);
         when(budgetRepository.countDistinctUsersEverActivated()).thenReturn(33L);
         when(goalRepository.countDistinctUsersEverActivated()).thenReturn(21L);
@@ -198,13 +198,30 @@ class AdminOperationalDashboardServiceTest {
     @Test
     void activationFunnel_signedUpCount_agreesWithOverviewsOwnTotalUsers() {
         // Both must read the same underlying figure -- see the service method's own doc comment
-        // on why this reuses countByRoleNot("BOOTSTRAP_ADMIN") rather than a second definition of
-        // "total users."
-        when(userRepository.countByRoleNot("BOOTSTRAP_ADMIN")).thenReturn(42L);
+        // on why this reuses countByEmailNot(BootstrapService.BOOTSTRAP_IDENTIFIER) rather than a
+        // second definition of "total users."
+        when(userRepository.countByEmailNot(BootstrapService.BOOTSTRAP_IDENTIFIER)).thenReturn(42L);
         when(healthRegistryService.platformHealth()).thenReturn(new PlatformHealthDto("UP", List.of()));
 
         assertThat(service.activationFunnel().signedUp()).isEqualTo(42L);
         assertThat(service.overview().totalUsers()).isEqualTo(42L);
+    }
+
+    /** Bug fix regression test. Both totalUsers and signedUp used to be
+     *  {@code countByRoleNot("BOOTSTRAP_ADMIN")}, which stopped excluding the bootstrap account
+     *  the instant setup completed -- {@code SetupService.completeSetup()} resets its legacy
+     *  {@code User.role} column to {@code DEFAULT_ROLE} via {@code RoleService.revokeRole}. This
+     *  pins that both figures are now read via the account's EMAIL
+     *  ({@code BootstrapService.BOOTSTRAP_IDENTIFIER}), which never changes -- see
+     *  {@code UserRepositoryIT} for proof against a real Postgres that the email-based query
+     *  actually survives that role reset. */
+    @Test
+    void overview_and_activationFunnel_excludeTheBootstrapAdminByEmail_notByItsResettableRoleColumn() {
+        when(userRepository.countByEmailNot(BootstrapService.BOOTSTRAP_IDENTIFIER)).thenReturn(7L);
+        when(healthRegistryService.platformHealth()).thenReturn(new PlatformHealthDto("UP", List.of()));
+
+        assertThat(service.overview().totalUsers()).isEqualTo(7L);
+        assertThat(service.activationFunnel().signedUp()).isEqualTo(7L);
     }
 
     @Test

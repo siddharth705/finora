@@ -55,6 +55,41 @@ describe('GoogleSignInButton', () => {
       });
     });
 
+    it('clears the cached Google account before signing in, so the picker always appears', async () => {
+      // The SDK silently reuses the last-used account. Without an explicit signOut() first, a
+      // device with two Google accounts is locked to whichever signed in first, with no in-app way
+      // to switch -- and if that account is one the backend refuses, there is no way out at all.
+      mockedGoogleSignin.signIn.mockResolvedValue({
+        type: 'success',
+        data: { idToken: 'a-real-looking-id-token', user: {}, scopes: [], serverAuthCode: null },
+      } as never);
+
+      const { view, onCredential } = renderButton();
+      fireEvent.press(view.getByText('Sign in with Google'));
+
+      await waitFor(() => expect(onCredential).toHaveBeenCalled());
+      expect(mockedGoogleSignin.signOut).toHaveBeenCalled();
+      expect(mockedGoogleSignin.signOut.mock.invocationCallOrder[0]).toBeLessThan(
+        mockedGoogleSignin.signIn.mock.invocationCallOrder[0]
+      );
+    });
+
+    it('signs in anyway when there is no cached account to clear', async () => {
+      // signOut() rejects when nobody has ever signed in on this device. That is the ordinary
+      // first-run state, not an error -- it must not block the sign-in it precedes.
+      mockedGoogleSignin.signOut.mockRejectedValueOnce(new Error('RNGoogleSignin: not signed in'));
+      mockedGoogleSignin.signIn.mockResolvedValue({
+        type: 'success',
+        data: { idToken: 'first-run-token', user: {}, scopes: [], serverAuthCode: null },
+      } as never);
+
+      const { view, onCredential, onError } = renderButton();
+      fireEvent.press(view.getByText('Sign in with Google'));
+
+      await waitFor(() => expect(onCredential).toHaveBeenCalledWith('first-run-token'));
+      expect(onError).not.toHaveBeenCalled();
+    });
+
     it('does nothing when the user cancels -- not an error', async () => {
       mockedGoogleSignin.signIn.mockResolvedValue({ type: 'cancelled', data: null } as never);
 

@@ -1,11 +1,82 @@
 import { useId, useState } from 'react';
 import { useAdminAuth } from '../../context/AdminAuthContext';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Pencil, Plus, Trash2, X } from 'lucide-react';
+import { AlertTriangle, ChevronDown, ChevronUp, Pencil, Plus, Trash2, X } from 'lucide-react';
 import { adminAccountsApi, banksApi } from '../../api/endpoints';
 import type { AccountDto, CreateAccountRequest } from '../../types';
 import { errorMessage } from './errorMessage';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
+
+// Phase 1 of docs/proposals/statement-continuity-and-coverage-integrity-proposal.md (§0.14): the
+// first consumer of the coverage engine, deliberately admin-only -- someone needs to watch it run
+// against real accounts before an end-user-facing warning or timeline (Phase 2+) exists at all.
+function CoveragePanel({ accountId }: { accountId: string }) {
+  const { data, isLoading, error } = useQuery({
+    queryKey: ['admin-account-coverage', accountId],
+    queryFn: () => adminAccountsApi.coverage(accountId),
+  });
+
+  if (isLoading) return <p className="text-xs text-muted px-4 py-3">Loading coverage…</p>;
+  if (error) {
+    return <p className="text-xs text-danger bg-danger-bg rounded-lg px-3 py-2 mx-4 my-2">Failed to load coverage.</p>;
+  }
+  if (!data) return null;
+
+  const clean = !data.hasGaps && !data.hasOverlaps && !data.hasNonStandardPeriods;
+
+  return (
+    <div className="border-t border-border px-4 py-3 space-y-2 bg-bg/50">
+      <div className="flex items-center gap-2 flex-wrap text-xs">
+        <span
+          className={`font-semibold px-2 py-0.5 rounded-full ${clean ? 'bg-success-bg text-success' : 'bg-warning-bg text-warning'}`}
+        >
+          {data.coverageStatus}
+        </span>
+        <span className="text-muted">
+          {data.coveredDays}d covered · {data.missingDays}d missing
+          {data.coveragePercentage !== null && ` · ${data.coveragePercentage.toFixed(1)}%`}
+        </span>
+      </div>
+
+      {data.gaps.length > 0 && (
+        <ul className="space-y-1">
+          {data.gaps.map((gap) => (
+            <li key={`${gap.gapStart}-${gap.gapEnd}`} className="flex items-center gap-1.5 text-xs text-warning">
+              <AlertTriangle size={12} />
+              Missing {gap.gapStart} to {gap.gapEnd} ({gap.daysMissing}d)
+              {gap.delta !== null && ` · balance delta ₹${gap.delta.toLocaleString('en-IN')}`}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {data.overlaps.length > 0 && (
+        <ul className="space-y-1">
+          {data.overlaps.map((overlap) => (
+            <li key={`${overlap.segmentAId}-${overlap.segmentBId}`} className="flex items-center gap-1.5 text-xs text-warning">
+              <AlertTriangle size={12} />
+              {overlap.type === 'EXACT_DUPLICATE' ? 'Duplicate period' : 'Overlapping periods'}: {overlap.overlapStart} to {overlap.overlapEnd}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {data.hasNonStandardPeriods && (
+        <p className="text-xs text-muted">
+          One or more statements cover an unusually long or short period for this account and were
+          excluded from gap/overlap classification.
+        </p>
+      )}
+
+      {clean && data.segments.length > 0 && (
+        <p className="text-xs text-muted">No gaps or overlaps across {data.segments.length} statement(s).</p>
+      )}
+      {data.segments.length === 0 && (
+        <p className="text-xs text-muted">No statements with a printed period on file for this account yet.</p>
+      )}
+    </div>
+  );
+}
 
 const BLANK_ACCOUNT: CreateAccountRequest = {
   name: '', accountType: 'SAVINGS', balance: 0, bankId: '', accountHolderName: '', accountNumberMasked: '',
@@ -136,6 +207,7 @@ export function AccountsSection({ userId }: { userId: string }) {
   const [editingAccount, setEditingAccount] = useState<AccountDto | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [confirmDeleteAccount, setConfirmDeleteAccount] = useState<AccountDto | null>(null);
+  const [expandedCoverageId, setExpandedCoverageId] = useState<string | null>(null);
 
   const { data: accounts, isLoading } = useQuery({
     queryKey: ['admin-user-accounts', userId],
@@ -174,6 +246,7 @@ export function AccountsSection({ userId }: { userId: string }) {
   const canCreate = hasPermission('ACCOUNT_CREATE');
   const canUpdate = hasPermission('ACCOUNT_UPDATE');
   const canDelete = hasPermission('ACCOUNT_DELETE');
+  const canViewCoverage = hasPermission('PLATFORM_DIAGNOSTICS_VIEW');
 
   return (
     <div className="bg-card border border-border rounded-xl2 shadow-card p-6">
@@ -241,46 +314,60 @@ export function AccountsSection({ userId }: { userId: string }) {
               onSubmit={(values) => updateMutation.mutate({ id: account.id, values })}
             />
           ) : (
-            <div key={account.id} className="flex items-center justify-between border border-border rounded-lg px-4 py-3">
-              <div className="flex items-center gap-3">
-                <span
-                  className="w-8 h-8 rounded-lg flex items-center justify-center text-[10px] font-bold text-white flex-shrink-0"
-                  style={{ backgroundColor: account.bank.colorHex || '#64748B' }}
-                >
-                  {account.bank.initials}
-                </span>
-                <div>
-                  <p className="text-sm font-medium text-ink">{account.name}</p>
-                  <p className="text-xs text-muted">{account.bank.shortName} · {account.accountType}</p>
+            <div key={account.id} className="border border-border rounded-lg overflow-hidden">
+              <div className="flex items-center justify-between px-4 py-3">
+                <div className="flex items-center gap-3">
+                  <span
+                    className="w-8 h-8 rounded-lg flex items-center justify-center text-[10px] font-bold text-white flex-shrink-0"
+                    style={{ backgroundColor: account.bank.colorHex || '#64748B' }}
+                  >
+                    {account.bank.initials}
+                  </span>
+                  <div>
+                    <p className="text-sm font-medium text-ink">{account.name}</p>
+                    <p className="text-xs text-muted">{account.bank.shortName} · {account.accountType}</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className="text-sm font-semibold text-ink">₹{account.balance.toLocaleString('en-IN')}</span>
+                  {canViewCoverage && (
+                    <button
+                      type="button"
+                      title="Statement coverage"
+                      onClick={() => setExpandedCoverageId(expandedCoverageId === account.id ? null : account.id)}
+                      className="inline-flex items-center gap-1 text-xs font-medium text-muted hover:text-ink px-2 py-1 rounded-lg hover:bg-bg"
+                    >
+                      Coverage
+                      {expandedCoverageId === account.id ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+                    </button>
+                  )}
+                  {canUpdate && (
+                    <button
+                      type="button"
+                      title="Edit"
+                      onClick={() => {
+                        setEditingAccount(account);
+                        setError(null);
+                      }}
+                      className="w-7 h-7 rounded-lg hover:bg-bg text-muted hover:text-ink inline-flex items-center justify-center"
+                    >
+                      <Pencil size={13} />
+                    </button>
+                  )}
+                  {canDelete && (
+                    <button
+                      type="button"
+                      title="Delete"
+                      disabled={deleteMutation.isPending}
+                      onClick={() => setConfirmDeleteAccount(account)}
+                      className="w-7 h-7 rounded-lg hover:bg-danger-bg text-muted hover:text-danger inline-flex items-center justify-center"
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  )}
                 </div>
               </div>
-              <div className="flex items-center gap-3">
-                <span className="text-sm font-semibold text-ink">₹{account.balance.toLocaleString('en-IN')}</span>
-                {canUpdate && (
-                  <button
-                    type="button"
-                    title="Edit"
-                    onClick={() => {
-                      setEditingAccount(account);
-                      setError(null);
-                    }}
-                    className="w-7 h-7 rounded-lg hover:bg-bg text-muted hover:text-ink inline-flex items-center justify-center"
-                  >
-                    <Pencil size={13} />
-                  </button>
-                )}
-                {canDelete && (
-                  <button
-                    type="button"
-                    title="Delete"
-                    disabled={deleteMutation.isPending}
-                    onClick={() => setConfirmDeleteAccount(account)}
-                    className="w-7 h-7 rounded-lg hover:bg-danger-bg text-muted hover:text-danger inline-flex items-center justify-center"
-                  >
-                    <Trash2 size={13} />
-                  </button>
-                )}
-              </div>
+              {expandedCoverageId === account.id && <CoveragePanel accountId={account.id} />}
             </div>
           )
         )}

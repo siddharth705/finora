@@ -4,9 +4,12 @@ import { BadgeCheck, GitMerge, Pencil, Trash2 } from 'lucide-react';
 import { AdminLayout } from '../components/AdminLayout';
 import { RequirePermission } from '../components/ProtectedRoute';
 import { DataTable, type DataTableColumn } from '../components/DataTable';
+import { Pagination } from '../components/Pagination';
 import { adminMerchantReviewApi } from '../api/endpoints';
 import { formatWhen } from '../lib/formatWhen';
 import type { MerchantReviewItem } from '../types';
+
+const PAGE_SIZE = 25;
 
 /**
  * The Merchant Review Center (WI4).
@@ -35,39 +38,45 @@ function MerchantReviewContent() {
 
   const queue = useQuery({
     queryKey: ['merchant-review', page],
-    queryFn: () => adminMerchantReviewApi.queue({ page, size: 25 }),
+    queryFn: () => adminMerchantReviewApi.queue({ page, size: PAGE_SIZE }),
   });
 
-  const refresh = () => {
+  // Deleting/approving the last row(s) on a page beyond the first would otherwise leave the
+  // admin stranded on a now-empty page -- back off to the previous one so the list they land on
+  // actually has something in it, same as Pagination.tsx never rendering "Page 2 of 1".
+  const refresh = (removedCount = 1) => {
+    setPage((p) => (p > 0 && (queue.data?.content.length ?? 0) <= removedCount ? p - 1 : p));
     void queryClient.invalidateQueries({ queryKey: ['merchant-review'] });
     setSelected(null);
   };
 
   const approve = useMutation({
     mutationFn: (row: MerchantReviewItem) => adminMerchantReviewApi.approve(row.userId, row.id),
-    onSuccess: refresh,
+    onSuccess: () => refresh(),
   });
 
   const approveAll = useMutation({
     mutationFn: (userId: string) => adminMerchantReviewApi.approveAll(userId),
-    onSuccess: refresh,
+    // approveAll can clear every row on the page belonging to this user, not just one.
+    onSuccess: (_data, userId) =>
+      refresh(queue.data?.content.filter((row) => row.userId === userId).length ?? 1),
   });
 
   const rename = useMutation({
     mutationFn: (vars: { row: MerchantReviewItem; name: string }) =>
       adminMerchantReviewApi.rename(vars.row.userId, vars.row.id, vars.name),
-    onSuccess: refresh,
+    onSuccess: () => refresh(),
   });
 
   const discard = useMutation({
     mutationFn: (row: MerchantReviewItem) => adminMerchantReviewApi.discard(row.userId, row.id),
-    onSuccess: refresh,
+    onSuccess: () => refresh(),
   });
 
   const merge = useMutation({
     mutationFn: (vars: { row: MerchantReviewItem; into: string }) =>
       adminMerchantReviewApi.merge(vars.row.userId, vars.row.id, vars.into),
-    onSuccess: refresh,
+    onSuccess: () => refresh(),
   });
 
   const columns: DataTableColumn<MerchantReviewItem>[] = [
@@ -141,29 +150,14 @@ function MerchantReviewContent() {
         emptyMessage="Nothing awaiting review. Every merchant has been confirmed."
       />
 
-      {queue.data && queue.data.totalPages > 1 && (
-        <div className="flex items-center justify-between text-sm text-muted">
-          <span>
-            Page {queue.data.page + 1} of {queue.data.totalPages} ({queue.data.totalElements} awaiting
-            review)
-          </span>
-          <div className="flex gap-2">
-            <button
-              className="rounded border border-border px-2 py-1 disabled:opacity-40"
-              disabled={page === 0}
-              onClick={() => setPage((p) => p - 1)}
-            >
-              Previous
-            </button>
-            <button
-              className="rounded border border-border px-2 py-1 disabled:opacity-40"
-              disabled={page + 1 >= queue.data.totalPages}
-              onClick={() => setPage((p) => p + 1)}
-            >
-              Next
-            </button>
-          </div>
-        </div>
+      {queue.data && (
+        <Pagination
+          page={page}
+          totalPages={queue.data.totalPages}
+          totalElements={queue.data.totalElements}
+          pageSize={PAGE_SIZE}
+          onPageChange={setPage}
+        />
       )}
 
       {selected && (

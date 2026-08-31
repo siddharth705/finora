@@ -123,3 +123,43 @@ describe('apiErrorDetails', () => {
     expect(apiErrorDetails(new Error('kaboom'))).toBeNull();
   });
 });
+
+/**
+ * The three Firebase codes behind every phone-auth failure investigated on 2026-08-30 all fell
+ * through to the caller's generic fallback, and nothing logged the code before discarding it. The
+ * app held the exact diagnosis each time and threw it away, which is why the cause had to be found
+ * by probing Identity Toolkit over REST instead of by reading the screen.
+ */
+describe('Firebase auth codes that used to fall through silently', () => {
+  it.each([
+    ['auth/billing-not-enabled'],
+    ['auth/operation-not-allowed'],
+    ['auth/app-not-authorized'],
+  ])('%s is recognised rather than answered with the caller fallback', (code) => {
+    const message = toUserMessage({ code }, 'GENERIC FALLBACK');
+    expect(message).not.toBe('GENERIC FALLBACK');
+    expect(message.length).toBeGreaterThan(0);
+  });
+
+  it('points at the setup doc that actually exists', () => {
+    // The message named docs/engineering/mobile-setup.md; the file is at
+    // docs/engineering/mobile/mobile-setup.md. Shown to a developer whose build is already broken.
+    expect(toUserMessage({ code: 'auth/missing-client-identifier' }, 'GENERIC FALLBACK')).toContain(
+      'docs/engineering/mobile/mobile-setup.md'
+    );
+  });
+
+  it('logs an auth/ code it has no message for instead of dropping it', () => {
+    // The map will always be incomplete -- Firebase adds codes. What must not happen again is
+    // losing the code entirely, leaving only a sentence that fits every possible cause.
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      expect(toUserMessage({ code: 'auth/a-code-nobody-has-mapped' }, 'GENERIC FALLBACK')).toBe(
+        'GENERIC FALLBACK'
+      );
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('auth/a-code-nobody-has-mapped'));
+    } finally {
+      warn.mockRestore();
+    }
+  });
+});

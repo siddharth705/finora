@@ -178,6 +178,26 @@ class DashboardServiceTest {
     }
 
     @Test
+    @DisplayName("excludes an investment transfer from monthlyExpense, but keeps it in spendByCategory")
+    void summarize_excludesInvestmentTransfer_fromMonthlyExpense_butKeepsItInSpendByCategory() {
+        // Top-line-only exclusion (RefundNetting.excludingInvestmentTransfers): a SIP must not
+        // inflate the KPI headline, but "Investments" is still a real, budgetable category and
+        // must not silently vanish from the category breakdown a Budget page reads from.
+        LocalDate july = LocalDate.of(2026, 7, 15);
+        Transaction groceries = txn(new BigDecimal("2000.00"), Transaction.Type.EXPENSE, july, Transaction.ReconciliationStatus.OK);
+        Transaction sip = txn(new BigDecimal("3000.00"), Transaction.Type.EXPENSE, july, Transaction.ReconciliationStatus.INVESTMENT_TRANSFER);
+
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(groceries, sip));
+
+        DashboardSummaryDto summary = dashboardService.summarize(userId);
+
+        assertThat(summary.monthlyExpense()).isEqualByComparingTo("2000.00");
+        BigDecimal categoryTotal = summary.spendByCategory().values().stream()
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        assertThat(categoryTotal).isEqualByComparingTo("5000.00");
+    }
+
+    @Test
     @DisplayName("categoryReviewWarning fires at/above the threshold, with the real amount/count/pct behind it")
     void summarize_flagsCategoryReviewWarning_atOrAboveTheThreshold() {
         LocalDate july = LocalDate.of(2026, 7, 15);

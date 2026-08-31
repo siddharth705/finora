@@ -3,6 +3,9 @@ import { useQueryClient } from '@tanstack/react-query';
 import { authApi } from '../api/endpoints';
 import { setSessionCallbacks } from '../api/client';
 import { safeStorage } from '../lib/safeStorage';
+import { clearPersistedNavigationState } from '../navigation/useNavigationStatePersistence';
+import { clearPersistedQueryCache, pauseQueryPersistence } from '../api/queryClient';
+import { signOutOfGoogle } from '../lib/googleSession';
 
 /**
  * Ported from frontend/src/context/AuthContext.tsx -- same state shape, same method contracts.
@@ -61,6 +64,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // Restore a persisted session on cold start. Reads run in parallel -- they're independent keys,
   // and on Android each SecureStore read is a separate bridge round-trip.
+  //
+  // Deliberately checks only whether a token is PRESENT, not whether it's still valid -- there is
+  // no cheap local way to know that, and blocking here on a network round-trip before painting
+  // anything is exactly the loading-state-first pattern Item B's cache persistence
+  // (queryClient.ts's startQueryPersistence) exists to avoid. The accepted consequence: if a
+  // session expires while the app is fully closed, the very next open can paint real, persisted
+  // financial figures for a beat before the first live request 401s and clearLocalState redirects
+  // to Login -- the worst case during that gap goes from an empty skeleton (pre-persistence) to a
+  // stale-but-real number. That's the same "show existing data" tradeoff the whole initiative was
+  // built around, not a gap specific to this effect; narrowing it would mean gating every screen on
+  // a dedicated validity check this app has no cheap way to make faster than the request that's
+  // going to fire anyway.
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -115,7 +130,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setEmail(null);
     setFullName(null);
     setPhoneVerifiedState(false);
+    // Must run BEFORE queryClient.clear() below -- see pauseQueryPersistence's own comment. It
+    // stops the persister reacting to clear()'s own cache-removal events, which would otherwise
+    // race clearPersistedQueryCache's disk delete and could resurrect the departing session's data.
+    pauseQueryPersistence();
     queryClient.clear();
+    // Same reasoning as queryClient.clear() just above: a persisted screen position is a smaller
+    // leak than a balance, but the next person signing in on this device landing on wherever the
+    // previous account last was is still a mistake worth ruling out at this single convergence
+    // point rather than by remembering it at every exit path. Fire-and-forget, same as every other
+    // AsyncStorage write in this app -- there is no UI waiting on this to resolve.
+    void clearPersistedNavigationState();
+    // Item B: same convergence-point reasoning as clearPersistedNavigationState just above, one
+    // layer further down. queryClient.clear() (above) only empties the IN-MEMORY cache -- Item B's
+    // AsyncStorage persistence (startQueryPersistence, api/queryClient.ts) means a copy of
+    // whatever was cached at the last save also lives on disk. Without this, the next person to
+    // sign in on this device would have their very first frame painted from the PREVIOUS
+    // account's persisted balances. Fire-and-forget, same as every other AsyncStorage write here.
+    void clearPersistedQueryCache();
+    // The Google session goes with it, for the same reason and at the same point as the cache: a
+    // credential the SDK still holds lets the next person press "Sign in with Google" and land in
+    // the previous person's account without a picker ever appearing. Fire-and-forget -- the local
+    // state above must not wait on a native call, and signOutOfGoogle never rejects.
+    void signOutOfGoogle();
   }, [queryClient]);
 
   // The API client can't import navigation or this context (it's imported BY both), so it calls
