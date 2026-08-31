@@ -223,7 +223,7 @@ public class AdminMfaService {
 
         Optional<AdminTotpCredential> enabledCredential = credentialRepository.findByUserId(userId)
                 .filter(AdminTotpCredential::isEnabled);
-        if (enabledCredential.isPresent() && !verifyMfaCode(userId, enabledCredential.get(), code)) {
+        if (enabledCredential.isPresent() && !verifyMfaCode(userId, enabledCredential.get(), code, actingAdminId)) {
             throw new ApiException(ErrorCode.AUTH_MFA_INVALID_CODE);
         }
 
@@ -275,7 +275,7 @@ public class AdminMfaService {
                 .filter(AdminTotpCredential::isEnabled)
                 .orElseThrow(() -> new ApiException(ErrorCode.AUTH_MFA_INVALID_CODE));
 
-        if (!verifyMfaCode(userId, credential, code)) {
+        if (!verifyMfaCode(userId, credential, code, userId)) {
             throw new ApiException(ErrorCode.AUTH_MFA_INVALID_CODE);
         }
 
@@ -288,16 +288,21 @@ public class AdminMfaService {
      *  fallback for "I don't have my authenticator." Consumes the recovery code (marks it used) if
      *  that's the branch that matched, same as {@link #verifyChallenge} already relied on. Shared
      *  by {@link #verifyChallenge} and {@link #disable} -- both are "prove you still hold the
-     *  second factor," just gating a different action. */
-    private boolean verifyMfaCode(UUID userId, AdminTotpCredential credential, String code) {
+     *  second factor," just gating a different action.
+     *
+     *  @param actingAdminId who is proving possession of the second factor -- {@code userId} itself
+     *         from {@link #verifyChallenge} (a login is always self-service) and {@link #disable}'s
+     *         own {@code actingAdminId} otherwise. Threaded through rather than re-derived, same
+     *         reason {@link #confirm}'s doc comment gives. */
+    private boolean verifyMfaCode(UUID userId, AdminTotpCredential credential, String code, UUID actingAdminId) {
         String secret = encryptionService.decrypt(credential.secret());
         if (TotpGenerator.verify(secret, code)) {
             return true;
         }
-        return tryConsumeRecoveryCode(userId, code);
+        return tryConsumeRecoveryCode(userId, code, actingAdminId);
     }
 
-    private boolean tryConsumeRecoveryCode(UUID userId, String code) {
+    private boolean tryConsumeRecoveryCode(UUID userId, String code, UUID actingAdminId) {
         if (code == null || code.isBlank()) return false;
         // Normalized identically to how generateRecoveryCodes() formats what it hands out
         // (uppercase hex, "XXXXX-XXXXX") minus tolerance for a dropped dash or stray whitespace --
@@ -309,7 +314,8 @@ public class AdminMfaService {
         match.ifPresent(rc -> {
             rc.markUsed();
             recoveryCodeRepository.save(rc);
-            auditService.record(userId, "ADMIN_MFA_RECOVERY_CODE_USED", "User", userId, Map.of());
+            auditService.record(userId, "ADMIN_MFA_RECOVERY_CODE_USED", "User", userId,
+                    Map.of("actorId", actingAdminId.toString()));
         });
         return match.isPresent();
     }
