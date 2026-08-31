@@ -29,15 +29,14 @@ explain or let the user correct).
 ## Coordination check — read this before starting any track
 
 This repo runs concurrent sessions in shared history, with a documented record of collisions
-(three separate Flyway migration-number collisions; see `CLAUDE.md`). Before starting a track below,
-this baseline pass found the following **already in flight on branches that touch the same files**.
-Re-check `git worktree list` / `git branch -r` for current state before assuming any of this is stale:
+(three separate Flyway migration-number collisions; see `CLAUDE.md`). At the time this plan was first
+drafted, three related branches were still open; **rechecked 2026-09-01, two have since merged:**
 
-| Branch | Touches | Relevance |
+| Branch | Status | Relevance |
 |---|---|---|
-| `worktree-confirmnotduplicate-supersede-guard` | `backend/.../transactions/TransactionService.java` (`confirmNotDuplicate`) | Adjacent to **Track A**'s duplicate-detection work — a different bug (un-duplicating a row whose statement was later superseded), same method neighborhood. Check this has landed before editing `confirmNotDuplicate`/`supersede` logic. |
-| `worktree-mobile-ux-bugfix` | `mobile/src/components/charts/{DonutChart,CashFlowChart,TrendChart}.tsx`, `DashboardScreen.tsx` | Already fixes the chart-memoization findings from both audit passes (`buildArcs`/`cashFlowPoints` memoization, double-computed scaled points). **Do not re-fix this** — verify it merged, don't duplicate the diff. Also already fixes per-query refresh-spinner gating and adds a skeleton screen-reader announcement (a different a11y fix than the ones tracked below, not a duplicate). |
-| `worktree-pm-status-report` | `docs/project-management/plans/project-plan-v1.0.md` | Has re-baselined the master GA plan to 87% (71 merges folded in) — **newer** than the 83% figure visible from `main` at the time of this audit. Don't cite the 83% figure; check that branch or `main` post-merge for the current number. |
+| `worktree-confirmnotduplicate-supersede-guard` | **Merged** — PR [#679](https://github.com/siddharth705/finora/pull/679), `d0295d58` on `main` | Fixed a related-but-distinct bug (`confirmNotDuplicate` refuses to un-duplicate a row whose statement was later superseded) in the same `TransactionService` neighborhood **A1/A2 will touch**. Confirmed present on `main` — no conflict, just be aware of this method's current shape before editing it. |
+| `worktree-mobile-ux-bugfix` | **Merged** — PR [#660](https://github.com/siddharth705/finora/pull/660), `7ad4efc5` on `main` | Fixed the chart-memoization findings from both audit passes (`buildArcs`/`cashFlowPoints` in `DonutChart`/`CashFlowChart`/`TrendChart`), confirmed present on `main`. **Track C's chart work starts from an already-memoized baseline** — don't re-diff this. Also shipped per-query refresh-spinner gating and a skeleton screen-reader announcement (unrelated to anything tracked here). |
+| `worktree-pm-status-report` | **Still open** — PR [#319](https://github.com/siddharth705/finora/pull/319), re-baselines the master GA plan to 87% | Not merged as of this update. Don't cite the 83% figure from `project-plan-v1.0.md` on `main` until this lands or is superseded — check #319 or `main` post-merge for the current number. |
 | `worktree-android-prod-build`, `worktree-animation-phase3-settings`, `worktree-statement-period-patterns`, `dependabot/npm_and_yarn/mobile/*` | Unrelated to this plan's scope (Android release build, animation polish, statement-period parsing, dependency bumps) | No action needed, listed for completeness. |
 
 ---
