@@ -53,6 +53,26 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _refuse_if_inside_repo(path: Path, what: str, allow_in_repo_synthetic_corpus: bool = False) -> None:
+    """Real customer statements must never sit inside the working tree -- one `git add -A` away from
+    being committed. The one exception is a committed, reviewed SYNTHETIC fixture corpus (Phase 2's
+    mechanism-proof regression fixture and its successors), which is safe to commit by construction
+    and needs an explicit, loudly-named opt-in to say so -- the refusal stays the unconditional
+    default for everything else, including every real-corpus invocation this script has ever had.
+    """
+    if allow_in_repo_synthetic_corpus:
+        return
+    # is_relative_to, not a string prefix: a sibling directory that merely shares REPO_ROOT's name
+    # as a prefix (e.g. a "finora-backup" next to "finora") is not inside it, and a naive
+    # str.startswith check would wrongly refuse it -- this project's own worktree layout has
+    # exactly that shape.
+    if path.is_relative_to(REPO_ROOT):
+        sys.exit(f"REFUSED: {path} is inside the repository.\n"
+                 f"Real customer statements must live outside the working tree. Keep the {what} "
+                 "elsewhere and pass an absolute path, or pass "
+                 "--allow-in-repo-synthetic-corpus for a committed synthetic fixture corpus.")
 BACKEND = REPO_ROOT / "backend"
 PROBE_CLASS = "com.finora.imports.analysis.CorpusProbe"
 CLASSPATH_CACHE = BACKEND / "target" / "corpus-classpath.txt"
@@ -82,17 +102,23 @@ def build_classpath(quiet: bool) -> str:
     return f"{test_classes}:{BACKEND / 'target' / 'classes'}:{CLASSPATH_CACHE.read_text().strip()}"
 
 
-def probe(classpath: str, pdf: Path, timeout: int) -> dict:
+def probe(classpath: str, pdf: Path, timeout: int, synthetic: bool = False) -> dict:
     """One statement -> one record. Never raises; every failure becomes a record.
 
     A corpus run that dies on file 3 of 16 is not a corpus run, and the statement most likely to
     crash a parser is exactly the one worth recording. So a crash, a timeout and a non-JSON stdout
     all resolve to `status: "error"` with the reason attached, and the sweep continues.
+
+    `synthetic` mirrors this script's own `--allow-in-repo-synthetic-corpus`: only a committed,
+    reviewed fixture corpus ever sets it, and CorpusProbe's own default keeps every other call site
+    on the safe, real-corpus path (see CorpusProbe.probe's doc comment).
     """
+    cmd = ["java", "-cp", classpath, PROBE_CLASS]
+    if synthetic:
+        cmd.append("--synthetic")
+    cmd.append(str(pdf))
     try:
-        result = subprocess.run(
-            ["java", "-cp", classpath, PROBE_CLASS, str(pdf)],
-            capture_output=True, text=True, timeout=timeout)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired:
         return _error(pdf, "Timeout", f"probe exceeded {timeout}s")
     except Exception as exc:                                    # noqa: BLE001 - must not propagate
@@ -157,18 +183,16 @@ def main() -> int:
     ap.add_argument("-o", "--out", type=Path, required=True, help="JSONL output path")
     ap.add_argument("--timeout", type=int, default=180, help="per-statement timeout in seconds")
     ap.add_argument("--quiet", action="store_true")
+    ap.add_argument("--allow-in-repo-synthetic-corpus", action="store_true",
+                     help="skip the in-repo refusal for a committed, reviewed SYNTHETIC fixture "
+                          "corpus. Never pass this for a real-statement corpus.")
     args = ap.parse_args()
 
     corpus = args.corpus.resolve()
     if not corpus.is_dir():
         sys.exit(f"not a directory: {corpus}")
 
-    # Same refusal as trace-capture.sh, for the same reason: a real statement inside the working tree
-    # is one `git add -A` from being committed.
-    if str(corpus).startswith(str(REPO_ROOT)):
-        sys.exit(f"REFUSED: {corpus} is inside the repository.\n"
-                 "Real customer statements must live outside the working tree. Keep the corpus\n"
-                 "elsewhere and pass an absolute path.")
+    _refuse_if_inside_repo(corpus, "corpus", args.allow_in_repo_synthetic_corpus)
 
     # Real statements arrive named however the bank or the customer named them (e.g.
     # "SBI Credit Card.PDF") -- glob("*.pdf") is case-sensitive regardless of the underlying
@@ -185,7 +209,7 @@ def main() -> int:
     for i, pdf in enumerate(pdfs, 1):
         if not args.quiet:
             print(f"  {i:>2}/{len(pdfs)} {pdf.name}", file=sys.stderr)
-        records.append(probe(classpath, pdf, args.timeout))
+        records.append(probe(classpath, pdf, args.timeout, args.allow_in_repo_synthetic_corpus))
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
     with args.out.open("w") as fh:

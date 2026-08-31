@@ -254,6 +254,52 @@ class Status(unittest.TestCase):
         self.assertEqual({cd.IMPROVEMENT}, severities(cd.compare_record(before, record())))
 
 
+class DescriptionDrift(unittest.TestCase):
+    """CorpusProbe's descriptionHashes are one-way digests, never the text itself -- see its own
+    doc comment. This dimension can only ever report CHANGE (a hash differs), never WHAT changed,
+    and it is always REVIEW severity: a differing hash could be the fix or a new corruption, and
+    only a human with the real document open locally can tell which."""
+
+    def test_a_changed_hash_is_review_not_regression(self):
+        before = record(sections=[section(0, 2, descriptionHashes=["aaaa", "bbbb"])])
+        after = record(sections=[section(0, 2, descriptionHashes=["aaaa", "cccc"])])
+
+        changes = cd.compare_record(before, after)
+
+        drift = [c for c in changes if c["dimension"] == "section[0].descriptionDrift"]
+        self.assertEqual(1, len(drift))
+        self.assertEqual(cd.REVIEW, drift[0]["severity"])
+        self.assertIn("1/2", drift[0]["detail"])
+
+    def test_no_drift_dimension_when_nothing_changed(self):
+        before = record(sections=[section(0, 2, descriptionHashes=["aaaa", "bbbb"])])
+        after = record(sections=[section(0, 2, descriptionHashes=["aaaa", "bbbb"])])
+
+        changes = cd.compare_record(before, after)
+
+        self.assertFalse([c for c in changes if c["dimension"] == "section[0].descriptionDrift"])
+
+    def test_no_drift_dimension_when_the_row_count_changed(self):
+        """Positional comparison across a length change is meaningless -- same reasoning as
+        compare_sections' own section-count-changed early return."""
+        before = record(sections=[section(0, 2, descriptionHashes=["aaaa", "bbbb"])])
+        after = record(sections=[section(0, 3, descriptionHashes=["aaaa", "bbbb", "eeee"])])
+
+        changes = cd.compare_record(before, after)
+
+        self.assertFalse([c for c in changes if c["dimension"] == "section[0].descriptionDrift"])
+
+    def test_no_drift_dimension_when_either_side_has_no_hashes_at_all(self):
+        """Absent (an older probe record, or a synthetic-mode record with no hashes) must not be
+        misread as zero rows changed."""
+        before = record(sections=[section(0, 2)])
+        after = record(sections=[section(0, 2, descriptionHashes=["aaaa", "bbbb"])])
+
+        changes = cd.compare_record(before, after)
+
+        self.assertFalse([c for c in changes if c["dimension"] == "section[0].descriptionDrift"])
+
+
 class CorpusMembership(unittest.TestCase):
 
     def test_added_and_removed_statements_are_reported_but_are_not_regressions(self):

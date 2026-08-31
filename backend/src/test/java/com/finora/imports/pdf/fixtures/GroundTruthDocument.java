@@ -91,6 +91,7 @@ public final class GroundTruthDocument {
      */
     private static String row(SyntheticStatementDefinition.Row r) {
         return "        { \"date\": " + quote(r.date().toString())
+                + ", \"description\": " + quote(r.description())
                 + ", \"amount\": " + quote(r.amount().toPlainString())
                 + ", \"direction\": " + quote(r.credit() ? "CREDIT" : "DEBIT")
                 + ", \"currency\": \"INR\" }";
