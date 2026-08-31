@@ -17,7 +17,18 @@ type Props = NativeStackScreenProps<AuthStackParamList, 'Login'>;
 export function LoginScreen({ navigation, route }: Props) {
   const c = useTheme();
   const { login, reactivate, loginWithGoogle, loginWithApple } = useAuth();
-  const [identifier, setIdentifier] = useState('');
+  // Phase 3B: AuthEntryScreen already resolved this identifier to an existing account via
+  // POST /auth/identify -- prefill it here instead of asking the user to retype it. route.params
+  // is stable for this screen instance (nothing here calls navigation.setParams), so it can be
+  // read directly rather than captured once like web's Login.tsx has to (there, location.state
+  // has to be snapshotted at mount since the same component instance persists across browser
+  // history entries).
+  //
+  // Phase 7 (resolved 2026-08-23): this used to also read route.params.method and hide the
+  // password form for a known GOOGLE/APPLE account -- removed along with nextAction no longer
+  // revealing which method an account uses (see AuthEntryScreen's own doc comment). The password
+  // field and Google/Apple buttons are always shown together now, matching a direct visit here.
+  const [identifier, setIdentifier] = useState(route.params?.identifier ?? '');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -135,7 +146,7 @@ export function LoginScreen({ navigation, route }: Props) {
     return (
       <AuthScreenLayout title="Welcome back" error={error}>
         <Text style={[styles.body, { color: c.muted }]}>
-          Your Finora account is deactivated. Sign in again to reactivate it — your data was
+          Your Fynora account is deactivated. Sign in again to reactivate it — your data was
           retained and nothing was lost.
         </Text>
 
@@ -208,7 +219,7 @@ export function LoginScreen({ navigation, route }: Props) {
         />
       </View>
 
-      <Button label="Sign in" onPress={handleSubmit} loading={loading} />
+      <Button label="Sign in" onPress={handleSubmit} loading={loading} testID="login-submit" />
 
       {showSocialSignIn ? (
         <>

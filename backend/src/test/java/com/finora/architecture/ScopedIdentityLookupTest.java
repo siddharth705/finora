@@ -47,7 +47,18 @@ class ScopedIdentityLookupTest {
             // Free-text admin search across name/email/phone. Not an identity resolution -- it
             // returns a page of partial matches for a human to pick from, and is already
             // permission-gated.
-            "search");
+            "search",
+            // Platform-wide aggregate counts (AdminOperationalDashboardService, AdminStatsService)
+            // that exclude exactly one hardcoded system constant, BootstrapService.BOOTSTRAP_IDENTIFIER
+            // -- never a client-typed value. That constant isn't shaped like a real email address, so
+            // it can't collide with a real account's identity in either portal the way this rule
+            // guards against. Adding AndAccountScope here would be wrong, not just unnecessary: these
+            // counts are deliberately unscoped across both portals (they've always counted ADMIN- and
+            // USER-scope rows together), and scoping them would silently change what "total users"
+            // means rather than fix an identity-resolution bug.
+            "countByEmailNot",
+            "countByStatusAndEmailNot",
+            "countByEmailNotAndCreatedAtBetween");
 
     @GuardianRule(
             id = "FG-027",

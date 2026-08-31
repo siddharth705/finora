@@ -57,6 +57,13 @@ import java.util.List;
  *   -&gt; buildDrCrSuffixAmountColumnSample, buildParenthesizedDrCrRunningBalanceSample
  * PAGE_BOUNDARY_ISOLATION / PAGE_FOOTER_EXCLUSION
  *   -&gt; buildParenthesizedDrCrRunningBalanceSample, buildStatementClosingMarkerSample
+ * TRANSACTION_TABLE_CLOSED
+ *   -&gt; buildStatementClosingMarkerWithTrailingLookalikeSample
+ * TRANSACTION_TABLE_TOTAL_CLOSED
+ *   -&gt; buildTransactionTableTotalMarkerWithTrailingLookalikeSample
+ * MITC_SECTION_CLOSED
+ *   -&gt; buildMitcSectionMarkerWithTrailingLookalikeSample,
+ *      buildMixedCaseMitcMentionDoesNotCloseSample (negative case)
  * COMPOSITE_STATEMENT / MULTI_ACCOUNT
  *   -&gt; buildMultiSectionCompositeStatementSample
  * CREDIT_CARD_SUMMARY_SIGNAL
@@ -370,6 +377,93 @@ public final class PdfFixtureBuilder {
         return render(List.of(page));
     }
 
+    /**
+     * TRANSACTION_TABLE_CLOSED. Same fixture as {@link #buildStatementClosingMarkerSample}, plus a
+     * row-shaped line AFTER the closing marker -- a date, a description, and an amount, exactly the
+     * shape a real transaction row has. Real-corpus-evidenced: a genuine Minimum-Amount-Due
+     * illustration table on a real Axis Bank Neo Rupay statement has this exact shape (date,
+     * description, Dr/Cr, amount) after its own "**** End of Statement ****" line -- see
+     * docs/architecture/system-design/transaction-boundary-phase2a-investigation.md. Before
+     * PdfTableLocator.STATEMENT_CLOSING_MARKER closed the section at the marker itself (rather than
+     * only excluding the marker LINE from continuation-merging), a row shaped like this one would
+     * still have been bucketed as a candidate row, surviving only if some unrelated stage happened
+     * to reject it -- exactly the "accidental, not structural" protection the investigation above
+     * documents. This fixture proves the closure itself, not a downstream accident.
+     */
+    public static byte[] buildStatementClosingMarkerWithTrailingLookalikeSample() throws IOException {
+        float[] col = {LEFT_MARGIN, 110f, 480f};
+
+        PageBuilder page = new PageBuilder();
+        page.row(col, "DATE", "TRANSACTION DETAILS", "AMOUNT (Rs.)")
+                .row(col, "24/06/2026", "UPI/SAMPLE VENDOR PRIVATE LT/SAMPLEA.PAYU@AXISB", "37.94 Dr")
+                .row(col, "15/07/2026", "UPI/SAMPLEB ENTERPRISES/PAYCO.S111111@PTY/90000", "1,240.00 Dr")
+                .line("**** End of Statement ****")
+                .row(col, "25/09/2026", "Illustrative Purchase Example", "5,000.00 Dr");
+
+        return render(List.of(page));
+    }
+
+    /**
+     * TRANSACTION_TABLE_TOTAL_CLOSED. Phase 2C. A real Kotak Mahindra Bank credit-card statement
+     * prints "Total Purchase & Other Charges  5,178.69" directly beneath its last real transaction,
+     * before a MITC/fees-and-charges legal schedule begins -- the same failure shape as
+     * TRANSACTION_TABLE_CLOSED (buildStatementClosingMarkerWithTrailingLookalikeSample), evidenced
+     * from a different bank. See docs/architecture/system-design/transaction-boundary-phase2a-
+     * investigation.md.
+     */
+    public static byte[] buildTransactionTableTotalMarkerWithTrailingLookalikeSample() throws IOException {
+        float[] col = {LEFT_MARGIN, 110f, 480f};
+
+        PageBuilder page = new PageBuilder();
+        page.row(col, "DATE", "TRANSACTION DETAILS", "AMOUNT (Rs.)")
+                .row(col, "12/03/2026", "SAMPLE RETAIL STORE", "450.00")
+                .row(col, "18/03/2026", "UPI-SAMPLE0001234567-SAMPLEVENDOR", "225.50") // synthetic-ok
+                .line("Total Purchase & Other Charges                                          675.50") // synthetic-ok
+                .row(col, "05/05/2026", "Illustrative Fee Example", "1,000.00");
+
+        return render(List.of(page));
+    }
+
+    /**
+     * MITC_SECTION_CLOSED. Phase 2C. A real ICICI Bank credit-card statement opens its MITC/legal
+     * appendix with an all-caps "MOST IMPORTANT TERMS AND CONDITIONS (MITC)" heading immediately
+     * after the last real transaction and its rewards summary -- same failure shape again,
+     * evidenced from a third bank. See the Phase 2A/2C investigation doc.
+     */
+    public static byte[] buildMitcSectionMarkerWithTrailingLookalikeSample() throws IOException {
+        float[] col = {LEFT_MARGIN, 110f, 480f};
+
+        PageBuilder page = new PageBuilder();
+        page.row(col, "DATE", "TRANSACTION DETAILS", "AMOUNT (Rs.)")
+                .row(col, "09/04/2026", "SAMPLE ONLINE SERVICE IN", "899.00")
+                .row(col, "16/04/2026", "SAMPLE SUBSCRIPTION APP IN", "1,499.00")
+                .line("MOST IMPORTANT TERMS AND CONDITIONS (MITC)")
+                .row(col, "11/09/2026", "Illustrative Interest Example", "500.00");
+
+        return render(List.of(page));
+    }
+
+    /**
+     * MITC_SECTION_CLOSED, negative case. {@link PdfTableLocator#MITC_SECTION_MARKER} is
+     * deliberately case-sensitive -- real AU and SBI statements both mention the same concept in
+     * ordinary mixed-case prose ("Most Important Terms and conditions" / "Most Important Terms &
+     * Conditions") WHILE their own real transactions are still ongoing, well before the document's
+     * true end. A case-insensitive match would close those documents' sections early. This fixture
+     * reproduces that mixed-case shape, with a real-looking transaction row after it, and asserts
+     * the row survives -- proving the case sensitivity is load-bearing, not incidental.
+     */
+    public static byte[] buildMixedCaseMitcMentionDoesNotCloseSample() throws IOException {
+        float[] col = {LEFT_MARGIN, 110f, 480f};
+
+        PageBuilder page = new PageBuilder();
+        page.row(col, "DATE", "TRANSACTION DETAILS", "AMOUNT (Rs.)")
+                .row(col, "09/04/2026", "SAMPLE ONLINE SERVICE IN", "899.00")
+                .line("Log onto examplebank.com to view the \"Most Important Terms & Conditions\"")
+                .row(col, "16/04/2026", "SAMPLE SUBSCRIPTION APP IN", "1,499.00");
+
+        return render(List.of(page));
+    }
+
     // ==================== LEADING_PLUS_CREDIT / DATE_TIME_COLUMN / WRAPPED_DESCRIPTION / CREDIT_CARD_SUMMARY_SIGNAL ====================
 
     /**
@@ -428,6 +522,43 @@ public final class PdfFixtureBuilder {
                 .line("CREDIT CARD ACCOUNT  4000 1111 2222 3333")
                 // Real HDFC-style card payment-summary wording, unmodified -- see the note on
                 // buildDrCrSuffixAmountColumnSample.
+                .line("Total Amount Due 1,817.00 Minimum Due 200.00")
+                .row(ccCol, "DATE", "TRANSACTION DETAILS", "AMOUNT (Rs.)")
+                .row(ccCol, "15/07/2026", "UPI-Retailer One", "1,817.02 Dr");
+
+        return render(List.of(page));
+    }
+
+    /**
+     * The same composite statement as {@link #buildMultiSectionCompositeStatementSample}, with one
+     * addition: the savings section's own table states its transaction date range inline, the same
+     * "Transaction details from X to Y" phrasing {@link TransactionTableDateRangeExtractor} reads
+     * (see that class's own doc comment) -- printed once, document-wide, the way a real repeated
+     * table-header row would appear if PDFBox only rendered it once per section.
+     *
+     * <p>Exists to prove {@code PdfPreviewGenerator}'s own scoping fix: this extractor is read
+     * document-wide (like {@code CreditCardSummaryExtractor}), but unlike a credit-card billing
+     * panel it is not restricted to credit-card documents, so "read once, apply everywhere" is only
+     * safe when the document IS effectively one section. Here it genuinely is not -- a savings
+     * section and an unrelated credit-card section -- so the printed range belongs to neither
+     * section's `DetectedAccountInfo`, not to both.
+     */
+    public static byte[] buildMultiSectionCompositeStatementWithTableHeaderDateRangeSample()
+            throws IOException {
+        float[] savingsCol = {LEFT_MARGIN, 130f, 300f, 380f, 460f};
+        float[] ccCol = {LEFT_MARGIN, 150f, 470f};
+
+        PageBuilder page = new PageBuilder();
+        page.line("HSBC")
+                .line("Composite Statement")
+                .blankLine()
+                .line("SAVINGS ACCOUNT-RES  100-111111-002")
+                .line("Transaction details from 05-Jul-2026 to 10-Jul-2026")
+                .row(savingsCol, "Date", "Transaction Details", "Deposits", "Withdrawals", "Balance")
+                .row(savingsCol, "05/07/2026", "Salary Credit", "55000.00", "", "105000.00")
+                .row(savingsCol, "10/07/2026", "Grocery Store", "", "2000.00", "103000.00")
+                .blankLine()
+                .line("CREDIT CARD ACCOUNT  4000 1111 2222 3333")
                 .line("Total Amount Due 1,817.00 Minimum Due 200.00")
                 .row(ccCol, "DATE", "TRANSACTION DETAILS", "AMOUNT (Rs.)")
                 .row(ccCol, "15/07/2026", "UPI-Retailer One", "1,817.02 Dr");

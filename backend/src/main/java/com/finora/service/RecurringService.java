@@ -3,6 +3,7 @@ package com.finora.service;
 import com.finora.dto.RecurringDto;
 import com.finora.entity.CategoryRule;
 import com.finora.entity.Transaction;
+import com.finora.repository.AccountRepository;
 import com.finora.repository.TransactionRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -21,9 +22,17 @@ import java.util.*;
  * occurrences within +-35% (minimum +-5 days) of the average gap.
  *
  * Persists the result onto Transaction.recurring so the Ledger/Reports pages can show a badge
- * without recomputing this on every page load — recomputed here and written back each call,
- * which is fine at personal-finance transaction volumes; would move to a scheduled job only if
- * this became a measured cost at much larger volumes.
+ * without recomputing this on every page load — recomputed here on every call (this is the one
+ * real call site reached from a plain GET, Dashboard.tsx and Insights.tsx both fetch it on
+ * ordinary page load), but only WRITTEN when a transaction's flag actually changed from this run
+ * (see detectForUser). Bug fix (review): a blind saveAll(active) here wrote and version-bumped
+ * every active transaction on every call, GET included -- two concurrent page loads (a browser
+ * prefetch, React StrictMode's double-render, or genuinely two open tabs) racing the same
+ * unchanged result could throw OptimisticLockingFailureException on what was, from the caller's
+ * perspective, a read. It also wrote one RECURRING_DETECTION_RUN audit row per page view, with
+ * nothing having actually happened. Diffing against the flag's current value before writing makes
+ * a call that changes nothing genuinely side-effect-free, without changing this method's
+ * contract or requiring a separate write endpoint.
  *
  * Admin Portal Phase 8 -- gated behind the RECURRING_DETECTION_ENABLED feature flag (V32). This
  * is the one real call site the flags framework is proven against: when disabled, this method is
@@ -55,13 +64,16 @@ public class RecurringService {
     private static final int MIN_OCCURRENCES_FOR_A_PATTERN = 3;
 
     private final TransactionRepository transactionRepository;
+    private final AccountRepository accountRepository;
     private final RuleEngineService ruleEngineService;
     private final AuditService auditService;
     private final FeatureFlagService featureFlagService;
 
-    public RecurringService(TransactionRepository transactionRepository, RuleEngineService ruleEngineService,
+    public RecurringService(TransactionRepository transactionRepository, AccountRepository accountRepository,
+                             RuleEngineService ruleEngineService,
                              AuditService auditService, FeatureFlagService featureFlagService) {
         this.transactionRepository = transactionRepository;
+        this.accountRepository = accountRepository;
         this.ruleEngineService = ruleEngineService;
         this.auditService = auditService;
         this.featureFlagService = featureFlagService;
@@ -78,18 +90,33 @@ public class RecurringService {
             return List.of();
         }
 
-        List<Transaction> active = transactionRepository.findByUserId(userId).stream()
+        // Deleted-account leak (see DashboardService.summarize for the original fix): a deleted
+        // account's transactions deliberately keep deleted_at unset, so findByUserId alone would
+        // keep detecting "recurring" patterns off them forever, not just during
+        // StatementImportService's 7-day grace window.
+        List<UUID> liveAccountIds = accountRepository.findByUserId(userId).stream()
+                .map(com.finora.entity.Account::getId).toList();
+        List<Transaction> allTransactions = liveAccountIds.isEmpty() ? List.of()
+                : transactionRepository.findByUserIdAndAccountIdIn(userId, liveAccountIds);
+        List<Transaction> active = allTransactions.stream()
                 .filter(t -> t.getIsDuplicateOf() == null && !t.isTransfer() && t.getTxnType() == Transaction.Type.EXPENSE)
                 .toList();
+        Set<UUID> activeIds = active.stream().map(Transaction::getId).collect(java.util.stream.Collectors.toSet());
 
         Map<String, List<Transaction>> byMerchant = new HashMap<>();
         active.stream()
                 .filter(t -> t.getMerchant() != null && !t.getMerchant().isBlank())
                 .forEach(t -> byMerchant.computeIfAbsent(t.getMerchant(), k -> new ArrayList<>()).add(t));
 
-        // Reset first — a merchant that used to look recurring but no longer does (e.g. a
+        // Computed into a side map rather than mutating `t.setRecurring` directly, so the diff
+        // against each transaction's CURRENT flag below (built after this map is complete) can
+        // tell "this run agrees with what's already persisted" apart from "this run changed
+        // something" -- see this class's own doc comment on why only the latter should ever be
+        // written. Defaults every active transaction to false first, same reasoning the old
+        // eager reset had: a merchant that used to look recurring but no longer does (e.g. a
         // cancelled subscription with no new charges) shouldn't keep a stale badge forever.
-        active.forEach(t -> t.setRecurring(false));
+        Map<UUID, Boolean> desiredRecurring = new HashMap<>();
+        active.forEach(t -> desiredRecurring.put(t.getId(), false));
 
         List<RecurringDto> results = new ArrayList<>();
         for (var entry : byMerchant.entrySet()) {
@@ -114,7 +141,7 @@ public class RecurringService {
             boolean intervalIsRegular = avgGap >= 5 && avgGap <= 95;
 
             if (gapRegular && amountConsistent && intervalIsRegular) {
-                group.forEach(t -> t.setRecurring(true));
+                group.forEach(t -> desiredRecurring.put(t.getId(), true));
                 String label = avgGap < 10 ? "Weekly" : avgGap < 20 ? "Biweekly" : avgGap < 40 ? "Monthly"
                         : avgGap < 100 ? "Quarterly" : "Periodic";
                 LocalDate lastDate = group.get(group.size() - 1).getTxnDate();
@@ -144,14 +171,43 @@ public class RecurringService {
         // for merchants, two lines further down and missed. See ruleSet.
         List<CategoryRule> sideEffectRules = ruleEngineService.ruleSet(userId);
         for (Transaction t : active) {
-            if (t.isRecurring()) continue;
+            // desiredRecurring, not t.isRecurring() -- the latter is still whatever was loaded
+            // from the DB (last run's result) at this point, since nothing has been mutated yet.
+            // "Already flagged recurring by the pattern pass above, this run" is the actual
+            // condition this skip means to express.
+            if (desiredRecurring.get(t.getId())) continue;
             boolean subscriptionRuleMatch = ruleEngineService.evaluateSideEffectRules(
                             sideEffectRules, t.getDescription(), t.getAmount(), t.getMerchant(), null).stream()
                     .anyMatch(m -> m.rule().getActionType() == CategoryRule.ActionType.MARK_SUBSCRIPTION);
-            if (subscriptionRuleMatch) t.setRecurring(true);
+            if (subscriptionRuleMatch) desiredRecurring.put(t.getId(), true);
         }
 
-        transactionRepository.saveAll(active);
+        // Bug 10 (docs/quality/bug-reports/BUG_REVIEW_REPORT.md) / see this class's own doc
+        // comment. Mutate and persist ONLY the transactions whose flag this run actually changes
+        // -- an unchanged transaction is never touched, so it never version-bumps and can never
+        // produce an OptimisticLockingFailureException against a concurrent identical run, and a
+        // run that changes nothing writes no audit row either.
+        List<Transaction> changed = new ArrayList<>(active.stream()
+                .filter(t -> t.isRecurring() != desiredRecurring.get(t.getId()))
+                .toList());
+        changed.forEach(t -> t.setRecurring(desiredRecurring.get(t.getId())));
+
+        // Bug 38. `active` deliberately excludes duplicates, transfers, and anything not
+        // Type.EXPENSE, so a transaction that WAS flagged recurring under a prior run and then left
+        // that set entirely -- e.g. its type changed away from EXPENSE, or it got marked a transfer
+        // or a duplicate -- never appears in `active` again. The reset-then-recompute pass above
+        // only ever considers `active`, so that transaction's stale `recurring = true` flag was
+        // never revisited and survived indefinitely. Reset it explicitly for anything outside
+        // `active` that still carries the flag.
+        List<Transaction> staleRecurring = allTransactions.stream()
+                .filter(t -> !activeIds.contains(t.getId()) && t.isRecurring())
+                .toList();
+        staleRecurring.forEach(t -> t.setRecurring(false));
+        changed.addAll(staleRecurring);
+
+        if (!changed.isEmpty()) {
+            transactionRepository.saveAll(changed);
+        }
         results.sort(Comparator.comparing(RecurringDto::nextEstimate));
 
         // Financial Intelligence Workspace, Reconciliation Monitor -- same one-summary-per-run
@@ -159,12 +215,16 @@ public class RecurringService {
         // comment. recurringGroupsFound is results.size() (pattern-detected groups only, not
         // rule-matched singles -- a MARK_SUBSCRIPTION match on one transaction isn't a "group"
         // the way 2+ regularly-spaced charges are); recurringTransactionsFlagged counts every
-        // transaction with recurring=true after this run, from either signal.
-        long recurringTransactionsFlagged = active.stream().filter(Transaction::isRecurring).count();
-        auditService.record(userId, "RECURRING_DETECTION_RUN", "Transaction", null, Map.of(
-                "transactionsProcessed", active.size(),
-                "recurringGroupsFound", results.size(),
-                "recurringTransactionsFlagged", recurringTransactionsFlagged));
+        // transaction this run considers recurring, from either signal -- desiredRecurring's
+        // values, not active's in-memory isRecurring(), since an unchanged transaction was
+        // deliberately left unmutated above.
+        if (!changed.isEmpty()) {
+            long recurringTransactionsFlagged = desiredRecurring.values().stream().filter(Boolean::booleanValue).count();
+            auditService.record(userId, "RECURRING_DETECTION_RUN", "Transaction", null, Map.of(
+                    "transactionsProcessed", active.size(),
+                    "recurringGroupsFound", results.size(),
+                    "recurringTransactionsFlagged", recurringTransactionsFlagged));
+        }
 
         return results;
     }

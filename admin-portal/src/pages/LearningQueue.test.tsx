@@ -9,6 +9,13 @@ import { mockAdminAuthState } from '../test/mockAdminAuth';
 import { adminLearningQueueApi } from '../api/endpoints';
 import type { LearningQueueEvent } from '../types';
 
+// AdminLayout now renders ThemeToggle (dark-mode support), which calls useTheme() --
+// same reason adminSearchApi is stubbed below for GlobalSearch: a real ThemeProvider isn't
+// mounted in these tests, so without this mock every AdminLayout-wrapped page throws before
+// any assertion runs.
+vi.mock('../context/ThemeContext', () => ({
+  useTheme: () => ({ theme: 'system', resolvedTheme: 'light', setTheme: vi.fn() }),
+}));
 vi.mock('../context/AdminAuthContext', () => ({
   useAdminAuth: vi.fn(),
 }));
@@ -156,5 +163,56 @@ describe('LearningQueue', () => {
     await userEvent.click(screen.getByRole('button', { name: /Retry all failed/i }));
 
     await waitFor(() => expect(screen.getByText(/42 event\(s\) queued for retry/)).toBeInTheDocument());
+  });
+
+  /** The shared Pagination component this page now uses (swapped in for a hand-rolled prev/next
+   *  pair) drives its "next page" request off the SAME `page` state the query itself reads --
+   *  proving the wiring survived the swap, not just that Pagination renders. */
+  it('requests the next page of the queue when Pagination is clicked', async () => {
+    mockAuth(['LEARNING_QUEUE_MANAGE']);
+    vi.mocked(adminLearningQueueApi.list).mockResolvedValue({
+      content: [failedEvent], page: 0, size: 25, totalElements: 30, totalPages: 2,
+    });
+    renderPage();
+
+    await waitFor(() => expect(screen.getByText('SWIGGY')).toBeInTheDocument());
+    expect(screen.getByText('Page 1 of 2')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Next page' }));
+
+    await waitFor(() => expect(adminLearningQueueApi.list)
+      .toHaveBeenCalledWith({ status: 'FAILED', page: 1, size: 25 }));
+  });
+
+  /** Bug fix: resolving the only FAILED event on a page beyond the first used to leave the admin
+   *  stranded looking at an empty table with no obvious way back -- Pagination still pointed at
+   *  the now-nonexistent page. A resolved event drops out of the FAILED filter, so the page has to
+   *  back off automatically instead. */
+  it('backs off to the previous page after resolving the last failed event on a later page', async () => {
+    mockAuth(['LEARNING_QUEUE_MANAGE']);
+    vi.mocked(adminLearningQueueApi.list).mockResolvedValueOnce({
+      content: [failedEvent], page: 0, size: 25, totalElements: 26, totalPages: 2,
+    });
+    const user = userEvent.setup();
+
+    renderPage();
+    await waitFor(() => expect(screen.getByText('SWIGGY')).toBeInTheDocument());
+
+    const secondFailedEvent = { ...failedEvent, id: '66666666-6666-6666-6666-666666666666', merchantName: 'UBER' };
+    vi.mocked(adminLearningQueueApi.list).mockResolvedValueOnce({
+      content: [secondFailedEvent], page: 1, size: 25, totalElements: 26, totalPages: 2,
+    });
+    await user.click(screen.getByRole('button', { name: 'Next page' }));
+    await waitFor(() => expect(screen.getByText('UBER')).toBeInTheDocument());
+    await user.click(screen.getByRole('button', { name: 'Details' }));
+
+    vi.mocked(adminLearningQueueApi.resolve).mockResolvedValue({ ...secondFailedEvent, status: 'RESOLVED', retryable: false });
+    vi.mocked(adminLearningQueueApi.list).mockResolvedValueOnce({
+      content: [failedEvent], page: 0, size: 25, totalElements: 25, totalPages: 1,
+    });
+    await user.click(screen.getByRole('button', { name: 'Mark resolved' }));
+
+    await waitFor(() => expect(adminLearningQueueApi.list)
+      .toHaveBeenLastCalledWith({ status: 'FAILED', page: 0, size: 25 }));
   });
 });

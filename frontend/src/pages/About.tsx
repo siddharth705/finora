@@ -4,13 +4,13 @@ import { PublicLayout, PublicSection } from '../components/PublicLayout';
 export default function About() {
   return (
     <PublicLayout
-      title="About Finora"
+      title="About Fynora"
       subtitle="A financial operating system built for people who are tired of spreadsheets."
     >
-      <PublicSection title="What Finora Is">
+      <PublicSection title="What Fynora Is">
         <p>
-          Finora is a personal finance platform that brings your accounts, transactions, budgets, goals, and
-          investments into one place. Import a bank or credit card statement and Finora detects the account,
+          Fynora is a personal finance platform that brings your accounts, transactions, budgets, goals, and
+          investments into one place. Import a bank or credit card statement and Fynora detects the account,
           categorizes every transaction, and updates your dashboard instantly — no manual data entry required.
         </p>
       </PublicSection>
@@ -22,11 +22,11 @@ export default function About() {
         </p>
       </PublicSection>
 
-      <PublicSection title="Why Finora Exists">
+      <PublicSection title="Why Fynora Exists">
         <p>
           Most people's financial picture is spread across multiple bank apps, credit card statements, and a
           spreadsheet nobody updates consistently. Categorizing spend by hand is tedious, and by the time
-          someone gets around to reviewing it, the insight has already lost its usefulness. Finora exists to
+          someone gets around to reviewing it, the insight has already lost its usefulness. Fynora exists to
           close that gap — turning a raw statement into an organized, understandable picture in seconds.
         </p>
       </PublicSection>

@@ -1,14 +1,17 @@
 package com.finora.budgets;
 
+import com.finora.entity.Account;
 import com.finora.entity.Budget;
 import com.finora.entity.Category;
 import com.finora.entity.Transaction;
 import com.finora.entity.User;
+import com.finora.repository.AccountRepository;
 import com.finora.repository.BudgetRepository;
 import com.finora.repository.CategoryRepository;
 import com.finora.repository.TransactionRepository;
 import com.finora.repository.UserRepository;
 import com.finora.service.AuditService;
+import com.finora.service.TransactionGraphService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -19,11 +22,13 @@ import java.time.YearMonth;
 import java.time.ZoneId;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 /**
@@ -43,17 +48,29 @@ class BudgetServiceTest {
     private BudgetRepository budgetRepository;
     private CategoryRepository categoryRepository;
     private TransactionRepository transactionRepository;
+    private AccountRepository accountRepository;
     private UserRepository userRepository;
     private BudgetService budgetService;
     private final UUID userId = UUID.randomUUID();
+    private Account liveAccount;
 
     @BeforeEach
     void setUp() {
         budgetRepository = mock(BudgetRepository.class);
         categoryRepository = mock(CategoryRepository.class);
         transactionRepository = mock(TransactionRepository.class);
+        accountRepository = mock(AccountRepository.class);
         userRepository = mock(UserRepository.class);
-        budgetService = new BudgetService(budgetRepository, categoryRepository, transactionRepository, userRepository, mock(AuditService.class));
+        TransactionGraphService transactionGraphService = mock(TransactionGraphService.class);
+        when(transactionGraphService.ccPaymentFromTransactionIds(any())).thenReturn(Set.of());
+
+        liveAccount = new Account();
+        ReflectionTestUtils.setField(liveAccount, "id", UUID.randomUUID());
+        liveAccount.setUserId(userId);
+        when(accountRepository.findByUserId(userId)).thenReturn(List.of(liveAccount));
+
+        budgetService = new BudgetService(budgetRepository, categoryRepository, transactionRepository, accountRepository,
+                userRepository, mock(AuditService.class), transactionGraphService);
         when(userRepository.findById(any())).thenReturn(Optional.empty());
     }
 
@@ -85,12 +102,24 @@ class BudgetServiceTest {
         return t;
     }
 
+    /** The income side of a matched refund/reversal, exactly as ReconciliationService leaves it. */
+    private Transaction refundOf(UUID expenseId, BigDecimal amount, Transaction.ReconciliationStatus status) {
+        Transaction t = new Transaction();
+        ReflectionTestUtils.setField(t, "id", UUID.randomUUID());
+        t.setUserId(userId);
+        t.setAmount(amount);
+        t.setTxnType(Transaction.Type.INCOME);
+        t.setReconciliationStatus(status);
+        t.setRefundOfTransactionId(expenseId);
+        return t;
+    }
+
     @Test
     void listForUser_matchesSpendToTheRightBudgetByCategory() {
         Category dining = category("Dining");
         when(categoryRepository.findByUserId(userId)).thenReturn(List.of(dining));
         when(budgetRepository.findByUserId(userId)).thenReturn(List.of(budget(dining.getId(), new BigDecimal("5000.00"))));
-        when(transactionRepository.findByUserIdAndTxnDateBetween(any(), any(), any()))
+        when(transactionRepository.findByUserIdAndTxnDateBetweenAndAccountIdIn(any(), any(), any(), any()))
                 .thenReturn(List.of(expense(new BigDecimal("1200.00"), dining.getId())));
 
         List<BudgetDto> result = budgetService.listForUser(userId);
@@ -98,6 +127,54 @@ class BudgetServiceTest {
         assertThat(result).hasSize(1);
         assertThat(result.get(0).categoryName()).isEqualTo("Dining");
         assertThat(result.get(0).spentThisMonth()).isEqualByComparingTo("1200.00");
+    }
+
+    /**
+     * Phase 1, docs/proposals/reconciliation-evolution-roadmap-proposal.md. Previously the one
+     * known-remaining copy of the one-sided refund filter RefundNetting replaced everywhere else
+     * -- a refunded purchase counted in full here even after ReportService/AnalyticsService had
+     * both been fixed. Queried across all time (not the month window), same as those two, because
+     * a refund routinely lands in a later month than the purchase it reverses.
+     */
+    @Test
+    void listForUser_netsARefundedPurchase_offItsCategorysSpend() {
+        Category dining = category("Dining");
+        UUID purchaseId = UUID.randomUUID();
+        Transaction purchase = expense(new BigDecimal("1200.00"), dining.getId());
+        ReflectionTestUtils.setField(purchase, "id", purchaseId);
+
+        when(categoryRepository.findByUserId(userId)).thenReturn(List.of(dining));
+        when(budgetRepository.findByUserId(userId)).thenReturn(List.of(budget(dining.getId(), new BigDecimal("5000.00"))));
+        when(transactionRepository.findByUserIdAndTxnDateBetweenAndAccountIdIn(any(), any(), any(), any()))
+                .thenReturn(List.of(purchase));
+        when(transactionRepository.findByUserIdAndReconciliationStatusInAndAccountIdIn(eq(userId), any(), any()))
+                .thenReturn(List.of(refundOf(purchaseId, new BigDecimal("1200.00"), Transaction.ReconciliationStatus.REFUND)));
+
+        List<BudgetDto> result = budgetService.listForUser(userId);
+
+        assertThat(result.get(0).spentThisMonth())
+                .as("a fully refunded purchase costs nothing against the budget")
+                .isEqualByComparingTo("0.00");
+    }
+
+    /** Same fix, the REVERSAL status -- RefundNetting nets both the same way. */
+    @Test
+    void listForUser_netsAReversedPurchase_offItsCategorysSpend() {
+        Category dining = category("Dining");
+        UUID purchaseId = UUID.randomUUID();
+        Transaction purchase = expense(new BigDecimal("1200.00"), dining.getId());
+        ReflectionTestUtils.setField(purchase, "id", purchaseId);
+
+        when(categoryRepository.findByUserId(userId)).thenReturn(List.of(dining));
+        when(budgetRepository.findByUserId(userId)).thenReturn(List.of(budget(dining.getId(), new BigDecimal("5000.00"))));
+        when(transactionRepository.findByUserIdAndTxnDateBetweenAndAccountIdIn(any(), any(), any(), any()))
+                .thenReturn(List.of(purchase));
+        when(transactionRepository.findByUserIdAndReconciliationStatusInAndAccountIdIn(eq(userId), any(), any()))
+                .thenReturn(List.of(refundOf(purchaseId, new BigDecimal("1200.00"), Transaction.ReconciliationStatus.REVERSAL)));
+
+        List<BudgetDto> result = budgetService.listForUser(userId);
+
+        assertThat(result.get(0).spentThisMonth()).isEqualByComparingTo("0.00");
     }
 
     @Test
@@ -109,7 +186,7 @@ class BudgetServiceTest {
         Category dining = category("Dining");
         when(categoryRepository.findByUserId(userId)).thenReturn(List.of(dining));
         when(budgetRepository.findByUserId(userId)).thenReturn(List.of(budget(dining.getId(), new BigDecimal("5000.00"))));
-        when(transactionRepository.findByUserIdAndTxnDateBetween(any(), any(), any()))
+        when(transactionRepository.findByUserIdAndTxnDateBetweenAndAccountIdIn(any(), any(), any(), any()))
                 .thenReturn(List.of(
                         expense(new BigDecimal("1200.00"), dining.getId()),
                         expense(new BigDecimal("300.00"), null) // uncategorized -- categoryId is null
@@ -139,8 +216,8 @@ class BudgetServiceTest {
         budgetService.listForUser(userId);
 
         YearMonth expected = YearMonth.now(ZoneId.of("Pacific/Kiritimati"));
-        verify(transactionRepository).findByUserIdAndTxnDateBetween(
-                userId, expected.atDay(1), expected.atEndOfMonth());
+        verify(transactionRepository).findByUserIdAndTxnDateBetweenAndAccountIdIn(
+                userId, expected.atDay(1), expected.atEndOfMonth(), List.of(liveAccount.getId()));
     }
 
     @Test
@@ -172,7 +249,7 @@ class BudgetServiceTest {
     @Test
     void upsert_updatesTheExistingRow_ratherThanInsertingASecondBudgetForTheSameCategory() {
         Category dining = category("Dining");
-        when(categoryRepository.findByUserIdAndName(userId, "Dining")).thenReturn(Optional.of(dining));
+        when(categoryRepository.findByUserIdAndNameIgnoreCaseOrderByIdAsc(userId, "Dining")).thenReturn(List.of(dining));
 
         Budget existing = budget(dining.getId(), new BigDecimal("3000.00"));
         when(budgetRepository.findByUserIdAndCategoryId(userId, dining.getId())).thenReturn(Optional.of(existing));
@@ -184,5 +261,98 @@ class BudgetServiceTest {
         assertThat(existing.getMonthlyLimit()).isEqualByComparingTo("6000.00");
         // Exactly one write. Two means the dead catch has been reintroduced.
         verify(budgetRepository, times(1)).save(any());
+    }
+
+    /**
+     * Bug 35 (docs/quality/bug-reports/BUG_REVIEW_REPORT.md). This used to hardcode
+     * BigDecimal.ZERO regardless of what the category had actually accrued this month --
+     * listForUser computed the real figure, upsert() didn't. A client updating local state from
+     * the mutation response (the standard optimistic-update pattern) showed 0% progress on a
+     * category already over budget, most visibly when editing an EXISTING budget's limit.
+     */
+    @Test
+    void upsert_reportsTheRealSpendThisMonth_notHardcodedZero() {
+        Category dining = category("Dining");
+        when(categoryRepository.findByUserIdAndNameIgnoreCaseOrderByIdAsc(userId, "Dining")).thenReturn(List.of(dining));
+        when(budgetRepository.findByUserIdAndCategoryId(userId, dining.getId())).thenReturn(Optional.empty());
+        when(budgetRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        YearMonth thisMonth = YearMonth.now(ZoneId.systemDefault());
+        Transaction spent1 = expense(new BigDecimal("4000.00"), dining.getId());
+        spent1.setTxnDate(thisMonth.atDay(1));
+        Transaction spent2 = expense(new BigDecimal("2000.00"), dining.getId());
+        spent2.setTxnDate(thisMonth.atEndOfMonth());
+        when(transactionRepository.findByUserIdAndTxnDateBetweenAndAccountIdIn(eq(userId), any(), any(), any()))
+                .thenReturn(List.of(spent1, spent2));
+
+        BudgetDto result = budgetService.upsert(userId, new BudgetDto.UpsertRequest("Dining", new BigDecimal("5000.00")));
+
+        assertThat(result.spentThisMonth()).isEqualByComparingTo("6000.00");
+    }
+
+    @Test
+    void upsert_reportsZeroSpend_whenNothingWasSpentThisMonth() {
+        Category dining = category("Dining");
+        when(categoryRepository.findByUserIdAndNameIgnoreCaseOrderByIdAsc(userId, "Dining")).thenReturn(List.of(dining));
+        when(budgetRepository.findByUserIdAndCategoryId(userId, dining.getId())).thenReturn(Optional.empty());
+        when(budgetRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        BudgetDto result = budgetService.upsert(userId, new BudgetDto.UpsertRequest("Dining", new BigDecimal("5000.00")));
+
+        assertThat(result.spentThisMonth()).isEqualByComparingTo(BigDecimal.ZERO);
+    }
+
+    /**
+     * Bug 16. Budgeting "dining" must attach to an existing "Dining" category rather than
+     * creating a sibling that would leave the existing budget attached to the wrong one of the
+     * two rows.
+     */
+    @Test
+    void upsert_matchesAnExistingCategoryCaseInsensitively() {
+        Category dining = category("Dining");
+        when(categoryRepository.findByUserIdAndNameIgnoreCaseOrderByIdAsc(userId, "dining")).thenReturn(List.of(dining));
+
+        Budget existing = budget(dining.getId(), new BigDecimal("3000.00"));
+        when(budgetRepository.findByUserIdAndCategoryId(userId, dining.getId())).thenReturn(Optional.of(existing));
+        when(budgetRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        budgetService.upsert(userId, new BudgetDto.UpsertRequest("dining", new BigDecimal("6000.00")));
+
+        verify(categoryRepository, never()).save(any());
+        assertThat(existing.getMonthlyLimit()).isEqualByComparingTo("6000.00");
+    }
+
+    // --- Deleted-account leak (see DashboardService.summarize for the original fix): a deleted
+    // account's transactions deliberately keep deleted_at unset, so listForUser/spentThisMonth/
+    // refundsFor must scope their transaction fetches to exactly the user's live account ids, not
+    // just their userId. ---
+
+    @Test
+    void listForUser_scopesTransactionFetch_toExactlyTheLiveAccountIds() {
+        when(categoryRepository.findByUserId(userId)).thenReturn(List.of());
+        when(budgetRepository.findByUserId(userId)).thenReturn(List.of());
+        when(transactionRepository.findByUserIdAndTxnDateBetweenAndAccountIdIn(any(), any(), any(), any()))
+                .thenReturn(List.of());
+        when(transactionRepository.findByUserIdAndReconciliationStatusInAndAccountIdIn(any(), any(), any()))
+                .thenReturn(List.of());
+
+        budgetService.listForUser(userId);
+
+        verify(transactionRepository).findByUserIdAndTxnDateBetweenAndAccountIdIn(
+                eq(userId), any(), any(), eq(List.of(liveAccount.getId())));
+        verify(transactionRepository).findByUserIdAndReconciliationStatusInAndAccountIdIn(
+                eq(userId), any(), eq(List.of(liveAccount.getId())));
+    }
+
+    @Test
+    void listForUser_withNoLiveAccounts_shortCircuits_withoutQueryingTransactions() {
+        when(accountRepository.findByUserId(userId)).thenReturn(List.of());
+        when(categoryRepository.findByUserId(userId)).thenReturn(List.of());
+        when(budgetRepository.findByUserId(userId)).thenReturn(List.of());
+
+        budgetService.listForUser(userId);
+
+        verify(transactionRepository, never()).findByUserIdAndTxnDateBetweenAndAccountIdIn(any(), any(), any(), any());
+        verify(transactionRepository, never()).findByUserIdAndReconciliationStatusInAndAccountIdIn(any(), any(), any());
     }
 }

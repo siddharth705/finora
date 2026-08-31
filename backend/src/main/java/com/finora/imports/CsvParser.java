@@ -172,12 +172,32 @@ public class CsvParser {
 
     /** Zips a header row and a data row into a header-keyed map, ignoring any cells beyond the
      *  header's width (the trailing-comma case) and treating missing trailing cells as absent
-     *  rather than throwing (the footer-notes case, where a row may have far fewer cells). */
+     *  rather than throwing (the footer-notes case, where a row may have far fewer cells).
+     *
+     *  Bug 33 (docs/quality/bug-reports/BUG_REVIEW_REPORT.md). A repeated header name -- most
+     *  commonly a Debit/Credit-style export that labels BOTH columns "Amount" -- used to
+     *  unconditionally overwrite on collision, so only whichever occurrence was positionally last
+     *  in the header row ever reached the caller. On exactly the real-world shape this actually
+     *  matters for, that silently discarded real data: a debit/credit pair sharing one header name
+     *  has, per row, exactly one side populated and the other blank (the same "non-blank value in
+     *  the column, not just the column's presence" convention TransactionNormalizer's own credit
+     *  detection already relies on) -- so a blank arriving after the real value wiped it out on
+     *  every row where the pairing happened to land that way. Now keeps whichever occurrence is
+     *  non-blank, regardless of which one is positionally last; if both are genuinely non-blank
+     *  (truly ambiguous data, not this class's real-world case), the later one still wins, same as
+     *  before. Blank/spacer headers (both reducing to the same "" key) are unaffected -- nothing
+     *  looks a column up by that key, so their collision was never a data-loss risk. */
     public Map<String, String> zipRow(String[] headerRow, String[] cells) {
         Map<String, String> row = new LinkedHashMap<>();
         for (int c = 0; c < headerRow.length; c++) {
             String key = headerRow[c] == null ? "" : headerRow[c].trim();
-            row.put(key, c < cells.length ? cells[c] : null);
+            String value = c < cells.length ? cells[c] : null;
+            String existing = row.get(key);
+            if (row.containsKey(key) && (value == null || value.isBlank())
+                    && existing != null && !existing.isBlank()) {
+                continue;
+            }
+            row.put(key, value);
         }
         return row;
     }
@@ -310,6 +330,7 @@ public class CsvParser {
             java.util.regex.Pattern.compile("(?i)(\\d{1,2})(?:st|nd|rd|th)\\b");
 
     public static LocalDate parseDate(String raw) {
+        if (raw == null) return null;
         String withoutTime = TRAILING_TIME.matcher(raw).replaceFirst("");
         LocalDate parsed = tryEveryFormat(withoutTime);
         if (parsed != null) return parsed;
@@ -417,6 +438,20 @@ public class CsvParser {
         } else if (TRAILING_CR.matcher(s).find()) {
             s = TRAILING_CR.matcher(s).replaceFirst("");
         }
+        s = s.trim();
+        // Bug 34 (docs/quality/bug-reports/BUG_REVIEW_REPORT.md). The accounting convention for a
+        // negative amount -- the WHOLE cell wrapped in parentheses, e.g. "(1,234.00)" or
+        // "(Rs. 1,234.00)" -- distinct from TRAILING_DR/TRAILING_CR above, which only strip a
+        // parenthesized "(Dr)"/"(Cr)" MARKER as a suffix, not this. Left unhandled, the opening
+        // paren survives every strip below and `new BigDecimal(...)` throws, so the cell parses
+        // as null -- which for an ordinary transaction row (not just here) is Bug 30's root cause:
+        // TransactionNormalizer's amount lookup falls through to the balance column on a null
+        // parse, so the row imports with the account's running balance staged as the transaction
+        // amount instead of vanishing loudly.
+        if (s.length() >= 2 && s.charAt(0) == '(' && s.charAt(s.length() - 1) == ')') {
+            negative = true;
+            s = s.substring(1, s.length() - 1).trim();
+        }
         s = s.replaceAll("(?i)^\\s*(rs\\.?|inr)\\s*", "").replace("₹", "")
                 // Bug fix: verified against a real uploaded HDFC statement -- that PDF's embedded
                 // font doesn't map the Rupee glyph to the real Unicode ₹ codepoint at all; PDFBox
@@ -446,6 +481,7 @@ public class CsvParser {
     }
 
     public static String maskAccountNumber(String raw) {
+        if (raw == null) return null;
         String digits = raw.replaceAll("[^0-9]", "");
         if (digits.length() <= 4) return digits;
         return "••••" + digits.substring(digits.length() - 4);

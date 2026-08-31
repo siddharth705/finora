@@ -28,7 +28,21 @@ import java.util.UUID;
 public class Transaction extends BaseEntity {
 
     public enum Type { INCOME, EXPENSE }
-    public enum ReconciliationStatus { OK, DUPLICATE, TRANSFER, REFUND }
+    // REVERSAL added Phase 1 of the reconciliation roadmap (docs/proposals/
+    // reconciliation-evolution-roadmap-proposal.md). Previously a bank-side reversal ("this
+    // payment bounced") and a merchant refund ("this order was returned") were indistinguishable
+    // -- both matched on the same REFUND_KEYWORDS set in ReconciliationService and produced
+    // identical REFUND rows. No DB CHECK constrains this column (plain VARCHAR(20) since V1, see
+    // Source below), so adding a value here needed no migration.
+    //
+    // INVESTMENT_TRANSFER added for the roadmap's Phase 4 "investment... detection" item, scoped
+    // down after checking real usage data (see ReconciliationService's investment-transfer pass
+    // for why this is a category-driven exclusion rather than a transaction_relationships edge).
+    // SUPERSEDED: this row's own statement was replaced by a later re-upload of the exact same
+    // period (StatementImportService.supersede) -- excluded from RefundNetting.reportable() the
+    // same way INVESTMENT_TRANSFER already is, but the row itself is never deleted, same
+    // reasoning as every other status here.
+    public enum ReconciliationStatus { OK, DUPLICATE, TRANSFER, REFUND, REVERSAL, INVESTMENT_TRANSFER, SUPERSEDED }
     // GMAIL_IMPORT added C5-B. PDF-sourced transactions are still tagged CSV_IMPORT (a pre-existing
     // gap -- ImportService.persistSection hardcodes CSV_IMPORT regardless of upload format), which
     // this does not fix; it is not repeated for Gmail. No DB CHECK constrains this column (plain
@@ -136,6 +150,19 @@ public class Transaction extends BaseEntity {
     @Column(name = "row_ordinal")
     private Integer rowOrdinal;
 
+    /**
+     * Position within its statement section as originally parsed (1-based), echoed from {@code
+     * ConfirmedRow.rowPosition} at confirm time -- distinct from {@link #rowOrdinal}, which is
+     * insertion order among CONFIRMED rows only and compresses away every excluded/dropped row.
+     * Null for a manual transaction, for anything imported before this field existed, and for
+     * anything imported by a client that predates the echoed field -- see {@code
+     * ImportDto.ConfirmedRow.rowPosition}'s own doc comment. Import Row Trace's only reason to
+     * exist (Founder Operations Dashboard, docs/proposals/reconciliation-evolution-roadmap-
+     * proposal.md Part 9).
+     */
+    @Column(name = "source_row_position")
+    private Integer sourceRowPosition;
+
     // See DecisionSource above. Defaults to MERCHANT_DEFAULT (matches the V17 column default) so
     // any write path that doesn't explicitly set this fails safe to the least-specific label
     // rather than silently claiming a rule/learning match that didn't happen.
@@ -147,8 +174,19 @@ public class Transaction extends BaseEntity {
     @Column(name = "decision_rule_id")
     private UUID decisionRuleId;
 
-    // Only set when reconciliationStatus is REFUND -- points back at the original EXPENSE
-    // transaction this INCOME transaction reverses. See ReconciliationService's refund pass.
+    // The confidence percentage (0-100, same scale as MerchantCategoryLearning.confidence and
+    // UserSettings.autoApplyConfidenceThreshold) behind this decision -- see
+    // CategorizationService.Suggestion#confidence's own doc comment for how each DecisionSource
+    // computes it. Null for MANUAL and FILE_PROVIDED (an explicit choice, not a guess) and for
+    // every transaction that predates Transaction Intelligence Phase B.
+    @Column(name = "decision_confidence")
+    private Integer decisionConfidence;
+
+    // Only set when reconciliationStatus is REFUND or REVERSAL -- points back at the original
+    // EXPENSE transaction this INCOME transaction reverses. Both statuses share this field: the
+    // distinction is *why* the money came back (a merchant refund vs. a bank-side reversal), not
+    // which expense it reverses or how that link is stored. See ReconciliationService's refund
+    // pass.
     @Column(name = "refund_of_transaction_id")
     private UUID refundOfTransactionId;
 
@@ -229,12 +267,16 @@ public class Transaction extends BaseEntity {
     public UUID getStatementImportId() { return statementImportId; }
     public Integer getRowOrdinal() { return rowOrdinal; }
     public void setRowOrdinal(Integer rowOrdinal) { this.rowOrdinal = rowOrdinal; }
+    public Integer getSourceRowPosition() { return sourceRowPosition; }
+    public void setSourceRowPosition(Integer sourceRowPosition) { this.sourceRowPosition = sourceRowPosition; }
 
     public void setStatementImportId(UUID statementImportId) { this.statementImportId = statementImportId; }
     public DecisionSource getDecisionSource() { return decisionSource; }
     public void setDecisionSource(DecisionSource decisionSource) { this.decisionSource = decisionSource; }
     public UUID getDecisionRuleId() { return decisionRuleId; }
     public void setDecisionRuleId(UUID decisionRuleId) { this.decisionRuleId = decisionRuleId; }
+    public Integer getDecisionConfidence() { return decisionConfidence; }
+    public void setDecisionConfidence(Integer decisionConfidence) { this.decisionConfidence = decisionConfidence; }
     public UUID getRefundOfTransactionId() { return refundOfTransactionId; }
     public void setRefundOfTransactionId(UUID refundOfTransactionId) { this.refundOfTransactionId = refundOfTransactionId; }
 

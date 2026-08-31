@@ -20,12 +20,20 @@ type Props = NativeStackScreenProps<AuthStackParamList, 'Register'>;
 // Validation rules live in lib/validation.ts so they're directly testable and shared with the
 // account forms Phases 4-5 add. They must agree with frontend/src/pages/Register.tsx.
 
-export function RegisterScreen({ navigation }: Props) {
+export function RegisterScreen({ navigation, route }: Props) {
   const c = useTheme();
   const { register, loginWithGoogle, loginWithApple } = useAuth();
+  // Phase 3B: AuthEntryScreen already learned (via POST /auth/identify) that this identifier has
+  // no account yet, and knew which of these two fields it looked like -- prefilled here so the
+  // user doesn't have to retype what they already entered. phoneNumber is run through the same
+  // sanitizer the field's own onChangeText uses, since AuthEntry hands over the full identifier
+  // (e.g. "+919876543210" -- synthetic-ok: same fake sequential example number used elsewhere in
+  // this file), not the local-only 10 digits this field stores.
   const [fullName, setFullName] = useState('');
-  const [email, setEmail] = useState('');
-  const [phoneNumber, setPhoneNumber] = useState('');
+  const [email, setEmail] = useState(route.params?.email ?? '');
+  const [phoneNumber, setPhoneNumber] = useState(
+    route.params?.phoneNumber ? sanitizePhoneNumber(route.params.phoneNumber) : '',
+  );
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [error, setError] = useState<string | null>(null);

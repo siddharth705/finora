@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { Line, Doughnut } from 'react-chartjs-2';
@@ -7,8 +7,8 @@ import {
 } from 'chart.js';
 import {
   Wallet, ArrowDownCircle, ArrowUpCircle, PieChart,
-  ShoppingBag, Utensils, Car, Sparkles, Plus, PiggyBank, TrendingUp, TrendingDown, Target, ShieldCheck, Repeat,
-  UploadCloud, Receipt, LineChart as LineChartIcon, Mail,
+  ShoppingBag, Sparkles, Plus, PiggyBank, TrendingUp, TrendingDown, Target, ShieldCheck, Repeat,
+  UploadCloud, Receipt, LineChart as LineChartIcon, Mail, AlertTriangle, ListChecks, Copy, BadgeCheck,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { BankLogo } from '../components/BankLogo';
@@ -16,8 +16,10 @@ import { MerchantLogo } from '../components/MerchantLogo';
 import { AddTransactionModal } from '../components/AddTransactionModal';
 import { FinancialJourney } from '../components/FinancialJourney';
 import { FinoraCard, MetricCard, EmptyState, SectionHeader, QuickActionCard, ChartContainer, Badge, baseChartOptions } from '../design-system';
+import { ICON_COMPONENTS, COLOR_HEX } from '../lib/categoryIcons';
 import {
-  dashboardApi, accountsApi, transactionsApi, goalsApi, insightsApi, userApi, budgetsApi, reportsApi, recurringApi,
+  dashboardApi, accountsApi, transactionsApi, categoriesApi, goalsApi, insightsApi, userApi, budgetsApi, reportsApi, recurringApi,
+  type CategoryOption,
 } from '../api/endpoints';
 
 ChartJS.register(ArcElement, LineElement, PointElement, LinearScale, CategoryScale, Tooltip, Legend, Filler);
@@ -59,22 +61,27 @@ function healthColor(label: string): string {
     default: return 'text-danger';
   }
 }
-function healthBarColor(label: string): string {
-  switch (label) {
-    case 'Excellent': return 'bg-success';
-    case 'Good': return 'bg-primary';
-    case 'Fair': return 'bg-warning';
-    default: return 'bg-danger';
-  }
+// Same 80/60/40 cutoffs as healthColor above, applied to ONE breakdown item's own
+// score rather than the overall label -- every item used to inherit the overall label's color, so
+// a perfect sub-score (e.g. Debt Score 100 for a user with no credit cards) rendered as a
+// full-width RED bar whenever the overall health score was "Needs Attention", reading as "maxed
+// out" regardless of what that item's own number said.
+function healthItemBarColor(score: number): string {
+  if (score >= 80) return 'bg-success';
+  if (score >= 60) return 'bg-primary';
+  if (score >= 40) return 'bg-warning';
+  return 'bg-danger';
 }
 
-const CATEGORY_ICON: Record<string, any> = {
-  Dining: Utensils, Shopping: ShoppingBag, Transport: Car, Salary: ArrowDownCircle,
-};
-const CATEGORY_COLOR: Record<string, string> = {
-  Dining: '#ef4444', Shopping: '#f59e0b', Transport: '#111827', Salary: '#16a34a',
-};
-
+// Same 80/60/40 cutoffs and label vocabulary as the health score above (Excellent/Good/Fair/Needs
+// Attention), reused rather than invented fresh -- Categorization Confidence is on the same 0-100
+// scale, and a second vocabulary for the same range would just be one more thing to learn.
+function scoreLabel(score: number): string {
+  if (score >= 80) return 'Excellent';
+  if (score >= 60) return 'Good';
+  if (score >= 40) return 'Fair';
+  return 'Needs Attention';
+}
 
 type CashFlowRange = '3M' | '6M' | '12M';
 const RANGE_MONTHS: Record<CashFlowRange, number> = { '3M': 3, '6M': 6, '12M': 12 };
@@ -103,6 +110,49 @@ export default function Dashboard() {
   const queryClient = useQueryClient();
   const [cashFlowRange, setCashFlowRange] = useState<CashFlowRange>('6M');
   const [showAddModal, setShowAddModal] = useState(false);
+  // Recent Transactions' icon/color used to key off categoryName against a 4-entry hardcoded map
+  // (predates custom categories, and covered only 4 of the 25 default categories even before user-
+  // created ones existed). Looked up by categoryId instead so every category -- default or custom
+  // -- renders its own real, backend-assigned icon/color token.
+  //
+  // On the shared ['categories'] key rather than its own useState+useEffect: this page also
+  // renders AskOnceCard and MerchantGroupReviewCard, each of which mounts CategoryComboboxes
+  // reading the same key, so one fetch serves all of them. It also picks up react-query's error
+  // handling, replacing a bare .then() with no .catch() at all -- a rejected promise there was an
+  // unhandled rejection, and the icons simply fell back to the default forever with no signal.
+  const categoriesQ = useQuery({ queryKey: ['categories'], queryFn: () => categoriesApi.list(), retry: false });
+  const categoriesById: Record<string, CategoryOption> = useMemo(
+    () => Object.fromEntries((categoriesQ.data ?? []).map((c) => [c.id, c])),
+    [categoriesQ.data],
+  );
+
+  const [confirmingDuplicateId, setConfirmingDuplicateId] = useState<string | null>(null);
+  const [duplicateConfirmError, setDuplicateConfirmError] = useState<string | null>(null);
+  // Which ONE Financial Health Score breakdown row (if any) has its "Why?" detail expanded --
+  // same single-open-at-a-time simplicity as the rest of this page's disclosures, just tracked by
+  // component name here rather than each row owning its own state, since these five rows are
+  // rendered inline rather than as their own component.
+  const [expandedHealthDetail, setExpandedHealthDetail] = useState<string | null>(null);
+
+  // BH-027's own service-layer doc comment: "the user asked for this row to count, so it counts
+  // now." transactionsApi.confirmNotDuplicate already existed and already worked -- this is the
+  // first UI anywhere in the product that calls it. dashboard-summary is invalidated so the card
+  // (and every KPI the reinstated transaction now counts toward) reflects the change immediately;
+  // recent-transactions/transactions too, since the row itself just changed status.
+  async function handleConfirmNotDuplicate(transactionId: string) {
+    setConfirmingDuplicateId(transactionId);
+    setDuplicateConfirmError(null);
+    try {
+      await transactionsApi.confirmNotDuplicate(transactionId);
+      void queryClient.invalidateQueries({ queryKey: ['dashboard-summary'] });
+      void queryClient.invalidateQueries({ queryKey: ['recent-transactions'] });
+      void queryClient.invalidateQueries({ queryKey: ['transactions'] });
+    } catch {
+      setDuplicateConfirmError("Couldn't update this transaction. Please try again.");
+    } finally {
+      setConfirmingDuplicateId(null);
+    }
+  }
 
   function onTransactionAdded() {
     setShowAddModal(false);
@@ -200,11 +250,31 @@ export default function Dashboard() {
   const totalSpend = categoryEntries.reduce((s, [, v]) => s + v, 0);
   const donutColors = ['#3b82f6', '#16a34a', '#f59e0b', '#8b5cf6', '#ef4444', '#94a3b8'];
 
+  // incomeDeltaPct/expenseDeltaPct/netDeltaPct share one gate on the backend (DashboardService
+  // computes a single priorMonthReliable boolean and applies it to all three), so there's one
+  // reason to explain, not three -- computed once here and handed to whichever of the three KPI
+  // cards below actually has a nulled-out delta to explain. Balance/Savings Rate never carry a
+  // gate reason: their "—" is "this KPI has no delta concept at all", not a withheld comparison.
+  const comparisonGateReasonText = summary.comparisonGateReason === 'PARTIAL_PRIOR_MONTH'
+    ? "Last month's data only covers part of the month, so comparing it wouldn't be a fair like-for-like."
+    : summary.comparisonGateReason === 'TOO_FEW_PRIOR_TRANSACTIONS'
+      ? `Last month has fewer than ${summary.comparisonGateMinTransactions} transactions, too few to compare reliably.`
+      : null;
+
+  // The categories actually behind a real Total Expenses delta -- e.g. "expenses up 12%" alone
+  // never says WHY; DashboardService.expenseCategoryMovers already ranked the real contributors,
+  // this just renders each into one line. Empty whenever expenseDeltaPct is null (nothing to
+  // explain about a hidden number -- comparisonGateReasonText above already covers that case).
+  const expenseMoverLines = summary.expenseCategoryMovers.map((m) => {
+    const pctText = m.pctChange === null ? `new ${periodLabel}` : `${m.pctChange >= 0 ? '+' : ''}${m.pctChange.toFixed(0)}%`;
+    return `${m.category}: ${fmt(m.currentAmount)} vs ${fmt(m.priorAmount)} (${pctText})`;
+  });
+
   const kpis = [
     { label: 'Total Balance', value: fmt(summary.currentBalance), delta: null as number | null, icon: Wallet, iconBg: 'bg-blue-100', iconColor: 'text-blue-600' },
-    { label: 'Total Income', value: fmt(summary.monthlyIncome), delta: summary.incomeDeltaPct, icon: ArrowDownCircle, iconBg: 'bg-green-100', iconColor: 'text-green-600' },
-    { label: 'Total Expenses', value: fmt(summary.monthlyExpense), delta: summary.expenseDeltaPct, icon: ArrowUpCircle, iconBg: 'bg-red-100', iconColor: 'text-red-600', invertDelta: true },
-    { label: 'Net Savings', value: fmt(summary.netCashFlow), delta: summary.netDeltaPct, icon: PiggyBank, iconBg: 'bg-primary-light', iconColor: 'text-primary' },
+    { label: 'Total Income', value: fmt(summary.monthlyIncome), delta: summary.incomeDeltaPct, icon: ArrowDownCircle, iconBg: 'bg-green-100', iconColor: 'text-green-600', gateReasonText: comparisonGateReasonText },
+    { label: 'Total Expenses', value: fmt(summary.monthlyExpense), delta: summary.expenseDeltaPct, icon: ArrowUpCircle, iconBg: 'bg-red-100', iconColor: 'text-red-600', invertDelta: true, gateReasonText: comparisonGateReasonText, moverLines: expenseMoverLines },
+    { label: 'Net Savings', value: fmt(summary.netCashFlow), delta: summary.netDeltaPct, icon: PiggyBank, iconBg: 'bg-primary-light', iconColor: 'text-primary', gateReasonText: comparisonGateReasonText },
     { label: 'Savings Rate', value: summary.savingsRatePct.toFixed(0) + '%', delta: null as number | null, icon: PieChart, iconBg: 'bg-purple-100', iconColor: 'text-purple-600' },
   ];
 
@@ -222,6 +292,30 @@ export default function Dashboard() {
         </p>
       </div>
 
+      {/* Limited-history banner. The KPI deltas and health score below are real, computed numbers
+          -- neither is hidden here -- but both are prone to thin-data artifacts this far below
+          limitedHistoryMonthFloor: a trend delta dividing against a near-empty prior month (see
+          pct() in DashboardService, still capable of a 900%+ swing off one stray transaction), and
+          a health score built from too few comparable months (see the Spend Consistency / Cash
+          Flow Stability partial-month fix). Shown once, above everything it explains, rather than
+          leaving a user to notice the numbers look strange and wonder why. Hidden once isEmpty --
+          the zero-transaction empty state below already covers that case on its own terms. */}
+      {!isEmpty && summary.limitedHistory && (
+        <div className="bg-warning-bg border border-warning/30 rounded-xl2 px-5 py-3.5 flex items-start gap-2.5 mb-6">
+          <AlertTriangle size={16} className="text-warning flex-shrink-0 mt-0.5" />
+          <div>
+            <p className="text-sm font-medium text-ink">Limited financial history</p>
+            <p className="text-xs text-muted mt-0.5">
+              Based on {summary.statementCount} statement{summary.statementCount === 1 ? '' : 's'} across{' '}
+              {summary.accountCount} account{summary.accountCount === 1 ? '' : 's'} and{' '}
+              {summary.historyMonthCount} month{summary.historyMonthCount === 1 ? '' : 's'} of activity.
+              Trends and the Financial Health Score below may be unreliable until at least{' '}
+              {summary.limitedHistoryMonthFloor} months of history are imported.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* KPI cards. Every card gets a deltaLabel (even Balance/Savings Rate, which never carry a
           real delta) so MetricCard renders a muted "— vs last month" instead of a silent gap
           where the line would otherwise just vanish. */}
@@ -237,6 +331,8 @@ export default function Dashboard() {
             delta={k.delta}
             deltaLabel={deltaLabel}
             invertDelta={k.invertDelta}
+            gateReasonText={k.gateReasonText}
+            moverLines={k.moverLines}
           />
         ))}
       </div>
@@ -267,20 +363,39 @@ export default function Dashboard() {
               <p className={`text-sm font-medium mt-1 ${healthColor(summary.healthLabel!)}`}>{summary.healthLabel}</p>
             </div>
             <div className="space-y-2.5">
-              {Object.entries(summary.healthBreakdown).map(([name, score]) => (
-                <div key={name}>
-                  <div className="flex justify-between items-baseline mb-1">
-                    <span className="text-xs text-ink">{name}</span>
-                    <span className="text-xs text-muted">{Math.round(score)}%</span>
+              {Object.entries(summary.healthBreakdown).map(([name, score]) => {
+                const detail = summary.healthBreakdownDetail[name];
+                const isExpanded = expandedHealthDetail === name;
+                return (
+                  <div key={name}>
+                    <div className="flex justify-between items-baseline mb-1">
+                      <span className="text-xs text-ink">
+                        {name}
+                        {detail && (
+                          <button
+                            type="button"
+                            onClick={() => setExpandedHealthDetail((cur) => (cur === name ? null : name))}
+                            aria-expanded={isExpanded}
+                            className="ml-1.5 text-primary underline underline-offset-2 font-normal"
+                          >
+                            {isExpanded ? 'Hide' : 'Why?'}
+                          </button>
+                        )}
+                      </span>
+                      <span className="text-xs text-muted">{Math.round(score)}%</span>
+                    </div>
+                    <div className="h-1.5 bg-bg rounded-full overflow-hidden">
+                      <div
+                        className={`h-full rounded-full ${healthItemBarColor(score)}`}
+                        style={{ width: `${Math.max(0, Math.min(100, score))}%` }}
+                      />
+                    </div>
+                    {detail && isExpanded && (
+                      <p className="text-[11px] text-muted mt-1">{detail}</p>
+                    )}
                   </div>
-                  <div className="h-1.5 bg-bg rounded-full overflow-hidden">
-                    <div
-                      className={`h-full rounded-full ${healthBarColor(summary.healthLabel!)}`}
-                      style={{ width: `${Math.max(0, Math.min(100, score))}%` }}
-                    />
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         ) : (
@@ -307,6 +422,120 @@ export default function Dashboard() {
               </div>
             </div>
           </div>
+        )}
+      </FinoraCard>
+      )}
+
+      {/* Categorization Confidence -- how sure the categorization engine was, on average, about
+          the categories it assigned this month. A positive, ongoing data-quality signal, distinct
+          from the category-review warning below (which only fires when spend is badly
+          miscategorized) -- this can read "Excellent" in the very same month that warning fires,
+          if a small number of genuinely low-confidence transactions sit alongside a lot of
+          high-confidence ones. Hidden below categorizationConfidenceMinTransactions
+          engine-decided transactions this month (server-side floor, same reasoning as
+          healthScoreAvailable above): an average of one or two decisions isn't a real reading. */}
+      {!isEmpty && summary.categorizationConfidenceScore !== null && (
+      <FinoraCard padding="lg" className="mb-6">
+        <div className="flex items-center gap-2 mb-3">
+          <div className="w-8 h-8 rounded-full bg-primary-light flex items-center justify-center">
+            <BadgeCheck size={15} className="text-primary" />
+          </div>
+          <h2 className="font-semibold text-ink">Categorization Confidence</h2>
+        </div>
+        <div className="flex items-baseline gap-2">
+          <p className={`text-4xl font-bold ${healthColor(scoreLabel(summary.categorizationConfidenceScore))}`}>
+            {summary.categorizationConfidenceScore}
+          </p>
+          <p className="text-xs text-muted">out of 100</p>
+        </div>
+        <p className={`text-sm font-medium mt-1 ${healthColor(scoreLabel(summary.categorizationConfidenceScore))}`}>
+          {scoreLabel(summary.categorizationConfidenceScore)}
+        </p>
+        <p className="text-xs text-muted mt-2">
+          Based on {summary.categorizationConfidenceTransactionCount} automatically categorized transaction
+          {summary.categorizationConfidenceTransactionCount === 1 ? '' : 's'} {periodLabel}.
+        </p>
+      </FinoraCard>
+      )}
+
+      {/* Next Actions -- summary.notifications (DashboardService.buildNotifications: credit-card
+          payments due soon, low-balance warnings, budget-threshold alerts) has always been
+          computed and sent on every dashboard load, but was only ever rendered in TopBar's
+          bell-icon dropdown -- easy to miss entirely if a user doesn't happen to open it. This
+          surfaces the SAME list, unchanged, directly on the page it's actually about, rather
+          than computing anything new. Hidden while isEmpty, same reasoning as Financial Health
+          Score above: a brand-new account has nothing computed here to act on yet. */}
+      {!isEmpty && (
+      <FinoraCard padding="lg" className="mb-6">
+        <div className="flex items-center gap-2 mb-4">
+          <div className="w-8 h-8 rounded-full bg-primary-light flex items-center justify-center">
+            <ListChecks size={15} className="text-primary" />
+          </div>
+          <h2 className="font-semibold text-ink">Next Actions</h2>
+        </div>
+        {summary.notifications.length === 0 ? (
+          <p className="text-sm text-muted">Nothing needs your attention right now.</p>
+        ) : (
+          <ul className="space-y-2.5">
+            {summary.notifications.map((n, i) => (
+              <li key={i} className="flex items-start gap-2.5">
+                <AlertTriangle size={14} className="text-warning flex-shrink-0 mt-0.5" />
+                <span className="text-sm text-ink">{n}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </FinoraCard>
+      )}
+
+      {/* Detected Issues -- ReconciliationService's own duplicate pass already silently excludes
+          a row from every total above the moment it runs (Transaction.isDuplicateOf), and until
+          now nothing told the user it happened. transactionsApi.confirmNotDuplicate (BH-027,
+          "no, these really are two separate transactions") already existed on the backend to let
+          a human overrule that guess -- it simply had no caller anywhere in the product. Shown
+          only when something was actually flagged (unlike Next Actions above, which stays visible
+          with a positive empty state): this is a conditional alert like Limited History and the
+          category-review warning, not a standing destination worth checking when empty. */}
+      {summary.duplicateTransactionCount > 0 && (
+      <FinoraCard padding="lg" className="mb-6">
+        <div className="flex items-center gap-2 mb-1">
+          <div className="w-8 h-8 rounded-full bg-warning-bg flex items-center justify-center">
+            <Copy size={15} className="text-warning" />
+          </div>
+          <h2 className="font-semibold text-ink">Detected Issues</h2>
+        </div>
+        <p className="text-xs text-muted mb-4 ml-10">
+          {summary.duplicateTransactionCount === 1
+            ? "We found 1 transaction that looks like a duplicate and excluded it from your totals."
+            : `We found ${summary.duplicateTransactionCount} transactions that look like duplicates and excluded them from your totals.`}
+        </p>
+        {duplicateConfirmError && (
+          <p className="text-danger text-xs mb-3">{duplicateConfirmError}</p>
+        )}
+        <ul className="divide-y divide-border">
+          {summary.detectedDuplicates.map((d) => (
+            <li key={d.transactionId} className="flex items-center justify-between gap-3 py-2.5">
+              <div className="min-w-0">
+                <p className="text-sm text-ink truncate">{d.merchant}</p>
+                <p className="text-xs text-muted">
+                  {new Date(d.date + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })} · {fmt(d.amount)}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => void handleConfirmNotDuplicate(d.transactionId)}
+                disabled={confirmingDuplicateId === d.transactionId}
+                className="text-xs text-primary font-medium flex-shrink-0 disabled:opacity-50"
+              >
+                {confirmingDuplicateId === d.transactionId ? 'Confirming…' : 'Not a duplicate'}
+              </button>
+            </li>
+          ))}
+        </ul>
+        {summary.duplicateTransactionCount > summary.detectedDuplicates.length && (
+          <p className="text-xs text-muted mt-2.5">
+            and {summary.duplicateTransactionCount - summary.detectedDuplicates.length} more
+          </p>
         )}
       </FinoraCard>
       )}
@@ -350,7 +579,7 @@ export default function Dashboard() {
                 cta={
                   <Link
                     to="/app/import"
-                    className="inline-flex items-center gap-1.5 bg-primary text-white hover:bg-primary-dark rounded-lg px-4 py-2 text-xs font-semibold"
+                    className="inline-flex items-center gap-1.5 bg-primary text-on-primary hover:bg-primary-dark rounded-lg px-4 py-2 text-xs font-semibold"
                   >
                     <UploadCloud size={14} /> Import Statement
                   </Link>
@@ -401,11 +630,34 @@ export default function Dashboard() {
                       <span className="w-2 h-2 rounded-full" style={{ background: donutColors[i % donutColors.length] }} />
                       {name}
                     </span>
-                    <span className="text-muted">{((val / totalSpend) * 100).toFixed(0)}%</span>
+                    {/* Bug 44. categoryEntries can be non-empty with every amount at zero, which
+                        the length check above doesn't catch -- totalSpend is then 0 and val /
+                        totalSpend is 0/0, rendering the literal string "NaN%". */}
+                    <span className="text-muted">{totalSpend > 0 ? ((val / totalSpend) * 100).toFixed(0) : '0'}%</span>
                     <span className="font-medium text-ink">{fmt(val)}</span>
                   </div>
                 ))}
               </div>
+              {/* Not gated on the "Other" category name -- "Other" is a real, resolvable category
+                  (the categorization engine's fallback when nothing matched), so a transaction
+                  landing there isn't necessarily uncategorized. categoryReviewWarning instead
+                  reuses Transaction.needsCategoryReview, the same per-transaction signal Ledger's
+                  "needs review" badge already shows -- flagged only when a default("Other")-
+                  sourced guess ALSO misses the user's own confidence threshold. */}
+              {summary.categoryReviewWarning && (
+                <div className="bg-warning-bg border border-warning/30 rounded-xl2 px-4 py-3 flex items-start gap-2.5 mt-4">
+                  <AlertTriangle size={15} className="text-warning flex-shrink-0 mt-0.5" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-medium text-ink">Spending needs category review</p>
+                    <p data-testid="category-review-detail" className="text-[11px] text-muted mt-0.5">
+                      {`${fmt(summary.categoryReviewSpendAmount)} (${summary.categoryReviewSpendPct.toFixed(0)}%) across ${summary.categoryReviewTransactionCount} transaction${summary.categoryReviewTransactionCount === 1 ? '' : 's'} ${periodLabel} landed in a generic category and could use a closer look.`}
+                    </p>
+                    <Link to="/app/transactions" className="inline-block mt-2 text-[11px] font-medium text-primary">
+                      Review transactions →
+                    </Link>
+                  </div>
+                </div>
+              )}
               <Link to="/app/reports" className="mt-4 text-center text-xs font-medium text-primary bg-primary-light rounded-lg py-2.5">
                 View Full Report →
               </Link>
@@ -427,7 +679,7 @@ export default function Dashboard() {
                 title="No accounts yet"
                 desc="Add your bank accounts to get a complete view."
                 cta={
-                  <Link to="/app/setup" className="inline-block bg-primary text-white hover:bg-primary-dark rounded-lg px-4 py-2 text-xs font-semibold">
+                  <Link to="/app/setup" className="inline-block bg-primary text-on-primary hover:bg-primary-dark rounded-lg px-4 py-2 text-xs font-semibold">
                     + Add Account
                   </Link>
                 }
@@ -461,15 +713,16 @@ export default function Dashboard() {
                   <button
                     type="button"
                     onClick={() => setShowAddModal(true)}
-                    className="bg-primary text-white hover:bg-primary-dark rounded-lg px-4 py-2 text-xs font-semibold"
+                    className="bg-primary text-on-primary hover:bg-primary-dark rounded-lg px-4 py-2 text-xs font-semibold"
                   >
                     + Add Transaction
                   </button>
                 }
               />
             ) : recentTxns.map((t) => {
-              const Icon = CATEGORY_ICON[t.categoryName] ?? ShoppingBag;
-              const color = t.type === 'INCOME' ? '#16a34a' : (CATEGORY_COLOR[t.categoryName] ?? '#2563EB');
+              const cat = categoriesById[t.categoryId];
+              const Icon = ICON_COMPONENTS[cat?.icon ?? 'tag'] ?? ShoppingBag;
+              const color = t.type === 'INCOME' ? '#16a34a' : (COLOR_HEX[cat?.color ?? 'gray'] ?? '#262A33');
               return (
                 <div key={t.id} className="flex items-center gap-3">
                   <div className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0" style={{ background: color + '20' }}>
@@ -504,7 +757,7 @@ export default function Dashboard() {
                 title="No budgets set"
                 desc="Create budgets to track your spending and stay on track."
                 cta={
-                  <Link to="/app/budgets" className="inline-block bg-primary text-white hover:bg-primary-dark rounded-lg px-4 py-2 text-xs font-semibold">
+                  <Link to="/app/budgets" className="inline-block bg-primary text-on-primary hover:bg-primary-dark rounded-lg px-4 py-2 text-xs font-semibold">
                     Create Budget
                   </Link>
                 }
@@ -546,7 +799,7 @@ export default function Dashboard() {
                 title="No goals yet"
                 desc="Set your financial goals and achieve them step by step."
                 cta={
-                  <Link to="/app/goals" className="inline-block bg-primary text-white hover:bg-primary-dark rounded-lg px-4 py-2 text-xs font-semibold">
+                  <Link to="/app/goals" className="inline-block bg-primary text-on-primary hover:bg-primary-dark rounded-lg px-4 py-2 text-xs font-semibold">
                     + Create Goal
                   </Link>
                 }
@@ -592,7 +845,7 @@ export default function Dashboard() {
               <h2 className="font-semibold text-ink">AI Insights</h2>
               <Badge label="Beta" />
             </div>
-            <Link to="/app/insights" className="bg-primary text-white text-xs font-semibold rounded-lg px-4 py-2">
+            <Link to="/app/insights" className="bg-primary text-on-primary text-xs font-semibold rounded-lg px-4 py-2">
               View Insights
             </Link>
           </div>
@@ -601,7 +854,11 @@ export default function Dashboard() {
               <p className="text-xs text-muted mb-3">Get personalized insights to improve your financial health.</p>
               <ul className="space-y-2">
                 {[
-                  'Upload or import more transactions to get AI-powered insights.',
+                  // Bug fix: this used to say "get AI-powered insights", contradicting the honest
+                  // "rule-based statistics, not an LLM assistant" framing the Insights page and
+                  // mobile screen both state plainly -- someone who only ever saw this Dashboard
+                  // card would come away with the wrong idea about what the feature actually is.
+                  'Upload or import more transactions to see spending insights.',
                   'Track your spending to identify patterns and save more.',
                   'Set budgets to stay in control of your finances.',
                 ].map((tip) => (
@@ -707,7 +964,7 @@ export default function Dashboard() {
           now opens rather than, say, a generic "add transaction" menu. */}
       <Link
         to="/app/import"
-        className="fixed bottom-8 right-8 w-14 h-14 rounded-full bg-primary text-white shadow-soft flex items-center justify-center hover:bg-primary-dark"
+        className="fixed bottom-8 right-8 w-14 h-14 rounded-full bg-primary text-on-primary shadow-soft flex items-center justify-center hover:bg-primary-dark"
         title="Import a bank or credit card statement"
       >
         <Plus size={24} />

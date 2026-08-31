@@ -65,9 +65,97 @@ export function buildArcs(slices: { label: string; value: number }[]): ArcSlice[
     });
 }
 
+/**
+ * Shared by every donut in the app (Dashboard's spend-by-category, Investments' holdings
+ * allocation) so a palette tweak can't apply to one and silently miss the other -- two donuts
+ * meant to speak one visual language drifting out of sync is a worse failure than either alone.
+ */
+export const CHART_PALETTE = ['#3b82f6', '#16a34a', '#f59e0b', '#8b5cf6', '#ef4444', '#94a3b8'];
+
+export interface BucketedSlice {
+  label: string;
+  value: number;
+  color: string;
+}
+
+/**
+ * Sorts by value descending, keeps the top `colors.length - 1` entries as their own slices, and
+ * folds everything else into a final `otherLabel` bucket -- unless one of the top entries already
+ * has that exact label, in which case the overflow merges into it instead of creating a second,
+ * identically-labelled row a reader can't tell apart from the first.
+ *
+ * Shared by DashboardScreen's spend-by-category donut and InvestmentsScreen's holdings donut so
+ * the capping rule -- and, just as importantly, the collision guard -- can't drift between the
+ * two the way two independently-written copies of the same rule eventually do.
+ */
+export function bucketTopSlices(
+  entries: [string, number][],
+  colors: string[],
+  otherLabel: string
+): BucketedSlice[] {
+  const sorted = [...entries].sort((a, b) => b[1] - a[1]);
+  if (sorted.length <= colors.length) {
+    return sorted.map(([label, value], i) => ({ label, value, color: colors[i] }));
+  }
+  const named = sorted.slice(0, colors.length - 1);
+  const rest = sorted.slice(colors.length - 1).reduce((sum, [, value]) => sum + value, 0);
+
+  const collidingIndex = named.findIndex(([label]) => label === otherLabel);
+  if (collidingIndex >= 0) {
+    return named.map(([label, value], i) => ({
+      label,
+      value: i === collidingIndex ? value + rest : value,
+      color: colors[i],
+    }));
+  }
+  return [
+    ...named.map(([label, value], i) => ({ label, value, color: colors[i] })),
+    { label: otherLabel, value: rest, color: colors[colors.length - 1] },
+  ];
+}
+
+export const DONUT_CIRCUMFERENCE = 2 * Math.PI * DONUT_RADIUS;
+
+/**
+ * Arc length in px for a slice of the donut's fixed radius, given its sweep in degrees --
+ * used to size a progressive draw-in's strokeDasharray/strokeDashoffset pair to exactly this
+ * slice's own length, so slices don't visually overlap mid-animation. Exact, not approximated:
+ * DONUT_RADIUS is constant and every slice is a true circular arc.
+ */
+export function arcLength(sweepDegrees: number): number {
+  return DONUT_RADIUS * ((sweepDegrees * Math.PI) / 180);
+}
+
+/**
+ * Cumulative straight-line length through a polyline's points -- the line-chart counterpart to
+ * arcLength, sizing the same strokeDasharray/strokeDashoffset draw-in technique for
+ * CashFlowChart's and TrendChart's polylines. Zero for zero or one points: there is nothing to
+ * draw, so nothing to animate.
+ */
+export function polylineLength(points: { x: number; y: number }[]): number {
+  let total = 0;
+  for (let i = 1; i < points.length; i++) {
+    const dx = points[i].x - points[i - 1].x;
+    const dy = points[i].y - points[i - 1].y;
+    total += Math.sqrt(dx * dx + dy * dy);
+  }
+  return total;
+}
+
+/**
+ * An {x,y}[] array as the SVG `points` attribute string ("x,y x,y ..."). Callers that need both
+ * this and polylineLength should build the {x,y} array once and pass it to both -- computing it
+ * twice (once inline for this string, once again for polylineLength) was CashFlowChart's and
+ * TrendChart's original approach and re-ran the same xAt/yAt scale calls twice per series for no
+ * reason.
+ */
+export function toSvgPoints(points: { x: number; y: number }[]): string {
+  return points.map((p) => `${p.x},${p.y}`).join(' ');
+}
+
 export const CASHFLOW_HEIGHT = 150;
 export const CASHFLOW_PAD_TOP = 8;
-export const CASHFLOW_PAD_BOTTOM = 22;
+const CASHFLOW_PAD_BOTTOM = 22;
 export const CASHFLOW_PLOT_HEIGHT = CASHFLOW_HEIGHT - CASHFLOW_PAD_TOP - CASHFLOW_PAD_BOTTOM;
 
 export interface CashFlowScale {
@@ -98,7 +186,7 @@ export function cashFlowScale(
 
 export const TREND_HEIGHT = 150;
 export const TREND_PAD_TOP = 8;
-export const TREND_PAD_BOTTOM = 22;
+const TREND_PAD_BOTTOM = 22;
 export const TREND_PLOT_HEIGHT = TREND_HEIGHT - TREND_PAD_TOP - TREND_PAD_BOTTOM;
 
 export interface TrendScale {

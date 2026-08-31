@@ -25,8 +25,7 @@ const Contact = lazy(() => import('./pages/Contact'));
 const About = lazy(() => import('./pages/About'));
 const Careers = lazy(() => import('./pages/Careers'));
 const Help = lazy(() => import('./pages/Help'));
-const Login = lazy(() => import('./pages/Login'));
-const Register = lazy(() => import('./pages/Register'));
+const AuthEntry = lazy(() => import('./pages/AuthEntry'));
 const ForgotPassword = lazy(() => import('./pages/ForgotPassword'));
 const ResetPassword = lazy(() => import('./pages/ResetPassword'));
 const VerifyEmail = lazy(() => import('./pages/VerifyEmail'));
@@ -42,7 +41,10 @@ const Investments = lazy(() => import('./pages/Investments'));
 const Reports = lazy(() => import('./pages/Reports'));
 const Insights = lazy(() => import('./pages/Insights'));
 const Profile = lazy(() => import('./pages/Profile'));
+const VerifyEmailChange = lazy(() => import('./pages/VerifyEmailChange'));
 const Settings = lazy(() => import('./pages/Settings'));
+const BillingHistory = lazy(() => import('./pages/BillingHistory'));
+const Referrals = lazy(() => import('./pages/Referrals'));
 const GmailReview = lazy(() => import('./pages/GmailReview'));
 const Setup = lazy(() => import('./pages/Setup'));
 
@@ -121,12 +123,17 @@ export default function App() {
           <Route path="/help" element={<Help />} />
 
           {/* Auth */}
-          <Route path="/login" element={<Login />} />
-          <Route path="/register" element={<Register />} />
+          <Route path="/auth" element={<AuthEntry />} />
+          {/* /login and /register no longer have their own pages -- AuthEntry (D-26 unified
+              entry) absorbed both. Kept as redirects, not removed, so old bookmarks/emails/links
+              still land somewhere real. */}
+          <Route path="/login" element={<Navigate to="/auth" replace />} />
+          <Route path="/register" element={<Navigate to="/auth" replace />} />
           <Route path="/forgot-password" element={<ForgotPassword />} />
           <Route path="/reset-password" element={<ResetPassword />} />
           <Route path="/verify-email" element={<VerifyEmail />} />
           <Route path="/verify-phone" element={<ProtectedRoute allowUnverified><VerifyPhone /></ProtectedRoute>} />
+          <Route path="/email-change-verify" element={<ProtectedRoute><VerifyEmailChange /></ProtectedRoute>} />
 
           {/* App (authenticated) */}
           <Route path="/app" element={<Protected><Dashboard /></Protected>} />
@@ -146,6 +153,8 @@ export default function App() {
           <Route path="/app/insights" element={<Protected><Insights /></Protected>} />
           <Route path="/app/profile" element={<Protected><Profile /></Protected>} />
           <Route path="/app/settings" element={<Protected><Settings /></Protected>} />
+          <Route path="/app/billing" element={<Protected><BillingHistory /></Protected>} />
+          <Route path="/app/referrals" element={<Protected><Referrals /></Protected>} />
           <Route path="/app/settings/gmail/review" element={<Protected><GmailReview /></Protected>} />
 
           {/* Bug fix: there was no catch-all, and wrangler.json sets

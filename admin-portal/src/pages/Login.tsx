@@ -1,9 +1,11 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { Navigate, useLocation, useNavigate, Link } from 'react-router-dom';
-import { useAdminAuth } from '../context/AdminAuthContext';
-import logoMark from '../assets/logo-mark.png';
+import { useAdminAuth, AdminAccessError } from '../context/AdminAuthContext';
+import { BrandMark } from '../components/BrandMark';
+import { PasswordInput } from '../components/PasswordInput';
 import { setupApi } from '../api/endpoints';
 import { ADMIN_SESSION_ENDED_REASON_KEY } from '../api/client';
+import { AUTH_MFA_REQUIRED } from '../api/errorCodes';
 import { safeStorage } from '../lib/safeStorage';
 
 /**
@@ -20,7 +22,7 @@ function nextRouteFor(phoneVerified: boolean): '/' | '/verify-phone' {
 }
 
 export default function Login() {
-  const { token, phoneVerified, login } = useAdminAuth();
+  const { token, phoneVerified, login, completeMfaChallenge } = useAdminAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const [identifier, setIdentifier] = useState('');
@@ -29,6 +31,12 @@ export default function Login() {
   const [submitting, setSubmitting] = useState(false);
   const [setupRequired, setSetupRequired] = useState(false);
   const [checkingSetup, setCheckingSetup] = useState(true);
+  // Set the moment login() comes back AUTH_MFA_REQUIRED (password was correct; the account has
+  // MFA enabled) -- its presence, not a separate `step` enum, is what switches the form below
+  // into the code-entry step, since there's nothing else this page can be showing once it's set.
+  const [mfaChallengeToken, setMfaChallengeToken] = useState<string | null>(null);
+  const [mfaCode, setMfaCode] = useState('');
+  const [mfaError, setMfaError] = useState<string | null>(null);
   // A one-time confirmation from ResetPassword's own post-success redirect ("Password reset
   // successfully..."). This page previously never read location.state at all, so ResetPassword.tsx
   // passing this message did nothing -- an admin who reset their password landed here with no
@@ -87,20 +95,103 @@ export default function Login() {
       const verified = await login(identifier, password);
       void navigate(nextRouteFor(verified));
     } catch (err: any) {
-      setError(err?.message ?? 'Sign in failed. Check your credentials and try again.');
+      // AUTH_MFA_REQUIRED: the password was correct, but this account has MFA enabled -- not a
+      // failure to display, a second step to start. The challenge token travels in `details`
+      // (see client.ts's interceptor and AdminAuthContext.login()'s own comment on why).
+      if (err instanceof AdminAccessError && err.code === AUTH_MFA_REQUIRED
+          && typeof err.details?.mfaChallengeToken === 'string') {
+        setMfaChallengeToken(err.details.mfaChallengeToken);
+      } else {
+        setError(err?.message ?? 'Sign in failed. Check your credentials and try again.');
+      }
     } finally {
       setSubmitting(false);
     }
+  }
+
+  function cancelMfaChallenge() {
+    setMfaChallengeToken(null);
+    setMfaCode('');
+    setMfaError(null);
+  }
+
+  async function handleMfaSubmit(e: FormEvent) {
+    e.preventDefault();
+    if (!mfaChallengeToken || mfaCode.trim().length === 0) return;
+    setMfaError(null);
+    setSubmitting(true);
+    try {
+      const verified = await completeMfaChallenge(mfaChallengeToken, mfaCode.trim());
+      void navigate(nextRouteFor(verified));
+    } catch (err: any) {
+      setMfaError(err?.message ?? "That code didn't work. Check your authenticator app and try again.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  if (mfaChallengeToken) {
+    return (
+      <div className="min-h-screen bg-bg flex items-center justify-center p-4">
+        <div className="w-full max-w-sm">
+          <div className="flex items-center gap-2.5 justify-center mb-8">
+            <BrandMark size={36} variant="auto" className="rounded-lg flex-shrink-0" />
+            <span className="font-extrabold tracking-wide text-xl text-ink">FYNORA ADMIN</span>
+          </div>
+
+          <form onSubmit={handleMfaSubmit} className="bg-card border border-border rounded-xl2 shadow-soft p-6 space-y-4">
+            <div>
+              <p className="text-sm font-semibold text-ink mb-1">Two-factor authentication</p>
+              <p className="text-xs text-muted">
+                Enter the 6-digit code from your authenticator app, or one of your recovery codes.
+              </p>
+            </div>
+            <div>
+              <label htmlFor="login-mfa-code" className="block text-sm font-medium text-ink mb-1.5">Code</label>
+              <input
+                id="login-mfa-code"
+                type="text"
+                inputMode="text"
+                autoFocus
+                autoComplete="one-time-code"
+                required
+                value={mfaCode}
+                onChange={(e) => setMfaCode(e.target.value)}
+                placeholder="123456"
+                className="w-full bg-bg border border-border rounded-lg px-3.5 py-2.5 text-center text-lg tracking-[0.3em] font-mono focus:outline-none focus:ring-2 focus:ring-primary/30"
+              />
+            </div>
+
+            {mfaError && (
+              <p className="text-sm text-danger bg-danger-bg rounded-lg px-3.5 py-2.5">{mfaError}</p>
+            )}
+
+            <button
+              type="submit"
+              disabled={submitting || mfaCode.trim().length === 0}
+              className="w-full bg-primary hover:bg-primary-dark text-on-primary font-semibold rounded-lg py-2.5 text-sm disabled:opacity-50"
+            >
+              {submitting ? 'Verifying…' : 'Verify'}
+            </button>
+            <button
+              type="button"
+              onClick={cancelMfaChallenge}
+              className="w-full text-muted hover:text-ink text-xs font-medium text-center"
+            >
+              Back to sign in
+            </button>
+          </form>
+        </div>
+      </div>
+    );
   }
 
   return (
     <div className="min-h-screen bg-bg flex items-center justify-center p-4">
       <div className="w-full max-w-sm">
         <div className="flex items-center gap-2.5 justify-center mb-8">
-          <div className="w-9 h-9 rounded-lg overflow-hidden flex-shrink-0">
-            <img src={logoMark} alt="" className="w-full h-full object-cover" />
-          </div>
-          <span className="font-extrabold tracking-wide text-xl text-ink">FINORA ADMIN</span>
+          <BrandMark size={36} variant="auto" className="rounded-lg flex-shrink-0" />
+          <span className="font-extrabold tracking-wide text-xl text-ink">FYNORA ADMIN</span>
         </div>
 
         <form onSubmit={handleSubmit} className="bg-card border border-border rounded-xl2 shadow-soft p-6 space-y-4">
@@ -121,13 +212,12 @@ export default function Login() {
               <label htmlFor="login-password" className="block text-sm font-medium text-ink">Password</label>
               <Link to="/forgot-password" className="text-xs text-primary font-medium">Forgot password?</Link>
             </div>
-            <input
+            <PasswordInput
               id="login-password"
-              type="password"
               required
               value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="w-full bg-bg border border-border rounded-lg px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+              onChange={setPassword}
+              className="w-full bg-bg border border-border rounded-lg px-3.5 py-2.5 pr-10 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
             />
           </div>
 
@@ -147,7 +237,7 @@ export default function Login() {
           <button
             type="submit"
             disabled={submitting}
-            className="w-full bg-primary hover:bg-primary-dark text-white font-semibold rounded-lg py-2.5 text-sm disabled:opacity-50"
+            className="w-full bg-primary hover:bg-primary-dark text-on-primary font-semibold rounded-lg py-2.5 text-sm disabled:opacity-50"
           >
             {submitting ? 'Signing in…' : 'Sign in'}
           </button>
@@ -155,7 +245,7 @@ export default function Login() {
 
         <p className="text-center text-xs text-muted mt-6">
           This portal is for accounts with admin permissions only. Regular users should use the
-          main Finora app.
+          main Fynora app.
         </p>
       </div>
     </div>

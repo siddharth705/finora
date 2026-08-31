@@ -22,6 +22,18 @@ staged=$(git diff --cached --name-only)
 # review while letting exactly what it warns about through.
 sh scripts/check-fixture-hygiene.sh || exit 1
 
+# Best-effort local secret scan: only when the `gitleaks` binary is present. It is a single Go
+# binary (brew install gitleaks, or see https://github.com/gitleaks/gitleaks#installing), not
+# something `npm install` at the repo root provisions the way it does for husky itself, so a fresh
+# clone without it must not be blocked. The actual gate is the "Secret scan" job in
+# .github/workflows/ci.yml, which always has the binary via gitleaks/gitleaks-action -- this is
+# the fast local nicety that catches a secret before it is ever pushed, not the enforcement point.
+if command -v gitleaks >/dev/null 2>&1; then
+  gitleaks protect --staged --no-banner --redact || exit 1
+else
+  echo "note: gitleaks not installed locally, skipping local secret scan (CI still runs it) -- see https://github.com/gitleaks/gitleaks#installing" >&2
+fi
+
 # Always, and cheap (one `git ls-files -s`): a mode regression is not tied to which files are
 # staged, and this one cost the backend job every CI run it ever had. Catching it here matters
 # more than the CI copy, because core.fileMode is false on Windows -- the bit cannot be restored
@@ -55,19 +67,52 @@ if echo "$staged" | grep -qE '^(ops/monitoring/|backend/src/main/java/com/finora
 fi
 
 if echo "$staged" | grep -qE '^(frontend|admin-portal|mobile)/'; then
-  if echo "$staged" | grep -q '^frontend/'; then
-    (cd frontend && npx eslint --fix $(echo "$staged" | grep '^frontend/' | sed 's#^frontend/##') 2>/dev/null || true)
+  # ACMR only -- a deleted file has nothing for eslint --fix to fix, and re-adding a path that no
+  # longer exists on disk fails with "pathspec did not match any files" and aborts the commit,
+  # which previously happened to block every commit that deleted a frontend/admin-portal/mobile
+  # file, not just ones that touched lint-relevant code.
+  staged_existing=$(git diff --cached --name-only --diff-filter=ACMR)
+  # Bug 48. Every one of the four spots below used to expand a multi-line file list as an unquoted
+  # `$(...)` (or, for the git add below, an unquoted plain variable) argument list -- POSIX sh word-
+  # splits that on $IFS, so a staged path containing a space (a real, staged filename is well within
+  # scope here -- see this block's own comment above on why deleted files needed handling at all)
+  # became two or more separate arguments: eslint --fix got handed nonexistent path fragments and
+  # silently skipped both, or git add failed outright with "pathspec did not match any files".
+  # Looping with `while IFS= read -r f` -- the same pattern scripts/check-fixture-hygiene.sh already
+  # uses for exactly this reason -- preserves each filename whole.
+  if echo "$staged_existing" | grep -q '^frontend/'; then
+    (
+      cd frontend || exit 0
+      echo "$staged_existing" | grep '^frontend/' | sed 's#^frontend/##' | while IFS= read -r f; do
+        npx eslint --fix -- "$f" 2>/dev/null || true
+      done
+    )
   fi
-  if echo "$staged" | grep -q '^admin-portal/'; then
-    (cd admin-portal && npx eslint --fix $(echo "$staged" | grep '^admin-portal/' | sed 's#^admin-portal/##') 2>/dev/null || true)
+  if echo "$staged_existing" | grep -q '^admin-portal/'; then
+    (
+      cd admin-portal || exit 0
+      echo "$staged_existing" | grep '^admin-portal/' | sed 's#^admin-portal/##' | while IFS= read -r f; do
+        npx eslint --fix -- "$f" 2>/dev/null || true
+      done
+    )
   fi
   # mobile/eslint.config.js was added alongside the CI lint step (see ci.yml's mobile Lint step) --
   # this block was never updated to match, so a staged mobile/ file got none of the auto-fix
   # frontend and admin-portal already get, and reached CI as the first lint pass it ever saw.
-  if echo "$staged" | grep -q '^mobile/'; then
-    (cd mobile && npx eslint --fix $(echo "$staged" | grep '^mobile/' | sed 's#^mobile/##') 2>/dev/null || true)
+  if echo "$staged_existing" | grep -q '^mobile/'; then
+    (
+      cd mobile || exit 0
+      echo "$staged_existing" | grep '^mobile/' | sed 's#^mobile/##' | while IFS= read -r f; do
+        npx eslint --fix -- "$f" 2>/dev/null || true
+      done
+    )
   fi
-  git add $(echo "$staged" | grep -E '^(frontend|admin-portal|mobile)/')
+  existing_to_add=$(echo "$staged_existing" | grep -E '^(frontend|admin-portal|mobile)/')
+  if [ -n "$existing_to_add" ]; then
+    printf '%s\n' "$existing_to_add" | while IFS= read -r f; do
+      git add -- "$f"
+    done
+  fi
 fi
 
 if echo "$staged" | grep -q '^backend/'; then

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { Sidebar } from './Sidebar';
 import { useAdminAuth } from '../context/AdminAuthContext';
@@ -12,7 +13,9 @@ vi.mock('../context/AdminAuthContext', () => ({
   useAdminAuth: vi.fn(),
 }));
 
-function renderSidebar(permissions: string[]) {
+const COLLAPSED_GROUPS_STORAGE_KEY = 'finora-admin-sidebar-collapsed-groups';
+
+function renderSidebar(permissions: string[], initialPath = '/') {
   vi.mocked(useAdminAuth).mockReturnValue(mockAdminAuthState({
     fullName: 'Support Admin',
     permissions,
@@ -20,7 +23,7 @@ function renderSidebar(permissions: string[]) {
   }));
 
   return render(
-    <MemoryRouter>
+    <MemoryRouter initialEntries={[initialPath]}>
       <Sidebar />
     </MemoryRouter>
   );
@@ -29,6 +32,7 @@ function renderSidebar(permissions: string[]) {
 describe('Sidebar', () => {
   beforeEach(() => {
     vi.mocked(useAdminAuth).mockReset();
+    localStorage.clear();
   });
 
   it('always shows Dashboard, which requires no permission', () => {
@@ -122,5 +126,72 @@ describe('Sidebar', () => {
   it('renders the account name from useAdminAuth', () => {
     renderSidebar([]);
     expect(screen.getByText('Support Admin')).toBeInTheDocument();
+  });
+});
+
+describe('Sidebar — collapsible groups', () => {
+  beforeEach(() => {
+    vi.mocked(useAdminAuth).mockReset();
+    localStorage.clear();
+  });
+
+  it('starts every group expanded when nothing has been collapsed before', () => {
+    renderSidebar(['BANK_MANAGE', 'RULE_MANAGE']);
+
+    expect(screen.getByText('Banks')).toBeInTheDocument();
+    expect(screen.getByText('Global Rules')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /core/i })).toHaveAttribute('aria-expanded', 'true');
+  });
+
+  it('collapses a group on click, hiding its links, and expands it again on a second click', async () => {
+    renderSidebar(['BANK_MANAGE']);
+    const user = userEvent.setup();
+    const toggle = screen.getByRole('button', { name: /core/i });
+
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByText('Banks')).not.toBeInTheDocument();
+
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByText('Banks')).toBeInTheDocument();
+  });
+
+  it('persists a collapsed group across remounts, same as reopening the admin portal in a new tab', async () => {
+    const { unmount } = renderSidebar(['BANK_MANAGE']);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: /core/i }));
+    expect(screen.queryByText('Banks')).not.toBeInTheDocument();
+    unmount();
+
+    renderSidebar(['BANK_MANAGE']);
+
+    expect(screen.queryByText('Banks')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /core/i })).toHaveAttribute('aria-expanded', 'false');
+  });
+
+  // The whole reason this can't just be a permanent render-time override: without a real state
+  // transition, the toggle button for the active group would silently do nothing when clicked
+  // (see Sidebar.tsx's own comment on this above the effect that opens it).
+  it('auto-opens a group that was left collapsed if the current route lives inside it, and the toggle still works normally afterward', async () => {
+    localStorage.setItem(COLLAPSED_GROUPS_STORAGE_KEY, JSON.stringify(['Core']));
+    renderSidebar(['BANK_MANAGE'], '/banks');
+    const user = userEvent.setup();
+
+    expect(screen.getByText('Banks')).toBeInTheDocument();
+    const toggle = screen.getByRole('button', { name: /core/i });
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByText('Banks')).not.toBeInTheDocument();
+  });
+
+  it('auto-opens for a prefixed route too, without also opening an unrelated group whose path happens to share a prefix', () => {
+    localStorage.setItem(COLLAPSED_GROUPS_STORAGE_KEY, JSON.stringify(['Intelligence']));
+    renderSidebar(['RECONCILIATION_VIEW'], '/reconciliation/txn-123');
+
+    expect(screen.getByText('Reconciliation Monitor')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /intelligence/i })).toHaveAttribute('aria-expanded', 'true');
   });
 });

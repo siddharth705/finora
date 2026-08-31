@@ -5,11 +5,11 @@ export default function ShippingPolicy() {
   return (
     <PublicLayout
       title="Shipping Policy"
-      subtitle="Last updated: August 2026. Finora is a digital service — no physical goods are shipped."
+      subtitle="Last updated: August 2026. Fynora is a digital service — no physical goods are shipped."
     >
       <PublicSection title="Digital Delivery Only">
         <p>
-          Finora is a software-as-a-service product. Nothing you purchase is a physical item, so there is no
+          Fynora is a software-as-a-service product. Nothing you purchase is a physical item, so there is no
           shipping, packaging, or courier involved at any point.
         </p>
       </PublicSection>
@@ -24,7 +24,7 @@ export default function ShippingPolicy() {
 
       <PublicSection title="No Physical Goods">
         <p>
-          Finora does not sell, ship, or deliver any physical product. All statements, reports, and exports you
+          Fynora does not sell, ship, or deliver any physical product. All statements, reports, and exports you
           generate within the app are downloaded directly by you as digital files (CSV, PDF); nothing is mailed
           or couriered.
         </p>

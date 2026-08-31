@@ -8,12 +8,12 @@
  * scripts/check-contact-addresses.py is the other half — it fails the build on a hardcoded Finora
  * mailbox anywhere under src/, so the next migration cannot silently miss one again.
  */
-export const SUPPORT_EMAIL = 'support@finoratech.info'; // synthetic-ok: Finora's own support mailbox, not customer PII
+export const SUPPORT_EMAIL = 'support@fynora.net'; // synthetic-ok: Finora's own support mailbox, not customer PII
 export const SUPPORT_MAILTO = `mailto:${SUPPORT_EMAIL}`;
 
 /**
  * Careers is a separate mailbox rather than an alias of SUPPORT_EMAIL: applications and support
  * requests go to different people, and collapsing them would route CVs into the support queue.
  */
-export const CAREERS_EMAIL = 'careers@finoratech.info'; // synthetic-ok: Finora's own careers mailbox, not customer PII
+export const CAREERS_EMAIL = 'careers@fynora.net'; // synthetic-ok: Finora's own careers mailbox, not customer PII
 export const CAREERS_MAILTO = `mailto:${CAREERS_EMAIL}`;

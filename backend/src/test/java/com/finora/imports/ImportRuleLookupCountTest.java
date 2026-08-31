@@ -50,15 +50,17 @@ class ImportRuleLookupCountTest {
                 .thenReturn(new CategorizationService.Suggestion("Uncategorized", "default", null, null, null));
         when(categorizationService.suggestReadOnly(any(), any(), any(), any(), any()))
                 .thenReturn(new CategorizationService.Suggestion("Uncategorized", "default", null, null, null));
+        when(categorizationService.suggestReadOnly(any(), any(), any(), any(), any(), any()))
+                .thenReturn(new CategorizationService.Suggestion("Uncategorized", "default", null, null, null));
 
         TransactionRepository transactionRepository = mock(TransactionRepository.class);
-        when(transactionRepository.findPotentialDuplicatesByUser(any(), any(), any(), any())).thenReturn(List.of());
+        when(transactionRepository.findPotentialDuplicatesByUserAndAccountIdIn(any(), any(), any(), any(), any())).thenReturn(List.of());
 
         ruleEngineService = mock(RuleEngineService.class);
         when(ruleEngineService.ruleSet(any())).thenReturn(List.of());
 
         TransactionNormalizer normalizer = new TransactionNormalizer(
-                categorizationService, new DuplicateDetector(transactionRepository), ruleEngineService);
+                categorizationService, new DuplicateDetector(transactionRepository, TestAccountRepositories.anyLive()), ruleEngineService);
         generator = new PreviewGenerator(new CsvParser(), normalizer,
                 new StatementValidator(com.finora.imports.product.ProductDiscovery.standard()),
                 new ImportVerifier(new BalanceChainValidator(), new StatementTotalsValidator(),

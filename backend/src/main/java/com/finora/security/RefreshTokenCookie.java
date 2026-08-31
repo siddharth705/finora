@@ -2,6 +2,7 @@ package com.finora.security;
 
 import com.finora.config.JwtProperties;
 import jakarta.servlet.http.HttpServletRequest;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseCookie;
 import org.springframework.stereotype.Component;
 
@@ -21,19 +22,29 @@ import java.util.Optional;
  * statements.
  *
  * <h2>Host-only, deliberately</h2>
- * No {@code Domain} attribute. Setting {@code Domain=.finoratech.info} would send this credential
+ * No {@code Domain} attribute. Setting {@code Domain=.fynora.net} would send this credential
  * to every current and future subdomain — marketing pages, status pages, anything — when the only
  * thing that ever needs it is the API host that issued it. Omitting {@code Domain} makes the
  * cookie host-only, which is least privilege and costs nothing: the frontend never reads it, so
  * it gains nothing from being shared.
  *
  * <h2>Why {@code SameSite=Lax} is enough</h2>
- * {@code app.finoratech.info} and {@code api.finoratech.info} share the registrable domain
- * {@code finoratech.info}, so a request from one to the other is same-SITE even though it is
+ * {@code app.fynora.net} and {@code api.fynora.net} share the registrable domain
+ * {@code fynora.net}, so a request from one to the other is same-SITE even though it is
  * cross-ORIGIN. Lax cookies are sent on same-site subresource requests. That matters beyond
  * tidiness: the alternative, {@code SameSite=None}, is what browsers are progressively restricting
  * as third-party cookies, and a credential that depends on it has a deprecation clock attached.
  * This only became available when the API moved onto the same registrable domain.
+ *
+ * <p>Bug 53 (docs/quality/bug-reports/BUG_REVIEW_REPORT.md). {@code Lax} is only correct while
+ * that precondition holds -- on a deployment where the SPA and API origins have DIFFERENT
+ * registrable domains, a Lax cookie is silently withheld by the browser entirely (never stored,
+ * never sent), and the app falls back to the {@code localStorage} refresh token this cookie exists
+ * to replace, with no error and no signal anything degraded. Configurable rather than hardcoded so
+ * that regression doesn't need a code change to fix -- but the DEFAULT stays {@code Lax}, matching
+ * what's actually true today per the paragraph above; this class has no way to verify live DNS
+ * from inside the JVM, so changing the default without confirming the precondition no longer holds
+ * would be trading a real, working control for a guess.
  *
  * <h2>Path</h2>
  * Scoped to {@code /api/v1/auth}. Every other endpoint authenticates with the access token and has
@@ -48,9 +59,12 @@ public class RefreshTokenCookie {
     private static final String PATH = "/api/v1/auth";
 
     private final JwtProperties jwtProperties;
+    private final String sameSite;
 
-    public RefreshTokenCookie(JwtProperties jwtProperties) {
+    public RefreshTokenCookie(JwtProperties jwtProperties,
+                               @Value("${app.security.refresh-cookie-same-site:Lax}") String sameSite) {
         this.jwtProperties = jwtProperties;
+        this.sameSite = sameSite;
     }
 
     /**
@@ -100,7 +114,7 @@ public class RefreshTokenCookie {
         return ResponseCookie.from(NAME, value)
                 .httpOnly(true)
                 .secure(true)
-                .sameSite("Lax")
+                .sameSite(sameSite)
                 .path(PATH);
     }
 }

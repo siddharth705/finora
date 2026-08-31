@@ -3,6 +3,7 @@ package com.finora.transactions;
 import com.finora.dto.ApiResponse;
 import com.finora.dto.PagedResponse;
 import com.finora.security.CurrentUser;
+import com.finora.service.TransactionGroupingService;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -19,13 +20,16 @@ public class TransactionController {
 
     private final TransactionService transactionService;
     private final TransactionExplanationService explanationService;
+    private final TransactionGroupingService transactionGroupingService;
     private final CurrentUser currentUser;
 
     public TransactionController(TransactionService transactionService,
                                   TransactionExplanationService explanationService,
+                                  TransactionGroupingService transactionGroupingService,
                                   CurrentUser currentUser) {
         this.transactionService = transactionService;
         this.explanationService = explanationService;
+        this.transactionGroupingService = transactionGroupingService;
         this.currentUser = currentUser;
     }
 
@@ -54,6 +58,12 @@ public class TransactionController {
     @GetMapping("/needs-review")
     public ApiResponse<List<TransactionDto>> needsReview() {
         return ApiResponse.ok(transactionService.needsReview(currentUser.id()));
+    }
+
+    /** Backs the Ledger's bulk "N similar transactions found" review card (Phase A). */
+    @GetMapping("/groups/needs-review")
+    public ApiResponse<List<TransactionGroupingService.MerchantGroup>> needsReviewGroups() {
+        return ApiResponse.ok(transactionGroupingService.groupNeedsReviewByMerchant(currentUser.id()));
     }
 
     /** "Why this category?" — fetched on demand, not on every row of the Ledger's list. */
@@ -102,14 +112,14 @@ public class TransactionController {
 
     @PostMapping("/bulk-delete")
     public ResponseEntity<ApiResponse<Void>> bulkDelete(@Valid @RequestBody TransactionDto.BulkDeleteRequest request) {
-        transactionService.bulkDelete(currentUser.id(), request.ids());
+        transactionService.bulkDelete(currentUser.id(), request.ids(), currentUser.id());
         return ResponseEntity.ok(ApiResponse.ok(null, request.ids().size() + " transaction(s) deleted"));
     }
 
     @PostMapping("/bulk-category")
     public ResponseEntity<ApiResponse<Void>> bulkRecategorize(
             @Valid @RequestBody TransactionDto.BulkRecategorizeRequest request) {
-        transactionService.bulkRecategorize(currentUser.id(), request.ids(), request.category());
+        transactionService.bulkRecategorize(currentUser.id(), request.ids(), request.category(), currentUser.id());
         return ResponseEntity.ok(ApiResponse.ok(null, request.ids().size() + " transaction(s) recategorized"));
     }
 }

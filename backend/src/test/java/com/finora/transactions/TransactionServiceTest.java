@@ -7,6 +7,7 @@ import com.finora.entity.User;
 import com.finora.exception.ApiException;
 import com.finora.repository.AccountRepository;
 import com.finora.repository.CategoryRepository;
+import com.finora.repository.StatementImportRepository;
 import com.finora.repository.TransactionRepository;
 import com.finora.repository.UserRepository;
 import com.finora.service.AuditService;
@@ -42,6 +43,7 @@ class TransactionServiceTest {
     private TransactionRepository transactionRepository;
     private CategoryRepository categoryRepository;
     private AccountRepository accountRepository;
+    private StatementImportRepository statementImportRepository;
     private CategorizationService categorizationService;
     private ReconciliationService reconciliationService;
     private RecurringService recurringService;
@@ -60,7 +62,13 @@ class TransactionServiceTest {
         transactionRepository = mock(TransactionRepository.class);
         categoryRepository = mock(CategoryRepository.class);
         accountRepository = mock(AccountRepository.class);
+        statementImportRepository = mock(StatementImportRepository.class);
         categorizationService = mock(CategorizationService.class);
+        // Preserves every existing test's expectation (needsCategoryReview mirrors suggestion
+        // source alone) by default; tests that specifically exercise the confidence-threshold
+        // behaviour override this per-test.
+        when(categorizationService.needsCategoryReview(any(), anyBoolean(), any()))
+                .thenAnswer(inv -> inv.getArgument(1));
         reconciliationService = mock(ReconciliationService.class);
         recurringService = mock(RecurringService.class);
         // Only reached by search() when a keyword is supplied (bank-aware search) -- delegates to
@@ -82,8 +90,8 @@ class TransactionServiceTest {
                 .thenReturn(SmsResult.success(ProviderType.TWO_FACTOR, "test-message-id"));
         auditService = mock(AuditService.class);
         transactionService = new TransactionService(transactionRepository, categoryRepository, accountRepository,
-                categorizationService, reconciliationService, recurringService, auditService,
-                bankManagementService, userRepository, smsProvider);
+                statementImportRepository, categorizationService, reconciliationService, recurringService,
+                auditService, bankManagementService, userRepository, smsProvider);
 
         dummyCategory = new Category();
         ReflectionTestUtils.setField(dummyCategory, "id", UUID.randomUUID());
@@ -304,6 +312,40 @@ class TransactionServiceTest {
     }
 
     @Test
+    void create_setsDecisionConfidence_fromTheSuggestion() {
+        var suggestion = new CategorizationService.Suggestion("Dining", "rule", UUID.randomUUID(),
+                Transaction.DecisionSource.KEYWORD_MATCH, null, 70);
+        when(categorizationService.suggest(eq(userId), anyString(), any(), any())).thenReturn(suggestion);
+        when(categorizationService.resolveOrCreateCategory(eq(userId), eq("Dining"))).thenReturn(dummyCategory);
+
+        var req = new TransactionDto.CreateRequest(UUID.randomUUID(), null, LocalDate.now(),
+                "Swiggy order", BigDecimal.valueOf(486), "EXPENSE", List.of());
+
+        transactionService.create(userId, req);
+
+        verify(transactionRepository).save(argThat(t -> Integer.valueOf(70).equals(t.getDecisionConfidence())));
+    }
+
+    @Test
+    void create_honorsCategorizationServicesNeedsCategoryReviewDecision_notJustSourceEqualsDefault() {
+        UUID merchantId = UUID.randomUUID();
+        var suggestion = new CategorizationService.Suggestion("Other", "default", merchantId,
+                Transaction.DecisionSource.MERCHANT_DEFAULT, null, 20);
+        when(categorizationService.suggest(eq(userId), anyString(), any(), any())).thenReturn(suggestion);
+        when(categorizationService.resolveOrCreateCategory(eq(userId), eq("Other"))).thenReturn(dummyCategory);
+        // Overrides the setUp() default: this user's threshold is permissive enough that a 20%
+        // default guess should NOT be flagged.
+        when(categorizationService.needsCategoryReview(userId, true, 20)).thenReturn(false);
+
+        var req = new TransactionDto.CreateRequest(UUID.randomUUID(), null, LocalDate.now(),
+                "Unknown merchant", BigDecimal.valueOf(50), "EXPENSE", List.of());
+
+        transactionService.create(userId, req);
+
+        verify(transactionRepository).save(argThat(t -> !t.isNeedsCategoryReview()));
+    }
+
+    @Test
     void create_withNoExplicitCategory_doesNotFlagForReview_whenSuggestionSourceIsRule() {
         var suggestion = new CategorizationService.Suggestion("Dining", "rule", UUID.randomUUID(), Transaction.DecisionSource.KEYWORD_MATCH, null);
         when(categorizationService.suggest(eq(userId), anyString(), any(), any())).thenReturn(suggestion);
@@ -347,7 +389,7 @@ class TransactionServiceTest {
         when(transactionRepository.findById(txn2Id)).thenReturn(Optional.of(t2));
         when(categorizationService.resolveOrCreateCategory(eq(userId), eq("Groceries"))).thenReturn(dummyCategory);
 
-        transactionService.bulkRecategorize(userId, List.of(txn1Id, txn2Id), "Groceries");
+        transactionService.bulkRecategorize(userId, List.of(txn1Id, txn2Id), "Groceries", userId);
 
         assertThat(t1.isNeedsCategoryReview()).isFalse();
         assertThat(t2.isNeedsCategoryReview()).isFalse();
@@ -420,9 +462,36 @@ class TransactionServiceTest {
         when(transactionRepository.findById(id1)).thenReturn(Optional.of(ownedTransaction(id1, userId)));
         when(transactionRepository.findById(id2)).thenReturn(Optional.of(ownedTransaction(id2, userId)));
 
-        transactionService.bulkDelete(userId, List.of(id1, id2));
+        transactionService.bulkDelete(userId, List.of(id1, id2), userId);
 
         verify(recurringService, times(1)).detectForUser(userId);
+    }
+
+    // Bug 36: bulkDelete/bulkRecategorize recorded no actorId at all, unlike delete() above --
+    // the higher-impact operation of the pair had weaker attribution than the lower-impact one.
+    @Test
+    void bulkDelete_recordsActingAdminIdInAuditMetadata() {
+        UUID id1 = UUID.randomUUID();
+        UUID actingAdminId = UUID.randomUUID();
+        when(transactionRepository.findById(id1)).thenReturn(Optional.of(ownedTransaction(id1, userId)));
+
+        transactionService.bulkDelete(userId, List.of(id1), actingAdminId);
+
+        verify(auditService).record(eq(userId), eq("TRANSACTION_BULK_DELETED"), eq("Transaction"), eq(null),
+                argThat(metadata -> actingAdminId.toString().equals(metadata.get("actorId"))));
+    }
+
+    @Test
+    void bulkRecategorize_recordsActingAdminIdInAuditMetadata() {
+        UUID txnId = UUID.randomUUID();
+        UUID actingAdminId = UUID.randomUUID();
+        when(transactionRepository.findById(txnId)).thenReturn(Optional.of(ownedTransaction(txnId, userId)));
+        when(categorizationService.resolveOrCreateCategory(eq(userId), eq("Groceries"))).thenReturn(dummyCategory);
+
+        transactionService.bulkRecategorize(userId, List.of(txnId), "Groceries", actingAdminId);
+
+        verify(auditService).record(eq(userId), eq("TRANSACTION_BULK_RECATEGORIZED"), eq("Transaction"), eq(null),
+                argThat(metadata -> actingAdminId.toString().equals(metadata.get("actorId"))));
     }
 
     @Test
@@ -449,7 +518,7 @@ class TransactionServiceTest {
         // as 404, for a row that exists and belongs to someone else. Asserting the class alone
         // cannot tell the two apart, and "not found" for another user's transaction is both the
         // wrong answer and a worse one.
-        assertThatThrownBy(() -> transactionService.bulkDelete(userId, List.of(ownedId, notOwnedId)))
+        assertThatThrownBy(() -> transactionService.bulkDelete(userId, List.of(ownedId, notOwnedId), userId))
                 .isInstanceOf(ApiException.class)
                 .satisfies(e -> assertThat(((ApiException) e).getStatus())
                         .isEqualTo(org.springframework.http.HttpStatus.FORBIDDEN));
@@ -701,7 +770,7 @@ class TransactionServiceTest {
         when(transactionRepository.findById(txn1Id)).thenReturn(Optional.of(t1));
         when(categorizationService.resolveOrCreateCategory(eq(userId), eq("Groceries"))).thenReturn(dummyCategory);
 
-        transactionService.bulkRecategorize(userId, List.of(txn1Id), "Groceries");
+        transactionService.bulkRecategorize(userId, List.of(txn1Id), "Groceries", userId);
 
         assertThat(t1.isCategoryManuallySet()).isTrue();
     }
@@ -723,7 +792,7 @@ class TransactionServiceTest {
         when(transactionRepository.findById(txn2Id)).thenReturn(Optional.of(t2));
         when(categorizationService.resolveOrCreateCategory(eq(userId), eq("Groceries"))).thenReturn(dummyCategory);
 
-        transactionService.bulkRecategorize(userId, List.of(txn1Id, txn2Id), "Groceries");
+        transactionService.bulkRecategorize(userId, List.of(txn1Id, txn2Id), "Groceries", userId);
 
         verify(categorizationService).queueLearning(userId, "SWIGGY*ORDR9182 BLR", dummyCategory.getId());
         verify(categorizationService).queueLearning(userId, "SWIGGY*ORDR7710 BLR", dummyCategory.getId());
@@ -1131,7 +1200,7 @@ class TransactionServiceTest {
     @Test
     void search_withAKeywordMatchingABankName_resolvesAndPassesThatBanksIdToTheRepository() {
         Page<Transaction> emptyPage = new PageImpl<>(List.of());
-        when(transactionRepository.search(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(Pageable.class)))
+        when(transactionRepository.search(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(Pageable.class)))
                 .thenReturn(emptyPage);
 
         var filter = new TransactionDto.FilterRequest(null, null, null, null, null, null, null,
@@ -1141,7 +1210,7 @@ class TransactionServiceTest {
         @SuppressWarnings("unchecked")
         ArgumentCaptor<List<String>> bankIdsCaptor = ArgumentCaptor.forClass(List.class);
         verify(transactionRepository).search(any(), any(), any(), any(), any(), any(), any(), any(), any(),
-                bankIdsCaptor.capture(), any(Pageable.class));
+                bankIdsCaptor.capture(), any(), any(Pageable.class));
 
         assertThat(bankIdsCaptor.getValue()).containsExactly("PNB");
     }
@@ -1152,7 +1221,7 @@ class TransactionServiceTest {
         // TransactionService always passes a non-empty placeholder instead (see its own
         // NO_BANK_MATCH_SENTINEL comment) so the repository never has to reason about that case.
         Page<Transaction> emptyPage = new PageImpl<>(List.of());
-        when(transactionRepository.search(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(Pageable.class)))
+        when(transactionRepository.search(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(Pageable.class)))
                 .thenReturn(emptyPage);
 
         var filter = new TransactionDto.FilterRequest(null, null, null, null, null, null, null,
@@ -1162,7 +1231,7 @@ class TransactionServiceTest {
         @SuppressWarnings("unchecked")
         ArgumentCaptor<List<String>> bankIdsCaptor = ArgumentCaptor.forClass(List.class);
         verify(transactionRepository).search(any(), any(), any(), any(), any(), any(), any(), any(), any(),
-                bankIdsCaptor.capture(), any(Pageable.class));
+                bankIdsCaptor.capture(), any(), any(Pageable.class));
 
         assertThat(bankIdsCaptor.getValue()).isNotEmpty();
         assertThat(bankIdsCaptor.getValue()).doesNotContain("PNB", "SBI", "HDFC");
@@ -1181,7 +1250,7 @@ class TransactionServiceTest {
         // 2 transactions on this page, but 45 total across the full result set at size 10 --
         // exactly the distinction a bare `.size()` on the returned list could never make.
         Page<Transaction> page = new PageImpl<>(pageContent, org.springframework.data.domain.PageRequest.of(0, 10), 45);
-        when(transactionRepository.search(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(Pageable.class)))
+        when(transactionRepository.search(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(Pageable.class)))
                 .thenReturn(page);
 
         var filter = new TransactionDto.FilterRequest(null, null, null, null, null, null, null, null, 0, 10, null, null);
@@ -1205,14 +1274,14 @@ class TransactionServiceTest {
      */
     @Test
     void search_withAnUnrecognisedSortDir_fallsBackToDescendingRatherThanThrowing() {
-        when(transactionRepository.search(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(Pageable.class)))
+        when(transactionRepository.search(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(Pageable.class)))
                 .thenReturn(new PageImpl<>(List.of()));
 
         var filter = new TransactionDto.FilterRequest(null, null, null, null, null, null, null, null, 0, 20, null, "bogus");
         transactionService.search(userId, filter);
 
         ArgumentCaptor<Pageable> pageableCaptor = ArgumentCaptor.forClass(Pageable.class);
-        verify(transactionRepository).search(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), pageableCaptor.capture());
+        verify(transactionRepository).search(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), pageableCaptor.capture());
         Sort.Order order = pageableCaptor.getValue().getSort().getOrderFor("txnDate");
         assertThat(order)
                 .as("an unrecognised sortDir must still produce a real sort, not fail the search")
@@ -1220,5 +1289,51 @@ class TransactionServiceTest {
         assertThat(order.getDirection())
                 .as("and the fallback must be the documented default, not an arbitrary one")
                 .isEqualTo(Sort.Direction.DESC);
+    }
+
+    // --- Deleted-account leak (see DashboardService.summarize for the original fix): a deleted
+    // account's transactions deliberately keep deleted_at unset, so search() (when no specific
+    // accountId is requested) and needsReview() must scope their fetch to exactly the user's live
+    // account ids, not just their userId. ---
+
+    @Test
+    void search_passesTheUsersLiveAccountIds_tookTheRepository() {
+        Account liveAccount = account(UUID.randomUUID(), Account.Type.SAVINGS, BigDecimal.ZERO);
+        when(accountRepository.findByUserId(userId)).thenReturn(List.of(liveAccount));
+        when(transactionRepository.search(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of()));
+
+        var filter = new TransactionDto.FilterRequest(null, null, null, null, null, null, null, null, 0, 20, null, null);
+        transactionService.search(userId, filter);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<UUID>> liveAccountIdsCaptor = ArgumentCaptor.forClass(List.class);
+        verify(transactionRepository).search(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
+                liveAccountIdsCaptor.capture(), any(Pageable.class));
+
+        assertThat(liveAccountIdsCaptor.getValue()).containsExactly(liveAccount.getId());
+    }
+
+    @Test
+    void needsReview_scopesTransactionFetch_toExactlyTheLiveAccountIds() {
+        Account liveAccount = account(UUID.randomUUID(), Account.Type.SAVINGS, BigDecimal.ZERO);
+        when(accountRepository.findByUserId(userId)).thenReturn(List.of(liveAccount));
+        when(transactionRepository.findByUserIdAndNeedsCategoryReviewTrueAndAccountIdInOrderByTxnDateDesc(eq(userId), any()))
+                .thenReturn(List.of());
+
+        transactionService.needsReview(userId);
+
+        verify(transactionRepository).findByUserIdAndNeedsCategoryReviewTrueAndAccountIdInOrderByTxnDateDesc(
+                userId, List.of(liveAccount.getId()));
+    }
+
+    @Test
+    void needsReview_withNoLiveAccounts_shortCircuits_withoutQueryingTransactions() {
+        when(accountRepository.findByUserId(userId)).thenReturn(List.of());
+
+        assertThat(transactionService.needsReview(userId)).isEmpty();
+
+        verify(transactionRepository, never())
+                .findByUserIdAndNeedsCategoryReviewTrueAndAccountIdInOrderByTxnDateDesc(any(), any());
     }
 }

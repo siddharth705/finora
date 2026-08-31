@@ -50,7 +50,7 @@ export interface ProviderStatusDto {
   detail: string;
 }
 
-export interface PlatformHealthDto {
+interface PlatformHealthDto {
   overallStatus: 'UP' | 'DEGRADED' | 'DOWN';
   providers: ProviderStatusDto[];
 }
@@ -59,6 +59,30 @@ export interface AlertDto {
   severity: 'critical' | 'warning';
   title: string;
   detail: string;
+}
+
+// --- Integrations (AdminIntegrationsController / com.finora.service.AdminIntegrationsService) ---
+// IntegrationDto reuses the SAME live status ProviderStatusDto carries, plus a curated
+// description -- see the backend DTO's own comment for why Database/Financial Intelligence
+// Engine/Statement Import are internal engine checks, not integrations, and stay off this page.
+
+interface IntegrationDto {
+  name: string;
+  category: string;
+  description: string;
+  status: 'UP' | 'DEGRADED' | 'DOWN';
+  detail: string;
+}
+
+/** No status field: nothing is running yet for these, so there is nothing to check. */
+interface UpcomingIntegrationDto {
+  name: string;
+  description: string;
+}
+
+export interface IntegrationsOverviewDto {
+  integrations: IntegrationDto[];
+  upcoming: UpcomingIntegrationDto[];
 }
 
 /** Every field here is a real, currently-unaddressed platform-wide count -- see backend
@@ -72,17 +96,81 @@ export interface NeedsAttentionDto {
 
 /** Mirrors backend OperationalDashboardDto exactly. importsWithSkippedRowsToday is the honest
  *  substitute for "failed imports" -- see that record's own doc comment for why this pipeline
- *  has no real FAILED signal to report today. */
+ *  has no real FAILED signal to report today. inactiveUsersLast7Days is the inverse of
+ *  activeUsersToday's own query -- a user who predates the 7-day window with no login in it, or
+ *  none ever -- an Insights figure, not a daily-reset tile, so it has no previousDay sibling. */
 export interface OperationalDashboardDto {
   totalUsers: number;
   activeUsersToday: number;
   transactionsToday: number;
   importsToday: number;
   importsWithSkippedRowsToday: number;
+  inactiveUsersLast7Days: number;
+  previousDay: PreviousDayDto;
   needsAttention: NeedsAttentionDto;
   health: PlatformHealthDto;
   alerts: AlertDto[];
   recentActivity: AuditLogDto[];
+}
+
+/** Mirrors backend PreviousDayDto exactly -- yesterday's counts for the four stat tiles that
+ *  reset daily, backing each tile's "vs yesterday" delta. No totalUsers sibling: see that
+ *  record's own doc comment for why a running total has no "vs yesterday" comparison. */
+interface PreviousDayDto {
+  activeUsers: number;
+  transactions: number;
+  imports: number;
+  importsWithSkippedRows: number;
+}
+
+/** D-27 PR3-D. Mirrors backend ActivationFunnelDto exactly -- see that record's own doc comment
+ *  for what "reached" means (ever, not currently-active) and why stages aren't guaranteed to be
+ *  strict subsets of each other. */
+export interface ActivationFunnelDto {
+  signedUp: number;
+  firstImport: number;
+  firstBudget: number;
+  firstGoal: number;
+}
+
+/** Mirrors backend ActivityTrendPointDto exactly -- one calendar day of the Platform Activity
+ *  chart, oldest first, today included. date is a plain calendar day (YYYY-MM-DD), not a
+ *  timestamp -- there is no time-of-day component to a daily point. */
+export interface ActivityTrendPointDto {
+  date: string;
+  signups: number;
+  imports: number;
+  transactions: number;
+}
+
+/** D-28 PR4-A. Mirrors backend BillingDtos.SubscriptionSummaryDto exactly -- one row per user's
+ *  current subscription, joined with their plan and account details for the admin list. */
+/** D-28 PR4-C. Mirrors backend ReferralDtos.AdminReferralSummaryDto exactly -- one row per
+ *  referral, both parties identified for abuse review. */
+export interface AdminReferralSummaryDto {
+  referralId: string;
+  referrerUserId: string;
+  referrerEmail: string | null;
+  referrerFullName: string | null;
+  referredUserId: string;
+  referredEmail: string | null;
+  referredFullName: string | null;
+  status: string;
+  reward: number | null;
+  createdAt: string;
+}
+
+export interface SubscriptionSummaryDto {
+  subscriptionId: string;
+  userId: string;
+  userEmail: string | null;
+  userFullName: string | null;
+  planCode: string | null;
+  planName: string | null;
+  status: string;
+  startDate: string;
+  endDate: string | null;
+  renewalDate: string | null;
 }
 
 export interface SystemHealthDto {
@@ -115,20 +203,20 @@ export interface MeAccessDto {
 /** Mirrors backend DiagnosticsDto -- see its own class doc for the full reasoning. version/
  *  gitCommit are null when the app was started without the build-info/git-commit-id Maven goals
  *  having run (e.g. an IDE run configuration), never a fabricated placeholder. */
-export interface ApplicationInfoDto {
+interface ApplicationInfoDto {
   version: string | null;
   gitCommit: string | null;
   springProfile: string;
 }
 
-export interface RuntimeInfoDto {
+interface RuntimeInfoDto {
   uptimeSeconds: number;
   flywayVersion: string;
   cacheEnabled: boolean;
 }
 
 /** phoneVerificationPolicy is a fixed descriptive string, not a toggle -- see ADR-0001. */
-export interface ConfigurationSummaryDto {
+interface ConfigurationSummaryDto {
   registrationsEnabled: boolean;
   setupCompleted: boolean;
   phoneVerificationPolicy: string;
@@ -240,6 +328,46 @@ export interface AccountDto {
   status: string;
 }
 
+// Phase 1 of docs/proposals/statement-continuity-and-coverage-integrity-proposal.md.
+// coverageStatus is a display convenience only -- render off the boolean flags, which are the
+// authoritative contract (that document's §0.24).
+export interface CoverageSegmentDto {
+  statementImportId: string;
+  periodStart: string;
+  periodEnd: string;
+  classification: 'STANDARD' | 'NON_STANDARD_PERIOD';
+}
+
+export interface CoverageGapDto {
+  gapStart: string;
+  gapEnd: string;
+  daysMissing: number;
+  delta: number | null;
+}
+
+export interface CoverageOverlapDto {
+  segmentAId: string;
+  segmentBId: string;
+  overlapStart: string;
+  overlapEnd: string;
+  type: 'EXACT_DUPLICATE' | 'PARTIAL';
+}
+
+export interface CoverageDto {
+  accountId: string;
+  coverageStatus: string;
+  coveredDays: number;
+  missingDays: number;
+  coveragePercentage: number | null;
+  hasGaps: boolean;
+  hasOverlaps: boolean;
+  hasNonStandardPeriods: boolean;
+  hasDuplicatePeriods: boolean;
+  segments: CoverageSegmentDto[];
+  gaps: CoverageGapDto[];
+  overlaps: CoverageOverlapDto[];
+}
+
 export interface CreateAccountRequest {
   name: string;
   accountType: string;
@@ -349,7 +477,72 @@ export interface GmailMerchantParserStatDto {
   lastSeen: string | null;
 }
 
-export interface MerchantDistributionEntry {
+// --- Gmail merchant templates (MerchantTemplateAdminService / AdminMerchantTemplateController) ---
+//
+// Not the trust boundary -- that's TrustedSenderDomain (gmail_trusted_sender_domains). A template
+// for a domain that isn't trusted is simply unreachable; domainIsTrusted below is purely
+// informational, so the UI can warn about that rather than an admin wondering why a
+// correctly-tested template produces nothing in production.
+
+export interface MerchantTemplateDto {
+  id: string;
+  merchantDomain: string;
+  merchantName: string;
+  receiptMarker: string;
+  /** Optional. Pipe-separated literal phrases that mean a message is NOT a receipt for this
+   *  template (a refund, return, exchange, or cancellation notice), checked before receiptMarker
+   *  -- see MerchantTemplate.matchesNonReceiptMarker's own doc comment. */
+  nonReceiptMarker: string | null;
+  amountPattern: string;
+  datePattern: string;
+  enabled: boolean;
+  createdByUserId: string | null;
+  createdAt: string;
+  updatedAt: string;
+  domainIsTrusted: boolean;
+}
+
+export interface CreateMerchantTemplateRequest {
+  merchantDomain: string;
+  merchantName: string;
+  receiptMarker: string;
+  nonReceiptMarker: string;
+  amountPattern: string;
+  datePattern: string;
+}
+
+/** Domain is deliberately not included -- it is immutable after creation, same reasoning as
+ *  TrustedSenderDomain's own rename-only-the-label design. */
+export interface UpdateMerchantTemplateRequest {
+  merchantName: string;
+  receiptMarker: string;
+  nonReceiptMarker: string;
+  amountPattern: string;
+  datePattern: string;
+}
+
+/** Dry-run against a pasted sample email -- never creates or persists a template. See
+ *  AdminMerchantTemplateController's /test endpoint doc comment. merchantDomain is carried
+ *  through into the result for display only; it does not affect matching. */
+export interface TestMerchantTemplateRequest {
+  merchantDomain: string;
+  receiptMarker: string;
+  nonReceiptMarker: string;
+  amountPattern: string;
+  datePattern: string;
+  sampleHtml: string;
+}
+
+export interface TestMerchantTemplateResult {
+  status: 'PARSED' | 'NOT_A_RECEIPT' | 'MALFORMED';
+  reason: string | null;
+  amount: number | null;
+  transactionDate: string | null;
+  confidence: number | null;
+  violations: { field: string; reason: string }[];
+}
+
+interface MerchantDistributionEntry {
   category: string;
   confirmationCount: number;
   confidence: number;
@@ -413,7 +606,7 @@ export interface LearningSummaryDto {
 
 // --- Relationship Engine (AdminUserRelationshipController) ---
 
-export interface RelationshipIdentifierDto {
+interface RelationshipIdentifierDto {
   id: string;
   identifierType: string;
   identifierValue: string;
@@ -427,7 +620,7 @@ export interface RelationshipDto {
   identifiers: RelationshipIdentifierDto[];
 }
 
-export interface RelationshipIdentifierRequest {
+interface RelationshipIdentifierRequest {
   identifierType: string;
   identifierValue: string;
 }
@@ -505,7 +698,126 @@ export interface ReconciliationStatsDto {
   totalTransactions: number;
 }
 
-export interface WorkspaceHealthDto {
+/* ── Reconciliation Explorer ───────────────────────────────────────────────────────────────────
+ * One transaction, raw through to final classification (AdminReconciliationExplorerController).
+ * Assembled, not scored -- same position ImportTrace takes: each block reports what its own
+ * table recorded, no derived verdict. Mirrors backend ReconciliationExplorerDto exactly.
+ */
+
+export interface ReconciliationExplorerRaw {
+  transactionId: string;
+  description: string | null;
+  amount: number;
+  txnType: 'INCOME' | 'EXPENSE';
+  txnDate: string;
+  source: 'MANUAL' | 'CSV_IMPORT' | 'GMAIL_IMPORT';
+}
+
+/** categoryName is null for an uncategorized transaction, not a lookup failure. */
+export interface ReconciliationExplorerNormalized {
+  merchant: string | null;
+  categoryName: string | null;
+}
+
+/** confidence and sourceTrust are 0-100, not the 0.0-1.0 scale the roadmap doc's own design
+ *  example used -- one confidence-scale convention across the codebase (see ConfidenceScorer's
+ *  own javadoc), matching decisionConfidence elsewhere. Both are null for an edge written before
+ *  the confidence engine shipped. */
+export interface ReconciliationExplorerEdge {
+  edgeId: string;
+  counterpartTransactionId: string;
+  relationshipType: 'TRANSFER' | 'REFUND' | 'REVERSAL' | 'DUPLICATE' | 'CC_PAYMENT' | 'EMI'
+    | 'SALARY' | 'LOAN_REPAYMENT' | 'INVESTMENT_TRANSFER' | 'CASH_WITHDRAWAL' | 'CASH_DEPOSIT';
+  confidence: number | null;
+  sourceTrust: number | null;
+  status: 'CANDIDATE' | 'AUTO_CONFIRMED' | 'USER_CONFIRMED' | 'REJECTED';
+  detectionMethod: 'RULE_ENGINE' | 'MANUAL' | 'AA_FEED' | 'USER_OVERRIDE';
+  explanation: Record<string, unknown> | null;
+}
+
+export interface ReconciliationExplorerClassification {
+  reconciliationStatus: 'OK' | 'DUPLICATE' | 'TRANSFER' | 'REFUND' | 'REVERSAL';
+  /** Null means classified before this existed, or never matched -- not a failure state. */
+  transactionExplanation: Record<string, unknown> | null;
+}
+
+export interface ReconciliationExplorerTrace {
+  raw: ReconciliationExplorerRaw;
+  normalized: ReconciliationExplorerNormalized;
+  /** Depth-1 edges touching this transaction directly -- empty means unmatched, not "not
+   *  looked up". */
+  edges: ReconciliationExplorerEdge[];
+  classification: ReconciliationExplorerClassification;
+}
+
+/* ── Import Row Trace ──────────────────────────────────────────────────────────────────────────
+ * One import, row by row (AdminImportRowTraceController) -- scoped to successfully-imported rows
+ * only; a dropped or excluded-by-user row stays aggregate-only, same as ImportTrace's existing
+ * verification findings. Mirrors backend ImportRowTraceDto exactly.
+ */
+
+export interface ImportRowOutcome {
+  rowPosition: number;
+  transactionId: string;
+  description: string | null;
+  amount: number;
+  txnDate: string;
+}
+
+/** rows is empty (not missing) when this import predates row-position tracking, or was confirmed
+ *  by a client that predates echoing it -- "no position data available" is a real, statable
+ *  answer, not an error. */
+export interface ImportRowTrace {
+  statementImportId: string;
+  rows: ImportRowOutcome[];
+}
+
+/* ── Insight Explorer ──────────────────────────────────────────────────────────────────────────
+ * One user's dashboard insights, traced back to the transaction set and formula that produced
+ * each number (AdminInsightsExplorerController). Mirrors backend InsightsExplorerDto exactly.
+ */
+
+/** rawAmount and reportableAmount differ when a refund was netted off this expense -- the gap
+ *  between the two IS the trace for that transaction. */
+export interface InsightsExplorerTracedTransaction {
+  transactionId: string;
+  description: string | null;
+  rawAmount: number;
+  reportableAmount: number;
+  txnDate: string;
+}
+
+export interface InsightsExplorerTotalSpend {
+  amount: number;
+  categoryCount: number;
+  transactions: InsightsExplorerTracedTransaction[];
+}
+
+export interface InsightsExplorerTopCategory {
+  category: string;
+  amount: number;
+  transactions: InsightsExplorerTracedTransaction[];
+}
+
+export interface InsightsExplorerTopMerchant {
+  merchant: string;
+  amount: number;
+  transactions: InsightsExplorerTracedTransaction[];
+}
+
+/** reportingMonth and every number are null when the user has no reportable expense
+ *  transactions at all -- the same state the user-facing dashboard answers with its own
+ *  "upload or add transactions" sentence, not a lookup failure. */
+export interface InsightsExplorerTrace {
+  userId: string;
+  reportingMonth: string | null;
+  reportingMonthIsCurrent: boolean;
+  totalSpend: InsightsExplorerTotalSpend | null;
+  topCategory: InsightsExplorerTopCategory | null;
+  topMerchant: InsightsExplorerTopMerchant | null;
+}
+
+interface WorkspaceHealthDto {
   rulesEnabled: boolean;
   merchantLearningActive: boolean;
   reconciliationHealthy: boolean;
@@ -637,7 +949,7 @@ export interface StatementAnalysisDetailDto {
  * reference (SA-20260806-0145) and the job id.
  */
 
-export interface ImportTraceJob {
+interface ImportTraceJob {
   status: string;
   attemptCount: number;
   rowsTotal: number | null;
@@ -672,14 +984,14 @@ export interface ImportTraceFinding {
   recordedAt: string;
 }
 
-export interface ImportTraceLearningEvent {
+interface ImportTraceLearningEvent {
   id: string;
   status: string;
   attemptCount: number;
   createdAt: string;
 }
 
-export interface ImportTraceLearning {
+interface ImportTraceLearning {
   /** Zero is a legitimate answer: an import of merchants Finora already knew teaches it nothing. */
   events: number;
   byStatus: Record<string, number>;
@@ -687,7 +999,7 @@ export interface ImportTraceLearning {
   outstanding: ImportTraceLearningEvent[];
 }
 
-export interface ImportTraceCompletion {
+interface ImportTraceCompletion {
   /** Null when nothing was confirmed. Staging successfully and importing are different events —
    *  a job reaching COMPLETED means only the first, because confirming is the user's decision. */
   statementImportId: string | null;

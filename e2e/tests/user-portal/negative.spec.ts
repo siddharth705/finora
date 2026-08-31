@@ -1,6 +1,6 @@
 import { test, expect, uploadStatement, signIn } from '../../fixtures/test';
 import { csv, FIVE_ROW_STATEMENT } from '../../fixtures/statements';
-import { transactionsFor, count } from '../../fixtures/db';
+import { transactionsFor, count, query } from '../../fixtures/db';
 import { API_BASE, USER_APP } from '../../fixtures/config';
 
 /**
@@ -172,14 +172,20 @@ test.describe('Phase 12 — negative and interruption cases', () => {
       expect(response.body?.message ?? '', 'no explanation for the user').not.toBe('');
     });
 
-  test('an expired session logs the user out rather than half-working', async ({ userPage }) => {
+  test('an expired session logs the user out rather than half-working', async ({ userPage, user }) => {
     await userPage.goto('/app/import');
     await expect(userPage.getByTestId('statement-file-input')).toBeAttached({ timeout: 20_000 });
 
-    await userPage.evaluate(() => { localStorage.clear(); sessionStorage.clear(); });
+    // Since SEC-01 (#187) the access token is in-memory only and the real session is an HttpOnly
+    // refresh cookie -- clearing storage doesn't touch it, so this used to pass by accident (the
+    // silent /auth/refresh on the next navigation would still succeed against the still-valid
+    // cookie). Expiring the actual refresh_tokens row is what a genuinely expired session looks
+    // like; ProtectedRoute's bootstrap refresh then fails for real and the guard redirects.
+    await query('update refresh_tokens set expires_at = now() - interval \'1 second\' where user_id = $1',
+      [user.id]);
     await userPage.goto('/app/import');
 
-    await expect(userPage).toHaveURL(/\/login/, { timeout: 20_000 });
+    await expect(userPage).toHaveURL(/\/auth/, { timeout: 20_000 });
   });
 
   /** An unauthenticated caller must be refused by the API, not merely hidden by the router. */

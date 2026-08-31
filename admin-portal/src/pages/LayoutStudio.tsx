@@ -4,6 +4,7 @@ import {
   RefreshCw, FileSearch, AlertTriangle, CheckCircle2, Layers, Ruler, ChevronRight, ChevronDown, Upload,
 } from 'lucide-react';
 import { AdminLayout } from '../components/AdminLayout';
+import { PasswordInput } from '../components/PasswordInput';
 import { RequirePermission } from '../components/ProtectedRoute';
 import { useAdminAuth } from '../context/AdminAuthContext';
 import { useNotify } from '../context/NotificationContext';
@@ -403,13 +404,12 @@ function AnalysisUploadPanel({ onAnalysed }: { onAnalysed: (reference: string) =
         {needsPassword && (
           <div>
             <label htmlFor="analysis-password" className="block text-xs text-muted mb-1">Document password</label>
-            <input
+            <PasswordInput
               id="analysis-password"
-              type="password"
               value={password}
-              onChange={(event) => setPassword(event.target.value)}
+              onChange={setPassword}
               autoComplete="off"
-              className="text-sm text-ink border border-border rounded-lg px-3 py-1.5 bg-card"
+              className="text-sm text-ink border border-border rounded-lg px-3 py-1.5 pr-10 bg-card"
             />
           </div>
         )}
@@ -418,7 +418,7 @@ function AnalysisUploadPanel({ onAnalysed }: { onAnalysed: (reference: string) =
           type="button"
           onClick={() => run.mutate()}
           disabled={!file || run.isPending}
-          className="inline-flex items-center gap-1.5 text-sm font-medium text-white bg-primary rounded-lg px-3.5 py-2 disabled:opacity-50"
+          className="inline-flex items-center gap-1.5 text-sm font-medium text-on-primary bg-primary rounded-lg px-3.5 py-2 disabled:opacity-50"
         >
           {run.isPending ? <RefreshCw size={14} className="animate-spin" /> : <Upload size={14} />}
           {run.isPending ? 'Analysing…' : 'Analyse'}

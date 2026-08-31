@@ -9,6 +9,13 @@ import { mockAdminAuthState } from '../test/mockAdminAuth';
 import { adminUsersApi, adminRolesApi } from '../api/endpoints';
 import type { UserSummaryDto } from '../types';
 
+// AdminLayout now renders ThemeToggle (dark-mode support), which calls useTheme() --
+// same reason adminSearchApi is stubbed below for GlobalSearch: a real ThemeProvider isn't
+// mounted in these tests, so without this mock every AdminLayout-wrapped page throws before
+// any assertion runs.
+vi.mock('../context/ThemeContext', () => ({
+  useTheme: () => ({ theme: 'system', resolvedTheme: 'light', setTheme: vi.fn() }),
+}));
 vi.mock('../context/AdminAuthContext', () => ({
   useAdminAuth: vi.fn(),
 }));
@@ -165,6 +172,11 @@ describe('Users', () => {
     await waitFor(() => expect(screen.getByText('Amy Active')).toBeInTheDocument());
 
     await user.click(screen.getByRole('button', { name: /Suspend/ }));
+    // Custom in-app confirmation (ConfirmDialog), not the browser's own confirm() -- see this
+    // page's own doc comment on confirmSuspend for why. Scoped to the dialog: its confirm button
+    // shares the accessible name "Suspend" with the row's own trigger button, still in the DOM.
+    const dialog = await screen.findByRole('dialog');
+    await user.click(within(dialog).getByRole('button', { name: 'Suspend' }));
 
     await waitFor(() => expect(adminUsersApi.suspend).toHaveBeenCalledWith('user-1'));
     await waitFor(() => expect(notifySuccess).toHaveBeenCalledWith('User suspended.'));
@@ -172,20 +184,18 @@ describe('Users', () => {
 
   it('does not suspend when the confirmation is declined', async () => {
     // Suspending signs the user out and blocks their login, from a one-click button in a table
-    // row with no undo in the same place. The confirm is the only thing between a misclick and
-    // that, so it is worth a test of its own -- src/test/setup.ts stubs confirm to true by
-    // default, and a permissive default can hide a guard that has been removed.
+    // row with no undo in the same place -- worth a test of its own that Cancel genuinely stops it.
     mockAuth(['USER_VIEW', 'USER_DELETE']);
     vi.mocked(adminUsersApi.list).mockResolvedValue(pagedResponse([AMY]));
-    vi.mocked(window.confirm).mockReturnValue(false);
     const user = userEvent.setup();
 
     renderPage();
     await waitFor(() => expect(screen.getByText('Amy Active')).toBeInTheDocument());
 
     await user.click(screen.getByRole('button', { name: /Suspend/ }));
+    await screen.findByText('Suspend Amy Active?');
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
 
-    expect(window.confirm).toHaveBeenCalled();
     expect(adminUsersApi.suspend).not.toHaveBeenCalled();
   });
 
@@ -199,6 +209,8 @@ describe('Users', () => {
     await waitFor(() => expect(screen.getByText('Amy Active')).toBeInTheDocument());
 
     await user.click(screen.getByRole('button', { name: /Suspend/ }));
+    const dialog = await screen.findByRole('dialog');
+    await user.click(within(dialog).getByRole('button', { name: 'Suspend' }));
 
     await waitFor(() => expect(notifyError).toHaveBeenCalledWith('Cannot suspend yourself.'));
   });

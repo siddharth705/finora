@@ -7,8 +7,10 @@ import com.finora.entity.Transaction;
 import com.finora.entity.User;
 import com.finora.exception.ApiException;
 import com.finora.exception.ErrorCode;
+import com.finora.entity.StatementImport;
 import com.finora.repository.AccountRepository;
 import com.finora.repository.CategoryRepository;
+import com.finora.repository.StatementImportRepository;
 import com.finora.repository.TransactionRepository;
 import com.finora.repository.UserRepository;
 import com.finora.security.OwnershipGuard;
@@ -38,6 +40,7 @@ public class TransactionService {
     private final TransactionRepository transactionRepository;
     private final CategoryRepository categoryRepository;
     private final AccountRepository accountRepository;
+    private final StatementImportRepository statementImportRepository;
     private final CategorizationService categorizationService;
     private final ReconciliationService reconciliationService;
     private final RecurringService recurringService;
@@ -48,6 +51,7 @@ public class TransactionService {
 
     public TransactionService(TransactionRepository transactionRepository, CategoryRepository categoryRepository,
                                AccountRepository accountRepository,
+                               StatementImportRepository statementImportRepository,
                                CategorizationService categorizationService,
                                ReconciliationService reconciliationService,
                                RecurringService recurringService,
@@ -58,6 +62,7 @@ public class TransactionService {
         this.transactionRepository = transactionRepository;
         this.categoryRepository = categoryRepository;
         this.accountRepository = accountRepository;
+        this.statementImportRepository = statementImportRepository;
         this.categorizationService = categorizationService;
         this.reconciliationService = reconciliationService;
         this.recurringService = recurringService;
@@ -109,6 +114,13 @@ public class TransactionService {
         // the way every other paginated endpoint in this codebase does (see PageBounds).
         int safeSize = com.finora.util.PageBounds.safeSize(f.size() > 0 ? f.size() : 20);
         int safePage = com.finora.util.PageBounds.safePage(f.page());
+        // Deleted-account leak (see DashboardService.summarize for the original fix): when the
+        // caller didn't ask for one specific account, the "all accounts" search must still exclude
+        // a deleted account's transactions, which deliberately keep deleted_at unset -- see the
+        // repository query's own doc comment for why this is only consulted when f.accountId() is
+        // null (an explicit accountId is trusted as-is, unchanged from before).
+        List<UUID> liveAccountIds = accountRepository.findByUserId(userId).stream()
+                .map(Account::getId).toList();
         var page = transactionRepository.search(
                 userId, f.accountId(), f.categoryId(),
                 com.finora.util.EnumParsing.parseIfPresent(Transaction.Type.class, f.type(), "type"),
@@ -117,7 +129,7 @@ public class TransactionService {
                 // literal percent signs ("2.5% CASHBACK"), and an unescaped one turned an exact
                 // search into a prefix search silently. Only the repository term is escaped:
                 // bankManagementService.search() above matches in memory with contains().
-                com.finora.util.LikePatterns.escape(f.keyword()), bankIdsParam,
+                com.finora.util.LikePatterns.escape(f.keyword()), bankIdsParam, liveAccountIds,
                 PageRequest.of(safePage, safeSize, sort)
         );
         Map<UUID, String> namesById = categoryNamesById(userId);
@@ -236,13 +248,17 @@ public class TransactionService {
         } else {
             // No explicit category given — ask the engine. A "default" (no rule/learned match)
             // suggestion isn't a real decision, so file it under Other but flag it for the
-            // "Ask Once" review queue instead of silently learning a non-decision.
+            // "Ask Once" review queue instead of silently learning a non-decision -- unless the
+            // user's own auto-apply confidence threshold says otherwise; see
+            // CategorizationService.needsCategoryReview's own doc comment.
             var suggestion = categorizationService.suggest(userId, req.description(), req.amount(), null);
             t.setMerchantId(suggestion.merchantId()); // already resolved as part of suggest() — no need to resolve twice
             category = categorizationService.resolveOrCreateCategory(userId, suggestion.category());
-            t.setNeedsCategoryReview(suggestion.source().equals("default"));
+            t.setNeedsCategoryReview(categorizationService.needsCategoryReview(
+                    userId, suggestion.source().equals("default"), suggestion.confidence()));
             t.setDecisionSource(suggestion.decisionSource());
             t.setDecisionRuleId(suggestion.ruleId());
+            t.setDecisionConfidence(suggestion.confidence());
             // create() is always a real write (unlike CsvImportService, there's no staging/
             // preview step in between) -- safe to record the match right here.
             categorizationService.recordRuleMatch(suggestion.ruleId());
@@ -412,6 +428,7 @@ public class TransactionService {
             t.setNeedsCategoryReview(false); // an explicit edit always resolves the review flag, even choosing "Other" on purpose
             t.setDecisionSource(Transaction.DecisionSource.MANUAL);
             t.setDecisionRuleId(null);
+            t.setDecisionConfidence(null);
             categorizationService.learn(userId, t.getDescription(), category.getId());
         }
 
@@ -444,6 +461,7 @@ public class TransactionService {
         t.setCategoryManuallySet(true);
         t.setDecisionSource(Transaction.DecisionSource.MANUAL);
         t.setDecisionRuleId(null);
+        t.setDecisionConfidence(null);
         categorizationService.learn(userId, t.getDescription(), category.getId());
         Transaction saved = transactionRepository.save(t);
         auditService.record(userId, "TRANSACTION_CATEGORY_UPDATED", "Transaction", txnId,
@@ -495,10 +513,27 @@ public class TransactionService {
         t.setReconciliationExplanation(null);
         Transaction saved = transactionRepository.save(t);
 
-        // The balance is deliberately NOT touched. A duplicate-flagged row was always counted in
-        // Account.balance -- the flag only ever governed what the reports exclude -- so the money
-        // does not move here. What changes is that the reports now agree with the balance, which
-        // is the whole point.
+        // Usually the balance is NOT touched: a manually-entered duplicate-flagged row was always
+        // counted in Account.balance (the flag only ever governed what the reports exclude), so
+        // the money never moved and doesn't need to move back.
+        //
+        // The one exception is BH-003 (ImportService.summarise): a statement-import row flagged
+        // DUPLICATE by reconciliation at its OWN confirm time has its contribution reversed OUT of
+        // Account.balance immediately, precisely so re-importing the same file twice doesn't double
+        // -count it. Such a row currently contributes zero. Confirming it "not a duplicate" here
+        // means it counts in every report again, so the balance must count it again too, or it
+        // stays permanently short by this row's amount with no way to self-correct.
+        //
+        // ADDITIVE is the only mode BH-003 ever reversed under (see StatementImport
+        // .BalanceApplicationMode's own doc) -- ABSOLUTE/NONE never moved the balance via this
+        // row's net effect, and UNKNOWN_LEGACY predates the field, so which branch its own confirm
+        // took was never recorded and is deliberately not guessed here either.
+        if (saved.getStatementImportId() != null) {
+            statementImportRepository.findById(saved.getStatementImportId())
+                    .filter(si -> si.getBalanceApplicationMode() == StatementImport.BalanceApplicationMode.ADDITIVE)
+                    .ifPresent(si -> adjustAccountBalance(saved.getAccountId(), balanceOf(saved)));
+        }
+
         reconciliationService.reconcileForUser(userId);
         recurringService.detectForUser(userId);
 
@@ -552,6 +587,7 @@ public class TransactionService {
         t.setCategoryManuallySet(true);
         t.setDecisionSource(Transaction.DecisionSource.MANUAL);
         t.setDecisionRuleId(null);
+        t.setDecisionConfidence(null);
         categorizationService.learn(userId, t.getDescription(), category.getId());
         Transaction saved = transactionRepository.save(t);
         auditService.record(userId, "TRANSACTION_CATEGORY_UPDATED", "Transaction", txnId,
@@ -565,7 +601,16 @@ public class TransactionService {
     @Transactional(readOnly = true)
     public List<TransactionDto> needsReview(UUID userId) {
         Map<UUID, String> namesById = categoryNamesById(userId);
-        return transactionRepository.findByUserIdAndNeedsCategoryReviewTrueOrderByTxnDateDesc(userId).stream()
+        // Deleted-account leak (see DashboardService.summarize for the original fix): a deleted
+        // account's transactions deliberately keep deleted_at unset, so the unscoped finder would
+        // keep surfacing them in this review queue forever, not just during
+        // StatementImportService's 7-day grace window.
+        List<UUID> liveAccountIds = accountRepository.findByUserId(userId).stream()
+                .map(Account::getId).toList();
+        List<Transaction> needsReview = liveAccountIds.isEmpty() ? List.of()
+                : transactionRepository.findByUserIdAndNeedsCategoryReviewTrueAndAccountIdInOrderByTxnDateDesc(
+                        userId, liveAccountIds);
+        return needsReview.stream()
                 .map(t -> TransactionDto.from(t, namesById.getOrDefault(t.getCategoryId(), "Uncategorized")))
                 .toList();
     }
@@ -593,8 +638,13 @@ public class TransactionService {
                         "actorId", actingAdminId.toString()));
     }
 
+    /**
+     * Bug 36: recorded no actorId at all, unlike {@link #delete}, which was fixed for the exact
+     * same reason -- an admin bulk-deleting a user's transactions was indistinguishable from the
+     * user doing it themself, for the higher-impact operation of the pair.
+     */
     @Transactional
-    public void bulkDelete(UUID userId, List<UUID> ids) {
+    public void bulkDelete(UUID userId, List<UUID> ids, UUID actingAdminId) {
         List<Transaction> owned = getOwnedAll(userId, ids);
         clearReconciliationPointersTo(owned.stream().map(Transaction::getId).toList());
         for (Transaction t : owned) {
@@ -604,7 +654,7 @@ public class TransactionService {
         reconciliationService.reconcileForUser(userId);
         recurringService.detectForUser(userId);
         auditService.record(userId, "TRANSACTION_BULK_DELETED", "Transaction", null,
-                Map.of("count", ids.size(), "ids", ids));
+                Map.of("count", ids.size(), "ids", ids, "actorId", actingAdminId.toString()));
     }
 
     /**
@@ -680,8 +730,9 @@ public class TransactionService {
      * <p>Single, interactive recategorization ({@link #updateCategory}, {@link #confirmMerchantCategory},
      * {@link #create}) deliberately stays synchronous — see {@code CategorizationService.learn}.
      */
+    /** Bug 36: same missing-actorId gap as {@link #bulkDelete}, same fix. */
     @Transactional
-    public void bulkRecategorize(UUID userId, List<UUID> ids, String categoryName) {
+    public void bulkRecategorize(UUID userId, List<UUID> ids, String categoryName, UUID actingAdminId) {
         Category category = categorizationService.resolveOrCreateCategory(userId, categoryName);
         // BH-057: one query for the whole list rather than one per id -- see getOwnedAll.
         for (Transaction t : getOwnedAll(userId, ids)) {
@@ -690,11 +741,12 @@ public class TransactionService {
             t.setCategoryManuallySet(true);
             t.setDecisionSource(Transaction.DecisionSource.MANUAL);
             t.setDecisionRuleId(null);
+            t.setDecisionConfidence(null);
             categorizationService.queueLearning(userId, t.getDescription(), category.getId());
             transactionRepository.save(t);
         }
         auditService.record(userId, "TRANSACTION_BULK_RECATEGORIZED", "Transaction", null,
-                Map.of("count", ids.size(), "newCategory", categoryName));
+                Map.of("count", ids.size(), "newCategory", categoryName, "actorId", actingAdminId.toString()));
     }
 
     /**

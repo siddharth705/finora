@@ -18,16 +18,22 @@ interface AuthState {
   // Completes the "Welcome back — reactivate your account?" prompt Login.tsx shows after a
   // deactivated account's password checks out -- see ReactivateAccountPrompt.tsx.
   reactivate: (token: string) => Promise<boolean>;
+  // referralCode: D-28 PR4-C. Optional -- Register.tsx passes it only when the page was reached
+  // via a referral link's `?ref=` param.
   register: (
     email: string,
     password: string,
     fullName: string,
-    phoneNumber: string
+    phoneNumber: string,
+    referralCode?: string
   ) => Promise<{ phoneVerified: boolean }>;
   // Same shape as login()/reactivate(): persists the session and reports whether the phone is
   // already verified -- true for an auto-linked existing account, always false for a newly
   // created one (Google sign-in never carries a phone number; see D-23).
   loginWithGoogle: (idToken: string) => Promise<boolean>;
+  // Same shape as loginWithGoogle -- fullName is only present on Apple's first authorization for
+  // a given account/client id pair, so callers pass whatever the popup handed back (often null).
+  loginWithApple: (idToken: string, fullName: string | null) => Promise<boolean>;
   setPhoneVerified: (verified: boolean) => void;
   logout: () => void;
 }
@@ -110,9 +116,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     regEmail: string,
     password: string,
     name: string,
-    phoneNumber: string
+    phoneNumber: string,
+    referralCode?: string
   ): Promise<{ phoneVerified: boolean }> {
-    const res = await authApi.register(regEmail, password, name, phoneNumber);
+    const res = await authApi.register(regEmail, password, name, phoneNumber, referralCode);
     persist(res.data);
     // VerifyPhone.tsx fetches the account's real phone number itself (userApi.get(), now that
     // it's authenticated) rather than being handed it via router state -- one less thing this
@@ -122,6 +129,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   async function loginWithGoogle(idToken: string): Promise<boolean> {
     const res = await authApi.google(idToken);
+    persist(res.data);
+    return res.data.phoneVerified;
+  }
+
+  async function loginWithApple(idToken: string, fullName: string | null): Promise<boolean> {
+    const res = await authApi.apple(idToken, fullName);
     persist(res.data);
     return res.data.phoneVerified;
   }
@@ -151,6 +164,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setEmail(null);
     setFullName(null);
     setPhoneVerifiedState(false);
+    // Bug 43. persist() (below) dispatches this after login/register so ThemeProvider -- which
+    // wraps AuthProvider and so can't consume useAuth() directly -- can react to a NEW session.
+    // logout() never dispatched the same event, so ThemeProvider had no way to know a session had
+    // ENDED either: its own theme sync only ever no-ops when there's no token, it never resets, so
+    // the previous user's theme stayed active for whatever renders next.
+    window.dispatchEvent(new Event(AUTH_CHANGED_EVENT));
   }
 
   // SEC-01 bootstrap. The access token no longer survives a reload (it's in-memory only, see
@@ -199,7 +218,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ token, bootstrapping, email, fullName, phoneVerified, login, reactivate, register, loginWithGoogle, setPhoneVerified, logout }}>
+    <AuthContext.Provider value={{ token, bootstrapping, email, fullName, phoneVerified, login, reactivate, register, loginWithGoogle, loginWithApple, setPhoneVerified, logout }}>
       {children}
     </AuthContext.Provider>
   );

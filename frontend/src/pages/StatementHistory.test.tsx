@@ -56,6 +56,8 @@ const groups: AccountStatementGroup[] = [{
     statementPeriodEnd: null,
     openingBalance: null,
     closingBalance: null,
+    totalAmountDue: null,
+    paymentDueDate: null,
     transactionsImported: 12,
     transactionsSkipped: 0,
     importedAt: '2026-08-01T10:00:00Z',
@@ -335,6 +337,24 @@ describe('StatementHistory — failed imports', () => {
     expect(screen.getByTitle('Re-import Statement')).toBeInTheDocument();
     expect(screen.queryByText('Failed Imports')).not.toBeInTheDocument();
   });
+
+  it('collapses and re-expands the failure list on click, same as the account-group disclosures', async () => {
+    vi.mocked(importApi.listFailures).mockReset().mockResolvedValue([aFailure()]);
+    const user = userEvent.setup();
+    renderPage();
+
+    expect(await screen.findByText('unreadable-statement.pdf')).toBeInTheDocument();
+    const toggle = screen.getByRole('button', { name: /failed imports/i });
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByText('unreadable-statement.pdf')).not.toBeInTheDocument();
+
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByText('unreadable-statement.pdf')).toBeInTheDocument();
+  });
 });
 
 /**
@@ -418,6 +438,24 @@ describe('StatementHistory — recent imports', () => {
     expect(screen.queryByText('Recent Imports')).not.toBeInTheDocument();
   });
 
+  it('collapses and re-expands the in-progress list on click, same as the account-group disclosures', async () => {
+    vi.mocked(importJobsApi.recent).mockReset().mockResolvedValue([aJob()]);
+    const user = userEvent.setup();
+    renderPage();
+
+    expect(await screen.findByText('still-going.csv')).toBeInTheDocument();
+    const toggle = screen.getByRole('button', { name: /recent imports/i });
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByText('still-going.csv')).not.toBeInTheDocument();
+
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByText('still-going.csv')).toBeInTheDocument();
+  });
+
   /**
    * Bug fix, caught by review: this query has no staleTime override of its own before this fix,
    * so it inherits the app's real global default (App.tsx: 30s, refetchOnWindowFocus off) -- a
@@ -451,5 +489,79 @@ describe('StatementHistory — recent imports', () => {
     );
 
     await waitFor(() => expect(importJobsApi.recent).toHaveBeenCalledTimes(2));
+  });
+});
+
+// Custom in-app confirmation (ConfirmDialog) rather than the browser's own confirm(), which
+// rendered as unstyled OS/browser chrome instead of looking like part of the product.
+describe('StatementHistory — delete confirmation', () => {
+  beforeEach(() => {
+    vi.mocked(statementImportsApi.listGroupedByAccount).mockReset().mockResolvedValue(groups);
+    vi.mocked(statementImportsApi.remove).mockReset().mockResolvedValue(undefined as never);
+    vi.mocked(importApi.listFailures).mockReset().mockResolvedValue([]);
+    vi.mocked(importJobsApi.recent).mockReset().mockResolvedValue([]);
+  });
+
+  it('shows a confirmation naming the file before deleting it', async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByTitle('Delete Statement Import'));
+
+    expect(await screen.findByText('Delete "protected-statement.pdf"?')).toBeInTheDocument();
+    expect(statementImportsApi.remove).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole('button', { name: 'Delete' }));
+
+    await waitFor(() => expect(statementImportsApi.remove).toHaveBeenCalledWith('stmt-1'));
+  });
+
+  it('does not delete when the confirmation is cancelled', async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByTitle('Delete Statement Import'));
+    await screen.findByText('Delete "protected-statement.pdf"?');
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    expect(statementImportsApi.remove).not.toHaveBeenCalled();
+    expect(screen.queryByText('Delete "protected-statement.pdf"?')).not.toBeInTheDocument();
+  });
+});
+
+// Credit-card statement entity, roadmap item 6 -- totalAmountDue/paymentDueDate are null for
+// every existing fixture above (a savings statement); this covers the one line that only appears
+// for a credit-card statement whose payment-summary panel was found.
+describe('StatementHistory — credit-card statement total due', () => {
+  const ccGroups: AccountStatementGroup[] = [{
+    ...groups[0],
+    accountType: 'CREDIT_CARD',
+    statements: [{
+      ...groups[0].statements[0],
+      totalAmountDue: 12450.75,
+      paymentDueDate: '2026-08-05',
+    }],
+  }];
+
+  beforeEach(() => {
+    vi.mocked(statementImportsApi.listGroupedByAccount).mockReset().mockResolvedValue(ccGroups);
+    vi.mocked(importApi.listFailures).mockReset().mockResolvedValue([]);
+    vi.mocked(importJobsApi.recent).mockReset().mockResolvedValue([]);
+  });
+
+  it('shows the total due and payment due date for a credit-card statement', async () => {
+    renderPage();
+
+    expect((await screen.findAllByText(/Total due/)).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/₹12,451/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/5 Aug 2026/).length).toBeGreaterThan(0);
+  });
+
+  it('shows nothing extra for a statement with no total due (the default fixture)', async () => {
+    vi.mocked(statementImportsApi.listGroupedByAccount).mockReset().mockResolvedValue(groups);
+    renderPage();
+
+    await screen.findByText('protected-statement.pdf');
+    expect(screen.queryByText(/Total due/)).not.toBeInTheDocument();
   });
 });

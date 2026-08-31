@@ -66,7 +66,7 @@ export default function Budgets() {
           <label htmlFor="budget-monthly-limit" className="block text-xs uppercase text-gray-500 mb-1">Monthly limit</label>
           <input id="budget-monthly-limit" type="number" value={newLimit} onChange={(e) => setNewLimit(e.target.value)} className="bg-card text-ink border rounded px-2 py-1.5 text-sm" />
         </div>
-        <button onClick={addOrUpdate} disabled={saving} className="bg-primary text-white hover:bg-primary-dark px-4 py-2 rounded text-xs uppercase disabled:opacity-50">
+        <button onClick={addOrUpdate} disabled={saving} className="bg-primary text-on-primary hover:bg-primary-dark px-4 py-2 rounded text-xs uppercase disabled:opacity-50">
           {saving ? 'Saving…' : 'Set Budget'}
         </button>
         {saved && <span className="text-success text-xs">Saved.</span>}

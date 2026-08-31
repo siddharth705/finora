@@ -213,7 +213,7 @@ app:
       client-ids: ${GOOGLE_LOGIN_CLIENT_IDS:}
     apple-login:
       # D-23 Phase 2: "Sign in with Apple" -- see AppleLoginProperties' own doc comment for why
-      # this holds bundle identifiers (e.g. com.finoratech.app) rather than a Google-style OAuth
+      # this holds bundle identifiers (e.g. com.fynora.app) rather than a Google-style OAuth
       # client id, and why it's a list even though D-26 only put Apple on iOS.
       #
       # Unconfigured (empty) is a supported state: POST /api/v1/auth/apple answers 503 and
@@ -315,12 +315,35 @@ app:
     # behind Railway (or any other trusted reverse proxy) so RateLimitFilter reads the real client
     # IP from X-Forwarded-For instead.
     trust-proxy-headers: ${TRUST_PROXY_HEADERS:false}
+    # Bug 24 (docs/quality/bug-reports/BUG_REVIEW_REPORT.md). How many trailing X-Forwarded-For
+    # entries were appended by a trusted proxy -- 1 matches Finora's current single-hop Railway
+    # deployment (only Railway's own edge proxy sits in front of the app) and reproduces the exact
+    # prior "always take the last entry" behavior. Only relevant when trust-proxy-headers is true;
+    # would need raising if a second trusted hop (a CDN, a load balancer) is ever added in front
+    # of Railway -- see ClientIpResolver's own doc comment.
+    trusted-proxy-hops: ${TRUSTED_PROXY_HOPS:1}
+    # Bug 53 (docs/quality/bug-reports/BUG_REVIEW_REPORT.md). Lax is correct only while the SPA
+    # and API share a registrable domain (see RefreshTokenCookie's own doc comment) -- true today
+    # per that comment, but a deployment where that stops holding would silently lose the refresh
+    # cookie entirely (browsers withhold a Lax cookie cross-site, with no error) rather than fail
+    # loudly. Set to "None" only if that precondition genuinely no longer holds.
+    refresh-cookie-same-site: ${REFRESH_COOKIE_SAME_SITE:Lax}
     # How long a started Change Password flow (PasswordChangeSession) stays usable before its own
     # isExpired() check starts rejecting verify-otp/complete calls against it. A property rather
     # than a hardcoded constant so it can be tuned per-deployment without a code change.
     password-change-session-expiry-minutes: ${PASSWORD_CHANGE_SESSION_EXPIRY_MINUTES:15}
     # Same property, same reasoning, for the Change Phone Number flow (PhoneChangeSession).
     phone-change-session-expiry-minutes: ${PHONE_CHANGE_SESSION_EXPIRY_MINUTES:15}
+    # Same property, same reasoning, for the Change Email flow (EmailChangeSession).
+    email-change-session-expiry-minutes: ${EMAIL_CHANGE_SESSION_EXPIRY_MINUTES:15}
+    # Bug 14 (docs/quality/bug-reports/BUG_REVIEW_REPORT.md). Same shape as
+    # app.import.session-cleanup below -- RefreshTokenService.scheduledCleanup, keyed on
+    # refresh_tokens.expiresAt. Hourly by default: refresh tokens live far longer than import
+    # sessions (days, not hours), so there is no benefit to sweeping as often.
+    refresh-token-cleanup:
+      enabled: ${REFRESH_TOKEN_CLEANUP_ENABLED:true}
+      interval-ms: ${REFRESH_TOKEN_CLEANUP_INTERVAL_MS:3600000}
+      initial-delay-ms: ${REFRESH_TOKEN_CLEANUP_INITIAL_DELAY_MS:120000}
   # Per-IP ceilings for the endpoints RateLimitFilter guards. Every default below is the value that
   # used to be hardcoded in that class, so leaving this block alone changes nothing.
   #
@@ -337,6 +360,15 @@ app:
     login:
       max: ${RATE_LIMIT_LOGIN_MAX:10}
       window-seconds: ${RATE_LIMIT_LOGIN_WINDOW_SECONDS:60}
+    # SEC-16 (docs/quality/bug-reports/2026-08-19-security-review-findings.md). More generous than
+    # every other bucket here, deliberately: refresh is called far more often per user than login/
+    # register/reset ever are (every access-token expiry, from every open tab/device), and several
+    # Finora users sharing one IP (a household, an office NAT) refreshing around the same time is
+    # ordinary use, not abuse. See RateLimitFilter's own comment on refreshLimiter for why this
+    # isn't sharing reset-password's tighter bucket.
+    refresh:
+      max: ${RATE_LIMIT_REFRESH_MAX:15}
+      window-seconds: ${RATE_LIMIT_REFRESH_WINDOW_SECONDS:300}
     register:
       max: ${RATE_LIMIT_REGISTER_MAX:5}
       window-seconds: ${RATE_LIMIT_REGISTER_WINDOW_SECONDS:300}
@@ -354,6 +386,9 @@ app:
     forgot-password:
       max: ${RATE_LIMIT_FORGOT_PASSWORD_MAX:5}
       window-seconds: ${RATE_LIMIT_FORGOT_PASSWORD_WINDOW_SECONDS:300}
+    identify:
+      max: ${RATE_LIMIT_IDENTIFY_MAX:10}
+      window-seconds: ${RATE_LIMIT_IDENTIFY_WINDOW_SECONDS:300}
     import-stage:
       max: ${RATE_LIMIT_IMPORT_STAGE_MAX:10}
       window-seconds: ${RATE_LIMIT_IMPORT_STAGE_WINDOW_SECONDS:600}
@@ -366,6 +401,11 @@ app:
     phone-change:
       max: ${RATE_LIMIT_PHONE_CHANGE_MAX:15}
       window-seconds: ${RATE_LIMIT_PHONE_CHANGE_WINDOW_SECONDS:600}
+    # Change Email. Same ceiling as password-change, and the same reason: start() here does a
+    # real GoogleReauthVerifier check (bcrypt, or a fresh Google/Apple token) on every call.
+    email-change:
+      max: ${RATE_LIMIT_EMAIL_CHANGE_MAX:15}
+      window-seconds: ${RATE_LIMIT_EMAIL_CHANGE_WINDOW_SECONDS:600}
     reset-password:
       max: ${RATE_LIMIT_RESET_PASSWORD_MAX:10}
       window-seconds: ${RATE_LIMIT_RESET_PASSWORD_WINDOW_SECONDS:600}
@@ -378,6 +418,14 @@ app:
     data-export:
       max: ${RATE_LIMIT_DATA_EXPORT_MAX:5}
       window-seconds: ${RATE_LIMIT_DATA_EXPORT_WINDOW_SECONDS:86400}
+    # Own ceiling, not shared with password-change/deactivate above: the real per-call cost here
+    # is AccountPurgeSweepService's full synchronous purge across every user table (deletion is
+    # instant, not a delayed sweep -- see UserAccountLifecycleService.requestDeletion), larger than
+    # a single bcrypt comparison. 5/hour leaves room for a user re-confirming after reading the
+    # irreversible-action warning without being a meaningful abuse budget.
+    delete-account:
+      max: ${RATE_LIMIT_DELETE_ACCOUNT_MAX:5}
+      window-seconds: ${RATE_LIMIT_DELETE_ACCOUNT_WINDOW_SECONDS:3600}
     # SEC-03 (docs/quality/bug-reports/2026-08-19-security-review-findings.md). Same ceiling class
     # as reset-password/reactivate above: an unguessable, short-TTL, single-use challenge token
     # already gates reaching this endpoint, so this bounds a token holder retrying in a loop, not
@@ -529,7 +577,11 @@ app:
       # Where the callback returns the browser. Configuration rather than a request parameter --
       # the callback is unauthenticated by necessity, so a request-supplied target would be an
       # open redirect.
-      post-connect-redirect: ${GOOGLE_OAUTH_POST_CONNECT_REDIRECT:https://app.finoratech.info/settings}
+      #
+      # /app/settings, not /settings -- the frontend's Settings page lives under the /app prefix
+      # (App.tsx's route table); anything else falls through the router's catch-all to the public
+      # marketing homepage, which reads as "Finora logged me out" even on a successful connection.
+      post-connect-redirect: ${GOOGLE_OAUTH_POST_CONNECT_REDIRECT:https://app.fynora.net/app/settings}
 
       # Gmail message discovery (Phase C4) and receipt extraction (Phase C5-B), one worker, one
       # config block -- extraction runs immediately after discovery for the same connection, not
@@ -569,6 +621,19 @@ app:
         # See GmailManualSyncService's own doc comment for why it's a separate value.
         manual-sync-cooldown-ms: ${GMAIL_MANUAL_SYNC_COOLDOWN_MS:60000}
 
+      # Hand-written P2P/payment-relay parsers (PhonePe, CRED, Paytm) -- unlike merchant_templates,
+      # a hand-written MerchantEmailParser.canParse has no per-row enabled column to gate it, so
+      # each one gates on its own property here instead, off by default. See PhonePeEmailParser's
+      # own class doc for why "verified against real data" is not the same thing as "safe to run
+      # unconditionally the moment this deploys".
+      parsers:
+        phonepe:
+          enabled: ${GMAIL_PARSER_PHONEPE_ENABLED:false}
+        cred:
+          enabled: ${GMAIL_PARSER_CRED_ENABLED:false}
+        paytm:
+          enabled: ${GMAIL_PARSER_PAYTM_ENABLED:false}
+
 # Reversible encryption at rest for third-party credentials Finora must read back -- OAuth refresh
 # tokens first (ADR-007). NOT for passwords or Finora's own session tokens, which are hashed via
 # TokenHasher; see com.finora.security.crypto's package doc for why the two are not interchangeable.
@@ -601,8 +666,12 @@ finora:
 sentry:
   dsn: ${SENTRY_DSN:}
   environment: ${SENTRY_ENVIRONMENT:development}
-  # Set by the deploy to the commit SHA, so an error points at a deploy rather than at "production".
-  release: ${SENTRY_RELEASE:}
+  # So an error points at a deploy rather than at "production". Falls back to RAILWAY_GIT_COMMIT_SHA
+  # -- one of Railway's own automatically-injected variables, present on every deploy with no
+  # dashboard configuration needed -- rather than requiring SENTRY_RELEASE to be set by hand.
+  # SENTRY_RELEASE still wins if explicitly set, for a non-Railway deploy or to name a release
+  # something other than the raw commit SHA.
+  release: ${SENTRY_RELEASE:${RAILWAY_GIT_COMMIT_SHA:}}
   # The starter would otherwise install a logback appender that ships every ERROR log as an event,
   # in addition to the exceptions we capture deliberately. On this backend a log line is the single
   # most likely place for a narration or an amount to appear, so that channel stays closed and

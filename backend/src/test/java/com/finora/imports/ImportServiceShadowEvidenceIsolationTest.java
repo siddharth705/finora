@@ -99,7 +99,7 @@ class ImportServiceShadowEvidenceIsolationTest {
             return si;
         });
 
-        DuplicateDetector duplicateDetector = new DuplicateDetector(transactionRepository);
+        DuplicateDetector duplicateDetector = new DuplicateDetector(transactionRepository, TestAccountRepositories.anyLive());
         TransactionNormalizer normalizer = new TransactionNormalizer(categorizationService, duplicateDetector,
                 TestRuleEngines.empty());
         PreviewGenerator previewGenerator = new PreviewGenerator(new CsvParser(), normalizer,
@@ -124,7 +124,8 @@ class ImportServiceShadowEvidenceIsolationTest {
                 duplicateDetector, new ImportRuleLearningService(categorizationService), importSessionService,
                 mock(com.finora.imports.pdf.PdfPreviewGenerator.class),
                 new com.finora.imports.product.ProductIdentityResolver(accountRepository),
-                new com.finora.imports.storage.StatementContentService(Optional.empty(), "", ""),
+                mock(com.finora.imports.ownership.OwnershipMatchService.class),
+                new com.finora.imports.storage.StatementContentService(Optional.empty(), mock(com.finora.security.crypto.EncryptionService.class), "", ""),
                 mock(com.finora.imports.analysis.StatementAnalysisRecorder.class),
                 mock(com.finora.imports.analysis.ImportVerificationRecorder.class),
                 mock(com.finora.service.MerchantLearningEventPublisher.class),

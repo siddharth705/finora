@@ -46,6 +46,10 @@ class MerchantNormalizationEngineTest {
     /** Counts the entity load the projection path added: one findById per token match. */
     private int findByIdCalls;
 
+    /** Counts the alias-table bulk load {@code indexFor} triggers -- see MerchantIndex's own doc
+     *  comment for why this must be 1 per statement, not 1 per row. */
+    private int aliasScanCalls;
+
     private MerchantRepository merchantRepository;
     private MerchantAliasRepository merchantAliasRepository;
     private MerchantNormalizationEngine engine;
@@ -59,6 +63,7 @@ class MerchantNormalizationEngineTest {
         aliases.clear();
         merchantScanCalls = 0;
         findByIdCalls = 0;
+        aliasScanCalls = 0;
 
         merchantRepository = mock(MerchantRepository.class);
         merchantAliasRepository = mock(MerchantAliasRepository.class);
@@ -92,6 +97,10 @@ class MerchantNormalizationEngineTest {
                     String alias = inv.getArgument(1);
                     return aliases.stream().filter(a -> alias.equals(a.getNormalizedAlias())).findFirst();
                 });
+        when(merchantAliasRepository.findByUserId(any())).thenAnswer(inv -> {
+            aliasScanCalls++;
+            return List.copyOf(aliases);
+        });
         // insertIfAbsent, not save/saveAndFlush: addAlias is now an atomic INSERT ... ON CONFLICT
         // DO NOTHING -- see its own doc comment for the poisoned-transaction race that a
         // saveAndFlush()+catch(DataIntegrityViolationException) recovery path could not survive.
@@ -256,6 +265,41 @@ class MerchantNormalizationEngineTest {
                 .isEqualTo(afterFirst);
     }
 
+    /**
+     * Bug 56. An alias row can outlive its target merchant -- e.g. MerchantReviewService.discard()
+     * removes a merchant with no attached transactions but, unlike MerchantService.merge(), never
+     * repoints or deletes its aliases. Before this fix, resolve() found the dangling alias, missed
+     * the merchant lookup, and fell into createMerchantAndAlias -- whose addAlias() is an
+     * INSERT ... ON CONFLICT DO NOTHING that silently no-ops because the alias already exists (just
+     * pointing at the dead merchant). Every single call for that description created and returned a
+     * BRAND NEW merchant, none of which the alias table ever pointed at -- a fresh duplicate every
+     * time, forever.
+     */
+    @Test
+    @DisplayName("Bug 56: a dangling alias is repointed, not left to spawn a new merchant every call")
+    void danglingAliasIsRepointedRatherThanSpawningANewMerchantForever() {
+        Merchant original = engine.resolve(userId, "SWIGGY BANGALORE");
+        assertThat(aliases).hasSize(1);
+
+        // Simulate the merchant having been deleted (e.g. discard()) without touching its alias --
+        // the alias is now dangling, pointing at an id no longer in `merchants`.
+        merchants.removeIf(m -> m.getId().equals(original.getId()));
+
+        Merchant repaired = engine.resolve(userId, "SWIGGY BANGALORE");
+        Merchant repairedAgain = engine.resolve(userId, "SWIGGY BANGALORE");
+
+        assertThat(repaired.getId())
+                .as("a replacement merchant is created for the now-missing one")
+                .isNotEqualTo(original.getId());
+        assertThat(repairedAgain.getId())
+                .as("the SECOND call must find the repointed alias, not spawn yet another merchant")
+                .isEqualTo(repaired.getId());
+        assertThat(aliases)
+                .as("the dangling row is repointed in place, never duplicated")
+                .hasSize(1);
+        assertThat(aliases.get(0).getMerchantId()).isEqualTo(repaired.getId());
+    }
+
     // ---- cost ----
 
     /**
@@ -381,5 +425,66 @@ class MerchantNormalizationEngineTest {
         statement.forEach(d -> engine.resolve(userId, d));
 
         assertThat(merchantScanCalls).isEqualTo(afterFirstImport);
+    }
+
+    // ---- MerchantIndex: read-only resolution for a staging pass with no active transaction ----
+
+    /**
+     * The fix for Transaction Intelligence Phase A's regression: {@code resolveReadOnly} has no
+     * transaction to memoize inside during staging ({@code parseAndStageWithSession} is
+     * deliberately not {@code @Transactional} -- see MerchantIndex's own doc comment for why). A
+     * pre-built index sidesteps that entirely: no transaction dependency, because there is no
+     * per-transaction state at all.
+     */
+    @Test
+    @DisplayName("cost: indexFor loads the merchant and alias tables once, regardless of statement size")
+    void indexForLoadsOnceRegardlessOfStatementSize() {
+        engine.resolve(userId, "SWIGGY BANGALORE");
+        engine.resolve(userId, "UBER TRIP 8891");
+        int scansBeforeIndex = merchantScanCalls;
+        int aliasScansBeforeIndex = aliasScanCalls;
+
+        com.finora.imports.MerchantIndex index = engine.indexFor(userId);
+
+        assertThat(merchantScanCalls).isEqualTo(scansBeforeIndex + 1);
+        assertThat(aliasScanCalls).isEqualTo(aliasScansBeforeIndex + 1);
+
+        for (int i = 0; i < 500; i++) {
+            engine.resolveReadOnly(userId, "MERCHANT " + (i % 50) + " REF " + i, index);
+        }
+
+        assertThat(merchantScanCalls)
+                .as("resolving against a pre-built index must not touch the database at all")
+                .isEqualTo(scansBeforeIndex + 1);
+        assertThat(aliasScanCalls)
+                .as("resolving against a pre-built index must not touch the database at all")
+                .isEqualTo(aliasScansBeforeIndex + 1);
+    }
+
+    @Test
+    @DisplayName("indexed resolution agrees with the live per-row resolution")
+    void indexedResolutionAgreesWithLiveResolution() {
+        Merchant confirmed = engine.resolve(userId, "UPI/9182736/SWIGGY");
+        com.finora.imports.MerchantIndex index = engine.indexFor(userId);
+
+        assertThat(engine.resolveReadOnly(userId, "UPI/5647382/SWIGGY", index))
+                .as("the same alias-first-then-token reduction must apply whether or not an index "
+                        + "was pre-built, or a staged preview would show a different merchant than "
+                        + "the un-indexed path would")
+                .contains(confirmed);
+        assertThat(engine.resolveReadOnly(userId, "UPI/1122334/ZOMATO", index)).isEmpty();
+    }
+
+    @Test
+    @DisplayName("an index built before a merchant existed does not see it")
+    void indexDoesNotSeeMerchantsCreatedAfterItWasBuilt() {
+        com.finora.imports.MerchantIndex index = engine.indexFor(userId);
+        engine.resolve(userId, "SWIGGY BANGALORE");
+
+        assertThat(engine.resolveReadOnly(userId, "SWIGGY BANGALORE", index))
+                .as("an index is a snapshot -- it is built once, before the loop that hoists it "
+                        + "runs, and staging never writes a merchant anyway (resolveReadOnly never "
+                        + "creates one), so this is the expected, and only, behaviour")
+                .isEmpty();
     }
 }

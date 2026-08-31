@@ -1,4 +1,4 @@
-import { test, expect, signIn } from '../../fixtures/test';
+import { test, expect, signIn, endSession } from '../../fixtures/test';
 import { USER_APP } from '../../fixtures/config';
 import type { Page } from '@playwright/test';
 
@@ -16,9 +16,9 @@ import type { Page } from '@playwright/test';
 test.describe('authenticated session', () => {
   test('signing in lands on an app page that is not the login screen', async ({ userPage }) => {
     // Asserts the session actually took, rather than that some specific dashboard widget exists --
-    // the widget set is product surface that changes; "no longer at /login and rendering content"
+    // the widget set is product surface that changes; "no longer at /auth and rendering content"
     // is the invariant. The Phase 17 guard on this fixture covers the console.
-    await expect(userPage).not.toHaveURL(/\/login/);
+    await expect(userPage).not.toHaveURL(/\/auth/);
     await expect(userPage.locator('body')).not.toBeEmpty();
   });
 
@@ -31,7 +31,7 @@ test.describe('authenticated session', () => {
     await userPage.reload();
 
     await expect(userPage).toHaveURL(before);
-    await expect(userPage).not.toHaveURL(/\/login/);
+    await expect(userPage).not.toHaveURL(/\/auth/);
   });
 
   test('the back button after signing in does not strand the user on a dead screen',
@@ -54,16 +54,18 @@ test.describe('authenticated session', () => {
       if (await logout.isVisible().catch(() => false)) {
         await logout.click();
       } else {
-        // Some layouts keep logout behind a menu. Clearing storage is what a closed browser does,
-        // and the guard must hold either way.
-        await userPage.evaluate(() => { localStorage.clear(); sessionStorage.clear(); });
+        // Some layouts keep logout behind a menu. Since SEC-01 (#187) the session that matters is
+        // an HttpOnly refresh cookie, not anything in storage -- closing the browser no longer
+        // ends it (that's the point: a returning user's session survives a reload), so the guard
+        // needs the session actually revoked here, the same way the real logout button does.
+        await endSession(userPage);
       }
 
-      // waitUntil 'commit' rather than the default: the app redirects to /login mid-navigation, and
+      // waitUntil 'commit' rather than the default: the app redirects to /auth mid-navigation, and
       // waiting for load on a request that gets aborted by that redirect is an ERR_ABORTED, not a
       // failure of the thing under test.
       await userPage.goto('/app', { waitUntil: 'commit' }).catch(() => {});
-      await expect(userPage).toHaveURL(/\/login/, { timeout: 20_000 });
+      await expect(userPage).toHaveURL(/\/auth/, { timeout: 20_000 });
     });
 
   /** Two accounts in one browser must not bleed into each other. Sequential sign-ins are the shape
@@ -72,12 +74,15 @@ test.describe('authenticated session', () => {
   test('signing in as a second account does not inherit the first session',
     async ({ page, user }) => {
       await signIn(page, USER_APP, user.email, user.password);
-      await page.evaluate(() => { localStorage.clear(); sessionStorage.clear(); });
+      // Since SEC-01 (#187) the session lives in an HttpOnly refresh cookie, not storage -- see
+      // endSession's own comment. Ending it for real is what leaves the browser in the state a
+      // second person signing in would actually find it in.
+      await endSession(page);
 
       // 'commit' rather than the default: the guard redirects mid-navigation, and waiting for load
       // on the request that redirect aborts is an ERR_ABORTED rather than a failure of the guard.
       await page.goto(`${USER_APP}/app`, { waitUntil: 'commit' }).catch(() => {});
-      await expect(page).toHaveURL(/\/login/, { timeout: 20_000 });
+      await expect(page).toHaveURL(/\/auth/, { timeout: 20_000 });
     });
 });
 
@@ -98,8 +103,17 @@ test.describe('public surface', () => {
    * on `window.opener` and can navigate this one somewhere else — a phishing vector that costs one
    * attribute to close, and one a jsdom component test cannot see.
    */
-  test('new-tab links on the register page cannot reach back into this one', async ({ page }) => {
+  test('new-tab links on the register step cannot reach back into this one', async ({ page }) => {
+    // /register redirects to /auth's identify step; an identifier with no account reaches the
+    // register step, which is where these Terms/Privacy links actually live now.
     await visit(page, '/register');
+    await page.getByLabel(/email|phone/i).first().fill(`new-${Date.now()}@example.com`);
+    await page.getByRole('button', { name: /continue/i }).click();
+
+    // Waits for a field only the register step has before counting: count() doesn't auto-wait,
+    // so right after the click resolves the render can still be in flight, sampling an empty DOM
+    // and counting zero links -- see smoke.spec.ts's identical fix for the same race.
+    await expect(page.getByLabel(/full name/i)).toBeVisible();
 
     const newTabLinks = page.locator('a[target="_blank"]');
     const total = await newTabLinks.count();
@@ -119,6 +133,6 @@ test.describe('public surface', () => {
 
   test('an app route is refused to someone who has not signed in', async ({ page }) => {
     await page.goto(`${USER_APP}/app`);
-    await expect(page).toHaveURL(/\/login/, { timeout: 20_000 });
+    await expect(page).toHaveURL(/\/auth/, { timeout: 20_000 });
   });
 });

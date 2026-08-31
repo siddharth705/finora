@@ -182,10 +182,13 @@ class AdminMfaServiceTest {
     // --- disable ---
 
     @Test
-    void disable_withAVerifiedCredential_deletesEverything() {
-        when(googleReauthVerifier.verify(any(), any(), any())).thenReturn(true);
+    void disable_withAVerifiedCredential_andNoEnabledMfa_deletesEverything() {
+        // No AdminTotpCredential row is stubbed at all (findByUserId returns Optional.empty()
+        // by Mockito's default), so there's nothing for a second-factor code to guard -- disable
+        // should not demand one.
+        when(googleReauthVerifier.verify(any(), any(), any(), any())).thenReturn(true);
 
-        service.disable(userId, "correct-password", null, userId);
+        service.disable(userId, "correct-password", null, null, null, userId);
 
         verify(credentialRepository).deleteByUserId(userId);
         verify(recoveryCodeRepository).deleteByUserId(userId);
@@ -195,10 +198,61 @@ class AdminMfaServiceTest {
 
     @Test
     void disable_withAnUnverifiedCredential_throwsAndDeletesNothing() {
-        when(googleReauthVerifier.verify(any(), any(), any())).thenReturn(false);
+        when(googleReauthVerifier.verify(any(), any(), any(), any())).thenReturn(false);
 
-        assertThatThrownBy(() -> service.disable(userId, "wrong-password", null, userId))
+        assertThatThrownBy(() -> service.disable(userId, "wrong-password", null, null, null, userId))
                 .isInstanceOf(ApiException.class);
+        verify(credentialRepository, never()).deleteByUserId(any());
+        verify(recoveryCodeRepository, never()).deleteByUserId(any());
+    }
+
+    @Test
+    void disable_withMfaEnabled_andACorrectTotpCode_deletesEverything() {
+        when(googleReauthVerifier.verify(any(), any(), any(), any())).thenReturn(true);
+        AdminTotpCredential enabled = new AdminTotpCredential();
+        enabled.storeSecret(ENCRYPTED);
+        enabled.markEnabled();
+        when(credentialRepository.findByUserId(userId)).thenReturn(Optional.of(enabled));
+
+        service.disable(userId, "correct-password", null, null, TotpGenerator.currentCode(SECRET), userId);
+
+        verify(credentialRepository).deleteByUserId(userId);
+        verify(recoveryCodeRepository).deleteByUserId(userId);
+    }
+
+    @Test
+    void disable_withMfaEnabled_andAValidUnusedRecoveryCode_deletesEverything() {
+        when(googleReauthVerifier.verify(any(), any(), any(), any())).thenReturn(true);
+        AdminTotpCredential enabled = new AdminTotpCredential();
+        enabled.storeSecret(ENCRYPTED);
+        enabled.markEnabled();
+        when(credentialRepository.findByUserId(userId)).thenReturn(Optional.of(enabled));
+        AdminMfaRecoveryCode recoveryCode = new AdminMfaRecoveryCode();
+        recoveryCode.setUserId(userId);
+        recoveryCode.setCodeHash(TokenHasher.sha256("ABCDE-12345"));
+        when(recoveryCodeRepository.findByUserIdAndCodeHashAndUsedAtIsNull(userId, TokenHasher.sha256("ABCDE-12345")))
+                .thenReturn(Optional.of(recoveryCode));
+
+        service.disable(userId, "correct-password", null, null, "ABCDE-12345", userId);
+
+        verify(credentialRepository).deleteByUserId(userId);
+        assertThat(recoveryCode.getUsedAt()).isNotNull();
+    }
+
+    @Test
+    void disable_withMfaEnabled_andAWrongCode_throwsAndDeletesNothing() {
+        // Password/Google re-auth alone must not be enough once MFA is enabled -- a stolen live
+        // session plus the account password should not be sufficient to strip the second factor.
+        when(googleReauthVerifier.verify(any(), any(), any(), any())).thenReturn(true);
+        AdminTotpCredential enabled = new AdminTotpCredential();
+        enabled.storeSecret(ENCRYPTED);
+        enabled.markEnabled();
+        when(credentialRepository.findByUserId(userId)).thenReturn(Optional.of(enabled));
+        when(recoveryCodeRepository.findByUserIdAndCodeHashAndUsedAtIsNull(any(), any())).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.disable(userId, "correct-password", null, null, "000000", userId))
+                .isInstanceOfSatisfying(ApiException.class,
+                        e -> assertThat(e.getCode()).isEqualTo(ErrorCode.AUTH_MFA_INVALID_CODE));
         verify(credentialRepository, never()).deleteByUserId(any());
         verify(recoveryCodeRepository, never()).deleteByUserId(any());
     }
@@ -361,7 +415,7 @@ class AdminMfaServiceTest {
     void disable_whenFeatureDisabled_throwsNotAvailable_andDeletesNothing() {
         ReflectionTestUtils.setField(service, "featureEnabled", false);
 
-        assertThatThrownBy(() -> service.disable(userId, "correct-password", null, userId))
+        assertThatThrownBy(() -> service.disable(userId, "correct-password", null, null, null, userId))
                 .isInstanceOfSatisfying(ApiException.class,
                         e -> assertThat(e.getCode()).isEqualTo(ErrorCode.AUTH_MFA_NOT_AVAILABLE));
         verify(credentialRepository, never()).deleteByUserId(any());

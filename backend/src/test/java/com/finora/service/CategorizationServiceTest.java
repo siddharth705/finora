@@ -5,6 +5,7 @@ import com.finora.entity.CategoryRule;
 import com.finora.entity.Merchant;
 import com.finora.entity.MerchantCategoryLearning;
 import com.finora.entity.Transaction;
+import com.finora.dto.WorkspaceSettingsDto;
 import com.finora.repository.CategoryRepository;
 import com.finora.repository.MerchantCategoryLearningRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -16,6 +17,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
@@ -32,6 +34,7 @@ class CategorizationServiceTest {
     private MerchantCategoryLearningRepository learningRepository;
     private CategoryRepository categoryRepository;
     private RuleEngineService ruleEngineService;
+    private WorkspaceSettingsService workspaceSettingsService;
     private CategorizationService categorizationService;
     private final UUID userId = UUID.randomUUID();
 
@@ -50,10 +53,11 @@ class CategorizationServiceTest {
         // methods, so every test here (none of which are about the rule engine itself -- see
         // RuleEngineServiceTest) falls straight through to the learned/keyword logic being tested.
         ruleEngineService = mock(RuleEngineService.class);
+        workspaceSettingsService = mock(WorkspaceSettingsService.class);
         categorizationService = new CategorizationService(
                 merchantNormalizationEngine, merchantLearningService, learningEventPublisher,
                 learningRepository,
-                new ConfidenceEngine(), categoryRepository, ruleEngineService); // ConfidenceEngine is pure logic — real instance is fine
+                new ConfidenceEngine(), categoryRepository, ruleEngineService, workspaceSettingsService); // ConfidenceEngine is pure logic — real instance is fine
     }
 
     private Merchant merchantWithId(UUID id) {
@@ -116,6 +120,84 @@ class CategorizationServiceTest {
     }
 
     @Test
+    void suggest_userRuleMatch_reportsInitialRuleConfidence() {
+        UUID merchantId = UUID.randomUUID();
+        UUID ruleId = UUID.randomUUID();
+        CategoryRule rule = new CategoryRule();
+        ReflectionTestUtils.setField(rule, "id", ruleId);
+        rule.setActionValue("Dining");
+        rule.setScope(CategoryRule.Scope.USER);
+
+        when(merchantNormalizationEngine.resolve(eq(userId), anyString())).thenReturn(merchantWithId(merchantId));
+        when(ruleEngineService.evaluateCategoryRule(eq(userId), anyString(), any(), anyString(), any()))
+                .thenReturn(Optional.of(new RuleEngineService.RuleMatch(rule)));
+
+        var suggestion = categorizationService.suggest(userId, "AMAZON PAY");
+
+        assertThat(suggestion.confidence()).isEqualTo(ConfidenceEngine.INITIAL_RULE_CONFIDENCE);
+    }
+
+    @Test
+    void suggest_learnedPattern_reportsRealConfidencePercentage_notJustHighestCount() {
+        // Amazon-shaped distribution: 3 Shopping confirmations, 1 Electronics -- a genuine 75%,
+        // not the flat 70 a rule match gets and not the highest-count category's raw count.
+        UUID merchantId = UUID.randomUUID();
+        UUID shoppingId = UUID.randomUUID();
+        UUID electronicsId = UUID.randomUUID();
+
+        MerchantCategoryLearning shopping = new MerchantCategoryLearning();
+        shopping.setMerchantId(merchantId);
+        shopping.setUserId(userId);
+        shopping.setCategoryId(shoppingId);
+        shopping.setConfirmationCount(3);
+        MerchantCategoryLearning electronics = new MerchantCategoryLearning();
+        electronics.setMerchantId(merchantId);
+        electronics.setUserId(userId);
+        electronics.setCategoryId(electronicsId);
+        electronics.setConfirmationCount(1);
+
+        Category shoppingCategory = new Category();
+        shoppingCategory.setUserId(userId);
+        shoppingCategory.setName("Shopping");
+
+        when(merchantNormalizationEngine.resolve(eq(userId), anyString())).thenReturn(merchantWithId(merchantId));
+        when(learningRepository.findByUserIdAndMerchantId(userId, merchantId))
+                .thenReturn(List.of(shopping, electronics));
+        when(categoryRepository.findById(shoppingId)).thenReturn(Optional.of(shoppingCategory));
+
+        var suggestion = categorizationService.suggest(userId, "AMAZON PAY");
+
+        assertThat(suggestion.category()).isEqualTo("Shopping");
+        assertThat(suggestion.confidence()).isEqualTo(75); // round(3 * 100.0 / 4)
+    }
+
+    @Test
+    void suggest_keywordFallbackMatch_reportsInitialRuleConfidence() {
+        UUID merchantId = UUID.randomUUID();
+        when(merchantNormalizationEngine.resolve(eq(userId), anyString())).thenReturn(merchantWithId(merchantId));
+        when(learningRepository.findByUserIdAndMerchantId(userId, merchantId)).thenReturn(List.of());
+
+        // "SWIGGY" hits the static keyword table's Dining rule -- see
+        // suggest_fallsBackToRuleEngine_whenMerchantHasNoLearnedDistribution above for the same setup.
+        var suggestion = categorizationService.suggest(userId, "SWIGGY*ORDR9182 BLR");
+
+        assertThat(suggestion.source()).isEqualTo("rule");
+        assertThat(suggestion.confidence()).isEqualTo(ConfidenceEngine.INITIAL_RULE_CONFIDENCE);
+    }
+
+    @Test
+    void suggest_defaultFallback_reportsInitialDefaultConfidence() {
+        UUID merchantId = UUID.randomUUID();
+        when(merchantNormalizationEngine.resolve(eq(userId), anyString())).thenReturn(merchantWithId(merchantId));
+        when(learningRepository.findByUserIdAndMerchantId(userId, merchantId)).thenReturn(List.of());
+
+        var suggestion = categorizationService.suggest(userId, "SOME COMPLETELY UNKNOWN VENDOR");
+
+        assertThat(suggestion.source()).isEqualTo("default");
+        assertThat(suggestion.confidence()).isEqualTo(ConfidenceEngine.INITIAL_DEFAULT_CONFIDENCE);
+    }
+
+    @Test
     void learn_resolvesMerchantAndDelegatesToMerchantLearningService() {
         UUID merchantId = UUID.randomUUID();
         UUID categoryId = UUID.randomUUID();
@@ -127,6 +209,48 @@ class CategorizationServiceTest {
         // The synchronous path must not ALSO queue -- a single interactive action that both applied
         // the learning and left an event behind would confirm the merchant twice.
         verifyNoInteractions(learningEventPublisher);
+    }
+
+    // --- Auto-apply confidence threshold --------------------------------------------------------
+
+    @Test
+    void needsCategoryReview_flagsADefaultSuggestion_whenConfidenceIsBelowTheUsersThreshold() {
+        when(workspaceSettingsService.get(userId))
+                .thenReturn(new WorkspaceSettingsDto(90, null));
+
+        boolean result = categorizationService.needsCategoryReview(userId, true, ConfidenceEngine.INITIAL_DEFAULT_CONFIDENCE);
+
+        assertThat(result).isTrue(); // 20 < 90
+    }
+
+    @Test
+    void needsCategoryReview_clearsTheFlag_whenConfidenceMeetsALowerUserThreshold() {
+        when(workspaceSettingsService.get(userId))
+                .thenReturn(new WorkspaceSettingsDto(10, null));
+
+        boolean result = categorizationService.needsCategoryReview(userId, true, ConfidenceEngine.INITIAL_DEFAULT_CONFIDENCE);
+
+        assertThat(result).isFalse(); // 20 >= 10 -- a permissive threshold clears the default-source flag
+    }
+
+    @Test
+    void needsCategoryReview_isFalse_wheneverTheSourceWasNotADefaultGuess() {
+        // A rule/learned match is never flagged for review regardless of confidence or threshold --
+        // this mirrors the exact pre-existing behaviour (source.equals("default")) this method replaces.
+        boolean result = categorizationService.needsCategoryReview(userId, false, 20);
+
+        assertThat(result).isFalse();
+        verifyNoInteractions(workspaceSettingsService);
+    }
+
+    @Test
+    void needsCategoryReview_staysTrue_whenConfidenceIsNull() {
+        // A caller with no confidence to report (shouldn't happen post-Task-1, but must fail safe)
+        // keeps the pre-existing "always flag a default guess" behaviour rather than silently clearing it.
+        boolean result = categorizationService.needsCategoryReview(userId, true, null);
+
+        assertThat(result).isTrue();
+        verifyNoInteractions(workspaceSettingsService);
     }
 
     // --- WI1A: the batch counterpart ------------------------------------------------------------
@@ -164,7 +288,7 @@ class CategorizationServiceTest {
         Category existing = new Category();
         existing.setUserId(userId);
         existing.setName("Dining");
-        when(categoryRepository.findByUserIdAndName(userId, "Dining")).thenReturn(Optional.of(existing));
+        when(categoryRepository.findByUserIdAndNameIgnoreCaseOrderByIdAsc(userId, "Dining")).thenReturn(List.of(existing));
 
         Category result = categorizationService.resolveOrCreateCategory(userId, "Dining");
 
@@ -174,7 +298,7 @@ class CategorizationServiceTest {
 
     @Test
     void resolveOrCreateCategory_createsNew_whenNameDoesNotExist() {
-        when(categoryRepository.findByUserIdAndName(userId, "Custom Category")).thenReturn(Optional.empty());
+        when(categoryRepository.findByUserIdAndNameIgnoreCaseOrderByIdAsc(userId, "Custom Category")).thenReturn(List.of());
         when(categoryRepository.save(any(Category.class))).thenAnswer(inv -> inv.getArgument(0));
 
         Category result = categorizationService.resolveOrCreateCategory(userId, "Custom Category");
@@ -182,6 +306,112 @@ class CategorizationServiceTest {
         assertThat(result.getName()).isEqualTo("Custom Category");
         assertThat(result.isSystem()).isFalse();
         verify(categoryRepository).save(any(Category.class));
+    }
+
+    /**
+     * Bug 04 (docs/quality/bug-reports/BUG_REVIEW_REPORT.md). categories.name is VARCHAR(80) NOT
+     * NULL with no upstream length check on the import-confirm path -- an oversized category cell
+     * used to make the INSERT fail against the column constraint, which marks the whole confirm
+     * transaction rollback-only and discards the entire import. Same fix shape as
+     * MerchantNormalizationEngine.fitToColumn for merchant names on the identical parser-output
+     * code path: truncate before the write is ever attempted, not after it fails.
+     */
+    @Test
+    void resolveOrCreateCategory_truncatesAnOversizedName_ratherThanFailingTheInsert() {
+        String oversized = "x".repeat(100);
+        String truncated = "x".repeat(80);
+        when(categoryRepository.findByUserIdAndNameIgnoreCaseOrderByIdAsc(userId, truncated)).thenReturn(List.of());
+        when(categoryRepository.save(any(Category.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        Category result = categorizationService.resolveOrCreateCategory(userId, oversized);
+
+        assertThat(result.getName()).isEqualTo(truncated);
+        assertThat(result.getName()).hasSize(80);
+    }
+
+    @Test
+    void resolveOrCreateCategory_trimsSurroundingWhitespace_beforeCheckingLength() {
+        String padded = " ".repeat(5) + "Dining" + " ".repeat(5);
+        when(categoryRepository.findByUserIdAndNameIgnoreCaseOrderByIdAsc(userId, "Dining")).thenReturn(List.of());
+        when(categoryRepository.save(any(Category.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        Category result = categorizationService.resolveOrCreateCategory(userId, padded);
+
+        assertThat(result.getName()).isEqualTo("Dining");
+    }
+
+    /**
+     * Bug 16. resolveOrCreateCategory now matches case-insensitively and trims whitespace, so
+     * "dining" resolves to an existing "Dining" row instead of creating a sibling that would
+     * split a budget and double-count in reports.
+     */
+    @Test
+    void resolveOrCreateCategory_matchesCaseInsensitively_andTrimsWhitespace() {
+        Category existing = new Category();
+        existing.setUserId(userId);
+        existing.setName("Dining");
+        when(categoryRepository.findByUserIdAndNameIgnoreCaseOrderByIdAsc(userId, "dining")).thenReturn(List.of(existing));
+
+        Category result = categorizationService.resolveOrCreateCategory(userId, " dining ");
+
+        assertThat(result).isSameAs(existing);
+        verify(categoryRepository, never()).save(any());
+    }
+
+    /**
+     * Self-review catch: a pre-existing case-variant duplicate (a user who already has both
+     * "Dining" and "dining" from BEFORE the Bug 16 fix shipped) must resolve to one of them
+     * deterministically, not throw. A single-result derived query
+     * (findByUserIdAndNameIgnoreCase, this method's first version) would have thrown
+     * IncorrectResultSizeDataAccessException the moment it matched more than one row -- turning
+     * every future category action for exactly the affected users into an unhandled 500.
+     */
+    @Test
+    void resolveOrCreateCategory_picksOneDeterministically_whenAPreExistingCaseVariantDuplicateExists() {
+        Category dining = new Category();
+        dining.setUserId(userId);
+        dining.setName("Dining");
+        Category lowercaseDining = new Category();
+        lowercaseDining.setUserId(userId);
+        lowercaseDining.setName("dining");
+        when(categoryRepository.findByUserIdAndNameIgnoreCaseOrderByIdAsc(userId, "Dining"))
+                .thenReturn(List.of(dining, lowercaseDining));
+
+        Category result = categorizationService.resolveOrCreateCategory(userId, "Dining");
+
+        assertThat(result).isSameAs(dining);
+        verify(categoryRepository, never()).save(any());
+    }
+
+    /**
+     * Guards against a regression the Bug 16 fix above could otherwise introduce:
+     * TransactionService.updateCategory passes an unvalidated Map value straight through with no
+     * upstream null check, unlike every other caller (which either validates via @NotBlank or
+     * checks != null first). Before trimming was added, a null name reached
+     * categoryRepository.save() with a NOT NULL column and came back as a confusing 409 CONFLICT.
+     * Trimming a null would instead throw an unhandled NullPointerException into the generic 500
+     * handler -- worse than the bug it replaced. This must throw a clean 400 instead.
+     *
+     * <p>Merge-conflict resolution note (Bug 04 x Bug 16): Bug 04's own version of this method
+     * defaulted null/blank to "Other" instead of throwing, for the import-confirm path's "don't
+     * fail the whole import over one bad cell" reasoning. That degradation now lives at
+     * ImportService.confirm's own call site instead (see
+     * ImportServiceAskOnceTest#confirm_fallsBackToOther_whenTheStatementsCategoryCellWasNullOrBlank)
+     * -- this method throwing for every OTHER caller is what Bug 16's fix actually needs, since a
+     * blank name reaching e.g. TransactionService.updateCategory is a malformed request, not a
+     * parser artifact to paper over.
+     */
+    @Test
+    void resolveOrCreateCategory_rejectsANullOrBlankName_withA400_ratherThanNpeOrANotNullViolation() {
+        assertThatThrownBy(() -> categorizationService.resolveOrCreateCategory(userId, null))
+                .isInstanceOf(com.finora.exception.ApiException.class)
+                .satisfies(e -> assertThat(((com.finora.exception.ApiException) e).getStatus())
+                        .isEqualTo(org.springframework.http.HttpStatus.BAD_REQUEST));
+
+        assertThatThrownBy(() -> categorizationService.resolveOrCreateCategory(userId, "   "))
+                .isInstanceOf(com.finora.exception.ApiException.class);
+
+        verify(categoryRepository, never()).save(any());
     }
 
     // --- Rule engine integration (docs/rule-engine-relationship-engine-eds.md §4: rule engine
@@ -317,7 +547,7 @@ class CategorizationServiceTest {
         ReflectionTestUtils.setField(investments, "id", UUID.randomUUID());
         investments.setUserId(userId);
         investments.setName("Investments");
-        when(categoryRepository.findByUserIdAndName(userId, "Investments")).thenReturn(Optional.of(investments));
+        when(categoryRepository.findByUserIdAndNameIgnoreCaseOrderByIdAsc(userId, "Investments")).thenReturn(List.of(investments));
 
         Transaction t = txnFor("SIP MUTUAL FUND DEDUCTION");
         Category result = categorizationService.applySideEffectRules(userId, t);
@@ -335,7 +565,7 @@ class CategorizationServiceTest {
         ReflectionTestUtils.setField(sipEquity, "id", UUID.randomUUID());
         sipEquity.setUserId(userId);
         sipEquity.setName("SIP - Equity");
-        when(categoryRepository.findByUserIdAndName(userId, "SIP - Equity")).thenReturn(Optional.of(sipEquity));
+        when(categoryRepository.findByUserIdAndNameIgnoreCaseOrderByIdAsc(userId, "SIP - Equity")).thenReturn(List.of(sipEquity));
 
         Transaction t = txnFor("SIP MUTUAL FUND DEDUCTION");
         categorizationService.applySideEffectRules(userId, t);

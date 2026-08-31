@@ -1,0 +1,15 @@
+-- A merchant template can currently only say "this text means it's a receipt" (receipt_marker).
+-- It has no way to say "but not this kind" -- a refund/return/exchange/cancellation notice from
+-- the same domain routinely reuses the same amount/date-shaped language a real purchase receipt
+-- does, and today a template would extract the amount and stage it as an EXPENSE regardless.
+--
+-- MyntraEmailParser and BookingEmailParser (hand-written) already solve this for themselves with
+-- a "detect refund/return language, refuse to parse at all" marker. This column gives templates
+-- the same capability: an optional, pipe-separated list of literal phrases that, if found, mean
+-- the message is not a receipt for this template -- checked before amount/date extraction, same
+-- as receipt_marker's own "found or not" semantics, just inverted.
+--
+-- Nullable, no default, no backfill: every existing template (Uber, Zomato, Domino's, and the 50
+-- disabled V103 readiness-seed rows) gets NULL, and a null/blank marker matches nothing, so this
+-- is a zero-behavior-change addition for anything already live.
+ALTER TABLE merchant_templates ADD COLUMN non_receipt_marker TEXT;

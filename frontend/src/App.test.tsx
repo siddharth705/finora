@@ -37,20 +37,22 @@ describe('App routing — unmatched paths', () => {
     // And it is specifically the landing page, asserted structurally. This used to match the CTA
     // text ("Get Started Free"), which contradicted the comment directly above it and duly broke
     // the moment that button was reworded -- a copy edit failing a routing test tells you nothing
-    // about routing. A sign-up link is what the landing page is FOR, so it survives rewording.
-    await waitFor(() => expect(container.querySelector('a[href="/register"]')).not.toBeNull());
+    // about routing. An entry-flow link is what the landing page is FOR, so it survives rewording.
+    // (Points at /auth, not /register directly, since the landing page's CTAs now route through
+    // the unified identifier-first entry page -- see AuthEntry.tsx.)
+    await waitFor(() => expect(container.querySelector('a[href="/auth"]')).not.toBeNull());
   });
 
   it('leaves a route that does exist alone', async () => {
-    window.history.pushState({}, '', '/login');
+    window.history.pushState({}, '', '/terms');
 
     render(<App />);
 
-    await waitFor(() => expect(window.location.pathname).toBe('/login'));
+    await waitFor(() => expect(window.location.pathname).toBe('/terms'));
   });
 
   it('replaces rather than pushes, so Back does not bounce into the bad URL again', async () => {
-    window.history.pushState({}, '', '/login');
+    window.history.pushState({}, '', '/terms');
     window.history.pushState({}, '', '/definitely-not-a-page');
 
     render(<App />);
@@ -58,6 +60,18 @@ describe('App routing — unmatched paths', () => {
     await waitFor(() => expect(window.location.pathname).toBe('/'));
 
     window.history.back();
-    await waitFor(() => expect(window.location.pathname).toBe('/login'));
+    await waitFor(() => expect(window.location.pathname).toBe('/terms'));
+  });
+});
+
+describe('App routing — /login and /register redirect to /auth', () => {
+  beforeEach(() => {
+    window.history.pushState({}, '', '/');
+  });
+
+  it.each(['/login', '/register'])('redirects %s to /auth', async (path) => {
+    window.history.pushState({}, '', path);
+    render(<App />);
+    await waitFor(() => expect(window.location.pathname).toBe('/auth'));
   });
 });

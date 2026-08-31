@@ -1,6 +1,7 @@
 import '@testing-library/jest-dom/vitest';
 import { afterEach } from 'vitest';
 import { cleanup, configure } from '@testing-library/react';
+import { ScrollTrigger } from 'gsap/ScrollTrigger';
 
 // Testing Library's async utilities -- findBy*, waitFor -- give up after their OWN timeout, which
 // defaults to 1000ms and is NOT the same knob as vitest's `testTimeout`. Both configs already set
@@ -26,6 +27,19 @@ configure({ asyncUtilTimeout: 5_000 });
 // same file (breaking any getBy* query that a later test in the file also happens to match).
 afterEach(() => {
   cleanup();
+  // gsap's ScrollTrigger runs a persistent, self-rescheduling requestAnimationFrame ticker for as
+  // long as any instance is alive -- by design, since a real page never tears down. Vitest's jsdom
+  // environment does tear down (a fresh window per test file), so a ScrollTrigger instance any
+  // test creates (useLearningTimeline, useImportScrollTimeline -- App.test.tsx renders the full
+  // routed app, which mounts the Landing page that uses both) can outlive its own test's unmount
+  // by one tick, leaving a requestAnimationFrame callback scheduled against a window that then gets
+  // torn down out from under it: "ReferenceError: requestAnimationFrame is not defined", thrown
+  // from OUTSIDE any test's own try/catch, well after that test finished -- an uncaught exception
+  // Vitest correctly fails the whole run for, not a merely-noisy passed test. Each hook's own
+  // gsap.context().revert() already kills its OWN instance on unmount; this is the backstop for
+  // whatever unmount timing doesn't quite catch. killAll() is idempotent and near-free when nothing
+  // is registered, so unconditional here costs nothing on the hundreds of tests that never touch it.
+  ScrollTrigger.killAll();
 });
 
 // jsdom doesn't implement matchMedia -- ThemeContext calls it unconditionally (both to read the

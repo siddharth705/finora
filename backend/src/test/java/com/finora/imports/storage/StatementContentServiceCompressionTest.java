@@ -1,5 +1,8 @@
 package com.finora.imports.storage;
 
+import com.finora.security.crypto.CryptoProperties;
+import com.finora.security.crypto.EncryptionService;
+import com.finora.security.crypto.EnvironmentKeyProvider;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import software.amazon.awssdk.core.ResponseBytes;
@@ -45,6 +48,23 @@ class StatementContentServiceCompressionTest {
     @TempDir
     Path filesystemRoot;
 
+    /** Same {@code CryptoProperties}/{@code EnvironmentKeyProvider} idiom
+     *  {@code GmailConnectionServiceTest} and {@code StatementContentServiceTest} use for a real
+     *  (non-mocked) EncryptionService -- these tests prove an actual round trip through real
+     *  AES-GCM, not a stubbed transform. */
+    private static final EncryptionService ENCRYPTION = testEncryptionService();
+
+    private static EncryptionService testEncryptionService() {
+        CryptoProperties crypto = new CryptoProperties();
+        crypto.setActiveKeyId("v1");
+        Map<String, String> keys = new HashMap<>();
+        byte[] raw = new byte[32];
+        java.util.Arrays.fill(raw, (byte) 7);
+        keys.put("v1", java.util.Base64.getEncoder().encodeToString(raw));
+        crypto.setKeys(keys);
+        return new EncryptionService(new EnvironmentKeyProvider(crypto));
+    }
+
     private static byte[] csvFixture() {
         // Real bank CSVs are highly repetitive -- this is what lets GZIP earn its keep, and what a
         // "compression is doing nothing" regression would show up against.
@@ -64,7 +84,7 @@ class StatementContentServiceCompressionTest {
     private StatementContentService filesystemBacked() {
         return new StatementContentService(
                 Optional.of(new FilesystemStatementStorage(filesystemRoot.toString())),
-                "filesystem", "");
+                ENCRYPTION, "filesystem", "");
     }
 
     /** An in-memory fake S3 backing store -- PUT records what was actually written (reading
@@ -102,7 +122,7 @@ class StatementContentServiceCompressionTest {
             return software.amazon.awssdk.services.s3.model.DeleteObjectResponse.builder().build();
         });
         StatementStorage r2 = new R2StatementStorage(client, "finora-statements-test");
-        return new StatementContentService(Optional.of(r2), "r2", "");
+        return new StatementContentService(Optional.of(r2), ENCRYPTION, "r2", "");
     }
 
     // ---- CSV round trip ----
@@ -132,20 +152,23 @@ class StatementContentServiceCompressionTest {
     /** One row per {@link StoredStatement} implementor -- a real read only ever happens through
      *  one of these. */
     private record Row(String getContentHash, String getObjectKey, byte[] getFileContent,
-                        CompressionType getCompressionType) implements StoredStatement {}
+                        CompressionType getCompressionType, String getEncryptionKeyId) implements StoredStatement {}
 
     private void assertRoundTrips(StatementContentService service, byte[] original, String mimeType) {
         StatementContentService.StoredContent stored = service.store(original, mimeType).orElseThrow();
 
-        // The identity half: content_hash is the ORIGINAL bytes' hash, unaffected by compression.
+        // The identity half: content_hash is the ORIGINAL bytes' hash, unaffected by compression
+        // or encryption.
         assertThat(stored.address().hash())
-                .as("content_hash must identify the ORIGINAL document, not its compressed encoding")
+                .as("content_hash must identify the ORIGINAL document, not its compressed/encrypted encoding")
                 .isEqualTo(ContentAddress.hashOf(original));
         assertThat(stored.compressionType()).isEqualTo(CompressionType.GZIP);
         assertThat(stored.originalSize()).isEqualTo(original.length);
         assertThat(stored.mimeType()).isEqualTo(mimeType);
+        assertThat(stored.encryptionKeyId()).isNotNull();
 
-        Row row = new Row(stored.address().hash(), stored.address().key(), null, CompressionType.GZIP);
+        Row row = new Row(stored.address().hash(), stored.address().key(), null, CompressionType.GZIP,
+                stored.encryptionKeyId());
         byte[] readBack = service.read(row);
 
         assertThat(readBack)
@@ -182,8 +205,10 @@ class StatementContentServiceCompressionTest {
 
         StatementStorage rawR2 = new R2StatementStorage(fakeClientPreloadedWith(rawAddress.key(), original),
                 "finora-statements-test");
-        StatementContentService r2Service = new StatementContentService(Optional.of(rawR2), "r2", "");
-        Row uncompressedRow = new Row(rawAddress.hash(), rawAddress.key(), null, CompressionType.NONE);
+        StatementContentService r2Service = new StatementContentService(Optional.of(rawR2), ENCRYPTION, "r2", "");
+        // Null key id, matching a real pre-V107 row: unencrypted, same as its pre-V92 NONE
+        // compression_type -- read() must not attempt to decrypt either.
+        Row uncompressedRow = new Row(rawAddress.hash(), rawAddress.key(), null, CompressionType.NONE, null);
 
         assertThat(r2Service.read(uncompressedRow)).isEqualTo(original);
     }
@@ -213,17 +238,19 @@ class StatementContentServiceCompressionTest {
 
         byte[] original = csvFixture();
         StatementStorage r2 = new R2StatementStorage(client, "finora-statements-test");
-        StatementContentService service = new StatementContentService(Optional.of(r2), "r2", "");
+        StatementContentService service = new StatementContentService(Optional.of(r2), ENCRYPTION, "r2", "");
 
         StatementContentService.StoredContent stored = service.store(original, "text/csv").orElseThrow();
 
         assertThat(stored.storedSize())
-                .as("a real repetitive CSV must actually shrink -- otherwise this test would pass "
-                        + "even if compression were silently a no-op")
+                .as("a real repetitive CSV must actually shrink even after the fixed 28-byte "
+                        + "encryption overhead -- otherwise this test would pass even if compression "
+                        + "were silently a no-op")
                 .isLessThan(stored.originalSize());
         assertThat(captor.getValue().contentLength())
-                .as("R2 must be told the COMPRESSED size -- a mismatched Content-Length against the "
-                        + "actual bytes streamed would be a wire-level upload failure, not a subtle bug")
+                .as("R2 must be told the COMPRESSED-THEN-ENCRYPTED size -- a mismatched Content-Length "
+                        + "against the actual bytes streamed would be a wire-level upload failure, not "
+                        + "a subtle bug")
                 .isEqualTo(stored.storedSize());
     }
 }

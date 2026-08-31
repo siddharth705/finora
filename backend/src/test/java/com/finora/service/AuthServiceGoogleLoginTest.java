@@ -87,6 +87,9 @@ class AuthServiceGoogleLoginTest {
                 new EmailProperties(), mock(PhoneVerificationProvider.class), platformSettingsService,
                 passwordHistoryService, new IdentityLookup(userRepository),
                 mock(com.finora.config.RequestMetadata.class),
+                mock(com.finora.service.SubscriptionService.class),
+                mock(com.finora.service.ReferralService.class),
+                mock(com.finora.service.MerchantSeedService.class),
                 // SEC-07: same-thread executor -- runs the dispatched email/audit work
                 // synchronously so assertions against it don't race a real background thread.
                 Runnable::run,
@@ -136,7 +139,7 @@ class AuthServiceGoogleLoginTest {
         assertThat(captor.getValue().isEmailVerified()).isTrue();
 
         verify(categoryRepository).saveAll(any());
-        verify(auditService).record(eq(userId), eq("USER_REGISTERED_GOOGLE"), eq("User"), eq(userId));
+        verify(auditService).record(eq(userId), eq("USER_REGISTERED_GOOGLE"), eq("User"), eq(userId), any());
     }
 
     @Test
@@ -223,7 +226,7 @@ class AuthServiceGoogleLoginTest {
         // signed into the pre-existing row rather than fabricating a fresh response.
         assertThat(response.maskedPhone()).isEqualTo("+•••••••••001");
         verify(userRepository, never()).save(any(User.class));
-        verify(auditService).record(eq(userId), eq("USER_LOGIN_GOOGLE"), eq("User"), eq(userId));
+        verify(auditService).record(eq(userId), eq("USER_LOGIN_GOOGLE"), eq("User"), eq(userId), any());
     }
 
     @Test
@@ -249,7 +252,7 @@ class AuthServiceGoogleLoginTest {
         verify(auditService).record(eq(userId), eq("EMAIL_SENT"), eq("User"), eq(userId), any());
         // Never actually signed in -- no session issued, no login recorded.
         verify(refreshTokenService, never()).issue(any());
-        verify(auditService, never()).record(any(), eq("USER_LOGIN_GOOGLE"), any(), any());
+        verify(auditService, never()).record(any(), eq("USER_LOGIN_GOOGLE"), any(), any(), any());
     }
 
     @Test
@@ -262,7 +265,7 @@ class AuthServiceGoogleLoginTest {
         assertThatThrownBy(() -> authService.loginWithGoogle(new GoogleIdentity("jane@example.com", "Jane")))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("suspended");
-        verify(auditService, never()).record(any(), eq("USER_LOGIN_GOOGLE"), any(), any());
+        verify(auditService, never()).record(any(), eq("USER_LOGIN_GOOGLE"), any(), any(), any());
     }
 
     @Test

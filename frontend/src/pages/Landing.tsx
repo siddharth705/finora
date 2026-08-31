@@ -1,6 +1,7 @@
-import { Link } from 'react-router-dom';
+import { useEffect, useRef, useState } from 'react';
 import { ArrowRight } from 'lucide-react';
 import { Nav } from './landing/Nav';
+import { MagneticLink } from './landing/MagneticLink';
 import { Hero } from './landing/Hero';
 import { Problem } from './landing/Problem';
 import { ImportSection } from './landing/ImportSection';
@@ -64,65 +65,103 @@ const WHITE = '#FFFFFF';
 const ALT = '#F8FAFC';
 const DEEP = '#0B1220';
 
+// Nav.tsx's own h-16 (64px) header height -- the rootMargin below shrinks the observer's
+// effective viewport by exactly this much, so overHero flips the moment Hero's bottom edge
+// scrolls up behind the navbar, not the literal top of the viewport.
+const NAV_HEIGHT_PX = 64;
+
 export default function Landing() {
+  const heroRef = useRef<HTMLDivElement | null>(null);
+  // Hero fills (or exceeds) the viewport at page load -- see the global chrome design spec's note
+  // on why observing the Hero element itself (rather than a 1px sentinel at its trailing edge)
+  // makes isIntersecting already correct without extra boundingClientRect math -- so `true` is
+  // the honest initial value before the observer's first callback fires.
+  const [overHero, setOverHero] = useState(true);
+
+  useEffect(() => {
+    const node = heroRef.current;
+    if (!node) return;
+    const observer = new IntersectionObserver(
+      ([entry]) => setOverHero(entry.isIntersecting),
+      { rootMargin: `-${NAV_HEIGHT_PX}px 0px 0px 0px`, threshold: 0 }
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+
   return (
     <div className="marketing">
-      <Nav />
+      {/* Keyboard/screen-reader users otherwise have to tab through the entire nav (5 anchors +
+          2 CTAs) before reaching any page content, on a page with 15 sections below it. Visually
+          hidden until focused, per the standard sr-only/focus:not-sr-only pattern. */}
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-50 focus:rounded-lg focus:bg-[var(--m-brand)] focus:px-4 focus:py-2.5 focus:text-sm focus:font-semibold focus:text-white"
+      >
+        Skip to content
+      </a>
+      <Nav overHero={overHero} />
 
-      <Hero />
-      {/* Hero already fades toward #FBFCFE, so this picks up close to where it ends. */}
-      <Transition from="#FBFCFE" to={WHITE} height={48} />
+      <main id="main-content">
+        <div ref={heroRef}>
+          <Hero />
+        </div>
+        {/* Hero's dark radial-gradient background bottoms out at #05070C (see Hero.tsx) -- this
+            bridges that into white, the same way every other section boundary on this page does.
+            Hero does not own any of its own exit fade; this band is the single place that does. */}
+        <Transition from="#05070C" to={WHITE} height={80} />
 
-      <Problem />
-      <Transition from={WHITE} to={WHITE} height={0} />
+        <Problem />
+        <Transition from={WHITE} to={WHITE} height={0} />
 
-      <ImportSection />
-      <Transition from={WHITE} to={DEEP} height={112} />
+        <ImportSection />
+        <Transition from={WHITE} to={DEEP} height={112} />
 
-      <LearningSection />
-      <Transition from={DEEP} to={ALT} height={112} />
+        <LearningSection />
+        <Transition from={DEEP} to={ALT} height={112} />
 
-      <BeforeAfter />
-      <Transition from={ALT} to={WHITE} />
+        <BeforeAfter />
+        <Transition from={ALT} to={WHITE} />
 
-      <Journey />
-      <Transition from={WHITE} to={DEEP} height={112} />
+        <Journey />
+        <Transition from={WHITE} to={DEEP} height={112} />
 
-      <Trust />
-      <Transition from={DEEP} to={ALT} height={112} />
+        <Trust />
+        <Transition from={DEEP} to={ALT} height={112} />
 
-      <Security />
-      <Transition from={ALT} to={WHITE} />
+        <Security />
+        <Transition from={ALT} to={WHITE} />
 
-      <DashboardShowcase />
-      <Transition from={WHITE} to={WHITE} height={0} />
+        <DashboardShowcase />
+        <Transition from={WHITE} to={WHITE} height={0} />
 
-      <Everywhere />
-      <Transition from={WHITE} to={ALT} />
+        <Everywhere />
+        <Transition from={WHITE} to={ALT} />
 
-      <UseCases />
-      <Transition from={ALT} to={WHITE} />
+        <UseCases />
+        <Transition from={ALT} to={WHITE} />
 
-      {/* Sits between "who it's for" and the price list on purpose: a price list provokes the
-          question "why would I pay?" but cannot answer it. This does, before it is asked. */}
-      <WhyUpgrade />
-      <Transition from={WHITE} to={ALT} />
+        {/* Sits between "who it's for" and the price list on purpose: a price list provokes the
+            question "why would I pay?" but cannot answer it. This does, before it is asked. */}
+        <WhyUpgrade />
+        <Transition from={WHITE} to={ALT} />
 
-      <Pricing />
-      <Transition from={ALT} to={WHITE} />
+        <Pricing />
+        <Transition from={ALT} to={WHITE} />
 
-      <Faq />
-      <Transition from={WHITE} to="#2563EB" height={72} />
+        <Faq />
+        <Transition from={WHITE} to="var(--m-brand)" height={72} />
 
-      <FinalCta />
+        <FinalCta />
+      </main>
       <SiteFooter />
 
       {/* Sticky mobile action bar. Phone-only: at md+ the hero CTAs and the nav button are both
           still in reach, so a permanent bar would only cover content. */}
       <div className="m-mobile-cta md:hidden">
-        <Link to="/register" className="m-btn m-btn-primary w-full">
+        <MagneticLink to="/auth" className="m-btn m-btn-primary w-full">
           Import your first statement <ArrowRight size={16} />
-        </Link>
+        </MagneticLink>
       </div>
       {/* Reserves the space the fixed bar covers so the footer's last line stays reachable. */}
       <div className="h-20 md:hidden" aria-hidden="true" />

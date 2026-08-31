@@ -2,10 +2,14 @@ import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { Pencil, Trash2, X, ChevronLeft, ChevronRight, HelpCircle } from 'lucide-react';
-import { transactionsApi, categoriesApi, type TransactionFilters, type UpdateTransactionPayload, type TransactionExplanation } from '../api/endpoints';
+import { transactionsApi, type TransactionFilters, type UpdateTransactionPayload, type TransactionExplanation } from '../api/endpoints';
 import { AskOnceCard } from '../components/AskOnceCard';
+import { CategoryCombobox } from '../components/CategoryCombobox';
+import { CategoryCreateEditPanel } from '../components/CategoryCreateEditPanel';
+import { MerchantGroupReviewCard } from '../components/MerchantGroupReviewCard';
 import { MerchantLogo } from '../components/MerchantLogo';
 import type { Transaction } from '../types';
+import { ConfirmDialog } from '../design-system';
 
 function fmt(n: number) {
   // Negative amounts (e.g. a month where spend exceeded income) must render as "-₹500",
@@ -39,6 +43,7 @@ export default function Ledger() {
   const [explaining, setExplaining] = useState<Transaction | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<Transaction | null>(null);
 
   // Ledger doesn't unmount between two TopBar searches fired while already on this page (same
   // route, just a new ?q=), so the useState initializer above only covers the first visit —
@@ -92,7 +97,6 @@ export default function Ledger() {
   }
 
   async function handleDelete(t: Transaction) {
-    if (!confirm(`Delete "${t.description || t.merchant}" (${fmt(t.amount)})? This can't be undone.`)) return;
     setDeletingId(t.id);
     setError(null);
     try {
@@ -109,7 +113,9 @@ export default function Ledger() {
     <div className="space-y-4">
       {/* Moved here from the Dashboard: transaction category review belongs with the
           transactions themselves, not mixed into an at-a-glance financial overview — see
-          AskOnceCard's own doc comment for what it does. */}
+          AskOnceCard's own doc comment for what it does. Groups (bigger wins) before
+          individual items. */}
+      <MerchantGroupReviewCard />
       <AskOnceCard />
 
       {error && <p className="text-danger text-sm">{error}</p>}
@@ -168,7 +174,7 @@ export default function Ledger() {
                     {t.categoryName}
                     <span
                       className={`text-[9px] uppercase ml-1.5 px-1 py-0.5 rounded ${t.categoryManuallySet ? 'bg-primary/15 text-primary' : 'bg-gray-200 text-gray-500'}`}
-                      title={t.categoryManuallySet ? 'You set this category' : 'Automatically assigned by Finora'}
+                      title={t.categoryManuallySet ? 'You set this category' : 'Automatically assigned by Fynora'}
                     >
                       {t.categoryManuallySet ? 'Manual' : 'Auto'}
                     </span>
@@ -203,7 +209,7 @@ export default function Ledger() {
                         type="button"
                         title="Delete transaction"
                         disabled={deletingId === t.id}
-                        onClick={() => handleDelete(t)}
+                        onClick={() => setConfirmDelete(t)}
                         className="w-7 h-7 rounded border border-border flex items-center justify-center text-danger hover:bg-danger-bg disabled:opacity-40"
                       >
                         <Trash2 size={13} />
@@ -262,12 +268,27 @@ export default function Ledger() {
       {explaining && (
         <ExplanationModal transaction={explaining} onClose={() => setExplaining(null)} />
       )}
+
+      {confirmDelete && (
+        <ConfirmDialog
+          title={`Delete "${confirmDelete.description || confirmDelete.merchant}"?`}
+          message={`${fmt(confirmDelete.amount)} — this can't be undone.`}
+          confirmLabel="Delete"
+          danger
+          onConfirm={() => {
+            const t = confirmDelete;
+            setConfirmDelete(null);
+            void handleDelete(t);
+          }}
+          onCancel={() => setConfirmDelete(null)}
+        />
+      )}
     </div>
   );
 }
 
 // "Why this category?" -- fetched on demand rather than carried on every row, since most rows
-// are never expanded. Every branch below is Finora's own real categorization decision read back
+// are never expanded. Every branch below is Fynora's own real categorization decision read back
 // out, not a new guess made for this panel -- see TransactionExplanationDto's own doc comment.
 function ExplanationModal({ transaction, onClose }: { transaction: Transaction; onClose: () => void }) {
   const [explanation, setExplanation] = useState<TransactionExplanation | null>(null);
@@ -304,6 +325,9 @@ function ExplanationModal({ transaction, onClose }: { transaction: Transaction; 
           ) : (
             <div className="space-y-2">
               <p className="text-ink text-sm">{explanation.summary}</p>
+              {explanation.confidence != null && (
+                <p className="text-xs text-muted">{explanation.confidence}% confidence</p>
+              )}
               {explanation.evidence.length > 0 && (
                 <ul className="list-disc list-inside space-y-1">
                   {explanation.evidence.map((line, i) => (
@@ -332,23 +356,11 @@ function EditTransactionModal({
   const [amount, setAmount] = useState(String(transaction.amount));
   const [type, setType] = useState<'INCOME' | 'EXPENSE'>(transaction.type);
   const [category, setCategory] = useState(transaction.categoryName);
+  const [creatingCategory, setCreatingCategory] = useState<string | null>(null);
   const [notes, setNotes] = useState(transaction.notes ?? '');
   const [tagsInput, setTagsInput] = useState((transaction.tags ?? []).join(', '));
-  const [categories, setCategories] = useState<string[]>([]);
-  const [categoriesFailed, setCategoriesFailed] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    // Bug fix: this was `.catch(() => {})`, which left the dropdown empty and made "the request
-    // failed" look exactly like "you have no categories" -- and the user's only recourse for an
-    // apparently-empty list is to go create categories that already exist. The edit modal still
-    // opens and still saves (the current category is preserved by the option below), so this is a
-    // notice rather than a blocker.
-    categoriesApi.list()
-      .then((cats) => setCategories(cats.map((c) => c.name)))
-      .catch(() => setCategoriesFailed(true));
-  }, []);
 
   async function save() {
     setSaving(true);
@@ -417,14 +429,20 @@ function EditTransactionModal({
             </div>
             <div>
               <label htmlFor="edit-txn-category" className="block text-[11px] uppercase text-muted mb-1">Category</label>
-              <select id="edit-txn-category" value={category} onChange={(e) => setCategory(e.target.value)} className="bg-card text-ink border border-border rounded-lg px-3 py-2 text-sm w-full">
-                {!categories.includes(category) && <option value={category}>{category}</option>}
-                {categories.map((c) => <option key={c} value={c}>{c}</option>)}
-              </select>
-              {categoriesFailed && (
-                <p className="text-[11px] text-warning mt-1">
-                  Couldn't load your categories — only the current one is shown.
-                </p>
+              {creatingCategory !== null ? (
+                <CategoryCreateEditPanel
+                  mode="create"
+                  initialName={creatingCategory}
+                  onSaved={(c) => { setCategory(c.name); setCreatingCategory(null); }}
+                  onCancel={() => setCreatingCategory(null)}
+                />
+              ) : (
+                <CategoryCombobox
+                  inputId="edit-txn-category"
+                  value={category}
+                  onChange={setCategory}
+                  onCreateNew={setCreatingCategory}
+                />
               )}
             </div>
             <div className="col-span-2">
@@ -441,7 +459,7 @@ function EditTransactionModal({
             <button
               onClick={save}
               disabled={saving || !description.trim() || !amount || !(parseFloat(amount) > 0)}
-              className="bg-primary text-white hover:bg-primary-dark px-4 py-2 rounded-lg text-xs font-semibold disabled:opacity-50"
+              className="bg-primary text-on-primary hover:bg-primary-dark px-4 py-2 rounded-lg text-xs font-semibold disabled:opacity-50"
             >
               {saving ? 'Saving…' : 'Save changes'}
             </button>

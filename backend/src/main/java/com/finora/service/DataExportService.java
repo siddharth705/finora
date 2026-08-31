@@ -7,10 +7,14 @@ import com.finora.budgets.BudgetService;
 import com.finora.dto.CategoryDto;
 import com.finora.dto.DataExportDto.AccountExportEntry;
 import com.finora.dto.DataExportDto.GmailConnectionExportDto;
+import com.finora.dto.DataExportDto.GoalContributionExportDto;
+import com.finora.dto.DataExportDto.GoalExportEntry;
 import com.finora.dto.DataExportDto.Manifest;
 import com.finora.dto.DataExportDto.ManifestEntry;
 import com.finora.dto.DataExportDto.MerchantExportDto;
 import com.finora.dto.DataExportDto.NetWorthSnapshotExportDto;
+import com.finora.dto.DataExportDto.PlanChangeExportDto;
+import com.finora.dto.DataExportDto.SubscriptionExportDto;
 import com.finora.dto.ImportDto.ImportSessionSummaryDto;
 import com.finora.dto.ImportDto.StagedAccountSection;
 import com.finora.dto.RelationshipDto;
@@ -20,10 +24,15 @@ import com.finora.dto.WorkspaceSettingsDto;
 import com.finora.entity.Account;
 import com.finora.entity.Category;
 import com.finora.entity.ImportSession;
+import com.finora.entity.Plan;
+import com.finora.entity.PlanChange;
+import com.finora.entity.Subscription;
 import com.finora.entity.User;
 import com.finora.exception.ApiException;
+import com.finora.goals.Goal;
+import com.finora.goals.GoalContributionRepository;
 import com.finora.goals.GoalDto;
-import com.finora.goals.GoalService;
+import com.finora.goals.GoalRepository;
 import com.finora.imports.ImportSessionService;
 import com.finora.imports.jobs.ImportJobDto;
 import com.finora.integrations.google.GmailConnectionRepository;
@@ -34,8 +43,11 @@ import com.finora.repository.ImportJobRepository;
 import com.finora.repository.ImportSessionRepository;
 import com.finora.repository.MerchantRepository;
 import com.finora.repository.NetWorthSnapshotRepository;
+import com.finora.repository.PlanChangeRepository;
+import com.finora.repository.PlanRepository;
 import com.finora.repository.StatementImportRepository;
 import com.finora.repository.StatementImportRepository.StatementMetadata;
+import com.finora.repository.SubscriptionRepository;
 import com.finora.repository.TransactionRepository;
 import com.finora.repository.UserRepository;
 import com.finora.rules.RuleDto;
@@ -52,8 +64,10 @@ import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 import java.util.zip.ZipEntry;
@@ -69,7 +83,11 @@ import java.util.zip.ZipOutputStream;
  * bookkeeping), {@code password_history} (never had anything to show), and the merchant-learning
  * tables ({@code merchant_aliases}/{@code merchant_category_map}/{@code
  * merchant_category_learning}/{@code merchant_learning_audit}/{@code merchant_learning_event} --
- * derived categorization intelligence, not data the user provided).
+ * derived categorization intelligence, not data the user provided). {@code subscription_events}
+ * (D-28 PR4-A) joins that same excluded set for the same reason as {@code audit_logs}: an
+ * internal lifecycle/analytics log, not data the user provided -- the subscription itself, and
+ * its upgrade/downgrade history, are still read, into {@code subscriptions.json} and {@code
+ * plan_changes.json} respectively.
  *
  * <h2>Two phases, for one specific reason</h2>
  * {@link #buildBundle} runs entirely inside one {@code @Transactional(readOnly = true)} call,
@@ -99,7 +117,8 @@ public class DataExportService {
     private final AccountRepository accountRepository;
     private final TransactionRepository transactionRepository;
     private final BudgetService budgetService;
-    private final GoalService goalService;
+    private final GoalRepository goalRepository;
+    private final GoalContributionRepository goalContributionRepository;
     private final CategoryRepository categoryRepository;
     private final CategoryRuleRepository categoryRuleRepository;
     private final RelationshipService relationshipService;
@@ -115,24 +134,31 @@ public class DataExportService {
     private final WorkspaceSettingsService workspaceSettingsService;
     private final BankManagementService bankManagementService;
     private final AuditService auditService;
+    private final SubscriptionRepository subscriptionRepository;
+    private final PlanRepository planRepository;
+    private final PlanChangeRepository planChangeRepository;
     private final ObjectMapper objectMapper;
 
     public DataExportService(UserRepository userRepository, GoogleReauthVerifier googleReauthVerifier,
                               AccountRepository accountRepository, TransactionRepository transactionRepository,
-                              BudgetService budgetService, GoalService goalService, CategoryRepository categoryRepository,
+                              BudgetService budgetService, GoalRepository goalRepository,
+                              GoalContributionRepository goalContributionRepository, CategoryRepository categoryRepository,
                               CategoryRuleRepository categoryRuleRepository, RelationshipService relationshipService,
                               NetWorthSnapshotRepository netWorthSnapshotRepository, MerchantRepository merchantRepository,
                               ImportJobRepository importJobRepository, ImportSessionRepository importSessionRepository,
                               ImportSessionService importSessionService, StatementImportRepository statementImportRepository,
                               StatementImportService statementImportService, GmailConnectionRepository gmailConnectionRepository,
                               UserSettingsService userSettingsService, WorkspaceSettingsService workspaceSettingsService,
-                              BankManagementService bankManagementService, AuditService auditService, ObjectMapper objectMapper) {
+                              BankManagementService bankManagementService, AuditService auditService,
+                              SubscriptionRepository subscriptionRepository, PlanRepository planRepository,
+                              PlanChangeRepository planChangeRepository, ObjectMapper objectMapper) {
         this.userRepository = userRepository;
         this.googleReauthVerifier = googleReauthVerifier;
         this.accountRepository = accountRepository;
         this.transactionRepository = transactionRepository;
         this.budgetService = budgetService;
-        this.goalService = goalService;
+        this.goalRepository = goalRepository;
+        this.goalContributionRepository = goalContributionRepository;
         this.categoryRepository = categoryRepository;
         this.categoryRuleRepository = categoryRuleRepository;
         this.relationshipService = relationshipService;
@@ -148,6 +174,9 @@ public class DataExportService {
         this.workspaceSettingsService = workspaceSettingsService;
         this.bankManagementService = bankManagementService;
         this.auditService = auditService;
+        this.subscriptionRepository = subscriptionRepository;
+        this.planRepository = planRepository;
+        this.planChangeRepository = planChangeRepository;
         this.objectMapper = objectMapper;
     }
 
@@ -166,10 +195,10 @@ public class DataExportService {
      * penalize a user whose purge is the one that's broken.
      */
     @Transactional(readOnly = true)
-    public ExportBundle buildBundle(UUID userId, String currentPassword, String googleIdToken) {
+    public ExportBundle buildBundle(UUID userId, String currentPassword, String googleIdToken, String appleIdToken) {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "User not found"));
-        if (!googleReauthVerifier.verify(user, currentPassword, googleIdToken)) {
+        if (!googleReauthVerifier.verify(user, currentPassword, googleIdToken, appleIdToken)) {
             // recordEvenOnRollback, not record: this method is @Transactional(readOnly = true),
             // and throwing ApiException right after a plain record() call would roll the audit
             // write back along with the (nonexistent) rest of this transaction -- see that
@@ -177,7 +206,9 @@ public class DataExportService {
             auditService.recordEvenOnRollback(userId, "INVALID_CURRENT_PASSWORD", "User", userId);
             throw new ApiException(HttpStatus.BAD_REQUEST, user.isGoogleAccount()
                     ? "We couldn't verify your Google account. Please try again."
-                    : "Current password is incorrect.");
+                    : user.isAppleAccount()
+                            ? "We couldn't verify your Apple account. Please try again."
+                            : "Current password is incorrect.");
         }
 
         // Mirrors AccountPurgeSweepService.purgeOne()'s own table order.
@@ -214,10 +245,27 @@ public class DataExportService {
                 .toList();
 
         List<BudgetDto> budgets = budgetService.listForUser(userId);
-        List<GoalDto> goals = goalService.listForUser(userId);
+
+        // Mirrors accounts.json's own findByUserIdIncludingDeleted treatment above -- reads
+        // directly via GoalRepository rather than GoalService.listForUser, which is also the live
+        // Goals page's own data source and stays filtered to non-deleted goals on purpose (see
+        // GoalRepository.findByUserIdIncludingDeleted's own doc comment).
+        List<Goal> goalEntities = goalRepository.findByUserIdIncludingDeleted(userId);
+        List<GoalExportEntry> goals = goalEntities.stream()
+                .map(g -> new GoalExportEntry(
+                        new GoalDto(g.getId(), g.getName(), g.getTargetAmount(), g.getCurrentAmount(), g.getTargetDate()),
+                        g.getDeletedAt() != null, g.getDeletedAt()))
+                .toList();
+
+        // Batched across every one of this user's goals (including soft-deleted ones, so a
+        // deleted goal's contribution history still exports) rather than one query per goal.
+        List<GoalContributionExportDto> goalContributions = goalContributionRepository
+                .findByGoalIdInOrderByContributedAtDesc(goalEntities.stream().map(Goal::getId).toList()).stream()
+                .map(GoalContributionExportDto::from)
+                .toList();
 
         List<CategoryDto> categories = userCategories.stream()
-                .map(c -> new CategoryDto(c.getId(), c.getName(), c.isSystem()))
+                .map(c -> new CategoryDto(c.getId(), c.getName(), c.isSystem(), c.getIcon(), c.getColor()))
                 .toList();
         List<RuleDto> categoryRules = categoryRuleRepository.findByUserId(userId).stream()
                 .map(RuleDto::from)
@@ -272,9 +320,40 @@ public class DataExportService {
         UserSettingsDto userSettings = userSettingsService.get(userId);
         WorkspaceSettingsDto workspaceSettings = workspaceSettingsService.get(userId);
 
-        return new ExportBundle(userId, user.getEmail(), accounts, transactions, budgets, goals, categories,
-                categoryRules, relationships, netWorthSnapshots, merchants, importJobs, importSessions,
-                statementSummaries, gmailConnections, userSettings, workspaceSettings);
+        // D-28 PR4-A: subscriptions and plan_changes are now in AccountPurgeSweepService's purge
+        // scope (see SubscriptionRepository.hardDeleteByUserId's own doc comment -- plan_changes
+        // cascades from subscriptions via subscription_id), so this class's own "mirrors the
+        // purge scope exactly" rule means they belong here too. Reads via
+        // findByUserIdIncludingDeletedOrderByCreatedAtDesc, the same soft-delete-aware treatment
+        // accounts.json/goals.json already get.
+        List<Subscription> subscriptions = subscriptionRepository.findByUserIdIncludingDeletedOrderByCreatedAtDesc(userId);
+        List<PlanChange> planChanges = planChangeRepository.findBySubscriptionIdInOrderByCreatedAtDesc(
+                subscriptions.stream().map(Subscription::getId).toList());
+
+        // One batched Plan lookup shared by both DTOs below -- every planId a subscription is
+        // currently on, plus every fromPlanId/toPlanId a plan_changes row ever referenced (a
+        // downgrade's fromPlanId can be a plan the subscription isn't on anymore).
+        Set<UUID> planIdsToResolve = new HashSet<>();
+        subscriptions.forEach(s -> planIdsToResolve.add(s.getPlanId()));
+        planChanges.forEach(pc -> {
+            if (pc.getFromPlanId() != null) planIdsToResolve.add(pc.getFromPlanId());
+            planIdsToResolve.add(pc.getToPlanId());
+        });
+        Map<UUID, Plan> plansById = planRepository.findAllById(planIdsToResolve.stream().toList()).stream()
+                .collect(Collectors.toMap(Plan::getId, p -> p));
+
+        // planId/fromPlanId/toPlanId resolved to the plan's own code/name, not left as raw FKs --
+        // same treatment transactions.json already gives categoryId.
+        List<SubscriptionExportDto> subscriptionExports = subscriptions.stream()
+                .map(s -> SubscriptionExportDto.from(s, plansById.get(s.getPlanId())))
+                .toList();
+        List<PlanChangeExportDto> planChangeExports = planChanges.stream()
+                .map(pc -> PlanChangeExportDto.from(pc, plansById.get(pc.getFromPlanId()), plansById.get(pc.getToPlanId())))
+                .toList();
+
+        return new ExportBundle(userId, user.getEmail(), accounts, transactions, budgets, goals, goalContributions,
+                categories, categoryRules, relationships, netWorthSnapshots, merchants, importJobs, importSessions,
+                statementSummaries, gmailConnections, userSettings, workspaceSettings, subscriptionExports, planChangeExports);
     }
 
     /**
@@ -297,6 +376,7 @@ public class DataExportService {
             writeJsonEntry(zos, "transactions.json", bundle.transactions());
             writeJsonEntry(zos, "budgets.json", bundle.budgets());
             writeJsonEntry(zos, "goals.json", bundle.goals());
+            writeJsonEntry(zos, "goal_contributions.json", bundle.goalContributions());
             writeJsonEntry(zos, "categories.json", bundle.categories());
             writeJsonEntry(zos, "category_rules.json", bundle.categoryRules());
             writeJsonEntry(zos, "relationships.json", bundle.relationships());
@@ -308,6 +388,8 @@ public class DataExportService {
             writeJsonEntry(zos, "gmail_connection.json", bundle.gmailConnections());
             writeJsonEntry(zos, "account_settings.json", bundle.userSettings());
             writeJsonEntry(zos, "workspace_settings.json", bundle.workspaceSettings());
+            writeJsonEntry(zos, "subscriptions.json", bundle.subscriptions());
+            writeJsonEntry(zos, "plan_changes.json", bundle.planChanges());
 
             for (Summary statement : bundle.statementSummaries()) {
                 String entryName = "statements/" + statement.id() + "-" + sanitize(statement.fileName());
@@ -377,6 +459,7 @@ public class DataExportService {
                 new ManifestEntry("transactions.json", "Every transaction on your ledger.", bundle.transactions().size()),
                 new ManifestEntry("budgets.json", "Your monthly category budgets.", bundle.budgets().size()),
                 new ManifestEntry("goals.json", "Your savings goals.", bundle.goals().size()),
+                new ManifestEntry("goal_contributions.json", "Every contribution you've made toward a savings goal.", bundle.goalContributions().size()),
                 new ManifestEntry("categories.json", "Your custom transaction categories.", bundle.categories().size()),
                 new ManifestEntry("category_rules.json", "Your own auto-categorization rules.", bundle.categoryRules().size()),
                 new ManifestEntry("relationships.json", "People/accounts you've linked transactions to.", bundle.relationships().size()),
@@ -388,7 +471,9 @@ public class DataExportService {
                 new ManifestEntry("statements/", "The original statement files you uploaded, where still retrievable.", bundle.statementSummaries().size()),
                 new ManifestEntry("gmail_connection.json", "Your Gmail connection status, if any (no credentials).", bundle.gmailConnections().size()),
                 new ManifestEntry("account_settings.json", "Your profile and account preferences.", null),
-                new ManifestEntry("workspace_settings.json", "Your categorization workspace preferences.", null)
+                new ManifestEntry("workspace_settings.json", "Your categorization workspace preferences.", null),
+                new ManifestEntry("subscriptions.json", "Your plan and subscription history.", bundle.subscriptions().size()),
+                new ManifestEntry("plan_changes.json", "Your subscription upgrade/downgrade history.", bundle.planChanges().size())
         );
         List<ManifestEntry> excluded = List.of(
                 new ManifestEntry("audit_logs", "Your own actions are logged for security, not collected as your data.", null),
@@ -396,7 +481,8 @@ public class DataExportService {
                         "Derived categorization intelligence Finora builds from your transactions, not data you provided directly.", null),
                 new ManifestEntry("refresh_tokens", "Login session bookkeeping (device/IP history), not your financial data.", null),
                 new ManifestEntry("password_history", "Used only to block password reuse; never held anything to show.", null),
-                new ManifestEntry("statement_analysis_sessions", "Internal parsing evidence Finora keeps to improve statement recognition, not part of your ledger.", null)
+                new ManifestEntry("statement_analysis_sessions", "Internal parsing evidence Finora keeps to improve statement recognition, not part of your ledger.", null),
+                new ManifestEntry("subscription_events", "An internal lifecycle/analytics log of your subscription, not data you provided -- your plan history itself is in subscriptions.json and plan_changes.json.", null)
         );
         return new Manifest(Instant.now(), bundle.userId(), bundle.email(), included, excluded);
     }
@@ -446,11 +532,13 @@ public class DataExportService {
     public record ExportBundle(
             UUID userId, String email,
             List<AccountExportEntry> accounts, List<TransactionDto> transactions, List<BudgetDto> budgets,
-            List<GoalDto> goals, List<CategoryDto> categories, List<RuleDto> categoryRules,
+            List<GoalExportEntry> goals, List<GoalContributionExportDto> goalContributions,
+            List<CategoryDto> categories, List<RuleDto> categoryRules,
             List<RelationshipDto> relationships, List<NetWorthSnapshotExportDto> netWorthSnapshots,
             List<MerchantExportDto> merchants, List<ImportJobDto.Progress> importJobs,
             List<ImportSessionSummaryDto> importSessions,
             List<Summary> statementSummaries, List<GmailConnectionExportDto> gmailConnections,
-            UserSettingsDto userSettings, WorkspaceSettingsDto workspaceSettings
+            UserSettingsDto userSettings, WorkspaceSettingsDto workspaceSettings,
+            List<SubscriptionExportDto> subscriptions, List<PlanChangeExportDto> planChanges
     ) {}
 }

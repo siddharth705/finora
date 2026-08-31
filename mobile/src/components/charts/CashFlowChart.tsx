@@ -1,10 +1,11 @@
 import { StyleSheet, Text, View } from 'react-native';
-import Svg, { Line, Polyline, Circle } from 'react-native-svg';
+import Svg, { Line, Circle } from 'react-native-svg';
 import { fmtCurrency } from '../../lib/format';
 import {
-  CASHFLOW_HEIGHT, CASHFLOW_PAD_TOP, CASHFLOW_PLOT_HEIGHT, cashFlowScale,
+  CASHFLOW_HEIGHT, CASHFLOW_PAD_TOP, CASHFLOW_PLOT_HEIGHT, cashFlowScale, polylineLength, toSvgPoints,
 } from '../../lib/chartGeometry';
 import { spacing, useTheme } from '../../theme';
+import { CHART_REVEAL_DURATION, RevealPolyline } from './ChartReveal';
 
 export interface CashFlowPoint {
   label: string;
@@ -25,8 +26,12 @@ export function CashFlowChart({ points, width }: { points: CashFlowPoint[]; widt
   }
 
   const { xAt, yAt } = cashFlowScale(points, width);
-  const toPolyline = (pick: (p: CashFlowPoint) => number) =>
-    points.map((p, i) => `${xAt(i)},${yAt(pick(p))}`).join(' ');
+  // Each series' {x,y} pairs computed once, not once for the SVG points string and again for
+  // polylineLength -- both are derived from this same array.
+  const toSeries = (pick: (p: CashFlowPoint) => number) =>
+    points.map((p, i) => ({ x: xAt(i), y: yAt(pick(p)) }));
+  const incomeSeries = toSeries((p) => p.income);
+  const expenseSeries = toSeries((p) => p.expense);
 
   return (
     <View>
@@ -47,8 +52,21 @@ export function CashFlowChart({ points, width }: { points: CashFlowPoint[]; widt
             stroke={c.border}
             strokeWidth={1}
           />
-          <Polyline points={toPolyline((p) => p.income)} fill="none" stroke={c.success} strokeWidth={2} />
-          <Polyline points={toPolyline((p) => p.expense)} fill="none" stroke={c.danger} strokeWidth={2} />
+          <RevealPolyline
+            points={toSvgPoints(incomeSeries)}
+            length={polylineLength(incomeSeries)}
+            color={c.success}
+            strokeWidth={2}
+          />
+          <RevealPolyline
+            points={toSvgPoints(expenseSeries)}
+            length={polylineLength(expenseSeries)}
+            color={c.danger}
+            strokeWidth={2}
+            // Expense sweeps in just behind income, not simultaneously -- a small stagger reads
+            // as two distinct series arriving, not one blob.
+            delay={CHART_REVEAL_DURATION / 3}
+          />
           {points.map((p, i) => (
             <Circle key={`i-${p.label}`} cx={xAt(i)} cy={yAt(p.income)} r={3} fill={c.success} />
           ))}

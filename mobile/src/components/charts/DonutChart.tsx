@@ -1,10 +1,13 @@
+import { useMemo } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
-import Svg, { Circle, G, Path } from 'react-native-svg';
+import Svg, { Circle, G } from 'react-native-svg';
 import { fmtCurrency } from '../../lib/format';
 import {
-  DONUT_CENTER, DONUT_RADIUS, DONUT_SIZE, DONUT_STROKE, arcPath, buildArcs,
+  DONUT_CENTER, DONUT_RADIUS, DONUT_SIZE, DONUT_STROKE, buildArcs,
 } from '../../lib/chartGeometry';
+import { useLargeFontScale } from '../../lib/useLargeFontScale';
 import { spacing, useTheme } from '../../theme';
+import { RevealArc } from './ChartReveal';
 
 export interface Slice {
   label: string;
@@ -22,7 +25,10 @@ export interface Slice {
  */
 export function DonutChart({ slices, centerLabel }: { slices: Slice[]; centerLabel?: string }) {
   const c = useTheme();
-  const arcs = buildArcs(slices);
+  const largeText = useLargeFontScale();
+  // Both callers already memoize `slices` specifically so a re-render doesn't redo this work --
+  // that memoization only pays off if buildArcs itself doesn't run again on every render too.
+  const arcs = useMemo(() => buildArcs(slices), [slices]);
   // By position, not by label -- see ArcSlice.index. Looking the colour up by label gave two
   // same-named holdings the same colour and one shared React key.
   const colorFor = (arcIndex: number) => slices[arcIndex]?.color ?? c.primary;
@@ -49,28 +55,19 @@ export function DonutChart({ slices, centerLabel }: { slices: Slice[]; centerLab
       <View>
         <Svg width={DONUT_SIZE} height={DONUT_SIZE}>
           <G>
-            {arcs.map((a) =>
-              a.full ? (
-                <Circle
-                  key={a.index}
-                  cx={DONUT_CENTER}
-                  cy={DONUT_CENTER}
-                  r={DONUT_RADIUS}
-                  stroke={colorFor(a.index)}
-                  strokeWidth={DONUT_STROKE}
-                  fill="none"
-                />
-              ) : (
-                <Path
-                  key={a.index}
-                  d={arcPath(a.start, a.end)}
-                  stroke={colorFor(a.index)}
-                  strokeWidth={DONUT_STROKE}
-                  fill="none"
-                  strokeLinecap="butt"
-                />
-              )
-            )}
+            {arcs.map((a, renderIndex) => (
+              <RevealArc
+                key={a.index}
+                a={a}
+                color={colorFor(a.index)}
+                strokeWidth={DONUT_STROKE}
+                // Staggered by RENDER order, not `a.index` (the pre-filter position in the
+                // caller's array) -- a.index skips values dropped by buildArcs's zero/negative
+                // filter, so using it here left uneven gaps between slices whenever any category
+                // had no spend.
+                delay={renderIndex * 60}
+              />
+            ))}
           </G>
         </Svg>
         {centerLabel ? (
@@ -89,10 +86,10 @@ export function DonutChart({ slices, centerLabel }: { slices: Slice[]; centerLab
         {arcs.map((a) => (
           <View key={a.index} style={styles.legendRow} accessible accessibilityLabel={`${a.label}: ${fmtCurrency(a.value)}`}>
             <View style={[styles.swatch, { backgroundColor: colorFor(a.index) }]} />
-            <Text style={[styles.legendLabel, { color: c.ink }]} numberOfLines={1}>
+            <Text style={[styles.legendLabel, { color: c.ink }]} numberOfLines={largeText ? 2 : 1}>
               {a.label}
             </Text>
-            <Text style={[styles.legendValue, { color: c.muted }]}>{fmtCurrency(a.value)}</Text>
+            <Text style={[styles.legendValue, { color: c.mutedInk }]}>{fmtCurrency(a.value)}</Text>
           </View>
         ))}
       </View>

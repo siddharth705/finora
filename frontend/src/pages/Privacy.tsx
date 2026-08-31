@@ -6,11 +6,11 @@ export default function Privacy() {
   return (
     <PublicLayout
       title="Privacy Policy"
-      subtitle="Last updated: July 2026. This explains what Finora collects, why, and the rights you have over it."
+      subtitle="Last updated: July 2026. This explains what Fynora collects, why, and the rights you have over it."
     >
       <PublicSection title="Information We Collect">
         <p>
-          Finora collects the information you provide directly (registration details, account and transaction
+          Fynora collects the information you provide directly (registration details, account and transaction
           data you add or import) and a small amount of technical information needed to operate the Service
           securely (login timestamps, IP address at login, device/browser information for session security).
         </p>
@@ -26,7 +26,7 @@ export default function Privacy() {
 
       <PublicSection title="Financial Data">
         <p>
-          Finora stores the accounts, transactions, budgets, goals, and categorization data you create or
+          Fynora stores the accounts, transactions, budgets, goals, and categorization data you create or
           import. This data is used exclusively to power the features you use — dashboards, reports, budgets,
           and insights — and is never sold to third parties or used for advertising.
         </p>
@@ -42,7 +42,7 @@ export default function Privacy() {
 
       <PublicSection title="Cookies">
         <p>
-          Finora uses essential, session-related storage (such as your authentication token) to keep you
+          Fynora uses essential, session-related storage (such as your authentication token) to keep you
           signed in. We do not currently use third-party advertising or tracking cookies.
         </p>
       </PublicSection>
@@ -51,7 +51,7 @@ export default function Privacy() {
         <p>
           We may collect aggregated, non-identifying usage data (such as which features are used most) to
           improve the product. This is never combined with your individual financial data for any purpose
-          outside operating and improving Finora itself.
+          outside operating and improving Fynora itself.
         </p>
       </PublicSection>
 
@@ -67,7 +67,7 @@ export default function Privacy() {
         <p>
           Passwords are hashed with bcrypt and never stored or logged in plain text. Password reset tokens are
           hashed before storage, so a database compromise alone cannot be used to reset an account. All traffic
-          between your browser and Finora's servers is encrypted in transit (HTTPS).
+          between your browser and Fynora's servers is encrypted in transit (HTTPS).
         </p>
       </PublicSection>
 
@@ -88,7 +88,7 @@ export default function Privacy() {
 
       <PublicSection title="Data Deletion">
         <p>
-          You may delete individual transactions, accounts, or statements from within Finora, or request full
+          You may delete individual transactions, accounts, or statements from within Fynora, or request full
           account deletion by contacting{' '}
           <a href={SUPPORT_MAILTO} className="text-primary hover:underline">{SUPPORT_EMAIL}</a>.
           Full account deletion removes your personal information and financial data from active systems.
@@ -97,7 +97,7 @@ export default function Privacy() {
 
       <PublicSection title="Third-Party Services">
         <p>
-          Finora does not sell your data to third parties. Where a third-party service is used (such as an
+          Fynora does not sell your data to third parties. Where a third-party service is used (such as an
           email or SMS provider to deliver password reset links or OTP codes), only the minimum information
           needed to deliver that message is shared.
         </p>

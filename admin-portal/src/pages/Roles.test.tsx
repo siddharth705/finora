@@ -19,6 +19,13 @@ import type { PermissionDto, RoleDto } from '../types';
  * and the create/grant/revoke mutations RoleCard and RolesContent expose.
  */
 
+// AdminLayout now renders ThemeToggle (dark-mode support), which calls useTheme() --
+// same reason adminSearchApi is stubbed below for GlobalSearch: a real ThemeProvider isn't
+// mounted in these tests, so without this mock every AdminLayout-wrapped page throws before
+// any assertion runs.
+vi.mock('../context/ThemeContext', () => ({
+  useTheme: () => ({ theme: 'system', resolvedTheme: 'light', setTheme: vi.fn() }),
+}));
 vi.mock('../context/AdminAuthContext', () => ({
   useAdminAuth: vi.fn(),
 }));
@@ -172,6 +179,8 @@ describe('Roles', () => {
     // (a tooltip), not its accessible name (computed from the visible "×" text content), so this
     // targets it via getByTitle rather than getByRole's name matcher.
     await user.click(screen.getByTitle('Revoke'));
+    // Custom in-app confirmation (ConfirmDialog), not the browser's own confirm().
+    await user.click(await screen.findByRole('button', { name: 'Revoke' }));
 
     await waitFor(() => expect(adminRolesApi.revokePermission).toHaveBeenCalledWith('role-1', 'perm-1'));
   });

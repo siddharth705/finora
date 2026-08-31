@@ -9,6 +9,13 @@ import { mockAdminAuthState } from '../test/mockAdminAuth';
 import { adminBanksApi } from '../api/endpoints';
 import type { BankDto } from '../types';
 
+// AdminLayout now renders ThemeToggle (dark-mode support), which calls useTheme() --
+// same reason adminSearchApi is stubbed below for GlobalSearch: a real ThemeProvider isn't
+// mounted in these tests, so without this mock every AdminLayout-wrapped page throws before
+// any assertion runs.
+vi.mock('../context/ThemeContext', () => ({
+  useTheme: () => ({ theme: 'system', resolvedTheme: 'light', setTheme: vi.fn() }),
+}));
 vi.mock('../context/AdminAuthContext', () => ({
   useAdminAuth: vi.fn(),
 }));
@@ -44,6 +51,10 @@ const HDFC: BankDto = {
   supportedAccountTypes: ['SAVINGS', 'CREDIT_CARD'],
 };
 
+function pageOf(...rows: BankDto[]) {
+  return { content: rows, page: 0, size: 20, totalElements: rows.length, totalPages: 1 };
+}
+
 describe('Banks', () => {
   beforeEach(() => {
     vi.mocked(adminBanksApi.list).mockReset();
@@ -51,12 +62,11 @@ describe('Banks', () => {
     vi.mocked(adminBanksApi.update).mockReset();
     vi.mocked(adminBanksApi.delete).mockReset();
     vi.mocked(adminBanksApi.audit).mockReset();
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
   });
 
   it('shows an access-denied message when the account lacks BANK_MANAGE', () => {
     mockAuth([]);
-    vi.mocked(adminBanksApi.list).mockResolvedValue([]);
+    vi.mocked(adminBanksApi.list).mockResolvedValue(pageOf());
 
     renderPage();
 
@@ -65,7 +75,7 @@ describe('Banks', () => {
 
   it('renders the bank list', async () => {
     mockAuth(['BANK_MANAGE']);
-    vi.mocked(adminBanksApi.list).mockResolvedValue([HDFC]);
+    vi.mocked(adminBanksApi.list).mockResolvedValue(pageOf(HDFC));
 
     renderPage();
 
@@ -75,7 +85,7 @@ describe('Banks', () => {
 
   it('opens the EntityDrawer with Summary details when a bank is clicked', async () => {
     mockAuth(['BANK_MANAGE']);
-    vi.mocked(adminBanksApi.list).mockResolvedValue([HDFC]);
+    vi.mocked(adminBanksApi.list).mockResolvedValue(pageOf(HDFC));
     const user = userEvent.setup();
 
     renderPage();
@@ -97,9 +107,9 @@ describe('Banks', () => {
    */
   it('shows an unsafe websiteUrl as plain text, never as a clickable link', async () => {
     mockAuth(['BANK_MANAGE']);
-    vi.mocked(adminBanksApi.list).mockResolvedValue([
+    vi.mocked(adminBanksApi.list).mockResolvedValue(pageOf(
       { ...HDFC, websiteUrl: 'javascript:alert(document.cookie)' },
-    ]);
+    ));
     const user = userEvent.setup();
 
     renderPage();
@@ -113,7 +123,7 @@ describe('Banks', () => {
 
   it('shows structural fields on the Metadata tab', async () => {
     mockAuth(['BANK_MANAGE']);
-    vi.mocked(adminBanksApi.list).mockResolvedValue([HDFC]);
+    vi.mocked(adminBanksApi.list).mockResolvedValue(pageOf(HDFC));
     const user = userEvent.setup();
 
     renderPage();
@@ -129,7 +139,7 @@ describe('Banks', () => {
 
   it('loads and shows real audit history on the Audit tab', async () => {
     mockAuth(['BANK_MANAGE']);
-    vi.mocked(adminBanksApi.list).mockResolvedValue([HDFC]);
+    vi.mocked(adminBanksApi.list).mockResolvedValue(pageOf(HDFC));
     vi.mocked(adminBanksApi.audit).mockResolvedValue([
       {
         id: 'log-1', userId: 'admin-1', action: 'BANK_UPDATED', entityType: 'Bank', entityId: null,
@@ -149,7 +159,7 @@ describe('Banks', () => {
 
   it('shows an empty-state message on the Audit tab when there is no recorded history', async () => {
     mockAuth(['BANK_MANAGE']);
-    vi.mocked(adminBanksApi.list).mockResolvedValue([HDFC]);
+    vi.mocked(adminBanksApi.list).mockResolvedValue(pageOf(HDFC));
     vi.mocked(adminBanksApi.audit).mockResolvedValue([]);
     const user = userEvent.setup();
 
@@ -163,7 +173,7 @@ describe('Banks', () => {
 
   it('edits a bank via the Summary tab edit toggle and saves', async () => {
     mockAuth(['BANK_MANAGE']);
-    vi.mocked(adminBanksApi.list).mockResolvedValue([HDFC]);
+    vi.mocked(adminBanksApi.list).mockResolvedValue(pageOf(HDFC));
     const updated = { ...HDFC, shortName: 'HDFC Renamed' };
     vi.mocked(adminBanksApi.update).mockResolvedValue(updated);
     const user = userEvent.setup();
@@ -186,7 +196,7 @@ describe('Banks', () => {
 
   it('deletes a bank after confirmation', async () => {
     mockAuth(['BANK_MANAGE']);
-    vi.mocked(adminBanksApi.list).mockResolvedValue([HDFC]);
+    vi.mocked(adminBanksApi.list).mockResolvedValue(pageOf(HDFC));
     vi.mocked(adminBanksApi.delete).mockResolvedValue(undefined as any);
     const user = userEvent.setup();
 
@@ -194,13 +204,45 @@ describe('Banks', () => {
     await waitFor(() => expect(screen.getByText('HDFC Custom')).toBeInTheDocument());
     await user.click(screen.getByTitle('Delete'));
 
-    expect(window.confirm).toHaveBeenCalled();
+    // Custom in-app confirmation (ConfirmDialog), not the browser's own confirm() -- see this
+    // page's own doc comment on confirmDeleteBank for why.
+    expect(await screen.findByText('Remove HDFC Custom?')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Remove' }));
+
     await waitFor(() => expect(adminBanksApi.delete).toHaveBeenCalledWith('hdfc-custom'));
+  });
+
+  /** Bug fix: deleting the only bank on a page beyond the first used to leave the admin
+   *  stranded looking at an empty table with no obvious way back -- Pagination still pointed at
+   *  the now-nonexistent page. Confirms the page backs off automatically instead. */
+  it('backs off to the previous page after deleting the last bank on a later page', async () => {
+    mockAuth(['BANK_MANAGE']);
+    vi.mocked(adminBanksApi.list).mockResolvedValueOnce(
+      { content: [HDFC], page: 0, size: 20, totalElements: 21, totalPages: 2 }
+    );
+    vi.mocked(adminBanksApi.delete).mockResolvedValue(undefined as any);
+    const user = userEvent.setup();
+
+    renderPage();
+    await waitFor(() => expect(screen.getByText('HDFC Custom')).toBeInTheDocument());
+
+    vi.mocked(adminBanksApi.list).mockResolvedValueOnce({
+      content: [{ ...HDFC, id: 'iob-custom', shortName: 'IOB Custom' }],
+      page: 1, size: 20, totalElements: 21, totalPages: 2,
+    });
+    await user.click(screen.getByRole('button', { name: 'Next page' }));
+    await waitFor(() => expect(screen.getByText('IOB Custom')).toBeInTheDocument());
+
+    vi.mocked(adminBanksApi.list).mockResolvedValueOnce(pageOf(HDFC));
+    await user.click(screen.getByTitle('Delete'));
+    await user.click(await screen.findByRole('button', { name: 'Remove' }));
+
+    await waitFor(() => expect(adminBanksApi.list).toHaveBeenLastCalledWith(0, 20));
   });
 
   it('creates a new bank via the Add bank form', async () => {
     mockAuth(['BANK_MANAGE']);
-    vi.mocked(adminBanksApi.list).mockResolvedValue([]);
+    vi.mocked(adminBanksApi.list).mockResolvedValue(pageOf());
     vi.mocked(adminBanksApi.create).mockResolvedValue(HDFC);
     const user = userEvent.setup();
 
@@ -216,5 +258,24 @@ describe('Banks', () => {
     await waitFor(() => expect(adminBanksApi.create).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'IOB', shortName: 'Indian Overseas Bank', officialName: 'Indian Overseas Bank Ltd.' })
     ));
+  });
+
+  /** The custom-bank catalog is small (dozens to low hundreds, see
+   *  BankManagementService.listCustom's own doc comment) -- pagination here is UI consistency
+   *  with every other admin list page, not a scale fix. Still worth proving the page state
+   *  actually drives the next request. */
+  it('requests the next page of banks when Pagination is clicked', async () => {
+    mockAuth(['BANK_MANAGE']);
+    vi.mocked(adminBanksApi.list).mockResolvedValue(
+      { content: [HDFC], page: 0, size: 20, totalElements: 25, totalPages: 2 }
+    );
+
+    renderPage();
+    await waitFor(() => expect(screen.getByText('HDFC Custom')).toBeInTheDocument());
+    expect(screen.getByText('Page 1 of 2')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Next page' }));
+
+    await waitFor(() => expect(adminBanksApi.list).toHaveBeenCalledWith(1, 20));
   });
 });

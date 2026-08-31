@@ -34,7 +34,7 @@ describe('VerifyEmail', () => {
 
     await waitFor(() => expect(screen.getByText('Email verified')).toBeInTheDocument());
     expect(authApi.verifyEmail).toHaveBeenCalledWith('real-token');
-    expect(screen.getByRole('link', { name: 'Continue to sign in' })).toHaveAttribute('href', '/login');
+    expect(screen.getByRole('link', { name: 'Continue to sign in' })).toHaveAttribute('href', '/auth');
   });
 
   it('shows the backend error message when the token is invalid or expired', async () => {

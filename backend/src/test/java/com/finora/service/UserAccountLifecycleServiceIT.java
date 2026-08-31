@@ -53,7 +53,7 @@ class UserAccountLifecycleServiceIT extends AbstractIntegrationTest {
     @Test
     void deactivate_wrongPassword_stillPersistsTheAuditRow_despiteTheTransactionRollingBack() {
         assertThrows(ApiException.class,
-                () -> service.deactivate(userId, "definitely-the-wrong-password", null, "TAKING_A_BREAK", null));
+                () -> service.deactivate(userId, "definitely-the-wrong-password", null, null, "TAKING_A_BREAK", null));
 
         List<AuditLog> logs = auditLogRepository.findByUserIdOrderByCreatedAtDesc(userId);
         assertThat(logs).anySatisfy(log -> assertThat(log.getAction()).isEqualTo("INVALID_CURRENT_PASSWORD"));

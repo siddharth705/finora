@@ -42,6 +42,29 @@ class MerchantTemplateTest {
     }
 
     @Test
+    void matchesNonReceiptMarkerFindsAnyPipeSeparatedPhrase() {
+        MerchantTemplate t = template("Total: {amount}", "Date: {date}");
+        t.setNonReceiptMarker("Refund Processed|Return Initiated|Exchange Confirmed");
+
+        assertThat(t.matchesNonReceiptMarker("Your Refund Processed for order #123")).isTrue();
+        assertThat(t.matchesNonReceiptMarker("Return Initiated for your recent order")).isTrue();
+        assertThat(t.matchesNonReceiptMarker("Here is your Trip Fare summary")).isFalse();
+    }
+
+    @Test
+    void matchesNonReceiptMarkerIsFalseWhenBlankOrNull() {
+        MerchantTemplate t = template("Total: {amount}", "Date: {date}");
+
+        assertThat(t.matchesNonReceiptMarker("Refund Processed")).isFalse();
+
+        t.setNonReceiptMarker("");
+        assertThat(t.matchesNonReceiptMarker("Refund Processed")).isFalse();
+
+        t.setNonReceiptMarker("Refund Processed");
+        assertThat(t.matchesNonReceiptMarker(null)).isFalse();
+    }
+
+    @Test
     @DisplayName("literal text around the placeholder is matched verbatim, not as regex")
     void literalTextIsRegexEscaped() {
         // Parentheses and a dot are both regex-significant -- a naive compiler would treat "(incl.
@@ -99,6 +122,23 @@ class MerchantTemplateTest {
         assertThat(dateGroup("2026-08-12 and more text")).isEqualTo("2026-08-12");
         assertThat(dateGroup("12 August 2026, thank you")).isEqualTo("12 August 2026");
         assertThat(dateGroup("12/08/2026. See you soon")).isEqualTo("12/08/2026");
+        assertThat(dateGroup("12-08-2026. See you soon")).isEqualTo("12-08-2026");
+    }
+
+    /**
+     * dd-MM-yyyy (day first) and yyyy-MM-dd (ISO, year first) are both hyphen-separated, so the
+     * capture regex has to tell them apart by digit-group width alone -- a 4-digit first group can
+     * only be the ISO shape, a 1-2 digit first group can only be the day-first shape. Proven here
+     * because a subtle overlap would silently produce the wrong date rather than fail loudly.
+     */
+    @Test
+    @DisplayName("day-first and ISO hyphenated dates do not get confused with each other")
+    void hyphenatedDayFirstAndIsoDatesAreDistinguished() {
+        assertThat(dateGroup("2026-08-12")).isEqualTo("2026-08-12");
+        assertThat(dateGroup("12-08-2026")).isEqualTo("12-08-2026");
+
+        assertThat(ReceiptDateFormats.tryParse("2026-08-12")).isEqualTo(java.time.LocalDate.of(2026, 8, 12));
+        assertThat(ReceiptDateFormats.tryParse("12-08-2026")).isEqualTo(java.time.LocalDate.of(2026, 8, 12));
     }
 
     private static String dateGroup(String textAfterLabel) {

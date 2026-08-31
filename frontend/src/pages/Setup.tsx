@@ -9,6 +9,7 @@ import { BankLogo } from '../components/BankLogo';
 import { MaskedAccountNumber } from '../components/MaskedAccountNumber';
 import type { Account, BankInfo } from '../types';
 import { formatDate } from '../utils/date';
+import { ConfirmDialog } from '../design-system';
 
 const TYPE_LABEL: Record<Account['accountType'], string> = {
   SAVINGS: 'Savings Account',
@@ -62,6 +63,7 @@ export default function Setup() {
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [menuOpenFor, setMenuOpenFor] = useState<string | null>(null);
+  const [confirmRemoveId, setConfirmRemoveId] = useState<string | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
 
@@ -97,7 +99,6 @@ export default function Setup() {
   }
 
   async function remove(id: string) {
-    if (!confirm('Delete this account?')) return;
     setMenuOpenFor(null);
     try {
       await accountsApi.remove(id);
@@ -143,7 +144,7 @@ export default function Setup() {
   return (
     <div className="space-y-4">
       {/* Statement import is the primary way an account is meant to get onto this page —
-          Finora detects the account details from the file and creates it automatically.
+          Fynora detects the account details from the file and creates it automatically.
           Everything below this is the manual fallback for accounts you'd rather set up by hand. */}
       <div className="bg-primary-light border border-primary/20 rounded-xl2 p-5 flex items-center justify-between gap-4 flex-wrap">
         <div className="flex items-center gap-3">
@@ -152,10 +153,10 @@ export default function Setup() {
           </div>
           <div>
             <p className="text-sm font-semibold text-ink">Import a bank or credit card statement</p>
-            <p className="text-xs text-muted">Finora detects the bank, account, and transactions automatically — no manual setup needed.</p>
+            <p className="text-xs text-muted">Fynora detects the bank, account, and transactions automatically — no manual setup needed.</p>
           </div>
         </div>
-        <Link to="/app/import" className="bg-primary text-white text-xs font-semibold rounded-lg px-4 py-2.5 flex-shrink-0">
+        <Link to="/app/import" className="bg-primary text-on-primary text-xs font-semibold rounded-lg px-4 py-2.5 flex-shrink-0">
           Import Statement
         </Link>
       </div>
@@ -216,7 +217,7 @@ export default function Setup() {
                     <Link to="/app/statements" className="text-primary border border-primary/30 rounded-lg px-3 py-1.5 text-xs font-medium">
                       Statements
                     </Link>
-                    <Link to="/app/import" className="bg-primary text-white rounded-lg px-3 py-1.5 text-xs font-medium">
+                    <Link to="/app/import" className="bg-primary text-on-primary rounded-lg px-3 py-1.5 text-xs font-medium">
                       Import New
                     </Link>
                     <div className="relative">
@@ -241,7 +242,7 @@ export default function Setup() {
                             <Link to="/app/statements" onClick={() => setMenuOpenFor(null)} className="w-full text-left px-3 py-2 text-xs text-ink hover:bg-bg flex items-center gap-2">
                               <FileText size={13} /> View Statements
                             </Link>
-                            <button onClick={() => remove(a.id)} className="w-full text-left px-3 py-2 text-xs text-danger hover:bg-bg flex items-center gap-2">
+                            <button onClick={() => { setMenuOpenFor(null); setConfirmRemoveId(a.id); }} className="w-full text-left px-3 py-2 text-xs text-danger hover:bg-bg flex items-center gap-2">
                               <Trash2 size={13} /> Delete Account
                             </button>
                           </div>
@@ -371,12 +372,27 @@ export default function Setup() {
               </div>
             </>
           )}
-          <button onClick={addAccount} disabled={saving} className="bg-primary text-white hover:bg-primary-dark px-4 py-2 rounded text-xs uppercase disabled:opacity-50">
+          <button onClick={addAccount} disabled={saving} className="bg-primary text-on-primary hover:bg-primary-dark px-4 py-2 rounded text-xs uppercase disabled:opacity-50">
             {saving ? 'Adding…' : 'Add'}
           </button>
         </div>
       </details>
       {error && <p className="text-danger text-sm">{error}</p>}
+
+      {confirmRemoveId && (
+        <ConfirmDialog
+          title="Delete this account?"
+          message="This can't be undone."
+          confirmLabel="Delete"
+          danger
+          onConfirm={() => {
+            const id = confirmRemoveId;
+            setConfirmRemoveId(null);
+            void remove(id);
+          }}
+          onCancel={() => setConfirmRemoveId(null)}
+        />
+      )}
     </div>
   );
 }

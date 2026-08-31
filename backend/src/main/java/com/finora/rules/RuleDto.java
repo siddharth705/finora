@@ -3,6 +3,7 @@ package com.finora.rules;
 import com.finora.entity.CategoryRule;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Size;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -43,10 +44,18 @@ public record RuleDto(
     ) {}
 
     /** Every field optional -- only supplied ones change, same partial-update convention as
-     *  TransactionDto.UpdateRequest. */
+     *  TransactionDto.UpdateRequest.
+     *
+     *  <p>Defense-in-depth fix: this carried zero Bean Validation and the controller had no
+     *  {@code @Valid}, the same invisible-to-FG-028 shape that caused the real
+     *  {@code AdminMerchantReviewController.merge} NPE. Safe today only because
+     *  {@code RuleService.updateGlobal} happens to null-check every field by hand before use --
+     *  {@code @Size} here matches {@code category_rules.field/operator/action_type VARCHAR(20)}
+     *  (V17 migration) so an oversized value fails validation with a specific message instead of
+     *  relying on that manual checking staying correct through a future refactor. */
     public record UpdateRequest(
-            String field, String operator, String comparisonValue,
-            String actionType, String actionValue, Integer priority, Boolean enabled
+            @Size(max = 20) String field, @Size(max = 20) String operator, String comparisonValue,
+            @Size(max = 20) String actionType, String actionValue, Integer priority, Boolean enabled
     ) {}
 
     /** Admin Rule Engine module -- "would this rule match?" against sample transaction fields,

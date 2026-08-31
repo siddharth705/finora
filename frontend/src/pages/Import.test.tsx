@@ -1,10 +1,11 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import Import from './Import';
-import { importApi, importJobsApi, categoriesApi, accountsApi, type ImportJobProgress } from '../api/endpoints';
+import { AuthProvider } from '../context/AuthContext';
+import { importApi, importJobsApi, statementImportsApi, categoriesApi, accountsApi, type ImportJobProgress } from '../api/endpoints';
 import type { Account, StagedAccountSection } from '../types';
 import { PDF_PASSWORD_REQUIRED, PDF_PASSWORD_INVALID, NO_HEADER_DETECTED, NO_TRANSACTIONS_FOUND, SCANNED_OCR_REQUIRED, CORRUPT_PDF, IMPORT_SESSION_ALREADY_CONFIRMED } from '../api/errorCodes';
 import { IMPORT_FAILURE_MESSAGES } from '../api/importFailureMessages';
@@ -26,6 +27,7 @@ vi.mock('../api/endpoints', () => ({
   statementImportsApi: {
     confirmReimport: vi.fn(),
     remove: vi.fn(),
+    supersede: vi.fn(),
   },
   categoriesApi: {
     list: vi.fn(),
@@ -124,7 +126,9 @@ function renderImport() {
     ...render(
       <QueryClientProvider client={queryClient}>
         <MemoryRouter>
-          <Import />
+          <AuthProvider>
+            <Import />
+          </AuthProvider>
         </MemoryRouter>
       </QueryClientProvider>
     ),
@@ -338,8 +342,59 @@ describe('Import — total amount due on the review screen', () => {
   });
 });
 
+describe('Import — detected merchant on the review screen', () => {
+  beforeEach(() => {
+    vi.mocked(categoriesApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(accountsApi.list).mockReset().mockResolvedValue([]);
+  });
+
+  it('shows the detected merchant name under the raw description', async () => {
+    vi.mocked(importApi.stagePdf).mockReset().mockResolvedValue({
+      sessionId: 'session-1', multiAccount: false, sections: null,
+      staging: {
+        rows: [{
+          date: '2026-07-10', description: 'UPI-SWIGGY-12345', amount: 350, type: 'EXPENSE',
+          suggestedCategory: 'Food', categorySource: 'learned', ruleId: null, likelyDuplicate: false,
+          referenceNumber: null, balanceAfter: null, duplicateMatch: null,
+          merchant: 'SWIGGY', merchantConfidence: 1.0,
+        }],
+        totalParsed: 1, flaggedDuplicates: 0, unparseableRows: [], detectedAccount,
+      },
+    } as never);
+    const user = userEvent.setup();
+    renderImport();
+
+    await pickAndUploadPdf(user);
+
+    expect(await screen.findByText('UPI-SWIGGY-12345')).toBeInTheDocument();
+    expect(screen.getByText('Detected: SWIGGY')).toBeInTheDocument();
+  });
+
+  it('shows nothing extra when no merchant was resolved', async () => {
+    vi.mocked(importApi.stagePdf).mockReset().mockResolvedValue({
+      sessionId: 'session-1', multiAccount: false, sections: null,
+      staging: {
+        rows: [{
+          date: '2026-07-10', description: 'SOME BRAND NEW SHOP', amount: 350, type: 'EXPENSE',
+          suggestedCategory: 'Other', categorySource: 'default', ruleId: null, likelyDuplicate: false,
+          referenceNumber: null, balanceAfter: null, duplicateMatch: null,
+          merchant: null, merchantConfidence: null,
+        }],
+        totalParsed: 1, flaggedDuplicates: 0, unparseableRows: [], detectedAccount,
+      },
+    } as never);
+    const user = userEvent.setup();
+    renderImport();
+
+    await pickAndUploadPdf(user);
+
+    expect(await screen.findByText('SOME BRAND NEW SHOP')).toBeInTheDocument();
+    expect(screen.queryByText(/^Detected:/)).not.toBeInTheDocument();
+  });
+});
+
 /**
- * Premium Import Reliability v1, Sprint 1 item 1: the failure UX contract. Finora's own curated
+ * Premium Import Reliability v1, Sprint 1 item 1: the failure UX contract. Fynora's own curated
  * copy, not the server's `message`, is what a user reads for a code the contract owns -- see
  * importFailureMessages.ts. A code the contract does NOT own falls through to exactly today's
  * behaviour, unchanged (covered by the two generic-fallback tests above, not repeated here).
@@ -553,7 +608,7 @@ describe('Import — password-protected PDFs', () => {
 
     await user.upload(screen.getByTestId('statement-file-input'), pdfFile());
 
-    // It's the bank's password for one document, not a Finora credential -- saving it into the
+    // It's the bank's password for one document, not a Fynora credential -- saving it into the
     // user's vault alongside real logins would be wrong, and it changes every statement anyway.
     expect(screen.getByLabelText(/statement password/i)).toHaveAttribute('autocomplete', 'off');
   });
@@ -1123,6 +1178,154 @@ describe('Import — multi-account statements get the same duplicate review', ()
 });
 
 /**
+ * Phase 4 of the statement continuity proposal (§0.3/§0.23) extended to the multi-account summary
+ * screen. Each account confirmed from a composite statement carries its own ImportSummary (one per
+ * section), so each has to render its own warnings and its own "Import this one as a replacement?"
+ * action independently -- a savings section duplicating an existing period says nothing about
+ * whether the credit-card section in the same file does too.
+ */
+describe('Import — multi-account summary screen warnings', () => {
+  function accountFor(name: string): Account {
+    return {
+      id: `acct-${name}`,
+      name,
+      accountType: 'SAVINGS',
+      balance: 0,
+      bank: detectedAccount.bank,
+      lastImportedAt: null,
+      lastStatementPeriodStart: null,
+      lastStatementPeriodEnd: null,
+      statementsCount: 1,
+      transactionsCount: 1,
+      status: 'ACTIVE',
+    };
+  }
+
+  function summaryFor(name: string, overrides: Partial<{ warnings: string[]; duplicateOfStatementId: string | null; statementImportId: string }> = {}) {
+    return {
+      imported: 1, skipped: 0, duplicatesDetected: 0, transfersIdentified: 0, newMerchantsLearned: 0,
+      accountsCreated: [], productsCreated: {}, categoriesAssigned: {},
+      warnings: overrides.warnings ?? [],
+      account: accountFor(name),
+      totalCredits: 0, totalDebits: 0, statementOpeningBalance: null, statementClosingBalance: null,
+      statementPeriodStart: null, statementPeriodEnd: null, importDurationMs: 12, source: 'PDF',
+      statementImportId: overrides.statementImportId ?? `stmt-${name}`,
+      duplicateOfStatementId: overrides.duplicateOfStatementId ?? null,
+    };
+  }
+
+  function stagedRow(description: string) {
+    return {
+      date: '2026-07-10', description, amount: 45, type: 'EXPENSE' as const,
+      suggestedCategory: 'Transport', categorySource: 'rule' as const, ruleId: null,
+      likelyDuplicate: false, referenceNumber: null, balanceAfter: null, duplicateMatch: null,
+    };
+  }
+
+  function section(name: string) {
+    return {
+      detectedAccount: { ...detectedAccount, suggestedName: name },
+      rows: [stagedRow('BLINKIT GROCERIES 9982')],
+      totalParsed: 1,
+      flaggedDuplicates: 0,
+      unparseableRows: [],
+    } as unknown as StagedAccountSection;
+  }
+
+  function stageSections(sections: StagedAccountSection[]) {
+    vi.mocked(importApi.stagePdf).mockReset().mockResolvedValue({
+      sessionId: 'session-multi-1',
+      multiAccount: true,
+      staging: null,
+      sections,
+    } as never);
+  }
+
+  beforeEach(() => {
+    vi.mocked(categoriesApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(accountsApi.list).mockReset().mockResolvedValue([]);
+  });
+
+  const confirmAll = () => screen.getByRole('button', { name: /confirm all 2 accounts/i });
+
+  /** Nothing to pay for when neither section produced a warning. */
+  it('renders no warnings block for an account with none, even when the other account has one', async () => {
+    vi.mocked(importApi.confirmMulti).mockReset().mockResolvedValue({
+      perAccount: [summaryFor('Savings'), summaryFor('Credit Card', { warnings: ['This statement has a gap before it.'] })],
+    } as never);
+    const user = userEvent.setup();
+    renderImport();
+
+    stageSections([section('Savings'), section('Credit Card')]);
+    await pickAndUploadPdf(user);
+    await screen.findByText(/this statement covers 2 accounts/i);
+    await user.click(confirmAll());
+
+    const savingsCard = await screen.findByTestId('summary-account-0');
+    const cardCard = screen.getByTestId('summary-account-1');
+    expect(within(savingsCard).queryByText(/gap before it/i)).not.toBeInTheDocument();
+    expect(within(cardCard).getByText(/gap before it/i)).toBeInTheDocument();
+  });
+
+  /** The action only appears for the account whose own period actually duplicated one on file. */
+  it('offers "Import this one as a replacement?" only for the account with a duplicateOfStatementId', async () => {
+    vi.mocked(importApi.confirmMulti).mockReset().mockResolvedValue({
+      perAccount: [
+        summaryFor('Savings', { warnings: ['This period was already imported.'], duplicateOfStatementId: 'old-savings-stmt' }),
+        summaryFor('Credit Card', { warnings: ['This period was already imported.'] }),
+      ],
+    } as never);
+    const user = userEvent.setup();
+    renderImport();
+
+    stageSections([section('Savings'), section('Credit Card')]);
+    await pickAndUploadPdf(user);
+    await screen.findByText(/this statement covers 2 accounts/i);
+    await user.click(confirmAll());
+
+    const savingsCard = await screen.findByTestId('summary-account-0');
+    const cardCard = screen.getByTestId('summary-account-1');
+    expect(within(savingsCard).getByRole('button', { name: /import this one as a replacement/i })).toBeInTheDocument();
+    expect(within(cardCard).queryByRole('button', { name: /import this one as a replacement/i })).not.toBeInTheDocument();
+  });
+
+  /**
+   * Each card's supersede flow is independent local state -- confirming the replacement for one
+   * account must not touch the other account's card, even though both are duplicates of some
+   * existing statement.
+   */
+  it('supersedes independently per account, leaving the other account untouched', async () => {
+    vi.mocked(importApi.confirmMulti).mockReset().mockResolvedValue({
+      perAccount: [
+        summaryFor('Savings', { warnings: ['This period was already imported.'], duplicateOfStatementId: 'old-savings-stmt', statementImportId: 'new-savings-stmt' }),
+        summaryFor('Credit Card', { warnings: ['This period was already imported.'], duplicateOfStatementId: 'old-cc-stmt', statementImportId: 'new-cc-stmt' }),
+      ],
+    } as never);
+    vi.mocked(statementImportsApi.supersede).mockReset().mockResolvedValue({ warning: null } as never);
+    const user = userEvent.setup();
+    renderImport();
+
+    stageSections([section('Savings'), section('Credit Card')]);
+    await pickAndUploadPdf(user);
+    await screen.findByText(/this statement covers 2 accounts/i);
+    await user.click(confirmAll());
+
+    const savingsCard = await screen.findByTestId('summary-account-0');
+    const cardCard = screen.getByTestId('summary-account-1');
+
+    await user.click(within(savingsCard).getByRole('button', { name: /import this one as a replacement/i }));
+    await user.click(screen.getByRole('button', { name: /^replace$/i }));
+
+    await waitFor(() => expect(statementImportsApi.supersede).toHaveBeenCalledWith('old-savings-stmt', 'new-savings-stmt'));
+    expect(statementImportsApi.supersede).toHaveBeenCalledTimes(1);
+    expect(within(savingsCard).getByText(/existing statement has been replaced/i)).toBeInTheDocument();
+    // The credit card card's own action is untouched -- still offering, not already replaced.
+    expect(within(cardCard).getByRole('button', { name: /import this one as a replacement/i })).toBeInTheDocument();
+    expect(within(cardCard).queryByText(/existing statement has been replaced/i)).not.toBeInTheDocument();
+  });
+});
+
+/**
  * The queued path, from upload to review.
  *
  * <b>What this is really guarding.</b> The synchronous upload returns the staged rows in its own
@@ -1240,6 +1443,36 @@ describe('Import — queued imports', () => {
     await waitFor(() => expect(screen.queryByTestId('import-progress')).not.toBeInTheDocument());
     expect(screen.getByText(/detected a/i)).toBeInTheDocument();
     expect(screen.queryByTestId('statement-file-input')).not.toBeInTheDocument();
+  });
+
+  /**
+   * Bug fix, caught by a user report: a queued job's poller reaches COMPLETED and calls
+   * getSession for the session it named -- but if that same session was already confirmed
+   * through another path in the meantime (e.g. a duplicate confirm, or the user resuming it
+   * from a second tab), the GET now 400s with IMPORT_SESSION_ALREADY_CONFIRMED. The bare catch
+   * here used to show "Your statement was imported, but the review could not be loaded. Open it
+   * from your unfinished imports" for every failure, including this one -- actively wrong twice
+   * over: nothing is unloaded (the import already succeeded and is confirmed), and confirmed
+   * sessions never appear in the unfinished-imports list, so the suggested next step is a dead
+   * end. resumeSession (a few lines below) already distinguishes this exact error by code; this
+   * mirrors that handling for the job-completion arrival path.
+   */
+  it('says the import was already reviewed, not a generic load failure, when a queued job\'s session was confirmed elsewhere first', async () => {
+    vi.mocked(importJobsApi.progress).mockResolvedValue(queuedJob({
+      status: 'COMPLETED', rowsTotal: 2, rowsProcessed: 2, importSessionId: 'session-already-confirmed',
+    }));
+    vi.mocked(importApi.getSession).mockRejectedValue({
+      response: { data: { errorCode: IMPORT_SESSION_ALREADY_CONFIRMED, message: 'This import has already been reviewed and confirmed.' } },
+    });
+    const user = userEvent.setup();
+    renderImport();
+    await waitFor(() => expect(importJobsApi.availability).toHaveBeenCalled());
+
+    await user.upload(screen.getByTestId('statement-file-input'), csvFile());
+
+    expect(await screen.findByText(/already been reviewed and confirmed/i)).toBeInTheDocument();
+    expect(screen.queryByText(/could not be loaded/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/unfinished imports/i)).not.toBeInTheDocument();
   });
 
   it('stops an import the user changed their mind about', async () => {
@@ -1445,14 +1678,16 @@ describe('Import — continuing an unfinished import', () => {
       .mockResolvedValueOnce([unfinishedSession()])
       .mockResolvedValueOnce([]);
     vi.mocked(importApi.discardSession).mockReset().mockResolvedValue(undefined as never);
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
     const user = userEvent.setup();
     renderImport();
 
     await screen.findByText('hdfc-july.pdf');
     await user.click(screen.getByTitle('Discard Unfinished Import'));
+    // Custom in-app confirmation (ConfirmDialog), not the browser's own confirm() -- see this
+    // page's own doc comment on confirmDiscardId for why.
+    expect(await screen.findByText('Discard this unfinished import?')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Discard' }));
 
-    expect(confirmSpy).toHaveBeenCalled();
     expect(importApi.discardSession).toHaveBeenCalledWith('sess-1');
     await waitFor(() => expect(screen.queryByText('hdfc-july.pdf')).not.toBeInTheDocument());
   });
@@ -1460,15 +1695,17 @@ describe('Import — continuing an unfinished import', () => {
   it('does not discard without confirmation', async () => {
     vi.mocked(importApi.listSessions).mockReset().mockResolvedValue([unfinishedSession()]);
     vi.mocked(importApi.discardSession).mockReset();
-    vi.spyOn(window, 'confirm').mockReturnValue(false);
     const user = userEvent.setup();
     renderImport();
 
     await screen.findByText('hdfc-july.pdf');
     await user.click(screen.getByTitle('Discard Unfinished Import'));
+    await screen.findByText('Discard this unfinished import?');
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
 
     expect(importApi.discardSession).not.toHaveBeenCalled();
     expect(screen.getByText('hdfc-july.pdf')).toBeInTheDocument();
+    expect(screen.queryByText('Discard this unfinished import?')).not.toBeInTheDocument();
   });
 
   /**
@@ -1490,7 +1727,6 @@ describe('Import — continuing an unfinished import', () => {
     vi.mocked(importApi.stageCsv).mockReset().mockRejectedValue({
       response: { data: { errorCode: NO_HEADER_DETECTED, message: 'server-only wording' } },
     });
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
     const user = userEvent.setup();
     renderImport();
 
@@ -1499,6 +1735,8 @@ describe('Import — continuing an unfinished import', () => {
     await screen.findByText(IMPORT_FAILURE_MESSAGES[NO_HEADER_DETECTED]);
 
     await user.click(screen.getByTitle('Discard Unfinished Import'));
+    await screen.findByText('Discard this unfinished import?');
+    await user.click(screen.getByRole('button', { name: 'Discard' }));
 
     await waitFor(() =>
       expect(screen.queryByText(IMPORT_FAILURE_MESSAGES[NO_HEADER_DETECTED])).not.toBeInTheDocument()
@@ -1526,7 +1764,9 @@ describe('Import — resuming via navigation state', () => {
     return render(
       <QueryClientProvider client={queryClient}>
         <MemoryRouter initialEntries={[{ pathname: '/app/import', state: { kind: 'resume', resumeSessionId } }]}>
-          <Import />
+          <AuthProvider>
+            <Import />
+          </AuthProvider>
         </MemoryRouter>
       </QueryClientProvider>
     );
@@ -1634,7 +1874,9 @@ describe('Import — arriving to retry a failed sync import', () => {
           pathname: '/app/import',
           state: { kind: 'retry', retryFileName, retryFailureCode },
         }]}>
-          <Import />
+          <AuthProvider>
+            <Import />
+          </AuthProvider>
         </MemoryRouter>
       </QueryClientProvider>
     );
@@ -1746,7 +1988,7 @@ describe('Import — arriving to retry a failed sync import', () => {
     renderImportWithRetryState('bad-statement.pdf', null);
 
     await screen.findByTestId('statement-dropzone');
-    expect(screen.getByText(/Finora couldn't complete this import\./)).toBeInTheDocument();
+    expect(screen.getByText(/Fynora couldn't complete this import\./)).toBeInTheDocument();
   });
 
   it('does not stage or resume anything -- the person must still pick the file', async () => {
@@ -1795,5 +2037,134 @@ describe('Import — arriving to retry a failed sync import', () => {
     // navigation and local useState updates commit on separate ticks. findByTestId resolving
     // only proves the dropzone is back, not that retryState has cleared yet.
     await waitFor(() => expect(screen.queryByTestId('retry-import-banner')).not.toBeInTheDocument());
+  });
+});
+
+/**
+ * docs/proposals/account-ownership-intelligence-proposal.md §3.1: the client-side pre-check that
+ * decides whether to show the "Statement Check" dialog before confirming. The backend's own
+ * OwnershipMatchService (which persists the authoritative result) is covered separately in
+ * ImportServiceSessionTest -- this only covers the frontend gate.
+ */
+describe('Import — ownership name-mismatch warning', () => {
+  function detectedAccountWithHolder(accountHolderName: string | null) {
+    return { ...detectedAccount, accountHolderName };
+  }
+
+  function stageWithHolder(accountHolderName: string | null) {
+    vi.mocked(importApi.stagePdf).mockReset().mockResolvedValue({
+      sessionId: 'session-1',
+      multiAccount: false,
+      sections: null,
+      staging: {
+        rows: [],
+        totalParsed: 0,
+        flaggedDuplicates: 0,
+        detectedAccount: detectedAccountWithHolder(accountHolderName),
+        unparseableRows: [],
+      },
+    } as never);
+  }
+
+  beforeEach(() => {
+    localStorage.setItem('finora_name', 'Rahul Sharma');
+    vi.mocked(categoriesApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(accountsApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(importApi.confirm).mockReset().mockResolvedValue({
+      imported: 1, skipped: 0, duplicatesDetected: 0, transfersIdentified: 0, newMerchantsLearned: 0,
+      accountsCreated: [], productsCreated: {}, categoriesAssigned: {}, warnings: [], account: null,
+      totalCredits: 0, totalDebits: 0, statementOpeningBalance: null, statementClosingBalance: null,
+      statementPeriodStart: null, statementPeriodEnd: null, importDurationMs: 12, source: 'PDF',
+    } as never);
+  });
+
+  afterEach(() => localStorage.removeItem('finora_name'));
+
+  it('shows the warning and does not confirm yet when the holder name differs from the profile', async () => {
+    stageWithHolder('Sunil Verma');
+    const user = userEvent.setup();
+    renderImport();
+
+    await pickAndUploadPdf(user);
+    await user.click(screen.getByRole('button', { name: /confirm import/i }));
+
+    expect(await screen.findByText('Statement Check')).toBeInTheDocument();
+    expect(screen.getByText(/Sunil Verma/)).toBeInTheDocument();
+    expect(screen.getByText(/Rahul Sharma/)).toBeInTheDocument();
+    expect(importApi.confirm).not.toHaveBeenCalled();
+  });
+
+  it('confirms with userConfirmedContinue once the user clicks Continue Import', async () => {
+    stageWithHolder('Sunil Verma');
+    const user = userEvent.setup();
+    renderImport();
+
+    await pickAndUploadPdf(user);
+    await user.click(screen.getByRole('button', { name: /confirm import/i }));
+    await screen.findByText('Statement Check');
+    await user.click(screen.getByRole('button', { name: 'Continue Import' }));
+
+    await waitFor(() => expect(importApi.confirm).toHaveBeenCalledTimes(1));
+    expect(importApi.confirm).toHaveBeenCalledWith(
+      expect.objectContaining({ userConfirmedContinue: true }),
+    );
+  });
+
+  it('returns to the upload step without confirming when the user picks Upload Different Statement', async () => {
+    stageWithHolder('Sunil Verma');
+    const user = userEvent.setup();
+    renderImport();
+
+    await pickAndUploadPdf(user);
+    await user.click(screen.getByRole('button', { name: /confirm import/i }));
+    await screen.findByText('Statement Check');
+    await user.click(screen.getByRole('button', { name: 'Upload Different Statement' }));
+
+    await screen.findByTestId('statement-dropzone');
+    expect(importApi.confirm).not.toHaveBeenCalled();
+  });
+
+  it('never shows the warning when the holder name matches the profile', async () => {
+    stageWithHolder('Rahul Sharma');
+    const user = userEvent.setup();
+    renderImport();
+
+    await pickAndUploadPdf(user);
+    await user.click(screen.getByRole('button', { name: /confirm import/i }));
+
+    await waitFor(() => expect(importApi.confirm).toHaveBeenCalledTimes(1));
+    expect(screen.queryByText('Statement Check')).not.toBeInTheDocument();
+    expect(importApi.confirm).toHaveBeenCalledWith(
+      expect.objectContaining({ userConfirmedContinue: undefined }),
+    );
+  });
+
+  it('never shows the warning when the statement has no extractable holder name', async () => {
+    stageWithHolder(null);
+    const user = userEvent.setup();
+    renderImport();
+
+    await pickAndUploadPdf(user);
+    await user.click(screen.getByRole('button', { name: /confirm import/i }));
+
+    await waitFor(() => expect(importApi.confirm).toHaveBeenCalledTimes(1));
+    expect(screen.queryByText('Statement Check')).not.toBeInTheDocument();
+  });
+
+  it('never shows the warning when the profile itself has no name on file', async () => {
+    // fullName is genuinely nullable -- Apple Sign-In only supplies it on the first authorization
+    // (AuthContext's loginWithApple). Without the guard this regression-tests, isLikelyMatch(holder,
+    // null) always returns false, so EVERY import with an extractable holder name would warn,
+    // forever, for a user in this state -- and the dialog would show "null" as their profile name.
+    localStorage.removeItem('finora_name');
+    stageWithHolder('Sunil Verma');
+    const user = userEvent.setup();
+    renderImport();
+
+    await pickAndUploadPdf(user);
+    await user.click(screen.getByRole('button', { name: /confirm import/i }));
+
+    await waitFor(() => expect(importApi.confirm).toHaveBeenCalledTimes(1));
+    expect(screen.queryByText('Statement Check')).not.toBeInTheDocument();
   });
 });

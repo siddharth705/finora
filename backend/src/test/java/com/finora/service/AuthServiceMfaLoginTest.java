@@ -41,6 +41,7 @@ class AuthServiceMfaLoginTest {
     private RefreshTokenService refreshTokenService;
     private PlatformSettingsService platformSettingsService;
     private AuditService auditService;
+    private com.finora.config.RequestMetadata requestMetadata;
     private AdminMfaService adminMfaService;
     private AuthService authService;
     private final UUID userId = UUID.randomUUID();
@@ -57,6 +58,8 @@ class AuthServiceMfaLoginTest {
         when(platformSettingsService.getEntity()).thenReturn(new com.finora.entity.PlatformSettings());
         auditService = mock(AuditService.class);
         adminMfaService = mock(AdminMfaService.class);
+        requestMetadata = mock(com.finora.config.RequestMetadata.class);
+        when(requestMetadata.addTo(any())).thenAnswer(inv -> inv.getArgument(0));
         // app.admin-mfa.enabled -- on here so every test below exercises the gate's own placement
         // and behavior exactly as it worked before that flag existed. See the "feature flag"
         // section for flag-off behavior, which overrides this to false per test.
@@ -70,7 +73,10 @@ class AuthServiceMfaLoginTest {
                 auditService, refreshTokenService, mock(EmailProvider.class),
                 new EmailProperties(), mock(PhoneVerificationProvider.class), platformSettingsService,
                 mock(PasswordHistoryService.class), new IdentityLookup(userRepository),
-                mock(com.finora.config.RequestMetadata.class),
+                requestMetadata,
+                mock(com.finora.service.SubscriptionService.class),
+                mock(com.finora.service.ReferralService.class),
+                mock(com.finora.service.MerchantSeedService.class),
                 Runnable::run,
                 adminMfaService
         );
@@ -106,7 +112,7 @@ class AuthServiceMfaLoginTest {
 
         // No session actually began -- this is only the first factor.
         verify(refreshTokenService, never()).issue(any());
-        verify(auditService, never()).record(any(), eq("USER_LOGIN"), any(), any());
+        verify(auditService, never()).record(any(), eq("USER_LOGIN"), any(), any(), any());
     }
 
     @Test
@@ -119,7 +125,7 @@ class AuthServiceMfaLoginTest {
 
         assertThat(response.refreshToken()).isEqualTo("test-refresh-token");
         verify(adminMfaService, never()).issueChallenge(any());
-        verify(auditService).record(userId, "USER_LOGIN", "User", userId);
+        verify(auditService).record(eq(userId), eq("USER_LOGIN"), eq("User"), eq(userId), any());
     }
 
     @Test
@@ -184,7 +190,7 @@ class AuthServiceMfaLoginTest {
         assertThat(response.refreshToken()).isEqualTo("test-refresh-token");
         verify(adminMfaService, never()).isEnabled(any());
         verify(adminMfaService, never()).issueChallenge(any());
-        verify(auditService).record(userId, "USER_LOGIN", "User", userId);
+        verify(auditService).record(eq(userId), eq("USER_LOGIN"), eq("User"), eq(userId), any());
     }
 
     @Test

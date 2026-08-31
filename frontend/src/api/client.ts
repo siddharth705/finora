@@ -49,8 +49,8 @@ const BASE_URL = import.meta.env.VITE_API_BASE_URL
 //
 // DEPLOYMENT PRECONDITION, because this now depends on it rather than merely benefiting from it:
 // the cookie is Secure, SameSite=Lax and host-only, scoped to /api/v1/auth. It reaches the API
-// only when the app and the API share a registrable domain (app.finoratech.info /
-// api.finoratech.info). Point VITE_API_BASE_URL at a different site -- a *.pages.dev or a bare
+// only when the app and the API share a registrable domain (app.fynora.net /
+// api.fynora.net). Point VITE_API_BASE_URL at a different site -- a *.pages.dev or a bare
 // *.up.railway.app -- and the browser will not attach it, refresh will fail, and users will be
 // signed out every 15 minutes. That was survivable before because localStorage papered over it.
 export const api = axios.create({ baseURL: BASE_URL, withCredentials: true });
@@ -111,10 +111,25 @@ export interface ApiEnvelope<T> {
 // /auth/apple is listed here too even though this app never calls it (Apple Sign-In is iOS-only,
 // see D-26) -- the checker treats this list as a declared policy, not a per-app usage log, so
 // admin-portal's copy carries it for the same reason.
-const AUTH_ENDPOINTS_NO_TOKEN = ['/auth/login', '/auth/register', '/auth/refresh', '/auth/forgot-password', '/auth/reset-password', '/auth/reactivate', '/auth/google', '/auth/apple'];
+const AUTH_ENDPOINTS_NO_TOKEN = ['/auth/login', '/auth/register', '/auth/refresh', '/auth/forgot-password', '/auth/reset-password', '/auth/reactivate', '/auth/google', '/auth/apple', '/auth/identify'];
+
+// Bug 42. This used to be a plain `.includes(path)` scan, which matches the substring ANYWHERE in
+// the request URL, including a query string -- e.g. `/some/unrelated/endpoint?next=/auth/login`
+// would have been treated as an auth endpoint, silently withholding the Bearer token (request
+// interceptor below) or skipping 401-retry/redirect handling (response interceptor below) for a
+// request that has nothing to do with auth. Every entry in the list above already starts with `/`,
+// so comparing against the END of the URL's path (query string stripped) is exact rather than a
+// substring scan. This is a shared PREDICATE, not the `.some()` call itself -- both interceptors
+// below still call `AUTH_ENDPOINTS_NO_TOKEN.some(...)` directly, deliberately, so
+// scripts/check-client-auth-policy.py can keep enforcing that both decision points actually
+// consult the list (see that script's own docstring for the incident that shape exists to catch).
+function pathMatchesAuthEndpoint(url: string | undefined, entry: string): boolean {
+  const path = url?.split('?')[0];
+  return !!path && (path === entry || path.endsWith(entry));
+}
 
 api.interceptors.request.use((config) => {
-  const isAuthEndpoint = AUTH_ENDPOINTS_NO_TOKEN.some((path) => config.url?.includes(path));
+  const isAuthEndpoint = AUTH_ENDPOINTS_NO_TOKEN.some((path) => pathMatchesAuthEndpoint(config.url, path));
   if (!isAuthEndpoint) {
     const token = getAccessToken();
     if (token) {
@@ -166,7 +181,7 @@ export function clearSessionAndRedirect(reason?: string) {
   // more useful than a silent bounce to the login screen.
   safeStorage.setItem(SESSION_ENDED_REASON_KEY,
     reason || 'Your session has ended. Please sign in again to continue.');
-  window.location.href = '/login';
+  window.location.href = '/auth';
 }
 
 // Every backend response arrives wrapped in a standard envelope:
@@ -266,7 +281,7 @@ api.interceptors.response.use(
     // wrong. admin-portal/src/api/client.ts already guards this exact case (its own comment
     // describes the same symptom); this app was never updated to match, though it already had the
     // AUTH_ENDPOINTS_NO_TOKEN list above and used it in the request interceptor.
-    const isAuthEndpoint = AUTH_ENDPOINTS_NO_TOKEN.some((path) => originalRequest.url?.includes(path));
+    const isAuthEndpoint = AUTH_ENDPOINTS_NO_TOKEN.some((path) => pathMatchesAuthEndpoint(originalRequest.url, path));
 
     if (error.response?.status === 401 && !originalRequest._retried && !isAuthEndpoint) {
       originalRequest._retried = true;
@@ -293,7 +308,13 @@ api.interceptors.response.use(
           return Promise.reject(error);
         }
       } else {
+        // Bug 41. Missing a `return` here (unlike both branches of the `if` above, which return
+        // immediately after calling clearSessionAndRedirect()) let execution fall through to the
+        // 403/phone-verification check and the envelope-normalizing block below -- running
+        // unrelated logic, including a window.location.pathname read, after the session had
+        // already been torn down and a hard navigation to /login already kicked off.
         clearSessionAndRedirect();
+        return Promise.reject(error);
       }
     }
 

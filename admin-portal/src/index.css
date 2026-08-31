@@ -4,9 +4,10 @@
 
 /*
  * Same theme palette as the user frontend's src/index.css (kept in sync deliberately -- this is
- * the same product, viewed through an admin-only lens, not a different visual product). No
- * landing-page animation keyframes here since this app has no marketing/public pages at all --
- * everything behind AdminProtectedRoute requires a login first.
+ * the same product, viewed through an admin-only lens, not a different visual product) -- Quiet
+ * Mark's graphite/paper --color-primary family included. No landing-page animation keyframes
+ * here since this app has no marketing/public pages at all -- everything behind
+ * AdminProtectedRoute requires a login first.
  */
 :root {
   --color-sidebar: #1f1420;
@@ -19,9 +20,14 @@
   --color-ink: 15 23 42;
   --color-muted: #64748B;
 
-  --color-primary: 37 99 235;
-  --color-primary-dark: #1D4ED8;
-  --color-primary-light: #EFF5FF;
+  --color-primary: 38 42 51;
+  --color-primary-dark: #15171C;
+  --color-primary-light: #F4F1EC;
+  /* Text/icon colour for anything sitting ON a primary-coloured surface -- see the identical
+     token in the user frontend's src/index.css. Was safe to hardcode `text-white` while primary
+     was always a mid-to-dark blue in both themes; dark mode's primary is now light paper, where
+     white text is nearly invisible, so this needs to flip opposite to primary itself. */
+  --color-on-primary: #FFFFFF;
 
   --color-success: #16a34a;
   --color-success-bg: #dcfce7;
@@ -42,9 +48,10 @@
   --color-ink: 226 232 240;
   --color-muted: #94A3B8;
 
-  --color-primary: 96 165 250;
-  --color-primary-dark: #3B82F6;
-  --color-primary-light: #172554;
+  --color-primary: 244 241 236;
+  --color-primary-dark: #DAD5C9;
+  --color-primary-light: #26241F;
+  --color-on-primary: #15171C;
 
   --color-success: #22c55e;
   --color-success-bg: #12301f;

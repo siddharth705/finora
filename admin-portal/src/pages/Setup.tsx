@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import { Link, Navigate, useNavigate } from 'react-router-dom';
 import { Sparkles, ShieldAlert, UserPlus, ShieldCheck, Check } from 'lucide-react';
 import { setupApi } from '../api/endpoints';
+import { PasswordInput } from '../components/PasswordInput';
 
 type Step = 'checking' | 'key' | 'create-admin' | 'done';
 
@@ -27,7 +28,7 @@ function StepIndicator({ current }: { current: Step }) {
           <div key={s.key} className="flex items-center gap-2">
             <div
               className={`w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 transition-colors ${
-                isDone ? 'bg-success text-white' : isActive ? 'bg-primary text-white' : 'bg-card border border-border text-muted'
+                isDone ? 'bg-success text-white' : isActive ? 'bg-primary text-on-primary' : 'bg-card border border-border text-muted'
               }`}
               title={s.label}
             >
@@ -131,10 +132,13 @@ export default function Setup() {
     <div className="min-h-screen bg-bg flex items-center justify-center p-4">
       <div className="w-full max-w-sm">
         <div className="flex items-center gap-2.5 justify-center mb-2">
-          <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-rose-400 to-primary-dark flex items-center justify-center">
+          {/* to-[#15171C] rather than to-primary-dark: primary-dark flips to light paper in dark
+              mode, which would fade this badge's rose-to-dark gradient into a rose-to-pale one --
+              pinning the dark end keeps the white icon readable in both themes. */}
+          <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-rose-400 to-[#15171C] flex items-center justify-center">
             <Sparkles size={18} className="text-white" strokeWidth={2.5} />
           </div>
-          <span className="font-extrabold tracking-wide text-xl text-ink">FINORA</span>
+          <span className="font-extrabold tracking-wide text-xl text-ink">FYNORA</span>
         </div>
         <p className="text-center text-sm text-muted mb-8">Let's get your platform set up.</p>
 
@@ -149,25 +153,24 @@ export default function Setup() {
             <Card>
               <div>
                 <p className="text-sm font-semibold text-ink mb-1">Enter your installation key</p>
-                <p className="text-xs text-muted">A one-time key was generated when Finora first started.</p>
+                <p className="text-xs text-muted">A one-time key was generated when Fynora first started.</p>
               </div>
 
               {!installationKeyAvailable && (
                 <p className="text-sm text-warning bg-warning-bg rounded-lg px-3.5 py-2.5">
-                  Finora couldn't find an installation key. It may not have been generated yet,
+                  Fynora couldn't find an installation key. It may not have been generated yet,
                   or has already been used elsewhere -- see below for where to look, or ask
-                  whoever deployed Finora for the key.
+                  whoever deployed Fynora for the key.
                 </p>
               )}
 
-              <input
-                type="password"
+              <PasswordInput
                 required
                 autoFocus
                 placeholder="Installation key"
                 value={installationKey}
-                onChange={(e) => setInstallationKey(e.target.value)}
-                className="w-full bg-bg border border-border rounded-lg px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                onChange={setInstallationKey}
+                className="w-full bg-bg border border-border rounded-lg px-3.5 py-2.5 pr-10 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
               />
 
               {error && <p className="text-sm text-danger bg-danger-bg rounded-lg px-3.5 py-2.5">{error}</p>}
@@ -175,7 +178,7 @@ export default function Setup() {
               <button
                 type="submit"
                 disabled={submitting}
-                className="w-full bg-primary hover:bg-primary-dark text-white font-semibold rounded-lg py-2.5 text-sm disabled:opacity-50"
+                className="w-full bg-primary hover:bg-primary-dark text-on-primary font-semibold rounded-lg py-2.5 text-sm disabled:opacity-50"
               >
                 {submitting ? 'Verifying…' : 'Continue'}
               </button>
@@ -183,10 +186,10 @@ export default function Setup() {
               <details className="text-xs text-muted">
                 <summary className="cursor-pointer font-medium text-ink select-none">Where do I find it?</summary>
                 <p className="mt-2 leading-relaxed">
-                  For a local installation, Finora writes it to a file named{' '}
+                  For a local installation, Fynora writes it to a file named{' '}
                   <code className="bg-bg px-1 py-0.5 rounded">installation.key</code> inside a{' '}
                   <code className="bg-bg px-1 py-0.5 rounded">.finora</code> folder in your project
-                  directory. If that file isn't there, the key was printed to Finora's own startup
+                  directory. If that file isn't there, the key was printed to Fynora's own startup
                   output instead -- look for a message starting with "FINORA FIRST-RUN SETUP."
                 </p>
               </details>
@@ -226,23 +229,21 @@ export default function Setup() {
                 onChange={(e) => setPhoneNumber(e.target.value)}
                 className="w-full bg-bg border border-border rounded-lg px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
               />
-              <input
-                type="password"
+              <PasswordInput
                 required
                 minLength={8}
                 maxLength={72}
                 placeholder="Password (at least 8 characters)"
                 value={adminPassword}
-                onChange={(e) => setAdminPassword(e.target.value)}
-                className="w-full bg-bg border border-border rounded-lg px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                onChange={setAdminPassword}
+                className="w-full bg-bg border border-border rounded-lg px-3.5 py-2.5 pr-10 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
               />
-              <input
-                type="password"
+              <PasswordInput
                 required
                 placeholder="Confirm password"
                 value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                className="w-full bg-bg border border-border rounded-lg px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                onChange={setConfirmPassword}
+                className="w-full bg-bg border border-border rounded-lg px-3.5 py-2.5 pr-10 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
               />
 
               {error && <p className="text-sm text-danger bg-danger-bg rounded-lg px-3.5 py-2.5">{error}</p>}
@@ -250,7 +251,7 @@ export default function Setup() {
               <button
                 type="submit"
                 disabled={submitting}
-                className="w-full bg-primary hover:bg-primary-dark text-white font-semibold rounded-lg py-2.5 text-sm disabled:opacity-50"
+                className="w-full bg-primary hover:bg-primary-dark text-on-primary font-semibold rounded-lg py-2.5 text-sm disabled:opacity-50"
               >
                 {submitting ? 'Creating your account…' : 'Finish setup'}
               </button>
@@ -274,7 +275,7 @@ export default function Setup() {
             <button
               type="button"
               onClick={() => navigate('/login')}
-              className="w-full bg-primary hover:bg-primary-dark text-white font-semibold rounded-lg py-2.5 text-sm"
+              className="w-full bg-primary hover:bg-primary-dark text-on-primary font-semibold rounded-lg py-2.5 text-sm"
             >
               Continue to sign in
             </button>

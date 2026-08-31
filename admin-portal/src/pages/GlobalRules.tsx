@@ -5,6 +5,8 @@ import { AdminLayout } from '../components/AdminLayout';
 import { RequirePermission } from '../components/ProtectedRoute';
 import { FormPanel } from '../components/FormPanel';
 import { DataTable, type DataTableColumn } from '../components/DataTable';
+import { ConfirmDialog } from '../components/ConfirmDialog';
+import { Pagination } from '../components/Pagination';
 import { useNotify } from '../context/NotificationContext';
 import { adminRulesApi } from '../api/endpoints';
 import type { CreateRuleRequest, RuleDto } from '../types';
@@ -12,6 +14,8 @@ import type { CreateRuleRequest, RuleDto } from '../types';
 const FIELDS = ['DESCRIPTION', 'AMOUNT', 'MERCHANT', 'ACCOUNT_TYPE'];
 const OPERATORS = ['CONTAINS', 'EQUALS', 'STARTS_WITH', 'GT', 'LT', 'BETWEEN'];
 const ACTION_TYPES = ['ASSIGN_CATEGORY', 'MARK_TRANSFER', 'MARK_INVESTMENT', 'MARK_SUBSCRIPTION', 'ADD_TAG'];
+
+const PAGE_SIZE = 20;
 
 const BLANK_FORM: CreateRuleRequest = {
   field: 'DESCRIPTION', operator: 'CONTAINS', comparisonValue: '', actionType: 'ASSIGN_CATEGORY', actionValue: '', priority: 100,
@@ -211,11 +215,13 @@ function GlobalRulesContent() {
   const notify = useNotify();
   const [showCreate, setShowCreate] = useState(false);
   const [editing, setEditing] = useState<RuleDto | null>(null);
+  const [confirmDeleteRule, setConfirmDeleteRule] = useState<RuleDto | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
+  const [page, setPage] = useState(0);
 
   const { data: rules, isLoading } = useQuery({
-    queryKey: ['admin-rules'],
-    queryFn: () => adminRulesApi.list(),
+    queryKey: ['admin-rules', page],
+    queryFn: () => adminRulesApi.list(page, PAGE_SIZE),
   });
 
   function invalidate() {
@@ -257,6 +263,10 @@ function GlobalRulesContent() {
   const deleteMutation = useMutation({
     mutationFn: (id: string) => adminRulesApi.delete(id),
     onSuccess: () => {
+      // Deleting the last row on a page beyond the first would otherwise leave the admin
+      // stranded on a now-empty page -- back off to the previous one so the list they land on
+      // actually has something in it, same as Pagination.tsx never rendering "Page 2 of 1".
+      setPage((p) => (p > 0 && (rules?.content.length ?? 0) <= 1 ? p - 1 : p));
       invalidate();
       notify.success('Rule deleted.');
     },
@@ -318,11 +328,7 @@ function GlobalRulesContent() {
             type="button"
             title="Delete"
             disabled={deleteMutation.isPending}
-            onClick={() => {
-              if (confirm('Delete this global rule? It stops applying to every user immediately.')) {
-                deleteMutation.mutate(rule.id);
-              }
-            }}
+            onClick={() => setConfirmDeleteRule(rule)}
             className="w-8 h-8 rounded-lg hover:bg-danger-bg text-muted hover:text-danger inline-flex items-center justify-center"
           >
             <Trash2 size={14} />
@@ -346,7 +352,7 @@ function GlobalRulesContent() {
               setShowCreate(true);
               setFormError(null);
             }}
-            className="inline-flex items-center gap-1.5 bg-primary hover:bg-primary-dark text-white text-sm font-semibold rounded-lg px-4 py-2.5 flex-shrink-0"
+            className="inline-flex items-center gap-1.5 bg-primary hover:bg-primary-dark text-on-primary text-sm font-semibold rounded-lg px-4 py-2.5 flex-shrink-0"
           >
             <Plus size={15} /> New rule
           </button>
@@ -390,11 +396,35 @@ function GlobalRulesContent() {
 
       <DataTable
         columns={columns}
-        rows={rules}
+        rows={rules?.content ?? []}
         keyFor={(rule) => rule.id}
         loading={isLoading}
         emptyMessage="No global rules yet."
       />
+      {rules && (
+        <Pagination
+          page={page}
+          totalPages={rules.totalPages}
+          totalElements={rules.totalElements}
+          pageSize={PAGE_SIZE}
+          onPageChange={setPage}
+        />
+      )}
+
+      {confirmDeleteRule && (
+        <ConfirmDialog
+          title="Delete this global rule?"
+          message="It stops applying to every user immediately."
+          confirmLabel="Delete"
+          danger
+          onConfirm={() => {
+            const id = confirmDeleteRule.id;
+            setConfirmDeleteRule(null);
+            deleteMutation.mutate(id);
+          }}
+          onCancel={() => setConfirmDeleteRule(null)}
+        />
+      )}
     </div>
   );
 }

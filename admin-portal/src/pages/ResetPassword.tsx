@@ -3,6 +3,7 @@ import type { FormEvent } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { ShieldAlert } from 'lucide-react';
 import { authApi } from '../api/endpoints';
+import { PasswordInput } from '../components/PasswordInput';
 import { sendPhoneVerificationCode, confirmPhoneVerificationCode, resetPhoneVerification } from '../lib/phoneAuth';
 import { maskPhone } from '../lib/maskPhone';
 import type { ConfirmationResult } from 'firebase/auth';
@@ -10,7 +11,7 @@ import type { ConfirmationResult } from 'firebase/auth';
 const RECAPTCHA_CONTAINER_ID = 'reset-password-recaptcha';
 
 // Same heuristic as frontend/'s Register.tsx/ResetPassword.tsx -- kept identical so the meter
-// means the same thing wherever a password gets set anywhere in Finora, admin or not.
+// means the same thing wherever a password gets set anywhere in Fynora, admin or not.
 function passwordStrength(pw: string): { score: number; label: string; color: string } {
   let score = 0;
   if (pw.length >= 8) score++;
@@ -132,10 +133,13 @@ export default function ResetPassword() {
     <div className="min-h-screen bg-bg flex items-center justify-center p-4">
       <div className="w-full max-w-sm">
         <div className="flex items-center gap-2.5 justify-center mb-8">
-          <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-rose-400 to-primary-dark flex items-center justify-center">
+          {/* to-[#15171C] rather than to-primary-dark: primary-dark flips to light paper in dark
+              mode, which would fade this badge's rose-to-dark gradient into a rose-to-pale one --
+              pinning the dark end keeps the white icon readable in both themes. */}
+          <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-rose-400 to-[#15171C] flex items-center justify-center">
             <ShieldAlert size={18} className="text-white" strokeWidth={2.5} />
           </div>
-          <span className="font-extrabold tracking-wide text-xl text-ink">FINORA ADMIN</span>
+          <span className="font-extrabold tracking-wide text-xl text-ink">FYNORA ADMIN</span>
         </div>
 
         <div className="bg-card border border-border rounded-xl2 shadow-soft p-6">
@@ -190,17 +194,16 @@ export default function ResetPassword() {
               )}
 
               <label htmlFor="reset-new-password" className="block text-sm font-medium text-ink mb-1.5">New password</label>
-              <input
+              <PasswordInput
                 id="reset-new-password"
-                type="password"
                 required
                 minLength={8}
                 maxLength={72}
                 autoComplete="new-password"
                 value={password}
-                onChange={(e) => setPassword(e.target.value)}
+                onChange={setPassword}
                 onBlur={() => markTouched('password')}
-                className="w-full bg-bg border border-border rounded-lg px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                className="w-full bg-bg border border-border rounded-lg px-3.5 py-2.5 pr-10 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
               />
               {password.length > 0 && (
                 <div className="mt-2 mb-1">
@@ -219,15 +222,14 @@ export default function ResetPassword() {
               </p>
 
               <label htmlFor="reset-confirm-password" className="block text-sm font-medium text-ink mb-1.5">Confirm password</label>
-              <input
+              <PasswordInput
                 id="reset-confirm-password"
-                type="password"
                 required
                 autoComplete="new-password"
                 value={confirm}
-                onChange={(e) => setConfirm(e.target.value)}
+                onChange={setConfirm}
                 onBlur={() => markTouched('confirm')}
-                className="w-full bg-bg border border-border rounded-lg px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 mb-1"
+                className="w-full bg-bg border border-border rounded-lg px-3.5 py-2.5 pr-10 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 mb-1"
               />
               <p className="text-[11px] mb-4 h-3.5">
                 {touched.confirm && !passwordsMatch && <span className="text-danger">Passwords don't match.</span>}
@@ -236,7 +238,7 @@ export default function ResetPassword() {
               <button
                 type="submit"
                 disabled={loading || !formValid}
-                className="w-full bg-primary hover:bg-primary-dark text-white font-semibold rounded-lg py-2.5 text-sm disabled:opacity-50"
+                className="w-full bg-primary hover:bg-primary-dark text-on-primary font-semibold rounded-lg py-2.5 text-sm disabled:opacity-50"
               >
                 {loading ? 'Updating…' : 'Update password'}
               </button>

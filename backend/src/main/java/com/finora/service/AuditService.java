@@ -123,6 +123,16 @@ public class AuditService {
         record(userId, action, entityType, entityId, null);
     }
 
+    // Self-service login history (Phase 2 audit hardening / user-security-center-proposal.md
+    // §3.1) -- behind a service method, not a direct repository call from LoginHistoryController,
+    // per CODING_STANDARDS.md's "controllers stay thin" rule (LayerDependencyDirectionTest).
+    private static final List<String> LOGIN_ACTIONS =
+            List.of("USER_LOGIN", "USER_LOGIN_GOOGLE", "USER_LOGIN_APPLE", "LOGIN_FAILED");
+
+    public List<AuditLog> findLoginHistory(UUID userId) {
+        return auditLogRepository.findTop50ByUserIdAndActionInOrderByCreatedAtDesc(userId, LOGIN_ACTIONS);
+    }
+
     /**
      * Same as {@link #record}, except the row is committed in its own transaction rather than
      * joining the caller's.

@@ -110,6 +110,27 @@ class PhoneVerificationFilterTest {
         assertThat(responseBody.toString()).contains("PHONE_VERIFICATION_REQUIRED");
     }
 
+    /**
+     * Bug 26 (docs/quality/bug-reports/BUG_REVIEW_REPORT.md). An empty Optional -- the user row
+     * was not found by the id the principal carries -- used to fall through the whole gate and
+     * let the request proceed, a security control failing open. JwtAuthFilter resolves every
+     * legitimate principal through this exact same table moments earlier, so reaching here with
+     * nothing found means a genuine race (the row was deleted between the two reads) or worse --
+     * neither should ever be treated as "verified."
+     */
+    @Test
+    void blocksTheRequest_whenTheUserRowCannotBeFound() throws Exception {
+        authenticateAs("ghost@example.com");
+        when(userRepository.findPhoneVerifiedById(idFor("ghost@example.com")))
+                .thenReturn(Optional.empty());
+
+        filter.doFilter(requestFor("/api/v1/accounts"), response, filterChain);
+
+        verify(response).setStatus(HttpServletResponse.SC_FORBIDDEN);
+        verify(filterChain, never()).doFilter(any(), any());
+        assertThat(responseBody.toString()).contains("PHONE_VERIFICATION_REQUIRED");
+    }
+
     @Test
     void allowsAVerifiedUser_throughToTheProtectedEndpoint() throws Exception {
         authenticateAs("verified@example.com");

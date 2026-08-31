@@ -128,7 +128,7 @@ export function DeleteAccountModal({ onClose, onDeleted, signInMethod }: {
   }
 
   return (
-    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-30" onClick={onClose}>
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-30" onClick={onClose} data-testid="delete-account-modal">
       <div className="bg-card rounded-xl2 shadow-card p-6 w-[420px] max-w-[90vw]" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-4">
           <h2 className="font-serif text-lg font-semibold text-ink">Delete Account</h2>

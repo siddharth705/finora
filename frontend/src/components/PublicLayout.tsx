@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowLeft, Sparkles } from 'lucide-react';
+import { BrandMark } from './BrandMark';
 
 /**
  * Shared shell for the public/legal pages linked from Landing.tsx's footer (Terms, Privacy,
@@ -14,8 +15,8 @@ export function PublicLayout({ title, subtitle, children }: { title: string; sub
       <header className="sticky top-0 z-30 bg-[#0a0b16]/90 backdrop-blur border-b border-white/5">
         <div className="max-w-4xl mx-auto px-6 py-4 flex items-center justify-between">
           <Link to="/" className="flex items-center gap-2">
-            <span className="w-8 h-8 rounded-lg bg-gradient-to-br from-primary to-primary-dark flex items-center justify-center text-white font-black text-sm">F</span>
-            <span className="font-extrabold tracking-wide text-white">Finora</span>
+            <BrandMark size={32} invert className="rounded-lg" />
+            <span className="font-extrabold tracking-wide text-white">Fynora</span>
           </Link>
           <Link to="/" className="flex items-center gap-1.5 text-sm text-gray-400 hover:text-white transition-colors">
             <ArrowLeft size={15} /> Back to home
@@ -25,8 +26,11 @@ export function PublicLayout({ title, subtitle, children }: { title: string; sub
 
       <section className="border-b border-white/5">
         <div className="max-w-4xl mx-auto px-6 pt-16 pb-10">
-          <span className="inline-flex items-center gap-1.5 text-xs font-medium text-primary bg-primary/10 border border-primary/20 rounded-full px-3 py-1 mb-4">
-            <Sparkles size={12} /> Finora
+          {/* This page is dark by design regardless of the app's own light/dark toggle, so it
+              can't use the toggling `primary` token (which is dark graphite in light mode) --
+              needs the fixed, always-light accent this fixed-dark surface actually requires. */}
+          <span className="inline-flex items-center gap-1.5 text-xs font-medium text-[#F4F1EC] bg-[#F4F1EC]/10 border border-[#F4F1EC]/20 rounded-full px-3 py-1 mb-4">
+            <Sparkles size={12} /> Fynora
           </span>
           <h1 className="text-3xl md:text-4xl font-extrabold text-white mb-3">{title}</h1>
           {subtitle && <p className="text-gray-400 text-base max-w-2xl">{subtitle}</p>}
@@ -37,7 +41,7 @@ export function PublicLayout({ title, subtitle, children }: { title: string; sub
 
       <footer className="border-t border-white/5">
         <div className="max-w-4xl mx-auto px-6 py-8 flex flex-col sm:flex-row justify-between items-center gap-3 text-xs text-gray-500">
-          <span>© {new Date().getFullYear()} Finora. Not a bank. Not investment advice.</span>
+          <span>© {new Date().getFullYear()} Fynora. Not a bank. Not investment advice.</span>
           <div className="flex items-center gap-4">
             <Link to="/terms" className="hover:text-gray-300">Terms</Link>
             <Link to="/privacy" className="hover:text-gray-300">Privacy</Link>

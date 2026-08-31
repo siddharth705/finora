@@ -102,7 +102,7 @@ class TransactionRepositoryIT extends AbstractIntegrationTest {
 
         var filtered = transactionRepository.search(
                 userId, null, null, Transaction.Type.EXPENSE, null, null,
-                BigDecimal.valueOf(1000), null, null, List.of("NONE"), PageRequest.of(0, 20));
+                BigDecimal.valueOf(1000), null, null, List.of("NONE"), List.of(accountId), PageRequest.of(0, 20));
 
         assertThat(filtered.getContent()).hasSize(1);
         assertThat(filtered.getContent().get(0).getDescription()).isEqualTo("Large expense");
@@ -115,7 +115,7 @@ class TransactionRepositoryIT extends AbstractIntegrationTest {
         newTransaction(BigDecimal.valueOf(320), LocalDate.of(2026, 7, 11), "Uber trip");
 
         var filtered = transactionRepository.search(
-                userId, null, null, null, null, null, null, null, "swiggy", List.of("NONE"), PageRequest.of(0, 20));
+                userId, null, null, null, null, null, null, null, "swiggy", List.of("NONE"), List.of(accountId), PageRequest.of(0, 20));
 
         assertThat(filtered.getContent()).hasSize(1);
         assertThat(filtered.getContent().get(0).getDescription()).contains("SWIGGY");
@@ -156,9 +156,87 @@ class TransactionRepositoryIT extends AbstractIntegrationTest {
         // bankIds branch of the query, not an accidental text hit.
         var filtered = transactionRepository.search(
                 userId, null, null, null, null, null, null, null, "zzz-no-text-match",
-                List.of("PNB"), PageRequest.of(0, 20));
+                List.of("PNB"), List.of(accountId, pnbAccount.getId()), PageRequest.of(0, 20));
 
         assertThat(filtered.getContent()).extracting(Transaction::getDescription).containsExactly("Grocery run");
+    }
+
+    /**
+     * Deleted-account leak fix: when the caller doesn't ask for one specific account
+     * ({@code accountId == null}), {@code search} must still restrict results to the liveAccountIds
+     * collection the caller passes -- otherwise a soft-deleted account's transactions would surface
+     * in the Ledger's default "all accounts" search forever, since {@code Transaction.deleted_at}
+     * is deliberately left unset when only the owning ACCOUNT is deleted. Verified against real
+     * Postgres because the query's {@code (:accountId IS NOT NULL OR t.accountId IN :liveAccountIds)}
+     * clause is exactly the kind of boolean-logic mistake a mock would never catch.
+     */
+    @Test
+    @Transactional
+    void search_withNoAccountIdFilter_scopesResultsToTheGivenLiveAccountIds() {
+        newTransaction(BigDecimal.valueOf(100), LocalDate.of(2026, 7, 1), "On the live account");
+
+        Account otherAccount = new Account();
+        otherAccount.setUserId(userId);
+        otherAccount.setName("Second Account");
+        otherAccount.setAccountType(Account.Type.SAVINGS);
+        otherAccount.setBalance(BigDecimal.ZERO);
+        otherAccount = accountRepository.save(otherAccount);
+        Transaction onOtherAccount = new Transaction();
+        onOtherAccount.setUserId(userId);
+        onOtherAccount.setAccountId(otherAccount.getId());
+        onOtherAccount.setCategoryId(categoryId);
+        onOtherAccount.setTxnDate(LocalDate.of(2026, 7, 2));
+        onOtherAccount.setAmount(BigDecimal.valueOf(200));
+        onOtherAccount.setTxnType(Transaction.Type.EXPENSE);
+        onOtherAccount.setDescription("On the deleted-account stand-in");
+        onOtherAccount.setSource(Transaction.Source.MANUAL);
+        transactionRepository.save(onOtherAccount);
+
+        // liveAccountIds simulates the caller's own account having been soft-deleted: only
+        // `accountId` (not otherAccount's id) is passed as live, even though both transactions
+        // physically exist and neither transaction itself is soft-deleted.
+        var filtered = transactionRepository.search(
+                userId, null, null, null, null, null, null, null, null,
+                List.of("NONE"), List.of(accountId), PageRequest.of(0, 20));
+
+        assertThat(filtered.getContent()).extracting(Transaction::getDescription)
+                .containsExactly("On the live account");
+    }
+
+    /**
+     * The other half of the same clause: when the caller DOES supply a specific accountId, that
+     * filter is trusted as-is and liveAccountIds is not consulted at all -- passing an empty
+     * liveAccountIds collection here must not also exclude the explicitly-requested account.
+     */
+    @Test
+    @Transactional
+    void search_withAnExplicitAccountId_ignoresLiveAccountIds() {
+        newTransaction(BigDecimal.valueOf(100), LocalDate.of(2026, 7, 1), "On the explicitly requested account");
+
+        var filtered = transactionRepository.search(
+                userId, accountId, null, null, null, null, null, null, null,
+                List.of("NONE"), List.of(), PageRequest.of(0, 20));
+
+        assertThat(filtered.getContent()).extracting(Transaction::getDescription)
+                .containsExactly("On the explicitly requested account");
+    }
+
+    /**
+     * The scenario the whole fix exists for: a user whose only account was soft-deleted, running
+     * the Ledger's default "all accounts" search (accountId == null). liveAccountIds is therefore
+     * empty -- confirming Hibernate's IN-clause handling of an empty parameter list evaluates to
+     * "match nothing" here rather than throwing (or, worse, silently matching everything).
+     */
+    @Test
+    @Transactional
+    void search_withNoAccountIdFilterAndNoLiveAccounts_returnsNothing() {
+        newTransaction(BigDecimal.valueOf(100), LocalDate.of(2026, 7, 1), "On the now-deleted account");
+
+        var filtered = transactionRepository.search(
+                userId, null, null, null, null, null, null, null, null,
+                List.of("NONE"), List.of(), PageRequest.of(0, 20));
+
+        assertThat(filtered.getContent()).isEmpty();
     }
 
     @Test

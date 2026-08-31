@@ -149,9 +149,18 @@ public class StatementAnalysisRecorder {
      * that {@code ErrorCode.wireCodeOrNull}'s own doc comment doesn't already say.
      */
     public List<ImportFailureSummaryDto> recentCustomerFailures(UUID userId, int limit) {
+        // SEC-05 (docs/quality/bug-reports/2026-08-19-security-review-findings.md). Every sibling
+        // read on this same admin surface clamps its size (ImportJobService.recent via
+        // PageBounds.safeSize; StatementAnalysisReportService.recent via its own Math.min) -- this
+        // one call site was missed, letting an admin holding PLATFORM_DIAGNOSTICS_VIEW pass
+        // limit=Integer.MAX_VALUE for an unbounded read of one customer's failure history. Scoped
+        // to that one user's own rows (not a full-table scan) and admin-only, so this is
+        // defense-in-depth rather than exploitable by an outsider -- but it's the exact gap
+        // PageBounds exists to close everywhere else on this admin surface.
+        int safeLimit = com.finora.util.PageBounds.safeSize(limit, 50);
         return repository.findByUserIdAndSourceAndOutcomeOrderByCreatedAtDesc(userId,
                         StatementAnalysisSession.Source.CUSTOMER_IMPORT, StatementAnalysisSession.Outcome.FAILED,
-                        PageRequest.of(0, limit))
+                        PageRequest.of(0, safeLimit))
                 .stream()
                 .map(s -> new ImportFailureSummaryDto(s.getReference(), s.getFileName(),
                         com.finora.exception.ErrorCode.wireCodeOrNull(s.getFailureCode()), s.getCreatedAt()))

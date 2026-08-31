@@ -150,4 +150,34 @@ class AdminUserRuleControllerIT extends AbstractIntegrationTest {
 
         assertThat(updateResponse.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
     }
+
+    /** Security fix: this endpoint shares RuleDto.UpdateRequest with AdminRuleController, and was
+     *  missing @Valid on its own binding site even after the DTO gained @Size constraints -- the
+     *  ArchUnit guard (ValidatedRequestBodyTest) caught this as a second real binding site for the
+     *  same shared type. category_rules.field is VARCHAR(20). */
+    @Test
+    void updatingATargetUsersRule_withAnOversizedField_isRejectedAsValidationError() throws Exception {
+        User admin = createUser("ADMIN");
+        User target = createUser("USER");
+        HttpHeaders headers = bearerFor(admin);
+
+        ResponseEntity<String> createResponse = restTemplate.exchange(
+                "/api/v1/admin/users/" + target.getId() + "/rules", HttpMethod.POST,
+                new HttpEntity<>("""
+                        {"field":"DESCRIPTION","operator":"CONTAINS","comparisonValue":"Spotify",
+                         "actionType":"MARK_SUBSCRIPTION"}
+                        """, headers),
+                String.class);
+        String ruleId = mapper.readTree(createResponse.getBody()).get("data").get("id").asText();
+
+        String tooLong = "\"" + "X".repeat(21) + "\"";
+        ResponseEntity<String> updateResponse = restTemplate.exchange(
+                "/api/v1/admin/users/" + target.getId() + "/rules/" + ruleId, HttpMethod.PUT,
+                new HttpEntity<>("{\"field\":" + tooLong + "}", headers), String.class);
+
+        assertThat(updateResponse.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        JsonNode body = mapper.readTree(updateResponse.getBody());
+        assertThat(body.get("errorCode").asText()).isEqualTo("VALIDATION_ERROR");
+        assertThat(body.get("message").asText()).contains("field");
+    }
 }
