@@ -710,6 +710,12 @@ jobs:
           SPRING_PROFILES_ACTIVE: dev
           SERVER_PORT: 18086
           DB_PORT: 5433
+          # This step's whole job is to kill the backend the instant health goes UP, and it shares
+          # this job's Postgres with "Start the backend" below -- so it must never let
+          # BootstrapService commit a BOOTSTRAP_ADMIN row that a kill mid-boot could then leave with
+          # no installation key and no way to regenerate one. See application.yml's app.bootstrap
+          # comment for the CI failure mode this prevents.
+          FINORA_BOOTSTRAP_ENABLED: "false"
         run: |
           set -euo pipefail
           creds="$RUNNER_TEMP/classpath-check-credentials.json"
@@ -781,6 +787,9 @@ jobs:
           SPRING_PROFILES_ACTIVE: dev
           SERVER_PORT: 18088
           DB_PORT: 5433
+          # Same reason as "Production classpath check" above: shares this job's Postgres with the
+          # real E2E boot and must not create a BOOTSTRAP_ADMIN row on its behalf.
+          FINORA_BOOTSTRAP_ENABLED: "false"
         run: |
           set -euo pipefail
           GOOGLE_APPLICATION_CREDENTIALS="$RUNNER_TEMP/classpath-check-credentials.json" \

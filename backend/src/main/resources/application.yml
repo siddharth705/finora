@@ -263,6 +263,18 @@ app:
     # (deployment config, a secret manager) instead of one being generated or written anywhere --
     # see RFC-BOOTSTRAP-01 in docs/bootstrap-setup-future-work.md for the full production story.
     key: ${FINORA_SETUP_KEY:}
+  bootstrap:
+    # On by default. Set FINORA_BOOTSTRAP_ENABLED=false for a boot that only needs to prove the
+    # jar starts (a classpath/runtime-dependency smoke check, not the environment real traffic or
+    # E2E tests will run against) -- see ci.yml's "Production classpath check" and "Runtime
+    # dependency verification" steps for why: they share a Postgres instance with the boot that
+    # follows them, and BootstrapService.run() commits the BOOTSTRAP_ADMIN row immediately
+    # (non-transactional, by design) before the installation-key file is written. A smoke-check
+    # step that gets killed the instant /actuator/health reports UP -- which is its whole job --
+    # can land between those two steps, leaving a row with no way to ever regenerate its key for
+    # the rest of that Postgres instance's lifetime, since BootstrapService correctly refuses to
+    # create a second bootstrap account once one already exists.
+    enabled: ${FINORA_BOOTSTRAP_ENABLED:true}
   account-lifecycle:
     # Off by default -- an unlimited self-service reactivation window is today's existing behavior
     # (AuthService.login()'s deactivated branch always minted a token). Set to true to make the
