@@ -14,6 +14,10 @@ import { maskPhone } from '../lib/maskPhone';
 import { parsePositiveAmount } from '../lib/validation';
 import { formatDayMonthYear, formatRelativeTime, SectionCard, VerifiedBadge, SaveStatus, MetricTile } from '../components/AccountUI';
 import { clearSessionAndRedirect } from '../api/client';
+import { useDelayedLoading } from '../hooks/useDelayedLoading';
+import { Skeleton } from '../design-system/Skeleton';
+import { Button } from '../design-system/Button';
+import { IconButton } from '../design-system/IconButton';
 
 // v1 scope is deliberately capabilities-first, not roadmap-first: every section below reflects a
 // real, backed setting or fact. No "Coming soon" placeholders for 2FA, API keys, integrations,
@@ -184,6 +188,14 @@ export default function Settings() {
 
   const prefsDirty = lowBalanceThreshold !== savedLowBalanceThreshold || timezone !== savedTimezone;
   const intelDirty = confidenceThreshold !== savedConfidenceThreshold;
+
+  // General and Security's Password/Phone-verification rows both come from the same userApi.get()
+  // call, so they share one skeleton timer -- Active Sessions, AI, and Connected Apps each fetch
+  // independently and get their own, so none of them has to wait on `loading` to render.
+  const showAccountSkeleton = useDelayedLoading(loading);
+  const showSessionsSkeleton = useDelayedLoading(sessionsLoading);
+  const showIntelSkeleton = useDelayedLoading(intelLoading);
+  const showGmailSkeleton = useDelayedLoading(gmailLoading);
 
   const prefsJustSavedTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const intelJustSavedTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -410,10 +422,6 @@ export default function Settings() {
     clearSessionAndRedirect("Your account has been permanently deleted. You've been signed out everywhere.");
   }
 
-  if (loading) return <p className="text-muted">Loading…</p>;
-
-  if (loadError) return <p className="text-muted">Couldn't load your settings — please try again later.</p>;
-
   return (
     <div className="space-y-6 max-w-3xl">
       <div>
@@ -422,81 +430,94 @@ export default function Settings() {
       </div>
 
       <SectionCard icon={<SlidersHorizontal size={18} />} title="General" subtitle="Customize your Fynora experience">
-        <div className="grid md:grid-cols-3 gap-4">
-          <div>
-            <label htmlFor="settings-low-balance-threshold" className="block text-xs uppercase text-muted mb-1">Low balance alert</label>
-            <input
-              id="settings-low-balance-threshold"
-              type="number"
-              min="1"
-              step="1"
-              value={lowBalanceThreshold}
-              onChange={(e) => { setLowBalanceThreshold(e.target.value); setPrefsInvalid(null); }}
-              className="bg-card text-ink w-full border border-border rounded-lg px-3 py-2 text-sm"
-            />
-          </div>
-          <div>
-            <label htmlFor="settings-timezone" className="block text-xs uppercase text-muted mb-1">Timezone</label>
-            <select
-              id="settings-timezone"
-              value={timezone}
-              onChange={(e) => setTimezone(e.target.value)}
-              className="bg-card text-ink w-full border border-border rounded-lg px-3 py-2 text-sm"
-            >
-              {!timezones.includes(timezone) && <option value={timezone}>{timezone}</option>}
-              {timezones.map((tz) => <option key={tz} value={tz}>{tz}</option>)}
-            </select>
-          </div>
-          <div>
-            <label htmlFor="settings-theme" className="block text-xs uppercase text-muted mb-1">Theme</label>
-            <select
-              id="settings-theme"
-              value={theme}
-              onChange={(e) => setTheme(e.target.value as 'light' | 'dark' | 'system')}
-              className="bg-card text-ink w-full border border-border rounded-lg px-3 py-2 text-sm"
-            >
-              <option value="light">Light</option>
-              <option value="dark">Dark</option>
-              <option value="system">System</option>
-            </select>
-          </div>
-        </div>
-        <div className="flex items-center justify-between mt-5 pt-4 border-t border-border">
-          <p className="text-xs text-muted">Theme applies instantly. Low balance alert and timezone save when you click Save.</p>
-          <div className="flex items-center gap-3">
-            <SaveStatus dirty={prefsDirty} saving={prefsSaving} justSaved={prefsJustSaved} error={prefsError} errorMessage={prefsInvalid} />
-            <button
-              onClick={savePreferences}
-              disabled={prefsSaving || !prefsDirty}
-              className="bg-primary text-on-primary hover:bg-primary-dark disabled:opacity-50 rounded-lg px-4 py-2 text-xs uppercase font-medium"
-            >
-              {prefsSaving ? 'Saving…' : 'Save preferences'}
-            </button>
-          </div>
-        </div>
+        {loading ? (
+          <Skeleton.Region label="Loading your preferences">
+            {showAccountSkeleton && <GeneralSkeletonFields />}
+          </Skeleton.Region>
+        ) : loadError ? (
+          <p className="text-muted text-sm">Couldn't load your settings — please try again later.</p>
+        ) : (
+          <>
+            <div className="grid md:grid-cols-3 gap-4">
+              <div>
+                <label htmlFor="settings-low-balance-threshold" className="block text-xs uppercase text-muted mb-1">Low balance alert</label>
+                <input
+                  id="settings-low-balance-threshold"
+                  type="number"
+                  min="1"
+                  step="1"
+                  value={lowBalanceThreshold}
+                  onChange={(e) => { setLowBalanceThreshold(e.target.value); setPrefsInvalid(null); }}
+                  className="bg-card text-ink w-full border border-border rounded-lg px-3 py-2 text-sm"
+                />
+              </div>
+              <div>
+                <label htmlFor="settings-timezone" className="block text-xs uppercase text-muted mb-1">Timezone</label>
+                <select
+                  id="settings-timezone"
+                  value={timezone}
+                  onChange={(e) => setTimezone(e.target.value)}
+                  className="bg-card text-ink w-full border border-border rounded-lg px-3 py-2 text-sm"
+                >
+                  {!timezones.includes(timezone) && <option value={timezone}>{timezone}</option>}
+                  {timezones.map((tz) => <option key={tz} value={tz}>{tz}</option>)}
+                </select>
+              </div>
+              <div>
+                <label htmlFor="settings-theme" className="block text-xs uppercase text-muted mb-1">Theme</label>
+                <select
+                  id="settings-theme"
+                  value={theme}
+                  onChange={(e) => setTheme(e.target.value as 'light' | 'dark' | 'system')}
+                  className="bg-card text-ink w-full border border-border rounded-lg px-3 py-2 text-sm"
+                >
+                  <option value="light">Light</option>
+                  <option value="dark">Dark</option>
+                  <option value="system">System</option>
+                </select>
+              </div>
+            </div>
+            <div className="flex items-center justify-between mt-5 pt-4 border-t border-border">
+              <p className="text-xs text-muted">Theme applies instantly. Low balance alert and timezone save when you click Save.</p>
+              <div className="flex items-center gap-3">
+                <SaveStatus dirty={prefsDirty} saving={prefsSaving} justSaved={prefsJustSaved} error={prefsError} errorMessage={prefsInvalid} />
+                <Button className="uppercase" onClick={savePreferences} disabled={!prefsDirty} loading={prefsSaving}>
+                  Save preferences
+                </Button>
+              </div>
+            </div>
+          </>
+        )}
       </SectionCard>
 
       <SectionCard icon={<ShieldCheck size={18} />} title="Security" subtitle="Manage your password, verification, and active sessions">
-        <div className="border-b border-border py-3 text-sm">
-          <p className="text-ink font-medium">Password</p>
-          <p className="text-muted text-xs mt-0.5">
-            {formatRelativeTime(passwordChangedAt) ? `Last changed ${formatRelativeTime(passwordChangedAt)}` : 'Never changed'}
-          </p>
-          <p className="text-muted text-[11px] mt-1">Keep your account secure by using a unique password.</p>
-          <button
-            onClick={() => setChangePasswordOpen(true)}
-            className="mt-3 border border-border rounded-lg px-3 py-1.5 text-xs uppercase font-medium text-ink hover:bg-black/5"
-          >
-            Change Password
-          </button>
-        </div>
-        <div className="flex items-center justify-between border-b border-border py-3 text-sm">
-          <div>
-            <p className="text-ink font-medium">Phone verification</p>
-            <p className="text-muted text-xs">{phoneNumber ? maskPhone(phoneNumber) : 'No phone number on file'}</p>
-          </div>
-          {phoneVerified ? <VerifiedBadge /> : <span className="text-xs text-muted flex-shrink-0">Not verified</span>}
-        </div>
+        {loading ? (
+          <Skeleton.Region label="Loading your security settings">
+            {showAccountSkeleton && <SecurityBasicsSkeletonFields />}
+          </Skeleton.Region>
+        ) : loadError ? (
+          <p className="text-muted text-sm py-3">Couldn't load your settings — please try again later.</p>
+        ) : (
+          <>
+            <div className="border-b border-border py-3 text-sm">
+              <p className="text-ink font-medium">Password</p>
+              <p className="text-muted text-xs mt-0.5">
+                {formatRelativeTime(passwordChangedAt) ? `Last changed ${formatRelativeTime(passwordChangedAt)}` : 'Never changed'}
+              </p>
+              <p className="text-muted text-[11px] mt-1">Keep your account secure by using a unique password.</p>
+              <Button variant="secondary" size="sm" className="mt-3 uppercase" onClick={() => setChangePasswordOpen(true)}>
+                Change Password
+              </Button>
+            </div>
+            <div className="flex items-center justify-between border-b border-border py-3 text-sm">
+              <div>
+                <p className="text-ink font-medium">Phone verification</p>
+                <p className="text-muted text-xs">{phoneNumber ? maskPhone(phoneNumber) : 'No phone number on file'}</p>
+              </div>
+              {phoneVerified ? <VerifiedBadge /> : <span className="text-xs text-muted flex-shrink-0">Not verified</span>}
+            </div>
+          </>
+        )}
 
         <div className="pt-3">
           <p className="text-ink font-medium text-sm">Active Sessions</p>
@@ -506,7 +527,9 @@ export default function Settings() {
             minutes of inactivity, or 7 days after signing in, whichever comes first.
           </p>
           {sessionsLoading ? (
-            <p className="text-xs text-muted">Loading…</p>
+            <Skeleton.Region label="Loading your active sessions">
+              {showSessionsSkeleton && <ActiveSessionsSkeletonFields />}
+            </Skeleton.Region>
           ) : sessionsError ? (
             <p className="text-xs text-danger">Couldn't load your active sessions — please try again later.</p>
           ) : sessions.length === 0 ? (
@@ -536,15 +559,15 @@ export default function Settings() {
                       </p>
                     </div>
                   </div>
-                  <button
-                    type="button"
+                  <IconButton
+                    size="sm"
+                    variant="danger"
+                    icon={<X size={14} />}
+                    aria-label="Sign out this device"
                     title="Sign out this device"
-                    disabled={revokingId === s.id}
+                    loading={revokingId === s.id}
                     onClick={() => revokeSession(s.id)}
-                    className="w-7 h-7 rounded-lg hover:bg-danger-bg text-muted hover:text-danger inline-flex items-center justify-center flex-shrink-0 disabled:opacity-50"
-                  >
-                    <X size={14} />
-                  </button>
+                  />
                 </div>
               ))}
             </div>
@@ -554,7 +577,9 @@ export default function Settings() {
 
       <SectionCard icon={<Sparkles size={18} />} title="AI" subtitle="Control how Fynora reviews and understands your financial documents">
         {intelLoading ? (
-          <p className="text-muted text-sm">Loading…</p>
+          <Skeleton.Region label="Loading your AI settings">
+            {showIntelSkeleton && <AISkeletonFields />}
+          </Skeleton.Region>
         ) : (
           <>
             <div className="max-w-md">
@@ -575,13 +600,9 @@ export default function Settings() {
               </p>
             </div>
             <div className="flex items-center gap-3 mt-4 pt-4 border-t border-border">
-              <button
-                onClick={saveIntelligencePreferences}
-                disabled={intelSaving || !intelDirty}
-                className="bg-primary text-on-primary hover:bg-primary-dark disabled:opacity-50 rounded-lg px-4 py-2 text-xs uppercase font-medium"
-              >
-                {intelSaving ? 'Saving…' : 'Save setting'}
-              </button>
+              <Button className="uppercase" onClick={saveIntelligencePreferences} disabled={!intelDirty} loading={intelSaving}>
+                Save setting
+              </Button>
               <SaveStatus dirty={intelDirty} saving={intelSaving} justSaved={intelJustSaved} error={intelError} />
             </div>
           </>
@@ -606,12 +627,16 @@ export default function Settings() {
             Download a ZIP of everything in your account, including your original bank statement
             files.
           </p>
-          <button
+          <Button
+            variant="secondary"
+            size="sm"
+            className="uppercase"
+            disabled={loading || loadError}
+            title={loadError ? "Couldn't load your account details" : undefined}
             onClick={() => setExportOpen(true)}
-            className="border border-border rounded-lg px-3 py-1.5 text-xs uppercase font-medium text-ink hover:bg-black/5"
           >
             Export My Data
-          </button>
+          </Button>
         </div>
       </SectionCard>
 
@@ -622,7 +647,9 @@ export default function Settings() {
           </p>
         )}
         {gmailLoading ? (
-          <p className="text-muted text-sm">Loading…</p>
+          <Skeleton.Region label="Loading your Gmail connection">
+            {showGmailSkeleton && <GmailSkeletonFields />}
+          </Skeleton.Region>
         ) : gmailError && !gmailStatus ? (
           <p className="text-xs text-danger">Couldn't load your Gmail connection — please try again later.</p>
         ) : !gmailStatus?.available ? (
@@ -644,14 +671,9 @@ export default function Settings() {
                   Google stopped accepting this connection -- reconnect to keep finding receipts.
                 </p>
               </div>
-              <button
-                type="button"
-                disabled={gmailConnecting}
-                onClick={handleGmailConnect}
-                className="bg-primary text-on-primary hover:bg-primary-dark disabled:opacity-50 rounded-lg px-3 py-1.5 text-xs uppercase font-medium flex-shrink-0"
-              >
-                {gmailConnecting ? 'Connecting…' : 'Reconnect Gmail'}
-              </button>
+              <Button size="sm" className="flex-shrink-0 uppercase" loading={gmailConnecting} onClick={handleGmailConnect}>
+                Reconnect Gmail
+              </Button>
             </div>
             {gmailActionError && <p className="text-xs text-danger mt-2">{gmailActionError}</p>}
           </div>
@@ -664,14 +686,9 @@ export default function Settings() {
                   Automatically detect receipts from your inbox — nothing is imported without your review.
                 </p>
               </div>
-              <button
-                type="button"
-                disabled={gmailConnecting}
-                onClick={handleGmailConnect}
-                className="bg-primary text-on-primary hover:bg-primary-dark disabled:opacity-50 rounded-lg px-3 py-1.5 text-xs uppercase font-medium flex-shrink-0"
-              >
-                {gmailConnecting ? 'Connecting…' : 'Connect Gmail'}
-              </button>
+              <Button size="sm" className="flex-shrink-0 uppercase" loading={gmailConnecting} onClick={handleGmailConnect}>
+                Connect Gmail
+              </Button>
             </div>
             {gmailActionError && <p className="text-xs text-danger mt-2">{gmailActionError}</p>}
           </div>
@@ -694,15 +711,15 @@ export default function Settings() {
                   </p>
                 )}
               </div>
-              <button
-                type="button"
+              <IconButton
+                size="sm"
+                className="flex-shrink-0"
+                icon={<RefreshCw size={14} />}
+                aria-label="Sync Gmail now"
                 title="Sync now"
-                disabled={gmailSyncing}
+                loading={gmailSyncing}
                 onClick={handleGmailSyncNow}
-                className="w-7 h-7 rounded-lg hover:bg-black/5 text-muted hover:text-ink inline-flex items-center justify-center flex-shrink-0 disabled:opacity-50"
-              >
-                <RefreshCw size={14} className={gmailSyncing ? 'animate-spin' : ''} />
-              </button>
+              />
             </div>
 
             <div className="grid grid-cols-2 gap-3 mt-3">
@@ -715,22 +732,13 @@ export default function Settings() {
 
             <div className="flex items-center gap-3 mt-3 pt-3 border-t border-border">
               {gmailStatus.needsReview > 0 && (
-                <button
-                  type="button"
-                  onClick={() => navigate('/app/settings/gmail/review')}
-                  className="bg-primary text-on-primary hover:bg-primary-dark rounded-lg px-3 py-1.5 text-xs uppercase font-medium"
-                >
+                <Button size="sm" className="uppercase" onClick={() => navigate('/app/settings/gmail/review')}>
                   Review {gmailStatus.needsReview}
-                </button>
+                </Button>
               )}
-              <button
-                type="button"
-                disabled={gmailDisconnecting}
-                onClick={handleGmailDisconnect}
-                className="border border-border rounded-lg px-3 py-1.5 text-xs uppercase font-medium text-ink hover:bg-black/5 disabled:opacity-50"
-              >
-                {gmailDisconnecting ? 'Disconnecting…' : 'Disconnect'}
-              </button>
+              <Button variant="secondary" size="sm" className="uppercase" loading={gmailDisconnecting} onClick={handleGmailDisconnect}>
+                Disconnect
+              </Button>
             </div>
           </div>
         )}
@@ -744,12 +752,16 @@ export default function Settings() {
             sign in until you reactivate -- your data is retained securely, and reactivating is as
             simple as signing in again.
           </p>
-          <button
+          <Button
+            variant="secondary"
+            size="sm"
+            className="uppercase"
+            disabled={loading || loadError}
+            title={loadError ? "Couldn't load your account details" : undefined}
             onClick={() => setDeactivateOpen(true)}
-            className="border border-border rounded-lg px-3 py-1.5 text-xs uppercase font-medium text-ink hover:bg-black/5"
           >
             Deactivate Account
-          </button>
+          </Button>
         </div>
         <div className="pt-4">
           <p className="text-ink font-medium text-sm">Delete Account</p>
@@ -757,12 +769,16 @@ export default function Settings() {
             Permanently delete your account and all your data. This cannot be undone, and there is
             no way to cancel this request once submitted.
           </p>
-          <button
+          <Button
+            variant="danger"
+            size="sm"
+            className="uppercase"
+            disabled={loading || loadError}
+            title={loadError ? "Couldn't load your account details" : undefined}
             onClick={() => setDeleteOpen(true)}
-            className="border border-danger text-danger hover:bg-danger-bg rounded-lg px-3 py-1.5 text-xs uppercase font-medium"
           >
             Delete Account
-          </button>
+          </Button>
         </div>
       </SectionCard>
 
@@ -791,6 +807,94 @@ export default function Settings() {
       )}
 
       {exportOpen && <ExportDataModal onClose={() => setExportOpen(false)} signInMethod={signInMethod} />}
+    </div>
+  );
+}
+
+/** Matches General's 3-field grid + footer save row. */
+function GeneralSkeletonFields() {
+  return (
+    <>
+      <div className="grid md:grid-cols-3 gap-4">
+        {[0, 1, 2].map((i) => (
+          <div key={i} className="space-y-1.5">
+            <Skeleton.Text width="w-24" className="h-2.5" />
+            <Skeleton.Block className="h-9 w-full" />
+          </div>
+        ))}
+      </div>
+      <div className="flex items-center justify-between mt-5 pt-4 border-t border-border">
+        <Skeleton.Text width="w-72" className="h-2.5" />
+        <Skeleton.Block className="h-8 w-32" />
+      </div>
+    </>
+  );
+}
+
+/** Matches Security's Password row + Phone verification row -- Active Sessions has its own
+ *  independent skeleton below since it loads separately. */
+function SecurityBasicsSkeletonFields() {
+  return (
+    <>
+      <div className="border-b border-border py-3 space-y-2">
+        <Skeleton.Text width="w-20" />
+        <Skeleton.Text width="w-32" className="h-2.5" />
+        <Skeleton.Block className="h-7 w-36 mt-2" />
+      </div>
+      <div className="flex items-center justify-between border-b border-border py-3">
+        <div className="space-y-1.5">
+          <Skeleton.Text width="w-32" />
+          <Skeleton.Text width="w-28" className="h-2.5" />
+        </div>
+        <Skeleton.Block className="h-5 w-16" />
+      </div>
+    </>
+  );
+}
+
+/** Matches a session row: device icon, two text lines, a sign-out icon button. */
+function ActiveSessionsSkeletonFields() {
+  return (
+    <div className="space-y-2">
+      {[0, 1].map((i) => (
+        <div key={i} className="flex items-center justify-between gap-3 border border-border rounded-lg px-3 py-2.5">
+          <div className="flex items-center gap-2.5 flex-1 min-w-0">
+            <Skeleton.Circle size={15} />
+            <div className="min-w-0 flex-1 space-y-1.5">
+              <Skeleton.Text width="w-40" />
+              <Skeleton.Text width="w-28" className="h-2.5" />
+            </div>
+          </div>
+          <Skeleton.Circle size={28} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** Matches the confidence-threshold slider + its save row. */
+function AISkeletonFields() {
+  return (
+    <div className="max-w-md">
+      <Skeleton.Text width="w-56" className="h-2.5 mb-2" />
+      <Skeleton.Block className="h-2 w-full rounded-full" />
+      <Skeleton.Text width="w-72" className="h-2.5 mt-2" />
+      <div className="mt-4 pt-4 border-t border-border">
+        <Skeleton.Block className="h-8 w-28" />
+      </div>
+    </div>
+  );
+}
+
+/** Matches the Gmail connect/connected card's title + subtitle + action button. */
+function GmailSkeletonFields() {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <div className="space-y-1.5 flex-1">
+        <Skeleton.Text width="w-16" />
+        <Skeleton.Text width="w-64" className="h-2.5" />
+      </div>
+      <Skeleton.Block className="h-7 w-28 flex-shrink-0" />
     </div>
   );
 }
