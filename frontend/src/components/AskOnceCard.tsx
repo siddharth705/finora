@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { HelpCircle, Check, ChevronLeft, ChevronRight } from 'lucide-react';
-import { transactionsApi, categoriesApi } from '../api/endpoints';
+import { transactionsApi } from '../api/endpoints';
+import { CategoryCombobox } from './CategoryCombobox';
+import { CategoryCreateEditPanel } from './CategoryCreateEditPanel';
 import type { Transaction } from '../types';
 
 const PAGE_SIZE = 10;
@@ -21,23 +23,20 @@ function fmt(n: number) {
 export function AskOnceCard() {
   const queryClient = useQueryClient();
   const [items, setItems] = useState<Transaction[]>([]);
-  const [categories, setCategories] = useState<string[]>([]);
   const [picks, setPicks] = useState<Record<string, string>>({});
-  const [resolving, setResolving] = useState<string | null>(null);
+  const [creatingFor, setCreatingFor] = useState<string | null>(null);
+  const [pendingText, setPendingText] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
   function load() {
     setLoading(true);
-    Promise.all([transactionsApi.needsReview(), categoriesApi.list()])
-      .then(([txns, cats]) => {
-        setItems(txns);
-        setCategories(cats.map((c) => c.name));
-      })
-      // A failed fetch here just leaves items/categories at their default [] -- the widget
-      // already renders nothing when items.length === 0, so this "no card" fallback for a
-      // Dashboard nice-to-have is preferable to surfacing an error banner for it.
+    transactionsApi.needsReview()
+      .then(setItems)
+      // A failed fetch here just leaves items at its default [] -- the widget already renders
+      // nothing when items.length === 0, so this "no card" fallback for a Dashboard nice-to-have
+      // is preferable to surfacing an error banner for it.
       .catch(() => {})
       .finally(() => setLoading(false));
   }
@@ -53,14 +52,21 @@ export function AskOnceCard() {
   }, [totalPages, page]);
   const pageItems = items.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE);
 
+  // Optimistic: the row disappears the instant Confirm is clicked, not once the round trip
+  // completes. This queue exists to be clicked through quickly (up to 10 rows a page), so the
+  // felt latency of waiting on each save was the whole cost of the old behavior. Correctness
+  // still lives entirely in the real response -- see the two rollback paths below -- this only
+  // changes when the UI reflects a save that, on the happy path, is going to succeed anyway.
   async function resolve(id: string) {
     const category = picks[id];
     if (!category) return;
-    setResolving(id);
+    const index = items.findIndex((t) => t.id === id);
+    if (index === -1) return;
+    const removed = items[index];
     setError(null);
+    setItems((prev) => prev.filter((t) => t.id !== id));
     try {
       await transactionsApi.updateCategory(id, category);
-      setItems((prev) => prev.filter((t) => t.id !== id));
       // This card now lives on the Transactions page (Ledger.tsx), directly above the table
       // showing the very row just re-categorized — without this, the table keeps its stale
       // TanStack Query cache (old category, "needs review" badge still on) until some unrelated
@@ -71,20 +77,29 @@ export function AskOnceCard() {
       // not invalidating 'report'/'report-months': a category-only edit doesn't change a
       // transaction's income/expense total, which is all that chart is built from.
       // Deliberately fire-and-forget: invalidateQueries()'s promise resolves once the background
-      // refetch of active queries completes, which nothing here needs to wait on.
+      // refetch of active queries completes, which nothing here needs to wait on. Deliberately
+      // NOT optimistic: these caches drive other pages, so they only ever reflect the real,
+      // confirmed state of the server, never a guess.
       void queryClient.invalidateQueries({ queryKey: ['transactions'] });
       void queryClient.invalidateQueries({ queryKey: ['recent-transactions'] });
       void queryClient.invalidateQueries({ queryKey: ['dashboard-summary'] });
       void queryClient.invalidateQueries({ queryKey: ['insights'] });
       void queryClient.invalidateQueries({ queryKey: ['budgets'] });
     } catch {
+      // Roll back: put the row back exactly where it was, not appended at the end -- the
+      // remaining picks in `picks` still reference their own rows by id, so re-inserting by
+      // index is enough to make the queue look exactly like the click never happened, category
+      // selection included (picks[id] was never cleared).
+      setItems((prev) => {
+        const next = [...prev];
+        next.splice(index, 0, removed);
+        return next;
+      });
       // Bug fix: this had no catch at all -- a failed updateCategory() (network error, 500)
       // became an unhandled promise rejection with zero feedback to the user. The spinner still
       // cleared via `finally`, but the row silently stayed in the "needs review" list with no
       // explanation that the save didn't actually happen.
       setError("Couldn't save that category — please try again.");
-    } finally {
-      setResolving(null);
     }
   }
 
@@ -97,30 +112,38 @@ export function AskOnceCard() {
         <h2 className="font-semibold text-ink text-sm">A few transactions need your input</h2>
       </div>
       <p className="text-xs text-muted mb-4">
-        Pick a category once — Finora will remember it for every future transaction from the same merchant.
+        Pick a category once — Fynora will remember it for every future transaction from the same merchant.
       </p>
       {error && <p className="text-xs text-danger mb-3">{error}</p>}
       <div className="space-y-3">
         {pageItems.map((t) => (
-          <div key={t.id} className="flex items-center gap-3 flex-wrap sm:flex-nowrap">
+          <div key={t.id} className={`flex gap-3 flex-wrap sm:flex-nowrap ${creatingFor === t.id ? 'items-start' : 'items-center'}`}>
             <div className="min-w-0 flex-1">
               <p className="text-sm font-medium text-ink truncate">{t.description || t.merchant}</p>
               <p className="text-[11px] text-muted">{t.date} · {fmt(t.amount)}</p>
             </div>
-            <select
-              value={picks[t.id] ?? ''}
-              onChange={(e) => setPicks((p) => ({ ...p, [t.id]: e.target.value }))}
-              className="bg-card text-ink border border-border rounded-lg px-2.5 py-1.5 text-xs flex-shrink-0"
-            >
-              <option value="" disabled>Choose category…</option>
-              {categories.map((c) => <option key={c} value={c}>{c}</option>)}
-            </select>
+            <div className={`flex-shrink-0 ${creatingFor === t.id ? 'w-64' : 'w-40'}`}>
+              {creatingFor === t.id ? (
+                <CategoryCreateEditPanel
+                  mode="create"
+                  initialName={pendingText[t.id] ?? ''}
+                  onSaved={(c) => { setPicks((p) => ({ ...p, [t.id]: c.name })); setCreatingFor(null); }}
+                  onCancel={() => setCreatingFor(null)}
+                />
+              ) : (
+                <CategoryCombobox
+                  value={picks[t.id] ?? ''}
+                  onChange={(name) => setPicks((p) => ({ ...p, [t.id]: name }))}
+                  onCreateNew={(text) => { setPendingText((p) => ({ ...p, [t.id]: text })); setCreatingFor(t.id); }}
+                />
+              )}
+            </div>
             <button
               onClick={() => resolve(t.id)}
-              disabled={!picks[t.id] || resolving === t.id}
-              className="bg-primary text-white text-xs font-medium rounded-lg px-3 py-1.5 flex items-center gap-1 flex-shrink-0 disabled:opacity-40"
+              disabled={!picks[t.id]}
+              className="bg-primary text-on-primary text-xs font-medium rounded-lg px-3 py-1.5 flex items-center gap-1 flex-shrink-0 disabled:opacity-40"
             >
-              <Check size={13} /> {resolving === t.id ? 'Saving…' : 'Confirm'}
+              <Check size={13} /> Confirm
             </button>
           </div>
         ))}

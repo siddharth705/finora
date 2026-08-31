@@ -96,7 +96,7 @@ export function AddTransactionModal({ onClose, onSaved }: { onClose: () => void;
               <p className="mb-3">You'll need an account before adding a transaction by hand.</p>
               <Link
                 to="/app/setup"
-                className="inline-block bg-primary text-white hover:bg-primary-dark px-4 py-2 rounded-lg text-xs font-semibold"
+                className="inline-block bg-primary text-on-primary hover:bg-primary-dark px-4 py-2 rounded-lg text-xs font-semibold"
               >
                 Add an account
               </Link>
@@ -138,7 +138,7 @@ export function AddTransactionModal({ onClose, onSaved }: { onClose: () => void;
                 <div>
                   <label htmlFor="add-txn-category" className="block text-[11px] uppercase text-muted mb-1">Category</label>
                   <select id="add-txn-category" value={category} onChange={(e) => setCategory(e.target.value)} className="bg-card text-ink border border-border rounded-lg px-3 py-2 text-sm w-full">
-                    <option value="">Let Finora categorize it</option>
+                    <option value="">Let Fynora categorize it</option>
                     {categories.map((c) => <option key={c} value={c}>{c}</option>)}
                   </select>
                   {categoriesQ.isError && (
@@ -151,7 +151,7 @@ export function AddTransactionModal({ onClose, onSaved }: { onClose: () => void;
                 <button
                   onClick={save}
                   disabled={saving || !canSave}
-                  className="bg-primary text-white hover:bg-primary-dark px-4 py-2 rounded-lg text-xs font-semibold disabled:opacity-50"
+                  className="bg-primary text-on-primary hover:bg-primary-dark px-4 py-2 rounded-lg text-xs font-semibold disabled:opacity-50"
                 >
                   {saving ? 'Adding…' : 'Add transaction'}
                 </button>

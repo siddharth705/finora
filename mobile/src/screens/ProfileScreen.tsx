@@ -115,7 +115,7 @@ export function ProfileScreen({ navigation }: Props) {
           accessibilityElementsHidden
           importantForAccessibility="no-hide-descendants"
         >
-          <Text style={styles.avatarText}>{initials(savedFullName)}</Text>
+          <Text style={[styles.avatarText, { color: c.onPrimary }]}>{initials(savedFullName)}</Text>
         </View>
         <View style={styles.identityText}>
           <Text style={[styles.identityName, { color: c.ink }]} numberOfLines={1}>
@@ -124,7 +124,7 @@ export function ProfileScreen({ navigation }: Props) {
           <Text style={[styles.identityEmail, { color: c.muted }]} numberOfLines={1}>
             {user.email}
           </Text>
-          <Text style={[styles.identityMeta, { color: c.muted }]}>
+          <Text style={[styles.identityMeta, { color: c.mutedInk }]}>
             {user.phoneVerified ? 'Phone verified · ' : ''}Member since {fmtMonthYear(user.createdAt)}
           </Text>
         </View>
@@ -166,7 +166,7 @@ export function ProfileScreen({ navigation }: Props) {
         <View style={[styles.row, { borderBottomColor: c.border }]}>
           <View style={styles.rowMain}>
             <Text style={[styles.rowTitle, { color: c.ink }]}>Password</Text>
-            <Text style={[styles.rowMeta, { color: c.muted }]}>
+            <Text style={[styles.rowMeta, { color: c.mutedInk }]}>
               {passwordChanged ? `Last changed ${passwordChanged}` : 'Never changed'}
             </Text>
           </View>
@@ -174,14 +174,14 @@ export function ProfileScreen({ navigation }: Props) {
         <View style={styles.row}>
           <View style={styles.rowMain}>
             <Text style={[styles.rowTitle, { color: c.ink }]}>Phone verification</Text>
-            <Text style={[styles.rowMeta, { color: c.muted }]}>
+            <Text style={[styles.rowMeta, { color: c.mutedInk }]}>
               {user.phoneNumber ? maskPhone(user.phoneNumber) : 'No phone number on file'}
             </Text>
           </View>
           {user.phoneVerified ? (
             <VerifiedBadge />
           ) : (
-            <Text style={[styles.rowMeta, { color: c.muted }]}>Not verified</Text>
+            <Text style={[styles.rowMeta, { color: c.mutedInk }]}>Not verified</Text>
           )}
         </View>
 
@@ -218,7 +218,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginRight: spacing.sm,
   },
-  avatarText: { color: '#fff', fontWeight: '700', fontSize: 18 },
+  avatarText: { fontWeight: '700', fontSize: 18 },
   identityText: { flex: 1 },
   identityName: { fontSize: 17, fontWeight: '700' },
   identityEmail: { fontSize: 13, marginTop: 2 },

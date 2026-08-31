@@ -2,6 +2,10 @@ package com.finora.dto;
 
 import com.finora.entity.NetWorthSnapshot;
 import com.finora.entity.Merchant;
+import com.finora.entity.Plan;
+import com.finora.entity.PlanChange;
+import com.finora.entity.Subscription;
+import com.finora.goals.GoalContribution;
 import com.finora.integrations.google.GmailConnection;
 
 import java.math.BigDecimal;
@@ -71,6 +75,64 @@ public final class DataExportDto {
      * comment), which would misrepresent a soft-deleted account here.
      */
     public record AccountExportEntry(com.finora.accounts.AccountDto account, boolean deleted, Instant deletedAt) {}
+
+    /** goals.json entries -- pairs {@code GoalDto} with the deleted marker that reading via
+     *  {@code GoalRepository.findByUserIdIncludingDeleted} (to mirror the purge's own scope,
+     *  which includes soft-deleted goals) requires, the same treatment {@code AccountExportEntry}
+     *  already gives accounts. */
+    public record GoalExportEntry(com.finora.goals.GoalDto goal, boolean deleted, Instant deletedAt) {}
+
+    /** One {@code goal_contributions} row -- {@code goalId} is left as a raw FK, not resolved to
+     *  the goal's name, the same way transactions.json leaves {@code accountId} raw: the goal it
+     *  belongs to (name included) is already in goals.json, one file over. Sourced from the same
+     *  including-deleted goal IDs as goals.json, so a soft-deleted goal's contribution history is
+     *  still included here too, not silently dropped along with its goal. */
+    public record GoalContributionExportDto(UUID id, UUID goalId, BigDecimal amount, LocalDate contributedAt) {
+        public static GoalContributionExportDto from(GoalContribution c) {
+            return new GoalContributionExportDto(c.getId(), c.getGoalId(), c.getAmount(), c.getContributedAt());
+        }
+    }
+
+    /** D-28 PR4-A. One {@code subscriptions} row -- {@code planId} is resolved to the plan's own
+     *  {@code code}/{@code name} rather than left as a raw FK, the same way transactions.json
+     *  resolves {@code categoryId} to {@code categoryName}. {@code plan} is null only if the
+     *  referenced plan row itself has been removed out from under a historical subscription --
+     *  fails soft (null code/name) rather than dropping the subscription row from the export.
+     *  {@code deleted}/{@code deletedAt} mirror {@code AccountExportEntry}'s own marker -- read
+     *  via {@code SubscriptionRepository.findByUserIdIncludingDeletedOrderByCreatedAtDesc}, a
+     *  soft-deleted subscription must still appear here, explicitly marked, not vanish. */
+    public record SubscriptionExportDto(
+            UUID id, String planCode, String planName, String status,
+            LocalDate startDate, LocalDate endDate, LocalDate renewalDate,
+            LocalDate trialStart, LocalDate trialEnd, String paymentProvider, Instant createdAt,
+            boolean deleted, Instant deletedAt
+    ) {
+        public static SubscriptionExportDto from(Subscription s, Plan plan) {
+            return new SubscriptionExportDto(s.getId(), plan != null ? plan.getCode() : null,
+                    plan != null ? plan.getName() : null, s.getStatus(), s.getStartDate(), s.getEndDate(),
+                    s.getRenewalDate(), s.getTrialStart(), s.getTrialEnd(), s.getPaymentProvider(), s.getCreatedAt(),
+                    s.getDeletedAt() != null, s.getDeletedAt());
+        }
+    }
+
+    /** D-28 PR4-A. One {@code plan_changes} row -- your upgrade/downgrade history.
+     *  {@code subscriptionId} is left as a raw FK (the subscription it belongs to is one file
+     *  over, in subscriptions.json), but {@code fromPlanId}/{@code toPlanId} are resolved to
+     *  each plan's own {@code code}/{@code name}, same treatment as {@code
+     *  SubscriptionExportDto}'s own {@code planId}. {@code fromPlan} is null both for a
+     *  referenced plan row that no longer exists AND for a subscription's very first plan change
+     *  (where {@code fromPlanId} itself is null) -- both fail soft rather than dropping the row. */
+    public record PlanChangeExportDto(
+            UUID id, UUID subscriptionId, String fromPlanCode, String fromPlanName,
+            String toPlanCode, String toPlanName, String reason, Instant effectiveAt, Instant createdAt
+    ) {
+        public static PlanChangeExportDto from(PlanChange pc, Plan fromPlan, Plan toPlan) {
+            return new PlanChangeExportDto(pc.getId(), pc.getSubscriptionId(),
+                    fromPlan != null ? fromPlan.getCode() : null, fromPlan != null ? fromPlan.getName() : null,
+                    toPlan != null ? toPlan.getCode() : null, toPlan != null ? toPlan.getName() : null,
+                    pc.getReason(), pc.getEffectiveAt(), pc.getCreatedAt());
+        }
+    }
 
     public record Manifest(
             Instant generatedAt, UUID userId, String email,

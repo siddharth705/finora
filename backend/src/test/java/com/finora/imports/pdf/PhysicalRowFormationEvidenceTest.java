@@ -152,6 +152,50 @@ class PhysicalRowFormationEvidenceTest {
     }
 
     @Test
+    void aChainOfSmallConsecutiveGapsWhoseTotalSpreadExceedsToleranceStaysOneRow() {
+        // Reproduces the real HSBC DB.pdf (OCR) shape at invented coordinates, per
+        // header-reconstruction-design.md §9.4: one printed header line, five labels, whose OCR
+        // per-word y-jitter accumulates across the line so the total spread from first to last
+        // member exceeds ROW_Y_TOLERANCE (3.0pt) even though every individual consecutive gap
+        // (here, 1.5pt each) stays comfortably under it. groupIntoRows clusters against a FIXED
+        // anchor -- the row's first member -- never the most recently added one, so it currently
+        // splits this single visual line into two physical rows the moment cumulative drift from
+        // the first member crosses 3.0pt, exactly matching the real document's observed
+        // [Balance, Date] / [Details, Withdrawals, Deposits] split. A chain-based comparison (each
+        // run against the previous one, not the first) would not: every step here is individually
+        // tolerable. Real header vocabulary is used for the label text -- not sensitive, standard
+        // banking column vocabulary the same way "Date"/"Description"/"Amount" already appear
+        // throughout this file -- but the y-coordinates are invented, not the real document's own.
+        List<PositionedText> positioned = new ArrayList<>();
+        positioned.add(run("Date", 30f, 40f, 100.0f));
+        positioned.add(run("Details", 90f, 90f, 101.5f));
+        positioned.add(run("Withdrawals", 260f, 80f, 103.0f));
+        positioned.add(run("Deposits", 360f, 70f, 104.5f));
+        positioned.add(run("Balance", 460f, 70f, 106.0f));
+        positioned.add(run("01/01/2026", 30f, 55f, 130f));
+        positioned.add(run("ATM WITHDRAWAL", 90f, 90f, 130f));
+        positioned.add(run("500.00", 260f, 70f, 130f));
+        positioned.add(run("", 360f, 70f, 130f));
+        positioned.add(run("4500.00", 460f, 70f, 130f));
+
+        DocumentContext ctx = new DocumentContext("PDF", "test");
+        PdfTableLocator.LocatedDocument doc = new PdfTableLocator().locateAll(positioned, ctx);
+
+        PdfTableLocator.PhysicalRowFormationEvidence evidence = doc.physicalRowFormationEvidence();
+        assertThat(evidence.physicalRowsCreated())
+                .as("one printed header line plus one data line -- two physical rows total, not "
+                        + "three -- the header line's own cumulative y-jitter must not split it")
+                .isEqualTo(2);
+        assertThat(evidence.maxCellsInRow())
+                .as("the header line's all five labels belong together in one physical row")
+                .isEqualTo(5);
+        assertThat(evidence.cellCountDistribution())
+                .as("a 5-cell header row and a 5-cell data row -- not a 3/2 split header plus a "
+                        + "5-cell data row")
+                .isEqualTo(Map.of(5, 2));
+    }
+
+    @Test
     void anEmptyDocumentHasNoRowsAndNoExtent() {
         DocumentContext ctx = new DocumentContext("PDF", "test");
         PdfTableLocator.LocatedDocument doc = new PdfTableLocator().locateAll(List.of(), ctx);

@@ -12,6 +12,7 @@ import { TextField } from '../components/TextField';
 import { goalsApi } from '../api/endpoints';
 import { toUserMessage } from '../lib/apiError';
 import { fmtCurrency, fmtDate } from '../lib/format';
+import { useLargeFontScale } from '../lib/useLargeFontScale';
 import { useSingleFlight } from '../lib/useSingleFlight';
 import { parsePositiveAmount } from '../lib/validation';
 import { spacing, useTheme } from '../theme';
@@ -20,6 +21,7 @@ import type { Goal } from '../types';
 /** Port of frontend/src/pages/Goals.tsx. */
 export function GoalsScreen() {
   const c = useTheme();
+  const largeText = useLargeFontScale();
   const queryClient = useQueryClient();
   // Guards every write below against a same-frame double tap -- see useSingleFlight. The `saving`
   // and `contributing` flags drive what the user sees; this is what stops the second request.
@@ -213,15 +215,15 @@ export function GoalsScreen() {
                   )}, ${pct.toFixed(0)} percent complete${due ? `, target ${due}` : ''}`}
                 >
                   <View style={styles.goalHeader}>
-                    <Text style={[styles.goalName, { color: c.ink }]} numberOfLines={1}>
+                    <Text style={[styles.goalName, { color: c.ink }]} numberOfLines={largeText ? 2 : 1}>
                       {g.name}
                     </Text>
-                    <Text style={[styles.goalAmounts, { color: c.muted }]}>
+                    <Text style={[styles.goalAmounts, { color: c.mutedInk }]}>
                       {fmtCurrency(g.currentAmount)} / {fmtCurrency(g.targetAmount)}
                     </Text>
                   </View>
                   <ProgressBar pct={pct} color={c.success} />
-                  <Text style={[styles.goalMeta, { color: c.muted }]}>
+                  <Text style={[styles.goalMeta, { color: c.mutedInk }]}>
                     {pct.toFixed(0)}% complete{due ? ` · target ${due}` : ''}
                   </Text>
                 </View>

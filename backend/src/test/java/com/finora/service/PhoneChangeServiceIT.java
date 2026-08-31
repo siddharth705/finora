@@ -96,7 +96,7 @@ class PhoneChangeServiceIT extends AbstractIntegrationTest {
         UUID sessionId = sessionRepository.save(session).getId();
 
         assertThrows(ApiException.class,
-                () -> service.complete(userId, new CompleteRequest(sessionId.toString())));
+                () -> service.complete(userId, new CompleteRequest(sessionId.toString()), UUID.randomUUID()));
 
         assertThat(actionsFor(userId)).contains("SESSION_EXPIRED");
     }
@@ -123,7 +123,7 @@ class PhoneChangeServiceIT extends AbstractIntegrationTest {
         anotherUser.setPhoneNumber(requestedNumber);
         userRepository.save(anotherUser);
 
-        assertThatThrownBy(() -> service.complete(userId, new CompleteRequest(start.sessionId())))
+        assertThatThrownBy(() -> service.complete(userId, new CompleteRequest(start.sessionId()), UUID.randomUUID()))
                 .isInstanceOf(DataIntegrityViolationException.class);
 
         User unchangedUser = userRepository.findById(userId).orElseThrow();

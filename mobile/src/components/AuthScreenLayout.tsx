@@ -8,6 +8,7 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { BrandMark } from './BrandMark';
 import { radius, spacing, useTheme } from '../theme';
 
 /**
@@ -45,10 +46,8 @@ export function AuthScreenLayout({ title, subtitle, error, banner, children, foo
         keyboardShouldPersistTaps="handled"
       >
         <View style={styles.brandRow}>
-          <View style={[styles.brandMark, { backgroundColor: c.primary }]}>
-            <Text style={styles.brandMarkText}>F</Text>
-          </View>
-          <Text style={[styles.brandName, { color: c.ink }]}>FINORA</Text>
+          <BrandMark size={30} />
+          <Text style={[styles.brandName, { color: c.ink }]}>FYNORA</Text>
         </View>
 
         <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }]}>
@@ -84,18 +83,6 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
     marginBottom: spacing.lg,
     alignSelf: 'center',
-  },
-  brandMark: {
-    width: 30,
-    height: 30,
-    borderRadius: radius.md,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  brandMarkText: {
-    color: '#fff',
-    fontWeight: '800',
-    fontSize: 16,
   },
   brandName: {
     fontWeight: '800',

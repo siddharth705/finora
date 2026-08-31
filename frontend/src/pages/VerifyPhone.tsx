@@ -76,7 +76,7 @@ export default function VerifyPhone() {
 
   // The "Change Number" detour: for a user whose account phone number is wrong or unreachable
   // (see the sendError escape hatch below), with no other self-service way to fix it. A separate
-  // mode on this same page rather than a new route -- the surrounding FINORA/shield chrome stays
+  // mode on this same page rather than a new route -- the surrounding FYNORA/shield chrome stays
   // put, only the form content changes, and there's no reason to lose the original session
   // (confirmation/phoneNumber above) if the user backs out.
   const [mode, setMode] = useState<'verify' | 'enterNewNumber' | 'confirmNewNumber'>('verify');
@@ -177,7 +177,7 @@ export default function VerifyPhone() {
   // failed.
   function handleLogout() {
     logout();
-    void navigate('/login');
+    void navigate('/auth');
   }
 
   function startChangingNumber() {
@@ -284,9 +284,9 @@ export default function VerifyPhone() {
       <div className="bg-card rounded-xl2 p-8 w-full max-w-sm shadow-soft border border-border">
         <div className="flex items-center gap-2 mb-6">
           <span className="w-7 h-7 rounded-lg bg-gradient-to-br from-primary to-primary-dark flex items-center justify-center">
-            <Sparkles size={14} className="text-white" strokeWidth={2.5} />
+            <Sparkles size={14} className="text-on-primary" strokeWidth={2.5} />
           </span>
-          <span className="font-extrabold tracking-wide text-ink">FINORA</span>
+          <span className="font-extrabold tracking-wide text-ink">FYNORA</span>
         </div>
 
         {mode === 'verify' && (
@@ -349,7 +349,7 @@ export default function VerifyPhone() {
               <button
                 type="submit"
                 disabled={loading || !confirmation || otp.length !== 6}
-                className="w-full bg-primary hover:bg-primary-dark text-white rounded-lg py-2.5 text-sm font-semibold disabled:opacity-50"
+                className="w-full bg-primary hover:bg-primary-dark text-on-primary rounded-lg py-2.5 text-sm font-semibold disabled:opacity-50"
               >
                 {loading ? 'Verifying…' : 'Verify'}
               </button>
@@ -432,7 +432,7 @@ export default function VerifyPhone() {
               <button
                 type="submit"
                 disabled={changeSubmitting || changeResendCooldown > 0}
-                className="w-full bg-primary hover:bg-primary-dark text-white rounded-lg py-2.5 text-sm font-semibold disabled:opacity-50"
+                className="w-full bg-primary hover:bg-primary-dark text-on-primary rounded-lg py-2.5 text-sm font-semibold disabled:opacity-50"
               >
                 {changeSubmitting
                   ? 'Sending…'
@@ -493,7 +493,7 @@ export default function VerifyPhone() {
               <button
                 type="submit"
                 disabled={changeSubmitting || changeOtp.length !== 6}
-                className="w-full bg-primary hover:bg-primary-dark text-white rounded-lg py-2.5 text-sm font-semibold disabled:opacity-50"
+                className="w-full bg-primary hover:bg-primary-dark text-on-primary rounded-lg py-2.5 text-sm font-semibold disabled:opacity-50"
               >
                 {changeSubmitting ? 'Confirming…' : 'Confirm number'}
               </button>

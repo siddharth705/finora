@@ -1,0 +1,15 @@
+-- Import Row Trace, Founder Operations Dashboard (docs/proposals/reconciliation-evolution-
+-- roadmap-proposal.md, Part 9's "Import Explorer", scoped down: imported rows only -- a
+-- successfully-imported row's own content is already fully persisted here, so tracing it back to
+-- its source position needs no new privacy exception. A row that was dropped or excluded by the
+-- user stays aggregate-only, as it is today (see UnparseableRowSummary/DocumentContext -- that
+-- data is deliberately never persisted per-row).
+--
+-- Position within its section as originally parsed (1-based, CSV relative to the first data row,
+-- PDF relative to the first row of its section) -- distinct from row_ordinal (V67), which is
+-- insertion order among CONFIRMED rows only and compresses away every excluded/dropped row.
+-- Nullable: null for a manual transaction, for anything imported before this column existed, and
+-- for anything imported by a client that predates ConfirmedRow.rowPosition (see that field's own
+-- doc comment) -- the Import Row Trace just has nothing to show for that row rather than a wrong
+-- answer.
+ALTER TABLE transactions ADD COLUMN source_row_position INTEGER;

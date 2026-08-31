@@ -12,7 +12,7 @@ export type FilterField =
   | { type: 'select'; key: string; value: string; onChange: (v: string) => void; options: { label: string; value: string }[]; placeholder?: string; label: string }
   | { type: 'date'; key: string; value: string; onChange: (v: string) => void; label: string };
 
-export interface FilterBarSavedViewsProps<T extends Record<string, string>> {
+interface FilterBarSavedViewsProps<T extends Record<string, string>> {
   views: SavedView<T>[];
   /** The current, live filter values -- what gets written under a new name on "Save current". */
   currentValues: T;
@@ -109,7 +109,7 @@ export function FilterBar<T extends Record<string, string>>({
         <button
           type="button"
           onClick={onApply}
-          className="bg-primary hover:bg-primary-dark text-white text-sm font-semibold rounded-lg px-4 py-2.5"
+          className="bg-primary hover:bg-primary-dark text-on-primary text-sm font-semibold rounded-lg px-4 py-2.5"
         >
           {applyLabel}
         </button>

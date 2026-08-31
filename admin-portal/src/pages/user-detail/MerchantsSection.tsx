@@ -6,8 +6,9 @@ import { useNotify } from '../../context/NotificationContext';
 import { adminUserMerchantsApi } from '../../api/endpoints';
 import type { CreateRuleRequest, MerchantDto } from '../../types';
 import { errorMessage } from './errorMessage';
+import { ConfirmDialog } from '../../components/ConfirmDialog';
 
-export function MerchantRow({
+function MerchantRow({
   userId, merchant, allMerchants, canManage,
 }: {
   userId: string;
@@ -21,6 +22,9 @@ export function MerchantRow({
   const [name, setName] = useState(merchant.canonicalName);
   const [mergeFrom, setMergeFrom] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [confirmMerge, setConfirmMerge] = useState(false);
+  const [confirmUndo, setConfirmUndo] = useState(false);
+  const [confirmResetLearning, setConfirmResetLearning] = useState(false);
 
   function invalidate() {
     void queryClient.invalidateQueries({ queryKey: ['admin-user-merchants', userId] });
@@ -146,12 +150,7 @@ export function MerchantRow({
               <button
                 type="button"
                 disabled={!mergeFrom || mergeMutation.isPending}
-                onClick={() => {
-                  const fromName = otherMerchants.find((m) => m.id === mergeFrom)?.canonicalName;
-                  if (confirm(`Merge "${fromName}" into "${merchant.canonicalName}"? This can't be undone.`)) {
-                    mergeMutation.mutate(mergeFrom);
-                  }
-                }}
+                onClick={() => setConfirmMerge(true)}
                 className="text-xs font-semibold text-primary px-2 py-1.5 disabled:opacity-50"
               >
                 Merge
@@ -163,11 +162,7 @@ export function MerchantRow({
               <button
                 type="button"
                 disabled={undoMutation.isPending}
-                onClick={() => {
-                  if (confirm(`Undo the last learning event for "${merchant.canonicalName}"?`)) {
-                    undoMutation.mutate();
-                  }
-                }}
+                onClick={() => setConfirmUndo(true)}
                 className="text-xs font-semibold text-primary px-2 py-1.5 disabled:opacity-50"
               >
                 Undo
@@ -175,11 +170,7 @@ export function MerchantRow({
               <button
                 type="button"
                 disabled={resetLearningMutation.isPending}
-                onClick={() => {
-                  if (confirm(`Reset ALL learned categories for "${merchant.canonicalName}"? This can't be undone.`)) {
-                    resetLearningMutation.mutate();
-                  }
-                }}
+                onClick={() => setConfirmResetLearning(true)}
                 className="text-xs font-semibold text-danger px-2 py-1.5 disabled:opacity-50"
               >
                 Reset learning
@@ -195,6 +186,39 @@ export function MerchantRow({
             <Pencil size={13} />
           </button>
         </div>
+      )}
+
+      {confirmMerge && (
+        <ConfirmDialog
+          title={`Merge "${otherMerchants.find((m) => m.id === mergeFrom)?.canonicalName}" into "${merchant.canonicalName}"?`}
+          message="This can't be undone."
+          confirmLabel="Merge"
+          danger
+          onConfirm={() => { setConfirmMerge(false); mergeMutation.mutate(mergeFrom); }}
+          onCancel={() => setConfirmMerge(false)}
+        />
+      )}
+
+      {confirmUndo && (
+        <ConfirmDialog
+          title={`Undo the last learning event for "${merchant.canonicalName}"?`}
+          message="This can't be undone."
+          confirmLabel="Undo"
+          danger
+          onConfirm={() => { setConfirmUndo(false); undoMutation.mutate(); }}
+          onCancel={() => setConfirmUndo(false)}
+        />
+      )}
+
+      {confirmResetLearning && (
+        <ConfirmDialog
+          title={`Reset ALL learned categories for "${merchant.canonicalName}"?`}
+          message="This can't be undone."
+          confirmLabel="Reset"
+          danger
+          onConfirm={() => { setConfirmResetLearning(false); resetLearningMutation.mutate(); }}
+          onCancel={() => setConfirmResetLearning(false)}
+        />
       )}
     </div>
   );

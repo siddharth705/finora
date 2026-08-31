@@ -1,7 +1,10 @@
 package com.finora.repository;
 
 import com.finora.entity.RefreshToken;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import java.time.Instant;
 import java.util.List;
@@ -18,9 +21,18 @@ public interface RefreshTokenRepository extends JpaRepository<RefreshToken, UUID
     /** Backs the device-management list endpoint — unlike findByUserIdAndRevokedAtIsNull above,
      *  also excludes tokens that have simply expired without ever being explicitly revoked, since
      *  those can no longer be used to refresh and so aren't a real "active session" to show or
-     *  let the user sign out of. */
+     *  let the user sign out of.
+     *
+     * <p>Bug 28. A derived-name query here compiled to a plain {@code ORDER BY last_seen_at DESC},
+     * and Postgres's default null ordering for DESC is NULLS FIRST — so a row with no
+     * {@code lastSeenAt} (captureDeviceMetadata skips it silently when there's no live request
+     * context, see RefreshTokenService) sorted ahead of every genuinely-recent session instead of
+     * behind them. {@code NULLS LAST} makes the explicit intent (documented above: most-recent
+     * first) hold regardless of the database's default. */
+    @Query("SELECT r FROM RefreshToken r WHERE r.userId = :userId AND r.revokedAt IS NULL "
+            + "AND r.expiresAt > :now ORDER BY r.lastSeenAt DESC NULLS LAST")
     List<RefreshToken> findByUserIdAndRevokedAtIsNullAndExpiresAtAfterOrderByLastSeenAtDesc(
-            UUID userId, Instant now);
+            @Param("userId") UUID userId, @Param("now") Instant now);
 
     Optional<RefreshToken> findByIdAndUserId(UUID id, UUID userId);
 
@@ -46,4 +58,30 @@ public interface RefreshTokenRepository extends JpaRepository<RefreshToken, UUID
     /** AccountPurgeSweepService -- every row already revoked by requestDeletion() by this point;
      *  this removes the residual device/IP labels too. Hard delete, no soft-delete concern. */
     void deleteByUserId(UUID userId);
+
+    /**
+     * Bug 14 (docs/quality/bug-reports/BUG_REVIEW_REPORT.md) / RefreshTokenService.sweepExpiredTokens.
+     *
+     * <p>{@code expiresAt} ALONE, deliberately -- not {@code OR revokedAt IS NOT NULL}, which the
+     * bug report's own reproduction query used. {@code rotate()} never updates {@code expiresAt}
+     * when it revokes the presented row (see RefreshToken's own history), so a rotated row's
+     * {@code expiresAt} still marks the FULL lifetime the original token would have had. That
+     * matters because {@code rotate()}'s reuse-detection depends on a revoked row still existing
+     * when the STOLEN copy of it is replayed ({@code findByTokenHash} finding it with
+     * {@code revokedAt != null} is what triggers "revoke every session for this user" -- see that
+     * method's own doc comment). Deleting on revocation alone would let an attacker's replay of an
+     * already-cleaned-up stolen token fall through to a generic "invalid token" 401 instead of
+     * tripping that response, for however much of the token's original lifetime remained
+     * unexpired. Keying on {@code expiresAt} only preserves that detection window for a row's
+     * entire natural lifetime, whether it was rotated early or simply expired unused.
+     */
+    List<RefreshToken> findByExpiresAtBeforeOrderByExpiresAtAsc(Instant now, Pageable pageable);
+
+    /** D-28 PR4-C: the reuse proposal §4 asks for -- "check device/IP overlap between
+     *  referrer_user_id and referred_user_id's sessions before crediting a reward, rather than
+     *  building a parallel fingerprinting system." Distinct, non-null IPs only: a null
+     *  {@code last_seen_ip} (never populated, e.g. a row created before this column existed) must
+     *  never be treated as a shared signal between two accounts. */
+    @Query("SELECT DISTINCT r.lastSeenIp FROM RefreshToken r WHERE r.userId = :userId AND r.lastSeenIp IS NOT NULL")
+    List<String> findDistinctLastSeenIpsByUserId(@Param("userId") UUID userId);
 }

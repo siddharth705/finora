@@ -13,8 +13,16 @@ interface ImportMetaEnv {
   /** Crash reporting DSN. Optional: unset disables Sentry entirely rather than being an error,
    *  which is what keeps local dev and the test suite free of network calls. See lib/monitoring.ts. */
   readonly VITE_SENTRY_DSN?: string;
+  /** Google Identity Services client id -- Admin MFA UI's re-auth-before-disable step only
+   *  (GoogleReauthPrompt.tsx). This app has no Google login button. See .env.example. */
+  readonly VITE_GOOGLE_LOGIN_CLIENT_ID?: string;
 }
 
 interface ImportMeta {
   readonly env: ImportMetaEnv;
 }
+
+/** Injected by vite.config.ts's `define` -- the deployed commit SHA (Cloudflare Pages'
+ *  CF_PAGES_COMMIT_SHA), or '' when building outside Cloudflare Pages (local dev, the test
+ *  suite). Powers Sentry release tagging -- see lib/monitoring.ts. */
+declare const __APP_RELEASE__: string;

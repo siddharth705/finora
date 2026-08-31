@@ -1,5 +1,7 @@
 package com.finora.imports.pdf;
 
+import com.finora.imports.TestAccountRepositories;
+
 import com.finora.dto.ImportDto.StagedAccountSection;
 import com.finora.imports.DuplicateDetector;
 import com.finora.imports.TransactionNormalizer;
@@ -112,9 +114,11 @@ class DepositIdentityPerDepositTest {
         // stubbed alongside the loading one so either path returns a real suggestion.
         when(categorizationService.suggestReadOnly(any(), any(), any(), any(), any()))
                 .thenReturn(new CategorizationService.Suggestion("Other", "default", null, null, null));
+        when(categorizationService.suggestReadOnly(any(), any(), any(), any(), any(), any()))
+                .thenReturn(new CategorizationService.Suggestion("Other", "default", null, null, null));
         List<StagedAccountSection> sections = new PdfPreviewGenerator(new PdfTextExtractor(),
                 new PdfTableLocator(), new PdfMetadataExtractor(),
-                new TransactionNormalizer(categorizationService, new DuplicateDetector(mock(TransactionRepository.class)), com.finora.imports.TestRuleEngines.empty()),
+                new TransactionNormalizer(categorizationService, new DuplicateDetector(mock(TransactionRepository.class), TestAccountRepositories.anyLive()), com.finora.imports.TestRuleEngines.empty()),
                 com.finora.imports.product.ProductDiscovery.standard(),
                 new com.finora.imports.product.ProductAttributeExtractor(), new com.finora.imports.ImportVerifier(new com.finora.imports.BalanceChainValidator(), new com.finora.imports.StatementTotalsValidator(), new com.finora.imports.SummaryTotalsValidator(), new com.finora.imports.ColumnAmbiguityValidator(), new com.finora.imports.RowAccountingValidator(), new com.finora.imports.CreditCardStatementTotalsValidator(), new com.finora.imports.CreditCardFlowReconciliationValidator()),
                 com.finora.imports.TestRuleEngines.empty())

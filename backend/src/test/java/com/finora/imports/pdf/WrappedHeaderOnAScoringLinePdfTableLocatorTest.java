@@ -1,5 +1,7 @@
 package com.finora.imports.pdf;
 
+import com.finora.imports.TestAccountRepositories;
+
 import com.finora.dto.ImportDto.StagedRow;
 import com.finora.imports.CsvParser;
 import com.finora.imports.DocumentContext;
@@ -77,9 +79,11 @@ class WrappedHeaderOnAScoringLinePdfTableLocatorTest {
                 .thenReturn(new CategorizationService.Suggestion("Other", "default", null, null, null));
         when(categorization.suggestReadOnly(any(), any(), any(), any(), any()))
                 .thenReturn(new CategorizationService.Suggestion("Other", "default", null, null, null));
+        when(categorization.suggestReadOnly(any(), any(), any(), any(), any(), any()))
+                .thenReturn(new CategorizationService.Suggestion("Other", "default", null, null, null));
         TransactionRepository transactions = mock(TransactionRepository.class);
-        when(transactions.findPotentialDuplicatesByUser(any(), any(), any(), any())).thenReturn(List.of());
-        return new TransactionNormalizer(categorization, new DuplicateDetector(transactions),
+        when(transactions.findPotentialDuplicatesByUserAndAccountIdIn(any(), any(), any(), any(), any())).thenReturn(List.of());
+        return new TransactionNormalizer(categorization, new DuplicateDetector(transactions, TestAccountRepositories.anyLive()),
                 com.finora.imports.TestRuleEngines.empty());
     }
 
@@ -194,8 +198,10 @@ class WrappedHeaderOnAScoringLinePdfTableLocatorTest {
         Map<String, int[]> expected = new LinkedHashMap<>();
         expected.put("au-credit-card-statement", new int[]{3, 6});
         // {2, 113} before PdfTableLocator.looksLikePaymentSummaryPanel: the dropped section was a
-        // misdetected payment-summary panel (2 rows), not fine print -- 111 real rows survive.
-        expected.put("axis-credit-card-statement", new int[]{1, 111});
+        // misdetected payment-summary panel (2 rows), not fine print -- real rows survive. 110, not
+        // 111, since TRANSACTION_TABLE_CLOSED (STATEMENT_CLOSING_MARKER) started stopping at this
+        // trace's own "*** End of Statement ***" line.
+        expected.put("axis-credit-card-statement", new int[]{1, 110});
         expected.put("bob-repeated-account-banner", new int[]{1, 58});
         expected.put("bob-savings-ledger-validation", new int[]{1, 58});
         expected.put("canara-savings-ledger-validation", new int[]{1, 60});
@@ -204,13 +210,21 @@ class WrappedHeaderOnAScoringLinePdfTableLocatorTest {
         // {2, 6} before looksLikePaymentSummaryPanel: same panel shape, 2 rows dropped.
         expected.put("hdfc-credit-card-ledger-validation", new int[]{1, 4});
         expected.put("hdfc-savings-ledger-validation", new int[]{1, 331});
-        expected.put("hdfc-savings-multi-page-ledger", new int[]{1, 569});
-        expected.put("hdfc-savings-single-page-ledger", new int[]{1, 9});
+        // 569 -> 568: STATEMENT_SUMMARY_BLOCK_CLOSED removes a phantom trailing-summary row this
+        // trace's own trace used to form -- see SplitHeaderRunsPdfTableLocatorTest's own comment.
+        expected.put("hdfc-savings-multi-page-ledger", new int[]{1, 568});
+        // 9 -> 8: STATEMENT_SUMMARY_BLOCK_CLOSED removes a phantom trailing-summary row, same shape
+        // as hdfc-savings-multi-page-ledger above.
+        expected.put("hdfc-savings-single-page-ledger", new int[]{1, 8});
         expected.put("hdfc-txn-date-narration-header", new int[]{1, 5});
         expected.put("hsbc-savings-ledger-validation", new int[]{1, 2});
         // icici, kotak, sbi: post P-002 Fix 2 (commit pending) -- see HeaderProseRejectionTest.
         expected.put("icici-credit-card-statement", new int[]{1, 6});
-        expected.put("icici-savings-ledger-validation", new int[]{1, 2});
+        // {1, 2} before Phase 2E.5's leading-narration fix -- the narration-only line right under the
+        // header now attaches to its transaction instead of being swallowed as false-header prose. All
+        // 11 real transactions verified via BALANCE_CHAIN/STATEMENT_TOTALS with zero discrepancies; row
+        // 12 is the pre-existing flushPendingLeading page-2 glossary content, not new behavior.
+        expected.put("icici-savings-ledger-validation", new int[]{1, 12});
         expected.put("kotak-credit-card-ledger-validation", new int[]{0, 0});
         expected.put("kotak-savings-ledger-validation", new int[]{1, 2});
         expected.put("pnb-savings-ledger-validation", new int[]{1, 62});

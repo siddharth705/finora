@@ -1,5 +1,7 @@
 package com.finora.integrations.google.merchant;
 
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.util.Optional;
@@ -12,4 +14,15 @@ public interface MerchantTemplateRepository extends JpaRepository<MerchantTempla
      *  template is that editing this row takes effect without a deploy, and C3's gate already pays
      *  the identical cost (one indexed lookup per message) for the same property. */
     Optional<MerchantTemplate> findByMerchantDomainAndEnabledTrue(String merchantDomain);
+
+    /** Any status -- unlike the lookup above, this is for the admin create-conflict check, which
+     *  must see a disabled row too (the same domain cannot be claimed twice regardless of
+     *  enabled), not just what a real message would currently match against. */
+    Optional<MerchantTemplate> findByMerchantDomain(String merchantDomain);
+
+    /** Every template, for the admin list view -- mirrors
+     *  {@code TrustedSenderDomainRepository.findAllByOrderByMerchantNameAscDomainAsc}. Paged: V103
+     *  alone seeded 50 rows, on top of whatever admins hand-author afterward, and this was still
+     *  an unconditional fetch-all before. */
+    Page<MerchantTemplate> findAllByOrderByMerchantNameAscMerchantDomainAsc(Pageable pageable);
 }

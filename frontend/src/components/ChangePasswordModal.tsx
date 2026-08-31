@@ -236,7 +236,7 @@ export function ChangePasswordModal({ onClose, onSuccess, signInMethod }: {
             <p className="text-muted text-sm mt-1">{successMessage}</p>
             <button
               onClick={onClose}
-              className="mt-5 bg-primary text-white hover:bg-primary-dark rounded-lg px-4 py-2 text-xs uppercase font-medium"
+              className="mt-5 bg-primary text-on-primary hover:bg-primary-dark rounded-lg px-4 py-2 text-xs uppercase font-medium"
             >
               Done
             </button>
@@ -290,7 +290,7 @@ export function ChangePasswordModal({ onClose, onSuccess, signInMethod }: {
                   <button
                     onClick={submitCurrentPassword}
                     disabled={currentPassword.length === 0 || submitting}
-                    className="bg-primary text-white hover:bg-primary-dark disabled:opacity-50 rounded-lg px-4 py-2 text-xs uppercase font-medium"
+                    className="bg-primary text-on-primary hover:bg-primary-dark disabled:opacity-50 rounded-lg px-4 py-2 text-xs uppercase font-medium"
                   >
                     {submitting ? 'Sending…' : 'Send code'}
                   </button>
@@ -318,7 +318,7 @@ export function ChangePasswordModal({ onClose, onSuccess, signInMethod }: {
                   <button
                     onClick={submitOtp}
                     disabled={!otpValid || submitting}
-                    className="bg-primary text-white hover:bg-primary-dark disabled:opacity-50 rounded-lg px-4 py-2 text-xs uppercase font-medium"
+                    className="bg-primary text-on-primary hover:bg-primary-dark disabled:opacity-50 rounded-lg px-4 py-2 text-xs uppercase font-medium"
                   >
                     {submitting ? 'Verifying…' : 'Verify'}
                   </button>
@@ -406,7 +406,7 @@ export function ChangePasswordModal({ onClose, onSuccess, signInMethod }: {
                   <button
                     onClick={submitNewPassword}
                     disabled={!canSubmitNewPassword}
-                    className="bg-primary text-white hover:bg-primary-dark disabled:opacity-50 rounded-lg px-4 py-2 text-xs uppercase font-medium"
+                    className="bg-primary text-on-primary hover:bg-primary-dark disabled:opacity-50 rounded-lg px-4 py-2 text-xs uppercase font-medium"
                   >
                     {submitting ? 'Updating…' : 'Update Password'}
                   </button>

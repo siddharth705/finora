@@ -36,10 +36,10 @@ test.describe('@smoke — the product works end to end', () => {
   const startedAt = Date.now();
 
   test('1. a user can sign in', async ({ userPage }) => {
-    // The userPage fixture signs in and asserts it left /login; this makes that a named step rather
+    // The userPage fixture signs in and asserts it left /auth; this makes that a named step rather
     // than a precondition buried in a fixture, because "nobody can log in" is the single failure
     // that makes every other result meaningless.
-    await expect(userPage).not.toHaveURL(/\/login/);
+    await expect(userPage).not.toHaveURL(/\/auth/);
     await expect(userPage.locator('body')).not.toBeEmpty();
   });
 
@@ -140,15 +140,15 @@ test.describe('@smoke — the product works end to end', () => {
   test('8. signing out takes the session with it', async ({ userPage, allowConsoleErrors }) => {
     allowConsoleErrors('requests start failing once the session is gone, which is the point');
 
-    // "Log out" lives inside the TopBar profile dropdown (TopBar.tsx), closed by default --
+    // "Log out" lives inside the Sidebar's account menu (Sidebar.tsx), closed by default --
     // open it before the button is clickable. Under SEC-01 the access token is an in-memory
     // module variable and the refresh token is an HttpOnly cookie, so an `evaluate` fallback
     // that only clears localStorage/sessionStorage wouldn't actually end the session.
-    await userPage.getByRole('button', { name: 'Profile & help' }).click();
+    await userPage.getByRole('button', { name: 'Account menu' }).click();
     await userPage.getByRole('button', { name: /log ?out|sign ?out/i }).first().click();
 
     await userPage.goto('/app', { waitUntil: 'commit' }).catch(() => {});
-    await expect(userPage).toHaveURL(/\/login/, { timeout: 20_000 });
+    await expect(userPage).toHaveURL(/\/auth/, { timeout: 20_000 });
   });
 
   /**

@@ -1,9 +1,22 @@
-import { act, render, screen } from '@testing-library/react-native';
-import { Text } from 'react-native';
+import { act, render, renderHook, screen } from '@testing-library/react-native';
+import { AccessibilityInfo, Platform, Text } from 'react-native';
 import { onlineManager } from '@tanstack/react-query';
-import { OfflineBoundary } from './OfflineBanner';
+import { OfflineBoundary, useOnline } from './OfflineBanner';
 import { ThemeProvider } from '../theme';
 import App from '../../App';
+
+describe('useOnline', () => {
+  afterEach(() => onlineManager.setOnline(true));
+
+  it('is exported and tracks onlineManager', () => {
+    onlineManager.setOnline(true);
+    const { result } = renderHook(() => useOnline());
+    expect(result.current).toBe(true);
+
+    act(() => onlineManager.setOnline(false));
+    expect(result.current).toBe(false);
+  });
+});
 
 // Replaced so the mount test below stays a test of App's own composition rather than of the whole
 // navigation tree. Everything above it -- the providers, and the boundary itself -- stays real.
@@ -82,6 +95,182 @@ describe('OfflineBoundary', () => {
     renderBoundary();
 
     expect(screen.getByRole('alert')).toBeTruthy();
+  });
+
+  // accessibilityLiveRegion (asserted above) only reaches Android -- React Native has no iOS
+  // equivalent, so VoiceOver needs an explicit announcement on the ONLINE -> OFFLINE transition.
+  describe('iOS VoiceOver announcement', () => {
+    const originalOS = Platform.OS;
+    let announceSpy: jest.SpyInstance;
+
+    beforeEach(() => {
+      Platform.OS = 'ios';
+      announceSpy = jest.spyOn(AccessibilityInfo, 'announceForAccessibility').mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+      Platform.OS = originalOS;
+      announceSpy.mockRestore();
+    });
+
+    it('announces when connectivity drops', () => {
+      setOnline(true);
+      renderBoundary();
+
+      setOnline(false);
+
+      expect(announceSpy).toHaveBeenCalledTimes(1);
+      expect(announceSpy).toHaveBeenCalledWith('No connection — showing the last data loaded');
+    });
+
+    it('does not announce on mount, even if already offline', () => {
+      // Mirrors Android's live region, which also only speaks a change, not the app opening
+      // already offline -- this keeps the two platforms symmetric rather than iOS being chattier.
+      setOnline(false);
+      renderBoundary();
+
+      expect(announceSpy).not.toHaveBeenCalled();
+    });
+
+    it('does not announce again on unrelated rerenders while still offline', () => {
+      setOnline(true);
+      const view = renderBoundary();
+
+      setOnline(false);
+      expect(announceSpy).toHaveBeenCalledTimes(1);
+
+      // Any rerender that doesn't change `online` (e.g. a theme or layout update) must not
+      // re-trigger the announcement -- it fires on the transition, not on every render.
+      view.rerender(
+        <ThemeProvider>
+          <OfflineBoundary>
+            <Text>protected content</Text>
+          </OfflineBoundary>
+        </ThemeProvider>
+      );
+
+      expect(announceSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('announces again on a second drop after recovering', () => {
+      setOnline(true);
+      renderBoundary();
+
+      setOnline(false);
+      setOnline(true);
+      setOnline(false);
+
+      const offlineCalls = announceSpy.mock.calls.filter(
+        ([msg]) => msg === 'No connection — showing the last data loaded'
+      );
+      expect(offlineCalls).toHaveLength(2);
+    });
+
+  });
+
+  describe('on Android, unaffected by the iOS announcement path', () => {
+    const originalOS = Platform.OS;
+    let announceSpy: jest.SpyInstance;
+
+    beforeEach(() => {
+      Platform.OS = 'android';
+      announceSpy = jest.spyOn(AccessibilityInfo, 'announceForAccessibility').mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+      Platform.OS = originalOS;
+      announceSpy.mockRestore();
+    });
+
+    it('still shows the visible banner and live region, but never calls the iOS announcement API', () => {
+      setOnline(true);
+      renderBoundary();
+
+      setOnline(false);
+
+      expect(screen.getByText(OFFLINE_TEXT)).toBeTruthy();
+      expect(screen.getByRole('alert')).toBeTruthy();
+      expect(announceSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('back online feedback', () => {
+    const BACK_ONLINE_TEXT = /Back online/i;
+
+    beforeEach(() => jest.useFakeTimers());
+    afterEach(() => {
+      jest.useRealTimers();
+      onlineManager.setOnline(true);
+    });
+
+    it('shows a transient success message when connectivity returns, then clears it, without hiding the app', () => {
+      setOnline(false);
+      renderBoundary();
+      expect(screen.getByText(OFFLINE_TEXT)).toBeTruthy();
+
+      setOnline(true);
+      expect(screen.getByText(BACK_ONLINE_TEXT)).toBeTruthy();
+      expect(screen.getByText('protected content')).toBeTruthy();
+
+      act(() => { jest.advanceTimersByTime(2500); });
+      expect(screen.queryByText(BACK_ONLINE_TEXT)).toBeNull();
+      expect(screen.getByText('protected content')).toBeTruthy();
+    });
+
+    it('does not show the back-online message on initial mount while already online', () => {
+      setOnline(true);
+      renderBoundary();
+
+      expect(screen.queryByText(BACK_ONLINE_TEXT)).toBeNull();
+    });
+
+    describe('iOS VoiceOver announcement', () => {
+      const originalOS = Platform.OS;
+      let announceSpy: jest.SpyInstance;
+
+      beforeEach(() => {
+        Platform.OS = 'ios';
+        announceSpy = jest.spyOn(AccessibilityInfo, 'announceForAccessibility').mockImplementation(() => {});
+      });
+      afterEach(() => {
+        Platform.OS = originalOS;
+        announceSpy.mockRestore();
+      });
+
+      it('announces when connectivity returns', () => {
+        setOnline(false);
+        renderBoundary();
+        announceSpy.mockClear();
+
+        setOnline(true);
+
+        expect(announceSpy).toHaveBeenCalledWith('Back online — refreshing your data');
+      });
+    });
+
+    describe('on Android', () => {
+      const originalOS = Platform.OS;
+      let announceSpy: jest.SpyInstance;
+
+      beforeEach(() => {
+        Platform.OS = 'android';
+        announceSpy = jest.spyOn(AccessibilityInfo, 'announceForAccessibility').mockImplementation(() => {});
+      });
+      afterEach(() => {
+        Platform.OS = originalOS;
+        announceSpy.mockRestore();
+      });
+
+      it('still shows the visible back-online banner, but never calls the iOS announcement API', () => {
+        setOnline(false);
+        renderBoundary();
+
+        setOnline(true);
+
+        expect(screen.getByText(BACK_ONLINE_TEXT)).toBeTruthy();
+        expect(announceSpy).not.toHaveBeenCalled();
+      });
+    });
   });
 });
 

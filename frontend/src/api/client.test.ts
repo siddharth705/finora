@@ -48,6 +48,52 @@ function rejectedHandler() {
   return handlers[handlers.length - 1].rejected;
 }
 
+function requestFulfilledHandler() {
+  const handlers = (api.interceptors.request as any).handlers;
+  return handlers[handlers.length - 1].fulfilled;
+}
+
+/**
+ * Bug 42. isAuthEndpoint used to be a plain `.includes(path)` scan of the whole request URL,
+ * including any query string -- so an unrelated endpoint whose query happened to contain one of
+ * the listed auth paths (e.g. a "redirect back here after login" param) would be misidentified as
+ * an auth endpoint: silently withheld the Bearer token here, and (see the response-interceptor
+ * tests below) skipped 401-retry/redirect handling for a request that has nothing to do with auth.
+ */
+describe('isAuthEndpoint matching', () => {
+  beforeEach(() => {
+    setAccessToken('a-real-access-token');
+  });
+
+  it('still attaches the token to an unrelated endpoint whose query string happens to contain an auth path', () => {
+    const config: any = { url: '/reports/export?next=/auth/login', headers: {} };
+    requestFulfilledHandler()(config);
+    expect(config.headers.Authorization).toBe('Bearer a-real-access-token');
+  });
+
+  it('still withholds the token from a real auth endpoint', () => {
+    const config: any = { url: '/auth/login', headers: {} };
+    requestFulfilledHandler()(config);
+    expect(config.headers.Authorization).toBeUndefined();
+  });
+
+  /**
+   * Phase 3A/3B self-review finding (caught by scripts/check-client-auth-policy.py, not by this
+   * suite -- AuthEntry.tsx's own PR shipped without a regression test here): /auth/identify was
+   * missing from AUTH_ENDPOINTS_NO_TOKEN, the exact D-23/D-26 bug class the comment above this
+   * list describes for /auth/google -- a stale leftover access token from an earlier, already-
+   * ended session would get attached to this unauthenticated, pre-login call. See the response-
+   * interceptor test below for why that's not just an unnecessary header: it risks a 401
+   * mis-triggering the refresh-then-clear-session path for someone who was just typing their
+   * identifier on the entry screen.
+   */
+  it('withholds the token from /auth/identify, same as every other unauthenticated auth endpoint', () => {
+    const config: any = { url: '/auth/identify', headers: {} };
+    requestFulfilledHandler()(config);
+    expect(config.headers.Authorization).toBeUndefined();
+  });
+});
+
 describe('api response interceptor', () => {
   beforeEach(() => {
     localStorage.clear();
@@ -116,6 +162,41 @@ describe('api response interceptor', () => {
   });
 
   /**
+   * Phase 3A/3B self-review finding, response-interceptor half: with /auth/identify missing from
+   * AUTH_ENDPOINTS_NO_TOKEN, a stale leftover access token attached to this call (see the request-
+   * interceptor test above) could 401, and this branch would have treated that exactly like a real
+   * session expiry -- attempting a refresh with whatever refresh token/cookie happens to be lying
+   * around, and clearing/redirecting on failure. Someone who simply visited AuthEntry with an old,
+   * already-ended session's leftover token in storage should never trigger that.
+   */
+  it('leaves a failed identify() call alone instead of treating it as an expired session', async () => {
+    setAccessToken('a-stale-access-token-from-a-previous-session');
+
+    await rejectedHandler()({
+      response: { status: 401, data: { message: 'Unauthorized', errorCode: null } },
+      config: { url: '/auth/identify', _retried: false, headers: {} },
+    }).catch(() => { /* the caller's own .catch is what renders the inline error */ });
+
+    expect(refreshMock).not.toHaveBeenCalled();
+    expect(getAccessToken()).toBe('a-stale-access-token-from-a-previous-session');
+    expect(localStorage.getItem('finora_session_ended_reason')).toBeNull();
+  });
+
+  /** Bug 42, response-interceptor half: an unrelated endpoint must still get the normal
+   *  retry-on-401 treatment even when its query string happens to contain an auth path. */
+  it('still retries an unrelated endpoint on 401 even when its query string contains an auth path', async () => {
+    setAccessToken('the-stale-access-token');
+    refreshMock.mockResolvedValue({ token: 'new-access-token', refreshToken: 'new-refresh-token' });
+
+    await rejectedHandler()({
+      response: { status: 401, data: { message: 'Unauthorized', errorCode: null } },
+      config: { url: '/reports/export?next=/auth/refresh', _retried: false, headers: {} },
+    }).catch(() => { /* the retry has no server to reach in this harness */ });
+
+    expect(refreshMock).toHaveBeenCalledTimes(1);
+  });
+
+  /**
    * The other half of the same problem: when a session genuinely DOES end, the backend's
    * explanation used to be discarded by clearSessionAndRedirect()'s full-page navigation, so the
    * user landed on the login screen with no idea why. The reason is now handed off through storage
@@ -145,6 +226,29 @@ describe('api response interceptor', () => {
 
     expect(localStorage.getItem('finora_session_ended_reason'))
       .toBe('Your session has ended. Please sign in again to continue.');
+  });
+
+  /**
+   * Bug 41. The no-stale-token branch above (no in-memory access token to attempt a refresh with)
+   * called clearSessionAndRedirect() but never returned afterward, unlike both branches of the
+   * try/catch just above it -- execution fell through to the 403/phone-verification check and the
+   * envelope-reshaping block at the end of this interceptor, running unrelated logic after the
+   * session had already been torn down and a hard navigation to /login already kicked off.
+   */
+  it('stops immediately after clearing the session when there is no token to refresh with', async () => {
+    const originalData = { message: 'Unauthorized', errorCode: null };
+
+    const caught = await rejectedHandler()({
+      response: { status: 401, data: originalData },
+      config: { url: '/users/me', _retried: false, headers: {} },
+    }).catch((e: unknown) => e);
+
+    expect(refreshMock).not.toHaveBeenCalled();
+    // The envelope-reshaping block at the very end of the interceptor replaces response.data with
+    // a new object carrying a `userActionRequired` key. If the fallthrough bug were still present,
+    // that block would still run even though the session was already cleared, and this identity
+    // check would fail.
+    expect((caught as any).response.data).toBe(originalData);
   });
 
   /**

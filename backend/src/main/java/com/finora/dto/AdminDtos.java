@@ -2,6 +2,7 @@ package com.finora.dto;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -68,7 +69,12 @@ public class AdminDtos {
      * "failed imports" -- see StatementImportRepository.countWithSkippedRowsAfter()'s doc
      * comment for why this pipeline has no real FAILED signal to report today. health/alerts
      * both come from AdminHealthRegistryService -- exactly one source of truth for "is something
-     * wrong," not two that could disagree.
+     * wrong," not two that could disagree. inactiveUsersLast7Days is the inverse of
+     * activeUsersToday's own query -- a user who predates the 7-day window with no USER_LOGIN
+     * audit row in it, or none ever (see UserRepository.countWithNoAuditActionSince's own doc
+     * comment for why "predates the window" matters -- without it, a signup from an hour ago
+     * would count as inactive) -- an Insights & Alerts figure, not a daily-reset tile, so it has
+     * no previousDay sibling.
      */
     public record OperationalDashboardDto(
             long totalUsers,
@@ -76,10 +82,27 @@ public class AdminDtos {
             long transactionsToday,
             long importsToday,
             long importsWithSkippedRowsToday,
+            long inactiveUsersLast7Days,
+            PreviousDayDto previousDay,
             NeedsAttentionDto needsAttention,
             HealthDtos.PlatformHealthDto health,
             List<HealthDtos.AlertDto> alerts,
             List<AuditLogDto> recentActivity
+    ) {}
+
+    /**
+     * Yesterday's counts for the four stat tiles that reset daily, backing each tile's "vs
+     * yesterday" delta on the admin Dashboard. totalUsers has no sibling here and never will --
+     * it's a running total, not a daily-reset metric, and "vs yesterday" has no sensible meaning
+     * for a monotonically-growing count (see AdminOperationalDashboardService.overview()). Both
+     * bounds are calendar-day boundaries in the platform reporting zone, the same midnight-to-
+     * midnight window importsToday/activeUsersToday/etc. themselves use, one day earlier.
+     */
+    public record PreviousDayDto(
+            long activeUsers,
+            long transactions,
+            long imports,
+            long importsWithSkippedRows
     ) {}
 
     /**
@@ -97,6 +120,45 @@ public class AdminDtos {
             long lockedAccounts,
             long transactionsNeedingCategoryReview,
             long transactionsFlaggedAsDuplicates
+    ) {}
+
+    /**
+     * D-27 PR3-D. Activation funnel: how many distinct users have EVER reached each of the four
+     * stages the owner named -- signup, first import, first budget, first goal (deliberately NOT
+     * "goal achieved", a fifth FinancialJourneyService milestone the owner's own funnel wording
+     * didn't ask for). A simple snapshot, not a cohort/time-series -- see the D-27 decision: no
+     * scheduled pre-aggregation exists anywhere in this codebase yet, and one live query per
+     * admin page-load is the owner's own chosen scope for a first cut.
+     *
+     * Each count is "ever reached," not "currently has one live" -- a user who created a budget
+     * and later deleted it still activated. Raw counts only; percentage-of-signedUp is a client-
+     * side computation (same split as DashboardSummaryDto's healthScoreTransactionCount/
+     * healthScoreMinTransactions), not duplicated here.
+     *
+     * Stages are not guaranteed to be subsets of each other -- a user can create a budget without
+     * ever importing a statement, since Finora doesn't require an import first. That's a real
+     * property of this product, not a query bug, and is left visible rather than corrected into a
+     * strictly monotonic funnel that would misrepresent actual usage.
+     */
+    public record ActivationFunnelDto(
+            long signedUp,
+            long firstImport,
+            long firstBudget,
+            long firstGoal
+    ) {}
+
+    /**
+     * One calendar day of the Platform Activity chart -- see
+     * AdminOperationalDashboardService.activityTrend()'s own doc comment for how the 7-day window
+     * is built and why each day is queried as its own bounded window rather than bucketed from one
+     * bulk fetch. date is a calendar day in the platform reporting zone, not an Instant -- there is
+     * no time-of-day component to a daily point.
+     */
+    public record ActivityTrendPointDto(
+            LocalDate date,
+            long signups,
+            long imports,
+            long transactions
     ) {}
 
     /**

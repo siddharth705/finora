@@ -27,6 +27,7 @@ import com.finora.service.CategorizationService;
 import com.finora.service.RecurringService;
 import com.finora.service.ReconciliationService;
 import com.finora.util.CategoryRules;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -98,6 +99,7 @@ public class ImportService {
     private final ImportSessionService importSessionService;
     private final com.finora.imports.pdf.PdfPreviewGenerator pdfPreviewGenerator;
     private final ProductIdentityResolver productIdentityResolver;
+    private final com.finora.imports.ownership.OwnershipMatchService ownershipMatchService;
     private final StatementAnalysisRecorder analysisRecorder;
     /** Keeps the verification rules' findings, which until now reached the staging response and
      *  were then discarded -- see ImportVerificationRecorder and milestone-2 item 6. */
@@ -125,6 +127,7 @@ public class ImportService {
                           ImportSessionService importSessionService,
                           com.finora.imports.pdf.PdfPreviewGenerator pdfPreviewGenerator,
                           ProductIdentityResolver productIdentityResolver,
+                          com.finora.imports.ownership.OwnershipMatchService ownershipMatchService,
                           com.finora.imports.storage.StatementContentService statementContentService,
                           StatementAnalysisRecorder analysisRecorder,
                           com.finora.imports.analysis.ImportVerificationRecorder verificationRecorder,
@@ -136,6 +139,7 @@ public class ImportService {
         this.analysisRecorder = analysisRecorder;
         this.verificationRecorder = verificationRecorder;
         this.productIdentityResolver = productIdentityResolver;
+        this.ownershipMatchService = ownershipMatchService;
         this.statementContentService = statementContentService;
         this.accountRepository = accountRepository;
         this.accountService = accountService;
@@ -346,14 +350,15 @@ public class ImportService {
                         ? new StagingResponse(List.of(), 0, 0, null, List.of())
                         : toStagingResponse(sections.get(0));
                 var session = importSessionService.createSession(userId, fileName, fileContent, staged.rows(), staged.detectedAccount(),
-                        result.documentContext());
+                        result.documentContext(), result.creditCardSummary());
                 recordPdfParsed(userId, fileName, fileContent.length, fingerprint, sections.size(), startedAtMs,
                         diagnostics, session.getId(),
                         java.util.Collections.singletonList(staged.verification()));
                 return new PdfStagingSessionResponse(session.getId(), false, staged, null);
             }
 
-            var session = importSessionService.createMultiSection(userId, fileName, fileContent, sections, result.documentContext());
+            var session = importSessionService.createMultiSection(userId, fileName, fileContent, sections,
+                    result.documentContext(), result.creditCardSummary());
             // Per section, in section order, because a composite statement's sections have separate
             // balance chains and one can verify while another does not -- collapsing them into one
             // report would lose exactly the distinction the verification framework computes.
@@ -603,12 +608,16 @@ public class ImportService {
                     null, // this section's ConfirmRequest doesn't carry its own sessionId -- the session is claimed once, above, for the whole multi-account request
                     sectionConfirm.rows(), sectionConfirm.existingAccountId(), sectionConfirm.newAccount(),
                     sectionConfirm.statementOpeningBalance(), sectionConfirm.statementClosingBalance(),
-                    null); // a multi-section PDF was already unlocked once to be staged; no password to carry here
+                    null, // a multi-section PDF was already unlocked once to be staged; no password to carry here
+                    sectionConfirm.statementPeriodStart(), sectionConfirm.statementPeriodEnd(),
+                    sectionConfirm.totalAmountDue(), sectionConfirm.paymentDueDate(),
+                    sectionConfirm.userConfirmedContinue());
             persisted.add(persistSection(userId, session.getFileName(), statementContentService.read(session), perAccountRequest, i,
                     session.getLayoutMetadataJson(), session.getLayoutFingerprint(), session.getActivatedCapabilitiesJson(),
                 // A multi-section import is CSV/PDF only -- a Gmail receipt is never
                 // multi-account -- so source is always null on this path, not session.getSource().
-                session.getUnparseableSummaryJson(), null));
+                session.getUnparseableSummaryJson(), null, importSessionService.readCreditCardSummary(session),
+                stagedSection.detectedAccount() == null ? null : stagedSection.detectedAccount().accountHolderName()));
         }
 
         reconcileAcross(userId, persisted);
@@ -654,9 +663,11 @@ public class ImportService {
         // the same staged rows". Plausibly was not enough -- same count, entirely different rows
         // was accepted, and the ledger recorded transactions the stored document does not contain.
         ConfirmedRowIntegrity.requireSameRows(stagedRows, request.rows());
+        var detectedAccount = importSessionService.readDetectedAccount(session);
         return confirm(userId, session.getFileName(), statementContentService.read(session), request, null,
                 session.getLayoutMetadataJson(), session.getLayoutFingerprint(), session.getActivatedCapabilitiesJson(),
-                session.getUnparseableSummaryJson(), session.getSource());
+                session.getUnparseableSummaryJson(), session.getSource(), importSessionService.readCreditCardSummary(session),
+                detectedAccount == null ? null : detectedAccount.accountHolderName());
     }
 
     /**
@@ -710,7 +721,7 @@ public class ImportService {
      */
     @Transactional
     public ConfirmResponse confirm(UUID userId, String fileName, byte[] fileContent, ConfirmRequest request) {
-        return confirm(userId, fileName, fileContent, request, null, null, null, null, null, null);
+        return confirm(userId, fileName, fileContent, request, null, null, null, null, null, null, null, null);
     }
 
     /**
@@ -722,7 +733,7 @@ public class ImportService {
      */
     @Transactional
     public ConfirmResponse confirm(UUID userId, String fileName, byte[] fileContent, ConfirmRequest request, Integer sourceSectionIndex) {
-        return confirm(userId, fileName, fileContent, request, sourceSectionIndex, null, null, null, null, null);
+        return confirm(userId, fileName, fileContent, request, sourceSectionIndex, null, null, null, null, null, null, null);
     }
 
     /**
@@ -737,13 +748,23 @@ public class ImportService {
      * <p>{@code source} (C5-B): {@link com.finora.entity.ImportSession#SOURCE_GMAIL} or null, copied
      * verbatim from the session the same way the metadata trio is -- never recomputed here, and
      * multi-section confirms always pass null (a Gmail receipt is never multi-section).
+     *
+     * <p>{@code creditCardSummaryJson} (roadmap item 6 follow-up, PR #451): same "copied verbatim,
+     * never recomputed" treatment, one more field.
+     *
+     * <p>{@code extractedHolderName} (docs/proposals/account-ownership-intelligence-proposal.md
+     * §3.1/§3.2): same "copied verbatim, never recomputed, null with no session" treatment as the
+     * rest of this list.
      */
     @Transactional
     public ConfirmResponse confirm(UUID userId, String fileName, byte[] fileContent, ConfirmRequest request, Integer sourceSectionIndex,
                                     String layoutMetadataJson, String layoutFingerprint, String activatedCapabilitiesJson,
-                                    String unparseableSummaryJson, String source) {
+                                    String unparseableSummaryJson, String source,
+                                    com.finora.imports.pdf.CreditCardSummaryExtractor.CreditCardSummaryEvidence creditCardSummary,
+                                    String extractedHolderName) {
         PersistedSection section = persistSection(userId, fileName, fileContent, request, sourceSectionIndex,
-                layoutMetadataJson, layoutFingerprint, activatedCapabilitiesJson, unparseableSummaryJson, source);
+                layoutMetadataJson, layoutFingerprint, activatedCapabilitiesJson, unparseableSummaryJson, source,
+                creditCardSummary, extractedHolderName);
         reconcileAcross(userId, List.of(section));
         return summarise(userId, section);
     }
@@ -804,7 +825,13 @@ public class ImportService {
     private PersistedSection persistSection(UUID userId, String fileName, byte[] fileContent, ConfirmRequest request,
                                     Integer sourceSectionIndex,
                                     String layoutMetadataJson, String layoutFingerprint, String activatedCapabilitiesJson,
-                                    String unparseableSummaryJson, String source) {
+                                    String unparseableSummaryJson, String source,
+                                    com.finora.imports.pdf.CreditCardSummaryExtractor.CreditCardSummaryEvidence creditCardSummary,
+                                    // docs/proposals/account-ownership-intelligence-proposal.md §3.1/§3.2. Copied
+                                    // verbatim from the session's DetectedAccountInfo, same "never recomputed"
+                                    // discipline as layoutMetadataJson/layoutFingerprint above -- null on the
+                                    // byte-array reimport path, which has no session to read it from.
+                                    String extractedHolderName) {
         long startedAtMs = System.currentTimeMillis();
         List<String> accountsCreated = new ArrayList<>();
         // What was created, by PRODUCT rather than by account. The summary says "1 Savings, 1 Fixed
@@ -813,12 +840,24 @@ public class ImportService {
         Map<String, Integer> productsCreated = new LinkedHashMap<>();
 
         UUID accountId = resolveTargetAccount(userId, request, accountsCreated, productsCreated);
+        // Computed here, right after the account is known and before the new StatementImport row
+        // exists -- OwnershipMatchService.evaluate's account-continuity check
+        // (countByUserIdAndAccountId) must see only PRIOR statements, and this row doesn't exist
+        // yet to pollute that count.
+        StatementImport.OwnershipMatchStatus ownershipMatchStatus =
+                ownershipMatchService.evaluate(userId, accountId, extractedHolderName);
 
         long merchantsBefore = merchantRepository.countByUserId(userId);
 
         int skipped = 0;
         Map<String, Integer> categoryTally = new LinkedHashMap<>();
         List<Transaction> toInsert = new ArrayList<>();
+        // Loaded once for the whole confirmed statement, not once per row. The per-row overload
+        // (CategorizationService.applySideEffectRules(UUID, Transaction)) re-queried category_rules
+        // twice for every confirmed row -- same pattern, same fix, as suggestReadOnly's rule-set
+        // hoist on the staging side (see that method's own doc comment); a user's rules cannot
+        // change partway through confirming one import, so hoisting is equivalent by construction.
+        List<com.finora.entity.CategoryRule> confirmRules = categorizationService.ruleSetFor(userId);
         // Merchant-learning confirmations this import earned, queued after savedImport below so
         // each one can be attributed to the statement it came from.
         List<PendingLearning> pendingLearning = new ArrayList<>();
@@ -836,7 +875,17 @@ public class ImportService {
                 totalDebits = totalDebits.add(row.amount());
             }
 
-            Category category = categorizationService.resolveOrCreateCategory(userId, row.category());
+            // Bug 04: "Other" for a null/blank category cell, not a thrown validation error --
+            // this mirrors CategoryRules' own fallback for "nothing matched" (see its own doc
+            // comment), so an unparseable category cell degrades to the same bucket a
+            // low-confidence guess would, rather than failing the whole import.
+            // resolveOrCreateCategory itself throws on null/blank (see its own doc comment) for
+            // every OTHER caller, where a blank name is a genuinely malformed request rather than
+            // a parser artifact to paper over -- the degradation belongs here, at the one call
+            // site the bug report identifies as reachable with unbounded, possibly-blank raw
+            // parser output.
+            String rowCategory = (row.category() == null || row.category().isBlank()) ? "Other" : row.category();
+            Category category = categorizationService.resolveOrCreateCategory(userId, rowCategory);
             var decision = ruleLearningService.recordDecision(userId, row, category);
             boolean isUnresolvedGuess = decision.unresolvedGuess();
 
@@ -868,7 +917,7 @@ public class ImportService {
                     ? Transaction.Source.GMAIL_IMPORT : Transaction.Source.CSV_IMPORT);
             t.setReferenceNumber(row.referenceNumber());
             t.setBalanceAfter(row.balanceAfter());
-            t.setNeedsCategoryReview(isUnresolvedGuess);
+            t.setNeedsCategoryReview(categorizationService.needsCategoryReview(userId, isUnresolvedGuess, row.categoryConfidence()));
             // The user's answer on the duplicate review screen, recorded on the row itself so
             // reconciliation cannot later overrule it. Only meaningful when the engine actually
             // flagged the row -- a client asserting "not a duplicate" about a row nothing
@@ -883,11 +932,16 @@ public class ImportService {
             // staging/review contract, not introduced by this change).
             t.setDecisionSource(CategorizationService.decisionSourceFor(row.categorySource()));
             t.setDecisionRuleId(row.ruleId());
+            t.setDecisionConfidence(row.categoryConfidence());
+            // Import Row Trace (Founder Operations Dashboard) -- see Transaction.sourceRowPosition's
+            // own doc comment. Null for a client that predates ConfirmedRow.rowPosition, same as
+            // every other "carried from staging" field above when an older client omits it.
+            t.setSourceRowPosition(row.rowPosition());
             // MARK_TRANSFER/MARK_INVESTMENT/ADD_TAG rules -- see
             // CategorizationService.applySideEffectRules's doc comment. A MARK_INVESTMENT match
             // returns the new Category -- reassigning `category` keeps the tally below (and any
             // other use of `category` in this iteration) in sync with what actually got persisted.
-            Category sideEffectCategory = categorizationService.applySideEffectRules(userId, t);
+            Category sideEffectCategory = categorizationService.applySideEffectRules(userId, t, confirmRules);
             if (sideEffectCategory != null) {
                 category = sideEffectCategory;
                 // Bug fix: t.setCategoryId(category.getId()) above (before this override was
@@ -923,6 +977,14 @@ public class ImportService {
         statementImport.setLayoutFingerprint(layoutFingerprint);
         statementImport.setActivatedCapabilitiesJson(activatedCapabilitiesJson);
         statementImport.setUnparseableSummaryJson(unparseableSummaryJson);
+        statementImport.setExtractedHolderName(extractedHolderName);
+        statementImport.setOwnershipMatchStatus(ownershipMatchStatus);
+        // Only meaningful when the warning actually fired -- a client-supplied true/false when
+        // ownershipMatchStatus isn't NAME_MISMATCH would be claiming a decision the user was never
+        // asked to make, same principle Transaction.notDuplicateConfirmedAt already follows.
+        statementImport.setUserConfirmedContinue(
+                ownershipMatchStatus == StatementImport.OwnershipMatchStatus.NAME_MISMATCH
+                        ? request.userConfirmedContinue() : null);
         // Object storage first, then the row -- the ordering §5.1 of the migration doc requires. A
         // failure throws before anything is persisted, so a row can never point at an object that
         // was never written.
@@ -964,13 +1026,96 @@ public class ImportService {
             statementImport.setStoredSize(stored.storedSize());
             statementImport.setCompressionType(stored.compressionType());
             statementImport.setOriginalMimeType(stored.mimeType());
+            statementImport.setEncryptionKeyId(stored.encryptionKeyId());
         } else {
             statementImport.setFileContent(fileContent);
         }
-        statementImport.setStatementPeriodStart(minDate);
-        statementImport.setStatementPeriodEnd(maxDate);
-        statementImport.setOpeningBalance(request.statementOpeningBalance());
+        // Bug fix: this used to fall back further, to minDate/maxDate -- the confirmed rows' own
+        // date range, which is only ever a LOWER bound on the statement's true period whenever a
+        // cycle has no activity near its own printed boundary dates. Confirmed wrong against a real
+        // Kotak Mahindra Bank credit-card statement, whose own earliest/latest transactions fall
+        // inside its printed period rather than at its edges. PdfPreviewGenerator/StatementValidator
+        // already compute and surface the printed period at staging time (see their own
+        // buildDetectedAccountInfo, which had and removed the identical transaction-range fallback),
+        // and ConfirmRequest echoes that back here -- so this is exactly what was printed, or
+        // genuinely null when nothing was ever printed (or an older client didn't send it), never a
+        // guess reconstructed from the rows.
+        statementImport.setStatementPeriodStart(request.statementPeriodStart());
+        statementImport.setStatementPeriodEnd(request.statementPeriodEnd());
+
+        // Bug fix. BalanceSequenceResolver derives an opening balance purely from THIS statement's
+        // own printed rows, with no knowledge of the account's prior import history (by design --
+        // see its own class comment). A real PNB statement pair prints consecutive periods that
+        // share their boundary date -- "31-05-2026 to 30-06-2026" then "30-06-2026 to
+        // 31-07-2026" -- so the later statement's own earliest printed row is the tail end of the
+        // PREVIOUS period, re-printed, not the true start of this one. The resolver then derives
+        // the balance before that overlapping row instead of after it, wrong by exactly the
+        // overlapping day's net effect, even though the statement's own arithmetic is internally
+        // consistent. Nothing about the derivation is PNB-specific -- no statement format anywhere
+        // in this pipeline carries the account's prior import history, so any bank whose
+        // consecutive statements share (or gap across) a boundary date is equally exposed; PNB is
+        // simply the confirmed repro. See OpeningBalanceCarryForward's own comment for the full
+        // reasoning.
+        //
+        // Carry-forward is consulted only when this statement's OWN opening balance does not
+        // already reconcile against its own totals and claimed closing balance -- reusing the
+        // exact arithmetic ClosingBalanceGuard checks the closing balance with below, just run
+        // early and read for a different purpose. An opening balance that DOES reconcile is
+        // correct FOR THIS STATEMENT even when it disagrees with the account's prior statement:
+        // that disagreement can mean a real gap (a statement the user genuinely never imported,
+        // during which the account moved), not a defect, and Finora's own necessarily-incomplete
+        // history is not entitled to override a statement whose own printed numbers are
+        // internally consistent. PNB's case is the opposite: its derived opening balance is wrong
+        // by construction and provably does not reconcile against ITS OWN totals -- that
+        // provable failure, not a mere disagreement with the ledger, is what carry-forward exists
+        // to correct.
+        //
+        // Only consulted when a period start was actually printed -- with none, there is no date
+        // to look an earlier statement up by, and this leaves the derived/stated value exactly as
+        // before rather than guessing. findPriorStatementClosingBalanceForAccount runs BEFORE this
+        // statement is saved, so (unlike the closing-balance-side lookups below) there is no
+        // excludingId to pass -- there is no row yet to accidentally match against itself.
+        BigDecimal effectiveOpeningBalance = request.statementOpeningBalance();
+        OpeningBalanceCarryForward.Decision openingBalanceDecision =
+                new OpeningBalanceCarryForward.Decision(effectiveOpeningBalance, false, null);
+        Account.Type accountTypeForOpeningBalanceCheck = accountRepository.findById(accountId)
+                .map(Account::getAccountType).orElse(null);
+        boolean ownOpeningBalanceAlreadyReconciles = ClosingBalanceGuard.assess(accountTypeForOpeningBalanceCheck,
+                        effectiveOpeningBalance, request.statementClosingBalance(),
+                        totalCredits, totalDebits, toInsert.size(), skipped)
+                .verdict() == ClosingBalanceGuard.Verdict.CORROBORATED;
+        if (!ownOpeningBalanceAlreadyReconciles && request.statementPeriodStart() != null) {
+            List<BigDecimal> priorClosingBalance = statementImportRepository
+                    .findPriorStatementClosingBalanceForAccount(userId, accountId,
+                            request.statementPeriodStart(), PageRequest.of(0, 1));
+            openingBalanceDecision = OpeningBalanceCarryForward.resolve(effectiveOpeningBalance,
+                    priorClosingBalance.isEmpty() ? null : priorClosingBalance.get(0));
+            effectiveOpeningBalance = openingBalanceDecision.openingBalance();
+            if (openingBalanceDecision.carriedForward()) {
+                log.info("Carrying forward opening balance for account {}: {}",
+                        accountId, openingBalanceDecision.reason());
+            }
+        }
+        statementImport.setOpeningBalance(effectiveOpeningBalance);
         statementImport.setClosingBalance(request.statementClosingBalance());
+        // Echoed from DetectedAccountInfo.totalAmountDue/paymentDueDate the same way the period
+        // above is -- null for a CSV import or any non-credit-card statement, same as on
+        // DetectedAccountInfo itself; see credit-card-statement-entity-design.md.
+        statementImport.setTotalAmountDue(request.totalAmountDue());
+        statementImport.setPaymentDueDate(request.paymentDueDate());
+        // Roadmap item 6 follow-up (PR #451): the rest of the same billing-summary panel, copied
+        // verbatim from the ImportSession this confirm came from -- same trio-of-metadata treatment
+        // as layoutMetadataJson above, not echoed via the request like totalAmountDue/paymentDueDate
+        // are, since a caller with none (confirmReimport, Gmail) always passes NONE here rather than
+        // routing it through ConfirmRequest at all.
+        if (creditCardSummary != null
+                && creditCardSummary != com.finora.imports.pdf.CreditCardSummaryExtractor.CreditCardSummaryEvidence.NONE) {
+            statementImport.setPreviousBalance(creditCardSummary.previousBalance());
+            statementImport.setPurchases(creditCardSummary.purchases());
+            statementImport.setCashAdvances(creditCardSummary.cashAdvances());
+            statementImport.setFees(creditCardSummary.fees());
+            statementImport.setPaymentsAndCredits(creditCardSummary.paymentsAndCredits());
+        }
         statementImport.setTransactionsImported(toInsert.size());
         statementImport.setTransactionsSkipped(skipped);
         // Measured here rather than after the save so it covers the same work the response reports
@@ -1060,16 +1205,29 @@ public class ImportService {
         // class comment documents. The type cannot go stale; the row can.
         Account.Type accountType = accountRepository.findById(accountId)
                 .map(Account::getAccountType).orElse(null);
+        // effectiveOpeningBalance, not request.statementOpeningBalance() -- the corroboration
+        // arithmetic below must be checked against the SAME opening balance this statement is
+        // actually being stored and shown with (see OpeningBalanceCarryForward above). Checking
+        // it against the request's raw, possibly-wrong-by-a-boundary-overlap figure would refuse
+        // a genuinely correct closing balance for the wrong reason, exactly reproducing Bug 1's
+        // arithmetic one step downstream.
         ClosingBalanceGuard.Decision balanceDecision = ClosingBalanceGuard.assess(
                 accountType,
-                request.statementOpeningBalance(), request.statementClosingBalance(),
+                effectiveOpeningBalance, request.statementClosingBalance(),
                 totalCredits, totalDebits, toInsert.size(), skipped);
         boolean closingBalanceIsAuthoritative = balanceDecision.mayOverwriteAccountBalance()
                 && isMostRecentStatementForAccount(userId, accountId, maxDate, savedImport.getId());
         if (closingBalanceIsAuthoritative) {
             accountRepository.findById(accountId).ifPresent(account -> {
+                // Captured before the overwrite -- the only safe source for reversing this SET
+                // later (see StatementImport.balanceBeforeAbsoluteSet's own doc comment). Nothing
+                // about this statement's own rows or opening/closing arithmetic can reconstruct it
+                // after the fact.
+                java.math.BigDecimal priorBalance = account.getBalance();
                 account.setBalance(request.statementClosingBalance());
+                account.setLastAbsoluteSetStatementId(savedImport.getId());
                 accountRepository.save(account);
+                savedImport.setBalanceBeforeAbsoluteSet(priorBalance);
             });
         } else if (!toInsert.isEmpty()) {
             accountRepository.findById(accountId).ifPresent(account -> {
@@ -1111,6 +1269,25 @@ public class ImportService {
             }
         }
 
+        // Phase 4 of the coverage proposal (§0.6): record the branch just taken, not just its
+        // effect, so a future supersede decision can read what actually happened here instead of
+        // recomputing it -- see StatementImport.BalanceApplicationMode's own doc comment for why
+        // recomputation is unsafe.
+        //
+        // No repository.save() call here, deliberately: savedImport is the MANAGED instance
+        // returned by the first save() (BaseEntity's own class comment explains why that save
+        // routes through merge(), not persist()), so it is already tracked by this transaction's
+        // persistence context -- a plain setter is picked up by ordinary dirty-checking at the next
+        // flush. An explicit second save() was tried first and broke coverageWarningsFor's
+        // metadata query a few lines below with a duplicate-key merge (Collectors.toMap) -- a
+        // second merge() on an already-managed instance is not the no-op it looks like, it produces
+        // a second row visible to a query issued later in the same persistence context.
+        savedImport.setBalanceApplicationMode(closingBalanceIsAuthoritative
+                ? StatementImport.BalanceApplicationMode.ABSOLUTE
+                : !toInsert.isEmpty()
+                        ? StatementImport.BalanceApplicationMode.ADDITIVE
+                        : StatementImport.BalanceApplicationMode.NONE);
+
         // Counted HERE rather than after reconciliation, which is where it used to sit. Nothing
         // between the two points creates merchants -- they are created while the rows above are
         // built -- so the number is identical, and taking it before the shared pass is what keeps
@@ -1121,8 +1298,8 @@ public class ImportService {
         return new PersistedSection(accountId, savedImport, saved, imported, skipped,
                 closingBalanceIsAuthoritative, balanceDecision, accountsCreated, productsCreated,
                 categoryTally, newMerchantsLearned, totalCredits, totalDebits,
-                request.statementOpeningBalance(), request.statementClosingBalance(),
-                minDate, maxDate, startedAtMs);
+                effectiveOpeningBalance, request.statementClosingBalance(),
+                minDate, maxDate, startedAtMs, openingBalanceDecision);
     }
 
     /**
@@ -1151,7 +1328,8 @@ public class ImportService {
             BigDecimal statementClosingBalance,
             LocalDate minDate,
             LocalDate maxDate,
-            long startedAtMs) {}
+            long startedAtMs,
+            OpeningBalanceCarryForward.Decision openingBalanceDecision) {}
 
     /**
      * What one section reports once reconciliation has run: what it found among this section's own
@@ -1226,6 +1404,18 @@ public class ImportService {
             warnings.add("This account's balance was updated from the imported transactions rather "
                     + "than from the statement's stated closing balance: " + balanceDecision.reason());
         }
+        // Same "tell the user which of two figures they are looking at" reasoning as the block
+        // above, for the mirror-image field: the opening balance shown for this statement is not
+        // what this statement's own PDF stated or derived, because an earlier statement on file
+        // says otherwise -- see OpeningBalanceCarryForward.
+        if (section.openingBalanceDecision().carriedForward()) {
+            warnings.add(section.openingBalanceDecision().reason());
+        }
+        // Phase 2 of the statement continuity proposal (§11): a gap now bordering this statement,
+        // or an exact-duplicate period, both scoped to this one import -- see coverageWarningsFor's
+        // own comment for why an old, unrelated gap elsewhere on the account stays quiet.
+        CoverageWarningsResult coverageWarnings = coverageWarningsFor(userId, accountId, section.savedImport());
+        warnings.addAll(coverageWarnings.warnings());
 
         // Re-fetched (not the pre-import in-memory copy) so the summary reflects the balance
         // update above, if it applied. Falls back to AccountDto.from(a) (no statement/transaction
@@ -1240,9 +1430,91 @@ public class ImportService {
                 section.categoryTally(), warnings,
                 accountSnapshot, section.totalCredits(), section.totalDebits(),
                 section.statementOpeningBalance(), section.statementClosingBalance(),
-                section.minDate(), section.maxDate(),
+                // The already-resolved value on the just-saved row, not section.minDate()/maxDate()
+                // -- this is the immediate post-confirm summary the "Statement period: ..." line
+                // (Import.tsx) reads, and it must agree with what Statement History shows later, or
+                // a printed period narrower/wider than the confirmed rows' own range would appear
+                // correct here and wrong there (or vice versa) depending purely on which screen the
+                // user happened to look at. See persistSection's own comment for the precedence.
+                section.savedImport().getStatementPeriodStart(), section.savedImport().getStatementPeriodEnd(),
                 System.currentTimeMillis() - section.startedAtMs(),
-                "CSV");
+                "CSV", section.savedImport().getId(), coverageWarnings.duplicateOfStatementId());
+    }
+
+    /** {@link #coverageWarningsFor}'s two independent results: the prose warnings, and (Phase 4,
+     *  §0.3) the original statement's id when one of those warnings is an exact-duplicate-period
+     *  notice -- what "Import this one as a replacement?" would supersede. */
+    private record CoverageWarningsResult(List<String> warnings, UUID duplicateOfStatementId) {}
+
+    /**
+     * Fetches every statement with a printed period for this account (including the one just
+     * saved), runs {@link StatementCoverageAnalyzer}, and delegates to {@link CoverageWarnings} for
+     * which facts are worth telling the user about right now. Returns empty for a CSV import (no
+     * printed period, per that document's §3/§7 -- CSV coverage is a later, optional phase, not
+     * this one) rather than running an analysis with nothing to place on a timeline.
+     */
+    private CoverageWarningsResult coverageWarningsFor(UUID userId, UUID accountId, StatementImport savedImport) {
+        LocalDate newStart = savedImport.getStatementPeriodStart();
+        LocalDate newEnd = savedImport.getStatementPeriodEnd();
+        if (newStart == null || newEnd == null) {
+            return new CoverageWarningsResult(List.of(), null);
+        }
+
+        AccountCoverage coverage = accountCoverageFor(userId, accountId);
+        List<String> warnings = CoverageWarnings.forNewStatement(coverage.report(), savedImport.getId(), newStart, newEnd,
+                coverage.importedAtById());
+        UUID duplicateOfStatementId = CoverageWarnings.duplicateOfStatementId(coverage.report(), savedImport.getId());
+        return new CoverageWarningsResult(warnings, duplicateOfStatementId);
+    }
+
+    /** The account-wide inputs {@link CoverageWarnings}' static methods need -- the fetch-and-
+     *  analyze steps {@link #coverageWarningsFor} and {@link #duplicateOverlapsFor} both start
+     *  from, factored out so the latter (added for a confirmReimport bug fix -- see its own
+     *  comment) doesn't duplicate them. */
+    private record AccountCoverage(StatementCoverageAnalyzer.CoverageReport report,
+                                    Map<UUID, java.time.Instant> importedAtById) {}
+
+    private AccountCoverage accountCoverageFor(UUID userId, UUID accountId) {
+        List<StatementImportRepository.StatementMetadata> metadata =
+                statementImportRepository.findMetadataWithPeriodByUserIdAndAccountId(userId, accountId);
+        List<StatementCoverageAnalyzer.StatementPeriod> periods = metadata.stream()
+                .map(m -> new StatementCoverageAnalyzer.StatementPeriod(m.getId(), m.getStatementPeriodStart(),
+                        m.getStatementPeriodEnd(), m.getOpeningBalance(), m.getClosingBalance()))
+                .toList();
+        StatementCoverageAnalyzer.CoverageReport report = StatementCoverageAnalyzer.analyze(periods);
+
+        Map<UUID, java.time.Instant> importedAtById = metadata.stream()
+                .collect(java.util.stream.Collectors.toMap(
+                        StatementImportRepository.StatementMetadata::getId,
+                        StatementImportRepository.StatementMetadata::getImportedAt));
+        return new AccountCoverage(report, importedAtById);
+    }
+
+    /**
+     * Every exact-duplicate-period overlap {@code statementId} is currently involved in, each
+     * paired with the specific statement it duplicates. Bug fix (self-review, Phase 4 follow-up):
+     * {@code StatementImportService.confirmReimport} used to reconstruct this from the flattened
+     * {@code warnings}/{@code duplicateOfStatementId} a normal confirm response carries -- every
+     * duplicate sentence concatenated into one list, only the FIRST overlap's id kept -- which
+     * cannot tell "the overlap against the statement being reimported" apart from "a second,
+     * unrelated duplicate this same confirm also produced" once both exist: stripping the former
+     * by string prefix silently took the latter's sentence (and sometimes its id) with it, so a
+     * real, actionable duplicate could vanish from the response entirely with no warning and no
+     * way to supersede it.
+     *
+     * <p>Recomputes the account's coverage report a second time rather than threading this
+     * structured shape through {@link #summarise}'s whole confirm/persistSection/summarise call
+     * graph for the one caller that needs it -- the same trade-off {@code confirmReimport}'s
+     * warning-stripping already makes (see its own comment). Returns empty for a CSV-sourced
+     * statement (no printed period), same as {@link #coverageWarningsFor}.
+     */
+    public List<CoverageWarnings.DuplicateOverlap> duplicateOverlapsFor(
+            UUID userId, UUID accountId, UUID statementId, LocalDate periodStart, LocalDate periodEnd) {
+        if (periodStart == null || periodEnd == null) {
+            return List.of();
+        }
+        AccountCoverage coverage = accountCoverageFor(userId, accountId);
+        return CoverageWarnings.duplicateOverlaps(coverage.report(), statementId, coverage.importedAtById());
     }
 
     /**
@@ -1254,13 +1526,25 @@ public class ImportService {
      * table in the schema to produce a boolean. It also dereferenced {@code si.getAccountId()}
      * without a null check, so a row with no account would have thrown mid-import. One aggregate
      * query answers it, and the database handles the nulls.
+     *
+     * <p>Bug fix: {@code findLatestPeriodEndForAccount} returning empty used to mean only "this is
+     * the account's only statement" -- safe to default to {@code true} (apply the balance; nothing
+     * to compare against). Now that a sibling statement can legitimately have a null {@code
+     * statementPeriodEnd} (see this class's {@code persistSection} comment), SQL {@code MAX()}
+     * silently drops that sibling from the aggregate, so empty ALSO means "other statements exist,
+     * but none states a period" -- a case where an undated sibling could still be the true most-recent
+     * one and we simply cannot tell. Defaulting to {@code true} there risked silently overwriting the
+     * account's balance with an older statement's, so it is disambiguated via a second, cheap
+     * COUNT query: only the genuinely-no-siblings case still defaults to {@code true}.
      */
     private boolean isMostRecentStatementForAccount(UUID userId, UUID accountId, LocalDate thisStatementEnd, UUID thisStatementId) {
         if (thisStatementEnd == null) return true; // nothing to compare against — apply rather than never updating
-        return statementImportRepository
-                .findLatestPeriodEndForAccount(userId, accountId, thisStatementId)
-                .map(latestOther -> !latestOther.isAfter(thisStatementEnd))
-                .orElse(true); // this is the account's only statement, or no other one states a period
+        Optional<LocalDate> latestOther =
+                statementImportRepository.findLatestPeriodEndForAccount(userId, accountId, thisStatementId);
+        if (latestOther.isPresent()) return !latestOther.get().isAfter(thisStatementEnd);
+        // No dated sibling found -- distinguish "no siblings at all" (safe to apply) from "siblings
+        // exist but none states a period" (unsafe to assume this one is newest).
+        return statementImportRepository.countOtherStatementsForAccount(userId, accountId, thisStatementId) == 0;
     }
 
     /** What the review screen says this product is, falling back to the coarse account type when a
@@ -1313,7 +1597,8 @@ public class ImportService {
             // the user asked for: quietly importing into the wrong deposit corrupts two products
             // at once, which is worse than a duplicate the user can see and merge.
             ProductIdentity discovered = ProductIdentity.stored(
-                    na.bankId(), productTypeOf(na), na.productIdentityHash(), na.accountNumberMasked());
+                    na.bankId(), productTypeOf(na), na.productIdentityHash(), na.accountNumberMasked())
+                    .withWeakSignals(na.ifscCode(), na.accountHolderName());
             ProductIdentityResolver.ProductMatch match = productIdentityResolver.resolve(userId, discovered);
             if (match.mayImportWithoutAsking()) {
                 return match.account().getId();
@@ -1330,6 +1615,20 @@ public class ImportService {
             FinancialProductType product = productTypeOf(na);
             String accountType = product.accountType() != null
                     ? product.accountType().name() : na.accountType();
+
+            // Visibility into which banks' statements are failing account-number extraction --
+            // without an account number, ProductIdentity.stored above can never build a strong key
+            // (see its own hash() null-guard), so this account can never be matched to on a later
+            // re-import: every subsequent statement for the same real account silently becomes
+            // another new one instead. This is the earliest point that fact is known for certain
+            // (na.accountNumberMasked() is genuinely null, not just unresolved) and where the
+            // affected bank/session is still in scope to log.
+            if (na.accountNumberMasked() == null) {
+                log.warn("Account number extraction failed for bank={} session={} -- new account "
+                        + "created without an identity key, so it cannot be matched on re-import",
+                        na.bankId(), request.sessionId());
+            }
+
             AccountDto created = accountService.create(userId, new AccountDto.CreateRequest(
                     na.name(), accountType, na.openingBalance(), na.creditLimit(), na.dueDate(),
                     product.investmentKind(),

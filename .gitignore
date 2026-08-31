@@ -40,6 +40,21 @@
 *serviceaccount*.json
 *-firebase-adminsdk-*.json
 
+# SEC-10 (docs/quality/bug-reports/2026-08-19-security-review-findings.md). The three patterns
+# above cover one specific credential shape by name, added reactively after that one real
+# incident -- there was no generic pattern for the general SHAPE of a credential file (a private
+# key, a certificate, an SSH key) before this. Nothing has ever been leaked this way; this closes
+# the same preventable gap ahead of an incident rather than after one, for every other format a
+# TLS private key, an exported R2/AWS key pair, or a deploy key could arrive in.
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+id_rsa*
+id_ed25519*
+id_ecdsa*
+
 # Environment files
 .env
 .env.*
@@ -210,6 +225,10 @@ scripts/load-test/results/*/k6-summary.json
 # ============================================================================================
 
 .claude/
+
+# Superpowers brainstorming visual-companion sessions (mockups shown in-browser during design
+# discussions) -- working scratch, not a deliverable.
+.superpowers/
 
 # ============================================================================================
 # Operating System

@@ -35,6 +35,7 @@ import java.security.SecureRandom;
 import java.time.Instant;
 import java.util.Base64;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -71,13 +72,34 @@ public class AuthService {
     // beyond the original 13 to cover common real-life cases the first pass didn't: repaying a
     // friend, EMIs, insurance premiums, and so on, so users aren't stuck recategorizing
     // everything as "Other" or hand-creating categories one at a time.
-    private static final List<String> DEFAULT_CATEGORIES = List.of(
-            "Salary", "Rent", "Groceries", "Dining", "Transport", "Utilities", "Shopping",
-            "Health", "Entertainment", "Investments", "Fees/Interest", "Transfer",
-            "Friend Repayment", "Loan EMI", "Insurance", "Education", "Subscriptions", "Travel",
-            "Gifts & Donations", "Pets", "Home & Furnishing", "Taxes", "Cash Withdrawal",
-            "Business Expenses", "Other"
-    );
+    private static final Map<String, String[]> DEFAULT_CATEGORIES = new LinkedHashMap<>();
+    static {
+        DEFAULT_CATEGORIES.put("Salary", new String[]{"arrow-down-circle", "green"});
+        DEFAULT_CATEGORIES.put("Rent", new String[]{"home", "blue"});
+        DEFAULT_CATEGORIES.put("Groceries", new String[]{"shopping-cart", "green"});
+        DEFAULT_CATEGORIES.put("Dining", new String[]{"utensils", "orange"});
+        DEFAULT_CATEGORIES.put("Transport", new String[]{"car", "gray"});
+        DEFAULT_CATEGORIES.put("Utilities", new String[]{"zap", "yellow"});
+        DEFAULT_CATEGORIES.put("Shopping", new String[]{"shopping-bag", "purple"});
+        DEFAULT_CATEGORIES.put("Health", new String[]{"heart-pulse", "red"});
+        DEFAULT_CATEGORIES.put("Entertainment", new String[]{"film", "pink"});
+        DEFAULT_CATEGORIES.put("Investments", new String[]{"trending-up", "teal"});
+        DEFAULT_CATEGORIES.put("Fees/Interest", new String[]{"percent", "gray"});
+        DEFAULT_CATEGORIES.put("Transfer", new String[]{"repeat", "blue"});
+        DEFAULT_CATEGORIES.put("Friend Repayment", new String[]{"users", "teal"});
+        DEFAULT_CATEGORIES.put("Loan EMI", new String[]{"landmark", "red"});
+        DEFAULT_CATEGORIES.put("Insurance", new String[]{"shield", "blue"});
+        DEFAULT_CATEGORIES.put("Education", new String[]{"graduation-cap", "purple"});
+        DEFAULT_CATEGORIES.put("Subscriptions", new String[]{"refresh-cw", "pink"});
+        DEFAULT_CATEGORIES.put("Travel", new String[]{"plane", "teal"});
+        DEFAULT_CATEGORIES.put("Gifts & Donations", new String[]{"gift", "pink"});
+        DEFAULT_CATEGORIES.put("Pets", new String[]{"paw-print", "orange"});
+        DEFAULT_CATEGORIES.put("Home & Furnishing", new String[]{"sofa", "yellow"});
+        DEFAULT_CATEGORIES.put("Taxes", new String[]{"receipt", "gray"});
+        DEFAULT_CATEGORIES.put("Cash Withdrawal", new String[]{"banknote", "green"});
+        DEFAULT_CATEGORIES.put("Business Expenses", new String[]{"briefcase", "blue"});
+        DEFAULT_CATEGORIES.put("Other", new String[]{"tag", "gray"});
+    }
     private static final long RESET_TOKEN_TTL_MINUTES = 30;
     // Short relative to the reset-token TTL above -- this token exists only to carry a login
     // attempt that already proved the password straight through to a single confirm click, not
@@ -119,6 +141,11 @@ public class AuthService {
     private final PasswordHistoryService passwordHistoryService;
     private final IdentityLookup identityLookup;
     private final RequestMetadata requestMetadata;
+    private final SubscriptionService subscriptionService;
+    // D-28 PR4-C: redeems RegisterRequest.referralCode, if present -- see register()'s own call
+    // site and ReferralService.redeemCode's doc comment for why this never blocks signup.
+    private final ReferralService referralService;
+    private final MerchantSeedService merchantSeedService;
     // SEC-07: dispatches the forgotPassword() email send off the request thread -- see
     // BackgroundWorkConfig.authEmailExecutor's own doc comment for why.
     private final Executor authEmailExecutor;
@@ -137,6 +164,9 @@ public class AuthService {
                         PlatformSettingsService platformSettingsService,
                         PasswordHistoryService passwordHistoryService,
                         IdentityLookup identityLookup, RequestMetadata requestMetadata,
+                        SubscriptionService subscriptionService,
+                        ReferralService referralService,
+                        MerchantSeedService merchantSeedService,
                         @Qualifier("authEmailExecutor") Executor authEmailExecutor,
                         AdminMfaService adminMfaService) {
         this.userRepository = userRepository;
@@ -157,6 +187,9 @@ public class AuthService {
         this.passwordHistoryService = passwordHistoryService;
         this.identityLookup = identityLookup;
         this.requestMetadata = requestMetadata;
+        this.subscriptionService = subscriptionService;
+        this.referralService = referralService;
+        this.merchantSeedService = merchantSeedService;
         this.authEmailExecutor = authEmailExecutor;
         this.adminMfaService = adminMfaService;
     }
@@ -171,6 +204,11 @@ public class AuthService {
             throw new ApiException(HttpStatus.FORBIDDEN, "New registrations are currently disabled.");
         }
         User user = createUserRecord(request, User.SCOPE_USER);
+        // D-28 PR4-C: self-service registration only -- adminCreateUser() shares createUserRecord()
+        // but never reaches this call, since support-assisted signup has no organic acquisition to
+        // track. See ReferralService.redeemCode's own doc comment for why an invalid code is a
+        // silent no-op here, not a rejected request.
+        referralService.redeemCode(user.getId(), request.referralCode());
         auditService.record(user.getId(), "USER_REGISTERED", "User", user.getId());
         // BH-016: sent AFTER this transaction commits, not inside it. The provider is an HTTP call
         // to Resend with no read timeout, and this method holds one of ten pooled connections --
@@ -284,6 +322,11 @@ public class AuthService {
         passwordHistoryService.record(user.getId(), user.getPasswordHash());
 
         seedDefaultCategories(user.getId());
+        merchantSeedService.seedCuratedMerchants(user.getId());
+        // D-28 PR4-A: every new account starts on the Free plan -- entitlement lookups are
+        // fail-closed (EntitlementService), so skipping this would leave a brand-new user with no
+        // subscription row at all, silently losing even BASIC_DASHBOARD the moment anything checks.
+        subscriptionService.provisionFreeSubscription(user.getId());
         return user;
     }
 
@@ -347,13 +390,42 @@ public class AuthService {
      */
     private String resolveEmailForLogin(String identifier, String scope) {
         if (identifier.contains("@")) {
-            return identifier;
+            // Bug fix: this used to return the identifier completely unchanged, unlike
+            // IdentityLookup.byEmail (a separate, newer entry point) which already trims. An
+            // email pasted with stray leading/trailing whitespace -- an ordinary way to end up
+            // with one -- silently failed to resolve, indistinguishable from an unregistered
+            // address. Trimming can only add matches, never remove one, so this is safe for
+            // every existing caller.
+            return identifier.trim();
         }
         // Delegates the stored-format variants to IdentityLookup, so the normalisation used when a
         // number is WRITTEN and the variants tried when one is READ cannot drift apart.
         return identityLookup.byPhoneNumber(identifier, scope)
                 .map(User::getEmail)
                 .orElse(identifier);
+    }
+
+    /**
+     * Identifier-first entry step (auth/security review §2.2). Reuses resolveEmailForLogin and
+     * findUserByEmailIgnoreCaseSafely so the account this resolves to can never diverge from the
+     * one login() would actually authenticate against. Always resolves within
+     * {@link User#SCOPE_USER} -- see {@link IdentifyRequest}'s doc comment for why this
+     * deliberately has no scope parameter.
+     *
+     * <p>Locked/suspended/deactivated status is intentionally not surfaced here: this endpoint
+     * answers "does an account exist for this identifier", not "is this account usable right
+     * now" -- the latter is login()'s job, and folding it in here would only grow the surface an
+     * anonymous caller can probe pre-authentication.
+     *
+     * <p>Phase 7 hardening (resolved 2026-08-23): used to return the account's real
+     * {@code signInMethod} value (PASSWORD/GOOGLE/APPLE) for an existing account -- see
+     * {@link IdentifyResponse}'s own doc comment for why that's now collapsed to a single EXISTS.
+     */
+    public IdentifyResponse identify(IdentifyRequest request) {
+        String email = resolveEmailForLogin(request.identifier(), User.SCOPE_USER);
+        return findUserByEmailIgnoreCaseSafely(email, User.SCOPE_USER)
+                .map(user -> new IdentifyResponse("EXISTS"))
+                .orElseGet(() -> new IdentifyResponse("CONTINUE"));
     }
 
     /**
@@ -437,6 +509,8 @@ public class AuthService {
             passwordEncoder.matches(request.password(), timingParityHash);
             log.info("Refused login for locked account {} -- responding as invalid credentials (BH-014)",
                     user.getId());
+            auditService.record(user.getId(), "LOGIN_FAILED", "User", user.getId(),
+                    requestMetadata.addTo(new java.util.HashMap<>(Map.of("reason", "locked"))));
             throw new ApiException(ErrorCode.AUTH_INVALID_CREDENTIALS, "Invalid credentials");
         }
         // An EXPIRED lockout clears the counter that produced it. Serving the lockout is the
@@ -471,6 +545,19 @@ public class AuthService {
             if (user != null) {
                 registerFailedLogin(user);
             }
+            // Timing-oracle fix, self-review 2026-08-23: this write happens for a null user too
+            // (unlike registerFailedLogin just above, which has nothing to attach a lockout
+            // counter to). Skipping it for an unknown identifier made this branch measurably
+            // cheaper than the known-user one -- one fewer DB round-trip on an endpoint whose
+            // whole BH-014 design goal is that locked/wrong-password/unknown-identifier must cost
+            // the same. AuditLog.userId has no NOT NULL constraint (same precedent as
+            // BANK_CREATED's null entityId), so a userId-less row is a supported shape, not a
+            // workaround -- and it's a genuine side benefit for admins watching the global audit
+            // feed for a credential-stuffing scan, not just parity theater.
+            auditService.record(user != null ? user.getId() : null, "LOGIN_FAILED", "User",
+                    user != null ? user.getId() : null,
+                    requestMetadata.addTo(new java.util.HashMap<>(
+                            Map.of("reason", user != null ? "bad_credentials" : "unknown_identifier"))));
             throw new ApiException(ErrorCode.AUTH_INVALID_CREDENTIALS, "Invalid credentials");
         }
 
@@ -533,7 +620,8 @@ public class AuthService {
                     ErrorCode.AUTH_MFA_REQUIRED.defaultMessage(), Map.of("mfaChallengeToken", challengeToken));
         }
 
-        auditService.record(user.getId(), "USER_LOGIN", "User", user.getId());
+        auditService.record(user.getId(), "USER_LOGIN", "User", user.getId(),
+                requestMetadata.addTo(new java.util.HashMap<>()));
         return issueSessionTokens(user);
     }
 
@@ -558,7 +646,8 @@ public class AuthService {
         UUID userId = adminMfaService.verifyChallenge(challengeToken, code);
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "User not found"));
-        auditService.record(user.getId(), "USER_LOGIN", "User", user.getId(), Map.of("mfa", true));
+        auditService.record(user.getId(), "USER_LOGIN", "User", user.getId(),
+                requestMetadata.addTo(new java.util.HashMap<>(Map.of("mfa", true))));
         return issueSessionTokens(user);
     }
 
@@ -760,7 +849,7 @@ public class AuthService {
         }
 
         auditService.record(user.getId(), isNewAccount ? provider.registeredAuditAction : provider.loginAuditAction,
-                "User", user.getId());
+                "User", user.getId(), requestMetadata.addTo(new java.util.HashMap<>()));
 
         var issued = refreshTokenService.issue(user.getId());
         String accessToken = jwtService.generateToken(user.getId(), user.getEmail(), issued.sessionId(),
@@ -821,6 +910,9 @@ public class AuthService {
         user = userRepository.save(user);
         passwordHistoryService.record(user.getId(), user.getPasswordHash());
         seedDefaultCategories(user.getId());
+        merchantSeedService.seedCuratedMerchants(user.getId());
+        // D-28 PR4-A: same "every new user gets this" discipline as seedDefaultCategories above.
+        subscriptionService.provisionFreeSubscription(user.getId());
         return user;
     }
 
@@ -883,8 +975,16 @@ public class AuthService {
      */
     @Transactional(noRollbackFor = ApiException.class)
     public RefreshResponse refresh(RefreshRequest request) {
-        var rotation = refreshTokenService.rotate(request.refreshToken());
-        User user = userRepository.findById(rotation.userId())
+        // Bug 27. These account-status checks must run BEFORE refreshTokenService.rotate(), not
+        // after -- rotate() revokes the presented token and mints + persists a replacement as its
+        // first mutations, and (per its own doc comment) those writes join THIS transaction rather
+        // than opening their own. A rejection thrown only after rotate() had already returned still
+        // committed a fresh, valid, unused rotated token to the database on a request this method
+        // ultimately rejects -- a real token "spent" for nothing on every refresh attempt a
+        // suspended/deactivated/deleted account makes. resolveUserId() is a read-only lookup, so
+        // gating on it first means a rejection here writes nothing.
+        UUID userId = refreshTokenService.resolveUserId(request.refreshToken());
+        User user = userRepository.findById(userId)
                 .orElseThrow(() -> new ApiException(HttpStatus.UNAUTHORIZED, "User no longer exists"));
         // A suspension that happens mid-session must actually take effect, not just block future
         // logins -- without this check, a suspended user with an unexpired refresh token could
@@ -911,6 +1011,7 @@ public class AuthService {
                     "This account is no longer active. Please sign in again.");
         }
 
+        var rotation = refreshTokenService.rotate(request.refreshToken());
         String newAccessToken = jwtService.generateToken(user.getId(), user.getEmail(),
                 rotation.newToken().sessionId(), user.getAccountScope());
         return new RefreshResponse(newAccessToken, rotation.newToken().rawToken());
@@ -1003,7 +1104,8 @@ public class AuthService {
                     "success", result.success()));
         });
 
-        auditService.record(user.getId(), "USER_LOGIN", "User", user.getId());
+        auditService.record(user.getId(), "USER_LOGIN", "User", user.getId(),
+                requestMetadata.addTo(new java.util.HashMap<>()));
         var issued = refreshTokenService.issue(user.getId());
         String accessToken = jwtService.generateToken(user.getId(), user.getEmail(), issued.sessionId(),
                 user.getAccountScope());
@@ -1191,16 +1293,28 @@ public class AuthService {
     }
 
     /**
-     * Reveals the account's real phone number for a valid, unused reset link (see
-     * ResolveResetPasswordPhoneRequest's own doc comment for why the frontend needs it and why
-     * this reset-token gate is enough to make that safe). Validates the token exactly like
-     * resetPassword() does, but deliberately does NOT consume/mark it here -- that only happens
-     * once the whole reset actually completes in resetPassword() below, so a user who looks up
-     * the phone number but never finishes the flow can still use the same reset link again later
-     * within its normal expiry window.
+     * BH-015 fix. Confirms a user-typed phone number against the account tied to a valid, unused
+     * reset link -- never reveals the account's real number itself (see
+     * VerifyResetPasswordPhoneRequest's own doc comment for the inverted flow this replaces).
+     * Validates the token exactly like resetPassword() does, but deliberately does NOT
+     * consume/mark it here -- that only happens once the whole reset actually completes in
+     * resetPassword() below, so a user who verifies but never finishes the flow can still use the
+     * same reset link again later within its normal expiry window.
+     *
+     * <p>Reuses phoneNumbersMatch() -- the exact digit-only comparison resetPassword() already
+     * applies to the Firebase-verified number below -- so this pre-check can't be stricter or
+     * looser than the real gate that follows it.
+     *
+     * <p>This does still function as a phone-number-guessing oracle: a caller holding a valid
+     * reset token can learn whether a GUESSED number belongs to the account, one guess at a time.
+     * That is a materially smaller exposure than the guaranteed full reveal this replaces --
+     * guessing all ~10^10 possible 10-digit numbers is infeasible, and the same rate limiter that
+     * already covers this endpoint (10 requests / 10 minutes, shared with resetPassword itself)
+     * bounds it further. The precondition of already holding a valid, unguessable, single-use,
+     * time-limited reset token (proof of email access) is unchanged from before.
      */
     @Transactional(readOnly = true)
-    public ResolveResetPasswordPhoneResponse resolveResetPasswordPhone(ResolveResetPasswordPhoneRequest request) {
+    public VerifyResetPasswordPhoneResponse verifyResetPasswordPhone(VerifyResetPasswordPhoneRequest request) {
         PasswordResetToken prt = validateResetToken(request.token());
         User user = userRepository.findById(prt.getUserId())
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "User not found"));
@@ -1236,31 +1350,15 @@ public class AuthService {
                             + "Go back and choose \"Sign in with " + reauthProviderLabel + "\" instead."
                     : "This account has no phone number on file. Contact an administrator for help resetting your password.");
         }
-        // BH-015, KNOWN AND DELIBERATELY STILL OPEN. This returns the account's phone number in
-        // full to anyone holding a valid reset link, where register() and login() -- both of which
-        // authenticate the caller far more strongly than a link from an inbox -- return
-        // PhoneMasking.mask(). The weakest gate in the product hands back the most.
-        //
-        // <p><b>Masking here does not work, and was tried.</b> All three clients pass this value
-        // straight to Firebase to SEND the code -- see ResetPassword.tsx, which calls
-        // {@code sendPhoneVerificationCode(res.phoneNumber, ...)} with it. Returning "+•••••••705"
-        // makes every password reset fail at the send. The number is not being disclosed
-        // decoratively; the client-side Firebase architecture needs it to do the thing this
-        // endpoint exists for.
-        //
-        // <p>Closing it properly means inverting the flow: the USER types their number, the client
-        // sends the OTP to what they typed, and resetPassword() rejects the reset unless the
-        // Firebase-verified number matches the account -- a check it ALREADY performs, so the
-        // server-side half is done. What is missing is the UI change across three clients and the
-        // decision to make people type their number. That is a product change, not a bug fix, and
-        // doing half of it silently is how a reset flow breaks in production.
-        //
-        // <p>Until then the exposure is bounded by the reset token: unguessable, single-use,
-        // 30-minute TTL, invalidated by any newer link, and now rate-limited (this endpoint was
-        // outside every limiter, so a token holder could hammer it). What an attacker who has
-        // already compromised the mailbox gains is the account's second factor -- the input to a
-        // SIM swap -- handed over before completing the reset.
-        return new ResolveResetPasswordPhoneResponse(user.getPhoneNumber());
+        // BH-015 FIXED (2026-08-23): the account's real phone number is no longer returned here.
+        // The user typed a candidate number in `request.phoneNumber()`; this only confirms it
+        // matches, reusing the same phoneNumbersMatch() comparison resetPassword() applies to the
+        // Firebase-verified number below, so the two checks can never disagree about what counts
+        // as a match.
+        if (!phoneNumbersMatch(request.phoneNumber(), user.getPhoneNumber())) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "That doesn't match the phone number on this account.");
+        }
+        return new VerifyResetPasswordPhoneResponse("Phone number confirmed.");
     }
 
     @Transactional
@@ -1338,7 +1436,7 @@ public class AuthService {
         return new ResetPasswordResponse("Password updated — you can now sign in with your new password.");
     }
 
-    /** Shared by resolveResetPasswordPhone() and resetPassword() -- both need the exact same
+    /** Shared by verifyResetPasswordPhone() and resetPassword() -- both need the exact same
      *  "is this reset link still good" checks, and drifting between two separate copies of this
      *  logic is exactly how one of them ends up silently more/less strict than the other. */
     private PasswordResetToken validateResetToken(String rawToken) {
@@ -1359,11 +1457,13 @@ public class AuthService {
     // building the whole batch in memory and writing it in one saveAll() call.
     private void seedDefaultCategories(java.util.UUID userId) {
         List<Category> categories = new ArrayList<>();
-        for (String name : DEFAULT_CATEGORIES) {
+        for (var entry : DEFAULT_CATEGORIES.entrySet()) {
             Category c = new Category();
             c.setUserId(userId);
-            c.setName(name);
+            c.setName(entry.getKey());
             c.setSystem(true);
+            c.setIcon(entry.getValue()[0]);
+            c.setColor(entry.getValue()[1]);
             categories.add(c);
         }
         categoryRepository.saveAll(categories);

@@ -37,9 +37,9 @@ export default function ForgotPassword() {
       <div className="bg-card rounded-xl2 p-8 w-full max-w-sm shadow-soft border border-border">
         <div className="flex items-center gap-2 mb-6">
           <span className="w-7 h-7 rounded-lg bg-gradient-to-br from-primary to-primary-dark flex items-center justify-center">
-            <Sparkles size={14} className="text-white" strokeWidth={2.5} />
+            <Sparkles size={14} className="text-on-primary" strokeWidth={2.5} />
           </span>
-          <span className="font-extrabold tracking-wide text-ink">FINORA</span>
+          <span className="font-extrabold tracking-wide text-ink">FYNORA</span>
         </div>
 
         {submitted ? (
@@ -58,7 +58,7 @@ export default function ForgotPassword() {
                 <a href={devLink} className="underline break-all text-primary">{devLink}</a>
               </div>
             )}
-            <Link to="/login" className="text-sm text-primary font-medium">Back to sign in</Link>
+            <Link to="/auth" className="text-sm text-primary font-medium">Back to sign in</Link>
           </>
         ) : (
           <form onSubmit={handleSubmit} noValidate>
@@ -84,13 +84,13 @@ export default function ForgotPassword() {
             <button
               type="submit"
               disabled={loading || !emailValid}
-              className="w-full bg-primary hover:bg-primary-dark text-white rounded-lg py-2.5 text-sm font-semibold disabled:opacity-50"
+              className="w-full bg-primary hover:bg-primary-dark text-on-primary rounded-lg py-2.5 text-sm font-semibold disabled:opacity-50"
             >
               {loading ? 'Sending…' : 'Send reset link'}
             </button>
 
             <p className="text-sm mt-4 text-center">
-              <Link to="/login" className="text-primary font-medium">Back to sign in</Link>
+              <Link to="/auth" className="text-primary font-medium">Back to sign in</Link>
             </p>
           </form>
         )}

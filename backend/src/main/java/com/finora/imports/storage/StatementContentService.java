@@ -1,5 +1,7 @@
 package com.finora.imports.storage;
 
+import com.finora.security.crypto.EncryptedBytes;
+import com.finora.security.crypto.EncryptionService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -59,6 +61,18 @@ import java.util.Optional;
  * by V92) keep reading correctly forever, and a future third compression format be added without
  * the read path having to guess.
  *
+ * <h2>Encryption (security review, V107)</h2>
+ * {@link #store} also runs the compressed bytes through {@link EncryptionService#encryptBytes}
+ * before handing them to {@code StatementStorage} — compress-then-encrypt, not the other order,
+ * because ciphertext is high-entropy and would make compression do nothing. Object storage
+ * previously held bank statements with no protection beyond the provider's own at-rest encryption,
+ * which a leaked storage credential bypasses entirely; this closes that gap the same way
+ * {@code GmailConnection} already protects OAuth refresh tokens, reusing the same
+ * {@code EncryptionService}/{@code KeyProvider}. Same explicit-per-row-metadata decision as
+ * compression: the row's own {@code encryption_key_id} column says whether and under which key to
+ * decrypt on {@link #read}, so an object written before this shipped (key id null) keeps reading
+ * correctly forever, and a key rotation only affects which id new writes carry.
+ *
  * <h2>Ordering</h2>
  * {@link #store} is called before the row is persisted, so the only possible partial failure is an
  * object with no row. That is a narrower gap than it looks: BH-017's {@code
@@ -78,6 +92,7 @@ public class StatementContentService {
     private static final Logger log = LoggerFactory.getLogger(StatementContentService.class);
 
     private final Optional<StatementStorage> storage;
+    private final EncryptionService encryptionService;
 
     /**
      * Bug fix: a provider name that matches no implementation used to be indistinguishable from no
@@ -96,9 +111,11 @@ public class StatementContentService {
      * because that is never what anyone intended in any profile.
      */
     public StatementContentService(Optional<StatementStorage> storage,
+                                    EncryptionService encryptionService,
                                     @Value("${app.statement-storage.provider:}") String configuredProvider,
                                     @Value("${STORAGE_PROVIDER:}") String nearMissEnvVar) {
         this.storage = storage;
+        this.encryptionService = encryptionService;
         if (storage.isEmpty() && configuredProvider != null && !configuredProvider.isBlank()) {
             throw new IllegalStateException(
                     "app.statement-storage.provider is set to \"" + configuredProvider + "\", which matches no "
@@ -135,10 +152,12 @@ public class StatementContentService {
      *                 computations.
      *  @param originalSize bytes before compression -- {@code content.length}, handed back rather
      *                 than re-derived so the caller has one source for it.
-     *  @param storedSize bytes actually written to the object store (the compressed size).
-     *  @param mimeType passed straight through from the caller; this class does not interpret it. */
+     *  @param storedSize bytes actually written to the object store (the encrypted, compressed size).
+     *  @param mimeType passed straight through from the caller; this class does not interpret it.
+     *  @param encryptionKeyId the {@code EncryptionService} key id the stored bytes were encrypted
+     *                 under -- persist alongside the row, same as {@code compressionType}. */
     public record StoredContent(ContentAddress address, long originalSize, long storedSize,
-                                 CompressionType compressionType, String mimeType) {}
+                                 CompressionType compressionType, String mimeType, String encryptionKeyId) {}
 
     /**
      * Compresses and stores the bytes, returning what to record on the row.
@@ -159,13 +178,16 @@ public class StatementContentService {
         // fully in memory.
         String originalHash = ContentAddress.hashOf(content);
         byte[] compressed = GzipCompression.compress(content);
+        // Encrypted AFTER compression -- see this class's "Encryption" doc section.
+        EncryptedBytes encrypted = encryptionService.encryptBytes(compressed);
         // The address STORED here (key only, hash discarded) is the storage layer's own -- computed
-        // over the COMPRESSED bytes, which is fine, because key is a layout detail (ContentAddress's
-        // own class doc) and the identity half is reassembled below from originalHash instead.
-        ContentAddress stored = storage.get().store(compressed);
+        // over the ENCRYPTED, COMPRESSED bytes, which is fine, because key is a layout detail
+        // (ContentAddress's own class doc) and the identity half is reassembled below from
+        // originalHash instead.
+        ContentAddress stored = storage.get().store(encrypted.data());
         ContentAddress address = new ContentAddress(originalHash, stored.key());
-        return Optional.of(new StoredContent(address, content.length, compressed.length,
-                CompressionType.GZIP, mimeType));
+        return Optional.of(new StoredContent(address, content.length, encrypted.data().length,
+                CompressionType.GZIP, mimeType, encrypted.keyId()));
     }
 
     /**
@@ -177,12 +199,19 @@ public class StatementContentService {
     public byte[] read(StoredStatement row) {
         if (row.getContentHash() != null && row.getObjectKey() != null && storage.isPresent()) {
             byte[] retrieved = storage.get().retrieve(new ContentAddress(row.getContentHash(), row.getObjectKey()));
+            // Decrypted by the row's OWN recorded encryption_key_id, not attempted unconditionally
+            // -- see this class's "Encryption" doc section for why a null key id (a pre-V107
+            // object) must be read back exactly as retrieved, not run through a decrypt that would
+            // reject it as malformed ciphertext.
+            byte[] decrypted = row.getEncryptionKeyId() != null
+                    ? encryptionService.decryptBytes(new EncryptedBytes(row.getEncryptionKeyId(), retrieved))
+                    : retrieved;
             // Decoded by the row's OWN recorded compression_type, not by inspecting the bytes --
             // see CompressionType's own class doc for why that is what lets a pre-compression
             // object (compression_type = NONE) keep reading correctly forever.
             byte[] content = row.getCompressionType() == CompressionType.GZIP
-                    ? GzipCompression.decompress(retrieved)
-                    : retrieved;
+                    ? GzipCompression.decompress(decrypted)
+                    : decrypted;
             // Verified here rather than inside each StatementStorage implementation: this is the one
             // path every read goes through, so a future R2/S3 provider inherits the guarantee instead
             // of having to remember to re-implement it. A provider CAN also check internally; it

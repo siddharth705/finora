@@ -12,7 +12,7 @@ import { recentImportsRefetchIntervalMs, label as jobLabel } from '../lib/import
 import { navigateToReimport, navigateToRetryFailedImport } from '../lib/importNavState';
 import type { AccountStatementGroup, StatementSummary, Transaction } from '../types';
 import { formatDate } from '../utils/date';
-import { FinoraCard, EmptyState } from '../design-system';
+import { FinoraCard, EmptyState, ConfirmDialog } from '../design-system';
 
 // Reused from the same failure UX contract Import.tsx's live upload flow already draws on
 // (Premium Import Reliability v1, §6) -- a failure a user comes back to later reads the same way
@@ -20,7 +20,7 @@ import { FinoraCard, EmptyState } from '../design-system';
 // generic fallback rather than "undefined" or an internal code -- unlike Import.tsx's fallback,
 // there is no server `message` available for a historical record to fall back to first.
 function messageFor(failureCode: string | null): string {
-  return importFailureMessage(failureCode) ?? "Finora couldn't complete this import.";
+  return importFailureMessage(failureCode) ?? "Fynora couldn't complete this import.";
 }
 
 function fmt(n: number | null) {
@@ -56,6 +56,9 @@ export default function StatementHistory() {
   // "we haven't asked yet" from "you answered and the document rejected it".
   const [passwordPrompt, setPasswordPrompt] = useState<{ statement: StatementSummary; wrong: boolean } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Which statement's delete confirmation is showing, if any -- a custom in-app modal
+  // (ConfirmDialog) instead of the browser's own confirm(), which rendered as unstyled OS chrome.
+  const [confirmDelete, setConfirmDelete] = useState<StatementSummary | null>(null);
 
   const { data: groups, isLoading } = useQuery({
     queryKey: ['statement-imports'],
@@ -157,9 +160,6 @@ export default function StatementHistory() {
   }
 
   async function handleDelete(statement: StatementSummary) {
-    if (!confirm(`Delete "${statement.fileName}"? This removes only the ${statement.transactionsImported} transaction(s) it imported — nothing else.`)) {
-      return;
-    }
     setBusyId(statement.id);
     setError(null);
     try {
@@ -210,7 +210,7 @@ export default function StatementHistory() {
             cta={
               <button
                 onClick={() => navigate('/app/import')}
-                className="bg-primary text-white text-xs font-semibold rounded-lg px-4 py-2"
+                className="bg-primary text-on-primary text-xs font-semibold rounded-lg px-4 py-2"
               >
                 Import a Statement
               </button>
@@ -266,6 +266,14 @@ export default function StatementHistory() {
                             </span>
                           )}
                         </p>
+                        {/* Credit-card statement entity, roadmap item 6 -- only present for a
+                            credit-card statement whose payment-summary panel was found. */}
+                        {s.totalAmountDue !== null && (
+                          <p className="text-xs text-muted">
+                            Total due {fmt(s.totalAmountDue)}
+                            {s.paymentDueDate && ` · Due ${fmtDate(s.paymentDueDate)}`}
+                          </p>
+                        )}
                       </div>
                       <div className="flex items-center gap-1.5 flex-shrink-0">
                         <ActionButton title="View Import Summary" onClick={() => setViewing({ mode: 'summary', statement: s })}>
@@ -285,7 +293,7 @@ export default function StatementHistory() {
                         <ActionButton title="Download Original File" onClick={() => handleDownload(s)}>
                           <Download size={14} />
                         </ActionButton>
-                        <ActionButton title="Delete Statement Import" onClick={() => handleDelete(s)} busy={busyId === s.id} danger>
+                        <ActionButton title="Delete Statement Import" onClick={() => setConfirmDelete(s)} busy={busyId === s.id} danger>
                           <Trash2 size={14} />
                         </ActionButton>
                       </div>
@@ -299,6 +307,21 @@ export default function StatementHistory() {
       )}
 
       {viewing && <StatementDetailModal viewing={viewing} onClose={() => setViewing(null)} />}
+
+      {confirmDelete && (
+        <ConfirmDialog
+          title={`Delete "${confirmDelete.fileName}"?`}
+          message={`This removes only the ${confirmDelete.transactionsImported} transaction(s) it imported — nothing else.`}
+          confirmLabel="Delete"
+          danger
+          onConfirm={() => {
+            const statement = confirmDelete;
+            setConfirmDelete(null);
+            void handleDelete(statement);
+          }}
+          onCancel={() => setConfirmDelete(null)}
+        />
+      )}
 
       {passwordPrompt && (
         <ReimportPasswordModal
@@ -350,7 +373,7 @@ function ReimportPasswordModal({
 
           <p className="text-xs text-muted">
             <span className="text-ink font-medium break-all">{prompt.statement.fileName}</span> is
-            password protected. Finora doesn't store statement passwords, so re-importing needs it again.
+            password protected. Fynora doesn't store statement passwords, so re-importing needs it again.
           </p>
 
           <div>
@@ -360,7 +383,7 @@ function ReimportPasswordModal({
             <input
               id="reimport-password"
               type="password"
-              // The bank's password for one document, not a Finora credential -- it doesn't belong
+              // The bank's password for one document, not a Fynora credential -- it doesn't belong
               // in the user's password manager next to real logins.
               autoComplete="off"
               autoFocus
@@ -384,7 +407,7 @@ function ReimportPasswordModal({
           <button
             type="submit"
             disabled={!password || busy}
-            className="w-full bg-primary text-white rounded px-4 py-2 text-sm font-medium disabled:opacity-40"
+            className="w-full bg-primary text-on-primary rounded px-4 py-2 text-sm font-medium disabled:opacity-40"
           >
             {busy ? 'Unlocking…' : 'Re-import statement'}
           </button>
@@ -406,16 +429,28 @@ function ReimportPasswordModal({
  */
 function FailedImportsSection({ failures }: { failures: ImportFailureSummary[] }) {
   const navigate = useNavigate();
+  const [expanded, setExpanded] = useState(true);
 
   return (
     <div className="bg-card rounded-xl2 shadow-card border border-danger/30 overflow-hidden">
-      <div className="px-5 py-4 border-b border-border flex items-center gap-2">
-        <AlertTriangle size={16} className="text-danger" />
-        <div>
-          <h2 className="font-semibold text-ink text-sm">Failed Imports</h2>
-          <p className="text-xs text-muted">Statements Finora could not import.</p>
+      <button
+        type="button"
+        onClick={() => setExpanded((open) => !open)}
+        aria-expanded={expanded}
+        className={`w-full flex items-center justify-between gap-2 px-5 py-4 text-left ${expanded ? 'border-b border-border' : ''}`}
+      >
+        <div className="flex items-center gap-2">
+          <AlertTriangle size={16} className="text-danger" />
+          <div>
+            <h2 className="font-semibold text-ink text-sm">Failed Imports</h2>
+            <p className="text-xs text-muted">Statements Fynora could not import.</p>
+          </div>
         </div>
-      </div>
+        {expanded
+          ? <ChevronDown size={16} className="text-muted flex-shrink-0" />
+          : <ChevronRight size={16} className="text-muted flex-shrink-0" />}
+      </button>
+      {expanded && (
       <div className="divide-y divide-border">
         {failures.map((f) => (
           <div key={f.reference} className="px-5 py-3.5">
@@ -435,6 +470,7 @@ function FailedImportsSection({ failures }: { failures: ImportFailureSummary[] }
           </div>
         ))}
       </div>
+      )}
     </div>
   );
 }
@@ -450,16 +486,28 @@ function RecentImportsSection({ jobs }: { jobs: ImportJobProgress[] }) {
   // useNavigate() for its own buttons, and this one needs nothing from the caller that reaching
   // for the hook directly doesn't already give it.
   const navigate = useNavigate();
+  const [expanded, setExpanded] = useState(true);
 
   return (
     <div className="bg-card rounded-xl2 shadow-card border border-border overflow-hidden">
-      <div className="px-5 py-4 border-b border-border flex items-center gap-2">
-        <Clock size={16} className="text-muted" />
-        <div>
-          <h2 className="font-semibold text-ink text-sm">Recent Imports</h2>
-          <p className="text-xs text-muted">Statements still processing, or that didn't finish.</p>
+      <button
+        type="button"
+        onClick={() => setExpanded((open) => !open)}
+        aria-expanded={expanded}
+        className={`w-full flex items-center justify-between gap-2 px-5 py-4 text-left ${expanded ? 'border-b border-border' : ''}`}
+      >
+        <div className="flex items-center gap-2">
+          <Clock size={16} className="text-muted" />
+          <div>
+            <h2 className="font-semibold text-ink text-sm">Recent Imports</h2>
+            <p className="text-xs text-muted">Statements still processing, or that didn't finish.</p>
+          </div>
         </div>
-      </div>
+        {expanded
+          ? <ChevronDown size={16} className="text-muted flex-shrink-0" />
+          : <ChevronRight size={16} className="text-muted flex-shrink-0" />}
+      </button>
+      {expanded && (
       <div className="divide-y divide-border">
         {jobs.map((job) => (
           <button
@@ -476,6 +524,7 @@ function RecentImportsSection({ jobs }: { jobs: ImportJobProgress[] }) {
           </button>
         ))}
       </div>
+      )}
     </div>
   );
 }
@@ -536,6 +585,12 @@ function StatementDetailModal({
               <Field label="Imported">{fmtDate(viewing.statement.importedAt)}</Field>
               <Field label="Opening balance">{fmt(viewing.statement.openingBalance)}</Field>
               <Field label="Closing balance">{fmt(viewing.statement.closingBalance)}</Field>
+              {viewing.statement.totalAmountDue !== null && (
+                <Field label="Total amount due">{fmt(viewing.statement.totalAmountDue)}</Field>
+              )}
+              {viewing.statement.paymentDueDate && (
+                <Field label="Payment due date">{fmtDate(viewing.statement.paymentDueDate)}</Field>
+              )}
               <Field label="Transactions imported">{viewing.statement.transactionsImported}</Field>
               <Field label="Transactions skipped">{viewing.statement.transactionsSkipped}</Field>
               <Field label="Duplicates flagged">{viewing.statement.duplicateCount}</Field>

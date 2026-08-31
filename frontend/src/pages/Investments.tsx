@@ -5,7 +5,7 @@ import { LineChart as LineChartIcon, TrendingUp, TrendingDown, Wallet } from 'lu
 import { accountsApi, networthApi, type NetWorthData } from '../api/endpoints';
 import type { Account } from '../types';
 import { formatDate } from '../utils/date';
-import { FinoraCard, MetricCard, EmptyState, SectionHeader, ChartContainer, baseChartOptions } from '../design-system';
+import { FinoraCard, MetricCard, EmptyState, SectionHeader, ChartContainer, baseChartOptions, ConfirmDialog } from '../design-system';
 
 ChartJS.register(ArcElement, LineElement, PointElement, LinearScale, CategoryScale, Tooltip, Legend);
 
@@ -49,6 +49,7 @@ export default function Investments() {
   const [error, setError] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [savingSnapshot, setSavingSnapshot] = useState(false);
+  const [confirmRemoveId, setConfirmRemoveId] = useState<string | null>(null);
 
   function load() {
     setLoading(true);
@@ -86,7 +87,6 @@ export default function Investments() {
   }
 
   async function removeHolding(id: string) {
-    if (!confirm('Delete this holding?')) return;
     try {
       await accountsApi.remove(id);
       load();
@@ -213,7 +213,7 @@ export default function Investments() {
               <option>Mutual Fund</option><option>Stocks</option><option>FD</option><option>PPF/NPS</option><option>Other</option>
             </select>
           </div>
-          <button onClick={addHolding} disabled={adding} className="bg-primary text-white hover:bg-primary-dark disabled:opacity-50 px-4 py-2 rounded text-xs uppercase">{adding ? 'Adding…' : 'Add'}</button>
+          <button onClick={addHolding} disabled={adding} className="bg-primary text-on-primary hover:bg-primary-dark disabled:opacity-50 px-4 py-2 rounded text-xs uppercase">{adding ? 'Adding…' : 'Add'}</button>
         </div>
 
         {holdings.length === 0 ? (
@@ -232,7 +232,7 @@ export default function Investments() {
                   <span>{h.name} <span className="text-[10px] uppercase text-gray-400 ml-2">{h.investmentKind}</span></span>
                   <span className="flex items-center gap-3">
                     {fmt(h.balance)}
-                    <button onClick={() => removeHolding(h.id)} className="text-danger border border-danger rounded px-2 py-0.5 text-[10px] uppercase">Delete</button>
+                    <button onClick={() => setConfirmRemoveId(h.id)} className="text-danger border border-danger rounded px-2 py-0.5 text-[10px] uppercase">Delete</button>
                   </span>
                 </div>
                 <DepositTerms holding={h} />
@@ -241,6 +241,21 @@ export default function Investments() {
           </div>
         )}
       </FinoraCard>
+
+      {confirmRemoveId && (
+        <ConfirmDialog
+          title="Delete this holding?"
+          message="This can't be undone."
+          confirmLabel="Delete"
+          danger
+          onConfirm={() => {
+            const id = confirmRemoveId;
+            setConfirmRemoveId(null);
+            void removeHolding(id);
+          }}
+          onCancel={() => setConfirmRemoveId(null)}
+        />
+      )}
     </div>
   );
 }

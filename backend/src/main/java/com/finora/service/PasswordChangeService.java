@@ -76,17 +76,19 @@ public class PasswordChangeService {
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "User not found"));
 
         requireActiveAccount(user);
-        if (!googleReauthVerifier.verify(user, request.currentPassword(), request.googleIdToken())) {
+        if (!googleReauthVerifier.verify(user, request.currentPassword(), request.googleIdToken(), request.appleIdToken())) {
             auditService.record(userId, "INVALID_CURRENT_PASSWORD", "User", userId);
             throw new ApiException(HttpStatus.BAD_REQUEST, user.isGoogleAccount()
                     ? "We couldn't verify your Google account. Please try again."
-                    : "Current password is incorrect.");
+                    : user.isAppleAccount()
+                            ? "We couldn't verify your Apple account. Please try again."
+                            : "Current password is incorrect.");
         }
         if (user.getPhoneNumber() == null || user.getPhoneNumber().isBlank()) {
             // Reachable today only for a Google Sign-In account that verified above but has not
             // yet gone through VerifyPhone.tsx's own "Add your phone number" flow -- every other
             // account has a phone number required at registration. See
-            // AuthService.resolveResetPasswordPhone for the identical guard on the reset-password
+            // AuthService.verifyResetPasswordPhone for the identical guard on the reset-password
             // path.
             throw new ApiException(HttpStatus.BAD_REQUEST,
                     "Add a phone number to your account before changing your password or deleting your account.");

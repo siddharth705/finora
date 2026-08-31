@@ -75,7 +75,7 @@ export function AppLockSection() {
       <View style={[styles.row, { borderBottomColor: c.border }]}>
         <View style={styles.rowMain}>
           <Text style={[styles.rowTitle, { color: c.ink }]}>App Lock</Text>
-          <Text style={[styles.rowMeta, { color: c.muted }]}>
+          <Text style={[styles.rowMeta, { color: c.mutedInk }]}>
             Set up a fingerprint, face, or passcode on this device to use App Lock.
           </Text>
         </View>
@@ -88,8 +88,8 @@ export function AppLockSection() {
       <View style={[styles.row, { borderBottomColor: c.border }]}>
         <View style={styles.rowMain}>
           <Text style={[styles.rowTitle, { color: c.ink }]}>App Lock</Text>
-          <Text style={[styles.rowMeta, { color: c.muted }]}>
-            Require your fingerprint, face, or device passcode to open Finora.
+          <Text style={[styles.rowMeta, { color: c.mutedInk }]}>
+            Require your fingerprint, face, or device passcode to open Fynora.
           </Text>
         </View>
         <Switch
@@ -97,6 +97,11 @@ export function AppLockSection() {
           onValueChange={(next) => void handleToggle(next)}
           disabled={busy}
           trackColor={{ true: c.primary, false: c.border }}
+          // The native thumb defaults to a plain white circle regardless of track color. That
+          // was fine against a mid-to-dark blue "on" track in both themes, but dark mode's track
+          // is now light paper (c.primary), where a white thumb nearly disappears into it --
+          // explicit onPrimary keeps the thumb visible against whichever track color is active.
+          thumbColor={enabled ? c.onPrimary : undefined}
           accessibilityLabel="App Lock"
           accessibilityHint="Requires biometric or device passcode authentication to open the app"
         />

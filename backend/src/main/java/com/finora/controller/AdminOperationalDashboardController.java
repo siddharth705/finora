@@ -1,5 +1,7 @@
 package com.finora.controller;
 
+import com.finora.dto.AdminDtos.ActivationFunnelDto;
+import com.finora.dto.AdminDtos.ActivityTrendPointDto;
 import com.finora.dto.AdminDtos.OperationalDashboardDto;
 import com.finora.dto.ApiResponse;
 import com.finora.service.AdminOperationalDashboardService;
@@ -7,6 +9,8 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+
+import java.util.List;
 
 /** The Operational Dashboard -- "Is Finora healthy?" as one screen. Reuses PLATFORM_STATS_VIEW
  *  (AdminStatsController's existing permission) rather than minting a new one: this is the same
@@ -26,5 +30,18 @@ public class AdminOperationalDashboardController {
     @GetMapping("/overview")
     public ApiResponse<OperationalDashboardDto> overview() {
         return ApiResponse.ok(adminOperationalDashboardService.overview());
+    }
+
+    /** D-27 PR3-D. */
+    @GetMapping("/activation-funnel")
+    public ApiResponse<ActivationFunnelDto> activationFunnel() {
+        return ApiResponse.ok(adminOperationalDashboardService.activationFunnel());
+    }
+
+    /** Platform Activity chart -- see AdminOperationalDashboardService.activityTrend()'s own doc
+     *  comment for exactly what window this covers. */
+    @GetMapping("/activity-trend")
+    public ApiResponse<List<ActivityTrendPointDto>> activityTrend() {
+        return ApiResponse.ok(adminOperationalDashboardService.activityTrend());
     }
 }

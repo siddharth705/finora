@@ -1,6 +1,7 @@
 package com.finora.service;
 
 import com.finora.dto.AdminDtos.AdminUpdateUserRequest;
+import com.finora.entity.Account;
 import com.finora.entity.User;
 import com.finora.exception.ApiException;
 import com.finora.repository.AccountRepository;
@@ -11,6 +12,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -29,6 +32,8 @@ import static org.mockito.Mockito.*;
 class AdminUserServiceTest {
 
     private UserRepository userRepository;
+    private AccountRepository accountRepository;
+    private TransactionRepository transactionRepository;
     private AuditService auditService;
     private RefreshTokenService refreshTokenService;
     private AdminUserService adminUserService;
@@ -38,10 +43,12 @@ class AdminUserServiceTest {
     @BeforeEach
     void setUp() {
         userRepository = mock(UserRepository.class);
+        accountRepository = mock(AccountRepository.class);
+        transactionRepository = mock(TransactionRepository.class);
         auditService = mock(AuditService.class);
         refreshTokenService = mock(RefreshTokenService.class);
         adminUserService = new AdminUserService(
-                userRepository, mock(AccountRepository.class), mock(TransactionRepository.class), auditService,
+                userRepository, accountRepository, transactionRepository, auditService,
                 mock(AuthService.class), refreshTokenService);
     }
 
@@ -230,5 +237,75 @@ class AdminUserServiceTest {
         assertThat(target.getTimezone()).isEqualTo("Asia/Kolkata");
         verify(userRepository).save(target);
         verify(auditService).record(eq(targetId), eq("USER_PROFILE_UPDATED_BY_ADMIN"), eq("User"), eq(targetId), any());
+    }
+
+    /**
+     * SEC-12 (docs/quality/bug-reports/2026-08-19-security-review-findings.md). Field names only,
+     * not before/after values -- see updateProfile()'s own comment for why. This is what makes the
+     * audit trail reconstructable at all: before this, the metadata carried only who/when, and two
+     * edits to the same account were indistinguishable from the audit row alone.
+     */
+    @Test
+    void updateProfile_recordsWhichFieldsActuallyChanged() {
+        User target = user(targetId, "ACTIVE");
+        target.setPhoneNumber("+919876500001");
+        target.setTimezone("Asia/Kolkata");
+        when(userRepository.findById(targetId)).thenReturn(Optional.of(target));
+
+        adminUserService.updateProfile(adminId, targetId,
+                new AdminUpdateUserRequest("New Name", null, java.math.BigDecimal.valueOf(500), "Asia/Tokyo"));
+
+        @SuppressWarnings("unchecked")
+        var metadata = org.mockito.ArgumentCaptor.forClass(Map.class);
+        verify(auditService).record(eq(targetId), eq("USER_PROFILE_UPDATED_BY_ADMIN"), eq("User"), eq(targetId), metadata.capture());
+        assertThat((List<String>) metadata.getValue().get("changedFields"))
+                .containsExactlyInAnyOrder("fullName", "lowBalanceThreshold", "timezone");
+    }
+
+    @Test
+    void updateProfile_recordsAnEmptyChangedFieldsList_whenNothingWasActuallySupplied() {
+        User target = user(targetId, "ACTIVE");
+        when(userRepository.findById(targetId)).thenReturn(Optional.of(target));
+
+        adminUserService.updateProfile(adminId, targetId, new AdminUpdateUserRequest(null, null, null, null));
+
+        @SuppressWarnings("unchecked")
+        var metadata = org.mockito.ArgumentCaptor.forClass(Map.class);
+        verify(auditService).record(eq(targetId), eq("USER_PROFILE_UPDATED_BY_ADMIN"), eq("User"), eq(targetId), metadata.capture());
+        assertThat((List<String>) metadata.getValue().get("changedFields")).isEmpty();
+    }
+
+    // --- Deleted-account leak (see DashboardService.summarize for the original fix): a deleted
+    // account's transactions deliberately keep deleted_at unset, so getUser's transactionCount
+    // must be scoped to exactly the user's live account ids, not just their userId -- unlike
+    // accountCount, which is already correctly scoped via Account's own @SQLRestriction. ---
+
+    @Test
+    void getUser_scopesTransactionCount_toExactlyTheLiveAccountIds() {
+        User target = user(targetId, "ACTIVE");
+        when(userRepository.findById(targetId)).thenReturn(Optional.of(target));
+        Account liveAccount = new Account();
+        ReflectionTestUtils.setField(liveAccount, "id", UUID.randomUUID());
+        liveAccount.setUserId(targetId);
+        when(accountRepository.findByUserId(targetId)).thenReturn(List.of(liveAccount));
+        when(transactionRepository.countByUserIdAndAccountIdIn(eq(targetId), any())).thenReturn(7L);
+
+        var result = adminUserService.getUser(targetId);
+
+        assertThat(result.transactionCount()).isEqualTo(7L);
+        verify(transactionRepository).countByUserIdAndAccountIdIn(targetId, List.of(liveAccount.getId()));
+        verify(transactionRepository, never()).countByUserId(any());
+    }
+
+    @Test
+    void getUser_withNoLiveAccounts_reportsZeroTransactions_withoutQueryingTransactionCount() {
+        User target = user(targetId, "ACTIVE");
+        when(userRepository.findById(targetId)).thenReturn(Optional.of(target));
+        when(accountRepository.findByUserId(targetId)).thenReturn(List.of());
+
+        var result = adminUserService.getUser(targetId);
+
+        assertThat(result.transactionCount()).isEqualTo(0L);
+        verify(transactionRepository, never()).countByUserIdAndAccountIdIn(any(), any());
     }
 }

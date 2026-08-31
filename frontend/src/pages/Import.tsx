@@ -9,6 +9,7 @@ import { BankLogo } from '../components/BankLogo';
 import { MaskedAccountNumber } from '../components/MaskedAccountNumber';
 import { VerificationPanel } from '../components/VerificationPanel';
 import { matchExistingAccount } from '../lib/accountMatch';
+import { isLikelyMatch } from '../lib/holderNameMatcher';
 import { DuplicateReview } from '../components/DuplicateReview';
 import { ImportProgress } from '../components/ImportProgress';
 import { ImportTimeline } from '../components/ImportTimeline';
@@ -24,8 +25,10 @@ import {
   type RowReview,
 } from '../lib/importReview';
 import { toNewAccountPayload } from '../lib/newAccountPayload';
+import { ConfirmDialog } from '../design-system';
 import type { ImportNavState } from '../lib/importNavState';
-import type { Account, DetectedAccountInfo, VerificationReport, ImportSummary, StagedAccountSection, StagedRow, UnparseableRow } from '../types';
+import { useAuth } from '../context/AuthContext';
+import type { Account, DetectedAccountInfo, VerificationReport, ImportSummary, StagedAccountSection, StagedRow, SupersedeResult, UnparseableRow } from '../types';
 import { formatDate, formatDateDDMMMYYYY } from '../utils/date';
 
 type Step = 'upload' | 'review' | 'summary';
@@ -116,6 +119,7 @@ export default function Import() {
   const navigate = useNavigate();
   const location = useLocation();
   const queryClient = useQueryClient();
+  const { fullName } = useAuth();
 
   // "Re-import Statement" (from the Statement History page) lands here with the original file's
   // staging result already computed server-side — see StatementImportService.reimport(). There's
@@ -186,6 +190,15 @@ export default function Import() {
   const [multiSummary, setMultiSummary] = useState<ImportSummary[] | null>(null);
   const [confirming, setConfirming] = useState(false);
 
+  // docs/proposals/account-ownership-intelligence-proposal.md §3.1. A client-side pre-check only
+  // -- it decides whether to show the "Statement Check" dialog before confirming; the backend
+  // independently computes and persists the authoritative OwnershipMatchStatus at confirm time
+  // (see OwnershipMatchService), which is the source of truth for audit purposes. Reset per
+  // upload via the effects that already clear detectedAccount, so a second file in the same
+  // session gets its own check.
+  const [ownershipWarningOpen, setOwnershipWarningOpen] = useState(false);
+  const [ownershipWarningAcknowledged, setOwnershipWarningAcknowledged] = useState(false);
+
   // Set only for a multi-account PDF upload (see SectionState above) -- null the rest of the
   // time, and the single flat rows/detectedAccount/etc. state above is what's used instead.
   const [multiSections, setMultiSections] = useState<SectionState[] | null>(null);
@@ -219,6 +232,10 @@ export default function Import() {
   // sessions (ImportSessionService.listActiveSessions), so there is no ownership check to add
   // here -- only whether to show what it returns.
   const [discardingSessionId, setDiscardingSessionId] = useState<string | null>(null);
+  // Which unfinished session's discard confirmation is showing, if any -- a custom in-app modal
+  // (ConfirmDialog) instead of the browser's own confirm(), which rendered as unstyled OS chrome
+  // (literally titled with the page's own origin) rather than looking like part of the product.
+  const [confirmDiscardId, setConfirmDiscardId] = useState<string | null>(null);
   const { data: unfinishedSessions } = useQuery({
     queryKey: ['import-sessions'],
     queryFn: () => importApi.listSessions(),
@@ -366,8 +383,20 @@ export default function Import() {
       hydrateReviewFrom(session.staging);
       setJobId(null);
       setStep('review');
-    } catch {
+    } catch (e: any) {
       setJobId(null);
+      // Bug fix: the worker only stages, never confirms (ImportJobWorker's own doc comment says
+      // so) -- but by the time this poller's COMPLETED tick fires and this fetch runs, the same
+      // session can already have been confirmed through another path (a second tab resuming it,
+      // a duplicate confirm). getSession then 400s with this code, same as resumeSession below
+      // already handles -- mirrored here rather than shown as a generic, actively misleading
+      // failure: nothing is unloaded (the import already succeeded), and "open it from your
+      // unfinished imports" is a dead end since listResumableSessions never returns a confirmed
+      // session.
+      if (e.response?.data?.errorCode === IMPORT_SESSION_ALREADY_CONFIRMED) {
+        showError('This import has already been reviewed and confirmed -- check your Statement History for it.');
+        return;
+      }
       showError('Your statement was imported, but the review could not be loaded. Open it from your unfinished imports.');
     }
   }
@@ -412,7 +441,6 @@ export default function Import() {
   }
 
   async function discardStagedSession(id: string) {
-    if (!confirm('Discard this unfinished import? You can upload the statement again later.')) return;
     // Bug fix, caught by review: this function never cleared the banner on success, unlike every
     // other action on this page -- an unrelated error left showing (e.g. an ACTION_REQUIRED parse
     // failure, amber-colored) would sit there indefinitely, now misleadingly still reading as
@@ -502,7 +530,7 @@ export default function Import() {
       } else if (contractMessage) {
         // Premium Import Reliability v1 failure UX contract: for a code we have curated copy for,
         // that copy is what the user reads, not the server's `message` -- the whole point of the
-        // contract is that Finora controls the wording, even though the server's own message is
+        // contract is that Fynora controls the wording, even though the server's own message is
         // already reasonable prose (see ExtractionCheck.java). Only a code with no curated entry
         // falls through to the server message / generic fallback below. Sprint 4 item 22:
         // userActionRequired comes off the wire (ErrorCode.userActionRequired(), computed once
@@ -529,8 +557,32 @@ export default function Import() {
   const toggleRowIncluded = (index: number, include: boolean) =>
     setReview((r) => setIncluded(r, index, include));
 
-  async function confirmImport() {
+  // docs/proposals/account-ownership-intelligence-proposal.md §3.1 point 1: the extracted name is
+  // untrusted input, not ground truth -- this is why a mismatch only ever opens a non-blocking
+  // dialog here, never blocks confirmImport() outright.
+  function ownershipNameMismatch(): boolean {
+    const holder = detectedAccount?.accountHolderName;
+    if (!holder) return false;
+    // fullName is genuinely nullable (Apple Sign-In only supplies it on the first authorization --
+    // see AuthContext's loginWithApple). Nothing on the profile side to compare against means
+    // nothing to warn about, same "don't guess" principle OwnershipMatchService follows for this
+    // exact case on the backend -- without this guard, a user with no profile name would see this
+    // warning on every single import, and the dialog would show "null" as their profile name.
+    if (!fullName) return false;
+    return !isLikelyMatch(holder, fullName);
+  }
+
+  // ownershipAcknowledgedNow is an explicit override, not just a read of ownershipWarningAcknowledged
+  // state -- the dialog's own "Continue Import" handler calls this function again immediately after
+  // setting that state, and a React state update isn't visible in the same render's closure yet. The
+  // override sidesteps that; the state still exists for the payload sent to the backend below.
+  async function confirmImport(ownershipAcknowledgedNow = false) {
     if (!reimportState && !sessionId) return;
+    const ownershipAcknowledged = ownershipWarningAcknowledged || ownershipAcknowledgedNow;
+    if (!ownershipAcknowledged && ownershipNameMismatch()) {
+      setOwnershipWarningOpen(true);
+      return;
+    }
     setConfirming(true);
     clearError();
     try {
@@ -554,7 +606,12 @@ export default function Import() {
             existingAccountId,
             statementOpeningBalance: detectedAccount?.openingBalance ?? null,
             statementClosingBalance: detectedAccount?.closingBalance ?? null,
+            statementPeriodStart: detectedAccount?.statementPeriodStart ?? null,
+            statementPeriodEnd: detectedAccount?.statementPeriodEnd ?? null,
+            totalAmountDue: detectedAccount?.totalAmountDue ?? null,
+            paymentDueDate: detectedAccount?.paymentDueDate ?? null,
             password: reimportState.password,
+            userConfirmedContinue: ownershipAcknowledged ? true : undefined,
           })
         : await importApi.confirm({
             sessionId: sessionId!,
@@ -563,6 +620,11 @@ export default function Import() {
             newAccount,
             statementOpeningBalance: detectedAccount?.openingBalance ?? null,
             statementClosingBalance: detectedAccount?.closingBalance ?? null,
+            statementPeriodStart: detectedAccount?.statementPeriodStart ?? null,
+            statementPeriodEnd: detectedAccount?.statementPeriodEnd ?? null,
+            totalAmountDue: detectedAccount?.totalAmountDue ?? null,
+            paymentDueDate: detectedAccount?.paymentDueDate ?? null,
+            userConfirmedContinue: ownershipAcknowledged ? true : undefined,
           });
       setSummary(result);
       setStep('summary');
@@ -603,6 +665,10 @@ export default function Import() {
           newAccount,
           statementOpeningBalance: s.detectedAccount.openingBalance ?? null,
           statementClosingBalance: s.detectedAccount.closingBalance ?? null,
+          statementPeriodStart: s.detectedAccount.statementPeriodStart ?? null,
+          statementPeriodEnd: s.detectedAccount.statementPeriodEnd ?? null,
+          totalAmountDue: s.detectedAccount.totalAmountDue ?? null,
+          paymentDueDate: s.detectedAccount.paymentDueDate ?? null,
         };
       });
 
@@ -648,6 +714,8 @@ export default function Import() {
     setPendingPdf(null);
     setPdfPassword('');
     setPasswordState(null);
+    setOwnershipWarningOpen(false);
+    setOwnershipWarningAcknowledged(false);
     accountsApi.list().then(setExistingAccounts).catch((e) => console.error('Failed to load accounts', e));
     clearArrivalState();
   }
@@ -731,7 +799,7 @@ export default function Import() {
               id="pdf-password"
               ref={passwordInput}
               type="password"
-              // This is the bank's password for this document, not a Finora credential -- offering
+              // This is the bank's password for this document, not a Fynora credential -- offering
               // to save it in a password manager would put it in the user's vault alongside real
               // logins, and it changes with every statement anyway.
               autoComplete="off"
@@ -769,7 +837,7 @@ export default function Import() {
             </div>
           ) : (
             <div className="flex items-center gap-3">
-              <button type="submit" className="bg-primary text-white rounded px-4 py-2 text-sm font-medium">
+              <button type="submit" className="bg-primary text-on-primary rounded px-4 py-2 text-sm font-medium">
                 Upload statement
               </button>
               <button
@@ -814,7 +882,7 @@ export default function Import() {
                     type="button"
                     onClick={() => void resumeSession(s.id)}
                     disabled={discardingSessionId === s.id}
-                    className="bg-primary text-white text-xs font-semibold rounded-lg px-3 py-1.5 disabled:opacity-40 flex items-center gap-1.5"
+                    className="bg-primary text-on-primary text-xs font-semibold rounded-lg px-3 py-1.5 disabled:opacity-40 flex items-center gap-1.5"
                   >
                     <RefreshCw size={12} />
                     Continue Import
@@ -822,7 +890,7 @@ export default function Import() {
                   <button
                     type="button"
                     title="Discard Unfinished Import"
-                    onClick={() => void discardStagedSession(s.id)}
+                    onClick={() => setConfirmDiscardId(s.id)}
                     disabled={discardingSessionId === s.id}
                     className="w-8 h-8 rounded-lg border border-border flex items-center justify-center text-muted hover:bg-danger-bg hover:text-danger disabled:opacity-40"
                   >
@@ -833,6 +901,39 @@ export default function Import() {
             ))}
           </div>
         </div>
+      )}
+
+      {confirmDiscardId && (
+        <ConfirmDialog
+          title="Discard this unfinished import?"
+          message="You can upload the statement again later."
+          confirmLabel="Discard"
+          danger
+          onConfirm={() => {
+            const id = confirmDiscardId;
+            setConfirmDiscardId(null);
+            void discardStagedSession(id);
+          }}
+          onCancel={() => setConfirmDiscardId(null)}
+        />
+      )}
+
+      {ownershipWarningOpen && (
+        <ConfirmDialog
+          title="Statement Check"
+          message={`The statement holder name ("${detectedAccount?.accountHolderName}") differs from your Finora profile name ("${fullName}"). Please confirm you've selected the correct statement before continuing.`}
+          confirmLabel="Continue Import"
+          cancelLabel="Upload Different Statement"
+          onConfirm={() => {
+            setOwnershipWarningOpen(false);
+            setOwnershipWarningAcknowledged(true);
+            void confirmImport(true);
+          }}
+          onCancel={() => {
+            setOwnershipWarningOpen(false);
+            startOver();
+          }}
+        />
       )}
 
       {/* Arrival from the Failed Imports section's "Try again" action (Premium Import
@@ -850,7 +951,7 @@ export default function Import() {
               Retrying <span className="font-medium">{retryState.retryFileName}</span>
             </p>
             <p className="text-xs text-muted mt-0.5">
-              Last attempt: {importFailureMessage(retryState.retryFailureCode) ?? "Finora couldn't complete this import."} Select the file below to try again.
+              Last attempt: {importFailureMessage(retryState.retryFailureCode) ?? "Fynora couldn't complete this import."} Select the file below to try again.
             </p>
           </div>
         </div>
@@ -867,7 +968,7 @@ export default function Import() {
           // Bug fix: the actual <input type="file"> is visually hidden (className="hidden",
           // display:none), which removes it from the tab order entirely -- a keyboard-only user
           // had no way to open the file picker on this page at all, the primary way data enters
-          // Finora. This div is now itself a focusable, keyboard-operable trigger (Enter/Space),
+          // Fynora. This div is now itself a focusable, keyboard-operable trigger (Enter/Space),
           // matching the standard accessible-clickable-div pattern.
           onKeyDown={(e) => {
             if (uploadProgress !== null) return;
@@ -1043,7 +1144,7 @@ export default function Import() {
                 // blocks all of it, exactly as one unanswered row blocks a single-account import.
                 outstandingMultiDuplicates > 0
               }
-              className="bg-primary text-white hover:bg-primary-dark px-4 py-2 rounded-lg text-xs font-semibold disabled:opacity-50"
+              className="bg-primary text-on-primary hover:bg-primary-dark px-4 py-2 rounded-lg text-xs font-semibold disabled:opacity-50"
             >
               {confirming ? 'Importing…' : `Confirm All ${multiSections.length} Accounts`}
             </button>
@@ -1144,7 +1245,7 @@ export default function Import() {
             />
 
             <button
-              onClick={confirmImport}
+              onClick={() => void confirmImport()}
               disabled={
                 confirming ||
                 (!reimportState && !sessionId) ||
@@ -1154,7 +1255,7 @@ export default function Import() {
                 // inattention rather than by a decision.
                 unresolvedCount(rows, review.decisions) > 0
               }
-              className="bg-primary text-white hover:bg-primary-dark px-4 py-2 rounded-lg text-xs font-semibold disabled:opacity-50 mt-4"
+              className="bg-primary text-on-primary hover:bg-primary-dark px-4 py-2 rounded-lg text-xs font-semibold disabled:opacity-50 mt-4"
             >
               {confirming ? 'Importing…' : 'Confirm Import'}
             </button>
@@ -1221,7 +1322,7 @@ const PRODUCT_LABELS: Record<string, string> = {
   LOAN: 'Loan', INSURANCE: 'Insurance', FOREX_CARD: 'Forex Card', UNKNOWN: 'Unidentified product',
 };
 
-export function productLabel(product: string): string {
+function productLabel(product: string): string {
   return PRODUCT_LABELS[product] ?? product.replace(/_/g, ' ');
 }
 
@@ -1490,6 +1591,9 @@ function TransactionPreviewTable({
             <td className="p-1">{formatDateDDMMMYYYY(r.date)}</td>
             <td className="p-1">
               {r.description}
+              {r.merchant && (
+                <div className="text-[10px] text-muted">Detected: {r.merchant}</div>
+              )}
               {r.likelyDuplicate && <span className="text-danger text-[10px] uppercase ml-1">duplicate</span>}
               {r.categorySource === 'default' && (
                 <span className="text-[10px] uppercase ml-1" style={{ color: '#d97706' }}>low confidence</span>
@@ -1539,6 +1643,80 @@ function UnparseableRowsPanel({ rows }: { rows: UnparseableRow[] }) {
   );
 }
 
+// A statement's warnings (Phase 2's gap/duplicate-period notices) plus, when this confirm's own
+// period exactly duplicated an existing statement (summary.duplicateOfStatementId), the Phase 4
+// (§0.3/§0.23) "Import this one as a replacement?" action that supersedes it. Shared between
+// ImportSummaryScreen and each per-account card in MultiImportSummaryScreen -- each `summary` is
+// its own independent ImportSummary (one per confirmed section), so one instance of this per
+// summary, with its own local state, is exactly right: nothing here needs to be shared or merged
+// across accounts.
+function StatementWarnings({ summary }: { summary: ImportSummary }) {
+  const [confirmingSupersede, setConfirmingSupersede] = useState(false);
+  const [supersedeStatus, setSupersedeStatus] = useState<'idle' | 'loading' | 'error'>('idle');
+  const [supersedeResult, setSupersedeResult] = useState<SupersedeResult | null>(null);
+  const [supersedeError, setSupersedeError] = useState<string | null>(null);
+
+  async function confirmSupersede() {
+    if (!summary.duplicateOfStatementId) return;
+    setConfirmingSupersede(false);
+    setSupersedeStatus('loading');
+    setSupersedeError(null);
+    try {
+      const result = await statementImportsApi.supersede(summary.duplicateOfStatementId, summary.statementImportId);
+      setSupersedeResult(result);
+      setSupersedeStatus('idle');
+    } catch (e: any) {
+      setSupersedeStatus('error');
+      setSupersedeError(e.response?.data?.message ?? 'Could not replace the existing statement.');
+    }
+  }
+
+  if (summary.warnings.length === 0) return null;
+
+  return (
+    <>
+      <div className="bg-warning-bg border border-warning rounded-lg p-3 mb-4">
+        {summary.warnings.map((w, i) => (
+          <p key={i} className="text-xs text-ink flex items-start gap-2">
+            <AlertTriangle size={13} className="text-warning flex-shrink-0 mt-0.5" /> {w}
+          </p>
+        ))}
+        {summary.duplicateOfStatementId && !supersedeResult && (
+          <button
+            onClick={() => setConfirmingSupersede(true)}
+            disabled={supersedeStatus === 'loading'}
+            className="mt-2 text-xs font-semibold text-warning underline disabled:opacity-50"
+          >
+            {supersedeStatus === 'loading' ? 'Replacing…' : 'Import this one as a replacement?'}
+          </button>
+        )}
+        {supersedeError && (
+          <p className="text-xs text-danger mt-2">{supersedeError}</p>
+        )}
+        {supersedeResult && (
+          <p className="text-xs text-ink mt-2 flex items-start gap-2">
+            <CheckCircle2 size={13} className="text-success flex-shrink-0 mt-0.5" />
+            <span>
+              The existing statement has been replaced.
+              {supersedeResult.warning && ` ${supersedeResult.warning}`}
+            </span>
+          </p>
+        )}
+      </div>
+
+      {confirmingSupersede && (
+        <ConfirmDialog
+          title="Import this one as a replacement?"
+          message="The existing statement for this period will stop counting toward your balance, coverage, and insights. It stays in your Statement History — nothing is deleted."
+          confirmLabel="Replace"
+          onConfirm={confirmSupersede}
+          onCancel={() => setConfirmingSupersede(false)}
+        />
+      )}
+    </>
+  );
+}
+
 function ImportSummaryScreen({
   summary,
   onDone,
@@ -1553,6 +1731,7 @@ function ImportSummaryScreen({
   const periodStart = summary.statementPeriodStart ? formatDate(summary.statementPeriodStart) : null;
   const periodEnd = summary.statementPeriodEnd ? formatDate(summary.statementPeriodEnd) : null;
   const durationLabel = summary.importDurationMs < 1000 ? `${summary.importDurationMs} ms` : `${(summary.importDurationMs / 1000).toFixed(1)} s`;
+
   return (
     <div className="bg-card rounded-xl2 shadow-card border border-border p-6 max-w-xl">
       <div className="flex items-center gap-3 mb-5">
@@ -1633,18 +1812,10 @@ function ImportSummaryScreen({
         </div>
       )}
 
-      {summary.warnings.length > 0 && (
-        <div className="bg-warning-bg border border-warning rounded-lg p-3 mb-4">
-          {summary.warnings.map((w, i) => (
-            <p key={i} className="text-xs text-ink flex items-start gap-2">
-              <AlertTriangle size={13} className="text-warning flex-shrink-0 mt-0.5" /> {w}
-            </p>
-          ))}
-        </div>
-      )}
+      <StatementWarnings summary={summary} />
 
       <div className="flex gap-3">
-        <button onClick={onDone} className="bg-primary text-white hover:bg-primary-dark px-4 py-2 rounded-lg text-xs font-semibold">
+        <button onClick={onDone} className="bg-primary text-on-primary hover:bg-primary-dark px-4 py-2 rounded-lg text-xs font-semibold">
           Go to Dashboard
         </button>
         <button onClick={onImportAnother} className="border border-border text-ink px-4 py-2 rounded-lg text-xs font-semibold">
@@ -1687,7 +1858,7 @@ function MultiImportSummaryScreen({
         {summaries.map((summary, i) => {
           const account = summary.account;
           return (
-            <div key={i} className="bg-bg border border-border rounded-xl p-4">
+            <div key={i} data-testid={`summary-account-${i}`} className="bg-bg border border-border rounded-xl p-4">
               {account && (
                 <div className="flex items-center gap-3 mb-3">
                   <BankLogo bank={account.bank} size={32} />
@@ -1700,7 +1871,7 @@ function MultiImportSummaryScreen({
                   </div>
                 </div>
               )}
-              <div className="grid grid-cols-2 gap-2 text-xs">
+              <div className="grid grid-cols-2 gap-2 text-xs mb-3">
                 <p className="text-muted">Imported: <span className="text-ink font-medium">{summary.imported}</span></p>
                 <p className="text-muted">Skipped: <span className="text-ink font-medium">{summary.skipped}</span></p>
                 {summary.statementClosingBalance !== null && (
@@ -1709,6 +1880,11 @@ function MultiImportSummaryScreen({
                 <p className="text-muted">Total credits: <span className="text-success font-medium">{fmt(summary.totalCredits)}</span></p>
                 <p className="text-muted">Total debits: <span className="text-danger font-medium">{fmt(summary.totalDebits)}</span></p>
               </div>
+              {/* Each account's own ImportSummary carries its own warnings and, as of Phase 4, its
+                  own duplicateOfStatementId -- a composite statement's savings section can
+                  duplicate an existing period while its credit-card section does not, so this has
+                  to render (and offer to supersede) per account, not once for the whole file. */}
+              <StatementWarnings summary={summary} />
             </div>
           );
         })}
@@ -1726,7 +1902,7 @@ function MultiImportSummaryScreen({
       )}
 
       <div className="flex gap-3">
-        <button onClick={onDone} className="bg-primary text-white hover:bg-primary-dark px-4 py-2 rounded-lg text-xs font-semibold">
+        <button onClick={onDone} className="bg-primary text-on-primary hover:bg-primary-dark px-4 py-2 rounded-lg text-xs font-semibold">
           Go to Dashboard
         </button>
         <button onClick={onImportAnother} className="border border-border text-ink px-4 py-2 rounded-lg text-xs font-semibold">

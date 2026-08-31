@@ -83,7 +83,7 @@ export default function GmailReview() {
         </button>
         <h1 className="font-serif text-2xl font-semibold text-ink">Gmail Transactions</h1>
         <p className="text-sm text-muted mt-1">
-          Receipts Finora found in your inbox. Nothing here is added to your ledger until you approve it.
+          Receipts Fynora found in your inbox. Nothing here is added to your ledger until you approve it.
         </p>
       </div>
 
@@ -140,7 +140,7 @@ export default function GmailReview() {
                   type="button"
                   disabled={busyId === item.sessionId}
                   onClick={() => approve(item)}
-                  className="bg-primary text-white hover:bg-primary-dark disabled:opacity-50 rounded-lg px-3 py-1.5 text-xs uppercase font-medium inline-flex items-center gap-1.5"
+                  className="bg-primary text-on-primary hover:bg-primary-dark disabled:opacity-50 rounded-lg px-3 py-1.5 text-xs uppercase font-medium inline-flex items-center gap-1.5"
                 >
                   <Check size={13} /> Approve
                 </button>

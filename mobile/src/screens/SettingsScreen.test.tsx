@@ -11,6 +11,7 @@ jest.mock('../api/endpoints', () => ({
   analyticsApi: { importStatistics: jest.fn() },
   devicesApi: { list: jest.fn(), revoke: jest.fn() },
   passwordChangeApi: { start: jest.fn(), verifyOtp: jest.fn(), complete: jest.fn() },
+  emailChangeApi: { start: jest.fn() },
 }));
 
 const user = userApi as jest.Mocked<typeof userApi>;
@@ -190,6 +191,14 @@ describe('SettingsScreen', () => {
     await loaded();
 
     expect(screen.getByText('Never changed')).toBeTruthy();
+  });
+
+  it('shows the account email and a Change Email action in the Security section', async () => {
+    renderScreen();
+    await loaded();
+
+    expect(screen.getByText(settings.email)).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Change Email' })).toBeTruthy();
   });
 
   it('lists active sessions and can sign one out', async () => {

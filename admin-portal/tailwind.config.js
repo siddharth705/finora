@@ -17,6 +17,7 @@ export default {
         primary: 'rgb(var(--color-primary) / <alpha-value>)',
         'primary-dark': 'var(--color-primary-dark)',
         'primary-light': 'var(--color-primary-light)',
+        'on-primary': 'var(--color-on-primary)',
         success: 'var(--color-success)',
         'success-bg': 'var(--color-success-bg)',
         danger: 'var(--color-danger)',

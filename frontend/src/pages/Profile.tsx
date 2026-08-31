@@ -4,6 +4,7 @@ import { User, ShieldCheck, CheckCircle2 } from 'lucide-react';
 import { userApi } from '../api/endpoints';
 import { maskPhone } from '../lib/maskPhone';
 import { initials, formatMonthYear, formatRelativeTime, SectionCard, VerifiedBadge, SaveStatus } from '../components/AccountUI';
+import { ChangeEmailModal } from '../components/ChangeEmailModal';
 
 // Profile vs Settings: Profile is "who you are" (identity facts, editable personal info) --
 // Settings is "how the app behaves for you" (preferences, security actions, AI behavior, data).
@@ -21,12 +22,15 @@ export default function Profile() {
   const [phoneVerified, setPhoneVerified] = useState(false);
   const [createdAt, setCreatedAt] = useState<string | null>(null);
   const [passwordChangedAt, setPasswordChangedAt] = useState<string | null>(null);
+  const [signInMethod, setSignInMethod] = useState<'PASSWORD' | 'GOOGLE'>('PASSWORD');
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
 
   const [saving, setSaving] = useState(false);
   const [justSaved, setJustSaved] = useState(false);
   const [error, setError] = useState(false);
+
+  const [changeEmailOpen, setChangeEmailOpen] = useState(false);
 
   const dirty = fullName.trim() !== savedFullName;
 
@@ -42,6 +46,7 @@ export default function Profile() {
       setPhoneVerified(u.phoneVerified);
       setCreatedAt(u.createdAt);
       setPasswordChangedAt(u.passwordChangedAt);
+      setSignInMethod(u.signInMethod);
       setLoading(false);
     }).catch(() => {
       setLoadError(true);
@@ -79,7 +84,7 @@ export default function Profile() {
       {/* Reflects the SAVED name, not an in-progress edit below, so it never flickers ahead of
           what the "Unsaved changes" indicator in Personal Information is reporting. */}
       <div className="bg-card rounded-xl2 p-6 shadow-card border border-border flex items-center gap-4">
-        <div className="w-14 h-14 rounded-full bg-primary flex items-center justify-center text-white text-lg font-semibold flex-shrink-0">
+        <div className="w-14 h-14 rounded-full bg-primary flex items-center justify-center text-on-primary text-lg font-semibold flex-shrink-0">
           {initials(savedFullName)}
         </div>
         <div className="min-w-0">
@@ -107,7 +112,16 @@ export default function Profile() {
           </div>
           <div>
             <label htmlFor="profile-email" className="block text-xs uppercase text-muted mb-1">Email</label>
-            <input id="profile-email" value={email} readOnly className="text-ink w-full border border-border rounded-lg px-3 py-2 text-sm bg-black/5" />
+            <div className="flex items-center gap-2">
+              <input id="profile-email" value={email} readOnly className="text-ink w-full border border-border rounded-lg px-3 py-2 text-sm bg-black/5" />
+              <button
+                type="button"
+                onClick={() => setChangeEmailOpen(true)}
+                className="flex-shrink-0 border border-border rounded-lg px-3 py-2 text-xs uppercase font-medium text-ink hover:bg-black/5"
+              >
+                Change
+              </button>
+            </div>
           </div>
           <div>
             <label htmlFor="profile-phone" className="block text-xs uppercase text-muted mb-1">Phone number</label>
@@ -126,7 +140,7 @@ export default function Profile() {
           <button
             onClick={save}
             disabled={saving || !dirty || !fullName.trim()}
-            className="bg-primary text-white hover:bg-primary-dark disabled:opacity-50 rounded-lg px-4 py-2 text-xs uppercase font-medium"
+            className="bg-primary text-on-primary hover:bg-primary-dark disabled:opacity-50 rounded-lg px-4 py-2 text-xs uppercase font-medium"
           >
             {saving ? 'Saving…' : 'Save changes'}
           </button>
@@ -156,6 +170,10 @@ export default function Profile() {
           Manage Security →
         </Link>
       </SectionCard>
+
+      {changeEmailOpen && (
+        <ChangeEmailModal onClose={() => setChangeEmailOpen(false)} signInMethod={signInMethod} />
+      )}
     </div>
   );
 }

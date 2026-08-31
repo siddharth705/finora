@@ -20,6 +20,7 @@ import java.util.UUID;
 import com.finora.service.AuditService;
 import com.finora.service.AuthorizationService;
 import com.finora.service.DataExportService;
+import com.finora.service.EmailChangeService;
 import com.finora.service.PasswordChangeService;
 import com.finora.service.PhoneChangeService;
 import com.finora.service.UserAccountLifecycleService;
@@ -48,6 +49,7 @@ public class UserController {
     private final AuthorizationService authorizationService;
     private final PasswordChangeService passwordChangeService;
     private final PhoneChangeService phoneChangeService;
+    private final EmailChangeService emailChangeService;
     private final UserAccountLifecycleService accountLifecycleService;
     private final DataExportService dataExportService;
     private final AuditService auditService;
@@ -55,6 +57,7 @@ public class UserController {
     public UserController(UserSettingsService userSettingsService, CurrentUser currentUser,
                            UserRepository userRepository, AuthorizationService authorizationService,
                            PasswordChangeService passwordChangeService, PhoneChangeService phoneChangeService,
+                           EmailChangeService emailChangeService,
                            UserAccountLifecycleService accountLifecycleService,
                            DataExportService dataExportService, AuditService auditService) {
         this.userSettingsService = userSettingsService;
@@ -63,6 +66,7 @@ public class UserController {
         this.authorizationService = authorizationService;
         this.passwordChangeService = passwordChangeService;
         this.phoneChangeService = phoneChangeService;
+        this.emailChangeService = emailChangeService;
         this.accountLifecycleService = accountLifecycleService;
         this.dataExportService = dataExportService;
         this.auditService = auditService;
@@ -125,8 +129,33 @@ public class UserController {
 
     @PostMapping("/phone-change/complete")
     public ApiResponse<com.finora.dto.PhoneChangeDtos.CompleteResponse> completePhoneChange(
-            @Valid @RequestBody com.finora.dto.PhoneChangeDtos.CompleteRequest request) {
-        return ApiResponse.ok(phoneChangeService.complete(currentUser.id(), request));
+            @Valid @RequestBody com.finora.dto.PhoneChangeDtos.CompleteRequest request, HttpServletRequest httpRequest) {
+        UUID currentSessionId = (UUID) httpRequest.getAttribute(JwtAuthFilter.SESSION_ID_ATTRIBUTE);
+        return ApiResponse.ok(phoneChangeService.complete(currentUser.id(), request, currentSessionId));
+    }
+
+    /**
+     * Phase 4 (change email) -- the step-up-gated, session-based Change Email flow: start ->
+     * verify -> complete. See EmailChangeService's own doc comment for the full state machine and
+     * why, unlike phone-change, this one has a step-up first step.
+     */
+    @PostMapping("/email-change/start")
+    public ApiResponse<com.finora.dto.EmailChangeDtos.StartResponse> startEmailChange(
+            @Valid @RequestBody com.finora.dto.EmailChangeDtos.StartRequest request) {
+        return ApiResponse.ok(emailChangeService.start(currentUser.id(), request));
+    }
+
+    @PostMapping("/email-change/verify")
+    public ApiResponse<com.finora.dto.EmailChangeDtos.VerifyResponse> verifyEmailChange(
+            @Valid @RequestBody com.finora.dto.EmailChangeDtos.VerifyRequest request) {
+        return ApiResponse.ok(emailChangeService.verify(currentUser.id(), request));
+    }
+
+    @PostMapping("/email-change/complete")
+    public ApiResponse<com.finora.dto.EmailChangeDtos.CompleteResponse> completeEmailChange(
+            @Valid @RequestBody com.finora.dto.EmailChangeDtos.CompleteRequest request, HttpServletRequest httpRequest) {
+        UUID currentSessionId = (UUID) httpRequest.getAttribute(JwtAuthFilter.SESSION_ID_ATTRIBUTE);
+        return ApiResponse.ok(emailChangeService.complete(currentUser.id(), request, currentSessionId));
     }
 
     /**
@@ -149,7 +178,7 @@ public class UserController {
      *  local session immediately after this succeeds (there is nothing left to be signed in to). */
     @PostMapping("/account/deactivate")
     public ApiResponse<DeactivateResponse> deactivate(@Valid @RequestBody DeactivateRequest request) {
-        accountLifecycleService.deactivate(currentUser.id(), request.currentPassword(), request.googleIdToken(), request.reason(), request.note());
+        accountLifecycleService.deactivate(currentUser.id(), request.currentPassword(), request.googleIdToken(), request.appleIdToken(), request.reason(), request.note());
         return ApiResponse.ok(new DeactivateResponse(
                 "Your account has been deactivated. Sign in again any time to reactivate it."));
     }
@@ -185,10 +214,10 @@ public class UserController {
     @PostMapping("/data-export")
     public ResponseEntity<StreamingResponseBody> exportData(@Valid @RequestBody ExportDataRequest request) {
         UUID userId = currentUser.id();
-        DataExportService.ExportBundle bundle = dataExportService.buildBundle(userId, request.currentPassword(), request.googleIdToken());
+        DataExportService.ExportBundle bundle = dataExportService.buildBundle(userId, request.currentPassword(), request.googleIdToken(), request.appleIdToken());
         auditService.record(userId, "DATA_EXPORT_REQUESTED", "User", userId, Map.of());
 
-        String fileName = "finora-data-export-" + LocalDate.now() + ".zip";
+        String fileName = "fynora-data-export-" + LocalDate.now() + ".zip";
         // Captured on this (synchronous) request thread, not read again inside the callback below:
         // StreamingResponseBody runs its callback on a separate async-dispatch thread, and MDC is
         // thread-local, so CorrelationIdFilter's own key is already gone (cleared in its finally,

@@ -1,12 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
-import { AdminAuthProvider, useAdminAuth } from './AdminAuthContext';
+import { AdminAuthProvider, useAdminAuth, AdminAccessError } from './AdminAuthContext';
 import { authApi, meApi } from '../api/endpoints';
 import { getAdminToken, setAdminToken } from '../api/client';
 
 vi.mock('../api/endpoints', () => ({
-  authApi: { login: vi.fn(), refresh: vi.fn() },
+  authApi: { login: vi.fn(), refresh: vi.fn(), verifyMfa: vi.fn() },
   meApi: { access: vi.fn() },
 }));
 
@@ -81,6 +81,29 @@ describe('AdminAuthContext.login', () => {
     expect(result.current.token).toBeNull();
   });
 
+  // Admin MFA UI (SEC-03): errorCode/details are threaded through onto the thrown
+  // AdminAccessError -- without this, Login.tsx would have no way to tell "MFA required" apart
+  // from any other login failure, or reach the mfaChallengeToken to start that step.
+  it('surfaces errorCode and details on AUTH_MFA_REQUIRED as an AdminAccessError', async () => {
+    vi.mocked(authApi.login).mockRejectedValue({
+      response: { data: { message: 'MFA required.', errorCode: 'AUTH_008', details: { mfaChallengeToken: 'chal-abc' } } },
+    });
+    const { result } = renderHook(() => useAdminAuth(), { wrapper });
+
+    let caught: unknown;
+    await act(async () => {
+      try {
+        await result.current.login('amy@example.com', 'password');
+      } catch (err) {
+        caught = err;
+      }
+    });
+
+    expect(caught).toBeInstanceOf(AdminAccessError);
+    expect((caught as AdminAccessError).code).toBe('AUTH_008');
+    expect((caught as AdminAccessError).details).toEqual({ mfaChallengeToken: 'chal-abc' });
+  });
+
   it('clears the session when the account has no admin-relevant permissions at all', async () => {
     vi.mocked(authApi.login).mockResolvedValue({
       token: 'tok', refreshToken: 'refresh', email: 'amy@example.com', fullName: 'Amy Admin', phoneVerified: true,
@@ -91,6 +114,59 @@ describe('AdminAuthContext.login', () => {
     await expect(act(() => result.current.login('amy@example.com', 'password')))
       .rejects.toThrow(/doesn.t have any admin permissions/);
 
+    expect(result.current.token).toBeNull();
+  });
+});
+
+describe('AdminAuthContext.completeMfaChallenge', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    setAdminToken(null);
+    vi.mocked(authApi.verifyMfa).mockReset();
+    vi.mocked(meApi.access).mockReset();
+    vi.mocked(authApi.refresh).mockReset().mockRejectedValue(new Error('no session'));
+  });
+
+  // Same applySuccessfulAuth() path login() uses -- these three tests mirror login()'s own
+  // three success/branch/failure cases above, just reached via the MFA-challenge step instead of
+  // a password. If these two ever diverge, an MFA sign-in and a password sign-in stop being
+  // equivalent, which completeMfaLogin()'s identical AuthResponse shape (backend) says they should be.
+  it('signs in successfully and populates permissions once the challenge is verified', async () => {
+    vi.mocked(authApi.verifyMfa).mockResolvedValue({
+      token: 'tok', refreshToken: 'refresh', email: 'amy@example.com', fullName: 'Amy Admin', phoneVerified: true,
+    });
+    vi.mocked(meApi.access).mockResolvedValue({ roles: ['SUPER_ADMIN'], permissions: ['USER_VIEW'] });
+    const { result } = renderHook(() => useAdminAuth(), { wrapper });
+
+    const resolvedTo = await act(() => result.current.completeMfaChallenge('chal-123', '123456'));
+
+    expect(resolvedTo).toBe(true);
+    expect(authApi.verifyMfa).toHaveBeenCalledWith('chal-123', '123456');
+    expect(result.current.token).toBe('tok');
+    expect(result.current.permissions).toEqual(['USER_VIEW']);
+  });
+
+  it('resolves to false and skips loadAccess() when the account is not yet phone-verified', async () => {
+    vi.mocked(authApi.verifyMfa).mockResolvedValue({
+      token: 'tok', refreshToken: 'refresh', email: 'amy@example.com', fullName: 'Amy Admin', phoneVerified: false,
+    });
+    const { result } = renderHook(() => useAdminAuth(), { wrapper });
+
+    const resolvedTo = await act(() => result.current.completeMfaChallenge('chal-123', '123456'));
+
+    expect(resolvedTo).toBe(false);
+    expect(result.current.token).toBe('tok');
+    expect(meApi.access).not.toHaveBeenCalled();
+  });
+
+  it('throws a friendly AdminAccessError on a wrong or expired code', async () => {
+    vi.mocked(authApi.verifyMfa).mockRejectedValue({
+      response: { data: { message: "That code didn't work. Check your authenticator app and try again." } },
+    });
+    const { result } = renderHook(() => useAdminAuth(), { wrapper });
+
+    await expect(act(() => result.current.completeMfaChallenge('chal-123', '000000')))
+      .rejects.toThrow(/that code didn't work/i);
     expect(result.current.token).toBeNull();
   });
 });

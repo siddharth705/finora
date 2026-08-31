@@ -1,10 +1,28 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react-native';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
+import { Dimensions, RefreshControl } from 'react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { DashboardScreen } from './DashboardScreen';
 import {
-  accountsApi, dashboardApi, goalsApi, insightsApi, reportsApi, transactionsApi, userApi,
+  accountsApi, budgetsApi, dashboardApi, goalsApi, insightsApi, reportsApi, transactionsApi, userApi,
 } from '../api/endpoints';
 import type { DashboardSummary } from '../types';
+
+// useWindowDimensions (used for chart width and, per the "large Dynamic Type" describe block
+// below, font scale) reads its value from Dimensions.get('window') on mount -- spying there,
+// rather than re-mocking the whole 'react-native' module, avoids re-running the module's own
+// native TurboModule getters (which blow up under jest-expo when the module object is spread
+// rather than used as-is).
+const dimensionsGetSpy = jest.spyOn(Dimensions, 'get');
+
+/**
+ * The Expenses KPI renders through AnimatedNumber now -- a non-editable TextInput, so its
+ * settled value lives in `defaultValue` (see AnimatedNumber's own doc comment) rather than in
+ * text content getByText can see. These cross-checks against DonutChart's plain-Text centre
+ * label predate that change; kept accurate by reading each source the way it actually renders.
+ */
+function expensesKpiValue(): string {
+  return screen.getByTestId('kpi-Expenses').props.defaultValue as string;
+}
 
 /**
  * The distinction this file exists to protect: a dashboard that FAILED TO LOAD must never be
@@ -28,6 +46,7 @@ jest.mock('../api/endpoints', () => ({
   insightsApi: { get: jest.fn() },
   userApi: { get: jest.fn() },
   reportsApi: { availableMonths: jest.fn(), forMonth: jest.fn() },
+  budgetsApi: { list: jest.fn() },
 }));
 
 jest.mock('../context/AuthContext', () => ({
@@ -41,6 +60,7 @@ const goals = goalsApi as jest.Mocked<typeof goalsApi>;
 const insights = insightsApi as jest.Mocked<typeof insightsApi>;
 const user = userApi as jest.Mocked<typeof userApi>;
 const reports = reportsApi as jest.Mocked<typeof reportsApi>;
+const budgets = budgetsApi as jest.Mocked<typeof budgetsApi>;
 
 /**
  * A real summary for an account that has been imported but holds nothing -- every figure zero,
@@ -89,6 +109,9 @@ function renderScreen() {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  // Reset to the default (non-scaled) window on every test -- a leftover large fontScale from one
+  // test must never leak into the next.
+  dimensionsGetSpy.mockReturnValue({ width: 390, height: 844, scale: 2, fontScale: 1 });
   // Everything except the summary succeeds, so each test isolates one variable: the summary call.
   accounts.list.mockResolvedValue([]);
   transactions.search.mockResolvedValue({
@@ -99,6 +122,11 @@ beforeEach(() => {
   user.get.mockResolvedValue({ timezone: 'Asia/Kolkata' } as never);
   reports.availableMonths.mockResolvedValue([]);
   reports.forMonth.mockResolvedValue({} as never);
+  // usePrefetchAdjacentScreens prefetches budgets unconditionally on every mount (see that hook's
+  // own file) -- without a default here, every test below it triggers React Query's own "Query
+  // data cannot be undefined" console.error for the ['budgets'] key, since the un-mocked jest.fn()
+  // resolves to undefined.
+  budgets.list.mockResolvedValue([]);
 });
 
 describe('when /dashboard/summary fails', () => {
@@ -172,9 +200,10 @@ describe('M0-A: the spending donut must not understate the period total', () => 
     // ₹34,000 is the sum of the six largest categories. Rendering it as the centre of a chart
     // titled "Spending by Category" tells the user they spent 1,500 less than they did.
     expect(screen.queryByText('₹34,000')).toBeNull();
-    // getAllByText, not getByText: the correct total legitimately appears more than once (the
-    // centre and the Expenses KPI), and the next test asserts exactly that agreement.
-    expect(screen.getAllByText('₹35,500').length).toBeGreaterThan(0);
+    // The centre label is still a plain Text; the Expenses KPI now renders through AnimatedNumber
+    // (see expensesKpiValue's own comment) -- both must agree on the true total.
+    expect(screen.getByText('₹35,500')).toBeTruthy();
+    expect(expensesKpiValue()).toBe('₹35,500');
   });
 
   it('agrees with the Expenses KPI, which reads the same backend field', async () => {
@@ -187,7 +216,8 @@ describe('M0-A: the spending donut must not understate the period total', () => 
     renderScreen();
     await screen.findByText('Total Balance');
 
-    expect(screen.getAllByText('₹35,500').length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByText('₹35,500')).toBeTruthy();
+    expect(expensesKpiValue()).toBe('₹35,500');
   });
 
   it('does not show two rows both labelled Other', async () => {
@@ -220,7 +250,8 @@ describe('M0-A: the spending donut must not understate the period total', () => 
     expect(screen.getByText('₹8,500')).toBeTruthy();
     expect(screen.queryByText('₹5,500')).toBeNull();
     // And the invariant that started all of this still holds.
-    expect(screen.getAllByText('₹39,000').length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByText('₹39,000')).toBeTruthy();
+    expect(expensesKpiValue()).toBe('₹39,000');
   });
 
   it('is unaffected when every category already fits', async () => {
@@ -233,7 +264,8 @@ describe('M0-A: the spending donut must not understate the period total', () => 
     renderScreen();
     await screen.findByText('Total Balance');
 
-    expect(screen.getAllByText('₹25,000').length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByText('₹25,000')).toBeTruthy();
+    expect(expensesKpiValue()).toBe('₹25,000');
   });
 });
 
@@ -270,5 +302,189 @@ describe('when the dashboard is legitimately empty', () => {
 
     expect(emptyShowsError).toBe(false);
     expect(failureShowsKpis).toBe(false);
+  });
+});
+
+describe('large Dynamic Type support (mobile design review, iOS VoiceOver/Dynamic Type pass)', () => {
+  // A financial description long enough to actually truncate at either line count -- short enough
+  // fixtures would pass numberOfLines={1} by accident and prove nothing.
+  const LONG_DESCRIPTION = 'Payment to Greenfield Grocers and Home Essentials Superstore Ltd';
+  const LONG_GOAL_NAME = 'Emergency Fund for Home Repairs and Unexpected Medical Expenses';
+
+  beforeEach(() => {
+    transactions.search.mockResolvedValue({
+      content: [{
+        id: 't1', accountId: 'a1', categoryId: 'c1', categoryName: 'Shopping', date: '2026-08-01',
+        description: LONG_DESCRIPTION, merchant: 'Greenfield Grocers', paymentMethod: 'CARD',
+        amount: 1200, type: 'EXPENSE', tags: [], notes: null, reconciliationStatus: 'OK',
+        recurring: false, needsCategoryReview: false, categoryManuallySet: false,
+      }],
+      page: 0, size: 5, totalElements: 1, totalPages: 1,
+    } as never);
+    goals.list.mockResolvedValue([
+      { id: 'g1', name: LONG_GOAL_NAME, targetAmount: 100000, currentAmount: 25000 },
+    ] as never);
+  });
+
+  it('truncates the transaction description and goal name to one line at the default text size', async () => {
+    dashboard.summary.mockResolvedValue(emptySummary());
+    renderScreen();
+
+    const desc = await screen.findByText(LONG_DESCRIPTION);
+    expect(desc.props.numberOfLines).toBe(1);
+
+    const goalName = await screen.findByText(LONG_GOAL_NAME);
+    expect(goalName.props.numberOfLines).toBe(1);
+  });
+
+  it('allows two lines instead of truncating once Dynamic Type is scaled up', async () => {
+    dimensionsGetSpy.mockReturnValue({ width: 390, height: 844, scale: 2, fontScale: 1.3 });
+    dashboard.summary.mockResolvedValue(emptySummary());
+    renderScreen();
+
+    const desc = await screen.findByText(LONG_DESCRIPTION);
+    expect(desc.props.numberOfLines).toBe(2);
+
+    const goalName = await screen.findByText(LONG_GOAL_NAME);
+    expect(goalName.props.numberOfLines).toBe(2);
+  });
+
+  it('still allows two lines at full accessibility text sizes, not just the first large step', async () => {
+    dimensionsGetSpy.mockReturnValue({ width: 390, height: 844, scale: 2, fontScale: 2.0 });
+    dashboard.summary.mockResolvedValue(emptySummary());
+    renderScreen();
+
+    expect((await screen.findByText(LONG_DESCRIPTION)).props.numberOfLines).toBe(2);
+    expect((await screen.findByText(LONG_GOAL_NAME)).props.numberOfLines).toBe(2);
+  });
+});
+
+describe('pull-to-refresh indicator', () => {
+  it('does not wait on accounts, since accounts data is never rendered on this screen', async () => {
+    dashboard.summary.mockResolvedValue(emptySummary());
+    const { queryClient } = renderScreen();
+    await screen.findByText('Total Balance');
+
+    // Summary resolves fast; accounts is held open on purpose -- the indicator must NOT wait on
+    // it, since nothing on screen reads accountsQ.data. (This used to be inverted: the indicator
+    // tracked accountsQ.isFetching, which both kept the spinner up after every visible section had
+    // settled, AND could flip the spinner on with no user gesture at all if accounts merely
+    // happened to resolve slower than summary/recent-transactions on first mount.)
+    let resolveAccounts: (value: unknown) => void = () => {};
+    accounts.list.mockReturnValue(new Promise((resolve) => { resolveAccounts = resolve as typeof resolveAccounts; }));
+
+    await act(async () => {
+      void queryClient.invalidateQueries({ queryKey: ['dashboard-summary'] });
+      void queryClient.invalidateQueries({ queryKey: ['accounts'] });
+    });
+
+    // The QueryClient's own state flips to fetching synchronously inside invalidateQueries, but
+    // the component's re-render (via the query observer's subscriber) can land a tick later than
+    // act()'s own flush -- waitFor absorbs that gap instead of asserting on a stale render.
+    await waitFor(() => {
+      expect(screen.UNSAFE_getByType(RefreshControl).props.refreshing).toBe(false);
+    });
+
+    await act(async () => resolveAccounts([]));
+  });
+
+  it('stays visible until Goals, Insights, and the Cash Flow report queries have finished too', async () => {
+    dashboard.summary.mockResolvedValue(emptySummary());
+    const { queryClient } = renderScreen();
+    await screen.findByText('Total Balance');
+
+    // Summary/accounts/recent-transactions all resolve fast; insights is held open on purpose --
+    // refresh() invalidates it and its section is genuinely rendered, so the spinner must track it.
+    let resolveInsights: (value: unknown) => void = () => {};
+    insights.get.mockReturnValue(new Promise((resolve) => { resolveInsights = resolve as typeof resolveInsights; }));
+
+    await act(async () => {
+      void queryClient.invalidateQueries({ queryKey: ['dashboard-summary'] });
+      void queryClient.invalidateQueries({ queryKey: ['insights'] });
+    });
+
+    await waitFor(() => {
+      expect(screen.UNSAFE_getByType(RefreshControl).props.refreshing).toBe(true);
+    });
+
+    await act(async () => resolveInsights({ sentences: [], movers: [] }));
+
+    await waitFor(() => {
+      expect(screen.UNSAFE_getByType(RefreshControl).props.refreshing).toBe(false);
+    });
+  });
+});
+
+describe('the shell mounts before the network settles (dashboard shell capstone)', () => {
+  it('shows the greeting and section skeletons immediately, then swaps in real content once summary and recent transactions arrive', async () => {
+    let resolveSummary: (value: unknown) => void = () => {};
+    dashboard.summary.mockReturnValue(new Promise((resolve) => { resolveSummary = resolve as typeof resolveSummary; }));
+    let resolveTxns: (value: unknown) => void = () => {};
+    transactions.search.mockReturnValue(new Promise((resolve) => { resolveTxns = resolve as typeof resolveTxns; }));
+
+    renderScreen();
+
+    // The shell -- greeting and section headings -- is already on screen, not hidden behind a
+    // full-screen spinner.
+    expect(screen.getByText(/Good (morning|afternoon|evening|night)/)).toBeTruthy();
+    expect(screen.getByText('Cash Flow')).toBeTruthy();
+    expect(screen.getByText('Recent Transactions')).toBeTruthy();
+    expect(screen.getAllByTestId('shimmer-block', { hidden: true }).length).toBeGreaterThan(0);
+    expect(screen.queryByText('Total Balance')).toBeNull();
+
+    await act(async () => {
+      resolveSummary(emptySummary({ currentBalance: 4200 }));
+      resolveTxns({ content: [], page: 0, size: 5, totalElements: 0, totalPages: 0 });
+    });
+
+    expect(await screen.findByText('Total Balance')).toBeTruthy();
+    expect(screen.queryByTestId('shimmer-block', { hidden: true })).toBeNull();
+  });
+
+  it('skeletons Recent Transactions independently of the summary section', async () => {
+    dashboard.summary.mockResolvedValue(emptySummary());
+    let resolveTxns: (value: unknown) => void = () => {};
+    transactions.search.mockReturnValue(new Promise((resolve) => { resolveTxns = resolve as typeof resolveTxns; }));
+
+    renderScreen();
+
+    expect(await screen.findByText('Total Balance')).toBeTruthy();
+    // Summary has already settled, but the transactions section is still on its own skeleton.
+    expect(screen.getAllByTestId('skeleton-transaction-row', { hidden: true }).length).toBeGreaterThan(0);
+
+    await act(async () => resolveTxns({ content: [], page: 0, size: 5, totalElements: 0, totalPages: 0 }));
+
+    expect(await screen.findByText(/No transactions yet/i)).toBeTruthy();
+  });
+});
+
+describe('Recent Transactions error state', () => {
+  it('says the transactions could not be loaded, instead of claiming there are none', async () => {
+    dashboard.summary.mockResolvedValue(emptySummary());
+    transactions.search.mockRejectedValue(new Error('boom'));
+    renderScreen();
+
+    expect(await screen.findByText(/Couldn't load your transactions/)).toBeTruthy();
+    expect(screen.queryByText(/No transactions yet/i)).toBeNull();
+  });
+});
+
+describe('adjacent-screen prefetching', () => {
+  it('prefetches the Ledger, Budgets and latest Reports caches once summary loads', async () => {
+    dashboard.summary.mockResolvedValue(emptySummary());
+    reports.availableMonths.mockResolvedValue(['2026-08']);
+    reports.forMonth.mockResolvedValue({ month: '2026-08', income: 0, expense: 0, categories: [] });
+
+    renderScreen();
+
+    // Asserted via the mock call, not queryClient.getQueryData(['budgets']): this screen's test
+    // QueryClient uses gcTime: 0 (see renderScreen's own comment), and a prefetched query has no
+    // mounted useQuery observer, so it goes "inactive" -- and eligible for garbage collection --
+    // the instant it resolves. The prefetch demonstrably still ran and populated the cache
+    // correctly (confirmed manually during development), but the cache entry doesn't survive long
+    // enough for a read-back assertion here to reliably observe it.
+    await waitFor(() => expect(budgets.list).toHaveBeenCalled());
+    expect(transactions.search).toHaveBeenCalledWith({ page: 0, size: 20, sortField: 'date', sortDir: 'desc' });
+    await waitFor(() => expect(reports.forMonth).toHaveBeenCalledWith('2026-08'));
   });
 });

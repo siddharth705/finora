@@ -26,6 +26,19 @@ import { spacing, useTheme } from '../theme';
 // `null` (the signed-out value), so the very first render never accidentally matches `token`.
 const NEVER_CHECKED = Symbol('app-lock-never-checked');
 
+// How long after ANY authenticate() call resolves (appLock.justFinishedAuthenticating) to keep
+// ignoring foreground transitions -- see that function's own comment on why this has to be
+// module-level shared state, not something scoped to this component. On-device testing also
+// showed the native "app became active" notification for a dismissed Face ID sheet can arrive
+// AFTER authenticateAsync()'s own promise already resolved (two independent native notification
+// paths, not synchronized with each other) -- so a guard that only covers a call while it's still
+// in flight is not enough on its own; this is what actually closes that half of the loop. 1500ms
+// is generous on purpose: the failure mode of too-short (the loop this exists to fix) is far
+// worse than the failure mode of too-long (a genuine background-and-immediately-return within
+// 1.5s skips one re-lock check) -- picking up the phone that fast after actually putting it down
+// is the rare case, not the common one.
+const REGROUND_GRACE_MS = 1500;
+
 export function AppLockGate({ children }: { children: ReactNode }) {
   const { bootstrapping, token, logout } = useAuth();
   const c = useTheme();
@@ -47,7 +60,7 @@ export function AppLockGate({ children }: { children: ReactNode }) {
   const tryUnlock = useCallback(async () => {
     setAuthenticating(true);
     try {
-      const success = await appLock.authenticate('Unlock Finora');
+      const success = await appLock.authenticate('Unlock Fynora');
       if (success) setLocked(false);
     } finally {
       setAuthenticating(false);
@@ -104,7 +117,16 @@ export function AppLockGate({ children }: { children: ReactNode }) {
       // flag a bare `.match()` here even though `next` below is never null.
       const cameToForeground = !!appState.current?.match(/inactive|background/) && next === 'active';
       appState.current = next;
-      if (cameToForeground && token !== null) {
+      // Skips a foreground transition caused by ANY in-progress or just-finished authenticate()
+      // call -- AppLockGate's own re-lock prompt, or AppLockSection's "confirm to enable" prompt
+      // in Settings, checked through the shared appLock module rather than local state so BOTH
+      // sources are covered (see appLock.isAuthenticating's own comment on why local state here
+      // was blind to the Settings-triggered prompt specifically). Otherwise this is
+      // indistinguishable from the user actually backgrounding and returning, and re-locking here
+      // just re-prompts, which blips AppState again, forever.
+      const skipAsSelfInduced =
+        appLock.isAuthenticating() || appLock.justFinishedAuthenticating(REGROUND_GRACE_MS);
+      if (cameToForeground && token !== null && !skipAsSelfInduced) {
         void appLock.isEnabled().then((enabled) => {
           if (enabled) lockAndPrompt();
         });
@@ -130,7 +152,7 @@ export function AppLockGate({ children }: { children: ReactNode }) {
   return (
     <View style={[styles.container, { backgroundColor: c.bg }]}>
       <Ionicons name="lock-closed" size={48} color={c.primary} />
-      <Text style={[styles.title, { color: c.ink }]}>Finora is locked</Text>
+      <Text style={[styles.title, { color: c.ink }]}>Fynora is locked</Text>
       <Text style={[styles.subtitle, { color: c.muted }]}>
         Unlock with your fingerprint, face, or device passcode to continue.
       </Text>

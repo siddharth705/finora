@@ -44,7 +44,7 @@ export function ExportDataModal({ onClose, signInMethod }: {
   }
 
   return (
-    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-30" onClick={submitting ? undefined : onClose}>
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-30" onClick={submitting ? undefined : onClose} data-testid="export-data-modal">
       <div className="bg-card rounded-xl2 shadow-card p-6 w-[420px] max-w-[90vw]" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-4">
           <h2 className="font-serif text-lg font-semibold text-ink">Export My Data</h2>
@@ -99,7 +99,7 @@ export function ExportDataModal({ onClose, signInMethod }: {
               <button
                 type="submit"
                 disabled={submitting}
-                className="bg-primary text-white hover:bg-primary-dark disabled:opacity-50 rounded-lg px-4 py-2 text-xs uppercase font-medium"
+                className="bg-primary text-on-primary hover:bg-primary-dark disabled:opacity-50 rounded-lg px-4 py-2 text-xs uppercase font-medium"
               >
                 {submitting ? 'Preparing your export…' : 'Export My Data'}
               </button>

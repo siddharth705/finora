@@ -15,6 +15,7 @@ import { Card, EmptyState, SectionHeading } from '../components/Card';
 import { apiErrorCode, toUserMessage } from '../lib/apiError';
 import { fmtCurrency, fmtDate } from '../lib/format';
 import { invalidateFinancialData } from '../lib/invalidateFinancialData';
+import { useLargeFontScale } from '../lib/useLargeFontScale';
 import { radius, spacing, useTheme } from '../theme';
 import type { AppTabParamList } from '../navigation/types';
 import type { AccountStatementGroup, StatementSummary } from '../types';
@@ -231,7 +232,7 @@ function AccountGroupCard({
       >
         <View style={styles.flexShrink}>
           <Text style={[styles.groupName, { color: c.ink }]} numberOfLines={1}>{group.accountName}</Text>
-          <Text style={[styles.body, { color: c.muted }]}>
+          <Text style={[styles.body, { color: c.mutedInk }]}>
             {group.bank?.shortName ?? 'Other'} · {group.statements.length} statement
             {group.statements.length === 1 ? '' : 's'}
           </Text>
@@ -250,7 +251,7 @@ function AccountGroupCard({
             return (
               <View key={s.id} style={[styles.statementRow, { borderTopColor: c.border }]}>
                 <Text style={[styles.fileName, { color: c.ink }]} numberOfLines={2}>{s.fileName}</Text>
-                <Text style={[styles.body, { color: c.muted }]}>
+                <Text style={[styles.body, { color: c.mutedInk }]}>
                   {fmtDate(s.statementPeriodStart) ?? '—'} – {fmtDate(s.statementPeriodEnd) ?? '—'} ·{' '}
                   {s.transactionsImported} txns
                   {s.duplicateCount > 0 ? ` · ${s.duplicateCount} duplicate${s.duplicateCount === 1 ? '' : 's'}` : ''}
@@ -331,7 +332,7 @@ function ReimportPasswordModal({
           <SectionHeading title="Unlock this statement" />
           <Text style={[styles.body, { color: c.muted }]}>
             <Text style={{ color: c.ink }}>{prompt.statement.fileName}</Text> is password protected.
-            Finora doesn&apos;t store statement passwords, so re-importing needs it again.
+            Fynora doesn&apos;t store statement passwords, so re-importing needs it again.
           </Text>
 
           <Text style={[styles.fieldLabel, { color: c.ink }]}>Statement password</Text>
@@ -342,7 +343,7 @@ function ReimportPasswordModal({
             autoCapitalize="none"
             autoCorrect={false}
             autoFocus
-            // The bank's password for one document, not a Finora credential -- it does not belong
+            // The bank's password for one document, not a Fynora credential -- it does not belong
             // in the OS keychain alongside real logins, and it changes every statement.
             autoComplete="off"
             textContentType="none"
@@ -350,7 +351,7 @@ function ReimportPasswordModal({
             editable={!busy}
             style={[styles.input, { color: c.ink, borderColor: c.border, backgroundColor: c.inputBg }]}
           />
-          <Text style={[styles.helpText, { color: prompt.wrong ? c.danger : c.muted }]}>
+          <Text style={[styles.helpText, { color: prompt.wrong ? c.danger : c.mutedInk }]}>
             {prompt.wrong
               ? "That password didn't open this statement — check it and try again."
               : 'The password your bank uses for this statement.'}
@@ -371,6 +372,7 @@ function ReimportPasswordModal({
 
 function StatementDetailModal({ detail, onClose }: { detail: Detail; onClose: () => void }) {
   const c = useTheme();
+  const largeText = useLargeFontScale();
   const { statement, mode } = detail;
 
   const { data: transactions, isLoading } = useQuery({
@@ -412,8 +414,8 @@ function StatementDetailModal({ detail, onClose }: { detail: Detail; onClose: ()
               renderItem={({ item }) => (
                 <View style={[styles.txnRow, { borderBottomColor: c.border }]}>
                   <View style={styles.flexShrink}>
-                    <Text style={[styles.body, { color: c.ink }]} numberOfLines={1}>{item.description}</Text>
-                    <Text style={[styles.body, { color: c.muted }]}>{fmtDate(item.date)}</Text>
+                    <Text style={[styles.body, { color: c.ink }]} numberOfLines={largeText ? 2 : 1}>{item.description}</Text>
+                    <Text style={[styles.body, { color: c.mutedInk }]}>{fmtDate(item.date)}</Text>
                   </View>
                   <Text style={[styles.body, { color: item.type === 'INCOME' ? c.primary : c.ink }]}>
                     {fmtCurrency(item.amount)}

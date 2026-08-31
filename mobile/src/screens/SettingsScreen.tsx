@@ -8,6 +8,7 @@ import { Button } from '../components/Button';
 import { OptionPickerModal } from '../components/OptionPickerModal';
 import { TextField } from '../components/TextField';
 import { AppLockSection } from './settings/AppLockSection';
+import { ChangeEmailSheet } from './settings/ChangeEmailSheet';
 import { ChangePasswordSheet } from './settings/ChangePasswordSheet';
 import { DeviceSessionsSection } from './settings/DeviceSessionsSection';
 import { analyticsApi, userApi, workspaceApi } from '../api/endpoints';
@@ -20,7 +21,7 @@ import { parsePositiveAmount } from '../lib/validation';
 import { radius, spacing, THEME_SETTINGS, useTheme, useThemeSetting, type ThemeSetting } from '../theme';
 
 /**
- * Port of frontend/src/pages/Settings.tsx -- "how Finora behaves for you", as opposed to
+ * Port of frontend/src/pages/Settings.tsx -- "how Fynora behaves for you", as opposed to
  * ProfileScreen's "who you are".
  *
  * Same capabilities-first scope as the web page, and worth restating because it is the easiest
@@ -81,6 +82,7 @@ export function SettingsScreen() {
   const [intelError, setIntelError] = useState<string | null>(null);
 
   const [changePasswordOpen, setChangePasswordOpen] = useState(false);
+  const [changeEmailOpen, setChangeEmailOpen] = useState(false);
 
   const [userQ, workspaceQ, statsQ] = useQueries({
     queries: [
@@ -186,7 +188,7 @@ export function SettingsScreen() {
         />
       }
     >
-      <SectionCard title="General" subtitle="Customize how Finora works for you">
+      <SectionCard title="General" subtitle="Customize how Fynora works for you">
         <TextField
           label="Low balance alert"
           value={lowBalance}
@@ -226,7 +228,7 @@ export function SettingsScreen() {
             );
           })}
         </View>
-        <Text style={[styles.hint, { color: c.muted }]}>
+        <Text style={[styles.hint, { color: c.mutedInk }]}>
           Theme applies instantly. The alert amount and timezone save when you tap Save.
         </Text>
 
@@ -245,8 +247,18 @@ export function SettingsScreen() {
       <SectionCard title="Security" subtitle="Your password, verification and active sessions">
         <View style={[styles.row, { borderBottomColor: c.border }]}>
           <View style={styles.rowMain}>
+            <Text style={[styles.rowTitle, { color: c.ink }]}>Email</Text>
+            <Text style={[styles.rowMeta, { color: c.mutedInk }]}>{user.email}</Text>
+          </View>
+        </View>
+        <View style={styles.changePassword}>
+          <Button label="Change Email" onPress={() => setChangeEmailOpen(true)} />
+        </View>
+
+        <View style={[styles.row, { borderBottomColor: c.border }]}>
+          <View style={styles.rowMain}>
             <Text style={[styles.rowTitle, { color: c.ink }]}>Password</Text>
-            <Text style={[styles.rowMeta, { color: c.muted }]}>
+            <Text style={[styles.rowMeta, { color: c.mutedInk }]}>
               {passwordChanged ? `Last changed ${passwordChanged}` : 'Never changed'}
             </Text>
           </View>
@@ -258,14 +270,14 @@ export function SettingsScreen() {
         <View style={[styles.row, { borderBottomColor: c.border }]}>
           <View style={styles.rowMain}>
             <Text style={[styles.rowTitle, { color: c.ink }]}>Phone verification</Text>
-            <Text style={[styles.rowMeta, { color: c.muted }]}>
+            <Text style={[styles.rowMeta, { color: c.mutedInk }]}>
               {user.phoneNumber ? maskPhone(user.phoneNumber) : 'No phone number on file'}
             </Text>
           </View>
           {user.phoneVerified ? (
             <VerifiedBadge />
           ) : (
-            <Text style={[styles.rowMeta, { color: c.muted }]}>Not verified</Text>
+            <Text style={[styles.rowMeta, { color: c.mutedInk }]}>Not verified</Text>
           )}
         </View>
 
@@ -283,13 +295,20 @@ export function SettingsScreen() {
           <>
             {/* An "adjustable" with increment/decrement actions is React Native's equivalent of the
                 web's range input -- a screen reader announces the value and offers swipe up/down to
-                change it, which a pair of plain buttons would not. */}
+                change it, which a pair of plain buttons would not. The two Pressables below are kept
+                reachable too, deliberately: a screen reader user can either swipe on this container
+                or navigate directly to "Increase threshold" / "Decrease threshold" and activate one,
+                same as a sighted user tapping them (see SettingsScreen.test.tsx, which presses both
+                by that label). eslint-disable-next-line is for react-native-a11y/no-nested-touchables:
+                the rule is a static check for "accessible view contains a Pressable", with no way to
+                know that the redundant reachability here is the intended design, not an oversight. */}
+            {/* eslint-disable-next-line react-native-a11y/no-nested-touchables -- see comment above */}
             <View
               style={styles.stepper}
               accessible
               accessibilityRole="adjustable"
               accessibilityLabel="Confidence threshold"
-              accessibilityValue={{ min: 0, max: 100, now: threshold, text: `${threshold} percent` }}
+              accessibilityValue={{ min: 0, max: 100, now: threshold }}
               accessibilityActions={[{ name: 'increment' }, { name: 'decrement' }]}
               onAccessibilityAction={(e) => {
                 if (e.nativeEvent.actionName === 'increment') nudgeThreshold(THRESHOLD_STEP);
@@ -316,7 +335,7 @@ export function SettingsScreen() {
                 <Text style={[styles.stepButtonText, { color: c.ink }]}>+</Text>
               </Pressable>
             </View>
-            <Text style={[styles.hint, { color: c.muted }]}>
+            <Text style={[styles.hint, { color: c.mutedInk }]}>
               Suggestions at or above this confidence are applied automatically. Anything below it
               is left for you to confirm.
             </Text>
@@ -376,6 +395,8 @@ export function SettingsScreen() {
           }}
         />
       ) : null}
+
+      {changeEmailOpen ? <ChangeEmailSheet onClose={() => setChangeEmailOpen(false)} /> : null}
     </ScrollView>
   );
 }

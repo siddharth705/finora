@@ -27,7 +27,7 @@ import { clearSessionAndRedirect } from '../api/client';
 //   it, so it's hidden entirely rather than displayed as a fact that isn't one yet.
 //
 // Personal identity fields (name/email/phone/member-since) live on Profile.tsx now, not here --
-// this page is "how Finora behaves for you," not "who you are." Change Password stays here (a
+// this page is "how Fynora behaves for you," not "who you are." Change Password stays here (a
 // Security *action*, not an identity fact) via ChangePasswordModal -- an authenticated
 // POST /api/v1/users/me/password-change/*, genuinely separate from the forgot-password flow used
 // by someone who can't log in at all. See that component's own doc comment for the full reasoning.
@@ -107,8 +107,8 @@ function gmailLastSyncedLabel(status: GmailConnectionStatus): string {
 // available, not a capability over the user's data) -- skipped rather than shown as a raw URI.
 // "Read Gmail messages", not "read receipts only": gmail.readonly is what Google's consent
 // screen actually grants access to (the whole mailbox, at the OAuth layer) -- the trusted-sender
-// gate (C3) is Finora's own policy restriction on top of that, not something this scope itself
-// enforces, and this list should say what was actually granted, not what Finora chooses to do
+// gate (C3) is Fynora's own policy restriction on top of that, not something this scope itself
+// enforces, and this list should say what was actually granted, not what Fynora chooses to do
 // with it.
 const SCOPE_LABELS: Record<string, string> = {
   'https://www.googleapis.com/auth/gmail.readonly': 'Read Gmail messages',
@@ -375,16 +375,18 @@ export default function Settings() {
   // every refresh token server-side, so there is nothing left to be signed in to.
   //
   // Bug fix, confirmed against a real browser (not just this app's mocked-useAuth test suite):
-  // this used to call AuthContext's logout() and then navigate('/login', { state: { message } }),
-  // the way ResetPassword.tsx hands Login.tsx a one-shot confirmation. That works for
-  // ResetPassword because it isn't behind ProtectedRoute. Here, logout() calls setToken(null) --
-  // a REACT STATE update -- which App.tsx's ProtectedRoute (wrapping /app/settings) reacts to
-  // immediately by client-side-routing to /login itself, via its own stateless
-  // <Navigate to="/login" replace />. That reactive redirect runs (and, critically, mounts Login
-  // long enough for its one-shot useEffect to read AND clear SESSION_ENDED_REASON_KEY) before the
-  // browser's actual window.location.href navigation below ever fires -- so by the time the real,
-  // hard-reloaded page loads, the reason this function set has already been consumed and thrown
-  // away by a Login instance that never really existed to the user.
+  // this used to call AuthContext's logout() and then navigate('/auth', { state: { message } }),
+  // the way ResetPassword.tsx hands AuthEntry's PasswordStep a one-shot confirmation. That works
+  // for ResetPassword because it isn't behind ProtectedRoute. Here, logout() calls setToken(null)
+  // -- a REACT STATE update -- which App.tsx's ProtectedRoute (wrapping /app/settings) reacts to
+  // immediately by client-side-routing to /auth itself, via its own stateless
+  // <Navigate to="/auth" replace />. That reactive redirect runs and mounts a throwaway AuthEntry
+  // instance -- landing on its identify step, since a bare <Navigate> carries no deep-link state
+  // -- before the browser's actual window.location.href navigation below ever fires. The
+  // SESSION_ENDED_REASON_KEY this function is about to set would land in storage while that
+  // instance still exists, only for it to be torn down and replaced by the real, hard-reloaded
+  // page moments later -- fragile either way, whether or not that particular instance happens to
+  // read the key back out before dying.
   //
   // The fix is to never touch AuthContext's React state at all, the same way client.ts's
   // (now-exported) clearSessionAndRedirect already avoids this. Second bug fix, caught in review:
@@ -419,7 +421,7 @@ export default function Settings() {
         <p className="text-sm text-muted mt-1">Manage your preferences, security, and account data.</p>
       </div>
 
-      <SectionCard icon={<SlidersHorizontal size={18} />} title="General" subtitle="Customize your Finora experience">
+      <SectionCard icon={<SlidersHorizontal size={18} />} title="General" subtitle="Customize your Fynora experience">
         <div className="grid md:grid-cols-3 gap-4">
           <div>
             <label htmlFor="settings-low-balance-threshold" className="block text-xs uppercase text-muted mb-1">Low balance alert</label>
@@ -466,7 +468,7 @@ export default function Settings() {
             <button
               onClick={savePreferences}
               disabled={prefsSaving || !prefsDirty}
-              className="bg-primary text-white hover:bg-primary-dark disabled:opacity-50 rounded-lg px-4 py-2 text-xs uppercase font-medium"
+              className="bg-primary text-on-primary hover:bg-primary-dark disabled:opacity-50 rounded-lg px-4 py-2 text-xs uppercase font-medium"
             >
               {prefsSaving ? 'Saving…' : 'Save preferences'}
             </button>
@@ -550,7 +552,7 @@ export default function Settings() {
         </div>
       </SectionCard>
 
-      <SectionCard icon={<Sparkles size={18} />} title="AI" subtitle="Control how Finora reviews and understands your financial documents">
+      <SectionCard icon={<Sparkles size={18} />} title="AI" subtitle="Control how Fynora reviews and understands your financial documents">
         {intelLoading ? (
           <p className="text-muted text-sm">Loading…</p>
         ) : (
@@ -576,7 +578,7 @@ export default function Settings() {
               <button
                 onClick={saveIntelligencePreferences}
                 disabled={intelSaving || !intelDirty}
-                className="bg-primary text-white hover:bg-primary-dark disabled:opacity-50 rounded-lg px-4 py-2 text-xs uppercase font-medium"
+                className="bg-primary text-on-primary hover:bg-primary-dark disabled:opacity-50 rounded-lg px-4 py-2 text-xs uppercase font-medium"
               >
                 {intelSaving ? 'Saving…' : 'Save setting'}
               </button>
@@ -613,7 +615,7 @@ export default function Settings() {
         </div>
       </SectionCard>
 
-      <SectionCard icon={<Mail size={18} />} title="Connected Apps" subtitle="Link external accounts Finora can read transactions from">
+      <SectionCard icon={<Mail size={18} />} title="Connected Apps" subtitle="Link external accounts Fynora can read transactions from">
         {gmailCallbackNotice && (
           <p className={`text-xs mb-3 ${gmailCallbackNotice.isError ? 'text-danger' : 'text-success'}`}>
             {gmailCallbackNotice.text}
@@ -646,7 +648,7 @@ export default function Settings() {
                 type="button"
                 disabled={gmailConnecting}
                 onClick={handleGmailConnect}
-                className="bg-primary text-white hover:bg-primary-dark disabled:opacity-50 rounded-lg px-3 py-1.5 text-xs uppercase font-medium flex-shrink-0"
+                className="bg-primary text-on-primary hover:bg-primary-dark disabled:opacity-50 rounded-lg px-3 py-1.5 text-xs uppercase font-medium flex-shrink-0"
               >
                 {gmailConnecting ? 'Connecting…' : 'Reconnect Gmail'}
               </button>
@@ -666,7 +668,7 @@ export default function Settings() {
                 type="button"
                 disabled={gmailConnecting}
                 onClick={handleGmailConnect}
-                className="bg-primary text-white hover:bg-primary-dark disabled:opacity-50 rounded-lg px-3 py-1.5 text-xs uppercase font-medium flex-shrink-0"
+                className="bg-primary text-on-primary hover:bg-primary-dark disabled:opacity-50 rounded-lg px-3 py-1.5 text-xs uppercase font-medium flex-shrink-0"
               >
                 {gmailConnecting ? 'Connecting…' : 'Connect Gmail'}
               </button>
@@ -716,7 +718,7 @@ export default function Settings() {
                 <button
                   type="button"
                   onClick={() => navigate('/app/settings/gmail/review')}
-                  className="bg-primary text-white hover:bg-primary-dark rounded-lg px-3 py-1.5 text-xs uppercase font-medium"
+                  className="bg-primary text-on-primary hover:bg-primary-dark rounded-lg px-3 py-1.5 text-xs uppercase font-medium"
                 >
                   Review {gmailStatus.needsReview}
                 </button>
@@ -734,7 +736,7 @@ export default function Settings() {
         )}
       </SectionCard>
 
-      <SectionCard icon={<UserX size={18} />} title="Manage Your Account" subtitle="Deactivate or permanently delete your Finora account">
+      <SectionCard icon={<UserX size={18} />} title="Manage Your Account" subtitle="Deactivate or permanently delete your Fynora account">
         <div className="pt-1 pb-4 border-b border-border">
           <p className="text-ink font-medium text-sm">Deactivate Account</p>
           <p className="text-muted text-[11px] mt-1 mb-3">

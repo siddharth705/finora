@@ -4,7 +4,7 @@ sections: 4
 [section 0]
   columns: [Txn Date, Narration, Withdrawals, Deposits, Closing Balance]
   rows: 84
-  auxLines: 96
+  auxLines: 78
   accountNumberMasked: ••••9999
   accountHolderName: Xxxxxxx Xxxxxx Xxxxxx
   ifscCode: HDFC0XXXXXX
@@ -15,9 +15,9 @@ sections: 4
 [section 1]
   columns: [Xxxxxxxx Principal, Open/Xxxx Xxxxx Date]
   rows: 9
-  auxLines: 28
+  auxLines: 27
   accountNumberMasked: ••••9999
-  accountHolderName: Interest Xxxxxxx
+  accountHolderName: null
   ifscCode: HDFC0XXXXXX
   statementPeriod: null .. null
   product: UNKNOWN (34%, UNIDENTIFIED)
@@ -42,7 +42,7 @@ sections: 4
   accountHolderName: null
   ifscCode: null
   statementPeriod: null .. null
-  product: UNKNOWN (0%, UNIDENTIFIED)
+  product: UNKNOWN (50%, UNIDENTIFIED)
   mayCreateAutomatically: false
 
-capabilities: [COMPOSITE_STATEMENT, LEADING_NARRATION_CONTINUATION, OFFSET_COLUMN_ANCHORS, PAGE_BOUNDARY_ISOLATION, REPEATED_ACCOUNT_BANNER, REPEATED_HEADER, RIGHT_ALIGNED_AMOUNTS, WRAPPED_DESCRIPTION, WRAPPED_HEADER]
+capabilities: [COMPOSITE_STATEMENT, LEADING_NARRATION_CONTINUATION, OFFSET_COLUMN_ANCHORS, PAGE_BOUNDARY_ISOLATION, REPEATED_ACCOUNT_BANNER, REPEATED_HEADER, RIGHT_ALIGNED_AMOUNTS, TRANSACTION_TABLE_CLOSED, WRAPPED_DESCRIPTION, WRAPPED_HEADER]

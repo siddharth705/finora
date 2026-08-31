@@ -48,6 +48,21 @@ public class FirebaseConfig {
 
     private static final Logger log = LoggerFactory.getLogger(FirebaseConfig.class);
 
+    /**
+     * Same BH-016 class of gap as {@link com.finora.service.ResendEmailProvider}: the Admin SDK sets no connect/read
+     * timeout of its own, and {@code FirebaseAuth.verifyIdToken} -- called synchronously from
+     * {@code AuthService} on registration, password reset, password change, and phone change --
+     * can fetch Google's public certs over the network on a cache miss. Without a bound here, a
+     * hung fetch pins the request thread indefinitely instead of failing in a bounded window like
+     * every other external call in this codebase (Resend, R2, Gmail, Google OAuth all set one).
+     *
+     * <p>Same ten/twenty split as {@link com.finora.service.ResendEmailProvider}'s own timeouts, for the same reason:
+     * these are best-effort verification calls whose failure already surfaces as a normal request
+     * error, so waiting longer buys nothing.
+     */
+    private static final int CONNECT_TIMEOUT_MILLIS = 10_000;
+    private static final int READ_TIMEOUT_MILLIS = 20_000;
+
     @Bean
     public FirebaseApp firebaseApp() {
         if (!FirebaseApp.getApps().isEmpty()) {
@@ -56,6 +71,8 @@ public class FirebaseConfig {
         try {
             FirebaseOptions options = FirebaseOptions.builder()
                     .setCredentials(GoogleCredentials.getApplicationDefault())
+                    .setConnectTimeout(CONNECT_TIMEOUT_MILLIS)
+                    .setReadTimeout(READ_TIMEOUT_MILLIS)
                     .build();
             return FirebaseApp.initializeApp(options);
         } catch (IOException e) {

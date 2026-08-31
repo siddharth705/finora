@@ -23,5 +23,9 @@ public class AdminMfaDtos {
      *  actually look at these before dismissing this response, not to let them be re-fetched. */
     public record ConfirmResponse(List<String> recoveryCodes) {}
 
-    public record DisableRequest(String currentPassword, String googleIdToken) {}
+    /** {@code code} is a live TOTP code or an unused recovery code -- required in addition to
+     *  {@code currentPassword}/{@code googleIdToken}/{@code appleIdToken} whenever MFA is
+     *  currently enabled, so disabling it needs the same proof-of-possession enrolling it did
+     *  (see {@code AdminMfaService.disable}'s own doc comment). */
+    public record DisableRequest(String currentPassword, String googleIdToken, String appleIdToken, String code) {}
 }

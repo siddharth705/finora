@@ -1,6 +1,7 @@
 package com.finora.service;
 
 import com.finora.entity.Merchant;
+import com.finora.entity.MerchantAlias;
 import com.finora.repository.MerchantAliasRepository;
 import com.finora.repository.MerchantCategoryLearningRepository;
 import com.finora.repository.MerchantRepository;
@@ -140,8 +141,19 @@ public class MerchantNormalizationEngine {
             // an alias row already scoped to this user -- but MerchantRepository's own comment
             // states the rule as "never a bare findById", and a rule with one silent exception is
             // a rule the next reader cannot trust. Same query cost, no exception to explain.
-            return merchantRepository.findByIdAndUserId(existingAlias.get().getMerchantId(), userId)
-                    .orElseGet(() -> createMerchantAndAlias(userId, description, normalizedAlias));
+            var byAlias = merchantRepository.findByIdAndUserId(existingAlias.get().getMerchantId(), userId);
+            if (byAlias.isPresent()) return byAlias.get();
+            // Bug 56: a dangling alias -- its target merchant is gone (e.g.
+            // MerchantReviewService.discard() removes a merchant with no attached transactions but,
+            // unlike MerchantService.merge(), never touches its alias rows). createMerchantAndAlias
+            // would not have fixed this: its addAlias() is an INSERT ... ON CONFLICT DO NOTHING
+            // against (user_id, normalized_alias), which already has a row here -- just pointing at
+            // a dead merchant -- so the insert silently no-ops and the dangling row is left exactly
+            // as broken as it was. Every future call for this same alias would repeat this path and
+            // spawn a fresh, never-linked duplicate merchant, forever. Repointing the EXISTING row
+            // at a fresh merchant instead is the same repair MerchantService.merge() already does
+            // when it repoints an absorbed merchant's aliases onto the surviving one.
+            return repointDanglingAlias(userId, description, existingAlias.get());
         }
 
         // extractMerchant, not the raw normalised alias -- see firstSignificantToken for why the
@@ -259,6 +271,17 @@ public class MerchantNormalizationEngine {
      * merchant yet, and {@code StagedRow} carries no merchant field, so nothing downstream needs
      * one. The merchant is created at confirm time, by the path that also creates the transaction
      * it belongs to.
+     *
+     * <p><b>Costs one full merchant load (via {@link #merchantsByFirstToken}) per call unless the
+     * caller is inside an active transaction</b> -- {@link #merchantsByFirstToken}'s memo, like
+     * {@code resolve()}'s, is scoped to the transaction, and this method has no transaction of its
+     * own to offer one ({@code readOnly = true} still opens and immediately commits one PER CALL
+     * when nothing higher up the stack is already transactional). Fine for a caller invoking this a
+     * handful of times; wrong for once per row of a statement with no enclosing transaction, which
+     * is exactly {@code TransactionNormalizer.normalize}'s staging use. That caller must use
+     * {@link #indexFor} plus the {@link #resolveReadOnly(UUID, String, MerchantIndex)} overload
+     * instead -- see {@link com.finora.imports.MerchantIndex}'s own doc comment for the regression
+     * this fixes.
      */
     @Transactional(readOnly = true)
     public java.util.Optional<Merchant> resolveReadOnly(UUID userId, String description) {
@@ -275,13 +298,71 @@ public class MerchantNormalizationEngine {
         // resolve() does would break exactly that guarantee.
         String firstToken = firstSignificantToken(CategoryRules.extractMerchant(description));
         if (firstToken == null) return java.util.Optional.empty();
-        // The same memo resolve() uses, so a staged statement costs one merchant load rather than
-        // one per row -- Bug 35's fix applies to the preview too, which is where a user is
-        // actually waiting on the response.
         return java.util.Optional.ofNullable(merchantsByFirstToken(userId).get(firstToken));
     }
 
+    /**
+     * A snapshot of every merchant and alias this user owns, for one staging pass -- see
+     * {@link com.finora.imports.MerchantIndex}'s own doc comment for why this exists instead of
+     * calling {@link #resolveReadOnly(UUID, String)} once per row. Exactly two queries, regardless
+     * of the statement's row count: one for {@link MerchantRepository#findByUserId}, one for
+     * {@link MerchantAliasRepository#findByUserId}.
+     */
+    public com.finora.imports.MerchantIndex indexFor(UUID userId) {
+        Map<UUID, Merchant> merchantsById = new HashMap<>();
+        Map<String, Merchant> byFirstToken = new HashMap<>();
+        for (Merchant merchant : merchantRepository.findByUserId(userId)) {
+            merchantsById.put(merchant.getId(), merchant);
+            String token = firstSignificantToken(CategoryRules.normalize(merchant.getCanonicalName()));
+            // putIfAbsent: first match wins, matching indexByFirstToken's own tiebreak.
+            if (token != null) byFirstToken.putIfAbsent(token, merchant);
+        }
+        Map<String, Merchant> byNormalizedAlias = new HashMap<>();
+        for (MerchantAlias alias : merchantAliasRepository.findByUserId(userId)) {
+            Merchant merchant = merchantsById.get(alias.getMerchantId());
+            // A dangling alias (Bug 56) has no live merchant here -- correctly resolves to nothing,
+            // the same as resolveReadOnly's findByIdAndUserId would.
+            if (merchant != null) byNormalizedAlias.put(alias.getNormalizedAlias(), merchant);
+        }
+        return new com.finora.imports.MerchantIndex(byNormalizedAlias, byFirstToken);
+    }
+
+    /**
+     * Same reduction and precedence as {@link #resolveReadOnly(UUID, String)} -- exact alias first,
+     * then first-significant-token -- but against an {@link com.finora.imports.MerchantIndex} the
+     * caller built once for the whole statement via {@link #indexFor}, so this issues no database
+     * queries at all.
+     */
+    public java.util.Optional<Merchant> resolveReadOnly(UUID userId, String description,
+                                                          com.finora.imports.MerchantIndex index) {
+        String normalizedAlias = fitToColumn(CategoryRules.normalize(description));
+        Merchant aliased = index.byNormalizedAlias(normalizedAlias);
+        if (aliased != null) return java.util.Optional.of(aliased);
+
+        String firstToken = firstSignificantToken(CategoryRules.extractMerchant(description));
+        if (firstToken == null) return java.util.Optional.empty();
+        return java.util.Optional.ofNullable(index.byFirstToken(firstToken));
+    }
+
     private Merchant createMerchantAndAlias(UUID userId, String description, String normalizedAlias) {
+        Merchant merchant = createMerchant(userId, description);
+        addAlias(merchant.getId(), userId, normalizedAlias);
+        return merchant;
+    }
+
+    /**
+     * Bug 56's repair path: the alias row already exists (just pointing at a merchant that's gone),
+     * so it must be repointed at this new merchant rather than inserted again -- see resolve()'s own
+     * comment on why addAlias()/insertIfAbsent cannot do that repair itself.
+     */
+    private Merchant repointDanglingAlias(UUID userId, String description, MerchantAlias danglingAlias) {
+        Merchant replacement = createMerchant(userId, description);
+        danglingAlias.setMerchantId(replacement.getId());
+        merchantAliasRepository.save(danglingAlias);
+        return replacement;
+    }
+
+    private Merchant createMerchant(UUID userId, String description) {
         Merchant merchant = new Merchant();
         merchant.setUserId(userId);
         // merchants.canonical_name is VARCHAR(255) too, and is derived from the same description,
@@ -297,9 +378,7 @@ public class MerchantNormalizationEngine {
         // Never blocks the import. The merchant is created and returned exactly as before -- the
         // only difference is that it now admits what it is.
         merchant.setLifecycleStatus(Merchant.Lifecycle.TEMPORARY);
-        merchant = merchantRepository.save(merchant);
-        addAlias(merchant.getId(), userId, normalizedAlias);
-        return merchant;
+        return merchantRepository.save(merchant);
     }
 
     /** Never let parser output exceed what the column can hold; see resolve()'s own reasoning. */

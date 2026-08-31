@@ -20,6 +20,11 @@ public interface AuditLogRepository extends JpaRepository<AuditLog, UUID> {
     @Query("SELECT COUNT(DISTINCT a.userId) FROM AuditLog a WHERE a.action = :action AND a.createdAt >= :since")
     long countDistinctUsersByActionSince(@Param("action") String action, @Param("since") Instant since);
 
+    // Admin Portal, Operational Dashboard "vs yesterday" delta for "Active users today."
+    // Inclusive on both ends, matching Spring Data's own Between semantics.
+    @Query("SELECT COUNT(DISTINCT a.userId) FROM AuditLog a WHERE a.action = :action AND a.createdAt >= :start AND a.createdAt <= :end")
+    long countDistinctUsersByActionBetween(@Param("action") String action, @Param("start") Instant start, @Param("end") Instant end);
+
     // Backs the admin portal's global audit feed (AdminController.globalAuditLogs) -- unlike
     // findByUserIdOrderByCreatedAtDesc below, this is genuinely unbounded across every user on
     // the platform, so it's paginated from the start rather than fetched in full. Superseded by
@@ -82,6 +87,13 @@ public interface AuditLogRepository extends JpaRepository<AuditLog, UUID> {
     // Spring Data's derived Top-N query keyword pushes that limit down to the database rather
     // than fetching this user's entire audit history just to take(5) in memory.
     List<AuditLog> findTop5ByUserIdOrderByCreatedAtDesc(UUID userId);
+
+    // Self-service login history (Phase 2 audit hardening / user-security-center-proposal.md
+    // §3.1) -- filtered to just the login-family actions (see LoginHistoryController), same
+    // Top-N-pushed-to-the-database reasoning as findTop5ByUserIdOrderByCreatedAtDesc above:
+    // this is a user reviewing recent activity, not a bulk export, so an unbounded list isn't
+    // warranted the way it is for the admin-gated findByUserIdOrderByCreatedAtDesc.
+    List<AuditLog> findTop50ByUserIdAndActionInOrderByCreatedAtDesc(UUID userId, List<String> actions);
 
     /**
      * Admin Portal Phase 4 (EntityDrawer reference implementation, Banks page's Audit tab) --

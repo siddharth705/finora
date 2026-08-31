@@ -63,8 +63,16 @@ public class GoogleOAuthProperties {
      * <p>Configuration, never a request parameter. The callback endpoint is unauthenticated by
      * necessity (Google redirects a browser to it), so a redirect target taken from the request
      * would make it an open redirect usable by anyone who can get a browser to follow a link.
+     *
+     * <p>Must be {@code /app/settings}, not {@code /settings} — the frontend's authenticated
+     * Settings page lives under the {@code /app} prefix (see {@code App.tsx}'s route table); every
+     * other path falls through the router's catch-all straight to the public marketing homepage.
+     * Landing there after a real, successful connection reads as "Finora logged me out" even though
+     * the session and the Gmail connection are both completely fine underneath — found via a live
+     * reproduction where the backend's own log confirmed the connection succeeded while the browser
+     * still ended up looking signed out.
      */
-    private String postConnectRedirect = "https://app.finoratech.info/settings";
+    private String postConnectRedirect = "https://app.fynora.net/app/settings";
 
     /**
      * Google's own endpoints. Real values by default — nothing needs to set these.

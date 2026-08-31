@@ -1,7 +1,9 @@
 package com.finora.service;
 
+import com.finora.entity.Account;
 import com.finora.entity.CategoryRule;
 import com.finora.entity.Transaction;
+import com.finora.repository.AccountRepository;
 import com.finora.repository.TransactionRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -21,15 +23,18 @@ import static org.mockito.Mockito.*;
 class RecurringServiceTest {
 
     private TransactionRepository transactionRepository;
+    private AccountRepository accountRepository;
     private RuleEngineService ruleEngineService;
     private AuditService auditService;
     private FeatureFlagService featureFlagService;
     private RecurringService recurringService;
     private final UUID userId = UUID.randomUUID();
+    private Account liveAccount;
 
     @BeforeEach
     void setUp() {
         transactionRepository = mock(TransactionRepository.class);
+        accountRepository = mock(AccountRepository.class);
         // Unstubbed -- Mockito defaults a List-returning method to an empty list, so every
         // existing test here (none of which are about rule-driven subscriptions -- see the
         // dedicated tests below) is unaffected by this dependency's addition.
@@ -40,8 +45,35 @@ class RecurringServiceTest {
         // exercising the real detection logic unchanged; the flag-off behavior gets its own
         // dedicated tests below.
         when(featureFlagService.isEnabled("RECURRING_DETECTION_ENABLED")).thenReturn(true);
-        recurringService = new RecurringService(transactionRepository, ruleEngineService, auditService,
+
+        liveAccount = new Account();
+        ReflectionTestUtils.setField(liveAccount, "id", UUID.randomUUID());
+        liveAccount.setUserId(userId);
+        when(accountRepository.findByUserId(userId)).thenReturn(List.of(liveAccount));
+
+        recurringService = new RecurringService(transactionRepository, accountRepository, ruleEngineService, auditService,
                 featureFlagService);
+    }
+
+    // Deleted-account leak (see DashboardService.summarize for the original fix): a deleted
+    // account's transactions deliberately keep deleted_at unset, so detectForUser must scope its
+    // transaction fetch to exactly the live account ids, not just userId.
+    @Test
+    void detectForUser_scopesTransactionFetch_toExactlyTheLiveAccountIds() {
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of());
+
+        recurringService.detectForUser(userId);
+
+        verify(transactionRepository).findByUserIdAndAccountIdIn(userId, List.of(liveAccount.getId()));
+    }
+
+    @Test
+    void detectForUser_withNoLiveAccounts_shortCircuits_withoutQueryingTransactions() {
+        when(accountRepository.findByUserId(userId)).thenReturn(List.of());
+
+        assertThat(recurringService.detectForUser(userId)).isEmpty();
+
+        verify(transactionRepository, never()).findByUserIdAndAccountIdIn(any(), any());
     }
 
     private Transaction expense(String merchant, LocalDate date, BigDecimal amount) {
@@ -62,7 +94,7 @@ class RecurringServiceTest {
                 expense("netflix", LocalDate.of(2026, 6, 5), BigDecimal.valueOf(649)),
                 expense("netflix", LocalDate.of(2026, 7, 6), BigDecimal.valueOf(649))
         );
-        when(transactionRepository.findByUserId(userId)).thenReturn(txns);
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(txns);
 
         var results = recurringService.detectForUser(userId);
 
@@ -77,7 +109,7 @@ class RecurringServiceTest {
         List<Transaction> txns = List.of(
                 expense("amazon", LocalDate.of(2026, 6, 1), BigDecimal.valueOf(1200))
         );
-        when(transactionRepository.findByUserId(userId)).thenReturn(txns);
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(txns);
 
         var results = recurringService.detectForUser(userId);
 
@@ -100,7 +132,7 @@ class RecurringServiceTest {
                 expense(null, LocalDate.of(2026, 6, 4), BigDecimal.valueOf(500)),
                 expense("", LocalDate.of(2026, 7, 5), BigDecimal.valueOf(510))
         );
-        when(transactionRepository.findByUserId(userId)).thenReturn(txns);
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(txns);
 
         var results = recurringService.detectForUser(userId);
 
@@ -116,7 +148,7 @@ class RecurringServiceTest {
                 expense("bigbasket", LocalDate.of(2026, 5, 4), BigDecimal.valueOf(800)),
                 expense("bigbasket", LocalDate.of(2026, 6, 20), BigDecimal.valueOf(2200))
         );
-        when(transactionRepository.findByUserId(userId)).thenReturn(txns);
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(txns);
 
         var results = recurringService.detectForUser(userId);
 
@@ -130,7 +162,7 @@ class RecurringServiceTest {
                 expense("random-shop", LocalDate.of(2026, 6, 5), BigDecimal.valueOf(5000)), // wildly different
                 expense("random-shop", LocalDate.of(2026, 7, 5), BigDecimal.valueOf(300))
         );
-        when(transactionRepository.findByUserId(userId)).thenReturn(txns);
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(txns);
 
         var results = recurringService.detectForUser(userId);
 
@@ -141,7 +173,7 @@ class RecurringServiceTest {
     void resetsStaleRecurringFlag_whenPatternNoLongerHolds() {
         Transaction t = expense("old-subscription", LocalDate.of(2026, 1, 1), BigDecimal.valueOf(299));
         t.setRecurring(true); // simulate a stale flag from a previous run
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(t));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(t));
 
         recurringService.detectForUser(userId);
 
@@ -163,7 +195,7 @@ class RecurringServiceTest {
         // The whole point of a MARK_SUBSCRIPTION rule: doesn't need to wait for 2+ occurrences
         // with a regular gap the way organic pattern detection (tested above) does.
         Transaction t = expense("NETFLIX.COM", LocalDate.of(2026, 7, 1), BigDecimal.valueOf(649));
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(t));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(t));
         // Bug fix: expense() (the shared fixture above) never sets a description, only a merchant
         // -- so t.getDescription() is null here. anyString() looks like it should match anything,
         // but Mockito's anyString() explicitly excludes null (a well-known gotcha; any() is the
@@ -193,7 +225,7 @@ class RecurringServiceTest {
                 expense("spotify", LocalDate.of(2026, 6, 1), BigDecimal.valueOf(119)),
                 expense("spotify", LocalDate.of(2026, 7, 1), BigDecimal.valueOf(119))
         );
-        when(transactionRepository.findByUserId(userId)).thenReturn(txns);
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(txns);
 
         recurringService.detectForUser(userId);
 
@@ -204,7 +236,7 @@ class RecurringServiceTest {
     @Test
     void doesNotFlagRecurring_whenNoPatternAndNoRuleMatch() {
         Transaction t = expense("one-off-purchase", LocalDate.of(2026, 7, 1), BigDecimal.valueOf(2000));
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(t));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(t));
         // ruleEngineService.evaluateSideEffectRules unstubbed -- defaults to empty list.
 
         recurringService.detectForUser(userId);
@@ -222,7 +254,7 @@ class RecurringServiceTest {
                 expense("netflix", LocalDate.of(2026, 6, 1), BigDecimal.valueOf(499)),
                 expense("netflix", LocalDate.of(2026, 7, 1), BigDecimal.valueOf(499))
         );
-        when(transactionRepository.findByUserId(userId)).thenReturn(txns);
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(txns);
 
         recurringService.detectForUser(userId);
 
@@ -238,23 +270,88 @@ class RecurringServiceTest {
                 .containsEntry("recurringTransactionsFlagged", 3L);
     }
 
+    /**
+     * Bug 10 (docs/quality/bug-reports/BUG_REVIEW_REPORT.md). This used to assert the OPPOSITE --
+     * that an audit row is written even when nothing is recurring -- which was exactly the "one
+     * audit row per page view" the bug report flagged, since Dashboard.tsx/Insights.tsx call this
+     * on ordinary page load via a plain GET. A transaction that was never recurring and still
+     * isn't after this run is not a change; see RecurringService's own class doc comment.
+     */
     @Test
-    void detectForUser_recordsTheSummary_evenWhenNothingIsRecurring() {
+    void detectForUser_writesNoAuditRecord_whenNothingChanged() {
         Transaction t = expense("one-off-purchase", LocalDate.of(2026, 7, 1), BigDecimal.valueOf(2000));
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(t));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(t));
 
-        recurringService.detectForUser(userId);
+        var results = recurringService.detectForUser(userId);
+
+        assertThat(results).isEmpty();
+        verify(transactionRepository, never()).saveAll(any());
+        verifyNoInteractions(auditService);
+    }
+
+    /** The other half of Bug 10's fix: a transaction that WAS recurring and genuinely stops (the
+     *  reset-to-false path) is a real change and must still be written and audited -- the fix
+     *  only skips writes for transactions whose flag doesn't move, not every "nothing found"
+     *  outcome. */
+    @Test
+    void detectForUser_writesAndAudits_whenAPreviouslyRecurringTransactionStopsBeingOne() {
+        Transaction t = expense("cancelled-subscription", LocalDate.of(2026, 7, 1), BigDecimal.valueOf(499));
+        t.setRecurring(true);
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(t));
+
+        var results = recurringService.detectForUser(userId);
+
+        assertThat(results).isEmpty();
+        assertThat(t.isRecurring()).isFalse();
+        verify(transactionRepository).saveAll(List.of(t));
 
         @SuppressWarnings("unchecked")
         org.mockito.ArgumentCaptor<java.util.Map<String, Object>> metadataCaptor =
                 org.mockito.ArgumentCaptor.forClass(java.util.Map.class);
         verify(auditService).record(eq(userId), eq("RECURRING_DETECTION_RUN"), eq("Transaction"),
                 org.mockito.ArgumentMatchers.isNull(), metadataCaptor.capture());
-
         assertThat(metadataCaptor.getValue())
                 .containsEntry("transactionsProcessed", 1)
                 .containsEntry("recurringGroupsFound", 0)
                 .containsEntry("recurringTransactionsFlagged", 0L);
+    }
+
+    /** A second, otherwise-untouched transaction must not be re-saved or re-audited alongside a
+     *  genuinely changed one -- proving `changed` is a real filter, not saveAll(active) with
+     *  extra steps. */
+    @Test
+    void detectForUser_savesOnlyTheChangedTransaction_notEveryActiveOne() {
+        Transaction changing = expense("cancelled-subscription", LocalDate.of(2026, 7, 1), BigDecimal.valueOf(499));
+        changing.setRecurring(true);
+        Transaction unrelated = expense("one-off-purchase", LocalDate.of(2026, 7, 2), BigDecimal.valueOf(2000));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(changing, unrelated));
+
+        recurringService.detectForUser(userId);
+
+        verify(transactionRepository).saveAll(List.of(changing));
+    }
+
+    /**
+     * Bug 38. `active` only ever includes Type.EXPENSE, non-transfer, non-duplicate transactions,
+     * so a transaction that was flagged recurring under a prior run and then had its type changed
+     * away from EXPENSE never appears in `active` again -- the reset-then-recompute pass above only
+     * considers `active`, so its stale flag was never revisited and kept showing the badge forever.
+     */
+    @Test
+    void detectForUser_clearsTheRecurringFlag_whenATransactionsTypeChangedAwayFromExpense() {
+        Transaction noLongerAnExpense = expense("cancelled-subscription", LocalDate.of(2026, 7, 1),
+                BigDecimal.valueOf(499));
+        noLongerAnExpense.setRecurring(true);
+        noLongerAnExpense.setTxnType(Transaction.Type.INCOME);
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(noLongerAnExpense));
+
+        var results = recurringService.detectForUser(userId);
+
+        assertThat(results).isEmpty();
+        assertThat(noLongerAnExpense.isRecurring())
+                .as("the stale badge must be cleared even though this transaction is no longer in `active`")
+                .isFalse();
+        verify(transactionRepository).saveAll(List.of(noLongerAnExpense));
     }
 
     // --- Admin Portal Phase 8: RECURRING_DETECTION_ENABLED feature flag gate ---
@@ -263,7 +360,7 @@ class RecurringServiceTest {
     void detectForUser_isANoOp_whenTheFeatureFlagIsDisabled() {
         when(featureFlagService.isEnabled("RECURRING_DETECTION_ENABLED")).thenReturn(false);
         Transaction t = expense("netflix", LocalDate.of(2026, 7, 1), BigDecimal.valueOf(649));
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(t));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(t));
 
         var results = recurringService.detectForUser(userId);
 
@@ -280,7 +377,7 @@ class RecurringServiceTest {
         when(featureFlagService.isEnabled("RECURRING_DETECTION_ENABLED")).thenReturn(false);
         Transaction t = expense("netflix", LocalDate.of(2026, 7, 1), BigDecimal.valueOf(649));
         t.setRecurring(true);
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(t));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(t));
 
         recurringService.detectForUser(userId);
 
@@ -305,7 +402,7 @@ class RecurringServiceTest {
                 expense("blue tokai", LocalDate.of(2026, 6, 2), BigDecimal.valueOf(420)),
                 expense("blue tokai", LocalDate.of(2026, 6, 23), BigDecimal.valueOf(430))
         );
-        when(transactionRepository.findByUserId(userId)).thenReturn(txns);
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(txns);
 
         var results = recurringService.detectForUser(userId);
 
@@ -325,7 +422,7 @@ class RecurringServiceTest {
                 expense("blue tokai", LocalDate.of(2026, 6, 23), BigDecimal.valueOf(430)),
                 expense("blue tokai", LocalDate.of(2026, 7, 14), BigDecimal.valueOf(425))
         );
-        when(transactionRepository.findByUserId(userId)).thenReturn(txns);
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(txns);
 
         var results = recurringService.detectForUser(userId);
 
@@ -347,7 +444,7 @@ class RecurringServiceTest {
                 expense("blue tokai", LocalDate.of(2026, 6, 9), BigDecimal.valueOf(425)),
                 expense("blue tokai", LocalDate.of(2026, 7, 28), BigDecimal.valueOf(430))
         );
-        when(transactionRepository.findByUserId(userId)).thenReturn(txns);
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(txns);
 
         var results = recurringService.detectForUser(userId);
 

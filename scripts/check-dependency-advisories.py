@@ -63,70 +63,22 @@ ACCEPTED = [
     # The reasoning is not lost if it comes back: it is in this file's history, and the finding
     # that npm's suggested remediation (downgrade to 7.11.0) would reintroduce the open redirect
     # fixed in 1ea5d13 is the part worth re-reading before anyone acts on that advice again.
-    Accepted(
-        ghsa="GHSA-w5hq-g745-h8pq",
-        apps={"mobile"},
-        summary="uuid: missing buffer bounds check in v3/v5/v6 when buf is provided",
-        why=(
-            "Reached only as expo -> @expo/cli -> xcode -> uuid. That is the build and CLI\n"
-            "      toolchain; it runs on a developer machine and on the EAS builder, never on a\n"
-            "      user's device. It shows up in a production audit only because @expo/cli is a\n"
-            "      transitive dependency of the `expo` package, which is itself a production\n"
-            "      dependency -- a packaging artefact, not a statement about what ships.\n"
-            "      An npm override was considered and rejected: forcing a transitive version inside\n"
-            "      the Expo toolchain risks breaking `expo export`, which CI depends on, to fix\n"
-            "      something that never executes on a device."
-        ),
-        revisit="When Expo ships a toolchain release that resolves it upstream.",
-    ),
-    # The two image-size entries below are one finding in two parsers of the same package, reached
-    # by the same single path, so they are recorded together and should be removed together.
     #
-    # There is no upgrade to take, which is the part worth knowing before anyone re-litigates this:
-    # 1.2.1 is the LAST 1.x release -- the fix exists only in 2.x -- and metro declares
-    # `image-size@^1.0.2`, so no in-range version resolves to a fixed one. An npm override to 2.x
-    # was considered and rejected for the reason already recorded on the uuid entry above: forcing
-    # a major version into the Expo toolchain risks breaking `expo export`, which CI depends on, to
-    # fix something that never runs on a device.
-    Accepted(
-        ghsa="GHSA-5p2g-fcmc-qvqq",
-        apps={"mobile"},
-        summary="image-size: JXL and HEIF parsers allow denial of service through infinite loops",
-        why=(
-            "Reached only as expo -> metro -> image-size. metro is the React Native bundler: it\n"
-            "      reads asset dimensions at BUILD time, on a developer machine or the EAS builder,\n"
-            "      and is not part of the shipped bundle. metro is not a dependency of this app at\n"
-            "      all, neither direct nor dev -- it appears in a production audit solely because\n"
-            "      `expo` is a production dependency that carries the toolchain with it, the same\n"
-            "      packaging artefact this file's own header describes.\n"
-            "      Reaching the loop needs a malformed JXL or HEIF image inside this repo's asset\n"
-            "      tree, which presumes commit access; the worst outcome is a hung build, not\n"
-            "      anything on a user's device.\n"
-            "      THIS IS WRONG the moment image-size becomes reachable from runtime code. The\n"
-            "      check is `npm ls image-size` in mobile/: metro must still be the only dependent."
-        ),
-        revisit=(
-            "After any Expo SDK upgrade, re-check whether metro has moved to image-size 2.x, "
-            "and delete both image-size entries when it has."
-        ),
-    ),
-    Accepted(
-        ghsa="GHSA-w3rx-r6r6-pgpr",
-        apps={"mobile"},
-        summary="image-size: ICNS parser allows denial of service through an infinite loop",
-        why=(
-            "Same package, same single path, same build-time-only exposure as GHSA-5p2g-fcmc-qvqq\n"
-            "      above -- expo -> metro -> image-size, where metro is the bundler and never ships.\n"
-            "      Recorded separately because this checker keys on GHSA id, so a shared entry would\n"
-            "      leave the other advisory silently unaccounted for.\n"
-            "      THIS IS WRONG under the same condition: if image-size ever becomes reachable from\n"
-            "      runtime code. Verify with `npm ls image-size` in mobile/."
-        ),
-        revisit=(
-            "After any Expo SDK upgrade, re-check whether metro has moved to image-size 2.x, "
-            "and delete both image-size entries when it has."
-        ),
-    ),
+    # GHSA-w5hq-g745-h8pq (uuid: missing buffer bounds check in v3/v5/v6 when buf is provided) was
+    # here for mobile, with the reasoning that an npm override forcing a transitive uuid version
+    # inside the Expo toolchain (reached via expo -> @expo/cli -> xcode -> uuid) risked breaking
+    # `expo export`. Removed 2026-08-23: added an `"overrides": {"uuid": "^11.1.1"}` entry to
+    # mobile/package.json and confirmed `npx expo export --platform android` still succeeds against
+    # it, so the predicted risk does not materialize.
+    #
+    # GHSA-5p2g-fcmc-qvqq and GHSA-w3rx-r6r6-pgpr (image-size: JXL/HEIF/ICNS parsers, denial of
+    # service through infinite loops -- reached only as expo -> metro -> image-size, a build-time
+    # dependency that never ships) were here for mobile. Removed 2026-08-30, and it DID go away for
+    # the reason each entry's revisit trigger predicted: a routine `npm install` (no explicit Expo
+    # SDK version bump) picked up @expo/metro 56.0.2 / metro 0.84.5 over the previously-locked
+    # version, and that newer metro no longer resolves to a vulnerable image-size at all --
+    # confirmed via `npm ls image-size` in mobile/ returning empty. Both entries are removed
+    # together, as their own text said to.
 ]
 
 ACCEPTED_BY_GHSA = {a.ghsa: a for a in ACCEPTED}

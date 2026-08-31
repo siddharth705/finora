@@ -107,9 +107,9 @@ function TrendChart() {
 export type MockLevel = 'simple' | 'expanded' | 'complete';
 
 const LEVEL_LABEL: Record<MockLevel, string> = {
-  simple: 'The Finora dashboard showing income, expenses, savings and cash flow for the month, with a monthly trend chart.',
-  expanded: 'The Finora dashboard showing the month\'s income, expenses, savings and cash flow, a spending-by-category breakdown and a monthly trend chart.',
-  complete: 'The full Finora dashboard: income, expenses, savings and cash flow, spending by category, a monthly trend chart, recent transactions, budget progress and an insight.',
+  simple: 'The Fynora dashboard showing income, expenses, savings and cash flow for the month, with a monthly trend chart.',
+  expanded: 'The Fynora dashboard showing the month\'s income, expenses, savings and cash flow, a spending-by-category breakdown and a monthly trend chart.',
+  complete: 'The full Fynora dashboard: income, expenses, savings and cash flow, spending by category, a monthly trend chart, recent transactions, budget progress and an insight.',
 };
 
 export function DashboardMock({ level = 'complete', withSidebar = false, progressive = false }: {
@@ -143,17 +143,17 @@ export function DashboardMock({ level = 'complete', withSidebar = false, progres
         <span className="w-2.5 h-2.5 rounded-full bg-[#F87171]" />
         <span className="w-2.5 h-2.5 rounded-full bg-[#FBBF24]" />
         <span className="w-2.5 h-2.5 rounded-full bg-[#34D399]" />
-        <span className="ml-3 text-[10px] text-slate-400 truncate">app.finoratech.info/dashboard</span>
+        <span className="ml-3 text-[10px] text-slate-400 truncate">app.fynora.net/dashboard</span>
       </div>
 
       <div className="flex">
         {withSidebar ? (
           <aside className="hidden md:block w-40 shrink-0 border-r border-[#E6EAF2] bg-white py-4">
-            <p className="px-4 mb-3 text-[11px] font-bold tracking-tight text-slate-900">Finora</p>
+            <p className="px-4 mb-3 text-[11px] font-bold tracking-tight text-slate-900">Fynora</p>
             {NAV.map((item, i) => (
               <p
                 key={item}
-                className={`px-4 py-1.5 text-[11px] ${i === 0 ? 'text-[#2563EB] bg-[#EFF5FF] font-semibold' : 'text-slate-500'}`}
+                className={`px-4 py-1.5 text-[11px] ${i === 0 ? 'text-[var(--m-brand)] bg-[var(--m-brand-wash)] font-semibold' : 'text-slate-500'}`}
               >
                 {item}
               </p>
@@ -252,8 +252,10 @@ export function DashboardMock({ level = 'complete', withSidebar = false, progres
                   </div>
                 ))}
               </div>
-              <div className="rounded-xl border border-[#DBEAFE] bg-[#EFF5FF] p-3">
-                <p className="text-[9px] uppercase tracking-wide text-[#2563EB] font-semibold mb-1">Insight</p>
+              {/* Tailwind can't apply an opacity modifier to an arbitrary var() value (it silently
+                  fell back to a default gray border) -- the alpha has to be in the value itself. */}
+              <div className="rounded-xl border bg-[var(--m-brand-wash)] p-3" style={{ borderColor: 'rgb(38 42 51 / .2)' }}>
+                <p className="text-[9px] uppercase tracking-wide text-[var(--m-brand)] font-semibold mb-1">Insight</p>
                 <p className="text-[10px] text-slate-600 leading-relaxed">
                   You spent 18% less on Food &amp; Dining than last month.
                 </p>

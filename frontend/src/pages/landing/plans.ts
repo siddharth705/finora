@@ -1,5 +1,5 @@
 /**
- * Plan configuration — the single source of truth for what Finora offers and what can actually be
+ * Plan configuration — the single source of truth for what Fynora offers and what can actually be
  * bought today.
  *
  * Separated from the components so enabling Premium later is a data change, not a UI rewrite:
@@ -48,7 +48,7 @@ export const AVAILABILITY_LABEL: Record<Availability, string> = {
 
 export const AVAILABILITY_STYLE: Record<Availability, { background: string; color: string }> = {
   available: { background: '#DCFCE7', color: '#166534' },
-  'coming-soon': { background: '#DBEAFE', color: '#1D4ED8' },
+  'coming-soon': { background: 'var(--m-brand-wash)', color: 'var(--m-brand-deep)' },
   planned: { background: '#F1F5F9', color: '#64748B' },
   exploring: { background: '#F1F5F9', color: '#94A3B8' },
 };
@@ -98,9 +98,9 @@ export const PLANS: Plan[] = [
     name: 'Premium',
     price: null,
     availability: 'coming-soon',
-    blurb: 'For people who want Finora to work for them, not just show them the numbers.',
+    blurb: 'For people who want Fynora to work for them, not just show them the numbers.',
     promise: 'For people who want an assistant, not just a dashboard.',
-    stage: { when: 'Later', outcome: 'Let Finora work for you.' },
+    stage: { when: 'Later', outcome: 'Let Fynora work for you.' },
     features: [
       'Everything in Plus',
       'Investment insights',

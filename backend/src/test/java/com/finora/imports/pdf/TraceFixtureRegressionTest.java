@@ -201,12 +201,48 @@ class TraceFixtureRegressionTest {
                 .isEqualTo(6);
     }
 
+    /**
+     * Captured from the real BOB savings statement that first surfaced the {@code lineOf}
+     * X-ordering bug (docs/superpowers/specs/2026-08-29-lineof-x-ordering-fix-design.md):
+     * {@code groupIntoRows} sorts primarily by Y, so two runs on the same physical line with any
+     * baseline-Y jitter joined in the wrong left-to-right order. Corpus-wide measurement found this
+     * document alone had 19 of its 25 disordered rows structurally resembling real transaction
+     * rows (date + amount present) -- the most affected document in the real 27-document corpus,
+     * despite having been classified "CLEAN -- no known extraction issue" by this project's own
+     * 2026-08-18 physical-layout corpus study before this bug was found.
+     */
+    private static final String BOB_X_ORDERING_TRACE = "bob-transaction-row-x-ordering";
+
+    @Test
+    void bobTransactionRows_joinTheirNarrationInLeftToRightOrder() {
+        List<Map<String, String>> rows = new PdfTableLocator()
+                .locateAll(PdfTrace.load(BOB_X_ORDERING_TRACE), null).sections().get(0).rows();
+
+        // Every real UPI transaction narration on this statement is redactor-masked but keeps this
+        // exact shape: a leading reference-code run ("XXX/"), then a masked digit run, a masked
+        // time, and a "UPI"/masked-handle tail -- in that left-to-right order. A row whose members
+        // got joined out of x-order would put some OTHER masked fragment first instead (as it did
+        // before this fix, on this exact document), failing this prefix check.
+        List<String> upiNarrations = rows.stream()
+                .map(row -> CsvParser.firstNonBlank(row, "narration"))
+                .filter(narration -> narration != null && narration.contains("/UPI/"))
+                .toList();
+
+        assertThat(upiNarrations)
+                .as("this statement has many UPI-narration transaction rows")
+                .hasSizeGreaterThan(20);
+        assertThat(upiNarrations)
+                .as("every UPI narration must start with its reference-code run, not a "
+                        + "chain-merged neighbor that a Y-primary join order could put first")
+                .allMatch(narration -> narration.startsWith("XXX/"));
+    }
+
     @Test
     void theCommittedTraceContainsNoUnredactedPersonalData() {
         // A privacy control with no test is a privacy control that quietly stops working. This
         // asserts the invariant on the committed artifact itself rather than on the redactor, so it
         // fails if anyone hand-edits a trace or commits one captured with redaction disabled.
-        String text = java.util.stream.Stream.of(HDFC_TRACE, BOB_TRACE, HDFC_COMBINED_TRACE)
+        String text = java.util.stream.Stream.of(HDFC_TRACE, BOB_TRACE, HDFC_COMBINED_TRACE, BOB_X_ORDERING_TRACE)
                 .flatMap(name -> PdfTrace.load(name).stream())
                 .map(PositionedText::text).reduce("", (a, b) -> a + "\n" + b);
 

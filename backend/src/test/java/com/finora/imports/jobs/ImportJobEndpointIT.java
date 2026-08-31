@@ -121,11 +121,18 @@ class ImportJobEndpointIT extends AbstractIntegrationTest {
      * Guards docs/architecture/data/statement-storage-migration.md §0.2's decision: this path
      * writes through {@code StatementStorage} directly, never {@code StatementContentService} --
      * the only place that compresses -- so the object it creates must be byte-for-byte what was
-     * uploaded, not gzipped. Checked two ways: the retrieved bytes equal the original exactly, and
-     * they do not even start with GZIP's magic number, so a future change that silently routed this
-     * path through compression without also updating {@link ImportJob#getCompressionType()} would
-     * fail here rather than surface later as {@code StatementContentService.read} trying to gunzip
-     * bytes whose row claims {@code NONE}.
+     * uploaded (once decrypted), not gzipped. Checked two ways: the decrypted bytes equal the
+     * original exactly, and they do not even start with GZIP's magic number, so a future change
+     * that silently routed this path through compression without also updating
+     * {@link ImportJob#getCompressionType()} would fail here rather than surface later as
+     * {@code StatementContentService.read} trying to gunzip bytes whose row claims {@code NONE}.
+     *
+     * <p>Security review (V107): the object IS encrypted, unlike compression -- streaming
+     * encryption (unlike streaming GZIP) doesn't reintroduce the BH-018 buffering problem §0.2
+     * exempted this path from, so {@code ImportJobService.accept} encrypts here the same way
+     * {@code StatementContentService.store} does for the synchronous path. Asserting
+     * {@code getEncryptionKeyId()} is set applies the identical discipline this test already
+     * applies to compression: a future change that silently stopped encrypting must fail here.
      */
     @Test
     void theStoredObjectIsUncompressed() {
@@ -137,16 +144,20 @@ class ImportJobEndpointIT extends AbstractIntegrationTest {
         ImportJob job = jobRepository.findById(jobId).orElseThrow();
         assertThat(job.getCompressionType())
                 .isEqualTo(com.finora.imports.storage.CompressionType.NONE);
+        assertThat(job.getEncryptionKeyId()).isNotNull();
 
         byte[] stored = storage.retrieve(
                 new com.finora.imports.storage.ContentAddress(job.getContentHash(), job.getObjectKey()));
+        byte[] decrypted = encryptionService.decryptBytes(
+                new com.finora.security.crypto.EncryptedBytes(job.getEncryptionKeyId(), stored));
         byte[] uploaded = CSV.getBytes(StandardCharsets.UTF_8);
 
-        assertThat(stored).isEqualTo(uploaded);
-        assertThat(stored[0] & 0xFF).as("not GZIP's magic number").isNotEqualTo(0x1f);
+        assertThat(decrypted).isEqualTo(uploaded);
+        assertThat(decrypted[0] & 0xFF).as("not GZIP's magic number").isNotEqualTo(0x1f);
     }
 
     @Autowired private com.finora.imports.storage.StatementStorage storage;
+    @Autowired private com.finora.security.crypto.EncryptionService encryptionService;
 
     @Test
     void theJobIsDurableBeforeTheResponseIsSent() {

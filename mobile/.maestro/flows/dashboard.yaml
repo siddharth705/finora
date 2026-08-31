@@ -1,0 +1,43 @@
+# Signs in (same account as login.yaml) and checks the Home tab actually renders real dashboard
+# content rather than a stuck loading spinner or the error state -- see DashboardScreen.tsx's own
+# loading/error branches. Assumes nothing about ledger contents: a freshly seeded account has no
+# transactions, so this only asserts on what's true for EVERY account, verified vs.
+# mobile/src/screens/DashboardScreen.tsx directly rather than assumed.
+appId: com.fynora.app
+env:
+  TEST_EMAIL: maestro-test@finora.test
+  TEST_PASSWORD: MaestroSeedPass2026
+---
+- launchApp:
+    clearState: true
+- tapOn: "Email or mobile number"
+- inputText: ${TEST_EMAIL}
+# See login.yaml's own comment: the keyboard covers "Continue" too, and a tap through it can hit
+# Gboard's own toolbar instead of the app.
+- hideKeyboard
+- tapOn: "Continue"
+- tapOn: "Password"
+- inputText: ${TEST_PASSWORD}
+# See login.yaml's own comments: the keyboard covers the submit button until dismissed, and
+# AuthScreenLayout's title is also literally "Sign in" so the button needs its own testID.
+- hideKeyboard
+- tapOn:
+    id: "login-submit"
+
+- assertVisible: "Home"
+- assertVisible: "Total Balance"
+- assertVisible: "Income"
+- assertVisible: "Expenses"
+- assertVisible: "Net Savings"
+- assertVisible: "Cash Flow"
+- assertVisible: "Spending by Category"
+# DashboardScreen.tsx renders "Recent Transactions" unconditionally (see that file's own
+# EmptyState branch for a zero-transaction account), but this emulator's screen is only 320x640 --
+# too short to fit every card above the fold. A real run confirmed the section genuinely isn't in
+# the mounted tree yet at this scroll position, not just visually clipped, so this needs an actual
+# scroll rather than a taller assertion timeout.
+- scrollUntilVisible:
+    element:
+      text: "Recent Transactions"
+    direction: DOWN
+- assertVisible: "Recent Transactions"

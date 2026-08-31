@@ -245,7 +245,7 @@ function TraceView({ trace }: { trace: ImportTrace }) {
       <Panel
         icon={<GraduationCap size={16} className="text-primary" />}
         title="Learning"
-        hint="What the import taught the system. Zero is a legitimate answer — an import of merchants Finora already knew teaches it nothing."
+        hint="What the import taught the system. Zero is a legitimate answer — an import of merchants Fynora already knew teaches it nothing."
       >
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
           <Field label="Events" value={trace.learning.events} />
@@ -371,7 +371,7 @@ export default function ImportTracePage() {
             <button
               type="submit"
               disabled={!emailInput.trim() || isFetchingFailures}
-              className="flex items-center gap-1.5 bg-primary text-white rounded-lg px-4 py-2 text-sm disabled:opacity-50"
+              className="flex items-center gap-1.5 bg-primary text-on-primary rounded-lg px-4 py-2 text-sm disabled:opacity-50"
             >
               <Mail size={15} />
               {isFetchingFailures ? 'Looking…' : 'Find failed imports'}
@@ -454,7 +454,7 @@ export default function ImportTracePage() {
             <button
               type="submit"
               disabled={!input.trim() || isFetching}
-              className="flex items-center gap-1.5 bg-primary text-white rounded-lg px-4 py-2 text-sm disabled:opacity-50"
+              className="flex items-center gap-1.5 bg-primary text-on-primary rounded-lg px-4 py-2 text-sm disabled:opacity-50"
             >
               <Search size={15} />
               {isFetching ? 'Looking…' : 'Trace'}

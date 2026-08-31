@@ -1,7 +1,7 @@
-import { Link } from 'react-router-dom';
 import { Check, Minus } from 'lucide-react';
 import { Reveal, Section, SectionHeading } from './primitives';
 import { AVAILABILITY_LABEL, AVAILABILITY_STYLE, COMPARISON, PRICING_CARDS } from './plans';
+import { MagneticLink } from './MagneticLink';
 
 /**
  * Pricing, with a paid tier advertised but not pretended into existence.
@@ -36,7 +36,7 @@ export function Pricing() {
       <div className="grid md:grid-cols-3 gap-5 max-w-5xl mx-auto">
         {PRICING_CARDS.map((plan, i) => (
           <Reveal key={plan.name} delayMs={i * 80}>
-            <div className={`m-card p-6 h-full flex flex-col ${plan.availability === 'available' ? 'ring-2 ring-[#2563EB]' : ''}`}>
+            <div className={`m-card p-6 h-full flex flex-col ${plan.availability === 'available' ? 'ring-2 ring-[var(--m-brand)]' : ''}`}>
               <div className="flex items-center justify-between mb-2">
                 <p className="text-sm font-semibold" style={{ color: 'var(--m-ink)' }}>{plan.name}</p>
                 <span className="text-[9px] uppercase tracking-wide font-semibold px-2 py-1 rounded-full" style={AVAILABILITY_STYLE[plan.availability]}>
@@ -68,7 +68,7 @@ export function Pricing() {
               </ul>
 
               {plan.availability === 'available' ? (
-                <Link to="/register" className="m-btn m-btn-primary w-full">Start free</Link>
+                <MagneticLink to="/auth" className="m-btn m-btn-primary w-full">Start free</MagneticLink>
               ) : (
                 // A statement, not a control. See the note at the top of this file.
                 <p className="text-center text-sm py-3" style={{ color: 'var(--m-ink-3)' }}>
@@ -114,12 +114,12 @@ export function Pricing() {
                   </td>
                   <td className="text-center px-4 py-3">
                     {plus
-                      ? <Check size={16} className="inline text-[#2563EB]" aria-label="Included" />
+                      ? <Check size={16} className="inline text-[var(--m-brand)]" aria-label="Included" />
                       : <Minus size={16} className="inline text-slate-300" aria-label="Not included" />}
                   </td>
                   <td className="text-center px-4 py-3">
                     {premium
-                      ? <Check size={16} className="inline text-[#2563EB]" aria-label="Included" />
+                      ? <Check size={16} className="inline text-[var(--m-brand)]" aria-label="Included" />
                       : <Minus size={16} className="inline text-slate-300" aria-label="Not included" />}
                   </td>
                 </tr>

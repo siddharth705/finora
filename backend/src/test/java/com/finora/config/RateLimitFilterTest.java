@@ -9,11 +9,15 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.web.cors.CorsConfiguration;
+import org.springframework.web.cors.CorsConfigurationSource;
+import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Parameter;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import static com.finora.config.RateLimitFilter.*;
@@ -44,7 +48,31 @@ class RateLimitFilterTest {
         objectMapper.registerModule(new JavaTimeModule());
         ClientIpResolver clientIpResolver = new ClientIpResolver();
         ReflectionTestUtils.setField(clientIpResolver, "trustProxyHeaders", trustProxyHeaders);
-        return new RateLimitFilter(objectMapper, clientIpResolver);
+        // Bug 24 (docs/quality/bug-reports/BUG_REVIEW_REPORT.md) added this field with a
+        // @Value("...:1") default -- which only applies when Spring actually constructs the bean.
+        // This helper calls `new ClientIpResolver()` directly, bypassing Spring entirely, so
+        // without setting it explicitly the field silently sits at Java's own int default (0),
+        // not the intended 1 -- exactly the kind of default-that-only-applies-via-injection trap
+        // this codebase has hit before with Environment mocks. 0 trusted hops makes every
+        // X-Forwarded-For lookup resolve out of bounds and fall back to getRemoteAddr(), which
+        // broke resolvesToForwardedForsLastEntry_whenProxyHeadersAreTrusted below by collapsing
+        // both of that test's distinct clients onto the same shared IP.
+        ReflectionTestUtils.setField(clientIpResolver, "trustedProxyHops", 1);
+        return new RateLimitFilter(objectMapper, clientIpResolver, testCorsConfigurationSource());
+    }
+
+    /** A real CorsConfigurationSource, same shape CorsConfig's own bean builds -- one known
+     *  allowed origin, so Bug-07-style tests can assert against it precisely rather than mocking
+     *  Spring's own origin-matching logic. */
+    static final String ALLOWED_TEST_ORIGIN = "https://tests.invalid";
+
+    private CorsConfigurationSource testCorsConfigurationSource() {
+        CorsConfiguration config = new CorsConfiguration();
+        config.setAllowedOrigins(List.of(ALLOWED_TEST_ORIGIN));
+        config.setAllowCredentials(true);
+        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+        source.registerCorsConfiguration("/**", config);
+        return source;
     }
 
     private HttpServletRequest requestFor(String path, String remoteAddr, String forwardedFor) {
@@ -236,8 +264,10 @@ class RateLimitFilterTest {
     void everyEndpointWithARealPerCallCostIsLimited() throws Exception {
         String[] mustBeLimited = {
                 "/api/v1/auth/login",
+                "/api/v1/auth/refresh",
                 "/api/v1/auth/register",
                 "/api/v1/auth/google",
+                "/api/v1/auth/identify",
                 "/api/v1/auth/forgot-password",
                 "/api/v1/auth/reset-password",
                 "/api/v1/auth/reset-password/phone",
@@ -251,8 +281,12 @@ class RateLimitFilterTest {
                 "/api/v1/users/me/phone-change/start",
                 "/api/v1/users/me/phone-change/verify-otp",
                 "/api/v1/users/me/phone-change/complete",
+                "/api/v1/users/me/email-change/start",
+                "/api/v1/users/me/email-change/verify",
+                "/api/v1/users/me/email-change/complete",
                 "/api/v1/users/me/data-export",
                 "/api/v1/users/me/account/deactivate",
+                "/api/v1/users/me/account/delete",
                 "/api/v1/auth/mfa/verify",
         };
 
@@ -368,25 +402,37 @@ class RateLimitFilterTest {
                 Map.entry("app.rate-limit.register.window-seconds", DEFAULT_REGISTER_WINDOW),
                 Map.entry("app.rate-limit.forgot-password.max", DEFAULT_FORGOT_MAX),
                 Map.entry("app.rate-limit.forgot-password.window-seconds", DEFAULT_FORGOT_WINDOW),
+                Map.entry("app.rate-limit.identify.max", DEFAULT_IDENTIFY_MAX),
+                Map.entry("app.rate-limit.identify.window-seconds", DEFAULT_IDENTIFY_WINDOW),
                 Map.entry("app.rate-limit.import-stage.max", DEFAULT_IMPORT_STAGE_MAX),
                 Map.entry("app.rate-limit.import-stage.window-seconds", DEFAULT_IMPORT_STAGE_WINDOW),
                 Map.entry("app.rate-limit.password-change.max", DEFAULT_PASSWORD_CHANGE_MAX),
                 Map.entry("app.rate-limit.password-change.window-seconds", DEFAULT_PASSWORD_CHANGE_WINDOW),
                 Map.entry("app.rate-limit.phone-change.max", DEFAULT_PHONE_CHANGE_MAX),
                 Map.entry("app.rate-limit.phone-change.window-seconds", DEFAULT_PHONE_CHANGE_WINDOW),
+                Map.entry("app.rate-limit.email-change.max", DEFAULT_EMAIL_CHANGE_MAX),
+                Map.entry("app.rate-limit.email-change.window-seconds", DEFAULT_EMAIL_CHANGE_WINDOW),
                 Map.entry("app.rate-limit.reset-password.max", DEFAULT_RESET_PASSWORD_MAX),
                 Map.entry("app.rate-limit.reset-password.window-seconds", DEFAULT_RESET_PASSWORD_WINDOW),
                 Map.entry("app.rate-limit.data-export.max", DEFAULT_DATA_EXPORT_MAX),
                 Map.entry("app.rate-limit.data-export.window-seconds", DEFAULT_DATA_EXPORT_WINDOW),
+                Map.entry("app.rate-limit.delete-account.max", DEFAULT_DELETE_ACCOUNT_MAX),
+                Map.entry("app.rate-limit.delete-account.window-seconds", DEFAULT_DELETE_ACCOUNT_WINDOW),
                 Map.entry("app.rate-limit.google.max", DEFAULT_GOOGLE_MAX),
                 Map.entry("app.rate-limit.google.window-seconds", DEFAULT_GOOGLE_WINDOW),
                 Map.entry("app.rate-limit.apple.max", DEFAULT_APPLE_MAX),
                 Map.entry("app.rate-limit.apple.window-seconds", DEFAULT_APPLE_WINDOW),
                 Map.entry("app.rate-limit.mfa-verify.max", DEFAULT_MFA_VERIFY_MAX),
-                Map.entry("app.rate-limit.mfa-verify.window-seconds", DEFAULT_MFA_VERIFY_WINDOW));
+                Map.entry("app.rate-limit.mfa-verify.window-seconds", DEFAULT_MFA_VERIFY_WINDOW),
+                Map.entry("app.rate-limit.refresh.max", DEFAULT_REFRESH_MAX),
+                Map.entry("app.rate-limit.refresh.window-seconds", DEFAULT_REFRESH_WINDOW));
 
+        // Selects on an actual @Value annotation being present, not a parameter-count threshold --
+        // a count threshold silently breaks the moment another plain (non-@Value) dependency is
+        // added to the constructor list, as the CorsConfigurationSource fix for Bug 07 just did to
+        // the 2-arg test constructor (now 3 args, no longer safely below any assumed threshold).
         Constructor<?> springConstructor = Arrays.stream(RateLimitFilter.class.getDeclaredConstructors())
-                .filter(c -> c.getParameterCount() > 2)
+                .filter(c -> Arrays.stream(c.getParameters()).anyMatch(p -> p.getAnnotation(Value.class) != null))
                 .findFirst()
                 .orElseThrow(() -> new AssertionError("Expected the @Value-annotated constructor to still exist"));
 
@@ -401,5 +447,99 @@ class RateLimitFilterTest {
         }
 
         assertThat(actualByProperty).containsExactlyInAnyOrderEntriesOf(expectedByProperty);
+    }
+
+    /**
+     * Bug 07 (docs/quality/bug-reports/BUG_REVIEW_REPORT.md). This filter runs entirely before
+     * Spring Security's own CORS handling (see RateLimitFilter's own field comment on
+     * corsConfigurationSource), so its 429 short-circuit used to leave a cross-origin response
+     * with no Access-Control-Allow-Origin header at all -- invisible to the calling page's own
+     * JavaScript, reported as a generic network error rather than the actual RATE_LIMITED body.
+     *
+     * A real {@link org.springframework.mock.web.MockHttpServletRequest}, not the Mockito mock
+     * {@link #requestFor} builds elsewhere in this file -- CorsConfigurationSource's own path
+     * matching needs a request that actually behaves like one, not a hand-stubbed subset of it.
+     */
+    @Test
+    void addsCorsHeaders_onARateLimitedResponse_forAnAllowedOrigin() throws Exception {
+        RateLimitFilter filter = newFilter(false);
+        FilterChain chain = mock(FilterChain.class);
+
+        org.springframework.mock.web.MockHttpServletRequest request =
+                new org.springframework.mock.web.MockHttpServletRequest("POST", "/api/v1/auth/login");
+        request.setRemoteAddr("10.0.0.50");
+        request.addHeader(org.springframework.http.HttpHeaders.ORIGIN, ALLOWED_TEST_ORIGIN);
+
+        assertThat(tripsRateLimitAfterManyRequests(filter, request)).isTrue();
+
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        filter.doFilterInternal(request, response, chain);
+
+        assertThat(response.getStatus()).isEqualTo(429);
+        assertThat(response.getHeader(org.springframework.http.HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN))
+                .isEqualTo(ALLOWED_TEST_ORIGIN);
+        assertThat(response.getHeader(org.springframework.http.HttpHeaders.ACCESS_CONTROL_ALLOW_CREDENTIALS))
+                .isEqualTo("true");
+    }
+
+    /** The other half of the same fix: echoing every Origin unconditionally (rather than only an
+     *  actually-allowed one) would itself be a CORS hole, so a disallowed origin must still get
+     *  nothing back -- proving this isn't a blind echo of whatever the caller sent. */
+    @Test
+    void omitsCorsHeaders_onARateLimitedResponse_forADisallowedOrigin() throws Exception {
+        RateLimitFilter filter = newFilter(false);
+        FilterChain chain = mock(FilterChain.class);
+
+        org.springframework.mock.web.MockHttpServletRequest request =
+                new org.springframework.mock.web.MockHttpServletRequest("POST", "/api/v1/auth/login");
+        request.setRemoteAddr("10.0.0.51");
+        request.addHeader(org.springframework.http.HttpHeaders.ORIGIN, "https://not-allowed.invalid");
+
+        assertThat(tripsRateLimitAfterManyRequests(filter, request)).isTrue();
+
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        filter.doFilterInternal(request, response, chain);
+
+        assertThat(response.getStatus()).isEqualTo(429);
+        assertThat(response.getHeader(org.springframework.http.HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN)).isNull();
+    }
+
+    /**
+     * Bug fix: an OPTIONS preflight to a rate-limited endpoint (e.g. {@code /api/v1/import/jobs},
+     * whose real upload request carries a multipart body and an Authorization header, so the
+     * browser always sends a real CORS preflight first) used to consume the SAME bucket as the
+     * real request that follows it. Once that bucket emptied, the NEXT preflight itself got
+     * short-circuited with a bare 429 -- missing the Access-Control-Allow-Methods /
+     * -Allow-Headers a preflight response must carry (see applyCorsHeadersForShortCircuitedResponse's
+     * own comment: it is deliberately not the full preflight machinery). The browser reports that
+     * as a generic "preflight ... does not have HTTP ok status" CORS failure, hiding the real
+     * cause (rate limiting) from both the user and the console.
+     *
+     * <p>A preflight carries no side effect of its own -- the actual cost is in the request it
+     * precedes, which is separately counted when that request itself arrives -- so it must never
+     * be rate-limited, on any endpoint.
+     */
+    @Test
+    void optionsPreflightRequests_areNeverRateLimited_evenAfterTheBucketIsExhausted() throws Exception {
+        RateLimitFilter filter = newFilter(false);
+        FilterChain chain = mock(FilterChain.class);
+
+        // Exhaust the shared import-stage bucket for this IP via real (non-preflight) requests.
+        assertThat(tripsRateLimitAfterManyRequests(filter, requestFor("/api/v1/import/jobs", "10.0.2.1", null)))
+                .isTrue();
+
+        HttpServletRequest preflight = mock(HttpServletRequest.class);
+        when(preflight.getMethod()).thenReturn("OPTIONS");
+        when(preflight.getRequestURI()).thenReturn("/api/v1/import/jobs");
+        when(preflight.getContextPath()).thenReturn("");
+        when(preflight.getRemoteAddr()).thenReturn("10.0.2.1");
+
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        filter.doFilterInternal(preflight, response, chain);
+
+        assertThat(response.getStatus())
+                .as("an OPTIONS preflight must never be rate-limited, even against an already-exhausted bucket")
+                .isNotEqualTo(429);
+        verify(chain, atLeastOnce()).doFilter(any(), any());
     }
 }

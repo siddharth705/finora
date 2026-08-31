@@ -120,7 +120,7 @@ export default function ImportDetail() {
           <button
             type="button"
             onClick={() => navigateToResumeSession(navigate, job.importSessionId)}
-            className="mt-4 bg-primary text-white text-sm font-semibold rounded-lg px-4 py-2 hover:opacity-90"
+            className="mt-4 bg-primary text-on-primary text-sm font-semibold rounded-lg px-4 py-2 hover:opacity-90"
           >
             Review this import
           </button>
@@ -130,7 +130,7 @@ export default function ImportDetail() {
           <button
             type="button"
             onClick={() => void navigate('/app/import')}
-            className="mt-4 bg-primary text-white text-sm font-semibold rounded-lg px-4 py-2 hover:opacity-90"
+            className="mt-4 bg-primary text-on-primary text-sm font-semibold rounded-lg px-4 py-2 hover:opacity-90"
           >
             Upload a different file
           </button>

@@ -12,6 +12,8 @@ const mockedAuthenticateAsync = LocalAuthentication.authenticateAsync as jest.Mo
   typeof LocalAuthentication.authenticateAsync
 >;
 
+beforeEach(() => appLock.__resetAuthenticatingStateForTests());
+
 describe('isSupported', () => {
   it('requires both hardware and an enrolled biometric', async () => {
     mockedHasHardware.mockResolvedValueOnce(true);
@@ -54,24 +56,63 @@ describe('isEnabled / setEnabled', () => {
 describe('authenticate', () => {
   it('resolves true only on a genuine successful result', async () => {
     mockedAuthenticateAsync.mockResolvedValueOnce({ success: true });
-    expect(await appLock.authenticate('Unlock Finora')).toBe(true);
+    expect(await appLock.authenticate('Unlock Fynora')).toBe(true);
   });
 
   it('collapses an unsuccessful result to false', async () => {
     mockedAuthenticateAsync.mockResolvedValueOnce({ success: false, error: 'authentication_failed' });
-    expect(await appLock.authenticate('Unlock Finora')).toBe(false);
+    expect(await appLock.authenticate('Unlock Fynora')).toBe(false);
   });
 
   it('fails closed to false if authenticateAsync itself throws', async () => {
     mockedAuthenticateAsync.mockRejectedValueOnce(new Error('hardware busy'));
-    expect(await appLock.authenticate('Unlock Finora')).toBe(false);
+    expect(await appLock.authenticate('Unlock Fynora')).toBe(false);
   });
 
   it('leaves the device passcode fallback enabled (does not set disableDeviceFallback)', async () => {
     mockedAuthenticateAsync.mockResolvedValueOnce({ success: true });
-    await appLock.authenticate('Unlock Finora');
+    await appLock.authenticate('Unlock Fynora');
 
     const call = mockedAuthenticateAsync.mock.calls[0][0];
     expect(call?.disableDeviceFallback).not.toBe(true);
+  });
+});
+
+// isAuthenticating/justFinishedAuthenticating exist for AppLockGate's foreground listener to tell
+// a self-induced AppState blip (from ANY caller's Face ID sheet, not just AppLockGate's own) apart
+// from the user genuinely returning to the app -- see appLock.ts's own comment on why this has to
+// be shared, module-level state rather than something scoped to one component.
+describe('isAuthenticating / justFinishedAuthenticating', () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  it('is false with nothing in flight and nothing ever resolved', () => {
+    expect(appLock.isAuthenticating()).toBe(false);
+    expect(appLock.justFinishedAuthenticating(1500)).toBe(false);
+  });
+
+  it('is true for the entire duration of an authenticate() call, false again once it resolves', async () => {
+    let resolveAuth: ((result: LocalAuthentication.LocalAuthenticationResult) => void) | undefined;
+    mockedAuthenticateAsync.mockImplementationOnce(
+      () => new Promise((resolve) => { resolveAuth = resolve; })
+    );
+
+    const pending = appLock.authenticate('Unlock Fynora');
+    expect(appLock.isAuthenticating()).toBe(true);
+
+    resolveAuth?.({ success: true });
+    await pending;
+    expect(appLock.isAuthenticating()).toBe(false);
+  });
+
+  it('reports justFinishedAuthenticating for windowMs after resolving, from either outcome', async () => {
+    const nowSpy = jest.spyOn(Date, 'now').mockReturnValue(1_000_000);
+    mockedAuthenticateAsync.mockResolvedValueOnce({ success: false, error: 'authentication_failed' });
+    await appLock.authenticate('Unlock Fynora');
+
+    nowSpy.mockReturnValue(1_000_000 + 200);
+    expect(appLock.justFinishedAuthenticating(1500)).toBe(true);
+
+    nowSpy.mockReturnValue(1_000_000 + 1500);
+    expect(appLock.justFinishedAuthenticating(1500)).toBe(false);
   });
 });
