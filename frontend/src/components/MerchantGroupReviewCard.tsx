@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
+import { motion } from 'framer-motion';
 import { Users, Check } from 'lucide-react';
 import { transactionsApi } from '../api/endpoints';
 import { CategoryCombobox } from './CategoryCombobox';
 import { CategoryCreateEditPanel } from './CategoryCreateEditPanel';
+import { ReviewCardSkeleton } from './ReviewCardSkeleton';
 import type { MerchantGroup } from '../types';
 
 /**
@@ -53,7 +55,7 @@ export function MerchantGroupReviewCard() {
     }
   }
 
-  if (loading || groups.length === 0) return null;
+  if (!loading && groups.length === 0) return null;
 
   return (
     <div className="bg-card rounded-xl2 p-5 shadow-card border border-border mb-6">
@@ -64,41 +66,48 @@ export function MerchantGroupReviewCard() {
       <p className="text-xs text-muted mb-4">
         These merchants have multiple transactions needing a category — apply one to all of them.
       </p>
-      {error && <p className="text-xs text-danger mb-3">{error}</p>}
-      <div className="space-y-3">
-        {groups.map((g) => (
-          <div key={g.merchantId} className={`flex gap-3 flex-wrap sm:flex-nowrap ${creatingFor === g.merchantId ? 'items-start' : 'items-center'}`}>
-            <div className="min-w-0 flex-1">
-              <p className="text-sm font-medium text-ink truncate">{g.merchantName}</p>
-              <p className="text-[11px] text-muted">{g.transactionIds.length} transactions</p>
-            </div>
-            <div className={`flex-shrink-0 ${creatingFor === g.merchantId ? 'w-64' : 'w-40'}`}>
-              {creatingFor === g.merchantId ? (
-                <CategoryCreateEditPanel
-                  mode="create"
-                  initialName={pendingText[g.merchantId] ?? ''}
-                  onSaved={(c) => { setPicks((p) => ({ ...p, [g.merchantId]: c.name })); setCreatingFor(null); }}
-                  onCancel={() => setCreatingFor(null)}
-                />
-              ) : (
-                <CategoryCombobox
-                  value={picks[g.merchantId] ?? ''}
-                  onChange={(name) => setPicks((p) => ({ ...p, [g.merchantId]: name }))}
-                  onCreateNew={(text) => { setPendingText((p) => ({ ...p, [g.merchantId]: text })); setCreatingFor(g.merchantId); }}
-                />
-              )}
-            </div>
-            <button
-              onClick={() => apply(g)}
-              disabled={!picks[g.merchantId] || applying === g.merchantId}
-              className="bg-primary text-on-primary text-xs font-medium rounded-lg px-3 py-1.5 flex items-center gap-1 flex-shrink-0 disabled:opacity-40"
-            >
-              <Check size={13} />
-              {applying === g.merchantId ? 'Applying…' : `Apply to ${g.transactionIds.length} transactions`}
-            </button>
+      {loading ? (
+        <ReviewCardSkeleton />
+      ) : (
+        <>
+          {error && <p className="text-xs text-danger mb-3">{error}</p>}
+          <div className="space-y-3">
+            {groups.map((g) => (
+              <div key={g.merchantId} className={`flex gap-3 flex-wrap sm:flex-nowrap ${creatingFor === g.merchantId ? 'items-start' : 'items-center'}`}>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium text-ink truncate">{g.merchantName}</p>
+                  <p className="text-[11px] text-muted">{g.transactionIds.length} transactions</p>
+                </div>
+                <div className={`flex-shrink-0 ${creatingFor === g.merchantId ? 'w-64' : 'w-40'}`}>
+                  {creatingFor === g.merchantId ? (
+                    <CategoryCreateEditPanel
+                      mode="create"
+                      initialName={pendingText[g.merchantId] ?? ''}
+                      onSaved={(c) => { setPicks((p) => ({ ...p, [g.merchantId]: c.name })); setCreatingFor(null); }}
+                      onCancel={() => setCreatingFor(null)}
+                    />
+                  ) : (
+                    <CategoryCombobox
+                      value={picks[g.merchantId] ?? ''}
+                      onChange={(name) => setPicks((p) => ({ ...p, [g.merchantId]: name }))}
+                      onCreateNew={(text) => { setPendingText((p) => ({ ...p, [g.merchantId]: text })); setCreatingFor(g.merchantId); }}
+                    />
+                  )}
+                </div>
+                <motion.button
+                  whileTap={{ scale: 0.96 }}
+                  onClick={() => apply(g)}
+                  disabled={!picks[g.merchantId] || applying === g.merchantId}
+                  className="bg-primary text-on-primary text-xs font-medium rounded-lg px-3 py-1.5 flex items-center gap-1 flex-shrink-0 disabled:opacity-40"
+                >
+                  <Check size={13} />
+                  {applying === g.merchantId ? 'Applying…' : `Apply to ${g.transactionIds.length} transactions`}
+                </motion.button>
+              </div>
+            ))}
           </div>
-        ))}
-      </div>
+        </>
+      )}
     </div>
   );
 }
