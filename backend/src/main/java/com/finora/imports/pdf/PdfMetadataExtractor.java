@@ -386,6 +386,12 @@ public class PdfMetadataExtractor {
     // class ever sees it. Two capture groups, not one pre-joined range string -- the two dates
     // are never adjacent in the source text the way parsePeriod's single-string entry point
     // expects, so the two groups are joined with " to " before calling it (see the call site).
+    //
+    // Kept its `continue` unlike STATEMENT_PERIOD_PROSE/FOR_PERIOD_LABELED below -- direct
+    // PositionedText inspection of all four real evidencing documents confirmed the row always
+    // ends at "Statement of account" (the same trailing text this pattern's own test fixture
+    // uses), never followed by an account number or any other field on the same physical line.
+    // Revisit if a real document ever shows one.
     private static final Pattern FROM_TO_LABELED_PERIOD = Pattern.compile(
             "(?i)\\bFrom\\s*:\\s*(" + DATE_TOKEN_SRC + ")\\s+To\\s*:\\s*(" + DATE_TOKEN_SRC + ")");
 

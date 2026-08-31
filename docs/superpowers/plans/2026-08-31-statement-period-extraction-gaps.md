@@ -695,3 +695,50 @@ that's a new, real finding to investigate, not something to paper over to hit th
 
 Push, open a PR against `main` summarizing the root-cause groups (A-E) and Group F's deferral, and
 report the PR URL.
+
+---
+
+## Post-implementation deviations
+
+Flagged by an independent adversarial review after execution — recorded here rather than editing
+the task steps above, so the plan stays an honest record of what was designed versus what TDD
+actually found.
+
+1. **Tasks D (`STATEMENT_PERIOD_PROSE`) and E (`FOR_PERIOD_LABELED`) both shipped WITHOUT the
+   `continue` shown in their "Write the minimal implementation" code blocks above.** Both real
+   evidencing lines (`canara.pdf`'s "Statement for A/c `<number>` for the period..."; the real PNB
+   ONE statement's "Statement of Account:`<number>` For Period:...") also carry an account number
+   under a separate label on the SAME physical line. Continuing after a successful period match
+   skipped that account-number extraction entirely — caught by two pre-existing regression tests
+   going red (`extract_recognizesACanaraAccountNumber_fromTheAcLine`,
+   `extract_recognizesAPnbAccountNumber_fromTheStatementOfAccountLine`), not anticipated by this
+   plan. Fixed by removing `continue` from both blocks, same reasoning
+   `STATEMENT_PERIOD_IN_SENTENCE`'s own doc comment already gives for an identical situation.
+
+2. **Two supporting fixes, not in the original plan, were needed for Tasks C and D's own fixtures
+   to parse at all:**
+   - `PERIOD_DATE_FORMATS` gained a `"MMM d, yyyy"` formatter (abbreviated month name first, comma
+     before year) — BOB's real date format ("Jun 01, 2026") extracted correctly via
+     `DATE_TOKEN_SRC`'s regex but had no `DateTimeFormatter` that could parse it.
+   - `DATE_TOKEN_SRC`'s first alternative widened from `,?\s?\d{2,4}` to `[-,]?\s?\d{2,4}` after
+     the month, to tolerate a hyphen (not just an optional comma) before the year — canara's real
+     format ("02-Jul-2026") hyphenates all three parts.
+
+   Both are purely additive (verified: neither removes or narrows any previously-matched shape)
+   and are documented in their own doc comments at the point of change in `PdfMetadataExtractor.java`.
+
+3. **Two already-committed real trace fixtures improved as a side effect**:
+   `hdfc-composite-deposit-schedules` and `hdfc-txn-date-narration-header` (both HDFC-shaped,
+   exercising `FROM_TO_LABELED_PERIOD`/`STATEMENT_FROM_LABELED_PERIOD`) previously showed
+   `statementPeriod: null .. null` in their committed `GoldenOutputSnapshotTest` golden files; both
+   now show the real recovered dates. Regenerated and reviewed — the diff touches only the
+   `statementPeriod` line in each file, nothing else changed.
+
+4. **`FROM_TO_LABELED_PERIOD` (Task A) kept its `continue`, unlike Tasks D/E above** — its own test
+   fixture's trailing text ("Statement of account") is exactly what a separate account-number
+   pattern (`STATEMENT_OF_ACCOUNT_SAME_LINE`) looks for, raising the same class of risk found in
+   points 1-2. Checked directly via `PositionedText` inspection against all four real evidencing
+   documents (`HDFC sav.pdf`, `Mann HDFC.pdf`, `Sanjay HDFC.pdf`; `HDFC 3 month.pdf` is
+   byte-identical to `HDFC sav.pdf` per ground truth) — every one's row ends at "Statement of
+   account" with nothing trailing it, so `continue` is safe for all real evidence. Documented in
+   `FROM_TO_LABELED_PERIOD`'s own doc comment; revisit if a real document ever shows otherwise.
