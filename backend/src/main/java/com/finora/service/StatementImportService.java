@@ -19,6 +19,8 @@ import com.finora.imports.ConfirmedRowIntegrity;
 import com.finora.imports.CoverageWarnings;
 import com.finora.imports.ImportService;
 import com.finora.security.OwnershipGuard;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -36,6 +38,8 @@ import java.util.stream.Collectors;
  */
 @Service
 public class StatementImportService {
+
+    private static final Logger log = LoggerFactory.getLogger(StatementImportService.class);
 
     private final StatementImportRepository statementImportRepository;
     private final AccountRepository accountRepository;
@@ -378,8 +382,29 @@ public class StatementImportService {
         // closing figure: whichever way it was written, these transactions are what the balance is
         // now standing on, and removing them without moving it leaves the column describing a
         // ledger that no longer exists.
-        if (!toRemove.isEmpty()) {
+        // ABSOLUTE-mode rows are reversed separately from ADDITIVE/NONE/UNKNOWN_LEGACY, and
+        // unconditionally (not gated on whether this statement had any transactions): an ABSOLUTE
+        // confirm's SET can move the balance even for a zero-row statement, if its stated closing
+        // balance corroborated against a carried-forward opening figure that differed from live
+        // Account.balance at that moment (see OpeningBalanceCarryForward) -- reverseAbsoluteContribution
+        // reads the persisted snapshot and live pointer, not this statement's rows, so row count is
+        // irrelevant to it. The row-based reversal below it is unchanged: negating a still-live
+        // ADDITIVE-mode row's current net effect (or an UNKNOWN_LEGACY row's, unfixed here --
+        // deliberately out of scope, see the design spec) is only correct when there are rows to
+        // sum, unlike ABSOLUTE's snapshot-based approach.
+        if (statementImport.getBalanceApplicationMode() == StatementImport.BalanceApplicationMode.ABSOLUTE
+                || !toRemove.isEmpty()) {
             accountRepository.findById(statementImport.getAccountId()).ifPresent(account -> {
+                if (statementImport.getBalanceApplicationMode() == StatementImport.BalanceApplicationMode.ABSOLUTE) {
+                    ReversalOutcome outcome = reverseAbsoluteContribution(statementImport, account);
+                    if (outcome == ReversalOutcome.NO_SNAPSHOT) {
+                        log.warn("Cannot reverse ABSOLUTE contribution for statement {}: no pre-SET "
+                                + "snapshot (row predates automatic reversal tracking). Balance not "
+                                + "adjusted; verify manually if needed.", statementImport.getId());
+                    }
+                    return;
+                }
+                if (toRemove.isEmpty()) return;
                 // Excludes an already-DUPLICATE-flagged row: its contribution to Account.balance
                 // was already reversed once, at the original statement's own confirm time
                 // (ImportService.summarise's BH-003 correction) -- summing it again here would
@@ -430,6 +455,42 @@ public class StatementImportService {
                 StatementImport::getUserId, userId, "Statement import");
     }
 
+    private enum ReversalOutcome { REVERSED, MOOT, NO_SNAPSHOT }
+
+    /**
+     * Reverses an ABSOLUTE-mode statement's contribution to {@code Account.balance} -- the SET
+     * {@code ImportService.persistSection} performed at this statement's own confirm time. Shared
+     * by {@code supersede} and {@code delete}, the only two callers that ever need to undo one.
+     *
+     * <p>A SET is only safely reversible while it is still the account's live anchor: {@link
+     * Account#getLastAbsoluteSetStatementId()} tells whether some OTHER SET (a later-period
+     * ABSOLUTE statement, or a manual {@code AccountService.update} balance edit) has already
+     * overwritten it, in which case {@code original}'s contribution is already fully gone and
+     * there is nothing to reverse -- correct, not a gap. See the "absolute balance reversal"
+     * design spec's "live anchor" section.
+     *
+     * <p>{@code original.getBalanceBeforeAbsoluteSet()} is null for any row confirmed before that
+     * field existed -- {@code BalanceApplicationMode} says ABSOLUTE, but nothing captured what the
+     * balance was before the SET. Guessing risks the exact corruption this exists to prevent, so
+     * this is treated the same conservative way {@code UNKNOWN_LEGACY} already is: no reversal,
+     * caller surfaces a warning instead.
+     */
+    private ReversalOutcome reverseAbsoluteContribution(StatementImport original, Account account) {
+        if (original.getBalanceBeforeAbsoluteSet() == null) {
+            return ReversalOutcome.NO_SNAPSHOT;
+        }
+        if (!original.getId().equals(account.getLastAbsoluteSetStatementId())) {
+            return ReversalOutcome.MOOT;
+        }
+        BigDecimal delta = original.getBalanceBeforeAbsoluteSet().subtract(original.getClosingBalance());
+        if (delta.signum() != 0) {
+            account.setBalance(account.getBalance().add(delta));
+        }
+        account.setLastAbsoluteSetStatementId(null);
+        accountRepository.save(account);
+        return ReversalOutcome.REVERSED;
+    }
+
     /**
      * "Import this one as a replacement?" (docs/proposals/statement-continuity-and-coverage-
      * integrity-proposal.md §0.3/§0.23): {@code replacementId} has already been confirmed as its
@@ -449,13 +510,10 @@ public class StatementImportService {
      * here. See that field's own doc comment for why recomputation is unsafe (totalCredits/
      * totalDebits were never persisted, and Transaction.amount is editable after import).
      *
-     * <p><b>ABSOLUTE original requires ABSOLUTE replacement.</b> When {@code original} is ABSOLUTE,
-     * no reversal is applied below on the reasoning that replacement's own confirm already
-     * overwrote the balance. That reasoning only holds when replacement's own confirm ALSO landed
-     * in ABSOLUTE mode -- otherwise replacement's confirm merely ADDED its net delta on top of the
-     * balance original's confirm had already set, and original's contribution would still be
-     * counted underneath it after this call. Refused up front rather than silently risking a
-     * corrupted balance; see the guard clause below for the exact condition.
+     * <p>When {@code original} is ABSOLUTE, {@link #reverseAbsoluteContribution} decides whether
+     * a reversal is still possible: it is a no-op when replacement's own confirm ALSO landed in
+     * ABSOLUTE mode (its own SET already fully overwrote original's), and reverses correctly
+     * otherwise. See that method's own doc comment.
      *
      * <p><b>ADDITIVE original skips its own reversal against an ABSOLUTE replacement, for the
      * mirror-image reason.</b> ABSOLUTE mode does not add to {@code Account.balance} -- it
@@ -489,26 +547,6 @@ public class StatementImportService {
             throw new ApiException(HttpStatus.BAD_REQUEST,
                     "The replacement statement has itself already been superseded.");
         }
-        // ABSOLUTE's no-reversal branch below rests entirely on "the replacement's own confirm
-        // already set the balance again, on top of whatever this one left behind" (see that case's
-        // own comment). That is only true when replacement's own confirm ALSO landed in ABSOLUTE
-        // mode -- if replacement's own closing balance was missing, unstated, or did not corroborate
-        // against its own rows, its confirm instead ADDED its net delta on top of the balance
-        // original's confirm already set, and original's full contribution never leaves the account
-        // balance. Refusing here is the same safe-direction choice UNKNOWN_LEGACY already makes
-        // (warn/refuse rather than silently risk corrupting Account.balance) -- reproduced with a
-        // concrete numeric example in SupersedeRefusesMismatchedAbsoluteModeIT.
-        if (original.getBalanceApplicationMode() == StatementImport.BalanceApplicationMode.ABSOLUTE
-                && replacement.getBalanceApplicationMode() != StatementImport.BalanceApplicationMode.ABSOLUTE) {
-            throw new ApiException(HttpStatus.BAD_REQUEST,
-                    "The replacement statement's own closing balance was not applied at its confirm "
-                            + "time (it stated none, or it did not match its transactions), so it cannot "
-                            + "safely supersede a statement whose closing balance WAS applied -- doing so "
-                            + "would leave the original statement's balance contribution still counted "
-                            + "underneath the replacement's. Re-import the replacement with a closing "
-                            + "balance that corroborates against its transactions, then try again.");
-        }
-
         // Only OK-status rows -- a row already excluded for its own reason (DUPLICATE/TRANSFER/
         // REFUND/REVERSAL/INVESTMENT_TRANSFER) is already invisible to RefundNetting.reportable(),
         // and overwriting its status here would lose the true reason it was excluded, same
@@ -560,10 +598,22 @@ public class StatementImportService {
                     }
                 }
             }
+            case ABSOLUTE -> {
+                Optional<Account> account = accountRepository.findById(original.getAccountId());
+                if (account.isPresent()) {
+                    ReversalOutcome outcome = reverseAbsoluteContribution(original, account.get());
+                    balanceReversed = outcome == ReversalOutcome.REVERSED;
+                    if (outcome == ReversalOutcome.NO_SNAPSHOT) {
+                        warning = "This statement predates automatic balance-reversal tracking, so its "
+                                + "contribution to the account balance could not be automatically reversed. "
+                                + "An administrator should verify this account's balance.";
+                    }
+                }
+            }
             case UNKNOWN_LEGACY -> warning = "This statement predates balance-application tracking, so its "
                     + "contribution to the account balance could not be automatically reversed. An "
                     + "administrator should verify this account's balance.";
-            case ABSOLUTE, NONE -> { /* no reversal -- see BalanceApplicationMode's own doc comment */ }
+            case NONE -> { /* no reversal -- nothing was ever moved, see BalanceApplicationMode's own doc comment */ }
         }
 
         original.setSupersededBy(replacementId);

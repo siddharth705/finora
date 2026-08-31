@@ -118,6 +118,41 @@ class AccountServiceTest {
         assertThat(result.balance()).isEqualByComparingTo(BigDecimal.valueOf(20000));
     }
 
+    // Bug fix: a manual balance edit is a fresh, fully-trusted baseline -- any statement's claim
+    // to being this account's live absolute-SET anchor must be invalidated by it, the same way a
+    // later ABSOLUTE-mode statement confirm invalidates an earlier one (see the "absolute balance
+    // reversal" design spec's Case D / product-decision note).
+    @Test
+    void update_withANewBalance_clearsTheAbsoluteSetPointer() {
+        Account existing = existingAccount();
+        existing.setLastAbsoluteSetStatementId(UUID.randomUUID());
+        when(accountRepository.findById(accountId)).thenReturn(java.util.Optional.of(existing));
+        when(accountRepository.save(any(Account.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        AccountDto.CreateRequest balanceEdit = new AccountDto.CreateRequest(
+                "Punjab National Bank", "SAVINGS", BigDecimal.valueOf(20000), null, null, null, null, null, null, null, null);
+
+        accountService.update(userId, accountId, balanceEdit, actingAdminId);
+
+        assertThat(existing.getLastAbsoluteSetStatementId()).isNull();
+    }
+
+    @Test
+    void update_withNoBalanceInRequest_leavesTheAbsoluteSetPointerUntouched() {
+        Account existing = existingAccount();
+        UUID existingPointer = UUID.randomUUID();
+        existing.setLastAbsoluteSetStatementId(existingPointer);
+        when(accountRepository.findById(accountId)).thenReturn(java.util.Optional.of(existing));
+        when(accountRepository.save(any(Account.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        AccountDto.CreateRequest renameOnly = new AccountDto.CreateRequest(
+                "Salary Account", "SAVINGS", null, null, null, null, null, null, null, null, null);
+
+        accountService.update(userId, accountId, renameOnly, actingAdminId);
+
+        assertThat(existing.getLastAbsoluteSetStatementId()).isEqualTo(existingPointer);
+    }
+
     @Test
     void create_withAnUnrecognizedBankId_fallsBackToOtherRatherThanThrowing() {
         when(accountRepository.save(any(Account.class))).thenAnswer(inv -> {

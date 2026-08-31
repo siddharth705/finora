@@ -26,18 +26,18 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Mirror image of {@link SupersedeRefusesMismatchedAbsoluteModeIT}: {@code
- * StatementImportService.supersede}'s ADDITIVE-mode reversal branch assumes it is undoing a delta
- * that replacement's own confirm layered its own change on top of. That assumption breaks when
- * replacement's own confirm lands in ABSOLUTE mode instead -- ABSOLUTE doesn't add to {@code
+ * Mirror image of the ABSOLUTE-original reversal case ({@code
+ * StatementImportServiceSupersedeTest#absolute_reversesToThePreSetBalance_whenStillTheLiveAnchor}):
+ * {@code StatementImportService.supersede}'s ADDITIVE-mode reversal branch assumes it is undoing a
+ * delta that replacement's own confirm layered its own change on top of. That assumption breaks
+ * when replacement's own confirm lands in ABSOLUTE mode instead -- ABSOLUTE doesn't add to {@code
  * Account.balance}, it OVERWRITES it outright with replacement's own stated closing balance
  * ({@code ImportService.persistSection}), discarding original's ADDITIVE contribution along with
  * everything else that predated it. Reversing original's delta against a balance that already
  * discarded it would move the balance by that amount for no reason.
  *
- * <p>Unlike the ABSOLUTE-original case this mirrors, there's nothing to refuse here: the overwrite
- * already leaves the balance correct on its own, so {@code supersede} simply skips the reversal
- * (same as the ABSOLUTE/NONE original cases already do) rather than rejecting the call.
+ * <p>Unlike the ABSOLUTE-original case this mirrors, there's nothing to reverse here: the overwrite
+ * already leaves the balance correct on its own, so {@code supersede} simply skips the reversal.
  *
  * <p>Reproduced end-to-end against a real database for the same reason as the sibling IT: a mock of
  * {@code StatementImportService} alone can't exercise this, since the double-count this guards
