@@ -143,7 +143,15 @@ public class AccountService {
         // set it to null whenever a caller sends a partial payload -- e.g. Setup.tsx's "Rename
         // Account" action, which only sends {name, accountType} -- and accountRepository.save()
         // would then fail outright with a NOT NULL constraint violation on every rename.
-        if (req.balance() != null) a.setBalance(req.balance());
+        if (req.balance() != null) {
+            a.setBalance(req.balance());
+            // A manual balance edit is a fresh, fully-trusted baseline -- any statement's claim to
+            // being this account's live absolute-SET anchor is invalidated by it, the same way a
+            // later ABSOLUTE-mode statement confirm would invalidate an earlier one. See the
+            // "absolute balance reversal" design spec's Case D / product-decision note: automatic
+            // balance lineage is intentionally abandoned once a manual edit occurs.
+            a.setLastAbsoluteSetStatementId(null);
+        }
         if (req.creditLimit() != null) a.setCreditLimit(req.creditLimit());
         if (req.dueDate() != null) a.setDueDate(req.dueDate());
         if (req.accountHolderName() != null) a.setAccountHolderName(req.accountHolderName());

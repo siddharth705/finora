@@ -48,16 +48,16 @@ Baseline findings from reading the current tree before writing this plan (all co
 - Consumes: nothing
 - Produces: the `expo-haptics` package, importable as `import * as Haptics from 'expo-haptics'` by Task 2
 
-- [ ] **Step 1: Manual verification setup** — no automated test is meaningful for a dependency-manifest change by itself; this task is exercised for real once Task 2's unit tests run against the real package.
+- [x] **Step 1: Manual verification setup** — no automated test is meaningful for a dependency-manifest change by itself; this task is exercised for real once Task 2's unit tests run against the real package.
 ```bash
 cd /Users/sid/Downloads/finora/.claude/worktrees/mobile-ux-excellence/mobile
 npx expo install expo-haptics
 ```
 This resolves the exact patch version Expo SDK 57's bundled-native-module manifest blesses (every other `expo-*` package in `package.json` is pinned the same way, e.g. `"expo-screen-capture": "~57.0.2"`) — do not hand-pick a version number.
-- [ ] **Step 2: Verify** — confirm the entry landed in `package.json` on the `~57.0.x` line and that `npx tsc --noEmit` (via `npm run typecheck`) still passes with no new errors.
-- [ ] **Step 3: N/A** (no implementation code in this task)
-- [ ] **Step 4: N/A**
-- [ ] **Step 5: Commit** — `git add package.json package-lock.json` / `git commit -m "chore(mobile): add expo-haptics"`
+- [x] **Step 2: Verify** — confirm the entry landed in `package.json` on the `~57.0.x` line and that `npx tsc --noEmit` (via `npm run typecheck`) still passes with no new errors.
+- [x] **Step 3: N/A** (no implementation code in this task)
+- [x] **Step 4: N/A**
+- [x] **Step 5: Commit** — `git add package.json package-lock.json` / `git commit -m "chore(mobile): add expo-haptics"`
 
 ---
 
@@ -72,7 +72,7 @@ This resolves the exact patch version Expo SDK 57's bundled-native-module manife
 - Consumes: `expo-haptics` (Task 1)
 - Produces: `hapticSuccess()`, `hapticWarning()`, `hapticSelection()`, `hapticImpact()` — the four functions every later task in Item A calls instead of touching `expo-haptics` directly
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 ```ts
 // src/lib/haptics.test.ts
 import * as Haptics from 'expo-haptics';
@@ -102,7 +102,7 @@ describe('haptics', () => {
   });
 });
 ```
-- [ ] **Step 2: Run test to verify it fails** — `npm test -- src/lib/haptics.test.ts` — Expected: FAIL, `Cannot find module './haptics'` (and, until Step 2b below lands, `expo-haptics` has no JS implementation under the runner and would throw on import).
+- [x] **Step 2: Run test to verify it fails** — `npm test -- src/lib/haptics.test.ts` — Expected: FAIL, `Cannot find module './haptics'` (and, until Step 2b below lands, `expo-haptics` has no JS implementation under the runner and would throw on import).
 
 Add the mock this test (and every later screen test in Item A) needs, in `src/test/setup.ts`, immediately after the existing `expo-screen-capture` mock block (around line 209):
 ```ts
@@ -118,7 +118,7 @@ jest.mock('expo-haptics', () => ({
   ImpactFeedbackStyle: { Light: 'light', Medium: 'medium', Heavy: 'heavy', Rigid: 'rigid', Soft: 'soft' },
 }));
 ```
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 ```ts
 // src/lib/haptics.ts
 import * as Haptics from 'expo-haptics';
@@ -159,8 +159,8 @@ export function hapticImpact(): void {
   void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 }
 ```
-- [ ] **Step 4: Run test to verify it passes** — `npm test -- src/lib/haptics.test.ts` — Expected: PASS, all four assertions green.
-- [ ] **Step 5: Commit** — `git add src/lib/haptics.ts src/lib/haptics.test.ts src/test/setup.ts` / `git commit -m "feat(mobile): add haptics wrapper around expo-haptics"`
+- [x] **Step 4: Run test to verify it passes** — `npm test -- src/lib/haptics.test.ts` — Expected: PASS, all four assertions green.
+- [x] **Step 5: Commit** — `git add src/lib/haptics.ts src/lib/haptics.test.ts src/test/setup.ts` / `git commit -m "feat(mobile): add haptics wrapper around expo-haptics"`
 
 ---
 
@@ -176,14 +176,14 @@ export function hapticImpact(): void {
 
 `ImportScreen.tsx` currently has **no test file at all** (`src/screens/import/` only has `StagedRowCard.test.tsx`). Building one from scratch to exercise `confirmImport()`'s success path would require mocking the full upload/review harness (`pickStatement`, `importApi.stageCsv`/`stagePdf`, `categoriesApi.list`, `accountsApi.list`, `importApi.confirm`, `statementImportsApi.confirmReimport`, `useRoute`) — a much larger undertaking than this one-line haptic wire, and out of scope for this task. The underlying `hapticSuccess()` call itself is already unit-tested (Task 2). Manual verification: run the app, complete an import through to the summary screen, confirm a success haptic fires on a physical device (haptics don't simulate on the iOS Simulator/most Android emulators).
 
-- [ ] **Step 1: Manual verification setup** — read the real success branch first (already done above): `confirmImport()`'s try block, `src/screens/import/ImportScreen.tsx:274-277`, currently:
+- [x] **Step 1: Manual verification setup** — read the real success branch first (already done above): `confirmImport()`'s try block, `src/screens/import/ImportScreen.tsx:274-277`, currently:
 ```tsx
       setSummary(result);
       setStep('summary');
       invalidateFinancialData(queryClient);
 ```
-- [ ] **Step 2: N/A** (no automated test to fail)
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 2: N/A** (no automated test to fail)
+- [x] **Step 3: Write minimal implementation**
 ```tsx
 import { hapticSuccess } from '../../lib/haptics';
 ```
@@ -196,8 +196,8 @@ add near the top import block (after the `invalidateFinancialData` import), then
       // the request resolves would celebrate a network failure too.
       hapticSuccess();
 ```
-- [ ] **Step 4: Manual verification** — on a physical device: Import tab → pick a CSV → review → "Import N transactions" → feel a success haptic exactly as the summary screen appears.
-- [ ] **Step 5: Commit** — `git add src/screens/import/ImportScreen.tsx` / `git commit -m "feat(mobile): success haptic when an import completes"`
+- [x] **Step 4: Manual verification** — on a physical device: Import tab → pick a CSV → review → "Import N transactions" → feel a success haptic exactly as the summary screen appears.
+- [x] **Step 5: Commit** — `git add src/screens/import/ImportScreen.tsx` / `git commit -m "feat(mobile): success haptic when an import completes"`
 
 ---
 
@@ -211,7 +211,7 @@ add near the top import block (after the `invalidateFinancialData` import), then
 - Consumes: `hapticSuccess`, `hapticWarning` (Task 2)
 - Produces: nothing new consumed by later tasks
 
-- [ ] **Step 1: Write the failing test** — add to the existing `src/screens/BudgetsScreen.test.tsx`, right after its current `jest.mock('../api/endpoints', ...)` block:
+- [x] **Step 1: Write the failing test** — add to the existing `src/screens/BudgetsScreen.test.tsx`, right after its current `jest.mock('../api/endpoints', ...)` block:
 ```tsx
 jest.mock('../lib/haptics', () => ({
   hapticSuccess: jest.fn(),
@@ -272,8 +272,8 @@ Then extend three existing tests with new assertions (leaving everything else in
     expect(hapticWarning).toHaveBeenCalledTimes(3);
   });
 ```
-- [ ] **Step 2: Run test to verify it fails** — `npm test -- src/screens/BudgetsScreen.test.tsx` — Expected: FAIL on the three new `expect(hapticSuccess/hapticWarning)` lines (`hapticSuccess`/`hapticWarning` never called — `save()` doesn't call them yet).
-- [ ] **Step 3: Write minimal implementation** — in `src/screens/BudgetsScreen.tsx`, add the import:
+- [x] **Step 2: Run test to verify it fails** — `npm test -- src/screens/BudgetsScreen.test.tsx` — Expected: FAIL on the three new `expect(hapticSuccess/hapticWarning)` lines (`hapticSuccess`/`hapticWarning` never called — `save()` doesn't call them yet).
+- [x] **Step 3: Write minimal implementation** — in `src/screens/BudgetsScreen.tsx`, add the import:
 ```tsx
 import { hapticSuccess, hapticWarning } from '../lib/haptics';
 ```
@@ -310,8 +310,8 @@ and change `save()` (lines 49-78):
     });
   }
 ```
-- [ ] **Step 4: Run test to verify it passes** — `npm test -- src/screens/BudgetsScreen.test.tsx` — Expected: PASS, including the pre-existing tests (unaffected by this change).
-- [ ] **Step 5: Commit** — `git add src/screens/BudgetsScreen.tsx src/screens/BudgetsScreen.test.tsx` / `git commit -m "feat(mobile): success/warning haptics on budget save"`
+- [x] **Step 4: Run test to verify it passes** — `npm test -- src/screens/BudgetsScreen.test.tsx` — Expected: PASS, including the pre-existing tests (unaffected by this change).
+- [x] **Step 5: Commit** — `git add src/screens/BudgetsScreen.tsx src/screens/BudgetsScreen.test.tsx` / `git commit -m "feat(mobile): success/warning haptics on budget save"`
 
 ---
 
@@ -327,7 +327,7 @@ and change `save()` (lines 49-78):
 
 This is the shared picker sheet behind both `ImportScreen.tsx`'s category picker and `BudgetsScreen.tsx`'s category picker (`OptionPickerModal`'s own file comment: "Replaces the web's inline `<select>`... the import review's category dropdown, the budget form's category, the reports month picker"). One wiring point covers the brief's "category selection" for both real flows without touching either screen.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 ```tsx
 // src/components/OptionPickerModal.test.tsx
 import { fireEvent, render, screen } from '@testing-library/react-native';
@@ -357,8 +357,8 @@ describe('OptionPickerModal', () => {
   });
 });
 ```
-- [ ] **Step 2: Run test to verify it fails** — `npm test -- src/components/OptionPickerModal.test.tsx` — Expected: FAIL, `hapticSelection` never called.
-- [ ] **Step 3: Write minimal implementation** — add the import to `src/components/OptionPickerModal.tsx`:
+- [x] **Step 2: Run test to verify it fails** — `npm test -- src/components/OptionPickerModal.test.tsx` — Expected: FAIL, `hapticSelection` never called.
+- [x] **Step 3: Write minimal implementation** — add the import to `src/components/OptionPickerModal.tsx`:
 ```tsx
 import { hapticSelection } from '../lib/haptics';
 ```
@@ -375,8 +375,8 @@ and change the option `Pressable`'s `onPress` (lines 42-52):
                 android_ripple={{ color: c.border }}
               >
 ```
-- [ ] **Step 4: Run test to verify it passes** — `npm test -- src/components/OptionPickerModal.test.tsx` — Expected: PASS.
-- [ ] **Step 5: Commit** — `git add src/components/OptionPickerModal.tsx src/components/OptionPickerModal.test.tsx` / `git commit -m "feat(mobile): selection haptic in the shared option picker"`
+- [x] **Step 4: Run test to verify it passes** — `npm test -- src/components/OptionPickerModal.test.tsx` — Expected: PASS.
+- [x] **Step 5: Commit** — `git add src/components/OptionPickerModal.tsx src/components/OptionPickerModal.test.tsx` / `git commit -m "feat(mobile): selection haptic in the shared option picker"`
 
 ---
 
@@ -390,7 +390,7 @@ and change the option `Pressable`'s `onPress` (lines 42-52):
 - Consumes: `hapticImpact` (Task 2)
 - Produces: nothing new consumed by later tasks
 
-- [ ] **Step 1: Write the failing test** — add to `src/screens/LedgerScreen.test.tsx`, alongside its existing `jest.mock('../api/endpoints', ...)`:
+- [x] **Step 1: Write the failing test** — add to `src/screens/LedgerScreen.test.tsx`, alongside its existing `jest.mock('../api/endpoints', ...)`:
 ```tsx
 jest.mock('../lib/haptics', () => ({ hapticImpact: jest.fn() }));
 ```
@@ -411,8 +411,8 @@ Add a new test using the file's existing `renderScreen`/`txn`/`page` helpers:
   });
 ```
 (`waitFor` and `fireEvent` are already imported in this file per its existing usage; if `waitFor` isn't already in the import list, add it alongside `fireEvent, render, screen`.)
-- [ ] **Step 2: Run test to verify it fails** — `npm test -- src/screens/LedgerScreen.test.tsx` — Expected: FAIL, `hapticImpact` never called.
-- [ ] **Step 3: Write minimal implementation** — add the import to `src/screens/LedgerScreen.tsx`:
+- [x] **Step 2: Run test to verify it fails** — `npm test -- src/screens/LedgerScreen.test.tsx` — Expected: FAIL, `hapticImpact` never called.
+- [x] **Step 3: Write minimal implementation** — add the import to `src/screens/LedgerScreen.tsx`:
 ```tsx
 import { hapticImpact } from '../lib/haptics';
 ```
@@ -434,8 +434,8 @@ and change `confirmDelete` (lines 63-73):
     );
   }
 ```
-- [ ] **Step 4: Run test to verify it passes** — `npm test -- src/screens/LedgerScreen.test.tsx` — Expected: PASS, including all pre-existing tests in the file.
-- [ ] **Step 5: Commit** — `git add src/screens/LedgerScreen.tsx src/screens/LedgerScreen.test.tsx` / `git commit -m "feat(mobile): impact haptic on the ledger's long-press-to-delete"`
+- [x] **Step 4: Run test to verify it passes** — `npm test -- src/screens/LedgerScreen.test.tsx` — Expected: PASS, including all pre-existing tests in the file.
+- [x] **Step 5: Commit** — `git add src/screens/LedgerScreen.tsx src/screens/LedgerScreen.test.tsx` / `git commit -m "feat(mobile): impact haptic on the ledger's long-press-to-delete"`
 
 ---
 
@@ -456,7 +456,7 @@ and change `confirmDelete` (lines 63-73):
 
 **Version**: RN `0.86.2` has no old-architecture path, so Reanimated **4.x** is required (Reanimated 3 explicitly refuses to run with `react-native-worklets` installed, and Reanimated 4 requires it as a dependency — the two lines are mutually exclusive, not a preference). Reanimated 4 also moved its babel plugin into a separate package: `'react-native-reanimated/plugin'` (the 3.x name) becomes `'react-native-worklets/plugin'` in 4.x, still required to be **last** in the plugins array.
 
-- [ ] **Step 1: Manual verification setup** — pre-flight and install, in order:
+- [x] **Step 1: Manual verification setup** — pre-flight and install, in order:
 ```bash
 cd /Users/sid/Downloads/finora/.claude/worktrees/mobile-ux-excellence/mobile
 # Pre-flight: react-native-worklets' published compatibility table (0.7.x/0.8.x lines) lists RN
@@ -495,10 +495,10 @@ Add Reanimated's own documented test setup to `src/test/setup.ts`, near the top 
 // renders them.
 require('react-native-reanimated').setUpTests();
 ```
-- [ ] **Step 2: Verify** — `npm run typecheck` passes; `npm test` (full suite) still passes with no new failures, confirming the new babel config didn't change how anything else compiles.
-- [ ] **Step 3: N/A** (no implementation code beyond the config files above)
-- [ ] **Step 4: N/A**
-- [ ] **Step 5: Commit** — `git add package.json package-lock.json babel.config.js src/test/setup.ts` / `git commit -m "chore(mobile): add react-native-reanimated 4.x + babel/jest wiring"`
+- [x] **Step 2: Verify** — `npm run typecheck` passes; `npm test` (full suite) still passes with no new failures, confirming the new babel config didn't change how anything else compiles.
+- [x] **Step 3: N/A** (no implementation code beyond the config files above)
+- [x] **Step 4: N/A**
+- [x] **Step 5: Commit** — `git add package.json package-lock.json babel.config.js src/test/setup.ts` / `git commit -m "chore(mobile): add react-native-reanimated 4.x + babel/jest wiring"`
 
 **Native rebuild required before this works on-device**: Reanimated is native code. The app already needs a custom dev client (Firebase's native modules force that already — this isn't a new requirement), but the *existing* dev client binary must be rebuilt before Reanimated will load — a JS-only reload/OTA update is not enough for a new native module. Run `npx expo run:ios` / `npx expo run:ios --device` (or `eas build --profile development`) before testing Task 8+ on a simulator/device.
 
@@ -514,7 +514,7 @@ require('react-native-reanimated').setUpTests();
 - Consumes: `fmtCurrency` (`src/lib/format.ts:11-13`), `react-native-reanimated` (Task 7)
 - Produces: `AnimatedNumber({ value: number; style?: StyleProp<TextStyle>; duration?: number; testID?: string })`, used by Tasks 9 and 10
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 ```tsx
 // src/components/AnimatedNumber.test.tsx
 import { render, screen, waitFor } from '@testing-library/react-native';
@@ -544,8 +544,8 @@ describe('AnimatedNumber', () => {
   });
 });
 ```
-- [ ] **Step 2: Run test to verify it fails** — `npm test -- src/components/AnimatedNumber.test.tsx` — Expected: FAIL, `Cannot find module './AnimatedNumber'`.
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 2: Run test to verify it fails** — `npm test -- src/components/AnimatedNumber.test.tsx` — Expected: FAIL, `Cannot find module './AnimatedNumber'`.
+- [x] **Step 3: Write minimal implementation**
 ```tsx
 // src/components/AnimatedNumber.tsx
 import { useEffect } from 'react';
@@ -612,8 +612,8 @@ const styles = StyleSheet.create({
   text: { padding: 0, margin: 0 },
 });
 ```
-- [ ] **Step 4: Run test to verify it passes** — `npm test -- src/components/AnimatedNumber.test.tsx` — Expected: PASS. (Relies on Task 7's `setUpTests()` call in `src/test/setup.ts` — if these fail with a Reanimated runtime error, verify that call landed first.)
-- [ ] **Step 5: Commit** — `git add src/components/AnimatedNumber.tsx src/components/AnimatedNumber.test.tsx` / `git commit -m "feat(mobile): add AnimatedNumber component on reanimated"`
+- [x] **Step 4: Run test to verify it passes** — `npm test -- src/components/AnimatedNumber.test.tsx` — Expected: PASS. (Relies on Task 7's `setUpTests()` call in `src/test/setup.ts` — if these fail with a Reanimated runtime error, verify that call landed first.)
+- [x] **Step 5: Commit** — `git add src/components/AnimatedNumber.tsx src/components/AnimatedNumber.test.tsx` / `git commit -m "feat(mobile): add AnimatedNumber component on reanimated"`
 
 ---
 
@@ -631,7 +631,7 @@ const styles = StyleSheet.create({
 
 Also: `adjustsFontSizeToFit`/`numberOfLines` on the current KPI `<Text>` (`DashboardScreen.tsx:217-219`) have no `TextInput` equivalent — `TextInput` has no `adjustsFontSizeToFit` prop at all. `numberOfLines={1}`'s effect is preserved for free (a non-`multiline` `TextInput` is already single-line), but the auto-shrink-to-fit behaviour is not. Accepted deliberately here: `fmtCurrency` rounds to whole rupees and the KPI card (`48%` width) has comfortable headroom at this font size for realistic balances; flagged in-code as a place to revisit if a real balance is ever reported clipping, rather than silently dropped.
 
-- [ ] **Step 1: Write the failing test** — in `src/screens/DashboardScreen.test.tsx`, add a small helper near the top (after the existing `dimensionsGetSpy` declaration) and rewrite the four affected assertions:
+- [x] **Step 1: Write the failing test** — in `src/screens/DashboardScreen.test.tsx`, add a small helper near the top (after the existing `dimensionsGetSpy` declaration) and rewrite the four affected assertions:
 ```tsx
 /**
  * The Expenses KPI renders through AnimatedNumber now -- a non-editable TextInput, so its
@@ -667,8 +667,8 @@ and in `'is unaffected when every category already fits'` (around line 247):
     expect(screen.getByText('₹25,000')).toBeTruthy();
     expect(expensesKpiValue()).toBe('₹25,000');
 ```
-- [ ] **Step 2: Run test to verify it fails** — `npm test -- src/screens/DashboardScreen.test.tsx` — Expected: FAIL, `expensesKpiValue()` throws (`Unable to find an element with testID: kpi-Expenses` — the KPI grid doesn't render `AnimatedNumber` or set that `testID` yet).
-- [ ] **Step 3: Write minimal implementation** — in `src/screens/DashboardScreen.tsx`, add the import:
+- [x] **Step 2: Run test to verify it fails** — `npm test -- src/screens/DashboardScreen.test.tsx` — Expected: FAIL, `expensesKpiValue()` throws (`Unable to find an element with testID: kpi-Expenses` — the KPI grid doesn't render `AnimatedNumber` or set that `testID` yet).
+- [x] **Step 3: Write minimal implementation** — in `src/screens/DashboardScreen.tsx`, add the import:
 ```tsx
 import { AnimatedNumber } from '../components/AnimatedNumber';
 ```
@@ -724,8 +724,8 @@ Change the KPI grid rendering (lines 202-235) — the two edits are the `accessi
         ))}
       </View>
 ```
-- [ ] **Step 4: Run test to verify it passes** — `npm test -- src/screens/DashboardScreen.test.tsx` — Expected: PASS, all tests including the pre-existing ones untouched by this task.
-- [ ] **Step 5: Commit** — `git add src/screens/DashboardScreen.tsx src/screens/DashboardScreen.test.tsx` / `git commit -m "feat(mobile): animate Dashboard KPI values"`
+- [x] **Step 4: Run test to verify it passes** — `npm test -- src/screens/DashboardScreen.test.tsx` — Expected: PASS, all tests including the pre-existing ones untouched by this task.
+- [x] **Step 5: Commit** — `git add src/screens/DashboardScreen.tsx src/screens/DashboardScreen.test.tsx` / `git commit -m "feat(mobile): animate Dashboard KPI values"`
 
 ---
 
@@ -740,9 +740,9 @@ Change the KPI grid rendering (lines 202-235) — the two edits are the `accessi
 
 The budget card's `spentThisMonth` / `monthlyLimit` pair (`budgetAmounts`, lines 160-162) is the clear "budget total" in this screen. `budgetFoot`'s remaining-amount sentence (lines 165-169, `"₹X left this month"` / `"₹X over budget"`) is deliberately left alone: it's a full sentence with the number embedded mid-string, and `AnimatedNumber` renders on its own `TextInput`, so animating just the number would mean splitting one sentence into three fragments (`Text` + `AnimatedNumber` + `Text`) fighting the parent `accessible accessibilityLabel` grouping one line above it (`BudgetsScreen.tsx:148-154`) for no real visual gain. No existing test in `BudgetsScreen.test.tsx` asserts on the visible `budgetAmounts` text (confirmed by grep — only `'Set Budget'`/`'Pick a category first.'` are matched via `getByText`), so this task needs no test-file changes.
 
-- [ ] **Step 1: Manual verification setup** — this is a pure visual layout change to an already-rendered value; `AnimatedNumber`'s own formatting/clamping behaviour is fully covered by Task 8's test, and no `BudgetsScreen.test.tsx` assertion touches this text today (verified above), so there is nothing new to pin here beyond a manual check.
-- [ ] **Step 2: N/A**
-- [ ] **Step 3: Write minimal implementation** — add the import to `src/screens/BudgetsScreen.tsx`:
+- [x] **Step 1: Manual verification setup** — this is a pure visual layout change to an already-rendered value; `AnimatedNumber`'s own formatting/clamping behaviour is fully covered by Task 8's test, and no `BudgetsScreen.test.tsx` assertion touches this text today (verified above), so there is nothing new to pin here beyond a manual check.
+- [x] **Step 2: N/A**
+- [x] **Step 3: Write minimal implementation** — add the import to `src/screens/BudgetsScreen.tsx`:
 ```tsx
 import { AnimatedNumber } from '../components/AnimatedNumber';
 ```
@@ -763,8 +763,8 @@ and add a style next to the existing `budgetAmounts` entry in the `StyleSheet.cr
 ```tsx
   budgetAmountsRow: { flexDirection: 'row', alignItems: 'baseline' },
 ```
-- [ ] **Step 4: Manual verification** — Budgets tab (More → Budgets): confirm each card still reads `"₹4,000 / ₹10,000"`-style, and that saving a new limit for a category with an existing budget (upsert) causes the total to visibly tick to the new value rather than jump-cutting. Run `npm test -- src/screens/BudgetsScreen.test.tsx` to confirm the pre-existing suite still passes unmodified.
-- [ ] **Step 5: Commit** — `git add src/screens/BudgetsScreen.tsx` / `git commit -m "feat(mobile): animate budget totals"`
+- [x] **Step 4: Manual verification** — Budgets tab (More → Budgets): confirm each card still reads `"₹4,000 / ₹10,000"`-style, and that saving a new limit for a category with an existing budget (upsert) causes the total to visibly tick to the new value rather than jump-cutting. Run `npm test -- src/screens/BudgetsScreen.test.tsx` to confirm the pre-existing suite still passes unmodified.
+- [x] **Step 5: Commit** — `git add src/screens/BudgetsScreen.tsx` / `git commit -m "feat(mobile): animate budget totals"`
 
 ---
 
@@ -784,7 +784,7 @@ Constraint respected throughout: this codebase deliberately hand-rolls SVG chart
 - Consumes: `DONUT_RADIUS` (already exported in this file)
 - Produces: `arcLength(sweepDegrees: number): number`, `DONUT_CIRCUMFERENCE: number`, `polylineLength(points: { x: number; y: number }[]): number` — used by Task 12
 
-- [ ] **Step 1: Write the failing test** — append to `src/lib/chartGeometry.test.ts`:
+- [x] **Step 1: Write the failing test** — append to `src/lib/chartGeometry.test.ts`:
 ```ts
 import {
   DONUT_CIRCUMFERENCE, DONUT_RADIUS, arcLength, polylineLength,
@@ -813,8 +813,8 @@ describe('chart reveal geometry', () => {
   });
 });
 ```
-- [ ] **Step 2: Run test to verify it fails** — `npm test -- src/lib/chartGeometry.test.ts` — Expected: FAIL, `arcLength`/`DONUT_CIRCUMFERENCE`/`polylineLength` are not exported yet.
-- [ ] **Step 3: Write minimal implementation** — append to `src/lib/chartGeometry.ts`, after `buildArcs`:
+- [x] **Step 2: Run test to verify it fails** — `npm test -- src/lib/chartGeometry.test.ts` — Expected: FAIL, `arcLength`/`DONUT_CIRCUMFERENCE`/`polylineLength` are not exported yet.
+- [x] **Step 3: Write minimal implementation** — append to `src/lib/chartGeometry.ts`, after `buildArcs`:
 ```ts
 export const DONUT_CIRCUMFERENCE = 2 * Math.PI * DONUT_RADIUS;
 
@@ -844,8 +844,8 @@ export function polylineLength(points: { x: number; y: number }[]): number {
   return total;
 }
 ```
-- [ ] **Step 4: Run test to verify it passes** — `npm test -- src/lib/chartGeometry.test.ts` — Expected: PASS, including every pre-existing test in the file.
-- [ ] **Step 5: Commit** — `git add src/lib/chartGeometry.ts src/lib/chartGeometry.test.ts` / `git commit -m "feat(mobile): add chart-reveal geometry helpers"`
+- [x] **Step 4: Run test to verify it passes** — `npm test -- src/lib/chartGeometry.test.ts` — Expected: PASS, including every pre-existing test in the file.
+- [x] **Step 5: Commit** — `git add src/lib/chartGeometry.ts src/lib/chartGeometry.test.ts` / `git commit -m "feat(mobile): add chart-reveal geometry helpers"`
 
 ---
 
@@ -859,9 +859,9 @@ export function polylineLength(points: { x: number; y: number }[]): number {
 - Consumes: `arcLength`, `DONUT_CIRCUMFERENCE`, `arcPath`, `DONUT_CENTER`, `DONUT_RADIUS` (`src/lib/chartGeometry.ts`, Task 11), `react-native-reanimated` (Task 7)
 - Produces: `RevealArc({ a, color, strokeWidth, delay? })`, `RevealPolyline({ points, length, color, strokeWidth, delay? })`, `CHART_REVEAL_DURATION` — used by Tasks 13, 14, 15
 
-- [ ] **Step 1: Manual verification setup** — read `DonutChart.tsx`'s existing arc rendering (lines 54-75) and `CashFlowChart.tsx`/`TrendChart.tsx`'s `Polyline` rendering (already done above) to match the real prop shapes these replace.
-- [ ] **Step 2: N/A**
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 1: Manual verification setup** — read `DonutChart.tsx`'s existing arc rendering (lines 54-75) and `CashFlowChart.tsx`/`TrendChart.tsx`'s `Polyline` rendering (already done above) to match the real prop shapes these replace.
+- [x] **Step 2: N/A**
+- [x] **Step 3: Write minimal implementation**
 ```tsx
 // src/components/charts/ChartReveal.tsx
 import { useEffect } from 'react';
@@ -983,8 +983,8 @@ export function RevealPolyline({ points, length, color, strokeWidth, delay = 0 }
   );
 }
 ```
-- [ ] **Step 4: Manual verification** — nothing to run yet in isolation; verified together with Tasks 13-15 on-device (Reanimated + react-native-svg animated props require a real rebuilt dev client, not just Jest — see Task 7's rebuild note).
-- [ ] **Step 5: Commit** — `git add src/components/charts/ChartReveal.tsx` / `git commit -m "feat(mobile): add RevealArc/RevealPolyline chart draw-in primitives"`
+- [x] **Step 4: Manual verification** — nothing to run yet in isolation; verified together with Tasks 13-15 on-device (Reanimated + react-native-svg animated props require a real rebuilt dev client, not just Jest — see Task 7's rebuild note).
+- [x] **Step 5: Commit** — `git add src/components/charts/ChartReveal.tsx` / `git commit -m "feat(mobile): add RevealArc/RevealPolyline chart draw-in primitives"`
 
 ---
 
@@ -996,8 +996,8 @@ export function RevealPolyline({ points, length, color, strokeWidth, delay = 0 }
 **Interfaces:**
 - Consumes: `RevealArc` (Task 12)
 
-- [ ] **Step 1-2: N/A** — see Item C-wide test note.
-- [ ] **Step 3: Write minimal implementation** — add the import:
+- [x] **Step 1-2: N/A** — see Item C-wide test note.
+- [x] **Step 3: Write minimal implementation** — add the import:
 ```tsx
 import { RevealArc } from './ChartReveal';
 ```
@@ -1018,8 +1018,8 @@ Replace the arc-rendering block (lines 52-77) — the empty-ring branch (lines 3
         </Svg>
 ```
 (`Circle`/`Path` imports from `react-native-svg` are still needed for the empty-ring branch above and can stay; `G` stays too.)
-- [ ] **Step 4: Manual verification** — Dashboard tab, "Spending by Category": on load, slices should sweep in one after another (60ms stagger) rather than popping in at once; the legend (unaffected, still plain `Text`/`View`) should appear immediately as before.
-- [ ] **Step 5: Commit** — `git add src/components/charts/DonutChart.tsx` / `git commit -m "feat(mobile): progressive reveal for the spending donut"`
+- [x] **Step 4: Manual verification** — Dashboard tab, "Spending by Category": on load, slices should sweep in one after another (60ms stagger) rather than popping in at once; the legend (unaffected, still plain `Text`/`View`) should appear immediately as before.
+- [x] **Step 5: Commit** — `git add src/components/charts/DonutChart.tsx` / `git commit -m "feat(mobile): progressive reveal for the spending donut"`
 
 ---
 
@@ -1031,8 +1031,8 @@ Replace the arc-rendering block (lines 52-77) — the empty-ring branch (lines 3
 **Interfaces:**
 - Consumes: `RevealPolyline`, `CHART_REVEAL_DURATION` (Task 12), `polylineLength` (Task 11)
 
-- [ ] **Step 1-2: N/A** — see Item C-wide test note.
-- [ ] **Step 3: Write minimal implementation** — add imports:
+- [x] **Step 1-2: N/A** — see Item C-wide test note.
+- [x] **Step 3: Write minimal implementation** — add imports:
 ```tsx
 import { CHART_REVEAL_DURATION, RevealPolyline } from './ChartReveal';
 import { polylineLength } from '../../lib/chartGeometry';
@@ -1063,8 +1063,8 @@ Add a `toPoints` helper alongside the existing `toPolyline` (after line 28) and 
           />
 ```
 The per-point `Circle` markers (lines 52-57) stay static, unanimated — they're small enough that animating them adds motion without adding clarity, and they read correctly the instant the line beneath them finishes.
-- [ ] **Step 4: Manual verification** — Dashboard tab, "Cash Flow": income line draws in first, expense line follows just behind; switching the 3M/6M/12M range re-triggers the reveal on the new point set (a fresh mount of the same component with different `points`).
-- [ ] **Step 5: Commit** — `git add src/components/charts/CashFlowChart.tsx` / `git commit -m "feat(mobile): progressive reveal for the cash flow chart"`
+- [x] **Step 4: Manual verification** — Dashboard tab, "Cash Flow": income line draws in first, expense line follows just behind; switching the 3M/6M/12M range re-triggers the reveal on the new point set (a fresh mount of the same component with different `points`).
+- [x] **Step 5: Commit** — `git add src/components/charts/CashFlowChart.tsx` / `git commit -m "feat(mobile): progressive reveal for the cash flow chart"`
 
 ---
 
@@ -1076,8 +1076,8 @@ The per-point `Circle` markers (lines 52-57) stay static, unanimated — they're
 **Interfaces:**
 - Consumes: `RevealPolyline` (Task 12), `polylineLength` (Task 11)
 
-- [ ] **Step 1-2: N/A** — see Item C-wide test note.
-- [ ] **Step 3: Write minimal implementation** — add imports:
+- [x] **Step 1-2: N/A** — see Item C-wide test note.
+- [x] **Step 3: Write minimal implementation** — add imports:
 ```tsx
 import { RevealPolyline } from './ChartReveal';
 import { polylineLength } from '../../lib/chartGeometry';
@@ -1097,8 +1097,8 @@ Replace the single `<Polyline>` (line 54):
           />
 ```
 (rename the local `polyline` variable to `polylinePoints` throughout the render to avoid a name collision with the `points` prop; the point-marker `Circle`s below stay static, same reasoning as Task 14.)
-- [ ] **Step 4: Manual verification** — Investments tab, Net Worth Trend: the line draws in on load rather than appearing fully formed.
-- [ ] **Step 5: Commit** — `git add src/components/charts/TrendChart.tsx` / `git commit -m "feat(mobile): progressive reveal for the net worth trend chart"`
+- [x] **Step 4: Manual verification** — Investments tab, Net Worth Trend: the line draws in on load rather than appearing fully formed.
+- [x] **Step 5: Commit** — `git add src/components/charts/TrendChart.tsx` / `git commit -m "feat(mobile): progressive reveal for the net worth trend chart"`
 
 ---
 
@@ -1132,4 +1132,12 @@ Replace the single `<Polyline>` (line 54):
 - **Spec coverage:** Haptic Feedback (Tasks 1-6), Animated Numbers (Tasks 7-10), Progressive Chart Rendering (Tasks 11-15), Shared Element Transitions (Item D findings/recommendation, no code). All four Phase 3 brief items covered; ledger perf validation correctly excluded as already merged.
 - **Placeholder scan:** none found — every implementation step shows complete, real code; N/A steps are explicitly justified (dependency-manifest-only tasks, untestable SVG animation props) rather than silently skipped.
 - **Type consistency:** `AnimatedNumberProps` (Task 8) matches every call site in Tasks 9-10 (`value: number`, `style`, `testID`). `RevealArc`'s `a: Pick<ArcSlice, 'start' | 'end' | 'full'>` (Task 12) matches `DonutChart`'s existing `arcs` array shape from `buildArcs` (Task 11's file). `RevealPolyline`'s `length` prop is always paired with a `polylineLength(...)` call over the same point set used to build its `points` string, in both Task 14 and Task 15.
-</content>
+
+## Execution Notes (2026-08-30, real deviations found while implementing)
+
+- **Task 7 — `babel-preset-expo` isn't actually resolvable from the project root.** The plan's baseline assumed it was "available to reference without adding it as a new direct dependency" since `expo`/`jest-expo` depend on it transitively. In this tree it resolves to `node_modules/expo/node_modules/babel-preset-expo`, not hoisted to the top level, so `babel.config.js`'s `presets: ['babel-preset-expo']` failed to resolve. Fixed by adding it as an explicit `devDependency` pinned to the same `57.0.5` already resolved elsewhere in the tree.
+- **Task 7 — Reanimated 4's ESM-only build breaks under this suite's required `--experimental-vm-modules` flag.** The single hardest problem in this phase, not mentioned anywhere in Reanimated's or Worklets' own testing docs. `react-native-reanimated`/`react-native-worklets` ship no CommonJS build (`main`/`module` both point at ESM-syntax `lib/module/index.js`); under `--experimental-vm-modules` (required elsewhere in this suite for a real dynamic `import()`, per the test script's own comment), Jest's resolver prefers that ESM build over the packages' `react-native`/TypeScript source, and Node's `require()` then refuses to load it ("Must use import to load ES Module") *before* babel-jest's transform ever runs — so `transformIgnorePatterns` alone can't fix it, confirmed by testing the identical setup without the flag, where resolution correctly falls through to the TypeScript source instead. Fixed by combining `react-native-worklets`' own documented Jest resolver (`resolver: 'react-native-worklets/jest/resolver'`) with a `moduleNameMapper` forcing both packages to their `src/index.ts`, reproducing that same working resolution regardless of the flag. Verified against the full suite, including the dynamic-import-dependent test, with both the flag and this config present together.
+- **Task 8 — the plan's own `AnimatedNumber` test for a post-mount value change doesn't actually observe what it claims to.** `useAnimatedProps` updates a native prop directly, bypassing React's render cycle by design (the whole point of the technique) — so `.props.defaultValue` on an RNTL query result never reflects a transition that happens after mount, and Reanimated's jest-mode animation timing runs on fake timers, not real wall-clock time (its own deprecated `advanceAnimationByTime`/`withReanimatedTimer` helpers say so directly: "use `jest.useFakeTimers()`/`jest.advanceTimersByTime` directly"). `waitFor`'s real-time polling on `.props.defaultValue` therefore never settles. Fixed by driving the transition with `jest.useFakeTimers()`/`advanceTimersByTime` and observing the settled value through Reanimated's own `toHaveAnimatedProps` matcher (registered by `setUpTests()`), which reads a separately-tracked `jestAnimatedProps` value rather than the plain React props snapshot.
+- **Task 9 — `DashboardScreen.tsx`'s actual structure differs from the plan's baseline.** Phase 2 had already restructured `kpis` to be conditional on `summary` (`const kpis = summary ? [...] : []`, rendered via `summary ? kpis.map(...) : <skeleton>`), not the unconditional array the plan assumed — and `k.value` was already a pre-formatted string (`fmtCurrency(...)`) rather than a raw number needing a later format step. Adapted Task 9's edit to this actual shape: `kpis` now carries `summary.currentBalance` etc. as raw numbers (required for `AnimatedNumber`'s `value: number` prop), and the `accessibilityLabel` computation was updated to call `fmtCurrency(k.value)` itself rather than interpolating an already-formatted string. The task's own core fix (the four `DashboardScreen.test.tsx` regression assertions rewritten to check `expensesKpiValue()` alongside the donut centre label) applied as planned once these adjustments were made.
+- **Item D re-verified against the post-Phase-2 codebase, not just re-cited from the plan.** Re-ran the plan's own greps (`onPress`/`navigate` across `LedgerScreen.tsx`, `BudgetsScreen.tsx`, `AccountsScreen.tsx`, plus `TransactionDetail`/`BudgetDetail`/`AccountDetail` across `src/navigation/`) directly against the current tree. All findings hold unchanged: no detail screens exist, no row in any of the three candidate lists navigates anywhere. No code changes made, matching the plan's own evaluation-only scope for this item.
+

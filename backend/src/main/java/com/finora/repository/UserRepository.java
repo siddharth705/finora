@@ -54,21 +54,30 @@ public interface UserRepository extends JpaRepository<User, UUID> {
     // Powers the admin Dashboard's "new signups, last 7/30 days" stat tiles (AdminStatsService).
     long countByCreatedAtAfter(Instant threshold);
 
+    // Excludes the bootstrap/installer account (BootstrapService.BOOTSTRAP_IDENTIFIER) from
+    // "total users" stats, by its EMAIL -- AdminOperationalDashboardService and AdminStatsService
+    // both used a plain count() before, which would overcount by exactly one forever once a
+    // platform has been set up (that account is locked, never deleted -- see
+    // SetupService.completeSetup()).
+    //
+    // Bug fix: this used to filter on countByRoleNot("BOOTSTRAP_ADMIN") instead (now removed --
+    // no remaining callers). That only worked DURING the setup wizard -- SetupService.completeSetup()
+    // calls RoleService.revokeRole(...), which resets the legacy User.role column to DEFAULT_ROLE
+    // ("USER") the instant the revoked role matches it, so a role-based filter silently stopped
+    // excluding this account the moment setup finished (every real deployment, almost all of the
+    // time). The account's email never changes, so filtering on that instead survives setup
+    // completion. See UserRepositoryIT.
+    long countByEmailNot(String email);
+
     /**
      * Admin Portal, Operational Dashboard Platform Activity chart -- one calendar day's signup
      * count, mirroring TransactionRepository/StatementImportRepository's own Between siblings.
      *
-     * <p>Filters by email, NOT role, unlike this file's countByRoleNot("BOOTSTRAP_ADMIN") used
-     * elsewhere for the same "exclude the system account" purpose. BootstrapService seeds that
-     * account with role=BOOTSTRAP_ADMIN, but SetupService.completeSetup() explicitly revokes that
-     * role once setup finishes -- RoleService.revokeRole resets the legacy User.role column to
-     * USER as part of that revocation (see its own doc comment). So countByRoleNot("BOOTSTRAP_ADMIN")
-     * only ever excludes the account DURING the setup wizard, and silently stops working the
-     * moment setup completes, which is every real deployment past its first few minutes -- a live
-     * check against a running local stack showed the platform's very first calendar day
-     * permanently reporting one extra "signup" that was actually the bootstrap account. Email is
-     * this account's one identifier that never changes (BootstrapService.BOOTSTRAP_IDENTIFIER),
-     * so this query filters on that instead.
+     * <p>Filters by email, NOT role, same reason as countByEmailNot above: BootstrapService seeds
+     * the bootstrap account with role=BOOTSTRAP_ADMIN, but SetupService.completeSetup() explicitly
+     * revokes that role once setup finishes, resetting the legacy User.role column to USER -- so a
+     * role-based filter only ever excludes the account DURING the setup wizard. Email
+     * (BootstrapService.BOOTSTRAP_IDENTIFIER) is this account's one identifier that never changes.
      */
     long countByEmailNotAndCreatedAtBetween(String email, Instant start, Instant end);
 
@@ -86,11 +95,9 @@ public interface UserRepository extends JpaRepository<User, UUID> {
      * satisfies "no login row since :since" immediately. Requiring the account to predate the
      * cutoff means only users who had the full window to log in and didn't are counted.
      *
-     * <p>Excludes BOOTSTRAP_ADMIN by email, same as countByEmailNotAndCreatedAtBetween above --
-     * NOT by role, which would silently stop excluding it once setup completes; see that method's
-     * own doc comment for why. The bootstrap account never logs in again after setup, so a
-     * role-based filter here would have had it permanently misreported as an "inactive user" --
-     * exactly the kind of stale-forever figure this Insights row exists to avoid.
+     * <p>Excludes the bootstrap account by email, same reason as countByEmailNot above -- the
+     * account never logs in again after setup, so a role-based filter here would have had it
+     * permanently misreported as an "inactive user."
      */
     @Query("""
         SELECT COUNT(u) FROM User u
@@ -103,17 +110,11 @@ public interface UserRepository extends JpaRepository<User, UUID> {
     long countWithNoAuditActionSince(@Param("action") String action, @Param("since") Instant since,
                                       @Param("bootstrapEmail") String bootstrapEmail);
 
-    // Excludes the BOOTSTRAP_ADMIN system account (BootstrapService) from "total users" stats --
-    // AdminOperationalDashboardService and AdminStatsService both used a plain count() before,
-    // which would overcount by exactly one forever once a platform has been set up (that account
-    // is locked, never deleted -- see SetupService.completeSetup()).
-    long countByRoleNot(String role);
-
-    // Paired with countByRoleNot above -- AdminStatsService derives activeUsers as
-    // totalUsers - suspendedUsers, so both counts must exclude the bootstrap account together,
-    // or that subtraction goes negative by one the moment it's locked (status=SUSPENDED) but
-    // still excluded from the totalUsers side alone.
-    long countByStatusAndRoleNot(String status, String role);
+    // Paired with countByEmailNot above -- AdminStatsService's per-status breakdowns
+    // (suspendedUsers/activeUsers) need the same bootstrap-account exclusion, scoped to one
+    // status. Same bug history as countByEmailNot: a role-based version of this let the bootstrap
+    // account (status=SUSPENDED post-setup) leak straight into "suspended users".
+    long countByStatusAndEmailNot(String status, String email);
 
     // Backs the Admin Dashboard's Needs Attention section -- lockedUntil/failedLoginAttempts
     // already existed for AuthService's own lockout enforcement (see its class doc); this is the
