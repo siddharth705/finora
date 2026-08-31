@@ -118,8 +118,12 @@ public final class CreditCardSummaryExtractor {
             "other debit&charges", "other debit & charges", "finance charges", "fees");
     private static final List<String> PAYMENTS_LABELS = List.of(
             "payments / credits", "payments/credits", "payments and credits", "payments & refunds");
+    // "total amount due (payable)" is deliberately not listed here: stripDecoration() strips any
+    // trailing parenthetical before this list is consulted, so it would always collapse to the
+    // plain "total amount due" entry below anyway -- listing both invited exactly the kind of
+    // dead-entry drift a future reader would have to re-derive is safe.
     private static final List<String> TOTAL_DUE_LABELS = List.of(
-            "total amount due", "total amount due (payable)", "total payment due");
+            "total amount due", "total payment due");
 
     /**
      * What a credit-card statement printed about its own billing equation, every field nullable
@@ -166,9 +170,11 @@ public final class CreditCardSummaryExtractor {
 
         // Same gate StatementSummaryExtractor applies, for the same reason: a document that never
         // prints "Total Amount Due" anywhere has no billing-summary panel for either strategy to
-        // misread a transaction table's own header as.
-        boolean documentHasATotalDue = runs.stream()
-                .anyMatch(t -> matches(StatementSummaryExtractor.normalize(t.text()), TOTAL_DUE_LABELS));
+        // misread a transaction table's own header as. Uses joinedLabelsOnSameRow rather than a
+        // single-run check so a label split across adjacent runs (see trySameRow) is not rejected
+        // here before either strategy gets a chance to read it.
+        boolean documentHasATotalDue = joinedLabelsOnSameRow(runs).stream()
+                .anyMatch(l -> "totalAmountDue".equals(l.key()));
         if (!documentHasATotalDue) return CreditCardSummaryEvidence.NONE;
 
         // Both strategies always run, deliberately never short-circuited on the first to find
@@ -194,10 +200,38 @@ public final class CreditCardSummaryExtractor {
             chosen = CreditCardSummaryEvidence.NONE;
         }
 
+        if (chosen.totalAmountDue() == null) {
+            BigDecimal bestEffort = bestEffortTotalAmountDue(grid, sameRow);
+            if (bestEffort != null) {
+                chosen = new CreditCardSummaryEvidence(chosen.previousBalance(), chosen.purchases(),
+                        chosen.cashAdvances(), chosen.fees(), chosen.paymentsAndCredits(),
+                        bestEffort, chosen.extractionMethod(), chosen.conflictingFields());
+            }
+        }
+
         if (conflicts.isEmpty()) return chosen;
         return new CreditCardSummaryEvidence(chosen.previousBalance(), chosen.purchases(),
                 chosen.cashAdvances(), chosen.fees(), chosen.paymentsAndCredits(),
                 chosen.totalAmountDue(), chosen.extractionMethod(), conflicts);
+    }
+
+    /**
+     * {@code totalAmountDue} alone, independent of whether the other three reconciliation fields
+     * are present — a statement can print a clean headline total with no component breakdown
+     * anywhere, which {@code hasReconcilableFields()} correctly refuses to reconcile but which is
+     * still a real, usable metadata fact. Only when the two strategies agree or one is silent; a
+     * genuine disagreement stays null, the same "refuse rather than guess" discipline
+     * {@link #conflictsBetween} already applies. Deliberately does NOT prefer one strategy's
+     * reading over the other's when they conflict — that would be a precedence rule generalised
+     * from a single document's evidence, not yet validated against a second one.
+     */
+    private static BigDecimal bestEffortTotalAmountDue(CreditCardSummaryEvidence grid,
+                                                         CreditCardSummaryEvidence sameRow) {
+        BigDecimal g = grid.totalAmountDue();
+        BigDecimal s = sameRow.totalAmountDue();
+        if (g == null) return s;
+        if (s == null) return g;
+        return g.compareTo(s) == 0 ? g : null;
     }
 
     /** Fields where both strategies found a value and those values disagreed. A field only one
@@ -248,7 +282,7 @@ public final class CreditCardSummaryExtractor {
                 continue;
             }
 
-            List<PositionedText> valueRow = StatementSummaryExtractor.rowBelow(rows, i, MAX_VALUE_ROW_GAP);
+            List<PositionedText> valueRow = valueRowWithinGap(rows, i, MAX_VALUE_ROW_GAP);
             if (valueRow == null) continue;
 
             boolean allValuesNumeric = valueRow.stream()
@@ -274,6 +308,35 @@ public final class CreditCardSummaryExtractor {
         }
 
         return bestPageEvidence(resolvedByPageAndKey, CreditCardSummaryEvidence.ExtractionMethod.GRID);
+    }
+
+    /**
+     * Unlike {@link StatementSummaryExtractor#rowBelow}, which this class reuses everywhere else
+     * and which savings-statement parsing also depends on — deliberately NOT touched here, this
+     * scans every subsequent row within {@code maxGap} for the first one this class can actually
+     * use as a value row, rather than only ever considering the literal next row.
+     *
+     * <p>A real statement's billing-summary widget can share a page with an unrelated column of
+     * running text (a marketing notice, a footer) whose rows interleave with the widget's own by
+     * Y position — the immediate next row can belong to that unrelated column, not the widget.
+     * This is a strict superset of {@code rowBelow}'s own behaviour: whenever the immediate next
+     * row already qualifies, this returns that exact same row (identical to today), so it can
+     * only ever recover cases {@code rowBelow} used to give up on, never change one that already
+     * worked.
+     */
+    private static List<PositionedText> valueRowWithinGap(List<List<PositionedText>> rows, int i, float maxGap) {
+        if (i + 1 >= rows.size()) return null;
+        int page = rows.get(i).get(0).pageIndex();
+        float labelY = rows.get(i).get(0).y();
+        for (int j = i + 1; j < rows.size(); j++) {
+            List<PositionedText> candidate = rows.get(j);
+            if (candidate.get(0).pageIndex() != page) return null;
+            if (candidate.get(0).y() - labelY > maxGap) return null;
+            boolean allNumeric = candidate.stream()
+                    .allMatch(t -> CsvParser.parseNumeric(t.text().trim()) != null);
+            if (allNumeric || amountBearingSubset(candidate) != null) return candidate;
+        }
+        return null;
     }
 
     /** See {@link #tryGrid}'s own doc comment for when and why this is called. */
@@ -320,10 +383,7 @@ public final class CreditCardSummaryExtractor {
     private static CreditCardSummaryEvidence trySameRow(List<PositionedText> runs) {
         Map<Integer, Map<String, List<PositionedText>>> resolvedByPageAndKey = new TreeMap<>();
 
-        for (PositionedText label : runs) {
-            String key = keyFor(StatementSummaryExtractor.normalize(label.text()));
-            if (key == null) continue;
-
+        for (JoinedLabel label : joinedLabelsOnSameRow(runs)) {
             List<PositionedText> candidates = runs.stream()
                     .filter(t -> t.pageIndex() == label.pageIndex())
                     .filter(t -> t.x() > label.endX())
@@ -335,7 +395,7 @@ public final class CreditCardSummaryExtractor {
 
             if (candidates.size() == 1) {
                 resolvedByPageAndKey.computeIfAbsent(label.pageIndex(), p -> new LinkedHashMap<>())
-                        .computeIfAbsent(key, k -> new ArrayList<>()).add(candidates.get(0));
+                        .computeIfAbsent(label.key(), k -> new ArrayList<>()).add(candidates.get(0));
             }
             // Zero candidates for THIS occurrence: try the next label. Two or more competing
             // candidates for this occurrence: refused right here, never added.
@@ -344,17 +404,87 @@ public final class CreditCardSummaryExtractor {
         return bestPageEvidence(resolvedByPageAndKey, CreditCardSummaryEvidence.ExtractionMethod.INLINE_LABEL_VALUE);
     }
 
-    /** Accepts a key only when exactly one label occurrence resolved a value for it, within one
-     *  page's own resolutions. Shared by both strategies so "a repeated label is ambiguous, not
-     *  first-wins" is one rule, not two that could drift apart. */
+    /** How far apart two adjacent runs may sit horizontally and still be considered one continued
+     *  label — tight enough to never span two genuinely different columns (real word-to-word gaps
+     *  observed: roughly 2-20pt), unlike {@link #SAME_ROW_MAX_X_DISTANCE}, which bounds a LABEL to
+     *  its VALUE, a materially larger and different distance. */
+    private static final float LABEL_JOIN_MAX_X_GAP = 30.0f;
+
+    /** One matched label, possibly spanning more than one source run, with the combined bounding
+     *  box {@link #trySameRow}'s candidate search needs — everything a single-run
+     *  {@code PositionedText} label used to provide. */
+    private record JoinedLabel(String key, float y, int pageIndex, float x, float endX) {}
+
+    /**
+     * Every maximal span of immediately-adjacent, same-row runs whose concatenation matches one
+     * of this class's own known labels — checked incrementally so the SHORTEST matching span
+     * wins (never over-extends past a match looking for a longer one). A single run that already
+     * matches on its own is naturally included (a one-run "span"). Scoped narrowly: it can only
+     * ever recognise the same fixed, curated label vocabulary {@link #keyFor} already knows,
+     * split across runs — it invents no new labels and matches no unrecognised text.
+     *
+     * <p>Deliberately does NOT use {@link StatementSummaryExtractor#groupIntoRows} — that
+     * groups by Y across the FULL PAGE WIDTH, which is exactly what let an unrelated column's
+     * text interleave with a summary widget's own rows (see {@link #valueRowWithinGap}'s own doc
+     * comment). Joining only immediately-adjacent runs within {@link #LABEL_JOIN_MAX_X_GAP} of
+     * each other cannot span an unrelated column the way a full row-group can — a real
+     * cross-column gap is hundreds of points, this join tolerance is 30.
+     */
+    private static List<JoinedLabel> joinedLabelsOnSameRow(List<PositionedText> runs) {
+        List<PositionedText> sorted = runs.stream()
+                .sorted(Comparator.comparingInt(PositionedText::pageIndex)
+                        .thenComparingDouble(PositionedText::y)
+                        .thenComparingDouble(PositionedText::x))
+                .toList();
+
+        List<JoinedLabel> found = new ArrayList<>();
+        for (int start = 0; start < sorted.size(); start++) {
+            StringBuilder joined = new StringBuilder();
+            PositionedText first = sorted.get(start);
+            float endX = first.x();
+            for (int end = start; end < sorted.size(); end++) {
+                PositionedText t = sorted.get(end);
+                if (t.pageIndex() != first.pageIndex()
+                        || Math.abs(t.y() - first.y()) > SAME_ROW_Y_TOLERANCE) break;
+                if (end > start && t.x() - endX > LABEL_JOIN_MAX_X_GAP) break;
+                joined.append(joined.isEmpty() ? "" : " ").append(t.text().trim());
+                endX = t.endX();
+                String key = keyFor(StatementSummaryExtractor.normalize(joined.toString()));
+                if (key != null) {
+                    found.add(new JoinedLabel(key, first.y(), first.pageIndex(), first.x(), endX));
+                    break;
+                }
+            }
+        }
+        return found;
+    }
+
+    /** Accepts a key only when exactly one label occurrence resolved a value for it, OR when more
+     *  than one did and every occurrence resolved to the IDENTICAL amount — redundancy (the same
+     *  figure printed twice under different wording or footnote markers), not ambiguity.
+     *  Occurrences that disagree are still refused, unchanged: two different numbers under one
+     *  label is real ambiguity, which this class already refuses rather than guesses at
+     *  everywhere else. Shared by both strategies so this is one rule, not two that could drift
+     *  apart. */
     private static Map<String, PositionedText> onlyUnambiguous(Map<String, List<PositionedText>> resolvedByKey) {
         Map<String, PositionedText> labelled = new LinkedHashMap<>();
         for (Map.Entry<String, List<PositionedText>> entry : resolvedByKey.entrySet()) {
-            if (entry.getValue().size() == 1) {
-                labelled.put(entry.getKey(), entry.getValue().get(0));
+            List<PositionedText> occurrences = entry.getValue();
+            if (occurrences.size() == 1 || allOccurrencesAgree(occurrences)) {
+                labelled.put(entry.getKey(), occurrences.get(0));
             }
         }
         return labelled;
+    }
+
+    private static boolean allOccurrencesAgree(List<PositionedText> occurrences) {
+        BigDecimal first = amount(occurrences.get(0));
+        if (first == null) return false;
+        for (PositionedText t : occurrences) {
+            BigDecimal a = amount(t);
+            if (a == null || a.compareTo(first) != 0) return false;
+        }
+        return true;
     }
 
     /**
@@ -398,13 +528,26 @@ public final class CreditCardSummaryExtractor {
     }
 
     private static String keyFor(String normalized) {
-        if (matches(normalized, PREVIOUS_BALANCE_LABELS)) return "previousBalance";
-        if (matches(normalized, PURCHASES_LABELS)) return "purchases";
-        if (matches(normalized, CASH_ADVANCE_LABELS)) return "cashAdvances";
-        if (matches(normalized, FEES_LABELS) || normalized.startsWith("fee & charges")) return "fees";
-        if (matches(normalized, PAYMENTS_LABELS)) return "paymentsAndCredits";
-        if (matches(normalized, TOTAL_DUE_LABELS)) return "totalAmountDue";
+        String stripped = stripDecoration(normalized);
+        if (matches(stripped, PREVIOUS_BALANCE_LABELS)) return "previousBalance";
+        if (matches(stripped, PURCHASES_LABELS)) return "purchases";
+        if (matches(stripped, CASH_ADVANCE_LABELS)) return "cashAdvances";
+        if (matches(stripped, FEES_LABELS) || stripped.startsWith("fee & charges")) return "fees";
+        if (matches(stripped, PAYMENTS_LABELS)) return "paymentsAndCredits";
+        if (matches(stripped, TOTAL_DUE_LABELS)) return "totalAmountDue";
         return null;
+    }
+
+    /** Some statements print a footnote marker before an otherwise-exact label, and/or a trailing
+     *  parenthetical annotation after it (a currency-symbol placeholder, an abbreviation).
+     *  Stripped before matching against this class's own fixed, curated label lists — this can
+     *  only ever recognise MORE of what was already an exact match one layer down; it never
+     *  introduces fuzzy matching or a new false-positive category, since the stripped result
+     *  still has to equal one of the fixed strings exactly. */
+    private static String stripDecoration(String normalized) {
+        String s = normalized;
+        while (s.startsWith("*")) s = s.substring(1);
+        return s.replaceAll("\\s*\\([^)]*\\)\\s*$", "").trim();
     }
 
     private static boolean matches(String normalized, List<String> labels) {
