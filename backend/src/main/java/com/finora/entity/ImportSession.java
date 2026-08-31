@@ -156,6 +156,15 @@ public class ImportSession implements com.finora.imports.storage.StoredStatement
     @Column(name = "source_domain", length = 253)
     private String sourceDomain;
 
+    /** The short commit id ({@code BuildVersionResolver.currentCommit()}) of the backend build
+     *  that staged this session -- null for any session staged before this column existed. Read
+     *  by {@code ImportSessionService.findLiveSessionByContentHash} to decide whether a session is
+     *  safe to replay automatically: a mismatch against the CURRENT build's commit means the
+     *  parser may have changed since this session was staged, regardless of how little time has
+     *  passed. */
+    @Column(name = "parser_version", length = 40)
+    private String parserVersion;
+
     @Column(nullable = false)
     private String status = STATUS_STAGED;
 
@@ -211,6 +220,8 @@ public class ImportSession implements com.finora.imports.storage.StoredStatement
     public void setSource(String source) { this.source = source; }
     public String getSourceDomain() { return sourceDomain; }
     public void setSourceDomain(String sourceDomain) { this.sourceDomain = sourceDomain; }
+    public String getParserVersion() { return parserVersion; }
+    public void setParserVersion(String parserVersion) { this.parserVersion = parserVersion; }
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
     public Instant getCreatedAt() { return createdAt; }

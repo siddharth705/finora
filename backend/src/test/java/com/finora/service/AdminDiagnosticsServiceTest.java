@@ -1,5 +1,6 @@
 package com.finora.service;
 
+import com.finora.config.BuildVersionResolver;
 import com.finora.dto.DiagnosticsDto.PlatformDiagnosticsDto;
 import com.finora.dto.HealthDtos.PlatformHealthDto;
 import com.finora.entity.PlatformSettings;
@@ -38,6 +39,7 @@ class AdminDiagnosticsServiceTest {
     private Flyway flyway;
     private ObjectProvider<BuildProperties> buildProperties;
     private ObjectProvider<GitProperties> gitProperties;
+    private BuildVersionResolver buildVersionResolver;
     private ObjectProvider<CacheManager> cacheManager;
     private AdminDiagnosticsService service;
 
@@ -49,10 +51,14 @@ class AdminDiagnosticsServiceTest {
         environment = mock(Environment.class);
         flyway = mock(Flyway.class);
         buildProperties = mock(ObjectProvider.class);
-        gitProperties = mock(ObjectProvider.class);
         cacheManager = mock(ObjectProvider.class);
+        // Still a mocked ObjectProvider<GitProperties>, now used to build a REAL
+        // BuildVersionResolver per test rather than being read by AdminDiagnosticsService itself --
+        // proves the wiring end-to-end while BuildVersionResolverTest owns the resolution edge cases.
+        gitProperties = mock(ObjectProvider.class);
+        buildVersionResolver = new BuildVersionResolver(gitProperties, "");
         service = new AdminDiagnosticsService(healthRegistryService, adminSystemService, platformSettingsService,
-                environment, flyway, buildProperties, gitProperties, cacheManager);
+                environment, flyway, buildProperties, buildVersionResolver, cacheManager);
 
         when(healthRegistryService.platformHealth()).thenReturn(new PlatformHealthDto("UP", java.util.List.of()));
         when(adminSystemService.recentImports()).thenReturn(java.util.List.of());
@@ -97,7 +103,8 @@ class AdminDiagnosticsServiceTest {
         when(buildProperties.getIfAvailable()).thenReturn(null);
         when(gitProperties.getIfAvailable()).thenReturn(null);
         when(cacheManager.getIfAvailable()).thenReturn(null);
-        when(environment.getProperty("app.build.commit", "")).thenReturn("77bbfe4");
+        service = new AdminDiagnosticsService(healthRegistryService, adminSystemService, platformSettingsService,
+                environment, flyway, buildProperties, new BuildVersionResolver(gitProperties, "77bbfe4"), cacheManager);
 
         PlatformDiagnosticsDto dto = service.overview();
 
@@ -111,8 +118,9 @@ class AdminDiagnosticsServiceTest {
         when(buildProperties.getIfAvailable()).thenReturn(null);
         when(gitProperties.getIfAvailable()).thenReturn(null);
         when(cacheManager.getIfAvailable()).thenReturn(null);
-        when(environment.getProperty("app.build.commit", ""))
-                .thenReturn("77bbfe493cf230ce3e4624dfaa41fe617c8ae127");
+        service = new AdminDiagnosticsService(healthRegistryService, adminSystemService, platformSettingsService,
+                environment, flyway, buildProperties,
+                new BuildVersionResolver(gitProperties, "77bbfe493cf230ce3e4624dfaa41fe617c8ae127"), cacheManager);
 
         PlatformDiagnosticsDto dto = service.overview();
 
@@ -131,7 +139,8 @@ class AdminDiagnosticsServiceTest {
         Properties gitProps = new Properties();
         gitProps.setProperty("commit.id.abbrev", "a1b2c3d");
         when(gitProperties.getIfAvailable()).thenReturn(new GitProperties(gitProps));
-        when(environment.getProperty("app.build.commit", "")).thenReturn("9999999");
+        service = new AdminDiagnosticsService(healthRegistryService, adminSystemService, platformSettingsService,
+                environment, flyway, buildProperties, new BuildVersionResolver(gitProperties, "9999999"), cacheManager);
 
         PlatformDiagnosticsDto dto = service.overview();
 
