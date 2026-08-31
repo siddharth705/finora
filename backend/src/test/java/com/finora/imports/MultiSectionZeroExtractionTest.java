@@ -460,6 +460,7 @@ class MultiSectionZeroExtractionTest {
                 mock(ReconciliationService.class), mock(RecurringService.class), previewGenerator, duplicateDetector,
                 new ImportRuleLearningService(categorizationService), importSessionService, generatorFor(acquirer),
                 new com.finora.imports.product.ProductIdentityResolver(accountRepository),
+                mock(com.finora.imports.ownership.OwnershipMatchService.class),
                 new com.finora.imports.storage.StatementContentService(java.util.Optional.empty(), mock(com.finora.security.crypto.EncryptionService.class), "", ""),
                 mock(StatementAnalysisRecorder.class), mock(ImportVerificationRecorder.class),
                 mock(com.finora.service.MerchantLearningEventPublisher.class), mock(LayoutRegistryService.class),
