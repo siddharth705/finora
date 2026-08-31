@@ -52,6 +52,26 @@ describe('toCsv', () => {
     expect(row).toBe('"\'=HYPERLINK(""http://evil.example"",""click"")","100"');
   });
 
+  // A leading space before the formula-triggering character must not slip past the guard --
+  // spreadsheet apps can still evaluate a leading-space-then-formula value as a formula on import.
+  it('neutralises a category name with leading whitespace before a formula-triggering character', () => {
+    const csv = toCsv({
+      ...report,
+      categories: [{ category: " =cmd|'/c calc'!A0", amount: 100 }],
+    });
+    const row = csv.split('\n').find((l) => l.includes('cmd'));
+    expect(row).toBe(`"' =cmd|'/c calc'!A0","100"`);
+  });
+
+  // A lone leading tab or carriage return is itself a formula trigger (not just whitespace to
+  // skip past) -- stripping it before the regex check, e.g. via a blanket trimStart(), would
+  // silently defeat the guard for this input shape.
+  it('neutralises a category name starting with a tab', () => {
+    const csv = toCsv({ ...report, categories: [{ category: '\tDining', amount: 100 }] });
+    const row = csv.split('\n').find((l) => l.includes('Dining') && l.includes('100'));
+    expect(row).toBe(`"'\tDining","100"`);
+  });
+
   it('does not mangle a genuine negative amount', () => {
     const csv = toCsv({ ...report, categories: [{ category: 'Refund', amount: -500 }] });
     expect(csv).toContain('"Refund","-500"');
