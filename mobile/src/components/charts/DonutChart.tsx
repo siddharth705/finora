@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import Svg, { Circle, G } from 'react-native-svg';
 import { fmtCurrency } from '../../lib/format';
@@ -25,7 +26,9 @@ export interface Slice {
 export function DonutChart({ slices, centerLabel }: { slices: Slice[]; centerLabel?: string }) {
   const c = useTheme();
   const largeText = useLargeFontScale();
-  const arcs = buildArcs(slices);
+  // Both callers already memoize `slices` specifically so a re-render doesn't redo this work --
+  // that memoization only pays off if buildArcs itself doesn't run again on every render too.
+  const arcs = useMemo(() => buildArcs(slices), [slices]);
   // By position, not by label -- see ArcSlice.index. Looking the colour up by label gave two
   // same-named holdings the same colour and one shared React key.
   const colorFor = (arcIndex: number) => slices[arcIndex]?.color ?? c.primary;

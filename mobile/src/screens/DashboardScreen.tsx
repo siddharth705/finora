@@ -14,6 +14,7 @@ import {
   accountsApi, dashboardApi, goalsApi, insightsApi, reportsApi, transactionsApi, userApi,
 } from '../api/endpoints';
 import { useAuth } from '../context/AuthContext';
+import { CHART_PALETTE, bucketTopSlices } from '../lib/chartGeometry';
 import { fmtCurrency, greeting, monthLabel } from '../lib/format';
 import { usePrefetchAdjacentScreens } from '../lib/prefetchAdjacentScreens';
 import { deriveRefreshing } from '../lib/refreshingIndicator';
@@ -22,8 +23,6 @@ import { radius, spacing, useTheme } from '../theme';
 
 type CashFlowRange = '3M' | '6M' | '12M';
 const RANGE_MONTHS: Record<CashFlowRange, number> = { '3M': 3, '6M': 6, '12M': 12 };
-
-const DONUT_COLORS = ['#3b82f6', '#16a34a', '#f59e0b', '#8b5cf6', '#ef4444', '#94a3b8'];
 
 /**
  * The label for the remainder bucket, and also a category name the backend really assigns -- which
@@ -68,14 +67,16 @@ export function DashboardScreen() {
     ],
   });
 
-  const { data: availableMonths = [] } = useQuery({
+  const availableMonthsQ = useQuery({
     queryKey: ['report-months'],
     queryFn: () => reportsApi.availableMonths(),
   });
-  // Server returns these ascending, so the tail is the most recent N.
+  // Server returns these ascending, so the tail is the most recent N. Depends on
+  // availableMonthsQ.data directly, not a `?? []`-derived local -- that fallback would build a new
+  // array reference every render while data is still undefined, which defeats this memo entirely.
   const monthsInRange = useMemo(
-    () => availableMonths.slice(-RANGE_MONTHS[cashFlowRange]),
-    [availableMonths, cashFlowRange]
+    () => (availableMonthsQ.data ?? []).slice(-RANGE_MONTHS[cashFlowRange]),
+    [availableMonthsQ.data, cashFlowRange]
   );
   const monthlyReportsQ = useQueries({
     queries: monthsInRange.map((month) => ({
@@ -84,10 +85,14 @@ export function DashboardScreen() {
       staleTime: 5 * 60_000, // a past month's totals don't change once the month is over
     })),
   });
-  const cashFlowPoints = monthlyReportsQ
-    .map((q) => q.data)
-    .filter((d): d is NonNullable<typeof d> => !!d)
-    .map((d) => ({ label: monthLabel(d.month), income: d.income, expense: d.expense }));
+  const cashFlowPoints = useMemo(
+    () =>
+      monthlyReportsQ
+        .map((q) => q.data)
+        .filter((d): d is NonNullable<typeof d> => !!d)
+        .map((d) => ({ label: monthLabel(d.month), income: d.income, expense: d.expense })),
+    [monthlyReportsQ]
+  );
 
   // The accounts query's data is never read anywhere on this screen (it only prewarms
   // AccountsScreen's cache), so it stays out of BOTH the initial-load gate (the shell shouldn't
@@ -98,12 +103,16 @@ export function DashboardScreen() {
   // no user gesture at all, since initialLoad has already gone false).
   //
   // Tracks every query whose data IS rendered and that refresh() (below) actually invalidates --
-  // summary/recent-transactions plus goals, insights, and the Cash Flow chart's per-month report
-  // queries. Missing any of these would let the spinner disappear while a visible section is still
-  // silently updating underneath it.
+  // summary/recent-transactions plus goals, insights, the available-months list, and the Cash
+  // Flow chart's per-month report queries. Missing any of these would let the spinner disappear
+  // while a visible section is still silently updating underneath it -- availableMonthsQ itself
+  // has to be included too, not just the per-month queries it drives, or a refresh that adds a
+  // newly-available month shows nothing happening until that new month's own query mounts a beat
+  // later. deriveRefreshing's per-query isLoading gate (not just this initialLoad flag) is what
+  // keeps that later-mounted query from flipping the spinner back on with no pull gesture.
   const initialLoad = summaryQ.isLoading || recentTxnsQ.isLoading;
   const refreshing = deriveRefreshing(
-    [summaryQ, recentTxnsQ, goalsQ, insightsQ, ...monthlyReportsQ],
+    [summaryQ, recentTxnsQ, goalsQ, insightsQ, availableMonthsQ, ...monthlyReportsQ],
     initialLoad
   );
 
@@ -133,34 +142,7 @@ export function DashboardScreen() {
    */
   const donutSlices: Slice[] = useMemo(() => {
     if (!summary) return [];
-    const sorted = Object.entries(summary.spendByCategory).sort((a, b) => b[1] - a[1]);
-    if (sorted.length <= DONUT_COLORS.length) {
-      return sorted.map(([label, value], i) => ({ label, value, color: DONUT_COLORS[i] }));
-    }
-    // The last colour is the neutral grey, which is what "Other" should read as anyway.
-    const named = sorted.slice(0, DONUT_COLORS.length - 1);
-    const rest = sorted.slice(DONUT_COLORS.length - 1).reduce((sum, [, value]) => sum + value, 0);
-
-    /**
-     * The bucket has to absorb a real category of the same name rather than sit beside it.
-     * "Other" is a category the backend genuinely assigns -- an import whose merchant matched no
-     * rule lands there -- so on an account with enough categories the legend showed "Other 3,000"
-     * and "Other 5,500" as separate rows. The total stayed correct, but two identically labelled
-     * rows with different amounts is not something a reader can resolve, and this bucket created
-     * the collision. Merging is also the honest reading: uncategorised spending IS other spending.
-     */
-    const collidingIndex = named.findIndex(([label]) => label === OTHER_LABEL);
-    if (collidingIndex >= 0) {
-      return named.map(([label, value], i) => ({
-        label,
-        value: i === collidingIndex ? value + rest : value,
-        color: DONUT_COLORS[i],
-      }));
-    }
-    return [
-      ...named.map(([label, value], i) => ({ label, value, color: DONUT_COLORS[i] })),
-      { label: OTHER_LABEL, value: rest, color: DONUT_COLORS[DONUT_COLORS.length - 1] },
-    ];
+    return bucketTopSlices(Object.entries(summary.spendByCategory), CHART_PALETTE, OTHER_LABEL);
   }, [summary]);
 
   // summaryQ can fail on its own (the whole point of useQueries above) -- say so rather than

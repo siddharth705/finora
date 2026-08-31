@@ -13,7 +13,7 @@ import { TextField } from '../components/TextField';
 import { budgetsApi, categoriesApi } from '../api/endpoints';
 import { toUserMessage } from '../lib/apiError';
 import { fmtCurrency } from '../lib/format';
-import { hapticSuccess, hapticWarning } from '../lib/haptics';
+import { hapticError, hapticSuccess, hapticWarning } from '../lib/haptics';
 import { useSingleFlight } from '../lib/useSingleFlight';
 import { useTransientFlag } from '../lib/useTransientFlag';
 import { parsePositiveAmount } from '../lib/validation';
@@ -77,7 +77,9 @@ export function BudgetsScreen() {
         void queryClient.invalidateQueries({ queryKey: ['dashboard-summary'] });
       } catch (e) {
         setError(toUserMessage(e, 'Could not save this budget. Try again.'));
-        hapticWarning();
+        // hapticError, not hapticWarning -- this is the server rejecting a well-formed submit, not
+        // the client-side "form isn't complete yet" case the two validation checks above cover.
+        hapticError();
       } finally {
         setSaving(false);
       }

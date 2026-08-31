@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { BudgetsScreen } from './BudgetsScreen';
 import { budgetsApi, categoriesApi } from '../api/endpoints';
-import { hapticSuccess, hapticWarning } from '../lib/haptics';
+import { hapticError, hapticSuccess, hapticWarning } from '../lib/haptics';
 import type { Budget } from '../types';
 
 jest.mock('../api/endpoints', () => ({
@@ -81,9 +81,10 @@ describe('BudgetsScreen', () => {
     expect(hapticSuccess).toHaveBeenCalledTimes(1);
   });
 
-  // Client-side validation failures (empty category, bad limit) already warn haptically below --
-  // a genuine server-side failure is the same "this didn't work" moment for the user and must too.
-  it('warns haptically, not just success, when the save itself fails', async () => {
+  // A genuine server-side failure gets hapticError, not hapticWarning -- hapticWarning is
+  // reserved for the client-side "form isn't complete yet" cases covered below, a different
+  // outcome from "the form was fine and the server rejected it anyway."
+  it('signals an error haptically, not just success or a validation warning, when the save itself fails', async () => {
     api.upsert.mockRejectedValueOnce(new Error('network down'));
     renderScreen();
     await screen.findByText('₹6,000 left this month');
@@ -97,7 +98,8 @@ describe('BudgetsScreen', () => {
     await settle();
 
     expect(await screen.findByText('Could not save this budget. Try again.')).toBeTruthy();
-    expect(hapticWarning).toHaveBeenCalledTimes(1);
+    expect(hapticError).toHaveBeenCalledTimes(1);
+    expect(hapticWarning).not.toHaveBeenCalled();
     expect(hapticSuccess).not.toHaveBeenCalled();
   });
 
