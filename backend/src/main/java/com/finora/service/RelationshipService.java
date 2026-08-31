@@ -201,7 +201,15 @@ public class RelationshipService {
         Map<UUID, String> categoryNames = new HashMap<>();
         categoryRepository.findByUserId(userId).forEach(c -> categoryNames.put(c.getId(), c.getName()));
 
-        return transactionRepository.findByUserId(userId).stream()
+        // Deleted-account leak (see DashboardService.summarize for the original fix): a deleted
+        // account's transactions deliberately keep deleted_at unset, so findByUserId alone would
+        // keep surfacing them here forever, not just during StatementImportService's 7-day grace
+        // window.
+        List<UUID> liveAccountIds = accountRepository.findByUserId(userId).stream()
+                .map(Account::getId).toList();
+        if (liveAccountIds.isEmpty()) return List.of();
+
+        return transactionRepository.findByUserIdAndAccountIdIn(userId, liveAccountIds).stream()
                 .filter(t -> t.getDescription() != null && !t.getDescription().isBlank())
                 .filter(t -> {
                     String normalized = CategoryRules.normalize(t.getDescription());

@@ -429,16 +429,28 @@ function ReimportPasswordModal({
  */
 function FailedImportsSection({ failures }: { failures: ImportFailureSummary[] }) {
   const navigate = useNavigate();
+  const [expanded, setExpanded] = useState(true);
 
   return (
     <div className="bg-card rounded-xl2 shadow-card border border-danger/30 overflow-hidden">
-      <div className="px-5 py-4 border-b border-border flex items-center gap-2">
-        <AlertTriangle size={16} className="text-danger" />
-        <div>
-          <h2 className="font-semibold text-ink text-sm">Failed Imports</h2>
-          <p className="text-xs text-muted">Statements Fynora could not import.</p>
+      <button
+        type="button"
+        onClick={() => setExpanded((open) => !open)}
+        aria-expanded={expanded}
+        className={`w-full flex items-center justify-between gap-2 px-5 py-4 text-left ${expanded ? 'border-b border-border' : ''}`}
+      >
+        <div className="flex items-center gap-2">
+          <AlertTriangle size={16} className="text-danger" />
+          <div>
+            <h2 className="font-semibold text-ink text-sm">Failed Imports</h2>
+            <p className="text-xs text-muted">Statements Fynora could not import.</p>
+          </div>
         </div>
-      </div>
+        {expanded
+          ? <ChevronDown size={16} className="text-muted flex-shrink-0" />
+          : <ChevronRight size={16} className="text-muted flex-shrink-0" />}
+      </button>
+      {expanded && (
       <div className="divide-y divide-border">
         {failures.map((f) => (
           <div key={f.reference} className="px-5 py-3.5">
@@ -458,6 +470,7 @@ function FailedImportsSection({ failures }: { failures: ImportFailureSummary[] }
           </div>
         ))}
       </div>
+      )}
     </div>
   );
 }
@@ -473,16 +486,28 @@ function RecentImportsSection({ jobs }: { jobs: ImportJobProgress[] }) {
   // useNavigate() for its own buttons, and this one needs nothing from the caller that reaching
   // for the hook directly doesn't already give it.
   const navigate = useNavigate();
+  const [expanded, setExpanded] = useState(true);
 
   return (
     <div className="bg-card rounded-xl2 shadow-card border border-border overflow-hidden">
-      <div className="px-5 py-4 border-b border-border flex items-center gap-2">
-        <Clock size={16} className="text-muted" />
-        <div>
-          <h2 className="font-semibold text-ink text-sm">Recent Imports</h2>
-          <p className="text-xs text-muted">Statements still processing, or that didn't finish.</p>
+      <button
+        type="button"
+        onClick={() => setExpanded((open) => !open)}
+        aria-expanded={expanded}
+        className={`w-full flex items-center justify-between gap-2 px-5 py-4 text-left ${expanded ? 'border-b border-border' : ''}`}
+      >
+        <div className="flex items-center gap-2">
+          <Clock size={16} className="text-muted" />
+          <div>
+            <h2 className="font-semibold text-ink text-sm">Recent Imports</h2>
+            <p className="text-xs text-muted">Statements still processing, or that didn't finish.</p>
+          </div>
         </div>
-      </div>
+        {expanded
+          ? <ChevronDown size={16} className="text-muted flex-shrink-0" />
+          : <ChevronRight size={16} className="text-muted flex-shrink-0" />}
+      </button>
+      {expanded && (
       <div className="divide-y divide-border">
         {jobs.map((job) => (
           <button
@@ -499,6 +524,7 @@ function RecentImportsSection({ jobs }: { jobs: ImportJobProgress[] }) {
           </button>
         ))}
       </div>
+      )}
     </div>
   );
 }

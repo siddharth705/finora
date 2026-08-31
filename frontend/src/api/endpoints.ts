@@ -3,7 +3,7 @@ import { downloadBlob } from '../lib/download';
 import type {
 
   Account, AccountStatementGroup, BankInfo, Budget, DashboardSummary, DetectedAccountInfo, FinancialJourney, Goal,
-  ImportSummary, MerchantGroup, ReimportResult, StagedAccountSection, StagedRow, StatementSummary, Transaction,
+  ImportSummary, MerchantGroup, ReimportResult, StagedAccountSection, StagedRow, StatementSummary, SupersedeResult, Transaction,
   WorkspaceSettings, UnparseableRow, VerificationReport,
 } from '../types';
 
@@ -351,6 +351,10 @@ export interface ConfirmPayload {
   // Only meaningful to confirmReimport, for a statement whose stored bytes are a password-protected
   // PDF -- see ConfirmRequest's own doc comment on the backend. Every other confirm path ignores it.
   password?: string;
+  // docs/proposals/account-ownership-intelligence-proposal.md §3.1/§3.2. Whether the user clicked
+  // "Continue Import" after the client-side ownership warning fired -- see ConfirmRequest's own
+  // doc comment on the backend. Omitted (not just false) when the warning never fired.
+  userConfirmedContinue?: boolean;
 }
 
 // One account's worth of reviewed rows within a MultiAccountConfirmPayload -- same shape as
@@ -610,6 +614,11 @@ export const statementImportsApi = {
   confirmReimport: (id: string, payload: Omit<ConfirmPayload, 'newAccount' | 'sessionId'>) =>
     api.post<ImportSummary>(`/statement-imports/${id}/reimport/confirm`, { ...payload, newAccount: null }).then((r) => r.data),
   remove: (id: string) => api.delete(`/statement-imports/${id}`),
+  // "Import this one as a replacement?" (Phase 4, §0.3) -- `id` is the ORIGINAL statement, already
+  // marked superseded rather than deleted; `supersededByStatementId` must already be confirmed as
+  // its own statement (a normal confirm call) before this is called.
+  supersede: (id: string, supersededByStatementId: string) =>
+    api.post<SupersedeResult>(`/statement-imports/${id}/supersede`, { supersededByStatementId }).then((r) => r.data),
 };
 
 export const budgetsApi = {
@@ -630,9 +639,33 @@ export interface CategoryOption {
   id: string;
   name: string;
   isSystem: boolean;
+  icon: string;
+  color: string;
 }
+
+export interface CategoryOptions {
+  icons: { token: string; label: string }[];
+  colors: { token: string; label: string }[];
+}
+
 export const categoriesApi = {
   list: () => api.get<CategoryOption[]>('/categories').then((r) => r.data),
+  options: () => api.get<CategoryOptions>('/categories/options').then((r) => r.data),
+  create: (name: string, icon?: string, color?: string) =>
+    api.post<CategoryOption>('/categories', { name, icon, color }).then((r) => r.data),
+  update: (id: string, changes: { name?: string; icon?: string; color?: string }) =>
+    api.patch<CategoryOption>(`/categories/${id}`, changes).then((r) => r.data),
+  delete: (id: string, reassignTo?: string) =>
+    api.delete(`/categories/${id}`, { params: reassignTo ? { reassignTo } : undefined }),
+  usage: (id: string) =>
+    api.get<{
+      transactionCount: number;
+      hasBudget: boolean;
+      ruleCount: number;
+      learningRowCount: number;
+    }>(
+      `/categories/${id}/usage`,
+    ).then((r) => r.data),
 };
 
 export const dashboardApi = {

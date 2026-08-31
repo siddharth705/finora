@@ -129,6 +129,12 @@ public class TransactionExplanationService {
             case DUPLICATE -> t.getIsDuplicateOf();
             case TRANSFER -> t.getTransferPairId();
             case REFUND, REVERSAL -> t.getRefundOfTransactionId();
+            // No counterpart transaction -- see ReconciliationExplanation.investmentTransfer's own
+            // comment on why this classification has nothing to point at.
+            case INVESTMENT_TRANSFER -> null;
+            // No counterpart transaction either -- a superseded statement was replaced, not
+            // matched against another row.
+            case SUPERSEDED -> null;
             case OK -> null; // unreachable, guarded above
         };
 
@@ -165,6 +171,10 @@ public class TransactionExplanationService {
                 yield "Matched as a reversal of an earlier purchase, based on the wording of this "
                         + "transaction's description" + (sameMerchant ? " and a matching merchant" : "") + ".";
             }
+            case INVESTMENT_TRANSFER -> "Excluded from spend as an investment transfer — matched the "
+                    + "\"Investments\" category, not counted as spending.";
+            case SUPERSEDED -> "Excluded from spend — the statement this transaction came from was "
+                    + "replaced by a later re-upload of the same period.";
             case OK -> ""; // unreachable, guarded by the caller
         };
     }
@@ -191,7 +201,10 @@ public class TransactionExplanationService {
                     "Reversal amount: ₹" + reason.getOrDefault("reversalAmount", "?"),
                     "Original purchase: ₹" + reason.getOrDefault("purchaseAmount", "?"),
                     Boolean.TRUE.equals(reason.get("partialReversal")) ? "This is a partial reversal" : "Full reversal");
-            case DUPLICATE, OK -> List.of();
+            case INVESTMENT_TRANSFER -> List.of(
+                    "Amount: ₹" + reason.getOrDefault("amount", "?"),
+                    "Category: " + reason.getOrDefault("category", "Investments"));
+            case DUPLICATE, OK, SUPERSEDED -> List.of();
         };
     }
 

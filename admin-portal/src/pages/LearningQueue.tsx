@@ -4,9 +4,12 @@ import { ListRestart, RefreshCw, CheckCircle2, AlertTriangle } from 'lucide-reac
 import { AdminLayout } from '../components/AdminLayout';
 import { RequirePermission } from '../components/ProtectedRoute';
 import { DataTable, type DataTableColumn } from '../components/DataTable';
+import { Pagination } from '../components/Pagination';
 import { adminLearningQueueApi } from '../api/endpoints';
 import { formatWhen } from '../lib/formatWhen';
 import type { LearningQueueEvent } from '../types';
+
+const PAGE_SIZE = 25;
 
 /**
  * The merchant learning queue's operator surface (WI2).
@@ -54,7 +57,7 @@ function LearningQueueContent() {
 
   const queue = useQuery({
     queryKey: ['learning-queue', status, page],
-    queryFn: () => adminLearningQueueApi.list({ status: status || undefined, page, size: 25 }),
+    queryFn: () => adminLearningQueueApi.list({ status: status || undefined, page, size: PAGE_SIZE }),
   });
 
   const refreshAll = () => {
@@ -79,6 +82,12 @@ function LearningQueueContent() {
     mutationFn: (eventId: string) => adminLearningQueueApi.resolve(eventId),
     onSuccess: (updated) => {
       setSelected(updated);
+      // A resolved event drops out of the current status filter (unless the filter is "All" or
+      // already "RESOLVED", where it stays visible). When it drops out, back off a page beyond
+      // the first that this was the last row on, so the admin doesn't land on a now-empty page.
+      if (status && updated.status !== status) {
+        setPage((p) => (p > 0 && (queue.data?.content.length ?? 0) <= 1 ? p - 1 : p));
+      }
       refreshAll();
     },
   });
@@ -214,28 +223,14 @@ function LearningQueueContent() {
         }
       />
 
-      {queue.data && queue.data.totalPages > 1 && (
-        <div className="flex items-center justify-between text-sm text-muted">
-          <span>
-            Page {queue.data.page + 1} of {queue.data.totalPages} ({queue.data.totalElements} events)
-          </span>
-          <div className="flex gap-2">
-            <button
-              className="rounded border border-border px-2 py-1 disabled:opacity-40"
-              disabled={page === 0}
-              onClick={() => setPage((p) => p - 1)}
-            >
-              Previous
-            </button>
-            <button
-              className="rounded border border-border px-2 py-1 disabled:opacity-40"
-              disabled={page + 1 >= queue.data.totalPages}
-              onClick={() => setPage((p) => p + 1)}
-            >
-              Next
-            </button>
-          </div>
-        </div>
+      {queue.data && (
+        <Pagination
+          page={page}
+          totalPages={queue.data.totalPages}
+          totalElements={queue.data.totalElements}
+          pageSize={PAGE_SIZE}
+          onPageChange={setPage}
+        />
       )}
 
       {selected && (

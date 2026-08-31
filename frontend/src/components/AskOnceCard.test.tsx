@@ -8,7 +8,7 @@ import type { Transaction } from '../types';
 
 vi.mock('../api/endpoints', () => ({
   transactionsApi: { needsReview: vi.fn(), updateCategory: vi.fn() },
-  categoriesApi: { list: vi.fn() },
+  categoriesApi: { list: vi.fn(), options: vi.fn(), create: vi.fn() },
 }));
 
 function txn(id: string, description: string): Transaction {
@@ -31,7 +31,11 @@ function renderCard() {
 
 describe('AskOnceCard pagination', () => {
   beforeEach(() => {
-    vi.mocked(categoriesApi.list).mockResolvedValue([{ name: 'Food' }, { name: 'Transport' }] as any);
+    vi.mocked(categoriesApi.list).mockResolvedValue([
+      { id: 'cat-1', name: 'Food', isSystem: false, icon: 'tag', color: 'gray' },
+      { id: 'cat-2', name: 'Transport', isSystem: false, icon: 'tag', color: 'gray' },
+    ] as any);
+    vi.mocked(categoriesApi.options).mockResolvedValue({ icons: [], colors: [] } as any);
   });
 
   it('shows only 10 items on the first page when there are more than 10', async () => {
@@ -86,7 +90,11 @@ describe('AskOnceCard pagination', () => {
 
 describe('AskOnceCard resolve (optimistic)', () => {
   beforeEach(() => {
-    vi.mocked(categoriesApi.list).mockResolvedValue([{ name: 'Food' }, { name: 'Transport' }] as any);
+    vi.mocked(categoriesApi.list).mockResolvedValue([
+      { id: 'cat-1', name: 'Food', isSystem: false, icon: 'tag', color: 'gray' },
+      { id: 'cat-2', name: 'Transport', isSystem: false, icon: 'tag', color: 'gray' },
+    ] as any);
+    vi.mocked(categoriesApi.options).mockResolvedValue({ icons: [], colors: [] } as any);
   });
 
   it('removes the row immediately on Confirm, before the save request resolves', async () => {
@@ -100,7 +108,9 @@ describe('AskOnceCard resolve (optimistic)', () => {
     renderCard();
 
     await waitFor(() => expect(screen.getByText('Coffee Shop')).toBeInTheDocument());
-    await user.selectOptions(screen.getByRole('combobox'), 'Food');
+    const combobox = screen.getByRole('combobox');
+    await user.type(combobox, 'Food');
+    await user.click(await screen.findByText('Food'));
     await user.click(screen.getByRole('button', { name: /confirm/i }));
 
     await waitFor(() => expect(screen.queryByText('Coffee Shop')).not.toBeInTheDocument());
@@ -117,7 +127,9 @@ describe('AskOnceCard resolve (optimistic)', () => {
     renderCard();
 
     await waitFor(() => expect(screen.getByText('Grocery Store')).toBeInTheDocument());
-    await user.selectOptions(screen.getAllByRole('combobox')[1], 'Food');
+    const combobox = screen.getAllByRole('combobox')[1];
+    await user.type(combobox, 'Food');
+    await user.click(await screen.findByText('Food'));
     await user.click(screen.getAllByRole('button', { name: /confirm/i })[1]);
 
     // The immediate-removal half is covered by the test above (using a promise that never
@@ -138,10 +150,12 @@ describe('AskOnceCard resolve (optimistic)', () => {
     renderCard();
 
     await waitFor(() => expect(screen.getByText('Coffee Shop')).toBeInTheDocument());
-    await user.selectOptions(screen.getByRole('combobox'), 'Transport');
+    const combobox = screen.getByRole('combobox');
+    await user.type(combobox, 'Transport');
+    await user.click(await screen.findByText('Transport'));
     await user.click(screen.getByRole('button', { name: /confirm/i }));
 
     expect(await screen.findByText('Coffee Shop')).toBeInTheDocument();
-    expect(screen.getByRole('combobox')).toHaveValue('Transport');
+    expect(screen.getByRole('combobox')).toHaveTextContent('Transport');
   });
 });

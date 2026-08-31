@@ -7,6 +7,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -183,6 +184,44 @@ class RefundNettingTest {
 
         assertThat(RefundNetting.reportable(List.of(duplicate, transfer, real)))
                 .containsExactly(real);
+    }
+
+    @Test
+    @DisplayName("Phase 4: a SUPERSEDED row (its own statement was replaced) is excluded, like a transfer")
+    void supersededRowsAreExcluded() {
+        // proposal §0.6: "only the active (non-superseded) statement... participates in
+        // Account.balance, coverage, and Insights" -- the row itself is never deleted (see
+        // StatementImportService.supersede), only its reconciliationStatus changes, same
+        // precedent as INVESTMENT_TRANSFER.
+        Transaction superseded = expense(UUID.randomUUID(), "100.00");
+        superseded.setReconciliationStatus(Transaction.ReconciliationStatus.SUPERSEDED);
+        Transaction real = expense(UUID.randomUUID(), "100.00");
+
+        assertThat(RefundNetting.reportable(List.of(superseded, real))).containsExactly(real);
+    }
+
+    @Test
+    @DisplayName("a CC_PAYMENT-settling payment is excluded like a transfer -- the charges it settles stay counted")
+    void ccPaymentSettlementsAreExcludedButTheirChargesStay() {
+        // Reconciliation-evolution-roadmap-proposal.md Part 4/10 "Net worth & cash flow,
+        // graph-aware": a savings-side payment that settles a card statement is money moving
+        // between the user's own accounts, same as a TRANSFER -- only the payment nets out, the
+        // charges it settles are real spend and must stay.
+        Transaction amazonCharge = expense(UUID.randomUUID(), "5000.00");
+        Transaction cardPayment = expense(UUID.randomUUID(), "5000.00");
+
+        List<Transaction> reportable = RefundNetting.reportable(
+                List.of(amazonCharge, cardPayment), Set.of(cardPayment.getId()));
+
+        assertThat(reportable).containsExactly(amazonCharge);
+    }
+
+    @Test
+    @DisplayName("the one-argument reportable() overload behaves as if no CC_PAYMENT edges exist")
+    void theLegacyOverloadIsUnaffectedByCcPayments() {
+        Transaction real = expense(UUID.randomUUID(), "100.00");
+
+        assertThat(RefundNetting.reportable(List.of(real))).containsExactly(real);
     }
 
     @Test

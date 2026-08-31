@@ -1,5 +1,6 @@
 package com.finora.service;
 
+import com.finora.entity.Transaction;
 import com.finora.entity.TransactionRelationship;
 import com.finora.repository.TransactionRelationshipRepository;
 import org.springframework.stereotype.Service;
@@ -7,6 +8,7 @@ import org.springframework.stereotype.Service;
 import java.math.BigDecimal;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Deque;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -14,6 +16,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 /**
  * Reads and writes the transaction graph (docs/proposals/reconciliation-evolution-roadmap-
@@ -157,5 +160,70 @@ public class TransactionGraphService {
                 .orElseThrow(() -> new IllegalArgumentException("No such transaction relationship: " + edgeId));
         edge.setStatus(status);
         return repository.save(edge);
+    }
+
+    /**
+     * Roadmap Part 3's {@code supersede(edgeId, newEdgeId)}, speced but never built until now --
+     * marks {@code oldEdgeId} as replaced by {@code newEdgeId} (a manual correction, or a
+     * re-reconciliation run that found a genuinely better match). Distinct from {@link
+     * #rejectEdgesTouchingTransactions}: that one is for "this edge's data no longer exists,"
+     * this one is for "a better edge exists now" -- the old edge stays as provenance rather than
+     * being deleted, same reasoning as every other append-only choice in this table.
+     */
+    public TransactionRelationship supersede(UUID oldEdgeId, UUID newEdgeId) {
+        TransactionRelationship old = repository.findById(oldEdgeId)
+                .orElseThrow(() -> new IllegalArgumentException("No such transaction relationship: " + oldEdgeId));
+        old.setSupersededBy(newEdgeId);
+        return repository.save(old);
+    }
+
+    /**
+     * Rejects every still-live edge -- any relationship type, not just one pass's own -- touching
+     * any of {@code transactionIds}. The general-purpose half of the roadmap's supersession plan:
+     * where a reconciliation pass can only see and fix the edges ITS OWN next run would write
+     * (e.g. CC_PAYMENT re-skipping a now-dead statement), this is for a caller that knows a
+     * transaction's underlying data has become permanently invalid -- most concretely, {@link
+     * com.finora.accounts.AccountService#delete} calling this for every transaction on the
+     * account being deleted, so a live edge from ANY pass (TRANSFER, REFUND, CC_PAYMENT, ...)
+     * that references one of those transactions from the other side doesn't keep excluding real,
+     * currently-visible money from cash flow to "net against" spend the user can no longer see.
+     *
+     * <p>Idempotent: an edge already {@code REJECTED} or already superseded is left untouched, so
+     * calling this twice for the same transactions -- or for transactions with no edges at all --
+     * is harmless and cheap (one {@code findByEitherSideIn}, no write, for the common case).
+     *
+     * @return how many edges this call actually rejected, for a caller that wants to audit it
+     */
+    public int rejectEdgesTouchingTransactions(Collection<UUID> transactionIds) {
+        if (transactionIds.isEmpty()) return 0;
+        List<TransactionRelationship> live = repository.findByEitherSideIn(new ArrayList<>(transactionIds)).stream()
+                .filter(e -> e.getStatus() != TransactionRelationship.Status.REJECTED && e.getSupersededBy() == null)
+                .toList();
+        if (live.isEmpty()) return 0;
+        live.forEach(e -> e.setStatus(TransactionRelationship.Status.REJECTED));
+        repository.saveAll(live);
+        return live.size();
+    }
+
+    /**
+     * Which of {@code transactions} are the settling payment of a CC_PAYMENT edge -- i.e. a
+     * savings-side payment that already nets out the card charges it settles (PR #511), and would
+     * double the reported spend if also counted as its own expense (docs/proposals/reconciliation-
+     * evolution-roadmap-proposal.md, Part 4). REJECTED edges are excluded (a user or a later pass
+     * disagreed with the match) and so is any edge with a live {@code supersededBy} pointer; every
+     * other status -- CANDIDATE included -- counts. CANDIDATE is deliberately not held back for a
+     * higher-confidence bar here: unlike promoting an edge to AUTO_CONFIRMED (a ledger-facing
+     * verdict), this only changes a computed report total, is re-derived fresh on every read, and
+     * a wrong match costs one transiently mis-netted number rather than any persisted state.
+     */
+    public Set<UUID> ccPaymentFromTransactionIds(Collection<Transaction> transactions) {
+        if (transactions.isEmpty()) return Set.of();
+        List<UUID> transactionIds = transactions.stream().map(Transaction::getId).toList();
+        return repository.findByFromTransactionIdInAndRelationshipTypeAndStatusNotAndSupersededByIsNull(
+                        transactionIds, TransactionRelationship.RelationshipType.CC_PAYMENT,
+                        TransactionRelationship.Status.REJECTED)
+                .stream()
+                .map(TransactionRelationship::getFromTransactionId)
+                .collect(Collectors.toSet());
     }
 }

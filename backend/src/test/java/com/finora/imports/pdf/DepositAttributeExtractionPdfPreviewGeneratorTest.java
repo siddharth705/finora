@@ -1,5 +1,7 @@
 package com.finora.imports.pdf;
 
+import com.finora.imports.TestAccountRepositories;
+
 import com.finora.dto.ImportDto.StagedAccountSection;
 import com.finora.imports.DuplicateDetector;
 import com.finora.imports.TransactionNormalizer;
@@ -41,7 +43,7 @@ class DepositAttributeExtractionPdfPreviewGeneratorTest {
         when(categorizationService.suggestReadOnly(any(), any(), any(), any(), any(), any()))
                 .thenReturn(new CategorizationService.Suggestion("Other", "default", null, null, null));
         TransactionNormalizer normalizer = new TransactionNormalizer(categorizationService,
-                new DuplicateDetector(mock(TransactionRepository.class)),
+                new DuplicateDetector(mock(TransactionRepository.class), TestAccountRepositories.anyLive()),
                 com.finora.imports.TestRuleEngines.empty());
 
         PdfPreviewGenerator generator = new PdfPreviewGenerator(new PdfTextExtractor(), new PdfTableLocator(),

@@ -50,6 +50,7 @@ class RelationshipServiceTest {
     // findByRelationshipId/delete/save calls all see each other's effects within one test, the
     // same in-memory-list pattern MerchantServiceTest already uses for merge()'s own coverage.
     private final List<RelationshipIdentifier> identifierStore = new ArrayList<>();
+    private Account liveAccount;
 
     @BeforeEach
     void setUp() {
@@ -61,6 +62,14 @@ class RelationshipServiceTest {
         auditService = mock(AuditService.class);
         relationshipService = new RelationshipService(relationshipRepository, identifierRepository,
                 accountRepository, transactionRepository, categoryRepository, auditService);
+
+        // transactionsFor() (Financial Intelligence Workspace, Module 4) scopes its transaction
+        // fetch to the user's live account ids -- see DashboardService.summarize for the deleted-
+        // account-leak fix this mirrors. Only the transactionsFor tests below actually exercise
+        // this, but the default keeps every other test (which never touches accountRepository)
+        // unaffected.
+        liveAccount = account(UUID.randomUUID(), userId);
+        when(accountRepository.findByUserId(userId)).thenReturn(List.of(liveAccount));
 
         when(relationshipRepository.save(any(Relationship.class))).thenAnswer(inv -> {
             Relationship r = inv.getArgument(0);
@@ -379,7 +388,7 @@ class RelationshipServiceTest {
 
         Transaction matching = txn("UPI TRANSFER TO rahul@okhdfc", LocalDate.of(2026, 7, 1));
         Transaction notMatching = txn("SWIGGY ORDER", LocalDate.of(2026, 7, 2));
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(matching, notMatching));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(matching, notMatching));
 
         var result = relationshipService.transactionsFor(userId, id);
 
@@ -391,6 +400,35 @@ class RelationshipServiceTest {
     void transactionsFor_noIdentifiers_returnsEmptyList_withoutScanningTransactions() {
         UUID id = UUID.randomUUID();
         relationship(id, userId, Relationship.Type.FRIEND);
+
+        var result = relationshipService.transactionsFor(userId, id);
+
+        assertThat(result).isEmpty();
+        verifyNoInteractions(transactionRepository);
+    }
+
+    // Deleted-account leak (see DashboardService.summarize for the original fix): a deleted
+    // account's transactions deliberately keep deleted_at unset, so transactionsFor must scope
+    // its fetch to exactly the live account ids, not just userId.
+    @Test
+    void transactionsFor_scopesTransactionFetch_toExactlyTheLiveAccountIds() {
+        UUID id = UUID.randomUUID();
+        relationship(id, userId, Relationship.Type.FRIEND);
+        identifierStore.add(existingIdentifier(id, RelationshipIdentifier.Type.UPI_ID, "rahul@okhdfc"));
+        when(categoryRepository.findByUserId(userId)).thenReturn(List.of());
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of());
+
+        relationshipService.transactionsFor(userId, id);
+
+        verify(transactionRepository).findByUserIdAndAccountIdIn(userId, List.of(liveAccount.getId()));
+    }
+
+    @Test
+    void transactionsFor_withNoLiveAccounts_shortCircuits_withoutQueryingTransactions() {
+        UUID id = UUID.randomUUID();
+        relationship(id, userId, Relationship.Type.FRIEND);
+        identifierStore.add(existingIdentifier(id, RelationshipIdentifier.Type.UPI_ID, "rahul@okhdfc"));
+        when(accountRepository.findByUserId(userId)).thenReturn(List.of());
 
         var result = relationshipService.transactionsFor(userId, id);
 

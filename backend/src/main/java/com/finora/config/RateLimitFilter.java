@@ -433,6 +433,18 @@ public class RateLimitFilter extends OncePerRequestFilter {
     protected void doFilterInternal(@NonNull HttpServletRequest request,
                                      @NonNull HttpServletResponse response,
                                      @NonNull FilterChain filterChain) throws ServletException, IOException {
+        // A CORS preflight carries no side effect of its own -- the real cost is in the request
+        // it precedes, which is counted separately when that request itself arrives. This filter
+        // runs before Spring Security's own CORS/preflight handling (see corsConfigurationSource's
+        // field comment below), so a preflight that got short-circuited here with a 429 came back
+        // missing the Access-Control-Allow-Methods/-Headers a preflight response must carry --
+        // browsers then report the whole thing as a generic CORS failure, hiding that it was ever
+        // rate-limited at all.
+        if ("OPTIONS".equalsIgnoreCase(request.getMethod())) {
+            filterChain.doFilter(request, response);
+            return;
+        }
+
         String ip = clientIpResolver.resolve(request);
 
         RateLimiter limiter = limiterFor(request);

@@ -20,11 +20,13 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -36,6 +38,7 @@ class DashboardServiceTest {
     private CategoryRepository categoryRepository;
     private UserRepository userRepository;
     private com.finora.repository.StatementImportRepository statementImportRepository;
+    private TransactionGraphService transactionGraphService;
     private DashboardService dashboardService;
     private final UUID userId = UUID.randomUUID();
     private Account savings;
@@ -48,6 +51,9 @@ class DashboardServiceTest {
         budgetRepository = mock(BudgetRepository.class);
         userRepository = mock(UserRepository.class);
         statementImportRepository = mock(com.finora.repository.StatementImportRepository.class);
+        transactionGraphService = mock(TransactionGraphService.class);
+        // No CC_PAYMENT edges by default -- tests that care override this explicitly.
+        when(transactionGraphService.ccPaymentFromTransactionIds(any())).thenReturn(Set.of());
 
         savings = new Account();
         ReflectionTestUtils.setField(savings, "id", UUID.randomUUID());
@@ -65,10 +71,10 @@ class DashboardServiceTest {
         when(categoryRepository.findByUserId(any())).thenReturn(List.of());
         when(budgetRepository.findByUserId(any())).thenReturn(List.of());
         when(userRepository.findById(any())).thenReturn(Optional.of(user));
-        when(statementImportRepository.countByUserId(any())).thenReturn(0L);
+        when(statementImportRepository.countByUserIdAndAccountIdIn(any(), any())).thenReturn(0L);
 
         dashboardService = new DashboardService(accountRepository, transactionRepository, categoryRepository,
-                budgetRepository, userRepository, statementImportRepository);
+                budgetRepository, userRepository, statementImportRepository, transactionGraphService);
     }
 
     private Transaction txn(BigDecimal amount, Transaction.Type type, LocalDate date, Transaction.ReconciliationStatus status) {
@@ -92,7 +98,7 @@ class DashboardServiceTest {
         Transaction salary = txn(new BigDecimal("50000.00"), Transaction.Type.INCOME, july, Transaction.ReconciliationStatus.OK);
         Transaction refund = txn(new BigDecimal("999.00"), Transaction.Type.INCOME, july, Transaction.ReconciliationStatus.REFUND);
 
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(salary, refund));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(salary, refund));
 
         DashboardSummaryDto summary = dashboardService.summarize(userId);
 
@@ -105,12 +111,90 @@ class DashboardServiceTest {
         Transaction salary = txn(new BigDecimal("50000.00"), Transaction.Type.INCOME, july, Transaction.ReconciliationStatus.OK);
         Transaction rent = txn(new BigDecimal("15000.00"), Transaction.Type.EXPENSE, july, Transaction.ReconciliationStatus.OK);
 
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(salary, rent));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(salary, rent));
 
         DashboardSummaryDto summary = dashboardService.summarize(userId);
 
         assertThat(summary.monthlyIncome()).isEqualByComparingTo("50000.00");
         assertThat(summary.monthlyExpense()).isEqualByComparingTo("15000.00");
+    }
+
+    // Deleted-account leak: soft-deleting an Account never touches its transactions'/statements'
+    // own deleted_at (see StatementImportService.DELETED_ACCOUNT_RETENTION -- that column is left
+    // alone on purpose, so Statement History can keep showing a deleted account's statements for a
+    // 7-day grace window). A caller that queries transactions/statements by userId ALONE therefore
+    // keeps counting a deleted account's rows forever, not just during that window -- confirmed in
+    // production as a dashboard showing "0 accounts" (accounts already excludes soft-deleted rows,
+    // via Account's own @SQLRestriction) alongside non-zero income/expenses/statement counts.
+
+    @Test
+    @DisplayName("scopes the transaction and statement queries to exactly the live account ids")
+    void summarize_scopesTransactionAndStatementQueries_toLiveAccountIdsOnly() {
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of());
+
+        dashboardService.summarize(userId);
+
+        // setUp()'s account list is the single `savings` account -- if a deleted account's id ever
+        // leaked into this call, this exact-list assertion (not any()) would catch it.
+        org.mockito.Mockito.verify(transactionRepository)
+                .findByUserIdAndAccountIdIn(userId, List.of(savings.getId()));
+        org.mockito.Mockito.verify(statementImportRepository)
+                .countByUserIdAndAccountIdIn(userId, List.of(savings.getId()));
+    }
+
+    @Test
+    @DisplayName("a user with zero live accounts reports zero of everything, without querying transactions/statements at all")
+    void summarize_withNoLiveAccounts_shortCircuitsToZero_withoutQueryingTransactionsOrStatements() {
+        when(accountRepository.findByUserId(any())).thenReturn(List.of());
+
+        DashboardSummaryDto summary = dashboardService.summarize(userId);
+
+        assertThat(summary.accountCount()).isZero();
+        assertThat(summary.statementCount()).isZero();
+        assertThat(summary.monthlyIncome()).isEqualByComparingTo(BigDecimal.ZERO);
+        assertThat(summary.monthlyExpense()).isEqualByComparingTo(BigDecimal.ZERO);
+        org.mockito.Mockito.verifyNoInteractions(transactionRepository);
+        org.mockito.Mockito.verify(statementImportRepository, org.mockito.Mockito.never())
+                .countByUserIdAndAccountIdIn(any(), any());
+    }
+
+    @Test
+    @DisplayName("a CC_PAYMENT-settling payment is excluded from monthlyExpense; the charges it settles stay counted")
+    void summarize_excludesCcPaymentSettlement_fromMonthlyExpense() {
+        // Reconciliation-evolution-roadmap-proposal.md Part 4's concrete goal: a card charge
+        // followed by its statement payment must net to the charge's amount, never both summed.
+        // ReconciliationService/PR #511 links the payment -> each settled charge as a CC_PAYMENT
+        // edge; this is the read side that must not double-count the payment leg.
+        LocalDate july = LocalDate.of(2026, 7, 15);
+        Transaction amazonCharge = txn(new BigDecimal("5000.00"), Transaction.Type.EXPENSE, july, Transaction.ReconciliationStatus.OK);
+        Transaction cardPayment = txn(new BigDecimal("5000.00"), Transaction.Type.EXPENSE, july, Transaction.ReconciliationStatus.OK);
+
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(amazonCharge, cardPayment));
+        when(transactionGraphService.ccPaymentFromTransactionIds(any())).thenReturn(Set.of(cardPayment.getId()));
+
+        DashboardSummaryDto summary = dashboardService.summarize(userId);
+
+        assertThat(summary.monthlyExpense()).isEqualByComparingTo("5000.00"); // charge counted once, payment netted out
+    }
+
+    @Test
+    @DisplayName("excludes an investment transfer from monthlyExpense, but keeps it in spendByCategory")
+    void summarize_excludesInvestmentTransfer_fromMonthlyExpense_butKeepsItInSpendByCategory() {
+        // Top-line-only exclusion (RefundNetting.excludingInvestmentTransfers): a SIP must not
+        // inflate the KPI headline, but "Investments" is still a real, budgetable category and
+        // must not silently vanish from the category breakdown a Budget page reads from.
+        LocalDate july = LocalDate.of(2026, 7, 15);
+        Transaction groceries = txn(new BigDecimal("2000.00"), Transaction.Type.EXPENSE, july, Transaction.ReconciliationStatus.OK);
+        Transaction sip = txn(new BigDecimal("3000.00"), Transaction.Type.EXPENSE, july, Transaction.ReconciliationStatus.INVESTMENT_TRANSFER);
+
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(groceries, sip));
+
+        DashboardSummaryDto summary = dashboardService.summarize(userId);
+
+        assertThat(summary.monthlyExpense()).isEqualByComparingTo("2000.00");
+        BigDecimal categoryTotal = summary.spendByCategory().values().stream()
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        assertThat(categoryTotal).isEqualByComparingTo("5000.00");
     }
 
     @Test
@@ -125,7 +209,7 @@ class DashboardServiceTest {
         flagged2.setNeedsCategoryReview(true);
         Transaction clean = txn(new BigDecimal("2000.00"), Transaction.Type.EXPENSE, july, Transaction.ReconciliationStatus.OK);
 
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(flagged1, flagged2, clean));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(flagged1, flagged2, clean));
 
         DashboardSummaryDto summary = dashboardService.summarize(userId);
 
@@ -146,7 +230,7 @@ class DashboardServiceTest {
         flagged.setNeedsCategoryReview(true);
         Transaction clean = txn(new BigDecimal("9000.00"), Transaction.Type.EXPENSE, july, Transaction.ReconciliationStatus.OK);
 
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(flagged, clean));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(flagged, clean));
 
         DashboardSummaryDto summary = dashboardService.summarize(userId);
 
@@ -162,7 +246,7 @@ class DashboardServiceTest {
         flaggedIncome.setNeedsCategoryReview(true);
         Transaction cleanExpense = txn(new BigDecimal("5000.00"), Transaction.Type.EXPENSE, july, Transaction.ReconciliationStatus.OK);
 
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(flaggedIncome, cleanExpense));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(flaggedIncome, cleanExpense));
 
         DashboardSummaryDto summary = dashboardService.summarize(userId);
 
@@ -177,7 +261,7 @@ class DashboardServiceTest {
         LocalDate july = LocalDate.of(2026, 7, 15);
         Transaction incomeOnly = txn(new BigDecimal("50000.00"), Transaction.Type.INCOME, july, Transaction.ReconciliationStatus.OK);
 
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(incomeOnly));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(incomeOnly));
 
         DashboardSummaryDto summary = dashboardService.summarize(userId);
 
@@ -199,7 +283,7 @@ class DashboardServiceTest {
         for (LocalDate d = LocalDate.of(2026, 7, 1); !d.isAfter(LocalDate.of(2026, 7, 26)); d = d.plusDays(1)) {
             txns.add(txn(new BigDecimal("1200.00"), Transaction.Type.INCOME, d, Transaction.ReconciliationStatus.OK));
         }
-        when(transactionRepository.findByUserId(userId)).thenReturn(txns);
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(txns);
 
         DashboardSummaryDto summary = dashboardService.summarize(userId);
 
@@ -222,7 +306,7 @@ class DashboardServiceTest {
         for (LocalDate d = LocalDate.of(2026, 7, 1); !d.isAfter(LocalDate.of(2026, 7, 31)); d = d.plusDays(1)) {
             txns.add(txn(new BigDecimal("1000.00"), Transaction.Type.INCOME, d, Transaction.ReconciliationStatus.OK));
         }
-        when(transactionRepository.findByUserId(userId)).thenReturn(txns);
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(txns);
 
         DashboardSummaryDto summary = dashboardService.summarize(userId);
 
@@ -243,7 +327,7 @@ class DashboardServiceTest {
         for (LocalDate d = LocalDate.of(2026, 7, 1); !d.isAfter(LocalDate.of(2026, 7, 31)); d = d.plusDays(1)) {
             txns.add(txn(new BigDecimal("200.00"), Transaction.Type.INCOME, d, Transaction.ReconciliationStatus.OK));
         }
-        when(transactionRepository.findByUserId(userId)).thenReturn(txns);
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(txns);
 
         DashboardSummaryDto summary = dashboardService.summarize(userId);
 
@@ -267,7 +351,7 @@ class DashboardServiceTest {
         for (LocalDate d = LocalDate.of(2026, 7, 1); !d.isAfter(LocalDate.of(2026, 7, 31)); d = d.plusDays(1)) {
             txns.add(txn(new BigDecimal("1000.00"), Transaction.Type.INCOME, d, Transaction.ReconciliationStatus.OK));
         }
-        when(transactionRepository.findByUserId(userId)).thenReturn(txns);
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(txns);
 
         DashboardSummaryDto summary = dashboardService.summarize(userId);
 
@@ -316,7 +400,7 @@ class DashboardServiceTest {
         groceriesJuly.setCategoryId(groceriesId);
         txns.add(diningJuly);
         txns.add(groceriesJuly);
-        when(transactionRepository.findByUserId(userId)).thenReturn(txns);
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(txns);
 
         DashboardSummaryDto summary = dashboardService.summarize(userId);
 
@@ -358,7 +442,7 @@ class DashboardServiceTest {
         }
         txns.add(coffeeJuly);
         txns.add(rentJuly);
-        when(transactionRepository.findByUserId(userId)).thenReturn(txns);
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(txns);
 
         DashboardSummaryDto summary = dashboardService.summarize(userId);
 
@@ -393,7 +477,7 @@ class DashboardServiceTest {
             t.setCategoryId(ids[i]);
             txns.add(t);
         }
-        when(transactionRepository.findByUserId(userId)).thenReturn(txns);
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(txns);
 
         DashboardSummaryDto summary = dashboardService.summarize(userId);
 
@@ -413,7 +497,7 @@ class DashboardServiceTest {
         for (LocalDate d = LocalDate.of(2026, 7, 1); !d.isAfter(LocalDate.of(2026, 7, 26)); d = d.plusDays(1)) {
             txns.add(txn(new BigDecimal("1200.00"), Transaction.Type.EXPENSE, d, Transaction.ReconciliationStatus.OK));
         }
-        when(transactionRepository.findByUserId(userId)).thenReturn(txns);
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(txns);
 
         DashboardSummaryDto summary = dashboardService.summarize(userId);
 
@@ -430,7 +514,7 @@ class DashboardServiceTest {
                 LocalDate.of(2026, 7, 10), Transaction.ReconciliationStatus.DUPLICATE);
         duplicate.setIsDuplicateOf(canonical.getId());
         duplicate.setMerchant("Swiggy");
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(canonical, duplicate));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(canonical, duplicate));
 
         DashboardSummaryDto summary = dashboardService.summarize(userId);
 
@@ -450,7 +534,7 @@ class DashboardServiceTest {
         Transaction duplicate = txn(new BigDecimal("500.00"), Transaction.Type.EXPENSE,
                 LocalDate.of(2026, 7, 10), Transaction.ReconciliationStatus.DUPLICATE);
         duplicate.setIsDuplicateOf(UUID.randomUUID());
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(real, duplicate));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(real, duplicate));
 
         DashboardSummaryDto summary = dashboardService.summarize(userId);
 
@@ -470,7 +554,7 @@ class DashboardServiceTest {
             d.setIsDuplicateOf(UUID.randomUUID());
             txns.add(d);
         }
-        when(transactionRepository.findByUserId(userId)).thenReturn(txns);
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(txns);
 
         DashboardSummaryDto summary = dashboardService.summarize(userId);
 
@@ -483,7 +567,7 @@ class DashboardServiceTest {
     @Test
     @DisplayName("detected issues: empty when the reconciliation engine hasn't flagged anything")
     void summarize_reportsNoDetectedDuplicates_whenNoneAreFlagged() {
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(
                 txn(new BigDecimal("500.00"), Transaction.Type.EXPENSE, LocalDate.of(2026, 7, 10), Transaction.ReconciliationStatus.OK)
         ));
 
@@ -504,7 +588,7 @@ class DashboardServiceTest {
             t.setDecisionConfidence(confidences[i]);
             txns.add(t);
         }
-        when(transactionRepository.findByUserId(userId)).thenReturn(txns);
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(txns);
 
         DashboardSummaryDto summary = dashboardService.summarize(userId);
 
@@ -523,7 +607,7 @@ class DashboardServiceTest {
             t.setDecisionConfidence(50);
             txns.add(t);
         }
-        when(transactionRepository.findByUserId(userId)).thenReturn(txns);
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(txns);
 
         DashboardSummaryDto summary = dashboardService.summarize(userId);
 
@@ -549,7 +633,7 @@ class DashboardServiceTest {
             // decisionConfidence left null, as it always is for MANUAL/FILE_PROVIDED.
             txns.add(manual);
         }
-        when(transactionRepository.findByUserId(userId)).thenReturn(txns);
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(txns);
 
         DashboardSummaryDto summary = dashboardService.summarize(userId);
 
@@ -561,7 +645,7 @@ class DashboardServiceTest {
     void summarize_flagsALiquidAccountBelowTheUsersLowBalanceThreshold() {
         // Override setUp()'s 100000 balance with one below the default 2000 threshold.
         savings.setBalance(new BigDecimal("500.00"));
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of());
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of());
 
         DashboardSummaryDto summary = dashboardService.summarize(userId);
 
@@ -586,8 +670,8 @@ class DashboardServiceTest {
         ReflectionTestUtils.setField(user, "id", userId);
         when(userRepository.findById(any())).thenReturn(Optional.of(user));
         dashboardService = new DashboardService(accountRepository, transactionRepository, categoryRepository,
-                budgetRepository, userRepository, statementImportRepository);
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of());
+                budgetRepository, userRepository, statementImportRepository, transactionGraphService);
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of());
 
         DashboardSummaryDto summary = dashboardService.summarize(userId);
 
@@ -599,10 +683,10 @@ class DashboardServiceTest {
     void summarize_flagsLimitedHistory_belowTheMonthFloor() {
         LocalDate june = LocalDate.of(2026, 6, 15);
         LocalDate july = LocalDate.of(2026, 7, 15);
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(
                 txn(new BigDecimal("500.00"), Transaction.Type.EXPENSE, june, Transaction.ReconciliationStatus.OK),
                 txn(new BigDecimal("500.00"), Transaction.Type.EXPENSE, july, Transaction.ReconciliationStatus.OK)));
-        when(statementImportRepository.countByUserId(userId)).thenReturn(2L);
+        when(statementImportRepository.countByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(2L);
 
         DashboardSummaryDto summary = dashboardService.summarize(userId);
 
@@ -620,7 +704,7 @@ class DashboardServiceTest {
         for (int m = 5; m <= 7; m++) {
             txns.add(txn(new BigDecimal("500.00"), Transaction.Type.EXPENSE, LocalDate.of(2026, m, 10), Transaction.ReconciliationStatus.OK));
         }
-        when(transactionRepository.findByUserId(userId)).thenReturn(txns);
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(txns);
 
         DashboardSummaryDto summary = dashboardService.summarize(userId);
 
@@ -651,7 +735,7 @@ class DashboardServiceTest {
         LocalDate lastMonth = LocalDate.now(com.finora.util.UserZone.DEFAULT).minusMonths(1).withDayOfMonth(15);
         Transaction dining = txn(new BigDecimal("6000.00"), Transaction.Type.EXPENSE, lastMonth, Transaction.ReconciliationStatus.OK);
         dining.setCategoryId(categoryId);
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(dining));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(dining));
 
         DashboardSummaryDto summary = dashboardService.summarize(userId);
 
@@ -666,7 +750,7 @@ class DashboardServiceTest {
     void summarize_reportsWhichMonthTheFiguresAreFrom() {
         LocalDate lastMonth = LocalDate.now(com.finora.util.UserZone.DEFAULT).minusMonths(1).withDayOfMonth(15);
         Transaction spend = txn(new BigDecimal("900.00"), Transaction.Type.EXPENSE, lastMonth, Transaction.ReconciliationStatus.OK);
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(spend));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(spend));
 
         DashboardSummaryDto summary = dashboardService.summarize(userId);
 
@@ -705,7 +789,7 @@ class DashboardServiceTest {
         LocalDate thisMonth = LocalDate.now(com.finora.util.UserZone.DEFAULT).withDayOfMonth(15);
         Transaction dining = txn(new BigDecimal("6000.00"), Transaction.Type.EXPENSE, thisMonth, Transaction.ReconciliationStatus.OK);
         dining.setCategoryId(categoryId);
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(dining));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(dining));
 
         DashboardSummaryDto summary = dashboardService.summarize(userId);
 
@@ -731,7 +815,7 @@ class DashboardServiceTest {
         LocalDate july = LocalDate.of(2026, 7, 15);
         Transaction groceries = txn(new BigDecimal("1000.00"), Transaction.Type.EXPENSE, july, Transaction.ReconciliationStatus.OK);
         groceries.setCategoryId(categoryId);
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(groceries));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(groceries));
 
         DashboardSummaryDto summary = dashboardService.summarize(userId);
 
@@ -775,7 +859,7 @@ class DashboardServiceTest {
         for (int i = 0; i < 9; i++) {
             nineTxns.add(txn(new BigDecimal("500.00"), Transaction.Type.EXPENSE, july, Transaction.ReconciliationStatus.OK));
         }
-        when(transactionRepository.findByUserId(userId)).thenReturn(nineTxns);
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(nineTxns);
 
         DashboardSummaryDto summary = dashboardService.summarize(userId);
 
@@ -783,6 +867,7 @@ class DashboardServiceTest {
         assertThat(summary.healthScore()).isNull();
         assertThat(summary.healthLabel()).isNull();
         assertThat(summary.healthBreakdown()).isEmpty();
+        assertThat(summary.healthBreakdownDetail()).isEmpty();
         assertThat(summary.healthScoreTransactionCount()).isEqualTo(9);
         assertThat(summary.healthScoreMinTransactions()).isEqualTo(10);
     }
@@ -795,7 +880,7 @@ class DashboardServiceTest {
         for (int i = 0; i < 10; i++) {
             tenTxns.add(txn(new BigDecimal("500.00"), Transaction.Type.INCOME, july, Transaction.ReconciliationStatus.OK));
         }
-        when(transactionRepository.findByUserId(userId)).thenReturn(tenTxns);
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(tenTxns);
 
         DashboardSummaryDto summary = dashboardService.summarize(userId);
 
@@ -804,6 +889,89 @@ class DashboardServiceTest {
         assertThat(summary.healthLabel()).isNotNull();
         assertThat(summary.healthBreakdown()).isNotEmpty();
         assertThat(summary.healthScoreTransactionCount()).isEqualTo(10);
+    }
+
+    @Test
+    @DisplayName("health breakdown detail: reports the REAL savings rate, not the clamped 0-100 bar score behind it")
+    void summarize_reportsTheRealSavingsRate_behindTheClampedBar() {
+        // Income 50000, expense 40000 -> a real savings rate of 20%. savingsRateScore itself would
+        // be clamp(20, 0, 30) / 30 * 100 = 66.7 -- a different number from the 20% actually saved,
+        // which is exactly the gap this detail text exists to close.
+        LocalDate july = LocalDate.of(2026, 7, 15);
+        List<Transaction> txns = new java.util.ArrayList<>();
+        txns.add(txn(new BigDecimal("50000.00"), Transaction.Type.INCOME, july, Transaction.ReconciliationStatus.OK));
+        txns.add(txn(new BigDecimal("40000.00"), Transaction.Type.EXPENSE, july, Transaction.ReconciliationStatus.OK));
+        // Zero-amount padding, purely to clear MIN_TRANSACTIONS_FOR_HEALTH_SCORE (10) without
+        // perturbing the clean 50000/40000 = 20% savings rate the assertions below depend on.
+        for (int i = 0; i < 8; i++) {
+            txns.add(txn(BigDecimal.ZERO, Transaction.Type.EXPENSE, july, Transaction.ReconciliationStatus.OK));
+        }
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(txns);
+
+        DashboardSummaryDto summary = dashboardService.summarize(userId);
+
+        assertThat(summary.healthBreakdown().get("Savings Rate")).isCloseTo(66.7, org.assertj.core.data.Offset.offset(0.5));
+        assertThat(summary.healthBreakdownDetail().get("Savings Rate"))
+                .isEqualTo("Your savings rate was 20.0%.");
+    }
+
+    @Test
+    @DisplayName("health breakdown detail: distinguishes \"no credit cards\" from \"cards with real utilization\"")
+    void summarize_debtScoreDetail_distinguishesNoCardsFromRealUtilization() {
+        Account card = new Account();
+        ReflectionTestUtils.setField(card, "id", UUID.randomUUID());
+        card.setUserId(userId);
+        card.setAccountType(Account.Type.CREDIT_CARD);
+        card.setBalance(new BigDecimal("25000.00"));
+        card.setCreditLimit(new BigDecimal("100000.00"));
+
+        AccountRepository accountRepositoryWithCard = mock(AccountRepository.class);
+        when(accountRepositoryWithCard.findByUserId(any())).thenReturn(List.of(savings, card));
+        DashboardService serviceWithCard = new DashboardService(accountRepositoryWithCard, transactionRepository,
+                categoryRepository, budgetRepository, userRepository, statementImportRepository, transactionGraphService);
+
+        List<Transaction> txns = new java.util.ArrayList<>();
+        for (int i = 0; i < 10; i++) {
+            txns.add(txn(new BigDecimal("500.00"), Transaction.Type.INCOME,
+                    LocalDate.of(2026, 7, 1 + i), Transaction.ReconciliationStatus.OK));
+        }
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(txns);
+
+        // With a card: 25000/100000 = 25% utilization.
+        DashboardSummaryDto withCard = serviceWithCard.summarize(userId);
+        assertThat(withCard.healthBreakdownDetail().get("Debt Score"))
+                .isEqualTo("Your average credit utilization is 25% across 1 card.");
+
+        // Without any credit card at all (setUp()'s default: just the SAVINGS account) -- must read
+        // as "no cards", not silently as "0% utilization" (which would misleadingly imply cards
+        // that are simply paid off).
+        DashboardSummaryDto withoutCard = dashboardService.summarize(userId);
+        assertThat(withoutCard.healthBreakdownDetail().get("Debt Score"))
+                .isEqualTo("You have no credit cards on file.");
+    }
+
+    @Test
+    @DisplayName("health breakdown detail: reports real months-of-expenses-covered and the real cash-flow-positive month count")
+    void summarize_reportsRealEmergencyFundAndCashFlowDetail() {
+        // Two full calendar months (June, July), liquid savings fixed by setUp() at 100000.
+        // June: income 100 < expense 500/day*30 -- cash-flow negative. July: income 200 > expense
+        // 100/day*31 -- cash-flow positive. So exactly 1 of 2 full months is cash-flow positive.
+        List<Transaction> txns = new java.util.ArrayList<>();
+        for (LocalDate d = LocalDate.of(2026, 6, 1); !d.isAfter(LocalDate.of(2026, 6, 30)); d = d.plusDays(1)) {
+            txns.add(txn(new BigDecimal("500.00"), Transaction.Type.EXPENSE, d, Transaction.ReconciliationStatus.OK));
+            txns.add(txn(new BigDecimal("100.00"), Transaction.Type.INCOME, d, Transaction.ReconciliationStatus.OK));
+        }
+        for (LocalDate d = LocalDate.of(2026, 7, 1); !d.isAfter(LocalDate.of(2026, 7, 31)); d = d.plusDays(1)) {
+            txns.add(txn(new BigDecimal("100.00"), Transaction.Type.EXPENSE, d, Transaction.ReconciliationStatus.OK));
+            txns.add(txn(new BigDecimal("200.00"), Transaction.Type.INCOME, d, Transaction.ReconciliationStatus.OK));
+        }
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(txns);
+
+        DashboardSummaryDto summary = dashboardService.summarize(userId);
+
+        assertThat(summary.healthBreakdownDetail().get("Emergency Fund")).contains("months of expenses");
+        assertThat(summary.healthBreakdownDetail().get("Cash Flow Stability"))
+                .isEqualTo("1 of the last 2 full months had income meeting or exceeding expenses.");
     }
 
     @Test
@@ -825,7 +993,7 @@ class DashboardServiceTest {
             txns.add(txn(new BigDecimal("1200.00"), Transaction.Type.INCOME, date, Transaction.ReconciliationStatus.OK));
             date = date.plusDays(1);
         }
-        when(transactionRepository.findByUserId(userId)).thenReturn(txns);
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(txns);
 
         DashboardSummaryDto summary = dashboardService.summarize(userId);
 
@@ -847,7 +1015,7 @@ class DashboardServiceTest {
             txns.add(txn(new BigDecimal("1000.00"), Transaction.Type.EXPENSE, d, Transaction.ReconciliationStatus.OK));
             txns.add(txn(new BigDecimal("200.00"), Transaction.Type.INCOME, d, Transaction.ReconciliationStatus.OK));
         }
-        when(transactionRepository.findByUserId(userId)).thenReturn(txns);
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(txns);
 
         DashboardSummaryDto summary = dashboardService.summarize(userId);
 
@@ -867,7 +1035,7 @@ class DashboardServiceTest {
         for (LocalDate d = LocalDate.of(2026, 7, 10); !d.isAfter(LocalDate.of(2026, 7, 20)); d = d.plusDays(1)) {
             txns.add(txn(new BigDecimal("5000.00"), Transaction.Type.EXPENSE, d, Transaction.ReconciliationStatus.OK));
         }
-        when(transactionRepository.findByUserId(userId)).thenReturn(txns);
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(txns);
 
         DashboardSummaryDto summary = dashboardService.summarize(userId);
 
@@ -889,7 +1057,7 @@ class DashboardServiceTest {
             txns.add(txn(new BigDecimal("100.00"), Transaction.Type.EXPENSE, d, Transaction.ReconciliationStatus.OK));
             txns.add(txn(new BigDecimal("200.00"), Transaction.Type.INCOME, d, Transaction.ReconciliationStatus.OK));
         }
-        when(transactionRepository.findByUserId(userId)).thenReturn(txns);
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(txns);
 
         DashboardSummaryDto summary = dashboardService.summarize(userId);
 
@@ -912,7 +1080,7 @@ class DashboardServiceTest {
         for (LocalDate d = LocalDate.of(2026, 7, 1); !d.isAfter(LocalDate.of(2026, 7, 15)); d = d.plusDays(1)) {
             txns.add(txn(new BigDecimal("5000.00"), Transaction.Type.EXPENSE, d, Transaction.ReconciliationStatus.OK));
         }
-        when(transactionRepository.findByUserId(userId)).thenReturn(txns);
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(txns);
 
         DashboardSummaryDto summary = dashboardService.summarize(userId);
 
@@ -936,7 +1104,7 @@ class DashboardServiceTest {
         for (LocalDate d = LocalDate.of(2026, 7, 1); !d.isAfter(LocalDate.of(2026, 7, 10)); d = d.plusDays(1)) {
             txns.add(txn(new BigDecimal("50.00"), Transaction.Type.EXPENSE, d, Transaction.ReconciliationStatus.OK));
         }
-        when(transactionRepository.findByUserId(userId)).thenReturn(txns);
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(txns);
 
         DashboardSummaryDto summary = dashboardService.summarize(userId);
 

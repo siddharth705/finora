@@ -98,6 +98,13 @@ export interface DashboardSummary {
   healthScore: number | null;
   healthLabel: string | null;
   healthBreakdown: Record<string, number>;
+  /**
+   * The real quantity behind each entry in healthBreakdown, keyed by the same component name --
+   * e.g. "Savings Rate" -> "Your savings rate was 18.5%." Each bar in healthBreakdown
+   * shows a NORMALIZED 0-100 score, not the number it was computed from. Empty exactly when
+   * healthBreakdown is (below healthScoreMinTransactions).
+   */
+  healthBreakdownDetail: Record<string, string>;
   healthScoreAvailable: boolean;
   healthScoreTransactionCount: number;
   healthScoreMinTransactions: number;
@@ -439,6 +446,23 @@ export interface ImportSummary {
   statementPeriodEnd: string | null;
   importDurationMs: number;
   source: string;
+  // Phase 4 of the statement continuity proposal (§0.3): the statement THIS confirm just created,
+  // and (non-null only when this import's period exactly duplicates an existing statement) the
+  // ORIGINAL statement's id -- what "Import this one as a replacement?" would supersede.
+  statementImportId: string;
+  duplicateOfStatementId: string | null;
+}
+
+// Phase 4 of the statement continuity proposal (§0.3): result of "Import this one as a
+// replacement?" -- see StatementImportDto.SupersedeResult on the backend.
+export interface SupersedeResult {
+  supersededStatementId: string;
+  supersededByStatementId: string;
+  balanceReversed: boolean;
+  // Non-null only when the superseded statement predates balance-application-mode tracking --
+  // no automatic balance reversal was attempted, and an administrator should verify the account
+  // balance by hand.
+  warning: string | null;
 }
 
 // Statement History — organized by account rather than a flat list of uploaded files, since

@@ -1,10 +1,13 @@
 package com.finora.service;
 
 import com.finora.dto.InsightsExplorerDto;
+import com.finora.entity.Account;
 import com.finora.entity.Category;
 import com.finora.entity.Transaction;
+import com.finora.repository.AccountRepository;
 import com.finora.repository.BudgetRepository;
 import com.finora.repository.CategoryRepository;
+import com.finora.repository.StatementImportRepository;
 import com.finora.repository.TransactionRepository;
 import com.finora.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -14,15 +17,19 @@ import org.springframework.test.util.ReflectionTestUtils;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 class InsightsExplorerServiceTest {
 
     private TransactionRepository transactionRepository;
+    private AccountRepository accountRepository;
     private CategoryRepository categoryRepository;
     private UserRepository userRepository;
     private InsightsExplorerService service;
@@ -32,10 +39,22 @@ class InsightsExplorerServiceTest {
     @BeforeEach
     void setUp() {
         transactionRepository = mock(TransactionRepository.class);
+        accountRepository = mock(AccountRepository.class);
         categoryRepository = mock(CategoryRepository.class);
         BudgetRepository budgetRepository = mock(BudgetRepository.class);
+        StatementImportRepository statementImportRepository = mock(StatementImportRepository.class);
+        when(statementImportRepository.findMetadataWithPeriodByUserIdAndAccountId(any(), any())).thenReturn(List.of());
         userRepository = mock(UserRepository.class);
-        InsightsService insightsService = new InsightsService(transactionRepository, categoryRepository, budgetRepository, userRepository);
+        TransactionGraphService transactionGraphService = mock(TransactionGraphService.class);
+        when(transactionGraphService.ccPaymentFromTransactionIds(any())).thenReturn(Set.of());
+
+        Account liveAccount = new Account();
+        ReflectionTestUtils.setField(liveAccount, "id", UUID.randomUUID());
+        liveAccount.setUserId(userId);
+        when(accountRepository.findByUserId(userId)).thenReturn(List.of(liveAccount));
+
+        InsightsService insightsService = new InsightsService(transactionRepository, accountRepository, categoryRepository, budgetRepository,
+                userRepository, transactionGraphService, statementImportRepository);
         service = new InsightsExplorerService(insightsService, userRepository);
 
         dining = new Category();
@@ -69,7 +88,7 @@ class InsightsExplorerServiceTest {
 
     @Test
     void trace_returnsAnAllNullTrace_whenTheUserHasNoReportableExpenses() {
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of());
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of());
 
         InsightsExplorerDto.Trace trace = service.trace(userId).orElseThrow();
 
@@ -81,7 +100,7 @@ class InsightsExplorerServiceTest {
 
     @Test
     void trace_sumsTotalSpend_acrossAllCurrentMonthExpenses() {
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(
                 expense(new BigDecimal("500"), "Zomato"),
                 expense(new BigDecimal("300"), "Swiggy")));
 
@@ -95,7 +114,7 @@ class InsightsExplorerServiceTest {
 
     @Test
     void trace_namesTheTopCategory_withTheTransactionsThatMadeIt() {
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(
                 expense(new BigDecimal("500"), "Zomato")));
 
         InsightsExplorerDto.Trace trace = service.trace(userId).orElseThrow();
@@ -110,7 +129,7 @@ class InsightsExplorerServiceTest {
     void trace_namesTheTopMerchant_fallingBackToUncategorized_whenNoCategoryIsResolved() {
         Transaction uncategorized = expense(new BigDecimal("500"), "Zomato");
         uncategorized.setCategoryId(null);
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(uncategorized));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(uncategorized));
 
         InsightsExplorerDto.Trace trace = service.trace(userId).orElseThrow();
 
@@ -130,7 +149,7 @@ class InsightsExplorerServiceTest {
         refund.setTxnType(Transaction.Type.INCOME);
         refund.setRefundOfTransactionId(purchase.getId());
         refund.setReconciliationStatus(Transaction.ReconciliationStatus.REFUND);
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(purchase, refund));
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(purchase, refund));
 
         InsightsExplorerDto.Trace trace = service.trace(userId).orElseThrow();
 

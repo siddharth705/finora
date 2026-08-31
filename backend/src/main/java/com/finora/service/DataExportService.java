@@ -265,7 +265,7 @@ public class DataExportService {
                 .toList();
 
         List<CategoryDto> categories = userCategories.stream()
-                .map(c -> new CategoryDto(c.getId(), c.getName(), c.isSystem()))
+                .map(c -> new CategoryDto(c.getId(), c.getName(), c.isSystem(), c.getIcon(), c.getColor()))
                 .toList();
         List<RuleDto> categoryRules = categoryRuleRepository.findByUserId(userId).stream()
                 .map(RuleDto::from)

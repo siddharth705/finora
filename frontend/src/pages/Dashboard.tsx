@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { Line, Doughnut } from 'react-chartjs-2';
@@ -7,7 +7,7 @@ import {
 } from 'chart.js';
 import {
   Wallet, ArrowDownCircle, ArrowUpCircle, PieChart,
-  ShoppingBag, Utensils, Car, Sparkles, Plus, PiggyBank, TrendingUp, TrendingDown, Target, ShieldCheck, Repeat,
+  ShoppingBag, Sparkles, Plus, PiggyBank, TrendingUp, TrendingDown, Target, ShieldCheck, Repeat,
   UploadCloud, Receipt, LineChart as LineChartIcon, Mail, AlertTriangle, ListChecks, Copy, BadgeCheck,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
@@ -16,8 +16,10 @@ import { MerchantLogo } from '../components/MerchantLogo';
 import { AddTransactionModal } from '../components/AddTransactionModal';
 import { FinancialJourney } from '../components/FinancialJourney';
 import { FinoraCard, MetricCard, EmptyState, SectionHeader, QuickActionCard, ChartContainer, Badge, baseChartOptions } from '../design-system';
+import { ICON_COMPONENTS, COLOR_HEX } from '../lib/categoryIcons';
 import {
-  dashboardApi, accountsApi, transactionsApi, goalsApi, insightsApi, userApi, budgetsApi, reportsApi, recurringApi,
+  dashboardApi, accountsApi, transactionsApi, categoriesApi, goalsApi, insightsApi, userApi, budgetsApi, reportsApi, recurringApi,
+  type CategoryOption,
 } from '../api/endpoints';
 
 ChartJS.register(ArcElement, LineElement, PointElement, LinearScale, CategoryScale, Tooltip, Legend, Filler);
@@ -81,14 +83,6 @@ function scoreLabel(score: number): string {
   return 'Needs Attention';
 }
 
-const CATEGORY_ICON: Record<string, any> = {
-  Dining: Utensils, Shopping: ShoppingBag, Transport: Car, Salary: ArrowDownCircle,
-};
-const CATEGORY_COLOR: Record<string, string> = {
-  Dining: '#ef4444', Shopping: '#f59e0b', Transport: '#111827', Salary: '#16a34a',
-};
-
-
 type CashFlowRange = '3M' | '6M' | '12M';
 const RANGE_MONTHS: Record<CashFlowRange, number> = { '3M': 3, '6M': 6, '12M': 12 };
 
@@ -116,8 +110,29 @@ export default function Dashboard() {
   const queryClient = useQueryClient();
   const [cashFlowRange, setCashFlowRange] = useState<CashFlowRange>('6M');
   const [showAddModal, setShowAddModal] = useState(false);
+  // Recent Transactions' icon/color used to key off categoryName against a 4-entry hardcoded map
+  // (predates custom categories, and covered only 4 of the 25 default categories even before user-
+  // created ones existed). Looked up by categoryId instead so every category -- default or custom
+  // -- renders its own real, backend-assigned icon/color token.
+  //
+  // On the shared ['categories'] key rather than its own useState+useEffect: this page also
+  // renders AskOnceCard and MerchantGroupReviewCard, each of which mounts CategoryComboboxes
+  // reading the same key, so one fetch serves all of them. It also picks up react-query's error
+  // handling, replacing a bare .then() with no .catch() at all -- a rejected promise there was an
+  // unhandled rejection, and the icons simply fell back to the default forever with no signal.
+  const categoriesQ = useQuery({ queryKey: ['categories'], queryFn: () => categoriesApi.list(), retry: false });
+  const categoriesById: Record<string, CategoryOption> = useMemo(
+    () => Object.fromEntries((categoriesQ.data ?? []).map((c) => [c.id, c])),
+    [categoriesQ.data],
+  );
+
   const [confirmingDuplicateId, setConfirmingDuplicateId] = useState<string | null>(null);
   const [duplicateConfirmError, setDuplicateConfirmError] = useState<string | null>(null);
+  // Which ONE Financial Health Score breakdown row (if any) has its "Why?" detail expanded --
+  // same single-open-at-a-time simplicity as the rest of this page's disclosures, just tracked by
+  // component name here rather than each row owning its own state, since these five rows are
+  // rendered inline rather than as their own component.
+  const [expandedHealthDetail, setExpandedHealthDetail] = useState<string | null>(null);
 
   // BH-027's own service-layer doc comment: "the user asked for this row to count, so it counts
   // now." transactionsApi.confirmNotDuplicate already existed and already worked -- this is the
@@ -348,20 +363,39 @@ export default function Dashboard() {
               <p className={`text-sm font-medium mt-1 ${healthColor(summary.healthLabel!)}`}>{summary.healthLabel}</p>
             </div>
             <div className="space-y-2.5">
-              {Object.entries(summary.healthBreakdown).map(([name, score]) => (
-                <div key={name}>
-                  <div className="flex justify-between items-baseline mb-1">
-                    <span className="text-xs text-ink">{name}</span>
-                    <span className="text-xs text-muted">{Math.round(score)}%</span>
+              {Object.entries(summary.healthBreakdown).map(([name, score]) => {
+                const detail = summary.healthBreakdownDetail[name];
+                const isExpanded = expandedHealthDetail === name;
+                return (
+                  <div key={name}>
+                    <div className="flex justify-between items-baseline mb-1">
+                      <span className="text-xs text-ink">
+                        {name}
+                        {detail && (
+                          <button
+                            type="button"
+                            onClick={() => setExpandedHealthDetail((cur) => (cur === name ? null : name))}
+                            aria-expanded={isExpanded}
+                            className="ml-1.5 text-primary underline underline-offset-2 font-normal"
+                          >
+                            {isExpanded ? 'Hide' : 'Why?'}
+                          </button>
+                        )}
+                      </span>
+                      <span className="text-xs text-muted">{Math.round(score)}%</span>
+                    </div>
+                    <div className="h-1.5 bg-bg rounded-full overflow-hidden">
+                      <div
+                        className={`h-full rounded-full ${healthItemBarColor(score)}`}
+                        style={{ width: `${Math.max(0, Math.min(100, score))}%` }}
+                      />
+                    </div>
+                    {detail && isExpanded && (
+                      <p className="text-[11px] text-muted mt-1">{detail}</p>
+                    )}
                   </div>
-                  <div className="h-1.5 bg-bg rounded-full overflow-hidden">
-                    <div
-                      className={`h-full rounded-full ${healthItemBarColor(score)}`}
-                      style={{ width: `${Math.max(0, Math.min(100, score))}%` }}
-                    />
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         ) : (
@@ -686,8 +720,9 @@ export default function Dashboard() {
                 }
               />
             ) : recentTxns.map((t) => {
-              const Icon = CATEGORY_ICON[t.categoryName] ?? ShoppingBag;
-              const color = t.type === 'INCOME' ? '#16a34a' : (CATEGORY_COLOR[t.categoryName] ?? '#262A33');
+              const cat = categoriesById[t.categoryId];
+              const Icon = ICON_COMPONENTS[cat?.icon ?? 'tag'] ?? ShoppingBag;
+              const color = t.type === 'INCOME' ? '#16a34a' : (COLOR_HEX[cat?.color ?? 'gray'] ?? '#262A33');
               return (
                 <div key={t.id} className="flex items-center gap-3">
                   <div className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0" style={{ background: color + '20' }}>
@@ -819,7 +854,11 @@ export default function Dashboard() {
               <p className="text-xs text-muted mb-3">Get personalized insights to improve your financial health.</p>
               <ul className="space-y-2">
                 {[
-                  'Upload or import more transactions to get AI-powered insights.',
+                  // Bug fix: this used to say "get AI-powered insights", contradicting the honest
+                  // "rule-based statistics, not an LLM assistant" framing the Insights page and
+                  // mobile screen both state plainly -- someone who only ever saw this Dashboard
+                  // card would come away with the wrong idea about what the feature actually is.
+                  'Upload or import more transactions to see spending insights.',
                   'Track your spending to identify patterns and save more.',
                   'Set budgets to stay in control of your finances.',
                 ].map((tip) => (

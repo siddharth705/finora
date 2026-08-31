@@ -1,7 +1,9 @@
 package com.finora.integrations.google.merchant;
 
 import com.finora.dto.ImportDto.DuplicateMatch;
+import com.finora.entity.Account;
 import com.finora.entity.Transaction;
+import com.finora.repository.AccountRepository;
 import com.finora.repository.TransactionRepository;
 import com.finora.util.CategoryRules;
 import org.springframework.stereotype.Component;
@@ -55,18 +57,31 @@ public class GmailReconciliationMatcher {
     private static final int MIN_BRAND_TOKEN_LENGTH = 3;
 
     private final TransactionRepository transactionRepository;
+    private final AccountRepository accountRepository;
 
-    public GmailReconciliationMatcher(TransactionRepository transactionRepository) {
+    public GmailReconciliationMatcher(TransactionRepository transactionRepository, AccountRepository accountRepository) {
         this.transactionRepository = transactionRepository;
+        this.accountRepository = accountRepository;
     }
 
+    /**
+     * Matches against every LIVE account's transactions, excluding a soft-deleted account's rows
+     * which the unscoped query would otherwise keep matching against forever (see
+     * {@code TransactionRepository.findByUserIdAndAccountIdIn}'s own doc comment). This search is
+     * deliberately cross-account by design -- a Gmail receipt isn't tied to one account until it's
+     * matched -- only "including a deleted account's history forever" is what's being fixed here.
+     */
     public Optional<DuplicateMatch> findMatch(UUID userId, LocalDate receiptDate,
                                                java.math.BigDecimal amount, String merchantDomain) {
         String brandToken = brandTokenOf(merchantDomain);
         if (brandToken.length() < MIN_BRAND_TOKEN_LENGTH) return Optional.empty();
 
-        List<Transaction> candidates = transactionRepository.findCandidatesForGmailReconciliation(
-                userId, amount, receiptDate.minusDays(DATE_WINDOW_DAYS), receiptDate.plusDays(DATE_WINDOW_DAYS));
+        List<UUID> liveAccountIds = accountRepository.findByUserId(userId).stream().map(Account::getId).toList();
+        if (liveAccountIds.isEmpty()) return Optional.empty();
+
+        List<Transaction> candidates = transactionRepository.findCandidatesForGmailReconciliationAndAccountIdIn(
+                userId, amount, receiptDate.minusDays(DATE_WINDOW_DAYS), receiptDate.plusDays(DATE_WINDOW_DAYS),
+                liveAccountIds);
         if (candidates.isEmpty()) return Optional.empty();
 
         List<Transaction> matches = candidates.stream()

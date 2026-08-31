@@ -20,12 +20,21 @@ if (!rawBase) {
 }
 const BASE_URL = normalizeApiBase(rawBase);
 
-export const api = axios.create({ baseURL: BASE_URL });
+// No timeout at all was the previous default (axios's own default is 0, i.e. wait forever). On a
+// phone that's worse than on the web app this mirrors: a stalled cell connection leaves a request
+// hanging with no error, no retry, and nothing in the UI to explain why a screen never loads.
+// 30s, not something shorter -- import confirm re-parses the stored statement server-side and a
+// large one can genuinely take a while. File uploads (stageCsv/stagePdf) are exempt from this,
+// see toUploadProgressConfig in endpoints.ts: they already show upload progress, so an unbounded
+// wait there is visible progress rather than a silent hang.
+const DEFAULT_TIMEOUT_MS = 30_000;
+
+export const api = axios.create({ baseURL: BASE_URL, timeout: DEFAULT_TIMEOUT_MS });
 
 // Interceptor-free instance for the /auth/refresh call itself, same reasoning as the web app: if
 // the refresh call went through `api`'s own response interceptor and also got a 401, it would
 // recursively trigger another refresh attempt.
-export const rawApi = axios.create({ baseURL: BASE_URL });
+export const rawApi = axios.create({ baseURL: BASE_URL, timeout: DEFAULT_TIMEOUT_MS });
 
 export interface ApiEnvelope<T> {
   success: boolean;

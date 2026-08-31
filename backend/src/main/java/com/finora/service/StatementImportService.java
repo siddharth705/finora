@@ -16,6 +16,7 @@ import com.finora.repository.TransactionRepository;
 import com.finora.accounts.AccountBalanceConvention;
 import com.finora.accounts.AccountDto;
 import com.finora.imports.ConfirmedRowIntegrity;
+import com.finora.imports.CoverageWarnings;
 import com.finora.imports.ImportService;
 import com.finora.security.OwnershipGuard;
 import org.springframework.http.HttpStatus;
@@ -278,7 +279,50 @@ public class StatementImportService {
                 request.statementOpeningBalance(), request.statementClosingBalance(), null,
                 request.statementPeriodStart(), request.statementPeriodEnd(),
                 request.totalAmountDue(), request.paymentDueDate());
-        return importService.confirm(userId, original.getFileName(), content, scoped);
+        var response = importService.confirm(userId, original.getFileName(), content, scoped);
+
+        // Bug fix (self-review, statement continuity Phase 2): this reimport-confirms via the same
+        // path a first-time import takes, and `original` is never deleted -- confirm() creates a
+        // genuinely new StatementImport row with the SAME period, so CoverageWarnings correctly
+        // (from its own, narrower view) sees a same-period duplicate and warns about it. From the
+        // user's side, that reads as "you already have a statement for this period" immediately
+        // after an action that just successfully corrected one -- true in the letter (the old row
+        // genuinely still exists, unreplaced by a plain reimport) but actively misleading in this
+        // context, since it is not a statement worth offering to "Import as a replacement" against
+        // -- it is the SAME correction the user just made. Stripped here, at the one call site that
+        // actually knows this "duplicate" is the statement being reimported, rather than threading
+        // a "this confirm is a reimport of X" signal through ImportService's whole confirm/
+        // persistSection/summarise call graph for it.
+        //
+        // Bug fix (self-review, Phase 4 follow-up): this used to strip EVERY duplicate-period
+        // warning by string prefix while only conditionally clearing duplicateOfStatementId (when
+        // it happened to equal `original`'s own id) -- two independently-flattened views of
+        // "possibly several overlaps" that had no way to stay in agreement. Whenever this reimport
+        // ALSO exact-duplicated a second, unrelated statement (a real, actionable finding -- the
+        // whole reason this feature exists), one of two things happened depending purely on which
+        // overlap CoverageWarnings.duplicateOfStatementId happened to return first: either the
+        // unrelated duplicate's id survived while its explaining sentence was stripped alongside
+        // `original`'s (an id the summary screen could never render a button for, since it only
+        // renders when warnings is non-empty), or the id got cleared to null and BOTH sentences
+        // vanished, silently dropping the second duplicate entirely. duplicateOverlapsFor gives the
+        // per-overlap (id, sentence) pairing needed to remove only the ONE overlap against
+        // `original` and leave any other duplicate -- id and sentence together -- exactly as an
+        // ordinary confirm's response would carry it.
+        List<CoverageWarnings.DuplicateOverlap> overlaps = importService.duplicateOverlapsFor(
+                userId, original.getAccountId(), response.statementImportId(),
+                response.statementPeriodStart(), response.statementPeriodEnd());
+        List<CoverageWarnings.DuplicateOverlap> realDuplicates = overlaps.stream()
+                .filter(o -> !o.otherStatementId().equals(statementImportId))
+                .toList();
+
+        List<String> warnings = new ArrayList<>(response.warnings().stream()
+                .filter(w -> !w.startsWith(CoverageWarnings.DUPLICATE_PERIOD_WARNING_PREFIX))
+                .toList());
+        realDuplicates.forEach(o -> warnings.add(o.warning()));
+
+        return response.withWarningsAndDuplicateOfStatementId(
+                warnings,
+                realDuplicates.isEmpty() ? null : realDuplicates.get(0).otherStatementId());
     }
 
     /**
@@ -336,8 +380,24 @@ public class StatementImportService {
         // ledger that no longer exists.
         if (!toRemove.isEmpty()) {
             accountRepository.findById(statementImport.getAccountId()).ifPresent(account -> {
+                // Excludes an already-DUPLICATE-flagged row: its contribution to Account.balance
+                // was already reversed once, at the original statement's own confirm time
+                // (ImportService.summarise's BH-003 correction) -- summing it again here would
+                // move the balance a second time for a row that currently contributes nothing.
+                // Also excludes SUPERSEDED (#631 missed this second trigger of the same bug):
+                // StatementImportService.supersede() marks an ADDITIVE-mode original's rows
+                // SUPERSEDED and reverses their contribution in that same call, so a SUPERSEDED
+                // row's current net contribution is zero too -- deleting an already-superseded
+                // statement must not reverse it a second time here.
+                // TRANSFER/REFUND/REVERSAL/INVESTMENT_TRANSFER rows stay included: those
+                // classifications only affect expense/income REPORTING (RefundNetting.reportable),
+                // not Account.balance -- the cash genuinely moved, so the balance still reflects it.
+                List<Transaction> stillContributing = toRemove.stream()
+                        .filter(t -> t.getIsDuplicateOf() == null
+                                && t.getReconciliationStatus() != Transaction.ReconciliationStatus.SUPERSEDED)
+                        .toList();
                 BigDecimal reversal = AccountBalanceConvention
-                        .netDelta(account.getAccountType(), toRemove).negate();
+                        .netDelta(account.getAccountType(), stillContributing).negate();
                 if (reversal.signum() != 0) {
                     account.setBalance(account.getBalance().add(reversal));
                     accountRepository.save(account);
@@ -368,5 +428,139 @@ public class StatementImportService {
     private StatementImport getOwned(UUID userId, UUID statementImportId) {
         return OwnershipGuard.requireOwned(statementImportRepository.findById(statementImportId),
                 StatementImport::getUserId, userId, "Statement import");
+    }
+
+    /**
+     * "Import this one as a replacement?" (docs/proposals/statement-continuity-and-coverage-
+     * integrity-proposal.md §0.3/§0.23): {@code replacementId} has already been confirmed as its
+     * own statement, covering the exact same period as {@code originalId} -- this marks the
+     * original superseded rather than deleting it, so its history stays queryable the same way a
+     * TRANSFER-classified transaction stays in the ledger instead of being removed.
+     *
+     * <p>Deliberately two separate calls from the client (confirm the replacement, then supersede
+     * the original) rather than one combined request: threading a "this confirm also supersedes X"
+     * signal through {@code ImportService}'s confirm/persistSection/summarise call graph would
+     * touch every one of its four {@code confirm} overloads for what only this one caller needs --
+     * the same reasoning {@code confirmReimport}'s own duplicate-warning fix gave for staying out
+     * of that call graph.
+     *
+     * <p>The balance-reversal decision is read from {@code original}'s own {@link
+     * StatementImport.BalanceApplicationMode}, persisted at ITS confirm time -- never recomputed
+     * here. See that field's own doc comment for why recomputation is unsafe (totalCredits/
+     * totalDebits were never persisted, and Transaction.amount is editable after import).
+     *
+     * <p><b>ABSOLUTE original requires ABSOLUTE replacement.</b> When {@code original} is ABSOLUTE,
+     * no reversal is applied below on the reasoning that replacement's own confirm already
+     * overwrote the balance. That reasoning only holds when replacement's own confirm ALSO landed
+     * in ABSOLUTE mode -- otherwise replacement's confirm merely ADDED its net delta on top of the
+     * balance original's confirm had already set, and original's contribution would still be
+     * counted underneath it after this call. Refused up front rather than silently risking a
+     * corrupted balance; see the guard clause below for the exact condition.
+     */
+    @Transactional
+    public com.finora.dto.StatementImportDto.SupersedeResult supersede(UUID userId, UUID originalId, UUID replacementId) {
+        if (originalId.equals(replacementId)) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "A statement cannot supersede itself.");
+        }
+        StatementImport original = getOwned(userId, originalId);
+        StatementImport replacement = getOwned(userId, replacementId);
+
+        if (!original.getAccountId().equals(replacement.getAccountId())) {
+            throw new ApiException(HttpStatus.BAD_REQUEST,
+                    "A statement can only be superseded by a replacement for the same account.");
+        }
+        if (!Objects.equals(original.getStatementPeriodStart(), replacement.getStatementPeriodStart())
+                || !Objects.equals(original.getStatementPeriodEnd(), replacement.getStatementPeriodEnd())) {
+            throw new ApiException(HttpStatus.BAD_REQUEST,
+                    "A statement can only be superseded by a replacement covering the exact same period.");
+        }
+        if (original.getSupersededBy() != null) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "This statement has already been superseded.");
+        }
+        if (replacement.getSupersededBy() != null) {
+            throw new ApiException(HttpStatus.BAD_REQUEST,
+                    "The replacement statement has itself already been superseded.");
+        }
+        // ABSOLUTE's no-reversal branch below rests entirely on "the replacement's own confirm
+        // already set the balance again, on top of whatever this one left behind" (see that case's
+        // own comment). That is only true when replacement's own confirm ALSO landed in ABSOLUTE
+        // mode -- if replacement's own closing balance was missing, unstated, or did not corroborate
+        // against its own rows, its confirm instead ADDED its net delta on top of the balance
+        // original's confirm already set, and original's full contribution never leaves the account
+        // balance. Refusing here is the same safe-direction choice UNKNOWN_LEGACY already makes
+        // (warn/refuse rather than silently risk corrupting Account.balance) -- reproduced with a
+        // concrete numeric example in SupersedeRefusesMismatchedAbsoluteModeIT.
+        if (original.getBalanceApplicationMode() == StatementImport.BalanceApplicationMode.ABSOLUTE
+                && replacement.getBalanceApplicationMode() != StatementImport.BalanceApplicationMode.ABSOLUTE) {
+            throw new ApiException(HttpStatus.BAD_REQUEST,
+                    "The replacement statement's own closing balance was not applied at its confirm "
+                            + "time (it stated none, or it did not match its transactions), so it cannot "
+                            + "safely supersede a statement whose closing balance WAS applied -- doing so "
+                            + "would leave the original statement's balance contribution still counted "
+                            + "underneath the replacement's. Re-import the replacement with a closing "
+                            + "balance that corroborates against its transactions, then try again.");
+        }
+
+        // Only OK-status rows -- a row already excluded for its own reason (DUPLICATE/TRANSFER/
+        // REFUND/REVERSAL/INVESTMENT_TRANSFER) is already invisible to RefundNetting.reportable(),
+        // and overwriting its status here would lose the true reason it was excluded, same
+        // "preserve the specific classification" principle StatementImportService.delete's own
+        // pointer cleanup already follows.
+        List<Transaction> originalTransactions = transactionRepository.findByStatementImportId(originalId);
+        List<Transaction> toSupersede = originalTransactions.stream()
+                .filter(t -> t.getReconciliationStatus() == Transaction.ReconciliationStatus.OK)
+                .toList();
+        for (Transaction t : toSupersede) {
+            t.setReconciliationStatus(Transaction.ReconciliationStatus.SUPERSEDED);
+            transactionRepository.save(t);
+        }
+
+        boolean balanceReversed = false;
+        String warning = null;
+        switch (original.getBalanceApplicationMode()) {
+            case ADDITIVE -> {
+                // Excludes an already-DUPLICATE-flagged row: its contribution to Account.balance
+                // was already reversed once, at the original statement's own confirm time
+                // (ImportService.summarise's BH-003 correction) -- summing it again here would
+                // move the balance a second time for a row that currently contributes nothing.
+                // TRANSFER/REFUND/REVERSAL/INVESTMENT_TRANSFER rows stay included: those
+                // classifications only affect expense/income REPORTING (RefundNetting.reportable),
+                // not Account.balance -- the cash genuinely moved, so the balance still reflects it.
+                List<Transaction> stillContributing = originalTransactions.stream()
+                        .filter(t -> t.getIsDuplicateOf() == null)
+                        .toList();
+                if (!stillContributing.isEmpty()) {
+                    Optional<Account> account = accountRepository.findById(original.getAccountId());
+                    if (account.isPresent()) {
+                        BigDecimal reversal = AccountBalanceConvention
+                                .netDelta(account.get().getAccountType(), stillContributing).negate();
+                        if (reversal.signum() != 0) {
+                            account.get().setBalance(account.get().getBalance().add(reversal));
+                            accountRepository.save(account.get());
+                            balanceReversed = true;
+                        }
+                    }
+                }
+            }
+            case UNKNOWN_LEGACY -> warning = "This statement predates balance-application tracking, so its "
+                    + "contribution to the account balance could not be automatically reversed. An "
+                    + "administrator should verify this account's balance.";
+            case ABSOLUTE, NONE -> { /* no reversal -- see BalanceApplicationMode's own doc comment */ }
+        }
+
+        original.setSupersededBy(replacementId);
+        statementImportRepository.save(original);
+
+        if (!toSupersede.isEmpty()) {
+            reconciliationService.reconcileForUser(userId);
+            recurringService.detectForUser(userId);
+        }
+
+        auditService.record(userId, "STATEMENT_IMPORT_SUPERSEDED", "StatementImport", originalId,
+                Map.of("fileName", original.getFileName(), "supersededBy", replacementId,
+                        "balanceApplicationMode", original.getBalanceApplicationMode().name(),
+                        "balanceReversed", balanceReversed));
+
+        return new com.finora.dto.StatementImportDto.SupersedeResult(originalId, replacementId, balanceReversed, warning);
     }
 }

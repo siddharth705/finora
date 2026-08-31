@@ -47,8 +47,9 @@ class TransactionNormalizerTest {
         when(categorizationService.suggestReadOnly(any(), any(), any(), any(), any(), any()))
                 .thenReturn(new CategorizationService.Suggestion("Other", "default", null, null, null));
         TransactionRepository transactionRepository = mock(TransactionRepository.class);
-        when(transactionRepository.findPotentialDuplicatesByUser(any(), any(), any(), any())).thenReturn(List.of());
-        DuplicateDetector duplicateDetector = new DuplicateDetector(transactionRepository);
+        when(transactionRepository.findPotentialDuplicatesByUserAndAccountIdIn(any(), any(), any(), any(), any()))
+                .thenReturn(List.of());
+        DuplicateDetector duplicateDetector = new DuplicateDetector(transactionRepository, TestAccountRepositories.anyLive());
         normalizer = new TransactionNormalizer(categorizationService, duplicateDetector, com.finora.imports.TestRuleEngines.empty());
     }
 
@@ -920,8 +921,9 @@ class TransactionNormalizerTest {
         when(categorizationService.suggestReadOnly(any(), any(), any(), any(), any(), any()))
                 .thenReturn(new CategorizationService.Suggestion("Food", "learned", null, null, null));
         TransactionRepository transactionRepository = mock(TransactionRepository.class);
-        when(transactionRepository.findPotentialDuplicatesByUser(any(), any(), any(), any())).thenReturn(List.of());
-        DuplicateDetector duplicateDetector = new DuplicateDetector(transactionRepository);
+        when(transactionRepository.findPotentialDuplicatesByUserAndAccountIdIn(any(), any(), any(), any(), any()))
+                .thenReturn(List.of());
+        DuplicateDetector duplicateDetector = new DuplicateDetector(transactionRepository, TestAccountRepositories.anyLive());
         return new TransactionNormalizer(
                 categorizationService, duplicateDetector, TestRuleEngines.empty(), merchantNormalizationEngine);
     }

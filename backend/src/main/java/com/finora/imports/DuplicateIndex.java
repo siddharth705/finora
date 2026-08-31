@@ -52,13 +52,23 @@ public final class DuplicateIndex {
 
     private final TransactionRepository transactionRepository;
     private final UUID userId;
+    private final List<UUID> liveAccountIds;
 
     /** date -> (amount|description) -> matching transactions, loaded on first sight of the date. */
     private final Map<LocalDate, Map<String, List<Transaction>>> byDate = new HashMap<>();
 
-    DuplicateIndex(TransactionRepository transactionRepository, UUID userId) {
+    /**
+     * @param liveAccountIds the user's live (non-soft-deleted) account ids, computed once by
+     *                       {@code DuplicateDetector.indexFor} rather than re-derived per date --
+     *                       this class is already a cache scoped to the duration of one parse, so
+     *                       computing it once is both correct and consistent with that design.
+     *                       Excludes a soft-deleted account's transactions, which the plain
+     *                       user-scoped query would otherwise keep matching against forever.
+     */
+    DuplicateIndex(TransactionRepository transactionRepository, UUID userId, List<UUID> liveAccountIds) {
         this.transactionRepository = transactionRepository;
         this.userId = userId;
+        this.liveAccountIds = liveAccountIds;
     }
 
     /**
@@ -77,10 +87,13 @@ public final class DuplicateIndex {
     }
 
     private Map<String, List<Transaction>> loadDate(LocalDate date) {
+        if (liveAccountIds.isEmpty()) return new HashMap<>();
         Map<String, List<Transaction>> index = new HashMap<>();
-        // Both bounds the same date: findByUserIdAndTxnDateBetween is inclusive, so this is one
-        // day, and it reuses an existing repository method rather than adding a near-duplicate one.
-        for (Transaction existing : transactionRepository.findByUserIdAndTxnDateBetween(userId, date, date)) {
+        // Both bounds the same date: findByUserIdAndTxnDateBetweenAndAccountIdIn is inclusive, so
+        // this is one day. Scoped to liveAccountIds so a soft-deleted account's transactions don't
+        // keep matching against forever (see that method's own doc comment).
+        for (Transaction existing : transactionRepository.findByUserIdAndTxnDateBetweenAndAccountIdIn(
+                userId, date, date, liveAccountIds)) {
             if (existing.getAmount() == null || existing.getDescription() == null) continue;
             index.computeIfAbsent(key(existing.getAmount(), existing.getDescription()),
                     k -> new java.util.ArrayList<>()).add(existing);

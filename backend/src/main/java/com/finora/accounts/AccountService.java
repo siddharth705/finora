@@ -1,6 +1,7 @@
 package com.finora.accounts;
 
 import com.finora.entity.Account;
+import com.finora.entity.Transaction;
 import com.finora.exception.ApiException;
 import com.finora.repository.AccountRepository;
 import com.finora.repository.StatementImportRepository;
@@ -9,6 +10,7 @@ import com.finora.repository.TransactionRepository;
 import com.finora.security.OwnershipGuard;
 import com.finora.service.AuditService;
 import com.finora.service.BankManagementService;
+import com.finora.service.TransactionGraphService;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -27,15 +29,17 @@ public class AccountService {
     private final TransactionRepository transactionRepository;
     private final AuditService auditService;
     private final BankManagementService bankManagementService;
+    private final TransactionGraphService transactionGraphService;
 
     public AccountService(AccountRepository accountRepository, StatementImportRepository statementImportRepository,
                            TransactionRepository transactionRepository, AuditService auditService,
-                           BankManagementService bankManagementService) {
+                           BankManagementService bankManagementService, TransactionGraphService transactionGraphService) {
         this.accountRepository = accountRepository;
         this.statementImportRepository = statementImportRepository;
         this.transactionRepository = transactionRepository;
         this.auditService = auditService;
         this.bankManagementService = bankManagementService;
+        this.transactionGraphService = transactionGraphService;
     }
 
     @Transactional(readOnly = true)
@@ -160,10 +164,21 @@ public class AccountService {
     @Transactional
     public void delete(UUID userId, UUID accountId, UUID actingAdminId) {
         Account a = getOwned(userId, accountId);
+        // A graph edge (any relationship type -- TRANSFER, REFUND, CC_PAYMENT, ...) can reference
+        // this account's transactions from the OTHER side: a live account's payment settling a
+        // charge here, for instance. This account's own transactions deliberately keep deleted_at
+        // unset (see ReconciliationService's own "deleted-account leak" comments), so those edges
+        // would otherwise stay live forever, excluding real, currently-visible money from cash
+        // flow to "net against" spend the user can no longer even see -- the general fix a single
+        // pass (ReconciliationService's CC_PAYMENT liveness filter) could previously only prevent
+        // for its own future runs, not retroactively for every relationship type at once.
+        List<UUID> ownTransactionIds = transactionRepository.findByUserIdAndAccountIdIn(userId, List.of(accountId))
+                .stream().map(Transaction::getId).toList();
+        int edgesRejected = transactionGraphService.rejectEdgesTouchingTransactions(ownTransactionIds);
         accountRepository.delete(a); // soft delete via @SQLDelete on the entity
         auditService.record(userId, "ACCOUNT_DELETED", "Account", accountId,
                 Map.of("name", a.getName(), "type", a.getAccountType().name(),
-                        "actorId", actingAdminId.toString()));
+                        "actorId", actingAdminId.toString(), "graphEdgesRejected", edgesRejected));
     }
 
     private Account getOwned(UUID userId, UUID accountId) {

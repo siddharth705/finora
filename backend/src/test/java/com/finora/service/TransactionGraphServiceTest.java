@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Test;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -218,5 +219,111 @@ class TransactionGraphServiceTest {
 
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> graphService.setStatus(edgeId, TransactionRelationship.Status.REJECTED))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void supersede_pointsTheOldEdgeAtTheNewOne() {
+        UUID oldEdgeId = UUID.randomUUID();
+        UUID newEdgeId = UUID.randomUUID();
+        TransactionRelationship old = edge(UUID.randomUUID(), UUID.randomUUID(),
+                TransactionRelationship.RelationshipType.TRANSFER);
+        org.springframework.test.util.ReflectionTestUtils.setField(old, "id", oldEdgeId);
+        when(repository.findById(oldEdgeId)).thenReturn(java.util.Optional.of(old));
+
+        TransactionRelationship updated = graphService.supersede(oldEdgeId, newEdgeId);
+
+        assertThat(updated.getSupersededBy()).isEqualTo(newEdgeId);
+    }
+
+    @Test
+    void supersede_throwsForAnUnknownEdge() {
+        UUID oldEdgeId = UUID.randomUUID();
+        when(repository.findById(oldEdgeId)).thenReturn(java.util.Optional.empty());
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> graphService.supersede(oldEdgeId, UUID.randomUUID()))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void rejectEdgesTouchingTransactions_rejectsEveryLiveEdge_regardlessOfType() {
+        UUID a = UUID.randomUUID();
+        UUID b = UUID.randomUUID();
+        UUID c = UUID.randomUUID();
+        TransactionRelationship transfer = edge(a, b, TransactionRelationship.RelationshipType.TRANSFER);
+        TransactionRelationship ccPayment = edge(a, c, TransactionRelationship.RelationshipType.CC_PAYMENT);
+        when(repository.findByEitherSideIn(List.of(a))).thenReturn(List.of(transfer, ccPayment));
+
+        int rejected = graphService.rejectEdgesTouchingTransactions(List.of(a));
+
+        assertThat(rejected).isEqualTo(2);
+        assertThat(transfer.getStatus()).isEqualTo(TransactionRelationship.Status.REJECTED);
+        assertThat(ccPayment.getStatus()).isEqualTo(TransactionRelationship.Status.REJECTED);
+        verify(repository).saveAll(List.of(transfer, ccPayment));
+    }
+
+    @Test
+    void rejectEdgesTouchingTransactions_skipsAnEdgeAlreadyRejectedOrSuperseded() {
+        UUID a = UUID.randomUUID();
+        UUID b = UUID.randomUUID();
+        UUID c = UUID.randomUUID();
+        TransactionRelationship alreadyRejected = edge(a, b, TransactionRelationship.RelationshipType.TRANSFER);
+        alreadyRejected.setStatus(TransactionRelationship.Status.REJECTED);
+        TransactionRelationship alreadySuperseded = edge(a, c, TransactionRelationship.RelationshipType.CC_PAYMENT);
+        alreadySuperseded.setSupersededBy(UUID.randomUUID());
+        when(repository.findByEitherSideIn(List.of(a))).thenReturn(List.of(alreadyRejected, alreadySuperseded));
+
+        int rejected = graphService.rejectEdgesTouchingTransactions(List.of(a));
+
+        assertThat(rejected).isZero();
+        verify(repository, never()).saveAll(any());
+    }
+
+    @Test
+    void rejectEdgesTouchingTransactions_shortCircuits_onAnEmptyCollection() {
+        int rejected = graphService.rejectEdgesTouchingTransactions(List.of());
+
+        assertThat(rejected).isZero();
+        verify(repository, never()).findByEitherSideIn(any());
+    }
+
+    private com.finora.entity.Transaction txn(UUID id) {
+        com.finora.entity.Transaction t = new com.finora.entity.Transaction();
+        org.springframework.test.util.ReflectionTestUtils.setField(t, "id", id);
+        return t;
+    }
+
+    @Test
+    void ccPaymentFromTransactionIds_returnsTheFromSide_ofALiveCcPaymentEdge() {
+        UUID payment = UUID.randomUUID();
+        UUID charge = UUID.randomUUID();
+        TransactionRelationship ccPayment = edge(payment, charge, TransactionRelationship.RelationshipType.CC_PAYMENT);
+        ccPayment.setStatus(TransactionRelationship.Status.CANDIDATE);
+        when(repository.findByFromTransactionIdInAndRelationshipTypeAndStatusNotAndSupersededByIsNull(
+                List.of(payment, charge), TransactionRelationship.RelationshipType.CC_PAYMENT,
+                TransactionRelationship.Status.REJECTED))
+                .thenReturn(List.of(ccPayment));
+
+        Set<UUID> result = graphService.ccPaymentFromTransactionIds(List.of(txn(payment), txn(charge)));
+
+        assertThat(result).containsExactly(payment);
+    }
+
+    @Test
+    void ccPaymentFromTransactionIds_returnsEmpty_whenNoEdgesTouchTheBatch() {
+        UUID a = UUID.randomUUID();
+        when(repository.findByFromTransactionIdInAndRelationshipTypeAndStatusNotAndSupersededByIsNull(
+                List.of(a), TransactionRelationship.RelationshipType.CC_PAYMENT, TransactionRelationship.Status.REJECTED))
+                .thenReturn(List.of());
+
+        assertThat(graphService.ccPaymentFromTransactionIds(List.of(txn(a)))).isEmpty();
+    }
+
+    @Test
+    void ccPaymentFromTransactionIds_shortCircuits_onAnEmptyCollection() {
+        Set<UUID> result = graphService.ccPaymentFromTransactionIds(List.of());
+
+        assertThat(result).isEmpty();
+        verify(repository, never()).findByFromTransactionIdInAndRelationshipTypeAndStatusNotAndSupersededByIsNull(
+                any(), any(), any());
     }
 }
