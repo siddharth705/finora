@@ -52,6 +52,14 @@ public class BootstrapService implements ApplicationRunner {
     @Value("${app.setup.key}")
     private String configuredSetupKey;
 
+    // On by default (app.bootstrap.enabled / FINORA_BOOTSTRAP_ENABLED, application.yml). A boot
+    // that exists only to prove the jar starts -- not the environment anything will actually run
+    // against -- sets this false so it never creates a BOOTSTRAP_ADMIN account another boot
+    // sharing the same database can't undo. See application.yml's comment for the CI failure mode
+    // this exists to prevent.
+    @Value("${app.bootstrap.enabled}")
+    private boolean bootstrapEnabled;
+
     public BootstrapService(UserRepository userRepository, RoleRepository roleRepository,
                              PlatformSettingsService platformSettingsService, PasswordEncoder passwordEncoder,
                              AuditService auditService, SetupKeyFileWriter setupKeyFileWriter) {
@@ -86,6 +94,10 @@ public class BootstrapService implements ApplicationRunner {
      */
     @Override
     public void run(ApplicationArguments args) {
+        if (!bootstrapEnabled) {
+            return;
+        }
+
         // Single flag lookup (Gap 6), not a "SELECT * FROM users WHERE role='SUPER_ADMIN'" scan
         // on every boot -- and, per Gap 7, this is the ONLY condition that ever creates a
         // bootstrap account. A platform that has already been set up never gets a fresh one
