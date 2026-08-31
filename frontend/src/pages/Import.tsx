@@ -18,6 +18,7 @@ import {
   applyDecisionToSimilar,
   beginReview,
   decide,
+  decideAllUnresolved,
   setIncluded,
   toConfirmedRows,
   unresolvedCount,
@@ -570,6 +571,9 @@ export default function Import() {
 
   const applyDuplicateDecisionToSimilar = (index: number) =>
     setReview((r) => applyDecisionToSimilar(rows, r, index));
+
+  const decideAllDuplicates = (decision: DuplicateDecision) =>
+    setReview((r) => decideAllUnresolved(rows, r, decision));
 
   const toggleRowIncluded = (index: number, include: boolean) =>
     setReview((r) => setIncluded(r, index, include));
@@ -1161,6 +1165,9 @@ export default function Import() {
                 onApplyToSimilar={(rowIndex) =>
                   updateSection(setMultiSections, sectionIndex, (s) => ({ review: applyDecisionToSimilar(s.rows, s.review, rowIndex) }))
                 }
+                onDecideAll={(decision) =>
+                  updateSection(setMultiSections, sectionIndex, (s) => ({ review: decideAllUnresolved(s.rows, s.review, decision) }))
+                }
               />
             </div>
           ))}
@@ -1293,6 +1300,7 @@ export default function Import() {
               decisions={review.decisions}
               onDecide={decideDuplicate}
               onApplyToSimilar={applyDuplicateDecisionToSimilar}
+              onDecideAll={decideAllDuplicates}
             />
 
             <button

@@ -112,6 +112,28 @@ export function applyDecisionToSimilar(rows: StagedRow[], review: RowReview, ind
 }
 
 /**
+ * Applies one decision to every row under review that is still unresolved -- the "Skip all
+ * remaining" / "Import all remaining" bulk action.
+ *
+ * Bounded to unresolved rows for the same reason applyDecisionToSimilar is: a bulk action must
+ * never overwrite a choice the user already made by hand, because they would have no way to know
+ * it had happened. Unlike applyDecisionToSimilar, this is not seeded from one row's own decision
+ * (there is no "source" row) -- it takes the decision directly, since it is meant to resolve
+ * everything left over, not propagate one answer by description match.
+ */
+export function decideAllUnresolved(
+  rows: StagedRow[],
+  review: RowReview,
+  decision: DuplicateDecision
+): RowReview {
+  const reached = (i: number) => !!rows[i] && isUnderReview(rows[i]) && review.decisions[i] === 'unresolved';
+  return {
+    included: review.included.map((v, i) => (reached(i) ? decision === 'import' : v)),
+    decisions: review.decisions.map((v, i) => (reached(i) ? decision : v)),
+  };
+}
+
+/**
  * The preview table's own include checkbox.
  *
  * Deliberately does not touch decisions: unticking a row by hand is not an answer to "is this a

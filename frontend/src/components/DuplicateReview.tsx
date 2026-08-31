@@ -161,11 +161,18 @@ export function DuplicateReview({
   decisions,
   onDecide,
   onApplyToSimilar,
+  onDecideAll,
 }: {
   rows: StagedRow[];
   decisions: DuplicateDecision[];
   onDecide: (index: number, decision: DuplicateDecision) => void;
   onApplyToSimilar: (index: number) => void;
+  /** Optional. Resolves every still-unresolved flagged row at once ("Skip all remaining" /
+   *  "Import all remaining") — the bulk escape hatch for a long duplicate list, so a user isn't
+   *  stuck clicking "Skip this row" dozens of times. Never touches a row already decided by hand,
+   *  same rule applyDecisionToSimilar follows. Optional because DuplicateReview.test.tsx and any
+   *  other caller not yet updated should keep working without it. */
+  onDecideAll?: (decision: DuplicateDecision) => void;
 }) {
   const flagged = rows
     .map((row, index) => ({ row, index }))
@@ -185,14 +192,38 @@ export function DuplicateReview({
 
   return (
     <section className="border border-border rounded-xl p-4 space-y-3" data-testid="duplicate-review">
-      <div>
-        <h3 className="text-sm font-semibold">
-          {flagged.length} possible duplicate{flagged.length === 1 ? '' : 's'}
-        </h3>
-        <p className="text-xs text-muted mt-1">
-          These look like transactions already in your ledger. Nothing is imported or skipped until
-          you decide — and nothing changes in your ledger until you confirm the import.
-        </p>
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div>
+          <h3 className="text-sm font-semibold">
+            {flagged.length} possible duplicate{flagged.length === 1 ? '' : 's'}
+          </h3>
+          <p className="text-xs text-muted mt-1">
+            These look like transactions already in your ledger. Nothing is imported or skipped until
+            you decide — and nothing changes in your ledger until you confirm the import.
+          </p>
+        </div>
+
+        {/* Only worth offering once there's more than one row left to click through by hand --
+            with exactly one outstanding row, "Skip all remaining" and "Skip this row" would be the
+            same click twice over. */}
+        {onDecideAll && outstanding > 1 && (
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <button
+              type="button"
+              onClick={() => onDecideAll('import')}
+              className="px-2.5 py-1 rounded-md text-[11px] font-medium border border-border hover:bg-surface transition-colors"
+            >
+              Import all remaining
+            </button>
+            <button
+              type="button"
+              onClick={() => onDecideAll('skip')}
+              className="px-2.5 py-1 rounded-md text-[11px] font-medium border border-border hover:bg-surface transition-colors"
+            >
+              Skip all remaining
+            </button>
+          </div>
+        )}
       </div>
 
       {outstanding > 0 ? (

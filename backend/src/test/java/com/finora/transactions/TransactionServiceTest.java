@@ -18,6 +18,7 @@ import com.finora.service.RecurringService;
 import com.finora.service.ProviderType;
 import com.finora.service.SmsProvider;
 import com.finora.service.SmsResult;
+import com.finora.service.TransactionGroupingService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -51,6 +52,7 @@ class TransactionServiceTest {
     private UserRepository userRepository;
     private SmsProvider smsProvider;
     private AuditService auditService;
+    private TransactionGroupingService transactionGroupingService;
     private TransactionService transactionService;
 
     private final UUID userId = UUID.randomUUID();
@@ -89,9 +91,13 @@ class TransactionServiceTest {
         when(smsProvider.sendTransactionAlert(any(), any(), any(), any()))
                 .thenReturn(SmsResult.success(ProviderType.TWO_FACTOR, "test-message-id"));
         auditService = mock(AuditService.class);
+        transactionGroupingService = mock(TransactionGroupingService.class);
+        // Default: no merchant has a needs-review group, so every existing test that doesn't care
+        // about grouping sees needsReview() behave exactly as it did before this exclusion existed.
+        when(transactionGroupingService.groupNeedsReviewByMerchant(any())).thenReturn(List.of());
         transactionService = new TransactionService(transactionRepository, categoryRepository, accountRepository,
                 statementImportRepository, categorizationService, reconciliationService, recurringService,
-                auditService, bankManagementService, userRepository, smsProvider);
+                auditService, bankManagementService, userRepository, smsProvider, transactionGroupingService);
 
         dummyCategory = new Category();
         ReflectionTestUtils.setField(dummyCategory, "id", UUID.randomUUID());
@@ -1335,5 +1341,55 @@ class TransactionServiceTest {
 
         verify(transactionRepository, never())
                 .findByUserIdAndNeedsCategoryReviewTrueAndAccountIdInOrderByTxnDateDesc(any(), any());
+    }
+
+    // --- needsReview() must stay disjoint from groupNeedsReviewByMerchant()'s bulk groups: a
+    // transaction offered as part of a same-merchant group must not also be asked about
+    // one-by-one here, or the user is asked to categorize it twice. ---
+
+    @Test
+    void needsReview_excludesTransactionsAlreadyOfferedAsAMerchantGroup() {
+        Account liveAccount = account(UUID.randomUUID(), Account.Type.SAVINGS, BigDecimal.ZERO);
+        when(accountRepository.findByUserId(userId)).thenReturn(List.of(liveAccount));
+
+        UUID groupedMerchantId = UUID.randomUUID();
+        Transaction grouped1 = ownedTransaction(UUID.randomUUID(), userId);
+        grouped1.setMerchantId(groupedMerchantId);
+        grouped1.setNeedsCategoryReview(true);
+        Transaction grouped2 = ownedTransaction(UUID.randomUUID(), userId);
+        grouped2.setMerchantId(groupedMerchantId);
+        grouped2.setNeedsCategoryReview(true);
+        Transaction singleton = ownedTransaction(UUID.randomUUID(), userId);
+        singleton.setMerchantId(UUID.randomUUID());
+        singleton.setNeedsCategoryReview(true);
+
+        when(transactionRepository.findByUserIdAndNeedsCategoryReviewTrueAndAccountIdInOrderByTxnDateDesc(eq(userId), any()))
+                .thenReturn(List.of(grouped1, grouped2, singleton));
+        when(transactionGroupingService.groupNeedsReviewByMerchant(userId)).thenReturn(List.of(
+                new TransactionGroupingService.MerchantGroup(groupedMerchantId, "Ach Indian Clearing Corp",
+                        List.of(grouped1.getId(), grouped2.getId()))));
+
+        List<TransactionDto> result = transactionService.needsReview(userId);
+
+        assertThat(result).extracting(TransactionDto::id).containsExactly(singleton.getId());
+    }
+
+    @Test
+    void needsReview_excludesDuplicateStatusTransactions() {
+        Account liveAccount = account(UUID.randomUUID(), Account.Type.SAVINGS, BigDecimal.ZERO);
+        when(accountRepository.findByUserId(userId)).thenReturn(List.of(liveAccount));
+
+        Transaction duplicate = ownedTransaction(UUID.randomUUID(), userId);
+        duplicate.setNeedsCategoryReview(true);
+        duplicate.setReconciliationStatus(Transaction.ReconciliationStatus.DUPLICATE);
+        Transaction genuine = ownedTransaction(UUID.randomUUID(), userId);
+        genuine.setNeedsCategoryReview(true);
+
+        when(transactionRepository.findByUserIdAndNeedsCategoryReviewTrueAndAccountIdInOrderByTxnDateDesc(eq(userId), any()))
+                .thenReturn(List.of(duplicate, genuine));
+
+        List<TransactionDto> result = transactionService.needsReview(userId);
+
+        assertThat(result).extracting(TransactionDto::id).containsExactly(genuine.getId());
     }
 }
