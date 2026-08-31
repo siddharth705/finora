@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
+import { motion } from 'framer-motion';
 import { HelpCircle, Check, ChevronLeft, ChevronRight } from 'lucide-react';
 import { transactionsApi } from '../api/endpoints';
 import { CategoryCombobox } from './CategoryCombobox';
 import { CategoryCreateEditPanel } from './CategoryCreateEditPanel';
+import { ReviewCardSkeleton } from './ReviewCardSkeleton';
 import type { Transaction } from '../types';
 
 const PAGE_SIZE = 10;
@@ -103,7 +105,7 @@ export function AskOnceCard() {
     }
   }
 
-  if (loading || items.length === 0) return null;
+  if (!loading && items.length === 0) return null;
 
   return (
     <div className="bg-card rounded-xl2 p-5 shadow-card border border-border mb-6">
@@ -114,65 +116,72 @@ export function AskOnceCard() {
       <p className="text-xs text-muted mb-4">
         Pick a category once — Fynora will remember it for every future transaction from the same merchant.
       </p>
-      {error && <p className="text-xs text-danger mb-3">{error}</p>}
-      <div className="space-y-3">
-        {pageItems.map((t) => (
-          <div key={t.id} className={`flex gap-3 flex-wrap sm:flex-nowrap ${creatingFor === t.id ? 'items-start' : 'items-center'}`}>
-            <div className="min-w-0 flex-1">
-              <p className="text-sm font-medium text-ink truncate">{t.description || t.merchant}</p>
-              <p className="text-[11px] text-muted">{t.date} · {fmt(t.amount)}</p>
-            </div>
-            <div className={`flex-shrink-0 ${creatingFor === t.id ? 'w-64' : 'w-40'}`}>
-              {creatingFor === t.id ? (
-                <CategoryCreateEditPanel
-                  mode="create"
-                  initialName={pendingText[t.id] ?? ''}
-                  onSaved={(c) => { setPicks((p) => ({ ...p, [t.id]: c.name })); setCreatingFor(null); }}
-                  onCancel={() => setCreatingFor(null)}
-                />
-              ) : (
-                <CategoryCombobox
-                  value={picks[t.id] ?? ''}
-                  onChange={(name) => setPicks((p) => ({ ...p, [t.id]: name }))}
-                  onCreateNew={(text) => { setPendingText((p) => ({ ...p, [t.id]: text })); setCreatingFor(t.id); }}
-                />
-              )}
-            </div>
-            <button
-              onClick={() => resolve(t.id)}
-              disabled={!picks[t.id]}
-              className="bg-primary text-on-primary text-xs font-medium rounded-lg px-3 py-1.5 flex items-center gap-1 flex-shrink-0 disabled:opacity-40"
-            >
-              <Check size={13} /> Confirm
-            </button>
+      {loading ? (
+        <ReviewCardSkeleton />
+      ) : (
+        <>
+          {error && <p className="text-xs text-danger mb-3">{error}</p>}
+          <div className="space-y-3">
+            {pageItems.map((t) => (
+              <div key={t.id} className={`flex gap-3 flex-wrap sm:flex-nowrap ${creatingFor === t.id ? 'items-start' : 'items-center'}`}>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium text-ink truncate">{t.description || t.merchant}</p>
+                  <p className="text-[11px] text-muted">{t.date} · {fmt(t.amount)}</p>
+                </div>
+                <div className={`flex-shrink-0 ${creatingFor === t.id ? 'w-64' : 'w-40'}`}>
+                  {creatingFor === t.id ? (
+                    <CategoryCreateEditPanel
+                      mode="create"
+                      initialName={pendingText[t.id] ?? ''}
+                      onSaved={(c) => { setPicks((p) => ({ ...p, [t.id]: c.name })); setCreatingFor(null); }}
+                      onCancel={() => setCreatingFor(null)}
+                    />
+                  ) : (
+                    <CategoryCombobox
+                      value={picks[t.id] ?? ''}
+                      onChange={(name) => setPicks((p) => ({ ...p, [t.id]: name }))}
+                      onCreateNew={(text) => { setPendingText((p) => ({ ...p, [t.id]: text })); setCreatingFor(t.id); }}
+                    />
+                  )}
+                </div>
+                <motion.button
+                  whileTap={{ scale: 0.96 }}
+                  onClick={() => resolve(t.id)}
+                  disabled={!picks[t.id]}
+                  className="bg-primary text-on-primary text-xs font-medium rounded-lg px-3 py-1.5 flex items-center gap-1 flex-shrink-0 disabled:opacity-40"
+                >
+                  <Check size={13} /> Confirm
+                </motion.button>
+              </div>
+            ))}
           </div>
-        ))}
-      </div>
-      {items.length > PAGE_SIZE && (
-        <div className="flex items-center justify-between mt-4 pt-3 border-t border-border">
-          <p className="text-[11px] text-muted">
-            Showing {page * PAGE_SIZE + 1}-{Math.min(items.length, page * PAGE_SIZE + PAGE_SIZE)} of {items.length}
-          </p>
-          <div className="flex items-center gap-1.5">
-            <button
-              onClick={() => setPage((p) => Math.max(0, p - 1))}
-              disabled={page === 0}
-              className="w-7 h-7 rounded-lg border border-border flex items-center justify-center text-muted hover:text-ink hover:bg-bg disabled:opacity-30 disabled:hover:bg-transparent"
-              aria-label="Previous page"
-            >
-              <ChevronLeft size={14} />
-            </button>
-            <span className="text-[11px] text-muted px-1">Page {page + 1} of {totalPages}</span>
-            <button
-              onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
-              disabled={page >= totalPages - 1}
-              className="w-7 h-7 rounded-lg border border-border flex items-center justify-center text-muted hover:text-ink hover:bg-bg disabled:opacity-30 disabled:hover:bg-transparent"
-              aria-label="Next page"
-            >
-              <ChevronRight size={14} />
-            </button>
-          </div>
-        </div>
+          {items.length > PAGE_SIZE && (
+            <div className="flex items-center justify-between mt-4 pt-3 border-t border-border">
+              <p className="text-[11px] text-muted">
+                Showing {page * PAGE_SIZE + 1}-{Math.min(items.length, page * PAGE_SIZE + PAGE_SIZE)} of {items.length}
+              </p>
+              <div className="flex items-center gap-1.5">
+                <button
+                  onClick={() => setPage((p) => Math.max(0, p - 1))}
+                  disabled={page === 0}
+                  className="w-7 h-7 rounded-lg border border-border flex items-center justify-center text-muted hover:text-ink hover:bg-bg disabled:opacity-30 disabled:hover:bg-transparent"
+                  aria-label="Previous page"
+                >
+                  <ChevronLeft size={14} />
+                </button>
+                <span className="text-[11px] text-muted px-1">Page {page + 1} of {totalPages}</span>
+                <button
+                  onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
+                  disabled={page >= totalPages - 1}
+                  className="w-7 h-7 rounded-lg border border-border flex items-center justify-center text-muted hover:text-ink hover:bg-bg disabled:opacity-30 disabled:hover:bg-transparent"
+                  aria-label="Next page"
+                >
+                  <ChevronRight size={14} />
+                </button>
+              </div>
+            </div>
+          )}
+        </>
       )}
     </div>
   );

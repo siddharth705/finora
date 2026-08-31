@@ -21,6 +21,7 @@ import com.finora.service.ReconciliationService;
 import com.finora.service.RecurringService;
 import com.finora.service.SmsProvider;
 import com.finora.service.SmsResult;
+import com.finora.service.TransactionGroupingService;
 import com.finora.util.CategoryRules;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
@@ -29,8 +30,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -48,6 +51,7 @@ public class TransactionService {
     private final BankManagementService bankManagementService;
     private final UserRepository userRepository;
     private final SmsProvider smsProvider;
+    private final TransactionGroupingService transactionGroupingService;
 
     public TransactionService(TransactionRepository transactionRepository, CategoryRepository categoryRepository,
                                AccountRepository accountRepository,
@@ -58,7 +62,8 @@ public class TransactionService {
                                AuditService auditService,
                                BankManagementService bankManagementService,
                                UserRepository userRepository,
-                               SmsProvider smsProvider) {
+                               SmsProvider smsProvider,
+                               TransactionGroupingService transactionGroupingService) {
         this.transactionRepository = transactionRepository;
         this.categoryRepository = categoryRepository;
         this.accountRepository = accountRepository;
@@ -70,6 +75,7 @@ public class TransactionService {
         this.bankManagementService = bankManagementService;
         this.userRepository = userRepository;
         this.smsProvider = smsProvider;
+        this.transactionGroupingService = transactionGroupingService;
     }
 
     // Never a real bank id (BankRegistry ids are short uppercase codes like "PNB"/"OTHER") --
@@ -597,7 +603,15 @@ public class TransactionService {
     }
 
     /** Backs the "Ask Once, Learn Forever" review queue — every transaction the engine wasn't
-     *  confident about, waiting on exactly one user decision each. */
+     *  confident about, waiting on exactly one user decision each.
+     *
+     *  <p>Deliberately excludes any transaction that {@link TransactionGroupingService} already
+     *  offers as part of a same-merchant bulk group (2+ needs-review transactions for one
+     *  merchant): without this, a grouped transaction was asked about twice — once row-by-row
+     *  here, once again via the bulk "Categorize a whole merchant at once" card — since both
+     *  queries drew from the same unfiltered needs-review set with nothing making them disjoint.
+     *  Also excludes {@code DUPLICATE}-status transactions, matching the grouping query, since
+     *  those are resolved through the duplicate-review flow instead. */
     @Transactional(readOnly = true)
     public List<TransactionDto> needsReview(UUID userId) {
         Map<UUID, String> namesById = categoryNamesById(userId);
@@ -610,7 +624,16 @@ public class TransactionService {
         List<Transaction> needsReview = liveAccountIds.isEmpty() ? List.of()
                 : transactionRepository.findByUserIdAndNeedsCategoryReviewTrueAndAccountIdInOrderByTxnDateDesc(
                         userId, liveAccountIds);
+        if (needsReview.isEmpty()) return List.of();
+
+        Set<UUID> groupedTransactionIds = new HashSet<>();
+        for (TransactionGroupingService.MerchantGroup group : transactionGroupingService.groupNeedsReviewByMerchant(userId)) {
+            groupedTransactionIds.addAll(group.transactionIds());
+        }
+
         return needsReview.stream()
+                .filter(t -> t.getReconciliationStatus() != Transaction.ReconciliationStatus.DUPLICATE)
+                .filter(t -> !groupedTransactionIds.contains(t.getId()))
                 .map(t -> TransactionDto.from(t, namesById.getOrDefault(t.getCategoryId(), "Uncategorized")))
                 .toList();
     }
