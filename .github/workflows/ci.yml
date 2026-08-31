@@ -327,6 +327,29 @@ jobs:
         working-directory: backend
         run: ./mvnw -B --no-transfer-progress test
 
+      # The one thing in the whole corpus-regression suite that is genuinely CI-gated end to end
+      # (probe -> match -> merge-blocking). The real 27-document corpus can never run here -- see
+      # the self-test steps above -- so this fixture is what actually protects the
+      # description-corruption defect class in CI; everything else stays a manual, local,
+      # pre-merge step documented in docs/architecture/system-design/corpus-regression-suite.md.
+      #
+      # Its PDF is never committed -- a raw PDF's bytes cannot be PII-scanned, so this repo's
+      # pre-commit policy refuses one outright. SyntheticFixtureGenerator regenerates it fresh here
+      # from its own reviewable Java source, the same "render in-memory, never commit the bytes"
+      # shape every other synthetic fixture in this codebase already uses.
+      - name: Regenerate the synthetic corpus regression fixture
+        working-directory: backend
+        run: |
+          ./mvnw -q -o dependency:build-classpath -Dmdep.outputFile=target/corpus-classpath.txt -Dmdep.includeScope=test
+          java -cp "target/test-classes:target/classes:$(cat target/corpus-classpath.txt)" \
+               com.finora.imports.analysis.SyntheticFixtureGenerator
+
+      - name: Synthetic corpus regression (mechanism-gated)
+        run: python3 scripts/run-corpus-ground-truth.py
+             backend/target/synthetic-corpus-regression
+             --ground-truth backend/target/synthetic-corpus-regression/ground-truth
+             --allow-in-repo-synthetic-corpus
+
       # Runs on a FAILING run too -- that is when knowing which classes failed, and whether the ITs
       # ran at all, is worth most. It reports rather than re-judges: a genuine test failure is
       # already the previous step's exit code, and this only adds a failure of its own for a hollow
