@@ -276,7 +276,7 @@ public final class CreditCardSummaryExtractor {
                 continue;
             }
 
-            List<PositionedText> valueRow = StatementSummaryExtractor.rowBelow(rows, i, MAX_VALUE_ROW_GAP);
+            List<PositionedText> valueRow = valueRowWithinGap(rows, i, MAX_VALUE_ROW_GAP);
             if (valueRow == null) continue;
 
             boolean allValuesNumeric = valueRow.stream()
@@ -302,6 +302,35 @@ public final class CreditCardSummaryExtractor {
         }
 
         return bestPageEvidence(resolvedByPageAndKey, CreditCardSummaryEvidence.ExtractionMethod.GRID);
+    }
+
+    /**
+     * Unlike {@link StatementSummaryExtractor#rowBelow}, which this class reuses everywhere else
+     * and which savings-statement parsing also depends on — deliberately NOT touched here, this
+     * scans every subsequent row within {@code maxGap} for the first one this class can actually
+     * use as a value row, rather than only ever considering the literal next row.
+     *
+     * <p>A real statement's billing-summary widget can share a page with an unrelated column of
+     * running text (a marketing notice, a footer) whose rows interleave with the widget's own by
+     * Y position — the immediate next row can belong to that unrelated column, not the widget.
+     * This is a strict superset of {@code rowBelow}'s own behaviour: whenever the immediate next
+     * row already qualifies, this returns that exact same row (identical to today), so it can
+     * only ever recover cases {@code rowBelow} used to give up on, never change one that already
+     * worked.
+     */
+    private static List<PositionedText> valueRowWithinGap(List<List<PositionedText>> rows, int i, float maxGap) {
+        if (i + 1 >= rows.size()) return null;
+        int page = rows.get(i).get(0).pageIndex();
+        float labelY = rows.get(i).get(0).y();
+        for (int j = i + 1; j < rows.size(); j++) {
+            List<PositionedText> candidate = rows.get(j);
+            if (candidate.get(0).pageIndex() != page) return null;
+            if (candidate.get(0).y() - labelY > maxGap) return null;
+            boolean allNumeric = candidate.stream()
+                    .allMatch(t -> CsvParser.parseNumeric(t.text().trim()) != null);
+            if (allNumeric || amountBearingSubset(candidate) != null) return candidate;
+        }
+        return null;
     }
 
     /** See {@link #tryGrid}'s own doc comment for when and why this is called. */

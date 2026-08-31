@@ -548,4 +548,22 @@ class CreditCardSummaryExtractorTest {
 
         assertThat(summary.totalAmountDue()).isNull();
     }
+
+    // ------------------------------------------------- row-search past an intervening row (Phase 5, task 4)
+
+    @Test
+    void findsTheValueRowPastAnUnrelatedInterveningRow() {
+        // A real shape: an unrelated marketing/notice column running down the left side of the page
+        // (x=30) has text at a y-position BETWEEN the summary label and its own value, in the right
+        // column (x=440+). The immediate next row by y is the unrelated column's text -- not
+        // numeric, not recoverable -- so the value one row further down must still be reachable.
+        List<PositionedText> runs = new ArrayList<>(List.of(
+                run("Total Amount Due", 440f, 90f, 200f),
+                run("Please note our updated fee schedule", 30f, 200f, 206f),   // unrelated column
+                run("13,100.00", 445f, 60f, 214f)));
+
+        var summary = CreditCardSummaryExtractor.extract(runs);
+
+        assertThat(summary.totalAmountDue()).isEqualByComparingTo("13100.00");
+    }
 }
