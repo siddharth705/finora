@@ -168,7 +168,7 @@ public final class CreditCardSummaryExtractor {
         // prints "Total Amount Due" anywhere has no billing-summary panel for either strategy to
         // misread a transaction table's own header as.
         boolean documentHasATotalDue = runs.stream()
-                .anyMatch(t -> matches(StatementSummaryExtractor.normalize(t.text()), TOTAL_DUE_LABELS));
+                .anyMatch(t -> matches(stripDecoration(StatementSummaryExtractor.normalize(t.text())), TOTAL_DUE_LABELS));
         if (!documentHasATotalDue) return CreditCardSummaryEvidence.NONE;
 
         // Both strategies always run, deliberately never short-circuited on the first to find
@@ -441,13 +441,26 @@ public final class CreditCardSummaryExtractor {
     }
 
     private static String keyFor(String normalized) {
-        if (matches(normalized, PREVIOUS_BALANCE_LABELS)) return "previousBalance";
-        if (matches(normalized, PURCHASES_LABELS)) return "purchases";
-        if (matches(normalized, CASH_ADVANCE_LABELS)) return "cashAdvances";
-        if (matches(normalized, FEES_LABELS) || normalized.startsWith("fee & charges")) return "fees";
-        if (matches(normalized, PAYMENTS_LABELS)) return "paymentsAndCredits";
-        if (matches(normalized, TOTAL_DUE_LABELS)) return "totalAmountDue";
+        String stripped = stripDecoration(normalized);
+        if (matches(stripped, PREVIOUS_BALANCE_LABELS)) return "previousBalance";
+        if (matches(stripped, PURCHASES_LABELS)) return "purchases";
+        if (matches(stripped, CASH_ADVANCE_LABELS)) return "cashAdvances";
+        if (matches(stripped, FEES_LABELS) || stripped.startsWith("fee & charges")) return "fees";
+        if (matches(stripped, PAYMENTS_LABELS)) return "paymentsAndCredits";
+        if (matches(stripped, TOTAL_DUE_LABELS)) return "totalAmountDue";
         return null;
+    }
+
+    /** Some statements print a footnote marker before an otherwise-exact label, and/or a trailing
+     *  parenthetical annotation after it (a currency-symbol placeholder, an abbreviation).
+     *  Stripped before matching against this class's own fixed, curated label lists — this can
+     *  only ever recognise MORE of what was already an exact match one layer down; it never
+     *  introduces fuzzy matching or a new false-positive category, since the stripped result
+     *  still has to equal one of the fixed strings exactly. */
+    private static String stripDecoration(String normalized) {
+        String s = normalized;
+        while (s.startsWith("*")) s = s.substring(1);
+        return s.replaceAll("\\s*\\([^)]*\\)\\s*$", "").trim();
     }
 
     private static boolean matches(String normalized, List<String> labels) {

@@ -520,4 +520,32 @@ class CreditCardSummaryExtractorTest {
         assertThat(summary.totalAmountDue()).isNull();
         assertThat(summary.hasReconcilableFields()).isFalse();
     }
+
+    // ------------------------------------------------- label decoration (Phase 5, task 3)
+
+    @Test
+    void aFootnoteMarkedTotalDueLabelStillMatches() {
+        // A real shape: some statements print an asterisk before "Total Amount Due" pointing to a
+        // footnote, and/or a currency-symbol placeholder in parens after it.
+        List<PositionedText> runs = new ArrayList<>(List.of(
+                run("*Total Amount Due ( `)", 50f, 130f, 200f),
+                run("13,100.00", 55f, 60f, 230f)));
+
+        var summary = CreditCardSummaryExtractor.extract(runs);
+
+        assertThat(summary.totalAmountDue()).isEqualByComparingTo("13100.00");
+    }
+
+    @Test
+    void decorationStrippingDoesNotCreateAFalseMatchForAnUnrelatedLabel() {
+        // Guards against over-generalising the strip: an unrelated label that happens to end in a
+        // parenthetical must still not match anything.
+        List<PositionedText> runs = new ArrayList<>(List.of(
+                run("Total Outstanding (Principal)", 50f, 140f, 200f),
+                run("13,100.00", 55f, 60f, 230f)));
+
+        var summary = CreditCardSummaryExtractor.extract(runs);
+
+        assertThat(summary.totalAmountDue()).isNull();
+    }
 }
