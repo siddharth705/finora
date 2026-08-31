@@ -38,6 +38,14 @@ class RefuseIfInsideRepoIsSkippedOnlyWithTheExplicitFlag(unittest.TestCase):
         outside_repo_path = Path("/tmp")
         cr._refuse_if_inside_repo(outside_repo_path, "corpus")           # does not raise
 
+    def test_a_sibling_directory_sharing_a_path_prefix_is_not_refused(self):
+        """A naive string-prefix check would wrongly refuse '/x/repo-backup' as inside '/x/repo' --
+        a real shape this project's own worktree layout has (e.g. a 'finora' repo alongside a
+        'finora-dev' sibling directory). Containment must be a real path relationship, not a
+        substring match."""
+        sibling = cr.REPO_ROOT.parent / (cr.REPO_ROOT.name + "-sibling")
+        cr._refuse_if_inside_repo(sibling, "corpus")                     # does not raise
+
 
 class RunCorpusGroundTruthAppliesTheSameOptIn(unittest.TestCase):
     """run-corpus-ground-truth.py's _refuse_if_inside_repo is a separate copy ("reused verbatim",
@@ -53,6 +61,10 @@ class RunCorpusGroundTruthAppliesTheSameOptIn(unittest.TestCase):
         inside_repo_path = Path(__file__).parent
         rgt._refuse_if_inside_repo(inside_repo_path, "corpus",
                                     allow_in_repo_synthetic_corpus=True)   # does not raise
+
+    def test_a_sibling_directory_sharing_a_path_prefix_is_not_refused(self):
+        sibling = rgt.REPO_ROOT.parent / (rgt.REPO_ROOT.name + "-sibling")
+        rgt._refuse_if_inside_repo(sibling, "corpus")                     # does not raise
 
 
 if __name__ == "__main__":

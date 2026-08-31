@@ -64,7 +64,11 @@ def _refuse_if_inside_repo(path: Path, what: str, allow_in_repo_synthetic_corpus
     """
     if allow_in_repo_synthetic_corpus:
         return
-    if str(path).startswith(str(REPO_ROOT)):
+    # is_relative_to, not a string prefix: a sibling directory that merely shares REPO_ROOT's name
+    # as a prefix (e.g. a "finora-backup" next to "finora") is not inside it, and a naive
+    # str.startswith check would wrongly refuse it -- this project's own worktree layout has
+    # exactly that shape.
+    if path.is_relative_to(REPO_ROOT):
         sys.exit(f"REFUSED: {path} is inside the repository.\n"
                  f"Real customer statements must live outside the working tree. Keep the {what} "
                  "elsewhere and pass an absolute path, or pass "

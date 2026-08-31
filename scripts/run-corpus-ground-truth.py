@@ -62,7 +62,10 @@ def _refuse_if_inside_repo(path: Path, what: str, allow_in_repo_synthetic_corpus
     """
     if allow_in_repo_synthetic_corpus:
         return
-    if str(path).startswith(str(REPO_ROOT)):
+    # is_relative_to, not a string prefix -- see corpus-run.py's identical guard for why a naive
+    # str.startswith check wrongly refuses a sibling directory that merely shares REPO_ROOT's name
+    # as a prefix.
+    if path.is_relative_to(REPO_ROOT):
         sys.exit(f"REFUSED: {path} is inside the repository.\n"
                  f"The {what} must live outside the working tree. Keep it elsewhere and pass an "
                  "absolute path, or pass --allow-in-repo-synthetic-corpus for a committed synthetic "

@@ -304,6 +304,15 @@ jobs:
       - name: Ground-truth matcher (self-test)
         run: python3 scripts/test-ground-truth-match.py
 
+      # The in-repo refusal on corpus-run.py and run-corpus-ground-truth.py is the guard that
+      # stops a real corpus from ever being processed in place, and --allow-in-repo-synthetic-corpus
+      # is the one explicit way past it -- a regression here is exactly the shape of mistake that
+      # already happened once (see the 2026-08-08 incident referenced in
+      # docs/architecture/system-design/ground-truth-model-design.md), so it gets the same
+      # self-test discipline as the two steps above rather than being trusted to stay correct.
+      - name: In-repo corpus refusal (self-test)
+        run: python3 scripts/test-corpus-run.py
+
       - uses: actions/setup-java@v5
         with:
           java-version: '25'
@@ -341,6 +350,7 @@ jobs:
         working-directory: backend
         run: |
           ./mvnw -q -o dependency:build-classpath -Dmdep.outputFile=target/corpus-classpath.txt -Dmdep.includeScope=test
+          test -s target/corpus-classpath.txt || { echo "classpath resolution produced an empty file"; exit 1; }
           java -cp "target/test-classes:target/classes:$(cat target/corpus-classpath.txt)" \
                com.finora.imports.analysis.SyntheticFixtureGenerator
 

@@ -240,11 +240,20 @@ public final class CorpusProbe {
 
     /**
      * One SHA-256 digest per row's description, in row order -- computed unconditionally, on every
-     * probe (real corpus included), because a hash is one-way: it cannot be turned back into the
-     * text it came from, so recording it carries none of the risk raw description content would.
-     * This is CHANGE detection, never VALUE disclosure -- see {@code corpus-diff.py}'s
-     * {@code compare_description_drift}, the only consumer, which never sees or reports the text
-     * either, only whether the hash at a given row position differs between two runs.
+     * probe (real corpus included). This is CHANGE detection, never VALUE disclosure: see
+     * {@code corpus-diff.py}'s {@code compare_description_drift}, the only consumer, which never
+     * sees or reports the text either, only whether the hash at a given row position differs
+     * between two runs.
+     *
+     * <p>Not a privacy-hardened anonymisation scheme -- it is unsalted (a per-run salt would defeat
+     * the whole point: equal descriptions must hash equal across two runs for drift comparison to
+     * mean anything), so a common, low-entropy description ("ATM WITHDRAWAL", a frequent merchant
+     * name) is dictionary-attackable by anyone who can already read this hash. That is an
+     * acceptable bound only because of where this output lives: a local, never-committed
+     * {@code corpus-run.py} JSONL file on a machine that already has the source PDFs sitting next
+     * to it -- reading the hash requires exactly the filesystem access that would let someone open
+     * the PDF directly, so this adds no exposure beyond what that access already gives. It is not
+     * safe to commit, log centrally, or share outside that boundary.
      */
     private static List<String> descriptionHashesOf(StagedAccountSection section) {
         List<String> hashes = new ArrayList<>();

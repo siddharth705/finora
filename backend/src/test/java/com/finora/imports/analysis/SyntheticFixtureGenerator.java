@@ -19,7 +19,7 @@ import java.util.List;
  * build output, never committed. The reviewable artefact is this class's own {@link #definition()},
  * not a rendered PDF: a raw PDF's bytes cannot be scanned for customer data, so this repository's
  * pre-commit policy refuses to let one be committed at all (see the Synthetic Fixture Policy in
- * {@code docs/engineering/financial-document-intelligence-principles.md}). Every other synthetic
+ * {@code docs/architecture/system-design/financial-document-intelligence-principles.md}). Every other synthetic
  * fixture in this codebase already follows the same shape --
  * {@code SyntheticGroundTruthTest} renders in-memory and never touches disk. This class exists only
  * because the CI step that runs {@code scripts/run-corpus-ground-truth.py} needs an actual file
