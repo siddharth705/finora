@@ -58,11 +58,16 @@ export function downloadBlob(blob: Blob, fileName: string) {
  * exported report into text a spreadsheet refuses to sum, which breaks the export for the reason
  * people asked for it. A value that parses as a finite number cannot be a formula, so testing for
  * that first neutralises `-1+1` while leaving `-500` alone.
+ *
+ * The prefix check strips only leading spaces first, not `trim()`'s full whitespace set:
+ * spreadsheets skip past leading spaces before evaluating a formula, so " =cmd(...)" is still
+ * dangerous, but a leading tab or carriage return is itself one of the dangerous prefixes above —
+ * stripping it away before the check would make that character invisible to its own guard.
  */
 export function csvCell(value: string | number): string {
   const raw = String(value ?? '');
   const isPlainNumber = raw.trim() !== '' && Number.isFinite(Number(raw));
-  const needsFormulaGuard = !isPlainNumber && /^[=+\-@\t\r]/.test(raw);
+  const needsFormulaGuard = !isPlainNumber && /^[=+\-@\t\r]/.test(raw.replace(/^ +/, ''));
   const guarded = needsFormulaGuard ? `'${raw}` : raw;
   return `"${guarded.replace(/"/g, '""')}"`;
 }
