@@ -297,6 +297,62 @@ describe('Import — file-type routing', () => {
   });
 });
 
+describe('Import — discarding the current review to force a fresh parse', () => {
+  beforeEach(() => {
+    vi.mocked(importApi.stageCsv).mockReset().mockResolvedValue(stagingResultWith({ sessionId: 'sess-9' }));
+    vi.mocked(categoriesApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(accountsApi.list).mockReset().mockResolvedValue([]);
+  });
+
+  it('discards the staged session and returns to the upload step, after confirmation', async () => {
+    vi.mocked(importApi.discardSession).mockReset().mockResolvedValue(undefined as never);
+    const user = userEvent.setup();
+    renderImport();
+
+    await user.upload(screen.getByTestId('statement-file-input'), csvFile());
+    await screen.findByText(/which account is this statement for/i);
+
+    await user.click(screen.getByRole('button', { name: /discard and start over/i }));
+    expect(await screen.findByText('Discard this import and start over?')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Discard' }));
+
+    expect(importApi.discardSession).toHaveBeenCalledWith('sess-9');
+    expect(await screen.findByTestId('statement-dropzone')).toBeInTheDocument();
+  });
+
+  it('does not discard without confirmation, and stays on the review screen', async () => {
+    vi.mocked(importApi.discardSession).mockReset();
+    const user = userEvent.setup();
+    renderImport();
+
+    await user.upload(screen.getByTestId('statement-file-input'), csvFile());
+    await screen.findByText(/which account is this statement for/i);
+
+    await user.click(screen.getByRole('button', { name: /discard and start over/i }));
+    await screen.findByText('Discard this import and start over?');
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    expect(importApi.discardSession).not.toHaveBeenCalled();
+    expect(screen.getByText(/which account is this statement for/i)).toBeInTheDocument();
+  });
+
+  it('stays on the review screen and shows an error if discarding fails', async () => {
+    vi.mocked(importApi.discardSession).mockReset().mockRejectedValue(new Error('network'));
+    const user = userEvent.setup();
+    renderImport();
+
+    await user.upload(screen.getByTestId('statement-file-input'), csvFile());
+    await screen.findByText(/which account is this statement for/i);
+
+    await user.click(screen.getByRole('button', { name: /discard and start over/i }));
+    await screen.findByText('Discard this import and start over?');
+    await user.click(screen.getByRole('button', { name: 'Discard' }));
+
+    expect(await screen.findByText(/could not discard/i)).toBeInTheDocument();
+    expect(screen.getByText(/which account is this statement for/i)).toBeInTheDocument();
+  });
+});
+
 /**
  * Phase 1B: {@code totalAmountDue} was already correctly detected server-side but went no further
  * than the verification report -- this is the review screen's half of the plumbing fix.
