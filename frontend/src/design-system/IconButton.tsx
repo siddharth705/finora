@@ -7,7 +7,13 @@ type IconButtonSize = 'sm' | 'md';
 
 const VARIANT_CLASSES: Record<IconButtonVariant, string> = {
   default: 'text-muted hover:text-ink hover:bg-bg',
-  danger: 'text-muted hover:text-danger hover:bg-danger-bg',
+  // Always-red at rest, not muted-until-hover -- matches Button's own danger variant
+  // (`text-danger` unconditional) and Ledger.tsx's original delete-row button this variant was
+  // first actually used to migrate. Bug fix: this originally read `text-muted hover:text-danger`,
+  // which silently changed a destructive action's at-rest color the moment it got its first real
+  // caller -- an inconsistency between this component and Button's own danger variant that no
+  // Phase 0 test caught, since Phase 0 shipped before anything actually used `variant="danger"`.
+  danger: 'text-danger hover:bg-danger-bg',
 };
 
 const SIZE_CLASSES: Record<IconButtonSize, string> = {
