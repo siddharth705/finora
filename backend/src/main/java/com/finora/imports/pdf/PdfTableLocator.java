@@ -470,6 +470,18 @@ public class PdfTableLocator {
         // sit on the document's own actual last page is the one thing a true closing block and this
         // false-positive panel cannot both satisfy at once, and it needs no new vocabulary -- the
         // page position is already known to the caller.
+        //
+        // Known limitation, unevidenced against the real corpus so deliberately not solved
+        // speculatively: {@code lastPageIndex} is the WHOLE document's last page, not the
+        // currently-open section's. A composite multi-account statement whose first section's own
+        // true-end footer sits on that section's own last page (not the document's) would be
+        // refused here too. This is not a new risk this fix introduces, though -- pre-fix, the same
+        // false-positive-on-page-1 shape this fix closes would have permanently suppressed every
+        // row for the REST of the document (trailingContentSuppressed never resets), composite
+        // sections included; refusing an early/wrong-page match and letting the normal
+        // SECTION_MARKER/header machinery close the section later is strictly safer than that. No
+        // real document in this corpus evidences CHEQUE_PAYABLE_FOOTER_MARKER on a composite
+        // statement (only single-account Axis credit-card exports) -- revisit if one ever does.
         if (CHEQUE_PAYABLE_FOOTER_MARKER.matcher(rowLine).find()) {
             return pageIndex == lastPageIndex ? "CHEQUE_PAYABLE_FOOTER_CLOSED" : null;
         }
@@ -1275,11 +1287,20 @@ public class PdfTableLocator {
             // PAGE_LEGEND_BLOCK_START above) set this flag on page 1, there was no "next header"
             // ever again to reset it, and every one of the document's remaining 23 pages -- 231 of
             // 243 real transactions -- was silently suppressed for the rest of the document. A
-            // second, independent resume signal: a row that is unambiguously transaction-shaped
-            // (isTransactionShapedRow -- has both a date and an amount, the same admission test the
-            // headerless path already trusts) can only be genuine data, never legend/footer
-            // boilerplate, so it is always safe to treat as proof the block has ended, with or
-            // without a header row in between.
+            // second, independent resume signal: a row that is transaction-shaped
+            // (isTransactionShapedRow -- some cell parses as a date AND some cell parses as a
+            // decimal amount, not necessarily the same cell; the same admission test the headerless
+            // path already trusts) is treated as proof the block has ended, with or without a header
+            // row in between.
+            //
+            // Known limitation, unevidenced against the real corpus so deliberately not solved
+            // speculatively: none of the three real PAGE_LEGEND_BLOCK_START sentences (SBI, Kotak,
+            // HDFC -- see that pattern's own doc comment) are documented as being followed by a
+            // date-and-amount-bearing row within their own legend/disclaimer block, but nothing
+            // structurally prevents one -- a summary panel with an effective-date field and a
+            // nearby currency figure on the same physical line would satisfy isTransactionShapedRow
+            // without being a real transaction, resuming suppression a row early and admitting that
+            // row as a spurious transaction. Revisit if a real document ever shows this shape.
             if (pageLegendBlockActive && isTransactionShapedRow(row)) {
                 pageLegendBlockActive = false;
             }
