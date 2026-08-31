@@ -15,6 +15,16 @@ import type { DashboardSummary } from '../types';
 const dimensionsGetSpy = jest.spyOn(Dimensions, 'get');
 
 /**
+ * The Expenses KPI renders through AnimatedNumber now -- a non-editable TextInput, so its
+ * settled value lives in `defaultValue` (see AnimatedNumber's own doc comment) rather than in
+ * text content getByText can see. These cross-checks against DonutChart's plain-Text centre
+ * label predate that change; kept accurate by reading each source the way it actually renders.
+ */
+function expensesKpiValue(): string {
+  return screen.getByTestId('kpi-Expenses').props.defaultValue as string;
+}
+
+/**
  * The distinction this file exists to protect: a dashboard that FAILED TO LOAD must never be
  * indistinguishable from a dashboard that legitimately has no money in it.
  *
@@ -190,9 +200,10 @@ describe('M0-A: the spending donut must not understate the period total', () => 
     // ₹34,000 is the sum of the six largest categories. Rendering it as the centre of a chart
     // titled "Spending by Category" tells the user they spent 1,500 less than they did.
     expect(screen.queryByText('₹34,000')).toBeNull();
-    // getAllByText, not getByText: the correct total legitimately appears more than once (the
-    // centre and the Expenses KPI), and the next test asserts exactly that agreement.
-    expect(screen.getAllByText('₹35,500').length).toBeGreaterThan(0);
+    // The centre label is still a plain Text; the Expenses KPI now renders through AnimatedNumber
+    // (see expensesKpiValue's own comment) -- both must agree on the true total.
+    expect(screen.getByText('₹35,500')).toBeTruthy();
+    expect(expensesKpiValue()).toBe('₹35,500');
   });
 
   it('agrees with the Expenses KPI, which reads the same backend field', async () => {
@@ -205,7 +216,8 @@ describe('M0-A: the spending donut must not understate the period total', () => 
     renderScreen();
     await screen.findByText('Total Balance');
 
-    expect(screen.getAllByText('₹35,500').length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByText('₹35,500')).toBeTruthy();
+    expect(expensesKpiValue()).toBe('₹35,500');
   });
 
   it('does not show two rows both labelled Other', async () => {
@@ -238,7 +250,8 @@ describe('M0-A: the spending donut must not understate the period total', () => 
     expect(screen.getByText('₹8,500')).toBeTruthy();
     expect(screen.queryByText('₹5,500')).toBeNull();
     // And the invariant that started all of this still holds.
-    expect(screen.getAllByText('₹39,000').length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByText('₹39,000')).toBeTruthy();
+    expect(expensesKpiValue()).toBe('₹39,000');
   });
 
   it('is unaffected when every category already fits', async () => {
@@ -251,7 +264,8 @@ describe('M0-A: the spending donut must not understate the period total', () => 
     renderScreen();
     await screen.findByText('Total Balance');
 
-    expect(screen.getAllByText('₹25,000').length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByText('₹25,000')).toBeTruthy();
+    expect(expensesKpiValue()).toBe('₹25,000');
   });
 });
 

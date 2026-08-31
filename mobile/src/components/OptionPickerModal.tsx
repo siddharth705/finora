@@ -1,5 +1,6 @@
 import { FlatList, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { hapticSelection } from '../lib/haptics';
 import { radius, spacing, useTheme } from '../theme';
 
 /**
@@ -40,7 +41,10 @@ export function OptionPickerModal({ visible, title, options, selected, onSelect,
             const isSelected = item === selected;
             return (
               <Pressable
-                onPress={() => onSelect(item)}
+                onPress={() => {
+                  hapticSelection();
+                  onSelect(item);
+                }}
                 accessibilityRole="button"
                 accessibilityState={{ selected: isSelected }}
                 style={[styles.option, { borderBottomColor: c.border }]}
