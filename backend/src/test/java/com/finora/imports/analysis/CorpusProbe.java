@@ -12,8 +12,10 @@ import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.text.PDFTextStripper;
 
 import java.io.File;
+import java.math.BigDecimal;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -136,7 +138,14 @@ public final class CorpusProbe {
                     account == null ? null : account.accountNumberMasked(),
                     account == null ? 0.0 : account.productConfidence(),
                     account != null && account.productNeedsReview(),
-                    sectionVerification));
+                    sectionVerification,
+                    account == null ? null : account.openingBalance(),
+                    account == null ? null : account.closingBalance(),
+                    account == null ? null : account.statementPeriodStart(),
+                    account == null ? null : account.statementPeriodEnd(),
+                    account == null ? null : account.creditLimit(),
+                    account == null ? null : account.totalAmountDue(),
+                    account == null ? null : account.paymentDueDate()));
         }
 
         String fingerprint = generated.documentContext() == null ? "unknown"
@@ -217,7 +226,10 @@ public final class CorpusProbe {
      */
     record Section(int index, int rows, String detectedProduct, String suggestedAccountType,
                    String accountNumberMasked, double productConfidence, boolean productNeedsReview,
-                   Map<String, String> verification) {}
+                   Map<String, String> verification,
+                   BigDecimal openingBalance, BigDecimal closingBalance,
+                   LocalDate statementPeriodStart, LocalDate statementPeriodEnd,
+                   BigDecimal creditLimit, BigDecimal totalAmountDue, LocalDate paymentDueDate) {}
 
     /**
      * Renders sections as an ordered JSON array.
@@ -244,6 +256,13 @@ public final class CorpusProbe {
              .append(",\"productConfidence\":").append(Math.round(s.productConfidence() * 1000) / 1000.0)
              .append(",\"productNeedsReview\":").append(s.productNeedsReview())
              .append(",\"verification\":").append(stringMap(s.verification()))
+             .append(",\"openingBalance\":").append(s.openingBalance() == null ? "null" : quote(s.openingBalance().toPlainString()))
+             .append(",\"closingBalance\":").append(s.closingBalance() == null ? "null" : quote(s.closingBalance().toPlainString()))
+             .append(",\"statementPeriodStart\":").append(s.statementPeriodStart() == null ? "null" : quote(s.statementPeriodStart().toString()))
+             .append(",\"statementPeriodEnd\":").append(s.statementPeriodEnd() == null ? "null" : quote(s.statementPeriodEnd().toString()))
+             .append(",\"creditLimit\":").append(s.creditLimit() == null ? "null" : quote(s.creditLimit().toPlainString()))
+             .append(",\"totalAmountDue\":").append(s.totalAmountDue() == null ? "null" : quote(s.totalAmountDue().toPlainString()))
+             .append(",\"paymentDueDate\":").append(s.paymentDueDate() == null ? "null" : quote(s.paymentDueDate().toString()))
              .append('}');
         }
         return b.append(']').toString();

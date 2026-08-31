@@ -5,7 +5,9 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 
+import java.math.BigDecimal;
 import java.nio.file.Path;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
 
@@ -65,7 +67,43 @@ class CorpusProbeTest {
 
     private static CorpusProbe.Section sec(int index, int rows, String product, String type) {
         return new CorpusProbe.Section(index, rows, product, type, null, 0.5, false,
-                Map.of("BALANCE_CHAIN", "VERIFIED"));
+                Map.of("BALANCE_CHAIN", "VERIFIED"),
+                null, null, null, null, null, null, null);
+    }
+
+    // ------------------------------------------------- statement-level financial facts (Task 1)
+
+    @Test
+    void sectionsJson_emitsStatementLevelFinancialFacts_whenPresent() {
+        CorpusProbe.Section section = new CorpusProbe.Section(
+                0, 3, "SAVINGS", "SAVINGS", "****1234", 0.9, false, Map.of(),
+                new BigDecimal("1000.00"), new BigDecimal("1500.00"),
+                LocalDate.of(2026, 7, 1), LocalDate.of(2026, 7, 31),
+                null, null, null);
+
+        String json = CorpusProbe.sectionsJson(List.of(section));
+
+        assertThat(json).contains("\"openingBalance\":\"1000.00\"");
+        assertThat(json).contains("\"closingBalance\":\"1500.00\"");
+        assertThat(json).contains("\"statementPeriodStart\":\"2026-07-01\"");
+        assertThat(json).contains("\"statementPeriodEnd\":\"2026-07-31\"");
+        assertThat(json).contains("\"creditLimit\":null");
+        assertThat(json).contains("\"totalAmountDue\":null");
+        assertThat(json).contains("\"paymentDueDate\":null");
+    }
+
+    @Test
+    void sectionsJson_emitsCreditCardSummaryFields_whenPresent() {
+        CorpusProbe.Section section = new CorpusProbe.Section(
+                0, 3, "CREDIT_CARD", "CREDIT_CARD", null, 0.9, false, Map.of(),
+                null, null, null, null,
+                new BigDecimal("50000.00"), new BigDecimal("4321.50"), LocalDate.of(2026, 8, 15));
+
+        String json = CorpusProbe.sectionsJson(List.of(section));
+
+        assertThat(json).contains("\"creditLimit\":\"50000.00\"");
+        assertThat(json).contains("\"totalAmountDue\":\"4321.50\"");
+        assertThat(json).contains("\"paymentDueDate\":\"2026-08-15\"");
     }
 
     /**
@@ -118,9 +156,11 @@ class CorpusProbeTest {
     void perSectionVerificationStaysPerSection() {
         String json = CorpusProbe.sectionsJson(List.of(
                 new CorpusProbe.Section(0, 75, "UNKNOWN", "SAVINGS", null, 0.5, false,
-                        Map.of("COLUMN_AMBIGUITY", "VERIFIED")),
+                        Map.of("COLUMN_AMBIGUITY", "VERIFIED"),
+                        null, null, null, null, null, null, null),
                 new CorpusProbe.Section(1, 0, "UNKNOWN", "SAVINGS", null, 0.5, true,
-                        Map.of("COLUMN_AMBIGUITY", "WARNING"))));
+                        Map.of("COLUMN_AMBIGUITY", "WARNING"),
+                        null, null, null, null, null, null, null)));
 
         assertThat(json).contains("\"WARNING\"").contains("\"VERIFIED\"");
         assertThat(json.indexOf("VERIFIED")).isLessThan(json.indexOf("WARNING"));
@@ -130,7 +170,8 @@ class CorpusProbeTest {
     @DisplayName("a section with no detected account renders nulls rather than fabricated values")
     void missingAccountIdentityRendersNull() {
         String json = CorpusProbe.sectionsJson(List.of(
-                new CorpusProbe.Section(0, 0, null, null, null, 0.0, false, Map.of())));
+                new CorpusProbe.Section(0, 0, null, null, null, 0.0, false, Map.of(),
+                        null, null, null, null, null, null, null)));
 
         assertThat(json).contains("\"detectedProduct\":null")
                 .contains("\"accountNumberMasked\":null")
