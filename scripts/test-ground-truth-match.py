@@ -240,6 +240,55 @@ class UnestablishedIsNotAgreement(unittest.TestCase):
         self.assertIn("product", r["entities"][0]["detail"])
 
 
+class DescriptionJoinsTheValueAxis(unittest.TestCase):
+    """Synthetic-only, per the structural refusal already proven by
+    ground-truth-match.py:189-191 -- a REAL_CORPUS record carrying "transactions" is FAILed before
+    any dimension (description included) is even compared. These tests only exercise the
+    SYNTHETIC path; the refusal itself is exercised elsewhere and is untouched by this change."""
+
+    def test_a_matched_description_passes_on_a_synthetic_observation(self):
+        truth = {"entities": [entity("acct", "SAVINGS", txns=1, expectedTransactionValues=[
+            {"date": "2026-07-01", "amount": "100.00", "direction": "DEBIT", "currency": "INR",
+             "description": "Coffee shop"}])]}
+        rec = record([section(0, 1, "SAVINGS", transactions=[
+            {"date": "2026-07-01", "amount": "100.00", "direction": "DEBIT", "currency": "INR",
+             "description": "Coffee shop"}])])
+        rec["observed"]["observationSource"] = "SYNTHETIC"
+
+        self.assertEqual(gt.PASS, gt.match(truth, rec)["verdict"])
+
+    def test_a_mismatched_description_fails_on_a_synthetic_observation(self):
+        truth = {"entities": [entity("acct", "SAVINGS", txns=1, expectedTransactionValues=[
+            {"date": "2026-07-01", "amount": "100.00", "direction": "DEBIT", "currency": "INR",
+             "description": "Coffee shop"}])]}
+        rec = record([section(0, 1, "SAVINGS", transactions=[
+            {"date": "2026-07-01", "amount": "100.00", "direction": "DEBIT", "currency": "INR",
+             "description": "WRONG TEXT"}])])
+        rec["observed"]["observationSource"] = "SYNTHETIC"
+
+        r = gt.match(truth, rec)
+
+        self.assertEqual(gt.FAIL, r["verdict"])
+        self.assertEqual(gt.UNEXPECTED, r["entities"][0]["values"]["description"]["outcome"])
+
+    def test_a_synthetic_description_never_reaches_a_real_corpus_observation(self):
+        """The pre-existing refusal (unchanged by this task) still governs: a REAL_CORPUS record
+        carrying transactions FAILs outright, regardless of what the description dimension says."""
+        truth = {"entities": [entity("acct", "SAVINGS", txns=1, expectedTransactionValues=[
+            {"date": "2026-07-01", "amount": "100.00", "direction": "DEBIT", "currency": "INR",
+             "description": "Coffee shop"}])]}
+        rec = record([section(0, 1, "SAVINGS", transactions=[
+            {"date": "2026-07-01", "amount": "100.00", "direction": "DEBIT", "currency": "INR",
+             "description": "Coffee shop"}])])
+        # observationSource deliberately left unset -- defaults to REAL_CORPUS.
+
+        r = gt.match(truth, rec)
+
+        self.assertEqual(gt.FAIL, r["verdict"])
+        self.assertIn("financial values present on a REAL_CORPUS observation",
+                       r["entities"][0]["detail"])
+
+
 class StatementLevelFacts(unittest.TestCase):
     """Balance/period/credit-card-summary -- statement-level facts, not per-transaction ledger
     detail, so unlike VALUE_DIMENSIONS these apply to a REAL_CORPUS observation exactly like

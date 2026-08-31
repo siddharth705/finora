@@ -30,7 +30,7 @@ REAL_CORPUS, SYNTHETIC = "REAL_CORPUS", "SYNTHETIC"
 # Dimensions the value axis can speak about. Each is judged SEPARATELY: an entity whose product and
 # transaction count agree is not made less certain by amounts being unobservable, so UNKNOWN is
 # per-dimension and never swallows the whole entity.
-VALUE_DIMENSIONS = ("date", "amount", "direction", "currency")
+VALUE_DIMENSIONS = ("date", "amount", "direction", "currency", "description")
 
 # Statement-level facts, not per-transaction ledger detail -- these apply to a REAL_CORPUS
 # observation exactly like expectedProduct already does (see match()), unlike VALUE_DIMENSIONS
