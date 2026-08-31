@@ -1,0 +1,15 @@
+-- Phase 1B of the import-pipeline session-freshness fix (see ImportSessionService's own doc
+-- comment on findLiveSessionByContentHash). Phase 1A bounded automatic session replay to a short
+-- time window as a heuristic for "this is plausibly the same upload attempt, not a genuinely
+-- later re-upload" -- this column lets the actual question be asked directly: was this session
+-- staged by the exact same backend build that's now deciding whether to replay it? A session
+-- staged before this column existed has NULL here, which the application-level comparison in
+-- ImportSessionService.findLiveSessionByContentHash treats as "definitely a different version
+-- from whatever is running now" -- correct, since nothing before this feature shipped ever
+-- recorded what it was built from, so replaying it automatically would be exactly the bug this
+-- whole fix exists to close.
+--
+-- Nullable, no backfill, no default -- every existing row simply has no answer to a question that
+-- didn't exist when it was written, the same posture V108's source_domain and V113's
+-- credit_card_summary_json columns already take on this table.
+ALTER TABLE import_sessions ADD COLUMN parser_version VARCHAR(40);
