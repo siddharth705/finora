@@ -140,7 +140,7 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'npm'
           cache-dependency-path: package-lock.json
 
@@ -392,8 +392,13 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          # Matches the engines field in frontend/package.json (">=20.19.0").
-          node-version: '20'
+          # Matches the engines field in frontend/package.json (">=22.22.2") -- raised from Node 20
+          # alongside admin-portal's, both jsdom-dependent apps, when admin-portal's jsdom bump to
+          # 30.x turned out to need it (jsdom's own package.json declares
+          # "^22.22.2 || ^24.15.0 || >=26.0.0", dropping Node 20 outright: undici 8.10.0, which
+          # jsdom 30 pulls in, throws "webidl.util.markAsUncloneable is not a function" under
+          # Node 20 specifically -- confirmed via a real CI run, not just reading the engines field).
+          node-version: '22'
           cache: 'npm'
           cache-dependency-path: frontend/package-lock.json
 
@@ -456,7 +461,8 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: '20'
+          # See the user frontend's setup-node step for why this moved off Node 20.
+          node-version: '22'
           cache: 'npm'
           cache-dependency-path: admin-portal/package-lock.json
 
@@ -492,7 +498,7 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'npm'
           cache-dependency-path: mobile/package-lock.json
 
@@ -609,7 +615,7 @@ jobs:
       # for a single-app job's own cache-dependency-path.
       - uses: actions/setup-node@v7
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'npm'
           cache-dependency-path: |
             frontend/package-lock.json
