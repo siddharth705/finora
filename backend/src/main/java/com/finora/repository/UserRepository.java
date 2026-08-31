@@ -54,17 +54,25 @@ public interface UserRepository extends JpaRepository<User, UUID> {
     // Powers the admin Dashboard's "new signups, last 7/30 days" stat tiles (AdminStatsService).
     long countByCreatedAtAfter(Instant threshold);
 
-    // Excludes the BOOTSTRAP_ADMIN system account (BootstrapService) from "total users" stats --
-    // AdminOperationalDashboardService and AdminStatsService both used a plain count() before,
-    // which would overcount by exactly one forever once a platform has been set up (that account
-    // is locked, never deleted -- see SetupService.completeSetup()).
-    long countByRoleNot(String role);
+    // Excludes the bootstrap/installer account (BootstrapService.BOOTSTRAP_IDENTIFIER) from
+    // "total users" stats, by its EMAIL -- AdminOperationalDashboardService and AdminStatsService
+    // both used a plain count() before, which would overcount by exactly one forever once a
+    // platform has been set up (that account is locked, never deleted -- see
+    // SetupService.completeSetup()).
+    //
+    // Bug fix: this used to filter on countByRoleNot("BOOTSTRAP_ADMIN") instead. That only worked
+    // DURING the setup wizard -- SetupService.completeSetup() calls RoleService.revokeRole(...),
+    // which resets the legacy User.role column to DEFAULT_ROLE ("USER") the instant the revoked
+    // role matches it, so a role-based filter silently stopped excluding this account the moment
+    // setup finished (every real deployment, almost all of the time). The account's email never
+    // changes, so filtering on that instead survives setup completion. See UserRepositoryIT.
+    long countByEmailNot(String email);
 
-    // Paired with countByRoleNot above -- AdminStatsService derives activeUsers as
-    // totalUsers - suspendedUsers, so both counts must exclude the bootstrap account together,
-    // or that subtraction goes negative by one the moment it's locked (status=SUSPENDED) but
-    // still excluded from the totalUsers side alone.
-    long countByStatusAndRoleNot(String status, String role);
+    // Paired with countByEmailNot above -- AdminStatsService's per-status breakdowns
+    // (suspendedUsers/activeUsers) need the same bootstrap-account exclusion, scoped to one
+    // status. Same bug history as countByEmailNot: a role-based version of this let the bootstrap
+    // account (status=SUSPENDED post-setup) leak straight into "suspended users".
+    long countByStatusAndEmailNot(String status, String email);
 
     // Backs the Admin Dashboard's Needs Attention section -- lockedUntil/failedLoginAttempts
     // already existed for AuthService's own lockout enforcement (see its class doc); this is the

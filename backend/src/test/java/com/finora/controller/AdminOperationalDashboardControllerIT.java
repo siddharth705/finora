@@ -101,7 +101,7 @@ class AdminOperationalDashboardControllerIT extends AbstractIntegrationTest {
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
         JsonNode data = mapper.readTree(response.getBody()).get("data");
         // signedUp must agree with the Operational Dashboard's own totalUsers -- both read the
-        // same countByRoleNot("BOOTSTRAP_ADMIN") figure.
+        // same countByEmailNot(BootstrapService.BOOTSTRAP_IDENTIFIER) figure.
         assertThat(data.get("signedUp").asLong()).isGreaterThanOrEqualTo(1L);
         assertThat(data.has("firstImport")).isTrue();
         assertThat(data.has("firstBudget")).isTrue();
