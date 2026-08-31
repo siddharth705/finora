@@ -19,6 +19,13 @@
   --color-bg: #F8FAFC;
   --color-card: #ffffff;
   --color-border: #E6EAF2;
+  /* Bug fix: `bg-surface`/`hover:bg-surface` were already used in three places (DuplicateReview's
+     comparison panels, and PR #682's CategoryCreateEditPanel/ReviewCardSkeleton skeletons) with no
+     matching Tailwind color ever defined — every one of those classes silently resolved to nothing,
+     so the skeletons rendered with no visible pulse and DuplicateReview's cards had no fill. A
+     step between `bg` and `card`: for an inset panel sitting *inside* a card (comparison rows,
+     skeleton placeholder blocks), `card` itself would have no contrast against its own background. */
+  --color-surface: #F1F4F9;
 
   --color-ink: 15 23 42;
   --color-muted: #64748B;
@@ -49,6 +56,7 @@
   --color-bg: #0B1220;
   --color-card: #151C2C;
   --color-border: #253044;
+  --color-surface: #1B2436;
 
   --color-ink: 226 232 240;
   --color-muted: #94A3B8;

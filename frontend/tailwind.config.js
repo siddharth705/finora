@@ -15,6 +15,7 @@ export default {
         bg: 'var(--color-bg)',
         card: 'var(--color-card)',
         border: 'var(--color-border)',
+        surface: 'var(--color-surface)',
         // Text — rgb()/<alpha-value> form because these two are the only colors ever used
         // with Tailwind's opacity modifier (e.g. text-ink/60)
         ink: 'rgb(var(--color-ink) / <alpha-value>)',

@@ -89,10 +89,15 @@ rather than silently drifting apart over time.
     every background refresh — the opposite of what a background refetch should do. A refetch with
     existing data stays on the "stale content + spinner" row of the UX convention table below
     (Ledger's existing "Refreshing…" pattern), never the skeleton row.
-- **Accessibility, baked into `<Skeleton>`/the loading region, not left to each page to remember**:
-  the loading container gets `aria-busy="true"`, `role="status"`, `aria-live="polite"` so a page
-  adopting `<Skeleton>` inherits correct screen-reader behavior automatically instead of needing to
-  re-derive it.
+- **Accessibility: `Skeleton.Region` provides `aria-busy="true"`, `role="status"`,
+  `aria-live="polite"` — required, not automatic.** Individual shapes (`Row`/`Card`/`Chart`/...)
+  are `aria-hidden` on themselves, since a list of skeleton rows must announce as one region, not
+  one per row — which means the accessibility contract only exists where a page actually wraps its
+  shapes in one `Region`. A page that swaps `<p>Loading…</p>` for a bare `Skeleton.Row` and forgets
+  the `Region` wrapper is *worse* than before (readable text replaced by something that announces
+  nothing), not better. Every per-page skeleton composition in §2/§3/§4 wraps its shapes in exactly
+  one `Region` per logical loading area — call this out explicitly in each phase's PR description
+  and review, don't assume it's automatic.
 - **Performance guardrail**: animate only `transform`/`opacity` (what `whileTap`/`whileHover` and the
   skeleton shimmer already do) — never `width`/`height`/`top`/`left`/`margin`/`padding`, which force
   layout and janks on slower devices. Stated explicitly here so it's a documented rule new
@@ -267,6 +272,10 @@ Each phase is done when, for the page(s) it covers:
 - No page-level loading gate blocks a section that has its own independent data source — every
   section with its own query/fetch shows its own skeleton on its own schedule.
 - No new motion ignores `prefers-reduced-motion`.
+- Every `Skeleton` shape this phase renders is wrapped in a `Skeleton.Region` — no bare
+  `Skeleton.Row`/`Card`/`Chart` left announcing nothing to screen readers where the page used to
+  have readable "Loading…" text (§1's accessibility rule; this is easy to get wrong since the
+  shapes render fine, visually, either way).
 - No hand-rolled button/icon-button duplicates what `<Button>`/`<IconButton>` already provide (i.e.
   no new bare `<button className="...">` copy-pasted in a page this phase touched).
 - No untriaged old-idiom string/pattern remains in that phase's pages after the cleanup sweep (§
