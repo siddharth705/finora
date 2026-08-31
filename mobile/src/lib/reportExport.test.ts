@@ -52,6 +52,17 @@ describe('toCsv', () => {
     expect(row).toBe('"\'=HYPERLINK(""http://evil.example"",""click"")","100"');
   });
 
+  // A leading space before the formula-triggering character must not slip past the guard --
+  // spreadsheet apps can still evaluate a leading-space-then-formula value as a formula on open.
+  it('neutralises a category name with leading whitespace before a formula-triggering character', () => {
+    const csv = toCsv({
+      ...report,
+      categories: [{ category: " =cmd|'/c calc'!A0", amount: 100 }],
+    });
+    const row = csv.split('\n').find((l) => l.includes('cmd'));
+    expect(row).toBe(`"' =cmd|'/c calc'!A0","100"`);
+  });
+
   it('does not mangle a genuine negative amount', () => {
     const csv = toCsv({ ...report, categories: [{ category: 'Refund', amount: -500 }] });
     expect(csv).toContain('"Refund","-500"');
