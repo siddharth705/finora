@@ -254,6 +254,10 @@ public class PdfPreviewGenerator {
         // See PaymentDueDateGridExtractor's own doc comment for why PdfMetadataExtractor's
         // line-based reading can never recover this on these two real documents at all.
         LocalDate gridPaymentDueDate = PaymentDueDateGridExtractor.extract(positioned, ctx);
+        // Same reasoning, same document-wide/ungated-on-section-count scope, for the credit limit
+        // itself: the same real Axis/SBI "Payment Summary" grid scrambles "Credit Limit" away from
+        // its own value too -- see CreditLimitGridExtractor's own doc comment.
+        BigDecimal gridCreditLimit = CreditLimitGridExtractor.extract(positioned, ctx);
         // Same reasoning, same document-wide/ungated-on-section-count scope, for the account/card
         // number itself: a real Axis credit-card statement's own "Credit Card Number" field is
         // scrambled the same way its Payment Due Date is -- see AccountNumberGridExtractor's own
@@ -289,7 +293,7 @@ public class PdfPreviewGenerator {
             // the contradiction -- printed activity, nothing staged -- with nothing to state it.
             StagedAccountSection section = buildLedgerSection(userId, filename, emptySection, unknown, ctx,
                     printedSummary, printedCreditCardSummary, printedDateRange, gridPaymentDueDate,
-                    gridAccountNumberMasked);
+                    gridCreditLimit, gridAccountNumberMasked);
             return new PdfGenerationResult(List.of(surfaceUnrecognizedText(section, empty.preTableLines())), ctx,
                     printedCreditCardSummary);
         }
@@ -302,7 +306,7 @@ public class PdfPreviewGenerator {
             // every section exists.
             List<StagedAccountSection> staged = buildSections(userId, filename, doc.sections().get(i),
                     i, doc.sections().size(), ctx, PrintedSummary.NONE, printedCreditCardSummary,
-                    printedDateRange, gridPaymentDueDate, gridAccountNumberMasked);
+                    printedDateRange, gridPaymentDueDate, gridCreditLimit, gridAccountNumberMasked);
             for (StagedAccountSection s : staged) unparseableAcrossDocument.addAll(s.unparseableRows());
             result.addAll(staged);
         }
@@ -337,7 +341,8 @@ public class PdfPreviewGenerator {
                                                       PrintedSummary printedSummary,
                                                       CreditCardSummaryEvidence printedCreditCardSummary,
                                                       TransactionTableDateRangeExtractor.PrintedDateRange printedDateRange,
-                                                      LocalDate gridPaymentDueDate, String gridAccountNumberMasked) {
+                                                      LocalDate gridPaymentDueDate, BigDecimal gridCreditLimit,
+                                                      String gridAccountNumberMasked) {
         List<String> columns = section.rows().isEmpty() ? List.of() : List.copyOf(section.rows().get(0).keySet());
         ProductDiscovery.DiscoveredProduct product = productDiscovery.discover(
                 new ProductEvidenceCollector.Section(columns, section.auxiliaryText(), null,
@@ -356,7 +361,8 @@ public class PdfPreviewGenerator {
             return buildProductSections(filename, section, product, ctx);
         }
         return List.of(buildLedgerSection(userId, filename, section, product, ctx, printedSummary,
-                printedCreditCardSummary, printedDateRange, gridPaymentDueDate, gridAccountNumberMasked));
+                printedCreditCardSummary, printedDateRange, gridPaymentDueDate, gridCreditLimit,
+                gridAccountNumberMasked));
     }
 
     /**
@@ -380,7 +386,7 @@ public class PdfPreviewGenerator {
             // credit-card-ledger-only concept.
             DetectedAccountInfo detected = facts.toDetectedAccountInfo(product, suggestedAccountType,
                     null, null, facts.metadata().statementPeriodStart(), facts.metadata().statementPeriodEnd(), attrs,
-                    null, facts.metadata().paymentDueDate(), null);
+                    null, facts.metadata().paymentDueDate(), facts.metadata().creditLimit(), null);
             result.add(new StagedAccountSection(detected, List.of(), 0, 0, List.of()));
         }
         return result;
@@ -392,7 +398,8 @@ public class PdfPreviewGenerator {
                                                     DocumentContext ctx, PrintedSummary printedSummary,
                                                     CreditCardSummaryEvidence printedCreditCardSummary,
                                                     TransactionTableDateRangeExtractor.PrintedDateRange printedDateRange,
-                                                    LocalDate gridPaymentDueDate, String gridAccountNumberMasked) {
+                                                    LocalDate gridPaymentDueDate, BigDecimal gridCreditLimit,
+                                                    String gridAccountNumberMasked) {
         List<StagedRow> staged = new ArrayList<>();
         // "Never lose information" (see the engineering principles doc) -- a row that fails to
         // normalize is reported with WHY, not just silently absent from the row count. Real cost
@@ -505,7 +512,8 @@ public class PdfPreviewGenerator {
 
         int dupCount = (int) staged.stream().filter(StagedRow::likelyDuplicate).count();
         DetectedAccountInfo detected = buildDetectedAccountInfo(filename, section, staged, balancePoints, product, ctx,
-                printedCreditCardSummary, printedDateRange, gridPaymentDueDate, gridAccountNumberMasked);
+                printedCreditCardSummary, printedDateRange, gridPaymentDueDate, gridCreditLimit,
+                gridAccountNumberMasked);
         // Per section rather than per file: a composite statement's sections have separate balance
         // chains, and one can verify while another does not.
         var verification = importVerifier.verify(documentOrder,
@@ -657,7 +665,8 @@ public class PdfPreviewGenerator {
                                                            DocumentContext ctx,
                                                            CreditCardSummaryEvidence printedCreditCardSummary,
                                                            TransactionTableDateRangeExtractor.PrintedDateRange printedDateRange,
-                                                           LocalDate gridPaymentDueDate, String gridAccountNumberMasked) {
+                                                           LocalDate gridPaymentDueDate, BigDecimal gridCreditLimit,
+                                                           String gridAccountNumberMasked) {
         LocalDate statementStart = null;
         LocalDate statementEnd = null;
         BigDecimal openingBalance = null;
@@ -711,10 +720,28 @@ public class PdfPreviewGenerator {
         LocalDate paymentDueDate = facts.metadata().paymentDueDate() != null
                 ? facts.metadata().paymentDueDate() : gridPaymentDueDate;
 
+        // INVERTED precedence from paymentDueDate above -- the positioned-text grid wins here, and
+        // PdfMetadataExtractor's own line-based reading (GRID_CREDIT_LIMIT_LABEL's findGridValue
+        // fallback) is only used when the grid reading found nothing. Evidenced necessary, not just
+        // theoretically safer: on the real Indusland.pdf, the line-based fallback's own "first
+        // amount-shaped match after the label" rule finds the WRONG number -- an unrelated "Payments
+        // & Other Credits" figure that a stray word ("Credit") from the same corrupted line join
+        // happens to sit directly before, one line above the credit limit's own true value. The grid
+        // reading, by matching x-overlap against the label's own column instead of taking the first
+        // number it meets, gets the real value. Confirmed safe to invert: checked all 8 real
+        // credit-card documents directly -- CreditLimitGridExtractor.extract fires on exactly Axis,
+        // SBI and Indusland (where metadata's line-based reading is respectively absent, absent, and
+        // wrong) and returns null on AU/ICICI/Kotak/HDFC/HSBC (none of which carry a bare, standalone
+        // "Credit Limit" text run this extractor's exact-match label requires -- AU's is "Total
+        // Credit Limit:", ICICI's is "Credit Limit (Including cash)", neither an exact match), so
+        // inverting the precedence cannot change their already-correct result.
+        BigDecimal creditLimit = gridCreditLimit != null
+                ? gridCreditLimit : facts.metadata().creditLimit();
+
         return facts.toDetectedAccountInfo(product, suggestedAccountTypeFor(product, facts.creditCardSignals()),
                 openingBalance, closingBalance, statementStart, statementEnd, ProductAttributes.empty(),
                 printedCreditCardSummary == null ? null : printedCreditCardSummary.totalAmountDue(),
-                paymentDueDate, gridAccountNumberMasked);
+                paymentDueDate, creditLimit, gridAccountNumberMasked);
     }
 
     /**
@@ -777,7 +804,7 @@ public class PdfPreviewGenerator {
                                                   BigDecimal closingBalance, LocalDate statementStart,
                                                   LocalDate statementEnd, ProductAttributes attrs,
                                                   BigDecimal totalAmountDue, LocalDate paymentDueDate,
-                                                  String gridAccountNumberMasked) {
+                                                  BigDecimal creditLimit, String gridAccountNumberMasked) {
             // Same precedence as paymentDueDate: PdfMetadataExtractor's own line-based field wins
             // when present, and the positioned-text grid reading (AccountNumberGridExtractor /
             // AccountNumberTransactionHeaderExtractor) is only tried once that comes up empty -- see
@@ -800,7 +827,7 @@ public class PdfPreviewGenerator {
             return new DetectedAccountInfo(
                     suggestedName, suggestedAccountType,
                     openingBalance, closingBalance, statementStart, statementEnd,
-                    accountNumberMasked, metadata.creditLimit(), totalAmountDue,
+                    accountNumberMasked, creditLimit, totalAmountDue,
                     paymentDueDate,
                     metadata.accountHolderName(), metadata.branchName(), metadata.ifscCode(),
                     AccountDto.BankDto.from(bank),

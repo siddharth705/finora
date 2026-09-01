@@ -218,6 +218,16 @@ public class CapabilityCoverageService {
             // positioned-text grid CreditCardSummaryExtractor already reads for its own money
             // fields (see PaymentDueDateGridExtractor's own doc comment).
             "PRINTED_PAYMENT_DUE_DATE_GRID",
+            // The same two real documents (Axis, SBI) scramble their own printed credit limit away
+            // from its "Credit Limit" label the same way -- recovered by the same grid-reading
+            // mechanism. Also the more reliable of two readings on a real IndusInd Bank statement:
+            // PdfMetadataExtractor's own line-based GRID_CREDIT_LIMIT_LABEL fallback picks the first
+            // amount-shaped text after the label, which on that document is an unrelated "Payments &
+            // Other Credits" figure a stray word from the same corrupted line join happens to sit in
+            // front of -- one line above the credit limit's own true value. Matching by the label's
+            // own x-column instead of by first-match-wins gets the right one. See
+            // CreditLimitGridExtractor's own doc comment.
+            "PRINTED_CREDIT_LIMIT_GRID",
             // The same real Axis Bank credit-card statement prints its own account/card number in
             // this exact scrambled panel too, in two different real layouts (a stacked grid and a
             // same-row label/value pair) -- recovered the same "read raw positioned text directly"
