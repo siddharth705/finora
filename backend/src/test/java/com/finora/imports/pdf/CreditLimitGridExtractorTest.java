@@ -52,6 +52,33 @@ class CreditLimitGridExtractorTest {
         assertThat(CreditLimitGridExtractor.extract(runs)).isEqualByComparingTo(new BigDecimal("100000.00"));
     }
 
+    // Coordinates copied verbatim from a direct PositionedText inspection of the real HDFC
+    // credit.pdf (previously entirely out of scope for "font/glyph corruption"): "TOTAL CREDIT
+    // LIMIT" at y=273.9, x=64.6-123.7; its own sub-label "(Including Cash)" at y=282.4,
+    // x=71.0-117.2 -- genuinely x-overlapping the label, unlike Axis's sliver -- 8.5pt below; the
+    // true value "C78,000" ("C" is this document's own corrupted Rupee glyph, stripped by
+    // CsvParser.parseNumeric) at y=301.8, x=81.0-107.3, 27.9pt below the label. "AVAILABLE CREDIT
+    // LIMIT"/"MINIMUM DUE"/"DUE DATE" and their own values present at their real positions to
+    // prove the column match picks the right one. Proves both fixes together: the "Total "-prefixed
+    // label variant, and skipping an x-overlapping-but-non-numeric intervening row.
+    @Test
+    void extract_readsTheRealHdfcPaymentSummaryGrid() {
+        var runs = List.of(
+                run("TOTAL CREDIT LIMIT", 64.6f, 123.7f, 273.9f),
+                run("AVAILABLE CREDIT LIMIT", 182.7f, 254.9f, 278.2f),
+                run("AVAILABLE CASH LIMIT", 317.8f, 384.9f, 278.2f),
+                run("MINIMUM DUE", 445.9f, 491.2f, 279.9f),
+                run("DUE DATE", 512.1f, 541.6f, 279.9f),
+                run("(Including Cash)", 71.0f, 117.2f, 282.4f),
+                run("C200.00", 445.9f, 472.3f, 297.7f),
+                run("09 Aug, 2026", 512.1f, 555.0f, 297.7f),
+                run("C78,000", 81.0f, 107.3f, 301.8f),
+                run("C76,183", 205.6f, 231.9f, 301.8f),
+                run("C31,200", 338.2f, 364.5f, 301.8f));
+
+        assertThat(CreditLimitGridExtractor.extract(runs)).isEqualByComparingTo(new BigDecimal("78000"));
+    }
+
     @Test
     void extract_doesNotMatch_availableCreditLimitAsTheLabel() {
         // "Available Credit Limit" is its own separate run, distinct from bare "Credit Limit" --

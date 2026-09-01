@@ -5,11 +5,12 @@ import com.finora.imports.pdf.fixtures.PdfTrace;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Captured from three real credit-card statements (Axis, SBI, IndusInd) whose "Payment Summary"
+ * Captured from four real credit-card statements (Axis, SBI, IndusInd, HDFC) whose "Payment Summary"
  * grid scrambles the "Credit Limit" label away from its own value once joined into
  * {@link PdfMetadataExtractor}'s line-based {@code preTableLines} view -- see
  * {@link CreditLimitGridExtractor}'s own doc comment.
@@ -58,5 +59,24 @@ class CreditLimitGridRegressionTest {
         assertThat(creditLimit).isEqualByComparingTo(new BigDecimal("219000.00"));
         assertThat(ctx.capabilities().stream().map(c -> c.capability()))
                 .contains("PRINTED_CREDIT_LIMIT_GRID");
+    }
+
+    // HDFC's own committed trace has the "TOTAL CREDIT LIMIT" label and the intervening
+    // "(Including Cash)" row -- the exact shape that needed both fixes (the "Total "-prefixed
+    // label, and skipping an x-overlapping-but-non-numeric row) -- but redacts the credit limit
+    // VALUE itself ("X99,999", width 0.0), so this cannot prove the recovered VALUE. What it proves
+    // instead: this real document's own label IS recognized, and the extractor correctly declines
+    // on the redacted text near it rather than guessing.
+    @Test
+    void extract_returnsNull_onTheRealRedactedHdfcTrace() {
+        List<PositionedText> runs = PdfTrace.load("hdfc-credit-card-ledger-validation");
+        boolean labelPresent = runs.stream()
+                .anyMatch(t -> t.text().trim().equalsIgnoreCase("Total Credit Limit"));
+        assertThat(labelPresent).as("'Total Credit Limit' label must be present in the real trace").isTrue();
+
+        DocumentContext ctx = new DocumentContext("PDF", "test");
+        assertThat(CreditLimitGridExtractor.extract(runs, ctx)).isNull();
+        assertThat(ctx.capabilities().stream().map(c -> c.capability()))
+                .doesNotContain("PRINTED_CREDIT_LIMIT_GRID");
     }
 }
