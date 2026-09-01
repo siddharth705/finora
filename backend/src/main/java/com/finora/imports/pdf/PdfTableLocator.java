@@ -2417,7 +2417,23 @@ public class PdfTableLocator {
             // see mergeHeaderLinesAdmittingInteriorTierColumns' own doc comment for why that
             // restriction is what keeps this from reopening the FD/RD cross-contamination risk
             // mergeHeaderLines' own doc comment records as tried and reverted.
-            List<PositionedText> candidate = alreadyScores
+            //
+            // Also only reachable when the SEED (first) itself has at least two non-blank cells.
+            // Confirmed necessary against a real synthetic regression: a one-cell summary line
+            // ("Opening Balance 24818.22", carrying no value as a WHOLE cell so carriesNoDataValue
+            // passes it, but containing the word "balance") sitting one line above a genuine
+            // ledger header can seed a merge exactly like any real upper tier does. Genuine upper
+            // tiers name several of the table's own columns (Statement.pdf's real fix: three
+            // cells); a stray single-cell line does not, and GROUNDED_SEED_COLUMNS alone does not
+            // catch this shape -- the caption's own cell gets RENAMED (not left lonely), because it
+            // happens to share the header's leftmost column's x position ("Txn Date" both name the
+            // ledger's date column and, coincidentally, sit at the same left margin as the caption
+            // line above it). A one-cell seed still gets the ORIGINAL strict merge, which already
+            // handled this correctly: it joins the one coincidentally-aligned cell then refuses
+            // outright the moment a further cell fails to join, exactly the safety property this
+            // capability must not weaken for a shape it was never meant to reach.
+            boolean seedHasMultipleCells = nonBlankCount(first) >= 2;
+            List<PositionedText> candidate = (alreadyScores || !seedHasMultipleCells)
                     ? mergeHeaderLines(block)
                     : mergeHeaderLinesAdmittingInteriorTierColumns(block);
             if (candidate == null) break; // the merge helper has already explained which cell refused

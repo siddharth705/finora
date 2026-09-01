@@ -47,11 +47,19 @@ class AccountNumberInheritanceRegressionTest {
         String sourceAccountNumber = sections.get(0).detectedAccount().accountNumberMasked();
         assertThat(sourceAccountNumber).isNotNull();
 
-        StagedAccountSection unknownSection = sections.stream()
-                .filter(s -> "UNKNOWN".equals(s.detectedAccount().detectedProduct()))
+        // UNKNOWN or CREDIT_CARD -- matching inheritAccountNumberAcrossSections' own target gate.
+        // IndusInd's own second section moved from the former to the latter once
+        // WRAPPED_HEADER_INTERIOR_TIER_COLUMNS started recognizing its Description/Merchant
+        // Category columns well enough for ProductDiscovery to positively identify it as its own
+        // CREDIT_CARD fragment (see that method's own doc comment) -- still a fragment of the
+        // SAME card, so it must still inherit the number, just via the widened half of the gate.
+        StagedAccountSection sibling = sections.stream()
+                .filter(s -> s != sections.get(0))
+                .filter(s -> "UNKNOWN".equals(s.detectedAccount().detectedProduct())
+                        || "CREDIT_CARD".equals(s.detectedAccount().detectedProduct()))
                 .findFirst()
-                .orElseThrow(() -> new AssertionError("expected an UNKNOWN-product sibling section"));
-        assertThat(unknownSection.detectedAccount().accountNumberMasked()).isEqualTo(sourceAccountNumber);
+                .orElseThrow(() -> new AssertionError("expected an UNKNOWN- or CREDIT_CARD-product sibling section"));
+        assertThat(sibling.detectedAccount().accountNumberMasked()).isEqualTo(sourceAccountNumber);
     }
 
     private record TraceAcquirer(List<PositionedText> runs) implements DocumentTextAcquirer {
