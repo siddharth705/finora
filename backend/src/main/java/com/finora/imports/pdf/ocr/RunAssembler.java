@@ -94,8 +94,50 @@ public final class RunAssembler {
         float join = JOIN_WITHIN * medianHeight(runs);
 
         List<RecognisedText> assembled = new ArrayList<>();
-        for (List<RecognisedText> line : allLines) assembled.addAll(joinAlong(line, join));
+        for (List<RecognisedText> line : allLines) assembled.addAll(joinAlong(snapToLineBaseline(line), join));
         return assembled;
+    }
+
+    /**
+     * Re-emits one physical line's runs at a single shared y, before joining.
+     *
+     * <h2>The defect this exists for</h2>
+     *
+     * {@link #lines} already answers "are these runs on the same printed line" using vertical ink
+     * overlap -- a test suited to OCR, unlike a flat y-tolerance. But every run it groups still
+     * carries its OWN baseline straight from the engine's TSV, and two words on the same printed
+     * line commonly report baselines a few tenths of a point apart, sometimes more. That is invisible
+     * to this class's own horizontal joining, which only ever compares runs already known to share a
+     * line -- but it is not invisible to what reads this output next.
+     *
+     * <p>Measured on a real HSBC savings statement: the printed header row {@code Date | Details |
+     * Withdrawals | Deposits | Balance} recognised with per-word baselines spanning about 6pt, and
+     * {@code PdfTableLocator.groupIntoRows} -- calibrated on PDFBox's own near-noiseless positions,
+     * where 3pt already comfortably covers one printed line -- read that spread as two separate
+     * physical rows. Half the header's column names landed in a row nothing recognised as a header at
+     * all, and every transaction on the page lost its Details/Withdrawals/Deposits columns to the
+     * survivor.
+     *
+     * <p>The fix belongs here rather than in {@code groupIntoRows}: this method already knows, more
+     * reliably than a flat point threshold can, which runs are one printed line. Re-emitting them at
+     * one shared y is strictly more information than the per-word noise it replaces, and every
+     * consumer downstream -- table location most of all -- was always assuming that noise did not
+     * exist.
+     *
+     * <p>The shared value is the line's maximum y, matching {@link #merge}'s own convention for a
+     * phrase spanning two joined runs -- one baseline decision for a group of runs, made the same way
+     * whether the group ends up merged into one cell or stays several.
+     */
+    private static List<RecognisedText> snapToLineBaseline(List<RecognisedText> line) {
+        if (line.size() <= 1) return line;
+        float baseline = line.get(0).y();
+        for (RecognisedText r : line) baseline = Math.max(baseline, r.y());
+        List<RecognisedText> snapped = new ArrayList<>(line.size());
+        for (RecognisedText r : line) {
+            snapped.add(r.y() == baseline ? r
+                    : new RecognisedText(r.text(), r.x(), baseline, r.width(), r.height(), r.pageIndex(), r.confidence()));
+        }
+        return snapped;
     }
 
     /**
