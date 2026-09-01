@@ -157,6 +157,16 @@ class CapabilityCorpusCoverageTest {
                         + "unredacted, so that test proves the real recovered VALUE end to end, not just "
                         + "that the capability fires. SBI's trace has its date redacted, and that test "
                         + "proves the extractor correctly declines rather than fabricating one.");
+        DECLARED_WITHOUT_A_TRACE.put("PRINTED_CREDIT_LIMIT_GRID",
+                "no trace -- same scoping gap as PRINTED_PAYMENT_DUE_DATE_GRID above: this fires in "
+                        + "CreditLimitGridExtractor, called from PdfPreviewGenerator, never from "
+                        + "PdfTableLocator.locateAll. Three real evidencing documents have committed traces "
+                        + "(axis-credit-card-statement, sbi-credit-card-statement, "
+                        + "indusland-credit-card-account-number-inheritance) and all three are exercised "
+                        + "directly by CreditLimitGridRegressionTest, which proves the real recovered VALUE "
+                        + "end to end for each -- none of the three redact their own credit limit value, so "
+                        + "unlike PRINTED_PAYMENT_DUE_DATE_GRID's SBI case this needs no separate "
+                        + "value-withheld test.");
         DECLARED_WITHOUT_A_TRACE.put("PRINTED_ACCOUNT_NUMBER_GRID",
                 "no trace -- same scoping gap as PRINTED_PAYMENT_DUE_DATE_GRID above: this fires in "
                         + "AccountNumberGridExtractor, called from PdfPreviewGenerator, never from "
