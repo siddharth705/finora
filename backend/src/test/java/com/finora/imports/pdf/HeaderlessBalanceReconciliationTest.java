@@ -128,7 +128,16 @@ class HeaderlessBalanceReconciliationTest {
         assertThat(doc.sections()).hasSize(2);
         List<Map<String, String>> recovered = doc.sections().get(0).rows();
         assertThat(recovered).hasSize(1);
-        assertThat(recovered.get(0)).containsEntry("Amount", "3,150.75 CR");
+        // Staged as a Credit column, not an "Amount" carrying a synthesized "CR" suffix -- see
+        // buildSectionFromSignedCandidates' own doc comment for why a suffix this parser writes
+        // itself must never reach TransactionNormalizer's DR_CR_SUFFIX capability check.
+        assertThat(recovered.get(0)).containsEntry("Credit", "3,150.75").containsEntry("Debit", "");
+        // The amount cell is excluded from the narration by identity, not by re-testing its text.
+        // Without that exclusion the amount leaks into the description (a plain, marker-less amount
+        // cell falls through every other branch), which no other assertion here would notice.
+        assertThat(recovered.get(0).get("Description"))
+                .isEqualTo("SAMPLE MERCHANT PAYMENT")
+                .doesNotContain("3,150.75");
         assertThat(doc.sections().get(0).auxiliaryText())
                 .anyMatch(line -> line.contains("MR SOME CARDHOLDER"));
         List<String> capabilities = ctx.capabilities().stream().map(c -> c.capability()).toList();
@@ -223,10 +232,78 @@ class HeaderlessBalanceReconciliationTest {
         assertThat(doc.sections()).hasSize(2);
         List<Map<String, String>> recovered = doc.sections().get(0).rows();
         assertThat(recovered).hasSize(3);
-        assertThat(recovered).extracting(row -> row.get("Amount"))
-                .containsExactlyInAnyOrder("1,000.00 CR", "600.00 DR", "400.00 DR");
+        assertThat(recovered).extracting(row -> row.get("Debit") + "|" + row.get("Credit"))
+                .containsExactlyInAnyOrder("|1,000.00", "600.00|", "400.00|");
         List<String> capabilities = ctx.capabilities().stream().map(c -> c.capability()).toList();
         assertThat(capabilities).contains(
                 "HEADERLESS_LAYOUT_BEFORE_LATER_HEADER", "HEADERLESS_BALANCE_RECONCILIATION_CORROBORATED");
+    }
+
+    /** soleAmountCell's decline rule. A candidate row carrying TWO decimal-and-parseable cells is
+     *  ambiguous about which one is the transaction amount -- an earlier version took the leftmost,
+     *  and because the reconciliation arithmetic and the final staging both consulted that same
+     *  leftmost-wins rule they agreed with each other while both being wrong, so the exact-match
+     *  check could not catch it. The row must be refused outright instead. Here the second decimal
+     *  cell sits where a running-balance column would: the arithmetic would still "work" on the
+     *  leftmost value, so this test fails if the decline rule is ever removed. */
+    @Test
+    void extract_declinesARowThatPresentsTwoCandidateAmountCells() {
+        List<PositionedText> runs = new ArrayList<>(List.of(
+                run("OPENING BALANCE", 77.3f, 144.2f, 100f),
+                run("1,000.00", 381.1f, 408.4f, 100f),
+                run("05MAY", 30.7f, 52.1f, 110f),
+                run("SAMPLE MERCHANT PAYMENT", 77.3f, 213.1f, 110f),
+                run("1,000.00", 381.1f, 408.4f, 110f),
+                run("CR", 413.5f, 423.6f, 110f),
+                // A second parseable decimal on the same row -- a running-balance-shaped column.
+                run("9,999.00", 460.0f, 500.0f, 110f),
+                run("20MAY", 31.4f, 51.7f, 140f),
+                run("NET OUTSTANDING BALANCE", 78.7f, 180.2f, 140f),
+                run("0.00", 393.1f, 406.7f, 140f)));
+
+        PdfTableLocator locator = new PdfTableLocator();
+        List<List<PositionedText>> grouped = StatementSummaryExtractor.groupIntoRows(runs);
+        List<List<PositionedText>> candidates = new ArrayList<>();
+        for (List<PositionedText> row : grouped) {
+            if (row.stream().anyMatch(t -> t.text().trim().equals("05MAY"))) candidates.add(row);
+        }
+
+        assertThat(locator.corroboratedByPrintedBalanceReconciliationForTest(candidates, grouped)).isFalse();
+    }
+
+    /** A GLUED "&lt;value&gt; CR" single run -- one PositionedText carrying both the amount and its
+     *  marker, the shape CsvParser's own TRAILING_CR/TRAILING_DR already handle for other banks.
+     *  Regression guard for a real defect: because CsvParser.parseNumeric strips a trailing marker
+     *  itself, such a cell satisfies hasTrailingDrCrMarker AND parses as an amount, and an earlier
+     *  version of buildSectionFromSignedCandidates tested the marker predicate FIRST -- swallowing
+     *  the cell as a bare marker, leaving the row with no amount, and discarding the entire
+     *  recovered section. The row must resolve to a Credit here, and the section must be built. */
+    @Test
+    void locateAll_resolvesAGluedAmountAndMarkerRun() {
+        List<PositionedText> positioned = new ArrayList<>(List.of(
+                run("12 NOV 2026", 370.3f, 412.7f, 51.9f),
+                run("MR SOME CARDHOLDER", 58.1f, 162.1f, 72.6f),
+                run("OPENING BALANCE", 77.3f, 144.2f, 100f),
+                run("2,500.00", 381.1f, 408.4f, 100f),
+                run("05MAY", 30.7f, 52.1f, 110f),
+                run("SAMPLE MERCHANT PAYMENT", 77.3f, 213.1f, 110f),
+                // Amount and marker as ONE run, not two.
+                run("2,500.00 CR", 381.1f, 423.6f, 110f),
+                run("20MAY", 31.4f, 51.7f, 140f),
+                run("NET OUTSTANDING BALANCE", 78.7f, 180.2f, 140f),
+                run("0.00", 393.1f, 406.7f, 140f)));
+        positioned.add(new PositionedText("Loan Booking Date", 30f, 56f, 1, 60f));
+        positioned.add(new PositionedText("Installment amount", 350f, 56f, 1, 70f));
+        positioned.add(new PositionedText("01 Mar 2026", 30f, 76f, 1, 55f));
+        positioned.add(new PositionedText("350.00", 350f, 76f, 1, 40f));
+
+        DocumentContext ctx = new DocumentContext("PDF", "test");
+        PdfTableLocator.LocatedDocument doc = new PdfTableLocator().locateAll(positioned, ctx);
+
+        assertThat(doc.sections()).hasSize(2);
+        List<Map<String, String>> recovered = doc.sections().get(0).rows();
+        assertThat(recovered).hasSize(1);
+        // Normalized: the glued marker must not survive into a column whose name states direction.
+        assertThat(recovered.get(0)).containsEntry("Credit", "2500.00").containsEntry("Debit", "");
     }
 }

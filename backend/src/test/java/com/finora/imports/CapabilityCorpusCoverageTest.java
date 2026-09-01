@@ -176,9 +176,11 @@ class CapabilityCorpusCoverageTest {
                         + "admit the one real transaction below the row-count floor -- so calling "
                         + "PdfTableLocator.locateAll against this trace as-is exercises neither capability. "
                         + "Both are proven directly by HeaderlessBalanceReconciliationTest and "
-                        + "HeaderlessLayoutBeforeLaterHeaderTest using real (this one) or motivated-by-real "
-                        + "(the latter, fully synthetic per the Synthetic Fixture Policy) PositionedText "
-                        + "coordinates end to end through locateAll itself.");
+                        + "HeaderlessLayoutBeforeLaterHeaderTest, end to end through locateAll itself, on "
+                        + "fixtures whose row/column GEOMETRY is motivated by the real documents but whose "
+                        + "every text value is hand-synthesized per the Synthetic Fixture Policy. Both "
+                        + "suites also carry differential guards that were confirmed to FAIL against the "
+                        + "pre-fix behaviour, so they pin the mechanism rather than merely covering it.");
         DECLARED_WITHOUT_A_TRACE.put("HEADERLESS_BALANCE_RECONCILIATION_CORROBORATED",
                 "no trace -- same reason as HEADERLESS_LAYOUT_BEFORE_LATER_HEADER immediately above; both "
                         + "fire together on the same real document and are blocked by the same trace "

@@ -822,16 +822,33 @@ public class PdfTableLocator {
         Map<Integer, Set<Integer>> yearsByPage = yearsByPage(rows);
 
         List<LocatedSection> sections = new ArrayList<>();
-        // The physical row index of the document's OWN first recognized header, wherever it turns
-        // out to be -- -1 until that happens. See its one read site, after the main loop, for why
-        // this exists: a real header found LATE in the document (page 2's own, unrelated table)
-        // stops the sections.isEmpty() gate below from ever giving the content BEFORE it a chance
-        // at headerless inference, even when that earlier content is itself a real, genuinely
-        // headerless transaction table. Captured once, at the FIRST header event only -- a later
-        // header changing this would silently narrow or widen the pre-header slice depending on
-        // unrelated document structure further down, which has nothing to do with what came before
-        // the first one.
-        int firstHeaderRowIndex = -1;
+        // The row index of the header that opened the section currently accumulating into
+        // currentRows, and the row index of the first header whose section actually SURVIVED being
+        // closed -- both -1 until those happen. See firstStagedHeaderRowIndex's one read site,
+        // after the main loop, for why this exists at all: a real header found LATE in the document
+        // (page 2's own, unrelated table) stops the sections.isEmpty() gate below from ever giving
+        // the content BEFORE it a chance at headerless inference, even when that earlier content is
+        // itself a real, genuinely headerless transaction table.
+        //
+        // Deliberately keyed on SURVIVED, not merely recognized. An earlier version anchored on the
+        // first row that scored as a header, which is the wrong index: closeCurrentSection can
+        // afterwards judge that section a misdetected credit-card payment-summary panel
+        // (looksLikePaymentSummaryPanel) and fold it into auxiliary text without ever staging it,
+        // and anchoring on that phantom would stop the slice short of a genuinely headerless ledger
+        // sitting between the suppressed panel and a later real header -- content the later real
+        // header simultaneously makes unreachable for the sections.isEmpty() whole-document
+        // fallback, so nothing else would recover it either. Three real documents in the corpus do
+        // suppress a panel this way; none of them currently has such a ledger, so this costs
+        // nothing measurable today and exists so the anchor is right when one appears.
+        //
+        // Captured at the FIRST surviving header only -- a later header changing this would
+        // silently narrow or widen the pre-header slice based on unrelated document structure
+        // further down, which has nothing to do with what came before the first one. Only
+        // currentRows' own creation point sets pendingSectionHeaderRowIndex, and currentRows is
+        // created in exactly one place, so the pairing cannot drift onto a section that some other
+        // trigger opened.
+        int pendingSectionHeaderRowIndex = -1;
+        int firstStagedHeaderRowIndex = -1;
         List<String> pendingAuxiliary = new ArrayList<>();
         // Row-accounting evidence: physical rows that had transaction shape (a date-shaped cell
         // and a decimal-amount cell on the same line -- see isTransactionShapedRow) but were about
@@ -965,8 +982,12 @@ public class PdfTableLocator {
                 // a genuine header-based table followed by this appendix/closing marker must keep
                 // that real section, not lose it along with the boilerplate that follows.
                 if (currentRows != null) {
+                    int sectionsBeforeClose = sections.size();
                     PendingState closed = closeCurrentSection(currentRows, pendingLeading, headerNames,
                             pendingAuxiliary, pendingDroppedCandidates, pendingHeaderReconstructionVocab, sections, ctx);
+                    if (firstStagedHeaderRowIndex < 0 && sections.size() > sectionsBeforeClose) {
+                        firstStagedHeaderRowIndex = pendingSectionHeaderRowIndex;
+                    }
                     pendingAuxiliary = closed.auxiliary();
                     pendingDroppedCandidates = closed.droppedCandidates();
                     pendingHeaderReconstructionVocab = closed.headerReconstructionVocab();
@@ -1018,8 +1039,12 @@ public class PdfTableLocator {
                     continue; // repeated per-page banner for the account already in progress
                 }
                 if (currentRows != null) {
+                    int sectionsBeforeClose = sections.size();
                     PendingState closed = closeCurrentSection(currentRows, pendingLeading, headerNames,
                             pendingAuxiliary, pendingDroppedCandidates, pendingHeaderReconstructionVocab, sections, ctx);
+                    if (firstStagedHeaderRowIndex < 0 && sections.size() > sectionsBeforeClose) {
+                        firstStagedHeaderRowIndex = pendingSectionHeaderRowIndex;
+                    }
                     pendingAuxiliary = closed.auxiliary();
                     pendingDroppedCandidates = closed.droppedCandidates();
                     pendingHeaderReconstructionVocab = closed.headerReconstructionVocab();
@@ -1149,9 +1174,11 @@ public class PdfTableLocator {
                 recordIfHeaderReconstructionCandidate(row, pendingHeaderReconstructionVocab);
             }
             if (looksLikeHeaderRow(headerRow)) {
-                // Captured before `rowIndex` advances for a wrapped header just below, and only
-                // once -- see firstHeaderRowIndex's own doc comment.
-                if (firstHeaderRowIndex < 0) firstHeaderRowIndex = rowIndex;
+                // Captured before `rowIndex` advances for a wrapped header just below, so the
+                // index refers to the header's FIRST physical line. Carried down to where the
+                // section this header opens is actually created -- see
+                // firstStagedHeaderRowIndex's own doc comment.
+                int thisHeaderRowIndex = rowIndex;
                 row = headerRow;
                 if (wrappedHeaderLines > 0) {
                     rowIndex += wrappedHeaderLines;
@@ -1208,8 +1235,12 @@ public class PdfTableLocator {
                     // A different header shape, or a same-shaped header with a contradicting
                     // identity line since this section opened -- fallback signal for a new section
                     // in a document without a banner line.
+                    int sectionsBeforeClose = sections.size();
                     PendingState closed = closeCurrentSection(currentRows, pendingLeading, headerNames,
                             pendingAuxiliary, pendingDroppedCandidates, pendingHeaderReconstructionVocab, sections, ctx);
+                    if (firstStagedHeaderRowIndex < 0 && sections.size() > sectionsBeforeClose) {
+                        firstStagedHeaderRowIndex = pendingSectionHeaderRowIndex;
+                    }
                     pendingAuxiliary = closed.auxiliary();
                     pendingDroppedCandidates = closed.droppedCandidates();
                     pendingHeaderReconstructionVocab = closed.headerReconstructionVocab();
@@ -1291,6 +1322,8 @@ public class PdfTableLocator {
                 if (ctx != null) ctx.recordHeaders(headerNames);
                 currentHeaderSignature = signature;
                 currentRows = new ArrayList<>();
+                // The one place currentRows is ever created, so the one place this pairing is made.
+                pendingSectionHeaderRowIndex = thisHeaderRowIndex;
                 lastRowPage = null;
                 lastRowY = null;
                 blockPitch = null;
@@ -1611,8 +1644,12 @@ public class PdfTableLocator {
             }
         }
         if (currentRows != null) {
+            int sectionsBeforeClose = sections.size();
             PendingState closed = closeCurrentSection(currentRows, pendingLeading, headerNames,
                     pendingAuxiliary, pendingDroppedCandidates, pendingHeaderReconstructionVocab, sections, ctx);
+            if (firstStagedHeaderRowIndex < 0 && sections.size() > sectionsBeforeClose) {
+                firstStagedHeaderRowIndex = pendingSectionHeaderRowIndex;
+            }
             // closeCurrentSection's auxiliary is non-empty only when it just suppressed a
             // payment-summary panel instead of staging a section (the ordinary path always
             // returns a fresh, empty list for whatever section comes next). This is the end of the
@@ -1655,28 +1692,33 @@ public class PdfTableLocator {
         // document, sections is never empty again, and the sections.isEmpty() gate below never
         // gives the earlier, real content a chance at headerless inference at all, independent of
         // how many transactions it has. Tried BEFORE that gate, on ONLY the physical rows before
-        // the document's own first recognized header (see firstHeaderRowIndex's own doc comment) --
+        // the document's own first SURVIVING header (see firstStagedHeaderRowIndex's doc comment) --
         // deliberately not a comparison of which interpretation "found more," which would risk
         // overriding an already-correct header-based section on some other document; this only
         // ever ADDS content nothing else was going to claim. Inserted at the front of `sections`
         // (not appended) since it physically precedes everything else found.
         //
-        // Known side effect, downstream in PdfPreviewGenerator, not fixed here: turning a
-        // document's section count from 1 to 2 also turns off TransactionTableDateRangeExtractor /
-        // StatementTitleDateRangeExtractor (both gated on doc.sections().size() <= 1) and
-        // attributePrintedSummary's reviseSummaryTotals (gated on exactly one non-empty section) --
-        // reasoning that a document with more than one section might be a genuine multi-account
-        // composite, where one section's printed date range or summary shouldn't be copied onto
-        // another. For the real HSBC documents this recovers, that reasoning doesn't actually apply
-        // (the "second section" is an unrelated Loan Summary table, not another account) but
-        // PdfPreviewGenerator has no way to tell the difference from a section count alone. Net
-        // effect: these fields go from "wrongly attributed to the unrelated table" (when it was the
-        // sole section) to "not attributed to either" -- worse for those two fields specifically,
-        // better for the transaction rows themselves. Left as a known, undecided trade-off rather
-        // than guessed at, since fixing it correctly needs its own evidence-gated design, not a
-        // shortcut here.
-        if (firstHeaderRowIndex > 0) {
-            LocatedSection preHeaderInferred = inferHeaderlessSection(rows.subList(0, firstHeaderRowIndex), ctx);
+        // Downstream interaction with PdfPreviewGenerator, measured rather than assumed: turning a
+        // document's section count from 1 to 2 also turns off TransactionTableDateRangeExtractor
+        // and StatementTitleDateRangeExtractor (both gated on doc.sections().size() <= 1), on the
+        // reasoning that a document with more than one section may be a genuine multi-account
+        // composite where one section's printed range must not be copied onto another. That
+        // reasoning does not describe the documents recovered here (the "second section" is an
+        // unrelated Loan Summary table, not another account), so the gate looked like a real loss.
+        // It is not: removing both gates entirely and re-running the full 29-document real corpus
+        // changes NOTHING anywhere -- neither extractor finds a date range on either HSBC document
+        // with or without the gate, and no other document's section count is affected by this
+        // block at all. attributePrintedSummary's own gate (exactly one section with rows) is
+        // likewise untouched, because the added section is the one WITH rows and the pre-existing
+        // one has none. So there is no field to recover and nothing to trade off; the gate stays as
+        // it is, protecting the genuine composites (one real statement in this corpus splits into
+        // five sections) that it was written for.
+        // Anchored on the first header whose section actually SURVIVED closing, not on the first
+        // row that merely scored as one -- see firstStagedHeaderRowIndex's own doc comment for the
+        // suppressed-payment-summary-panel case that distinguishes them. On every document where
+        // nothing is suppressed the two indices are identical, so this is a no-op there.
+        if (firstStagedHeaderRowIndex > 0) {
+            LocatedSection preHeaderInferred = inferHeaderlessSection(rows.subList(0, firstStagedHeaderRowIndex), ctx);
             if (preHeaderInferred != null) {
                 if (ctx != null) ctx.record("HEADERLESS_LAYOUT_BEFORE_LATER_HEADER");
                 sections.add(0, preHeaderInferred);
@@ -5258,14 +5300,11 @@ public class PdfTableLocator {
      *  don't reconcile against the document's own printed balance summary -- same "never guess"
      *  contract as every other point in this class that can return null.
      *
-     *  <p>Known boundary, not yet evidenced by any real document: {@code firstHeaderRowIndex}
-     *  (see its own doc comment) anchors on the first row RECOGNIZED as header-shaped, even if
-     *  {@link #closeCurrentSection} later suppresses it as a misdetected payment-summary panel
-     *  ({@link #looksLikePaymentSummaryPanel}, capped at {@link #PAYMENT_SUMMARY_PANEL_MAX_ROWS}
-     *  rows). If real transaction content exists between such a suppressed panel and a later
-     *  genuine header, this method's slice never reaches it -- no worse than before this fallback
-     *  existed (that content was already unrecoverable whenever a later header made {@code
-     *  sections} non-empty), just not newly fixed by it either. */
+     *  <p>The slice handed here is anchored on {@code firstStagedHeaderRowIndex} -- the first
+     *  header whose section actually survived closing, not the first row merely recognized as
+     *  header-shaped -- so a misdetected payment-summary panel that {@link #closeCurrentSection}
+     *  suppresses ({@link #looksLikePaymentSummaryPanel}) no longer truncates the region searched
+     *  here. See that field's own doc comment. */
     private LocatedSection tryCorroboratedFallback(List<List<PositionedText>> rows, DocumentContext ctx) {
         Map<Integer, Set<Integer>> yearsByPage = yearsByPage(rows);
         LabeledRow opening = findLabeledRow(rows, "opening balance");
@@ -5305,62 +5344,97 @@ public class PdfTableLocator {
     }
 
     /** Builds a section directly from candidates a printed balance reconciliation has already
-     *  vouched for -- no statistical column inference at all. A signed candidate's own shape
-     *  states its Date/Amount/Description cells directly (the first date-parseable cell, the
-     *  first decimal-shaped cell, the CR/DR marker, everything else joined as narration) the same
-     *  "read what the document already states" discipline every other extractor in this file
-     *  already uses; there is nothing left to infer once a row has been individually vouched for.
-     *  Amount is staged as "<value> <CR|DR>" -- the same same-column marker-suffix shape Axis's
-     *  own real credit-card statement already uses ("10,081.99 Cr"), so
-     *  {@link CsvParser#detectSignFromRawAmount} classifies it correctly downstream without any
-     *  new sign-handling logic. A row with no marker cell of its own is staged as "DR" -- the same
-     *  implicit-purchase default {@link #signedTransactionAmount} already applies when computing
-     *  the sign that got this candidate corroborated in the first place; staging anything else
-     *  here would contradict the arithmetic that already vouched for it. Marker detection is
-     *  {@link #rowMarkerCredit}, the SAME function {@link #signedTransactionAmount} uses, so the
-     *  sign staged here can never disagree with the sign that was actually validated -- an earlier
-     *  version of this method matched "CR"/"DR" independently (first cell wins) while {@link
-     *  #signedTransactionAmount} matched independently too (every cell overwrites, so the last
-     *  cell won), which could silently stage the opposite sign from the one the reconciliation
-     *  arithmetic actually checked whenever a row carried more than one marker-shaped cell (e.g. a
-     *  narration token that happens to read "DR" on its own, ahead of the row's real trailing
-     *  marker). Known caveat, not yet correctable without new plumbing: {@link
-     *  #TransactionNormalizer} downstream records DR_CR_SUFFIX purely from this staged string's
-     *  own shape, with no way to tell a document-printed marker from this default -- an unmarked
-     *  row's DR_CR_SUFFIX capability count is therefore not reliable evidence of what the source
-     *  document actually prints for this one narrow code path. Returns null (never a partial
-     *  section) if a candidate turns out not to carry even a date and an amount once individually
-     *  inspected -- should not happen given {@link #tryCorroboratedFallback}'s own admission gate,
-     *  but this method makes no assumption about how its candidates were selected. */
+     *  vouched for -- no statistical column inference at all. A vouched-for candidate's own shape
+     *  states its Date/Debit/Credit/Description cells directly (the one amount cell per {@link
+     *  #soleAmountCell}, the first date-parseable cell, the row's own CR/DR marker per {@link
+     *  #rowMarkerCredit}, everything else joined as narration) -- the same "read what the document
+     *  already states" discipline every other extractor in this file uses; there is nothing left to
+     *  infer once a row has been individually vouched for.
+     *
+     *  <p>Both the amount and the sign are read through the SAME two helpers {@link
+     *  #signedTransactionAmount} used to get this candidate corroborated, so what is staged can
+     *  never disagree with what the reconciliation arithmetic actually checked. Two earlier
+     *  versions of this method got that wrong in opposite directions and both are worth remembering:
+     *  one matched "CR"/"DR" itself, first-cell-wins, while {@code signedTransactionAmount} matched
+     *  independently last-cell-wins, so a row carrying two marker-shaped cells could stage the
+     *  opposite sign from the one that was validated; the other then tested {@link
+     *  CsvParser#hasTrailingDrCrMarker} AHEAD of the amount, which -- because {@link
+     *  CsvParser#parseNumeric} strips a trailing marker itself -- swallowed a glued "&lt;value&gt; CR"
+     *  single run as if it were a bare marker and left the row with no amount, discarding the whole
+     *  section. Reading both facts once, up front, from shared helpers is what makes those two
+     *  classes of bug unrepresentable rather than merely fixed.
+     *
+     *  <p>Returns null (never a partial section) if a candidate turns out not to present exactly
+     *  one amount cell, or carries no date, once individually inspected -- should not happen given
+     *  {@link #tryCorroboratedFallback}'s own admission gate, but this method makes no assumption
+     *  about how its candidates were selected. */
     private LocatedSection buildSectionFromSignedCandidates(
             List<List<PositionedText>> signedCandidates, List<String> auxiliaryText, DocumentContext ctx) {
         List<Map<String, String>> staged = new ArrayList<>();
         for (List<PositionedText> candidate : signedCandidates) {
+            PositionedText amountCell = soleAmountCell(candidate);
+            if (amountCell == null) return null;
+            BigDecimal amount = CsvParser.parseNumeric(amountCell.text().trim());
+            if (amount == null) return null;
             Boolean credit = rowMarkerCredit(candidate);
             String date = null;
-            String amount = null;
             StringBuilder description = new StringBuilder();
             for (PositionedText cell : candidate) {
+                // Identity, not a text re-test: the one amount cell is already decided above, so
+                // the loop below can never re-classify it and can never disagree with the value
+                // actually staged.
+                if (cell == amountCell) continue;
                 String text = cell.text().trim();
                 if (text.isEmpty()) continue;
                 if (date == null && CsvParser.parseDate(text) != null) {
                     date = text;
                 } else if (CsvParser.hasTrailingDrCrMarker(text)) {
-                    // Already accounted for via rowMarkerCredit above -- excluded from
-                    // description, nothing further to stage from this cell.
-                } else if (amount == null && text.contains(".") && CsvParser.parseNumeric(text) != null) {
-                    amount = text;
+                    // A standalone marker cell, already read by rowMarkerCredit above -- kept out
+                    // of the narration rather than staged twice. Safe here, unlike inside the
+                    // amount decision, because the amount cell is excluded by identity above:
+                    // parseNumeric strips a glued marker, so testing this predicate ahead of the
+                    // amount would otherwise have swallowed a "<value> CR" single run and left the
+                    // row with no amount at all -- see soleAmountCell's own doc comment.
+                    continue;
                 } else {
                     if (description.length() > 0) description.append(' ');
                     description.append(text);
                 }
             }
-            if (date == null || amount == null) return null;
-            String marker = (credit != null && credit) ? "CR" : "DR";
+            if (date == null) return null;
+            // The value is staged WITHOUT any marker suffix, in a Debit or Credit column -- the
+            // same two-column shape inferHeaderlessSectionViaClustering's own bucketed rows already
+            // use, so this path stages what the rest of this class already stages. Staging a single
+            // "Amount" column with a synthesized "<value> DR" suffix (this method's earlier design)
+            // was wrong for a reason beyond style: TransactionNormalizer records the DR_CR_SUFFIX
+            // capability purely from the staged string's shape, so that design reported a marker
+            // this parser had written itself as evidence of what the bank printed -- in the one
+            // signal this codebase treats as ground truth for exactly that question. It was wrong
+            // on BOTH real documents, in two different ways: on the second, most genuine debit rows
+            // carry no marker at all, so the suffix was pure fabrication; and even on the first,
+            // whose one transaction DOES print "CR", that marker is its own separate PositionedText
+            // run, so the SUFFIX (as opposed to the marker) was still manufactured here by joining
+            // two runs that the document never printed as one cell. Measured: switching to columns
+            // drops DR_CR_SUFFIX from both documents and changes nothing else in the 29-document
+            // corpus. A column carries the same direction with nothing invented.
+            // The raw cell text is kept verbatim when it carries no glued marker (the real case on
+            // both evidencing documents, preserving the document's own thousands separators); only
+            // the glued "<value> CR" form is normalized, since its marker must not survive into a
+            // column whose name already states the direction.
+            String rawAmount = amountCell.text().trim();
+            String value = CsvParser.hasTrailingDrCrMarker(rawAmount)
+                    ? amount.abs().toPlainString()
+                    : rawAmount;
+            boolean isCredit = credit != null && credit;
             Map<String, String> bucketed = new LinkedHashMap<>();
             bucketed.put("Date", date);
             bucketed.put("Description", description.toString());
-            bucketed.put("Amount", amount + " " + marker);
+            // Both keys always present, one blank: TransactionNormalizer's own credit-column check
+            // reads a NON-BLANK value in the credit column as the income signal (see its
+            // firstNonZeroAmount/CREDIT_HINTS handling), which presumes a Debit/Credit layout
+            // prints both columns on every row.
+            bucketed.put("Debit", isCredit ? "" : value);
+            bucketed.put("Credit", isCredit ? value : "");
             staged.add(bucketed);
         }
         if (staged.isEmpty()) return null;
@@ -5448,18 +5522,49 @@ public class PdfTableLocator {
      *  independent guard that still refuses to corroborate if this default is ever wrong for a
      *  given row. Null, never a guess, when no amount cell is found at all. */
     private static BigDecimal signedTransactionAmount(List<PositionedText> row) {
-        BigDecimal amount = null;
-        for (PositionedText cell : row) {
-            String text = cell.text().trim();
-            if (amount == null && text.contains(".") && CsvParser.parseNumeric(text) != null) {
-                amount = CsvParser.parseNumeric(text);
-            }
-        }
+        PositionedText amountCell = soleAmountCell(row);
+        if (amountCell == null) return null;
+        BigDecimal amount = CsvParser.parseNumeric(amountCell.text().trim());
         if (amount == null) return null;
         Boolean credit = rowMarkerCredit(row);
         boolean isCredit = credit != null && credit;
         BigDecimal magnitude = amount.abs();
         return isCredit ? magnitude.negate() : magnitude;
+    }
+
+    /** The ONE amount cell on {@code row} -- null when zero cells qualify, and equally null when
+     *  two or more do. Declining on an ambiguous row rather than taking the first match is the
+     *  point: an earlier version of this path picked the leftmost decimal-shaped cell, so a
+     *  decimal-shaped narration token (a reference code, a rate) or a second amount/running-balance
+     *  column sitting left of the true amount would have been staged as the amount, and because the
+     *  reconciliation arithmetic and the final staging both consulted the SAME leftmost-wins rule,
+     *  they stayed mutually consistent and {@link #corroboratedByPrintedBalanceReconciliation}'s
+     *  exact-match check could not detect it. Measured against both real HSBC documents: inside the
+     *  OPENING BALANCE .. NET OUTSTANDING BALANCE bracket every genuine candidate row carries
+     *  exactly one qualifying cell (7 and 21 bracketed rows respectively, none with two or more),
+     *  so declining costs nothing real -- while rows with two-to-four qualifying cells DO exist on
+     *  both documents, in the account-summary and payment-summary panels OUTSIDE that bracket.
+     *
+     *  <p>Qualification is exactly {@link #isTransactionShapedRow}'s own decimal-and-parseable
+     *  rule, deliberately with NO Dr/Cr exclusion and NO date exclusion layered on top, because
+     *  measurement showed both would be wrong: {@link CsvParser#parseNumeric} strips a trailing
+     *  Dr/Cr marker itself before parsing, so a GLUED single run of the "&lt;value&gt; CR" form is
+     *  simultaneously a valid amount and a {@link CsvParser#hasTrailingDrCrMarker} match --
+     *  excluding on the marker would discard the real amount and reintroduce the very defect this
+     *  method exists to prevent. A marker-only cell needs no exclusion either: it carries no "." and
+     *  parseNumeric rejects it. A dotted date is likewise already rejected by parseNumeric. The rule
+     *  is therefore: numeric-parse success wins; never reject a cell on a marker or date predicate
+     *  before asking whether parseNumeric accepted it. */
+    private static PositionedText soleAmountCell(List<PositionedText> row) {
+        PositionedText found = null;
+        for (PositionedText cell : row) {
+            String text = cell.text().trim();
+            if (text.contains(".") && CsvParser.parseNumeric(text) != null) {
+                if (found != null) return null;
+                found = cell;
+            }
+        }
+        return found;
     }
 
     /** Entry point for the whole INFERRED_HEADERLESS_LAYOUT capability -- see its top-level doc

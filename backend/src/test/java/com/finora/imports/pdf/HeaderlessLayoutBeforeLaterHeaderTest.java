@@ -95,6 +95,62 @@ class HeaderlessLayoutBeforeLaterHeaderTest {
         assertThat(capabilities).contains("HEADERLESS_LAYOUT_BEFORE_LATER_HEADER", "INFERRED_HEADERLESS_LAYOUT");
     }
 
+    /** The pre-header slice is anchored on the first header whose section actually SURVIVED being
+     *  closed, not on the first row merely recognized as header-shaped. Here a credit-card
+     *  payment-summary panel scores as a header, is closed by an account banner while still only
+     *  one row deep, and is then suppressed by looksLikePaymentSummaryPanel -- it never becomes a
+     *  section. A genuinely headerless ledger follows it, and a real unrelated table with its own
+     *  header follows that.
+     *
+     *  <p>Anchoring on the merely-recognized header (this code's earlier behaviour) makes the slice
+     *  {@code rows.subList(0, 0)} -- empty -- so the ledger is never searched, while the later real
+     *  header keeps {@code sections} non-empty so the whole-document fallback never runs either,
+     *  and all five transactions are lost with no trace. Anchoring on the surviving header searches
+     *  the whole region ahead of it and recovers them. Fully hand-synthesized per the Synthetic
+     *  Fixture Policy; the panel's own value row deliberately carries no decimal point, so it is
+     *  not itself transaction-shaped and cannot pollute the recovered ledger's columns. */
+    @Test
+    void headerlessLedger_afterASuppressedPaymentSummaryPanel_isStillRecovered() {
+        List<PositionedText> positioned = new ArrayList<>();
+        // A payment-summary panel: scores as a header (a date hint plus an amount hint), and
+        // carries enough distinct payment-summary phrases to be judged a misdetected panel.
+        positioned.add(run("Payment Due Date", 30f, 70f, 60f));
+        positioned.add(run("Total Amount Due", 200f, 70f, 60f));
+        positioned.add(run("Credit Limit", 380f, 60f, 60f));
+        positioned.add(run("05 Jan 2026", 30f, 60f, 80f));
+        positioned.add(run("1,000", 200f, 40f, 80f));
+        positioned.add(run("50,000", 380f, 40f, 80f));
+        // An account banner closes that panel while it is still one row deep -- small enough for
+        // looksLikePaymentSummaryPanel to demote it into auxiliary text instead of staging it.
+        positioned.add(run("SAVINGS ACCOUNT - 987654", 30f, 160f, 110f));
+        // The genuinely headerless ledger, after the suppressed panel.
+        List<List<PositionedText>> transactions = List.of(
+                transaction("01/01/2026", "GROCERY STORE PURCHASE MONTHLY", "500.00", "-", "9500.00", 300f),
+                transaction("02/01/2026", "SALARY CREDIT FROM EMPLOYER LTD", "-", "20000.00", "29500.00", 320f),
+                transaction("03/01/2026", "ELECTRICITY BILL PAYMENT ONLINE", "1500.00", "-", "28000.00", 340f),
+                transaction("04/01/2026", "MOBILE RECHARGE PREPAID PLAN", "300.00", "-", "27700.00", 360f),
+                transaction("05/01/2026", "REFUND FROM ONLINE MERCHANT STORE", "-", "200.00", "27900.00", 380f));
+        for (List<PositionedText> row : transactions) positioned.addAll(row);
+        // A later, unrelated real table whose own header IS staged.
+        positioned.add(onPage(1, "Loan Booking Date", 30f, 60f, 56f));
+        positioned.add(onPage(1, "Installment amount", 350f, 70f, 56f));
+        positioned.add(onPage(1, "01 Mar 2026", 30f, 55f, 76f));
+        positioned.add(onPage(1, "350.00", 350f, 40f, 76f));
+
+        DocumentContext ctx = new DocumentContext("PDF", "test");
+        PdfTableLocator.LocatedDocument doc = new PdfTableLocator().locateAll(positioned, ctx);
+
+        List<String> capabilities = ctx.capabilities().stream().map(c -> c.capability()).toList();
+        // The panel really was suppressed -- otherwise this test would be proving nothing.
+        assertThat(capabilities).contains("PAYMENT_SUMMARY_PANEL_SUPPRESSED");
+        assertThat(capabilities).contains("HEADERLESS_LAYOUT_BEFORE_LATER_HEADER");
+        assertThat(doc.sections()).hasSize(2);
+        List<Map<String, String>> recovered = doc.sections().get(0).rows();
+        assertThat(recovered).hasSize(5);
+        assertThat(recovered.get(0)).containsEntry("Debit", "500.00");
+        assertThat(recovered.get(4)).containsEntry("Credit", "200.00");
+    }
+
     @Test
     void noContentBeforeTheFirstHeader_neverAttemptsThePreHeaderPath() {
         // The header is the very first row in the document -- firstHeaderRowIndex is 0, not > 0, so
