@@ -1353,7 +1353,17 @@ export default function Import() {
         )}
       </AnimatePresence>
 
-      {confirmDiscardId && (
+      {/* Each dialog is gated to the step that owns it, restoring by construction what the two early
+          `return <...SummaryScreen/>` statements used to guarantee for free: a discard dialog can
+          never render over the summary screen, where answering it would fire discardSession()
+          against a session the backend has already finalized.
+
+          `disabled={confirming}` on the trigger links closes only ONE of the two orderings -- the
+          user opening the dialog AFTER a confirm is already in flight. It does nothing about the
+          reverse (dialog already open when the confirm starts), which ConfirmDialog's own lack of a
+          focus trap leaves reachable by keyboard: its backdrop swallows mouse clicks, but Tab still
+          walks the controls behind it. Gating the render is what actually closes both. */}
+      {step === 'upload' && confirmDiscardId && (
         <ConfirmDialog
           title="Discard this unfinished import?"
           message="You can upload the statement again later."
@@ -1368,7 +1378,7 @@ export default function Import() {
         />
       )}
 
-      {confirmDiscardReviewOpen && (
+      {step === 'review' && confirmDiscardReviewOpen && (
         <ConfirmDialog
           title="Discard this import and start over?"
           message="This clears everything parsed from this file. You can upload the statement again right after."
@@ -1382,7 +1392,7 @@ export default function Import() {
         />
       )}
 
-      {ownershipWarningOpen && (
+      {step === 'review' && ownershipWarningOpen && (
         <ConfirmDialog
           title="Statement Check"
           message={`The statement holder name ("${detectedAccount?.accountHolderName}") differs from your Finora profile name ("${fullName}"). Please confirm you've selected the correct statement before continuing.`}

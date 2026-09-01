@@ -1222,6 +1222,42 @@ describe('Import — multi-account statements get the same duplicate review', ()
   });
 
   /**
+   * Phase 4b regression test, multi-account half. Its single-account twin lives in the "duplicate
+   * review gates the import" suite; this one exists because mutation-testing the guard showed it
+   * was held in place by nothing -- deleting `disabled={confirming}` from the multi-account link
+   * left all 89 tests green, while the same deletion on the single-account link correctly failed.
+   * Same failure both guards prevent: the discard dialog opening over the summary screen mid-
+   * confirm, where answering it would discard a session the backend has already finalized.
+   */
+  it('blocks "Discard and start over" while the multi-account confirm is in flight', async () => {
+    stageSections(savingsAndCard());
+    let resolveConfirm: (r: Awaited<ReturnType<typeof importApi.confirmMulti>>) => void;
+    vi.mocked(importApi.confirmMulti).mockReset().mockReturnValue(
+      new Promise((resolve) => { resolveConfirm = resolve; })
+    );
+    const user = userEvent.setup();
+    renderImport();
+
+    await pickAndUploadPdf(user);
+    await screen.findByText(/this statement covers 2 accounts/i);
+
+    // Both sections' flagged rows have to be answered before the confirm gate opens at all.
+    await user.click(within(card(0)).getByRole('button', { name: 'Import anyway' }));
+    await user.click(within(card(1)).getByRole('button', { name: 'Skip this row' }));
+
+    const discardLink = screen.getByRole('button', { name: /discard and start over/i });
+    expect(discardLink).toBeEnabled();
+
+    await user.click(confirmAll());
+    expect(discardLink).toBeDisabled();
+    await user.click(discardLink);
+    expect(screen.queryByText('Discard this import and start over?')).not.toBeInTheDocument();
+
+    resolveConfirm!({ perAccount: [] } as never);
+    await waitFor(() => expect(importApi.confirmMulti).toHaveBeenCalledTimes(1));
+  });
+
+  /**
    * The decision has to reach the server per section, not just the button. This is the field the
    * multi-account confirm payload dropped entirely: without it the row lands in the ledger and
    * reconciliation immediately re-flags it, so the user's answer shows in the ledger and vanishes
