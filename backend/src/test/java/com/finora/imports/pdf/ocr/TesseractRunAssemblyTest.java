@@ -171,6 +171,43 @@ class TesseractRunAssemblyTest {
         assertThat(RunAssembler.assemble(runs)).hasSize(2);
     }
 
+    /**
+     * Words on the SAME printed line, whose per-word baselines jitter a few points apart, must
+     * still leave assembly with one shared y per line -- not the several slightly different
+     * baselines the engine reported.
+     *
+     * <p>Motivated by a real HSBC savings statement whose five-column header ({@code Date |
+     * Details | Withdrawals | Deposits | Balance}) recognised with baselines spread across about
+     * 6pt. {@code PdfTableLocator.groupIntoRows} re-groups runs into rows using a flat 3pt
+     * tolerance calibrated on PDFBox's own near-noiseless native positions -- comfortably enough
+     * for one printed line there, but not enough to absorb this engine's own per-word jitter. Left
+     * unnormalised, that header split into two physical rows, and three of its five column names
+     * were never recognised as headers at all -- every transaction on the page lost its Details,
+     * Withdrawals and Deposits columns to whichever row survived.
+     *
+     * <p>{@link RunAssembler#lines} already groups these runs correctly (by vertical ink overlap,
+     * not a flat threshold) before this jitter ever mattered to the horizontal joining this class
+     * exists for -- the fix is re-emitting that already-correct grouping at one shared y, which is
+     * what this test pins.
+     */
+    @Test
+    void sameLineRunsShareOneBaselineDespitePerWordJitter() {
+        var runs = List.of(
+                new OcrEngine.RecognisedText("Date", 30f, 160f, 20f, 14f, 0, 0.96f),
+                new OcrEngine.RecognisedText("Details", 100f, 161.5f, 40f, 14f, 0, 0.96f),
+                new OcrEngine.RecognisedText("Withdrawals", 300f, 163f, 60f, 14f, 0, 0.96f),
+                new OcrEngine.RecognisedText("Deposits", 430f, 164.5f, 45f, 14f, 0, 0.96f),
+                new OcrEngine.RecognisedText("Balance", 500f, 166f, 40f, 14f, 0, 0.96f));
+
+        var assembled = RunAssembler.assemble(runs);
+
+        assertThat(assembled).hasSize(5);
+        assertThat(assembled.stream().map(OcrEngine.RecognisedText::y).distinct())
+                .as("five words on one printed line must leave assembly at one shared y, not the "
+                        + "five slightly different baselines the engine reported for them")
+                .containsExactly(166f);
+    }
+
     /** A merged phrase is only as certain as its least certain word. */
     @Test
     void confidenceOfAPhraseIsItsWeakestWord() {
