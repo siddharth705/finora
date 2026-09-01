@@ -157,6 +157,21 @@ class CapabilityCorpusCoverageTest {
                         + "unredacted, so that test proves the real recovered VALUE end to end, not just "
                         + "that the capability fires. SBI's trace has its date redacted, and that test "
                         + "proves the extractor correctly declines rather than fabricating one.");
+        DECLARED_WITHOUT_A_TRACE.put("PRINTED_ACCOUNT_NUMBER_GRID",
+                "no trace -- same scoping gap as PRINTED_PAYMENT_DUE_DATE_GRID above: this fires in "
+                        + "AccountNumberGridExtractor, called from PdfPreviewGenerator, never from "
+                        + "PdfTableLocator.locateAll. The one real evidencing document's committed trace "
+                        + "(axis-credit-card-statement) redacts its card-number value cells with "
+                        + "width=0.0 (breaking the GRID strategy's x-overlap match) and, independently, "
+                        + "redacts the cardholder name on the same row into an all-X string "
+                        + "indistinguishable in shape from a masked card number (correctly triggering the "
+                        + "SAME_ROW strategy's own ambiguity refusal) -- see "
+                        + "AccountNumberGridRegressionTest, which asserts against that same trace that the "
+                        + "capability correctly does NOT fire on this doubly-redacted text. Real recovery "
+                        + "against real geometry is covered by AccountNumberGridExtractorTest using the "
+                        + "real coordinates from both of the document's own layouts (grid and same-row), "
+                        + "and independently confirmed against the actual un-redacted PDF via "
+                        + "scripts/corpus-run.py.");
         DECLARED_WITHOUT_A_TRACE.put("CREDIT_CARD_SUMMARY_TOTALS",
                 "no trace yet -- CreditCardSummaryExtractorTest exercises the GRID strategy on "
                         + "synthetic fixtures reproducing real observed shapes (a clean stacked grid, "

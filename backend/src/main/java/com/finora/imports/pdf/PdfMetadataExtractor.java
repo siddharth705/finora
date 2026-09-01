@@ -226,9 +226,13 @@ public class PdfMetadataExtractor {
     // same-line-anywhere usage in extract() below) -- verified against a real SBI credit-card
     // statement, whose "Credit Card Number" label sits alone on its own line, with the masked
     // value on the very next one.
-    private static final String CARD_NUMBER_LABEL_SRC =
+    // Package-private (not private): reused by AccountNumberGridExtractor for the same label/value
+    // vocabulary against raw PositionedText, rather than re-declaring it a second time to drift
+    // from this one -- same reuse-over-duplication discipline CreditCardSummaryExtractor's own doc
+    // comment already documents for StatementSummaryExtractor's row utilities.
+    static final String CARD_NUMBER_LABEL_SRC =
             "(?:(?:Primary\\s+)?(?:Credit\\s+)?Card\\s*(?:No\\.?|Number)|Account\\s*Number)";
-    private static final Pattern CARD_NUMBER_LABEL = Pattern.compile("(?i)" + CARD_NUMBER_LABEL_SRC);
+    static final Pattern CARD_NUMBER_LABEL = Pattern.compile("(?i)" + CARD_NUMBER_LABEL_SRC);
 
     // CARD_NUMBER_VALUE: a card/account number exactly as a real statement prints it -- either the
     // bank's own masked form (X/x/* mask characters interleaved with visible digit groups, e.g.
@@ -238,8 +242,8 @@ public class PdfMetadataExtractor {
     // digit count afterward. Keeping that check separate from the regex, rather than trying to
     // express "6-20 characters, at least 2 real digits, ends in a digit" as one pattern, is what
     // keeps this simple enough to verify by eye and to test.
-    private static final String CARD_NUMBER_VALUE_SRC = "[\\dXx*]{2,}(?:[\\s-][\\dXx*]{2,})*";
-    private static final Pattern CARD_NUMBER_VALUE = Pattern.compile(CARD_NUMBER_VALUE_SRC);
+    static final String CARD_NUMBER_VALUE_SRC = "[\\dXx*]{2,}(?:[\\s-][\\dXx*]{2,})*";
+    static final Pattern CARD_NUMBER_VALUE = Pattern.compile(CARD_NUMBER_VALUE_SRC);
 
     // A_C_ACCOUNT_NUMBER_SAME_LINE: a real canara statement's own account-number field never says
     // "Account"/"Account Number"/"Card Number" at all -- it states the number inline as
@@ -1274,7 +1278,7 @@ public class PdfMetadataExtractor {
      *  how many digits a bank chooses to mask. A mask-character requirement was considered and
      *  rejected: a real HSBC statement's own account-number field is fully unmasked, so requiring
      *  one would have rejected a genuine match, not just noise. */
-    private static boolean looksLikeCardOrAccountNumber(String candidate) {
+    static boolean looksLikeCardOrAccountNumber(String candidate) {
         String stripped = candidate.replaceAll("[\\s-]", "");
         if (stripped.length() < 6 || stripped.length() > 20) return false;
         long digitCount = stripped.chars().filter(Character::isDigit).count();
@@ -1292,7 +1296,7 @@ public class PdfMetadataExtractor {
      * @return a two-element array: [0] the value for accountNumberMasked, [1] the unmasked full
      *         number for accountNumberFullForHashingOnly, or null when the value was already masked
      */
-    private static String[] normalizeCardOrAccountNumberValue(String captured) {
+    static String[] normalizeCardOrAccountNumberValue(String captured) {
         String trimmed = captured.trim();
         boolean alreadyMasked = trimmed.chars().anyMatch(c -> c == 'X' || c == 'x' || c == '*');
         if (alreadyMasked) return new String[]{trimmed, null};
