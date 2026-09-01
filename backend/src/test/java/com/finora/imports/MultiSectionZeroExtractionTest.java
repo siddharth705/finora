@@ -246,6 +246,10 @@ class MultiSectionZeroExtractionTest {
         m.put("cbi-account-discrepancy-disclaimer-trailer", 222);
         m.put("pnb-one-account-discrepancy-disclaimer-trailer", 61);
         m.put("bob-transaction-row-x-ordering", 53);
+        // Captured for PdfPreviewGenerator.inheritAccountNumberAcrossSections (docs/superpowers/
+        // plans -- see AccountNumberInheritanceRegressionTest, which verifies this trace's actual
+        // content, not this row count) -- listed here only so this inventory sweep accounts for it.
+        m.put("indusland-credit-card-account-number-inheritance", 8);
         return m;
     }
 

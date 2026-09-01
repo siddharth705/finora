@@ -294,6 +294,7 @@ public class PdfPreviewGenerator {
             result.addAll(staged);
         }
         result = attributePrintedSummary(result, printedSummary);
+        result = inheritAccountNumberAcrossSections(result);
         // One document's worth, across every section -- the DocumentContext is per-file, and a
         // combined statement's sections all failed (or didn't) as part of the same parse run.
         ctx.recordUnparseable(unparseableAcrossDocument);
@@ -555,6 +556,62 @@ public class PdfPreviewGenerator {
                     // unparseable count here would have been a different number wearing this one's
                     // name.
                     importVerifier.reviseSummaryTotals(s.verification(), s.rows(), printedSummary, 0)));
+        }
+        return revised;
+    }
+
+    /**
+     * A credit-card statement's account/card number belongs to the whole relationship, not any one
+     * section -- the same "effectively always one account" assumption {@code gridPaymentDueDate}/
+     * {@code printedCreditCardSummary} already make elsewhere in this class, applied here as a
+     * POST-PROCESSING fallback rather than a document-wide extraction: the number itself is already
+     * correctly found by {@link PdfMetadataExtractor} on the section that owns it, and what's
+     * missing is only propagating it to a SIBLING section that never found its own.
+     *
+     * <p>Confirmed on two real documents (SBI, IndusInd): both have a genuine, fully-formed
+     * CREDIT_CARD section that DOES find its own {@code accountNumberMasked}, plus a second,
+     * malformed {@code UNKNOWN}-product fragment (a rewards/purchase-detail sub-table {@link
+     * PdfTableLocator} mis-splits into its own section) that never does.
+     *
+     * <p>Scoped narrowly to avoid mis-attributing a genuinely DIFFERENT account's number onto a
+     * sibling: only ever copies FROM a {@code CREDIT_CARD} section (the "one relationship"
+     * assumption applies to a credit card specifically, not to a generic multi-account composite
+     * statement) INTO a sibling whose own {@code detectedProduct} is {@code UNKNOWN} -- never into a
+     * section the pipeline has already positively identified as its own distinct product. A real
+     * composite statement (Shivani_HDFC) has a genuine {@code RECURRING_DEPOSIT} section with its
+     * own certificate number, which must never be overwritten by a sibling account's number; gating
+     * on {@code UNKNOWN} specifically (not "any section missing a number") is what keeps that case
+     * untouched.
+     */
+    private List<StagedAccountSection> inheritAccountNumberAcrossSections(List<StagedAccountSection> sections) {
+        if (sections.size() <= 1) return sections;
+        String sourceAccountNumber = null;
+        for (StagedAccountSection s : sections) {
+            DetectedAccountInfo acc = s.detectedAccount();
+            if (acc != null && "CREDIT_CARD".equals(acc.detectedProduct()) && acc.accountNumberMasked() != null) {
+                sourceAccountNumber = acc.accountNumberMasked();
+                break;
+            }
+        }
+        if (sourceAccountNumber == null) return sections;
+
+        List<StagedAccountSection> revised = new ArrayList<>(sections.size());
+        for (StagedAccountSection s : sections) {
+            DetectedAccountInfo acc = s.detectedAccount();
+            if (acc != null && acc.accountNumberMasked() == null && "UNKNOWN".equals(acc.detectedProduct())) {
+                DetectedAccountInfo updated = new DetectedAccountInfo(
+                        acc.suggestedName(), acc.suggestedAccountType(), acc.openingBalance(), acc.closingBalance(),
+                        acc.statementPeriodStart(), acc.statementPeriodEnd(), sourceAccountNumber, acc.creditLimit(),
+                        acc.totalAmountDue(), acc.paymentDueDate(), acc.accountHolderName(), acc.branchName(),
+                        acc.ifscCode(), acc.bank(), acc.detectedProduct(), acc.productConfidence(),
+                        acc.productNeedsReview(), acc.productEvidence(), acc.productIdentityHash(),
+                        acc.principalAmount(), acc.interestRate(), acc.maturityDate(), acc.maturityAmount(),
+                        acc.installmentAmount(), acc.installmentsPaid(), acc.installmentsTotal());
+                revised.add(new StagedAccountSection(updated, s.rows(), s.totalParsed(), s.flaggedDuplicates(),
+                        s.unparseableRows(), s.verification()));
+            } else {
+                revised.add(s);
+            }
         }
         return revised;
     }
