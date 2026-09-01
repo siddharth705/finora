@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -24,6 +25,14 @@ import static org.assertj.core.api.Assertions.assertThat;
  * mechanism, so this test uses a generic merchant description instead of the real one, per the
  * Synthetic Fixture Policy already established in {@link HeaderlessLayoutInferenceTest} for
  * fixtures motivated by a real document but not requiring its exact text.
+ *
+ * <p>A second real HSBC document (10 real transactions across the same statement shape, mostly
+ * unmarked debits, plus coincidental date+amount noise before its own "OPENING BALANCE" label)
+ * later proved two more things this class's tests cover further down: an unmarked row must
+ * default to DR rather than being dropped, and the candidate pool must be positionally bracketed
+ * between "OPENING BALANCE" and "NET OUTSTANDING BALANCE" so that default can't readmit the same
+ * noise the original CR/DR-marker requirement used to filter for free. Coordinates for that
+ * second shape are hand-synthesized (not copied from the second document), per the same policy.
  */
 class HeaderlessBalanceReconciliationTest {
 
@@ -121,6 +130,100 @@ class HeaderlessBalanceReconciliationTest {
         assertThat(recovered.get(0)).containsEntry("Amount", "1,582.00 CR");
         assertThat(doc.sections().get(0).auxiliaryText())
                 .anyMatch(line -> line.contains("MR SOME CARDHOLDER"));
+        List<String> capabilities = ctx.capabilities().stream().map(c -> c.capability()).toList();
+        assertThat(capabilities).contains(
+                "HEADERLESS_LAYOUT_BEFORE_LATER_HEADER", "HEADERLESS_BALANCE_RECONCILIATION_CORROBORATED");
+    }
+
+    /** A second real HSBC document (10 real transactions, mostly unmarked) proved the CR/DR-marker
+     *  requirement above was too strict: it silently dropped every genuine debit row that carries
+     *  no marker at all, which real evidence shows is most of them -- only credits are marked.
+     *  {@code signedTransactionAmount} now defaults an unmarked row to DR (a purchase). This test
+     *  proves that default reconciles correctly on its own, independent of the positional
+     *  bracketing {@link #locateAll_ignoresNoiseOutsideTheBalanceBracket_whileRecoveringUnmarkedRows}
+     *  below covers. */
+    @Test
+    void extract_defaultsAnUnmarkedRowToDebit_andStillReconciles() {
+        List<PositionedText> runs = new ArrayList<>(List.of(
+                run("OPENING BALANCE", 77.3f, 144.2f, 100f),
+                run("5,000.00", 381.1f, 408.4f, 100f),
+                run("24DEC", 30.7f, 52.1f, 110f),
+                run("BBPS PMT REFERENCE", 77.3f, 213.1f, 110f),
+                run("1,000.00", 381.1f, 408.4f, 110f),
+                run("CR", 413.5f, 423.6f, 110f),
+                run("01JAN", 30.7f, 52.1f, 120f),
+                run("SOME MERCHANT A", 77.3f, 213.1f, 120f),
+                run("600.00", 381.1f, 408.4f, 120f),
+                run("06JAN", 30.7f, 52.1f, 130f),
+                run("SOME MERCHANT B", 77.3f, 213.1f, 130f),
+                run("400.00", 381.1f, 408.4f, 130f),
+                run("23JAN", 31.4f, 51.7f, 140f),
+                run("NET OUTSTANDING BALANCE", 78.7f, 180.2f, 140f),
+                run("5,000.00", 393.1f, 406.7f, 140f)));
+
+        PdfTableLocator locator = new PdfTableLocator();
+        List<List<PositionedText>> grouped = StatementSummaryExtractor.groupIntoRows(runs);
+
+        List<List<PositionedText>> candidates = new ArrayList<>();
+        for (List<PositionedText> row : grouped) {
+            if (row.stream().anyMatch(t -> Set.of("24DEC", "01JAN", "06JAN").contains(t.text().trim()))) {
+                candidates.add(row);
+            }
+        }
+
+        assertThat(locator.corroboratedByPrintedBalanceReconciliationForTest(candidates, grouped)).isTrue();
+    }
+
+    /** End-to-end proof of the fix for the second real HSBC document's shape: a headerless ledger
+     *  with mostly-unmarked debit rows, preceded by coincidental date+amount noise (the statement
+     *  generation date paired with its own total-amount-due figure) that sits BEFORE the
+     *  document's own "OPENING BALANCE" label. Real evidence: exactly this noise shape (plus a
+     *  second, analogous billing-period noise line the real document keeps as one combined,
+     *  non-date-parseable text run -- not reproduced here, see the Synthetic Fixture Policy)
+     *  defeated the ordinary clustering path on both real HSBC documents. {@code
+     *  tryCorroboratedFallback} now restricts candidates to rows strictly between "OPENING
+     *  BALANCE" and "NET OUTSTANDING BALANCE" -- if that bracketing were missing, this noise row
+     *  would also default to DR and the arithmetic below would not reconcile (its amount doesn't
+     *  cancel), so this test fails closed on a regression rather than silently recovering a wrong
+     *  section. */
+    @Test
+    void locateAll_ignoresNoiseOutsideTheBalanceBracket_whileRecoveringUnmarkedRows() {
+        List<PositionedText> positioned = new ArrayList<>(List.of(
+                // Noise, BEFORE "OPENING BALANCE": a statement-generation date paired with a
+                // total-amount-due figure -- also supplies the full year "2026" that "24DEC" /
+                // "01JAN" / "06JAN" / "23JAN" below need to resolve via resolveYearlessDate.
+                run("10 FEB 2026", 370.3f, 412.7f, 10f),
+                run("4,999.99", 440f, 470f, 10f),
+                run("MR SOME CARDHOLDER", 58.1f, 162.1f, 30f),
+                run("OPENING BALANCE", 77.3f, 144.2f, 100f),
+                run("5,000.00", 381.1f, 408.4f, 100f),
+                run("24DEC", 30.7f, 52.1f, 110f),
+                run("BBPS PMT REFERENCE", 77.3f, 213.1f, 110f),
+                run("1,000.00", 381.1f, 408.4f, 110f),
+                run("CR", 413.5f, 423.6f, 110f),
+                run("01JAN", 30.7f, 52.1f, 120f),
+                run("SOME MERCHANT A", 77.3f, 213.1f, 120f),
+                run("600.00", 381.1f, 408.4f, 120f),
+                run("06JAN", 30.7f, 52.1f, 130f),
+                run("SOME MERCHANT B", 77.3f, 213.1f, 130f),
+                run("400.00", 381.1f, 408.4f, 130f),
+                run("23JAN", 31.4f, 51.7f, 140f),
+                run("NET OUTSTANDING BALANCE", 78.7f, 180.2f, 140f),
+                run("5,000.00", 393.1f, 406.7f, 140f)));
+        // A later, unrelated real table on page 1 -- same shape as the other end-to-end test above.
+        positioned.add(new PositionedText("Loan Booking Date", 30f, 56f, 1, 60f));
+        positioned.add(new PositionedText("Installment amount", 350f, 56f, 1, 70f));
+        positioned.add(new PositionedText("01 Mar 2026", 30f, 76f, 1, 55f));
+        positioned.add(new PositionedText("350.00", 350f, 76f, 1, 40f));
+
+        DocumentContext ctx = new DocumentContext("PDF", "test");
+        PdfTableLocator.LocatedDocument doc = new PdfTableLocator().locateAll(positioned, ctx);
+
+        assertThat(doc.sections()).hasSize(2);
+        List<Map<String, String>> recovered = doc.sections().get(0).rows();
+        assertThat(recovered).hasSize(3);
+        assertThat(recovered).extracting(row -> row.get("Amount"))
+                .containsExactlyInAnyOrder("1,000.00 CR", "600.00 DR", "400.00 DR");
         List<String> capabilities = ctx.capabilities().stream().map(c -> c.capability()).toList();
         assertThat(capabilities).contains(
                 "HEADERLESS_LAYOUT_BEFORE_LATER_HEADER", "HEADERLESS_BALANCE_RECONCILIATION_CORROBORATED");
