@@ -44,6 +44,34 @@ class StatementTitleDateRangeExtractorTest {
         assertThat(range.start()).isEqualTo(LocalDate.of(2026, 7, 1));
     }
 
+    // Bug fix: DateTimeFormatter's default parsing is case-sensitive, so an all-caps month (the
+    // style HSBC CC.pdf's own period line elsewhere in this corpus uses) used to match
+    // BARE_DATE_RANGE's case-insensitive character class but then fail to parse, silently falling
+    // through to NONE instead of recovering the same real fact isTitleRow's own equalsIgnoreCase
+    // already tolerates for the title.
+    @Test
+    void extract_isTolerantOfDateMonthCasing() {
+        var range = StatementTitleDateRangeExtractor.extract(List.of(
+                run("Account Statement", 33.9f, 110.5f),
+                run("01 JUL 2026 - 31 JUL 2026", 33.9f, 126.0f)));
+
+        assertThat(range.start()).isEqualTo(LocalDate.of(2026, 7, 1));
+        assertThat(range.end()).isEqualTo(LocalDate.of(2026, 7, 31));
+    }
+
+    // Bug fix: the month token used to accept 3-9 letters, wider than DATE_FORMAT could ever
+    // parse (only the 3-letter abbreviated form) -- a full month name matched the old regex and
+    // then silently failed to parse. Narrowed to exactly 3 letters, so this now fails to match
+    // structurally (NONE) rather than matching and then silently failing to parse.
+    @Test
+    void extract_returnsNone_whenTheMonthIsAFullNameRatherThanAThreeLetterAbbreviation() {
+        var range = StatementTitleDateRangeExtractor.extract(List.of(
+                run("Account Statement", 33.9f, 110.5f),
+                run("01 September 2026 - 30 September 2026", 33.9f, 126.0f)));
+
+        assertThat(range).isSameAs(StatementTitleDateRangeExtractor.PrintedDateRange.NONE);
+    }
+
     @Test
     void extract_returnsNone_whenNoTitleRowPrecedesTheDateRange() {
         // Proves this is not a generic "find any bare date range" pattern -- the same date row

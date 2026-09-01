@@ -4,6 +4,7 @@ import com.finora.imports.DocumentContext;
 
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeFormatterBuilder;
 import java.util.List;
 import java.util.Locale;
 import java.util.regex.Matcher;
@@ -58,11 +59,28 @@ public final class StatementTitleDateRangeExtractor {
     // cover "to"-separated ranges wherever they carry a label. Anchored start-to-end (not "find
     // anywhere in the line") so a row carrying any other text alongside the range -- e.g. a real
     // label -- is correctly left to the extractors that already handle labelled shapes.
+    //
+    // Bug fix: the month token used to accept 3-9 letters ("Jul" through a 9-letter full month
+    // name), which is wider than DATE_FORMAT below can ever parse -- DateTimeFormatter's "MMM"
+    // pattern only understands the abbreviated 3-letter form, so a row with a full month name
+    // (e.g. "September") matched this regex but then silently failed to parse and fell through to
+    // NONE. Narrowed to exactly 3 letters, matching both the one real evidencing document and what
+    // DATE_FORMAT can actually recover -- a full month name here would need its own evidenced
+    // pattern, not a regex range the parser can't back up.
     private static final Pattern BARE_DATE_RANGE = Pattern.compile(
-            "^(\\d{1,2}\\s+[A-Za-z]{3,9}\\s+\\d{4})\\s*-\\s*(\\d{1,2}\\s+[A-Za-z]{3,9}\\s+\\d{4})$");
+            "^(\\d{1,2}\\s+[A-Za-z]{3}\\s+\\d{4})\\s*-\\s*(\\d{1,2}\\s+[A-Za-z]{3}\\s+\\d{4})$");
 
-    private static final DateTimeFormatter DATE_FORMAT =
-            DateTimeFormatter.ofPattern("d MMM yyyy", Locale.ENGLISH);
+    // Bug fix: DateTimeFormatter.ofPattern's default parsing is CASE-SENSITIVE, so a differently-
+    // cased but identical real month string (e.g. "JUL", the all-caps style HSBC CC.pdf's own
+    // period line uses elsewhere in this corpus) matched BARE_DATE_RANGE's case-insensitive
+    // character class above but then failed to parse, silently falling through to NONE --
+    // inconsistent with isTitleRow's own equalsIgnoreCase just below. parseCaseInsensitive() makes
+    // the two checks agree: same real fact, differently capitalized, should not change the
+    // outcome.
+    private static final DateTimeFormatter DATE_FORMAT = new DateTimeFormatterBuilder()
+            .parseCaseInsensitive()
+            .appendPattern("d MMM yyyy")
+            .toFormatter(Locale.ENGLISH);
 
     public record PrintedDateRange(LocalDate start, LocalDate end) {
         public static final PrintedDateRange NONE = new PrintedDateRange(null, null);
