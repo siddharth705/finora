@@ -257,7 +257,7 @@ Extend `ImportJobWorkerTest`:
     @Test
     void unclassifiedFailure_thatDeadLetters_isHeldForReviewRatherThanFailed() {
         // An exception no ErrorCode recognizes -- classified RETRY_ONCE_THEN_ALERT, which is the
-        // "likely a genuine Finora bug" bucket.
+        // the "plausibly a genuine unclassified bug" bucket.
         when(exceptionClassifier.classify(any()))
                 .thenReturn(ErrorCode.RetryPolicy.RETRY_ONCE_THEN_ALERT);
         ImportJob job = jobWithAttemptsRemaining(1);

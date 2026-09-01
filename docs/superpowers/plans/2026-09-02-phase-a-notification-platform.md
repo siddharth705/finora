@@ -72,6 +72,10 @@ backend/src/main/java/com/finora/notification/
 
 Plus: `com/finora/controller/DeviceTokenController.java`, `com/finora/controller/AdminNotificationController.java`, `com/finora/service/AdminNotificationService.java`, `com/finora/config/PushConfig.java`, and additions to `com/finora/config/BackgroundWorkConfig.java`.
 
+Mobile (Task 14): `mobile/src/lib/pushRegistration.ts` plus its test, additions to `mobile/src/api/endpoints.ts`, and the auth-lifecycle wiring.
+
+**On the `com.finora` package name:** new code goes in `com.finora.notification`, matching the existing tree. The Fynora brand rename is tracked separately (`2026-09-02-fynora-brand-migration.md`) and a Java package rename, if it happens at all, is that plan's decision to make across the whole codebase at once — not something this plan forks by naming one new package differently. All **user-facing copy** written here says Fynora.
+
 Each file has one responsibility. The `provider/` package is the only place that knows how to talk to an external system; `worker/` is the only place that decides *when*; `api/` is the only surface callers touch.
 
 ---
@@ -2499,11 +2503,11 @@ INSERT INTO notification_templates (id, type, channel, title_template, body_temp
      'Your {{bank}} statement has been imported.'),
     (gen_random_uuid(), 'PASSWORD_CHANGED', 'EMAIL',
      'Your password was changed',
-     'The password on your Finora account was just changed. If this was not you, reset your '
+     'The password on your Fynora account was just changed. If this was not you, reset your '
      'password immediately.'),
     (gen_random_uuid(), 'PASSWORD_CHANGED', 'PUSH',
      'Password changed',
-     'Your Finora password was just changed.');
+     'Your Fynora password was just changed.');
 ```
 
 - [ ] **Step 6: Run test to verify it passes**
@@ -3562,7 +3566,15 @@ git commit -m "feat(notification): add FCM push provider with no-op fallback"
 - Consumes: everything from Task 10.
 - Produces: push delivery that routes each token to FCM or APNs by its stored `platform`.
 
-**Blocking prerequisite:** APNs needs an Apple push certificate/key that does not exist yet (the proposal §2.2 calls this out as "new credential/certificate setup required"). **This is an owner task, not an engineering one.** Before starting: confirm the APNs key is provisioned. If not, **stop and report** — implement the routing seam (so Android ships) and leave APNs behind its unconfigured no-op rather than blocking Task 12.
+**Prerequisite — owner-provisioned, confirmed:** APNs needs an Apple push key/certificate. The project owner has committed to provisioning this **before this task starts**, so iOS and Android ship together rather than iOS trailing behind a no-op.
+
+Before writing code, verify the key is actually in place and readable by the backend:
+
+```bash
+grep -rn "APNS\|apns" backend/src/main/resources/application.yml backend/src/main/java/com/finora/config 2>/dev/null
+```
+
+If the key turns out **not** to be provisioned yet, do not silently fall back — **stop and report**. The routing seam below still lets Android ship alone, but that becomes a scope change the owner should make knowingly, not a default you chose.
 
 - [ ] **Step 1: Change `activeTokensFor` to return platform-tagged tokens**
 
@@ -3820,13 +3832,156 @@ git commit -m "feat(auth): cap OTP verification attempts on password-change sess
 
 ---
 
+## Task 14: Mobile push registration and permission
+
+**Files:**
+- Modify: `mobile/package.json` — add `@react-native-firebase/messaging`
+- Create: `mobile/src/lib/pushRegistration.ts`
+- Create: `mobile/src/lib/pushRegistration.test.ts`
+- Modify: `mobile/src/api/endpoints.ts` — add the device-token endpoints
+- Modify: the app's auth/session lifecycle (find it: `grep -rn "onLogin\|useAuth\|logout" mobile/src/context | head`)
+
+**Interfaces:**
+- Consumes: `POST /api/v1/device-tokens` and its revoke counterpart from Task 9; the FCM/APNs providers from Tasks 10–11.
+- Produces: a real device token in the `device_tokens` table for every logged-in user who granted permission. **Without this task, Task 9's endpoint is never called and push silently never fires — the backend would look correct while no user ever receives a notification.**
+
+**Why `@react-native-firebase/messaging` and not `expo-notifications`:** the app already depends on `@react-native-firebase/app` and `@react-native-firebase/auth` at v26 for phone auth. Adding the messaging package from the same family reuses that initialized `FirebaseApp` and matches the existing native setup. Introducing a second, parallel notification stack would be more machinery for no benefit. Pin messaging to the same major version as the other two RNFirebase packages.
+
+**Platform requirements** (from this project's established minimums — Android 7.0 / API 24, iOS 16.4):
+- Android 13 (API 33) and above require the `POST_NOTIFICATIONS` **runtime** permission. Below 33 it is granted implicitly. The code must handle both.
+- iOS always requires an explicit authorization prompt.
+
+- [ ] **Step 1: Add the dependency and native config**
+
+```bash
+cd mobile && npx expo install @react-native-firebase/messaging
+```
+
+Verify the version matches the existing `@react-native-firebase/app` major (v26). Add the messaging config plugin to `app.json`/`app.config.js` alongside the existing RNFirebase plugins, and confirm `POST_NOTIFICATIONS` lands in the Android manifest. A native config change requires a new development build — `npx expo start` alone will not pick it up.
+
+- [ ] **Step 2: Write the failing test**
+
+Create `mobile/src/lib/pushRegistration.test.ts`:
+
+```typescript
+import { registerDeviceToken, revokeDeviceToken } from './pushRegistration';
+
+jest.mock('@react-native-firebase/messaging');
+
+describe('pushRegistration', () => {
+  const postDeviceToken = jest.fn();
+  const deleteDeviceToken = jest.fn();
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('does not call the backend when the user denies permission', async () => {
+    const messaging = requestPermissionMock('denied');
+
+    await registerDeviceToken({ postDeviceToken, messaging });
+
+    // A denied prompt is a normal outcome, not an error -- and must not send a token.
+    expect(postDeviceToken).not.toHaveBeenCalled();
+  });
+
+  it('registers the token with its platform when permission is granted', async () => {
+    const messaging = requestPermissionMock('granted', 'fcm-token-abc');
+
+    await registerDeviceToken({ postDeviceToken, messaging });
+
+    expect(postDeviceToken).toHaveBeenCalledWith({
+      token: 'fcm-token-abc',
+      platform: expect.stringMatching(/^(ANDROID|IOS)$/),
+    });
+  });
+
+  it('re-registers when Firebase rotates the token', async () => {
+    const messaging = requestPermissionMock('granted', 'token-1');
+
+    await registerDeviceToken({ postDeviceToken, messaging });
+    messaging.__emitTokenRefresh('token-2');
+
+    expect(postDeviceToken).toHaveBeenLastCalledWith(
+      expect.objectContaining({ token: 'token-2' }),
+    );
+  });
+
+  it('never throws when the backend registration call fails', async () => {
+    const messaging = requestPermissionMock('granted', 'fcm-token-abc');
+    postDeviceToken.mockRejectedValueOnce(new Error('network'));
+
+    // Failing to register a push token must never block the user from using the app.
+    await expect(registerDeviceToken({ postDeviceToken, messaging })).resolves.not.toThrow();
+  });
+
+  it('revokes the token on logout', async () => {
+    const messaging = requestPermissionMock('granted', 'fcm-token-abc');
+
+    await revokeDeviceToken({ deleteDeviceToken, messaging });
+
+    expect(deleteDeviceToken).toHaveBeenCalledWith({ token: 'fcm-token-abc' });
+  });
+});
+```
+
+Write `requestPermissionMock` as a local helper returning a fake messaging module with `requestPermission`, `getToken`, `onTokenRefresh`, and a test-only `__emitTokenRefresh`. Match the mocking style already used in the mobile test suite — read a neighbouring test first (`mobile/src/api/client.test.ts` is a good reference) rather than inventing a new one.
+
+- [ ] **Step 3: Run test to verify it fails**
+
+```bash
+cd mobile && npx jest src/lib/pushRegistration.test.ts
+```
+
+Expected: FAIL — the module does not exist.
+
+- [ ] **Step 4: Implement registration**
+
+Create `mobile/src/lib/pushRegistration.ts` covering:
+- Request permission (iOS always; Android only on API 33+, granted implicitly below).
+- On grant, `getToken()` and POST it with `platform: 'ANDROID' | 'IOS'` — the backend routes to FCM or APNs on exactly this value, so it must match `DeviceToken.platform` precisely.
+- Subscribe to `onTokenRefresh` and re-POST. Firebase rotates tokens on reinstall, restore, and app-data clear; without this the user silently stops receiving push.
+- **Never throw.** A failed registration is logged and swallowed — push is an enhancement, and no notification path may block app usage.
+- Never log the raw token, matching the backend's handling.
+
+- [ ] **Step 5: Wire into the session lifecycle**
+
+Call `registerDeviceToken` after a successful login and on app foreground; call `revokeDeviceToken` during logout **before** the auth token is cleared, or the revoke call will 401. Read the existing auth context to find the right hooks rather than adding a parallel lifecycle.
+
+- [ ] **Step 6: Ask for permission at a sensible moment, not at cold start**
+
+Do not prompt on first launch. Request permission the first time the user does something that earns a notification — completing a statement import is the natural trigger for this feature. A prompt fired before the user understands the value is the standard way to get a permanent denial, which cannot be re-prompted without sending the user to OS settings.
+
+- [ ] **Step 7: Run tests and verify on a real device**
+
+```bash
+cd mobile && npx jest src/lib/pushRegistration.test.ts
+```
+
+Then verify on hardware — **push does not work on the iOS Simulator**, and a token that never reaches the backend is exactly the failure this task exists to prevent:
+1. Install a development build on a physical device.
+2. Log in, grant permission.
+3. Confirm a `device_tokens` row appears for that user with a non-null `encrypted_token` and the right `platform`.
+4. Trigger a notification and confirm it arrives on the device.
+5. Log out, confirm `revoked_at` is set.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add mobile/package.json mobile/package-lock.json mobile/app.json mobile/src
+git commit -m "feat(mobile): register device push tokens with permission handling"
+```
+
+---
+
 ## Phase A completion checklist
 
 Before declaring Phase A done and starting Phase B:
 
 - [ ] `cd backend && ./mvnw test` passes in full.
 - [ ] `NotificationService.request(...)` is callable and writes rows in the caller's transaction — **this is Phase B's hard dependency.**
-- [ ] `NotificationDispatcher` delivers on EMAIL and PUSH at minimum (SMS and APNs may remain unconfigured no-ops if credentials are not provisioned; say so explicitly rather than implying they work).
+- [ ] `NotificationDispatcher` delivers on EMAIL and PUSH. Both Android (FCM) and iOS (APNs) are live — the owner provisions the APNs key before Task 11, so iOS trailing behind a no-op is a scope change to report, not an acceptable default. SMS may remain an unconfigured no-op if 2Factor credentials are absent; say so explicitly rather than implying it works.
+- [ ] **Push verified on a physical device, not a simulator** (Task 14 Step 7). A green backend suite proves nothing here: if Task 14 is skipped, Task 9's endpoint is never called, no `device_tokens` row is ever written, and every push silently no-ops while looking correct server-side.
 - [ ] `NotificationType.IMPORT_STATEMENT_READY` has active template rows for EMAIL and PUSH — Phase B needs both.
 - [ ] Admin dashboard renders and shows real delivery outcomes, verified in a browser.
 - [ ] Every new migration got a freshly-checked version number, and `git fetch origin && ls backend/src/main/resources/db/migration | sort -V | tail -5` shows no duplicate versions.
@@ -3839,6 +3994,8 @@ Before declaring Phase A done and starting Phase B:
 Checked against the spec and the frozen proposal:
 
 - **Spec coverage:** proposal §2.1 (module, outbox, dispatcher, templates, priority) → Tasks 1–3, 7; §2.2 (push, device tokens, encryption) → Tasks 9–11; §2.3 (preferences) → Task 8; §2.4 (OTP cap, delivery-status capture) → Tasks 13 and 4; §2.5 (logs, lifecycle, idempotency, retry, admin view) → Tasks 1, 4, 12.
-- **Open questions resolved in-plan:** the "forcibly on vs defaulted on" question for SECURITY (Task 8, decided: forcibly on, with rationale) and the retry backoff schedule (Task 1, decided: 2^n minutes, matching `MerchantLearningEvent`). Two remain owner-blocked and are marked **stop and report** rather than guessed: the Firebase service-account FCM scope (Task 10 Step 1) and the APNs certificate (Task 11 prerequisite).
+- **Open questions resolved in-plan:** the "forcibly on vs defaulted on" question for SECURITY (Task 8, decided: forcibly on, with rationale) and the retry backoff schedule (Task 1, decided: 2^n minutes, matching `MerchantLearningEvent`).
+- **Owner decisions applied (2026-09-02):** build the full frozen platform rather than a minimal slice; the APNs key is provisioned before Task 11 so iOS and Android ship together; mobile push registration is in scope as Task 14. One item remains owner-blocked and is marked **stop and report** rather than guessed: whether the Firebase service account carries FCM scope (Task 10 Step 1).
+- **Task 14 exists because of a real gap in the first draft of this plan:** Task 9 shipped a device-token endpoint that nothing would ever have called. The backend would have passed every test while no user received a single push.
 - **Deliberately deferred, matching the proposal:** `DELIVERED`/`READ` states, webhook signature verification (no webhook endpoint exists to secure yet), i18n, marketing send logic, in-app inbox UI.
 - **Known soft spots for the implementer:** Tasks 5, 6, and 9 each open with a "read the existing type first" step because the exact constructor shapes of `EmailMessage`, `SmsRequest`, and the current-user resolution helper were not read in full at plan-writing time. The surrounding structure is correct; adapt the construction lines to what you find rather than forcing the code as written.
