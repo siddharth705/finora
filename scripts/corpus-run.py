@@ -102,7 +102,7 @@ def build_classpath(quiet: bool) -> str:
     return f"{test_classes}:{BACKEND / 'target' / 'classes'}:{CLASSPATH_CACHE.read_text().strip()}"
 
 
-def probe(classpath: str, pdf: Path, timeout: int, synthetic: bool = False) -> dict:
+def probe(classpath: str, pdf: Path, timeout: int, synthetic: bool = False, ocr: bool = False) -> dict:
     """One statement -> one record. Never raises; every failure becomes a record.
 
     A corpus run that dies on file 3 of 16 is not a corpus run, and the statement most likely to
@@ -112,10 +112,16 @@ def probe(classpath: str, pdf: Path, timeout: int, synthetic: bool = False) -> d
     `synthetic` mirrors this script's own `--allow-in-repo-synthetic-corpus`: only a committed,
     reviewed fixture corpus ever sets it, and CorpusProbe's own default keeps every other call site
     on the safe, real-corpus path (see CorpusProbe.probe's doc comment).
+
+    `ocr` routes CorpusProbe through the same RoutingTextAcquirer + TesseractRecogniser production
+    uses, instead of the plain native-text-layer path this sweep has always run. Off by default: it
+    needs `tesseract` on PATH and is much slower (real rasterization + OCR per page).
     """
     cmd = ["java", "-cp", classpath, PROBE_CLASS]
     if synthetic:
         cmd.append("--synthetic")
+    if ocr:
+        cmd.append("--ocr")
     cmd.append(str(pdf))
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
@@ -186,6 +192,10 @@ def main() -> int:
     ap.add_argument("--allow-in-repo-synthetic-corpus", action="store_true",
                      help="skip the in-repo refusal for a committed, reviewed SYNTHETIC fixture "
                           "corpus. Never pass this for a real-statement corpus.")
+    ap.add_argument("--ocr", action="store_true",
+                     help="route acquisition through RoutingTextAcquirer + TesseractRecogniser, the "
+                          "same OCR fallback production uses, instead of the native text-layer-only "
+                          "path this sweep otherwise runs. Requires tesseract on PATH; much slower.")
     args = ap.parse_args()
 
     corpus = args.corpus.resolve()
@@ -209,7 +219,7 @@ def main() -> int:
     for i, pdf in enumerate(pdfs, 1):
         if not args.quiet:
             print(f"  {i:>2}/{len(pdfs)} {pdf.name}", file=sys.stderr)
-        records.append(probe(classpath, pdf, args.timeout, args.allow_in_repo_synthetic_corpus))
+        records.append(probe(classpath, pdf, args.timeout, args.allow_in_repo_synthetic_corpus, args.ocr))
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
     with args.out.open("w") as fh:
