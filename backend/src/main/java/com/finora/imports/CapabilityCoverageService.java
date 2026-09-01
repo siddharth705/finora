@@ -218,6 +218,18 @@ public class CapabilityCoverageService {
             // positioned-text grid CreditCardSummaryExtractor already reads for its own money
             // fields (see PaymentDueDateGridExtractor's own doc comment).
             "PRINTED_PAYMENT_DUE_DATE_GRID",
+            // The same real Axis Bank credit-card statement prints its own account/card number in
+            // this exact scrambled panel too, in two different real layouts (a stacked grid and a
+            // same-row label/value pair) -- recovered the same "read raw positioned text directly"
+            // way, reusing PdfMetadataExtractor's card-number label/value vocabulary. See
+            // AccountNumberGridExtractor's own doc comment.
+            "PRINTED_ACCOUNT_NUMBER_GRID",
+            // A real ICICI credit-card statement prints its own account number with no label at
+            // all, in a row positioned directly under the transaction table's own "Date" column
+            // header, before the first real transaction row -- recognized by that position and by
+            // its shape (a real transaction date never matches a masked-number pattern), not by any
+            // adjacent label text. See AccountNumberTransactionHeaderExtractor's own doc comment.
+            "PRINTED_ACCOUNT_NUMBER_ABOVE_TRANSACTIONS",
             // Two real, independently-uploaded savings-account statements (Central Bank of India,
             // PNB ONE) each close with a regulatory-boilerplate discrepancy-notification sentence
             // that sits before either document's own true end -- swept into the last real

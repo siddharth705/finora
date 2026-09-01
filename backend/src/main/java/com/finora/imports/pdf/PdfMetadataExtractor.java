@@ -175,6 +175,17 @@ public class PdfMetadataExtractor {
             Pattern.compile("(?i)^\\s*Statement\\s+of\\s+Account\\s*:?\\s*$");
     private static final Pattern ACCOUNT_NUMBER_DIGITS = Pattern.compile("\\d{6,20}");
 
+    // SAVING_ACCOUNT_NO_SAME_LINE: a real ICICI savings statement's own account-number field is
+    // embedded mid-sentence, ended by a PERIOD rather than a colon -- "Statement of Transactions
+    // in Saving Account no. <number> in INR for the period ...". ACCOUNT_NUMBER's own
+    // labelPattern-built regex requires a colon for its mid-line branch (see labelPattern's own
+    // doc comment), so this real shape matches neither branch: it is not at the start of the line
+    // (ACCOUNT_NUMBER's start-anchored branch), and it has no colon (ACCOUNT_NUMBER's mid-line
+    // branch). Same optional-colon, unanchored shape as STATEMENT_OF_ACCOUNT_SAME_LINE just above,
+    // for the same reason -- "for the period ..." always trails the value on the same line.
+    private static final Pattern SAVING_ACCOUNT_NO_SAME_LINE =
+            Pattern.compile("(?i)\\bSaving(?:s)?\\s+Account\\s*no\\.?\\s*:?\\s*(\\d{6,20})\\b");
+
     // The account PRODUCTS a statement names when it banners its own identity ("SAVINGS ACCOUNT -
     // <number>") rather than labelling a field. Held as one shared constant, not inlined, because
     // this vocabulary is the thing that drifts: the same words already appear inside
@@ -215,9 +226,13 @@ public class PdfMetadataExtractor {
     // same-line-anywhere usage in extract() below) -- verified against a real SBI credit-card
     // statement, whose "Credit Card Number" label sits alone on its own line, with the masked
     // value on the very next one.
-    private static final String CARD_NUMBER_LABEL_SRC =
+    // Package-private (not private): reused by AccountNumberGridExtractor for the same label/value
+    // vocabulary against raw PositionedText, rather than re-declaring it a second time to drift
+    // from this one -- same reuse-over-duplication discipline CreditCardSummaryExtractor's own doc
+    // comment already documents for StatementSummaryExtractor's row utilities.
+    static final String CARD_NUMBER_LABEL_SRC =
             "(?:(?:Primary\\s+)?(?:Credit\\s+)?Card\\s*(?:No\\.?|Number)|Account\\s*Number)";
-    private static final Pattern CARD_NUMBER_LABEL = Pattern.compile("(?i)" + CARD_NUMBER_LABEL_SRC);
+    static final Pattern CARD_NUMBER_LABEL = Pattern.compile("(?i)" + CARD_NUMBER_LABEL_SRC);
 
     // CARD_NUMBER_VALUE: a card/account number exactly as a real statement prints it -- either the
     // bank's own masked form (X/x/* mask characters interleaved with visible digit groups, e.g.
@@ -227,8 +242,8 @@ public class PdfMetadataExtractor {
     // digit count afterward. Keeping that check separate from the regex, rather than trying to
     // express "6-20 characters, at least 2 real digits, ends in a digit" as one pattern, is what
     // keeps this simple enough to verify by eye and to test.
-    private static final String CARD_NUMBER_VALUE_SRC = "[\\dXx*]{2,}(?:[\\s-][\\dXx*]{2,})*";
-    private static final Pattern CARD_NUMBER_VALUE = Pattern.compile(CARD_NUMBER_VALUE_SRC);
+    static final String CARD_NUMBER_VALUE_SRC = "[\\dXx*]{2,}(?:[\\s-][\\dXx*]{2,})*";
+    static final Pattern CARD_NUMBER_VALUE = Pattern.compile(CARD_NUMBER_VALUE_SRC);
 
     // A_C_ACCOUNT_NUMBER_SAME_LINE: a real canara statement's own account-number field never says
     // "Account"/"Account Number"/"Card Number" at all -- it states the number inline as
@@ -1008,6 +1023,17 @@ public class PdfMetadataExtractor {
                 }
                 continue;
             }
+            // SAVING_ACCOUNT_NO_SAME_LINE (see that constant's own doc comment -- the real ICICI
+            // savings shape neither ACCOUNT_NUMBER nor STATEMENT_OF_ACCOUNT_SAME_LINE covers).
+            if (accountNumberMasked == null) {
+                Matcher savingAcctNo = SAVING_ACCOUNT_NO_SAME_LINE.matcher(line);
+                if (savingAcctNo.find()) {
+                    accountNumberFull = savingAcctNo.group(1);
+                    accountNumberMasked = com.finora.imports.CsvParser.maskAccountNumber(savingAcctNo.group(1));
+                    if (ctx != null) ctx.record("GRID_METADATA_TRAILING_LABEL");
+                    continue;
+                }
+            }
             // A_C_ACCOUNT_NUMBER_SAME_LINE (see that constant's own doc comment -- the real canara
             // shape neither ACCOUNT_NUMBER nor STATEMENT_OF_ACCOUNT_SAME_LINE covers). Validated
             // with looksLikeCardOrAccountNumber/normalizeCardOrAccountNumberValue, the same guard
@@ -1252,7 +1278,7 @@ public class PdfMetadataExtractor {
      *  how many digits a bank chooses to mask. A mask-character requirement was considered and
      *  rejected: a real HSBC statement's own account-number field is fully unmasked, so requiring
      *  one would have rejected a genuine match, not just noise. */
-    private static boolean looksLikeCardOrAccountNumber(String candidate) {
+    static boolean looksLikeCardOrAccountNumber(String candidate) {
         String stripped = candidate.replaceAll("[\\s-]", "");
         if (stripped.length() < 6 || stripped.length() > 20) return false;
         long digitCount = stripped.chars().filter(Character::isDigit).count();
@@ -1270,7 +1296,7 @@ public class PdfMetadataExtractor {
      * @return a two-element array: [0] the value for accountNumberMasked, [1] the unmasked full
      *         number for accountNumberFullForHashingOnly, or null when the value was already masked
      */
-    private static String[] normalizeCardOrAccountNumberValue(String captured) {
+    static String[] normalizeCardOrAccountNumberValue(String captured) {
         String trimmed = captured.trim();
         boolean alreadyMasked = trimmed.chars().anyMatch(c -> c == 'X' || c == 'x' || c == '*');
         if (alreadyMasked) return new String[]{trimmed, null};

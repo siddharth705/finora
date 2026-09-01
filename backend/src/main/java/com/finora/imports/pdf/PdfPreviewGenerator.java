@@ -254,6 +254,18 @@ public class PdfPreviewGenerator {
         // See PaymentDueDateGridExtractor's own doc comment for why PdfMetadataExtractor's
         // line-based reading can never recover this on these two real documents at all.
         LocalDate gridPaymentDueDate = PaymentDueDateGridExtractor.extract(positioned, ctx);
+        // Same reasoning, same document-wide/ungated-on-section-count scope, for the account/card
+        // number itself: a real Axis credit-card statement's own "Credit Card Number" field is
+        // scrambled the same way its Payment Due Date is -- see AccountNumberGridExtractor's own
+        // doc comment.
+        String gridAccountNumberMasked = AccountNumberGridExtractor.extract(positioned, ctx);
+        // A different real document (ICICI) prints its own account number with no label at all,
+        // positioned directly under the transaction table's own "Date" column header -- neither
+        // scrambled nor label-anchored, so AccountNumberGridExtractor alone can't recover it. See
+        // AccountNumberTransactionHeaderExtractor's own doc comment.
+        if (gridAccountNumberMasked == null) {
+            gridAccountNumberMasked = AccountNumberTransactionHeaderExtractor.extract(positioned, ctx);
+        }
 
         if (doc.sections().isEmpty()) {
             // "Never lose information" (see the engineering principles doc) applies at the
@@ -276,7 +288,8 @@ public class PdfPreviewGenerator {
             // section and there is no other candidate it could describe. Withholding it here left
             // the contradiction -- printed activity, nothing staged -- with nothing to state it.
             StagedAccountSection section = buildLedgerSection(userId, filename, emptySection, unknown, ctx,
-                    printedSummary, printedCreditCardSummary, printedDateRange, gridPaymentDueDate);
+                    printedSummary, printedCreditCardSummary, printedDateRange, gridPaymentDueDate,
+                    gridAccountNumberMasked);
             return new PdfGenerationResult(List.of(surfaceUnrecognizedText(section, empty.preTableLines())), ctx,
                     printedCreditCardSummary);
         }
@@ -289,11 +302,12 @@ public class PdfPreviewGenerator {
             // every section exists.
             List<StagedAccountSection> staged = buildSections(userId, filename, doc.sections().get(i),
                     i, doc.sections().size(), ctx, PrintedSummary.NONE, printedCreditCardSummary,
-                    printedDateRange, gridPaymentDueDate);
+                    printedDateRange, gridPaymentDueDate, gridAccountNumberMasked);
             for (StagedAccountSection s : staged) unparseableAcrossDocument.addAll(s.unparseableRows());
             result.addAll(staged);
         }
         result = attributePrintedSummary(result, printedSummary);
+        result = inheritAccountNumberAcrossSections(result);
         // One document's worth, across every section -- the DocumentContext is per-file, and a
         // combined statement's sections all failed (or didn't) as part of the same parse run.
         ctx.recordUnparseable(unparseableAcrossDocument);
@@ -323,7 +337,7 @@ public class PdfPreviewGenerator {
                                                       PrintedSummary printedSummary,
                                                       CreditCardSummaryEvidence printedCreditCardSummary,
                                                       TransactionTableDateRangeExtractor.PrintedDateRange printedDateRange,
-                                                      LocalDate gridPaymentDueDate) {
+                                                      LocalDate gridPaymentDueDate, String gridAccountNumberMasked) {
         List<String> columns = section.rows().isEmpty() ? List.of() : List.copyOf(section.rows().get(0).keySet());
         ProductDiscovery.DiscoveredProduct product = productDiscovery.discover(
                 new ProductEvidenceCollector.Section(columns, section.auxiliaryText(), null,
@@ -342,7 +356,7 @@ public class PdfPreviewGenerator {
             return buildProductSections(filename, section, product, ctx);
         }
         return List.of(buildLedgerSection(userId, filename, section, product, ctx, printedSummary,
-                printedCreditCardSummary, printedDateRange, gridPaymentDueDate));
+                printedCreditCardSummary, printedDateRange, gridPaymentDueDate, gridAccountNumberMasked));
     }
 
     /**
@@ -366,7 +380,7 @@ public class PdfPreviewGenerator {
             // credit-card-ledger-only concept.
             DetectedAccountInfo detected = facts.toDetectedAccountInfo(product, suggestedAccountType,
                     null, null, facts.metadata().statementPeriodStart(), facts.metadata().statementPeriodEnd(), attrs,
-                    null, facts.metadata().paymentDueDate());
+                    null, facts.metadata().paymentDueDate(), null);
             result.add(new StagedAccountSection(detected, List.of(), 0, 0, List.of()));
         }
         return result;
@@ -378,7 +392,7 @@ public class PdfPreviewGenerator {
                                                     DocumentContext ctx, PrintedSummary printedSummary,
                                                     CreditCardSummaryEvidence printedCreditCardSummary,
                                                     TransactionTableDateRangeExtractor.PrintedDateRange printedDateRange,
-                                                    LocalDate gridPaymentDueDate) {
+                                                    LocalDate gridPaymentDueDate, String gridAccountNumberMasked) {
         List<StagedRow> staged = new ArrayList<>();
         // "Never lose information" (see the engineering principles doc) -- a row that fails to
         // normalize is reported with WHY, not just silently absent from the row count. Real cost
@@ -491,7 +505,7 @@ public class PdfPreviewGenerator {
 
         int dupCount = (int) staged.stream().filter(StagedRow::likelyDuplicate).count();
         DetectedAccountInfo detected = buildDetectedAccountInfo(filename, section, staged, balancePoints, product, ctx,
-                printedCreditCardSummary, printedDateRange, gridPaymentDueDate);
+                printedCreditCardSummary, printedDateRange, gridPaymentDueDate, gridAccountNumberMasked);
         // Per section rather than per file: a composite statement's sections have separate balance
         // chains, and one can verify while another does not.
         var verification = importVerifier.verify(documentOrder,
@@ -559,6 +573,62 @@ public class PdfPreviewGenerator {
         return revised;
     }
 
+    /**
+     * A credit-card statement's account/card number belongs to the whole relationship, not any one
+     * section -- the same "effectively always one account" assumption {@code gridPaymentDueDate}/
+     * {@code printedCreditCardSummary} already make elsewhere in this class, applied here as a
+     * POST-PROCESSING fallback rather than a document-wide extraction: the number itself is already
+     * correctly found by {@link PdfMetadataExtractor} on the section that owns it, and what's
+     * missing is only propagating it to a SIBLING section that never found its own.
+     *
+     * <p>Confirmed on two real documents (SBI, IndusInd): both have a genuine, fully-formed
+     * CREDIT_CARD section that DOES find its own {@code accountNumberMasked}, plus a second,
+     * malformed {@code UNKNOWN}-product fragment (a rewards/purchase-detail sub-table {@link
+     * PdfTableLocator} mis-splits into its own section) that never does.
+     *
+     * <p>Scoped narrowly to avoid mis-attributing a genuinely DIFFERENT account's number onto a
+     * sibling: only ever copies FROM a {@code CREDIT_CARD} section (the "one relationship"
+     * assumption applies to a credit card specifically, not to a generic multi-account composite
+     * statement) INTO a sibling whose own {@code detectedProduct} is {@code UNKNOWN} -- never into a
+     * section the pipeline has already positively identified as its own distinct product. A real
+     * composite statement (Shivani_HDFC) has a genuine {@code RECURRING_DEPOSIT} section with its
+     * own certificate number, which must never be overwritten by a sibling account's number; gating
+     * on {@code UNKNOWN} specifically (not "any section missing a number") is what keeps that case
+     * untouched.
+     */
+    private List<StagedAccountSection> inheritAccountNumberAcrossSections(List<StagedAccountSection> sections) {
+        if (sections.size() <= 1) return sections;
+        String sourceAccountNumber = null;
+        for (StagedAccountSection s : sections) {
+            DetectedAccountInfo acc = s.detectedAccount();
+            if (acc != null && "CREDIT_CARD".equals(acc.detectedProduct()) && acc.accountNumberMasked() != null) {
+                sourceAccountNumber = acc.accountNumberMasked();
+                break;
+            }
+        }
+        if (sourceAccountNumber == null) return sections;
+
+        List<StagedAccountSection> revised = new ArrayList<>(sections.size());
+        for (StagedAccountSection s : sections) {
+            DetectedAccountInfo acc = s.detectedAccount();
+            if (acc != null && acc.accountNumberMasked() == null && "UNKNOWN".equals(acc.detectedProduct())) {
+                DetectedAccountInfo updated = new DetectedAccountInfo(
+                        acc.suggestedName(), acc.suggestedAccountType(), acc.openingBalance(), acc.closingBalance(),
+                        acc.statementPeriodStart(), acc.statementPeriodEnd(), sourceAccountNumber, acc.creditLimit(),
+                        acc.totalAmountDue(), acc.paymentDueDate(), acc.accountHolderName(), acc.branchName(),
+                        acc.ifscCode(), acc.bank(), acc.detectedProduct(), acc.productConfidence(),
+                        acc.productNeedsReview(), acc.productEvidence(), acc.productIdentityHash(),
+                        acc.principalAmount(), acc.interestRate(), acc.maturityDate(), acc.maturityAmount(),
+                        acc.installmentAmount(), acc.installmentsPaid(), acc.installmentsTotal());
+                revised.add(new StagedAccountSection(updated, s.rows(), s.totalParsed(), s.flaggedDuplicates(),
+                        s.unparseableRows(), s.verification()));
+            } else {
+                revised.add(s);
+            }
+        }
+        return revised;
+    }
+
     private StagedAccountSection surfaceUnrecognizedText(StagedAccountSection section, List<String> extractedLines) {
         List<UnparseableRow> unparseable = new ArrayList<>();
         for (String line : extractedLines) {
@@ -587,7 +657,7 @@ public class PdfPreviewGenerator {
                                                            DocumentContext ctx,
                                                            CreditCardSummaryEvidence printedCreditCardSummary,
                                                            TransactionTableDateRangeExtractor.PrintedDateRange printedDateRange,
-                                                           LocalDate gridPaymentDueDate) {
+                                                           LocalDate gridPaymentDueDate, String gridAccountNumberMasked) {
         LocalDate statementStart = null;
         LocalDate statementEnd = null;
         BigDecimal openingBalance = null;
@@ -644,7 +714,7 @@ public class PdfPreviewGenerator {
         return facts.toDetectedAccountInfo(product, suggestedAccountTypeFor(product, facts.creditCardSignals()),
                 openingBalance, closingBalance, statementStart, statementEnd, ProductAttributes.empty(),
                 printedCreditCardSummary == null ? null : printedCreditCardSummary.totalAmountDue(),
-                paymentDueDate);
+                paymentDueDate, gridAccountNumberMasked);
     }
 
     /**
@@ -706,11 +776,18 @@ public class PdfPreviewGenerator {
                                                   String suggestedAccountType, BigDecimal openingBalance,
                                                   BigDecimal closingBalance, LocalDate statementStart,
                                                   LocalDate statementEnd, ProductAttributes attrs,
-                                                  BigDecimal totalAmountDue, LocalDate paymentDueDate) {
+                                                  BigDecimal totalAmountDue, LocalDate paymentDueDate,
+                                                  String gridAccountNumberMasked) {
+            // Same precedence as paymentDueDate: PdfMetadataExtractor's own line-based field wins
+            // when present, and the positioned-text grid reading (AccountNumberGridExtractor) is
+            // only tried once that comes up empty -- see that class's own doc comment for why a
+            // real Axis document's "Credit Card Number" field can never be read the line-based way.
+            String accountNumberMasked = metadata.accountNumberMasked() != null
+                    ? metadata.accountNumberMasked() : gridAccountNumberMasked;
             return new DetectedAccountInfo(
                     suggestedName, suggestedAccountType,
                     openingBalance, closingBalance, statementStart, statementEnd,
-                    metadata.accountNumberMasked(), metadata.creditLimit(), totalAmountDue,
+                    accountNumberMasked, metadata.creditLimit(), totalAmountDue,
                     paymentDueDate,
                     metadata.accountHolderName(), metadata.branchName(), metadata.ifscCode(),
                     AccountDto.BankDto.from(bank),
@@ -723,7 +800,7 @@ public class PdfPreviewGenerator {
                     // relationship number, not any one deposit's. Null for a ledger account, whose
                     // number identifies it on its own. See ProductIdentity.forDeposit.
                     ProductIdentity.of(bank.id(), product.type(),
-                            metadata.accountNumberFullForHashingOnly(), metadata.accountNumberMasked(),
+                            metadata.accountNumberFullForHashingOnly(), accountNumberMasked,
                             ProductIdentity.forDeposit(attrs.principalAmount(), attrs.maturityDate(),
                                     attrs.installmentAmount()))
                             .strongKey(),
