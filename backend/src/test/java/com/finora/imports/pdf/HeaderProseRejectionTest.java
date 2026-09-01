@@ -305,6 +305,14 @@ class HeaderProseRejectionTest {
         // YearlessDateResolutionTest and HsbcCreditCardYearlessDateRegressionTest, not this
         // class; listed here only so this inventory sweep accounts for it at all.
         put("hsbc-credit-card-yearless-dates", 1);
+        // Captured for PdfPreviewGenerator.inheritAccountNumberAcrossSections -- its own content
+        // is verified by AccountNumberInheritanceRegressionTest, not this class; listed here only
+        // so this inventory sweep accounts for it at all.
+        put("indusland-credit-card-account-number-inheritance", 2);
+        // Captured for AccountNumberTransactionHeaderExtractor -- its own content is verified by
+        // AccountNumberTransactionHeaderRegressionTest, not this class; listed here only so this
+        // inventory sweep accounts for it at all.
+        put("icici-credit-card-account-number-above-transactions", 1);
     }};
 
     @Test

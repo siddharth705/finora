@@ -1298,4 +1298,42 @@ class PdfMetadataExtractorTest {
         assertThat(metadata.accountHolderName()).isNull();
         assertThat(metadata.branchName()).isEqualTo("SOME TOWN BRANCH");
     }
+
+    /**
+     * SAVING_ACCOUNT_NO_SAME_LINE. A real ICICI savings statement's own account-number field is
+     * embedded mid-sentence, ended by a PERIOD rather than a colon -- "Statement of Transactions
+     * in Saving Account no. <number> in INR for the period ...". ACCOUNT_NUMBER's own
+     * labelPattern-built regex requires a colon for its mid-line branch, so this real shape
+     * matches neither branch: not line-start (ACCOUNT_NUMBER's anchored branch), no colon
+     * (ACCOUNT_NUMBER's mid-line branch). Digits and surrounding wording genericized per the
+     * Synthetic Fixture Policy -- the shape being tested is the label/punctuation, not the real
+     * account number.
+     */
+    @Test
+    void extract_recognizesASavingAccountNumber_embeddedMidSentenceWithATrailingPeriod() {
+        var metadata = extractor.extract(List.of(
+                "Statement of Transactions in Saving Account no. 100200300499 in INR for the period")); // synthetic-ok: invented value, not the real document's
+
+        assertThat(metadata.accountNumberMasked()).endsWith("0499");
+    }
+
+    @Test
+    void extract_recognizesASavingsAccountNumber_pluralSpelling() {
+        var metadata = extractor.extract(List.of(
+                "Statement for Savings Account No. 100200300499")); // synthetic-ok: invented value, not the real document's
+
+        assertThat(metadata.accountNumberMasked()).endsWith("0499");
+    }
+
+    /** Narrow by design: requires the word "Saving"/"Savings" immediately before "Account no" --
+     *  a bare mid-sentence "Account No." (no "Saving(s)" prefix) must keep failing to match, the
+     *  same restraint {@link #extract_doesNotMatchAccountNo_whenItIsNotAtTheStartOfTheLine()}
+     *  already asserts for ACCOUNT_NUMBER itself. Without this narrowing, this pattern would
+     *  reopen the exact false-positive class F22 fixed for the card-number family. */
+    @Test
+    void extract_doesNotMatchABareAccountNo_withoutTheSavingPrefix() {
+        var metadata = extractor.extract(List.of("Please quote your Account No. 500123456789 when calling.")); // synthetic-ok
+
+        assertThat(metadata.accountNumberMasked()).isNull();
+    }
 }
