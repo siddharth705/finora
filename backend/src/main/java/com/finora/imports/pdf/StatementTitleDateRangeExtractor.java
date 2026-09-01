@@ -5,6 +5,7 @@ import com.finora.imports.DocumentContext;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeFormatterBuilder;
+import java.time.format.ResolverStyle;
 import java.util.List;
 import java.util.Locale;
 import java.util.regex.Matcher;
@@ -77,10 +78,22 @@ public final class StatementTitleDateRangeExtractor {
     // inconsistent with isTitleRow's own equalsIgnoreCase just below. parseCaseInsensitive() makes
     // the two checks agree: same real fact, differently capitalized, should not change the
     // outcome.
+    //
+    // Bug fix: the default resolver style (SMART) silently COERCES an invalid calendar date --
+    // confirmed directly: "30 Feb 2026" resolved to 2026-02-28, "31 Apr 2026" to 2026-04-30 --
+    // rather than rejecting it, which is exactly wrong for a value read off a real document: a
+    // misread digit should fail to parse, not confidently report a different, wrong date. STRICT
+    // rejects all four invalid combinations confirmed above while still parsing every valid real
+    // date (including leap years) the same as before. STRICT requires the proleptic year field
+    // ("uuuu") rather than year-of-era ("yyyy") to resolve to a LocalDate at all -- confirmed
+    // empirically that "yyyy" under STRICT fails to parse even a genuinely valid date; "uuuu" does
+    // not change what text matches (both are 4-digit numeric fields), only how the parsed value is
+    // resolved.
     private static final DateTimeFormatter DATE_FORMAT = new DateTimeFormatterBuilder()
             .parseCaseInsensitive()
-            .appendPattern("d MMM yyyy")
-            .toFormatter(Locale.ENGLISH);
+            .appendPattern("d MMM uuuu")
+            .toFormatter(Locale.ENGLISH)
+            .withResolverStyle(ResolverStyle.STRICT);
 
     public record PrintedDateRange(LocalDate start, LocalDate end) {
         public static final PrintedDateRange NONE = new PrintedDateRange(null, null);
@@ -107,7 +120,12 @@ public final class StatementTitleDateRangeExtractor {
 
             LocalDate start = parseDate(m.group(1));
             LocalDate end = parseDate(m.group(2));
-            if (start != null && end != null) {
+            // Bug fix: a reversed range (start after end) used to be accepted as-is. Nothing about
+            // the structural match (title, alignment, gap) rules that out -- it's only the dates
+            // themselves that would be wrong, the same way a malformed source row could produce
+            // one. Treated as a non-match, same as any other structural failure above: keep
+            // searching rather than returning a period nobody could have printed in that order.
+            if (start != null && end != null && !start.isAfter(end)) {
                 if (ctx != null) ctx.record("PRINTED_TITLE_ADJACENT_DATE_RANGE");
                 return new PrintedDateRange(start, end);
             }

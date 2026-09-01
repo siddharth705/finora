@@ -72,6 +72,42 @@ class StatementTitleDateRangeExtractorTest {
         assertThat(range).isSameAs(StatementTitleDateRangeExtractor.PrintedDateRange.NONE);
     }
 
+    // Bug fix: a reversed range (start printed after end) used to be accepted as-is -- the
+    // structural checks (title, alignment, gap, date shape) have nothing to say about date
+    // ORDER. Nothing in the real corpus prints one this way; this proves a malformed one would be
+    // rejected rather than confidently reported backwards.
+    @Test
+    void extract_returnsNone_whenTheRangeIsReversed() {
+        var range = StatementTitleDateRangeExtractor.extract(List.of(
+                run("Account Statement", 33.9f, 110.5f),
+                run("31 Jul 2026 - 01 Jul 2026", 33.9f, 126.0f)));
+
+        assertThat(range).isSameAs(StatementTitleDateRangeExtractor.PrintedDateRange.NONE);
+    }
+
+    // Bug fix: the default (SMART) resolver style silently coerces an invalid calendar date --
+    // confirmed directly that "30 Feb 2026" used to resolve to 2026-02-28 rather than being
+    // rejected. STRICT makes a misread/malformed date fail to parse instead of confidently
+    // reporting a different, wrong date.
+    @Test
+    void extract_returnsNone_whenTheDateIsNotARealCalendarDay() {
+        var range = StatementTitleDateRangeExtractor.extract(List.of(
+                run("Account Statement", 33.9f, 110.5f),
+                run("30 Feb 2026 - 31 Mar 2026", 33.9f, 126.0f)));
+
+        assertThat(range).isSameAs(StatementTitleDateRangeExtractor.PrintedDateRange.NONE);
+    }
+
+    // Same STRICT-resolver fix, on the boundary that must still work: a real leap-year Feb 29.
+    @Test
+    void extract_stillAcceptsALeapYearFebruary29th() {
+        var range = StatementTitleDateRangeExtractor.extract(List.of(
+                run("Account Statement", 33.9f, 110.5f),
+                run("01 Feb 2028 - 29 Feb 2028", 33.9f, 126.0f)));
+
+        assertThat(range.end()).isEqualTo(LocalDate.of(2028, 2, 29));
+    }
+
     @Test
     void extract_returnsNone_whenNoTitleRowPrecedesTheDateRange() {
         // Proves this is not a generic "find any bare date range" pattern -- the same date row
