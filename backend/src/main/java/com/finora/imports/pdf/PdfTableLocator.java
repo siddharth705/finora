@@ -1660,6 +1660,21 @@ public class PdfTableLocator {
         // overriding an already-correct header-based section on some other document; this only
         // ever ADDS content nothing else was going to claim. Inserted at the front of `sections`
         // (not appended) since it physically precedes everything else found.
+        //
+        // Known side effect, downstream in PdfPreviewGenerator, not fixed here: turning a
+        // document's section count from 1 to 2 also turns off TransactionTableDateRangeExtractor /
+        // StatementTitleDateRangeExtractor (both gated on doc.sections().size() <= 1) and
+        // attributePrintedSummary's reviseSummaryTotals (gated on exactly one non-empty section) --
+        // reasoning that a document with more than one section might be a genuine multi-account
+        // composite, where one section's printed date range or summary shouldn't be copied onto
+        // another. For the real HSBC documents this recovers, that reasoning doesn't actually apply
+        // (the "second section" is an unrelated Loan Summary table, not another account) but
+        // PdfPreviewGenerator has no way to tell the difference from a section count alone. Net
+        // effect: these fields go from "wrongly attributed to the unrelated table" (when it was the
+        // sole section) to "not attributed to either" -- worse for those two fields specifically,
+        // better for the transaction rows themselves. Left as a known, undecided trade-off rather
+        // than guessed at, since fixing it correctly needs its own evidence-gated design, not a
+        // shortcut here.
         if (firstHeaderRowIndex > 0) {
             LocatedSection preHeaderInferred = inferHeaderlessSection(rows.subList(0, firstHeaderRowIndex), ctx);
             if (preHeaderInferred != null) {
@@ -5175,10 +5190,10 @@ public class PdfTableLocator {
     /** {@link #HEADERLESS_MIN_TRANSACTION_ROWS}'s own escape hatch: a candidate pool too small to
      *  trust on row count alone can still be trusted when the document's own printed balance
      *  summary proves it. Real HSBC evidence: a genuinely headerless statement with exactly ONE
-     *  real transaction (one short of the floor) prints both "OPENING BALANCE 1,582.00" and
-     *  "NET OUTSTANDING BALANCE 0.00" as ordinary same-line label/value pairs, and that one
-     *  transaction is itself "1,582.00 CR" -- a payment that exactly and only accounts for the
-     *  difference. Same "the printed data proves itself, not an invented threshold" reasoning
+     *  real transaction (one short of the floor) prints both "OPENING BALANCE" and "NET
+     *  OUTSTANDING BALANCE" as ordinary same-line label/value pairs, and that one transaction is
+     *  itself a CR payment that exactly and only accounts for the difference between the two
+     *  printed figures. Same "the printed data proves itself, not an invented threshold" reasoning
      *  {@link #resolveDebitCreditByBalanceChain} already uses for header-based tables, just against
      *  explicit summary labels instead of a printed running-balance column (this document's
      *  transaction line carries no balance column of its own to chain against).
@@ -5188,26 +5203,31 @@ public class PdfTableLocator {
      *  guess" philosophy). A near-miss proves nothing; it is not treated as corroboration.
      *
      *  <p>Narrow by design: only the two exact label phrases HSBC prints are recognized, not a
-     *  general "any balance summary" pattern -- see {@link #sameLineLabeledAmount}. A second real
+     *  general "any balance summary" pattern -- see {@link #findLabeledRow}. A second real
      *  HSBC document (10 real transactions, mostly unmarked debits) confirmed the same two labels
      *  and the same exact-reconciliation arithmetic hold beyond the original one-transaction case.
      *  Returns false (never guesses) whenever either label is absent, any candidate's own amount
      *  cannot be found at all, or the arithmetic doesn't land exactly -- the caller's existing
-     *  floor rejection is always the safe default. */
+     *  floor rejection is always the safe default. Calls {@link #findLabeledRow} independently of
+     *  {@link #tryCorroboratedFallback}'s own call for the SAME two labels on the SAME {@code
+     *  rows} -- a deliberately redundant second scan rather than threading the resolved value
+     *  through, so the two can never read a different row for the same label: {@link
+     *  #findLabeledRow} is a pure function of its arguments, so two calls on identical input
+     *  always agree. */
     private boolean corroboratedByPrintedBalanceReconciliation(
             List<List<PositionedText>> candidates, List<List<PositionedText>> rows, DocumentContext ctx) {
         if (candidates.isEmpty()) return false;
-        BigDecimal opening = sameLineLabeledAmount(rows, "opening balance");
-        BigDecimal closing = sameLineLabeledAmount(rows, "net outstanding balance");
+        LabeledRow opening = findLabeledRow(rows, "opening balance");
+        LabeledRow closing = findLabeledRow(rows, "net outstanding balance");
         if (opening == null || closing == null) return false;
 
-        BigDecimal projected = opening;
+        BigDecimal projected = opening.amount();
         for (List<PositionedText> candidate : candidates) {
             BigDecimal signed = signedTransactionAmount(candidate);
             if (signed == null) return false;
             projected = projected.add(signed);
         }
-        if (projected.compareTo(closing) != 0) return false;
+        if (projected.compareTo(closing.amount()) != 0) return false;
         if (ctx != null) ctx.record("HEADERLESS_BALANCE_RECONCILIATION_CORROBORATED");
         return true;
     }
@@ -5221,7 +5241,7 @@ public class PdfTableLocator {
     /** Recomputes the transaction-shaped candidate pool (same as
      *  {@link #inferHeaderlessSectionViaClustering}'s own, but the clustering path's `candidates`
      *  local isn't visible here), narrowed to rows strictly BETWEEN the document's own "OPENING
-     *  BALANCE" and "NET OUTSTANDING BALANCE" labels (see {@link #rowIndexOfLabel}). Real HSBC
+     *  BALANCE" and "NET OUTSTANDING BALANCE" labels (see {@link #findLabeledRow}). Real HSBC
      *  evidence across two documents shows the coincidental date+amount noise that defeats the
      *  clustering path (the statement generation date, the billing period, the closing-balance
      *  line itself) always sits OUTSIDE that bracket -- before OPENING BALANCE, or ON the NET
@@ -5236,12 +5256,21 @@ public class PdfTableLocator {
      *  the document anyway once neither label resolves to a row, so declining earlier here changes
      *  nothing about the outcome. Null when no candidates exist, or when the ones that do exist
      *  don't reconcile against the document's own printed balance summary -- same "never guess"
-     *  contract as every other point in this class that can return null. */
+     *  contract as every other point in this class that can return null.
+     *
+     *  <p>Known boundary, not yet evidenced by any real document: {@code firstHeaderRowIndex}
+     *  (see its own doc comment) anchors on the first row RECOGNIZED as header-shaped, even if
+     *  {@link #closeCurrentSection} later suppresses it as a misdetected payment-summary panel
+     *  ({@link #looksLikePaymentSummaryPanel}, capped at {@link #PAYMENT_SUMMARY_PANEL_MAX_ROWS}
+     *  rows). If real transaction content exists between such a suppressed panel and a later
+     *  genuine header, this method's slice never reaches it -- no worse than before this fallback
+     *  existed (that content was already unrecoverable whenever a later header made {@code
+     *  sections} non-empty), just not newly fixed by it either. */
     private LocatedSection tryCorroboratedFallback(List<List<PositionedText>> rows, DocumentContext ctx) {
         Map<Integer, Set<Integer>> yearsByPage = yearsByPage(rows);
-        int openingIdx = rowIndexOfLabel(rows, "opening balance");
-        int closingIdx = rowIndexOfLabel(rows, "net outstanding balance");
-        boolean bracketed = openingIdx >= 0 && closingIdx > openingIdx;
+        LabeledRow opening = findLabeledRow(rows, "opening balance");
+        LabeledRow closing = findLabeledRow(rows, "net outstanding balance");
+        boolean bracketed = opening != null && closing != null && closing.index() > opening.index();
         List<List<PositionedText>> signedCandidates = new ArrayList<>();
         // Every OTHER row's own flattened line -- becomes this section's auxiliaryText below, the
         // same "everything that wasn't a staged row" contract bucketHeaderlessRowsWithContinuation
@@ -5253,12 +5282,16 @@ public class PdfTableLocator {
         List<String> auxiliaryText = new ArrayList<>();
         for (int i = 0; i < rows.size(); i++) {
             List<PositionedText> row = rows.get(i);
-            boolean withinLedger = bracketed && i > openingIdx && i < closingIdx;
+            boolean withinLedger = bracketed && i > opening.index() && i < closing.index();
+            if (!withinLedger) {
+                String line = lineOf(row);
+                if (!line.isBlank()) auxiliaryText.add(line);
+                continue;
+            }
             Set<Integer> rowYears = row.isEmpty() ? Set.of()
                     : yearsByPage.getOrDefault(row.get(0).pageIndex(), Set.of());
             List<PositionedText> resolved = substituteYearlessDates(row, rowYears);
-            BigDecimal signed = withinLedger ? signedTransactionAmount(resolved) : null;
-            if (withinLedger && isTransactionShapedRow(resolved, rowYears) && signed != null) {
+            if (isTransactionShapedRow(resolved, rowYears) && signedTransactionAmount(resolved) != null) {
                 signedCandidates.add(resolved);
             } else {
                 String line = lineOf(row);
@@ -5283,26 +5316,38 @@ public class PdfTableLocator {
      *  new sign-handling logic. A row with no marker cell of its own is staged as "DR" -- the same
      *  implicit-purchase default {@link #signedTransactionAmount} already applies when computing
      *  the sign that got this candidate corroborated in the first place; staging anything else
-     *  here would contradict the arithmetic that already vouched for it. Returns null (never a
-     *  partial section) if a candidate turns out not to carry even a date and an amount once
-     *  individually inspected -- should not happen given {@link #tryCorroboratedFallback}'s own
-     *  admission gate, but this method makes no assumption about how its candidates were
-     *  selected. */
+     *  here would contradict the arithmetic that already vouched for it. Marker detection is
+     *  {@link #rowMarkerCredit}, the SAME function {@link #signedTransactionAmount} uses, so the
+     *  sign staged here can never disagree with the sign that was actually validated -- an earlier
+     *  version of this method matched "CR"/"DR" independently (first cell wins) while {@link
+     *  #signedTransactionAmount} matched independently too (every cell overwrites, so the last
+     *  cell won), which could silently stage the opposite sign from the one the reconciliation
+     *  arithmetic actually checked whenever a row carried more than one marker-shaped cell (e.g. a
+     *  narration token that happens to read "DR" on its own, ahead of the row's real trailing
+     *  marker). Known caveat, not yet correctable without new plumbing: {@link
+     *  #TransactionNormalizer} downstream records DR_CR_SUFFIX purely from this staged string's
+     *  own shape, with no way to tell a document-printed marker from this default -- an unmarked
+     *  row's DR_CR_SUFFIX capability count is therefore not reliable evidence of what the source
+     *  document actually prints for this one narrow code path. Returns null (never a partial
+     *  section) if a candidate turns out not to carry even a date and an amount once individually
+     *  inspected -- should not happen given {@link #tryCorroboratedFallback}'s own admission gate,
+     *  but this method makes no assumption about how its candidates were selected. */
     private LocatedSection buildSectionFromSignedCandidates(
             List<List<PositionedText>> signedCandidates, List<String> auxiliaryText, DocumentContext ctx) {
         List<Map<String, String>> staged = new ArrayList<>();
         for (List<PositionedText> candidate : signedCandidates) {
+            Boolean credit = rowMarkerCredit(candidate);
             String date = null;
             String amount = null;
-            String marker = null;
             StringBuilder description = new StringBuilder();
             for (PositionedText cell : candidate) {
                 String text = cell.text().trim();
                 if (text.isEmpty()) continue;
                 if (date == null && CsvParser.parseDate(text) != null) {
                     date = text;
-                } else if (marker == null && (text.equalsIgnoreCase("CR") || text.equalsIgnoreCase("DR"))) {
-                    marker = text.toUpperCase(Locale.ENGLISH);
+                } else if (CsvParser.hasTrailingDrCrMarker(text)) {
+                    // Already accounted for via rowMarkerCredit above -- excluded from
+                    // description, nothing further to stage from this cell.
                 } else if (amount == null && text.contains(".") && CsvParser.parseNumeric(text) != null) {
                     amount = text;
                 } else {
@@ -5311,7 +5356,7 @@ public class PdfTableLocator {
                 }
             }
             if (date == null || amount == null) return null;
-            if (marker == null) marker = "DR";
+            String marker = (credit != null && credit) ? "CR" : "DR";
             Map<String, String> bucketed = new LinkedHashMap<>();
             bucketed.put("Date", date);
             bucketed.put("Description", description.toString());
@@ -5323,17 +5368,29 @@ public class PdfTableLocator {
         return new LocatedSection(auxiliaryText, staged, ExtractionEvidence.NONE);
     }
 
-    /** The value on the SAME physical row as a label whose trimmed text matches {@code label}
-     *  case-insensitively -- an ordinary "Label ... Value" line, not the label-above-value grid
-     *  {@link StatementSummaryExtractor} matches. Null (never a guess) when the label isn't found,
-     *  found more than once with different amounts (ambiguous -- which one is real?), or the row
-     *  carries no parseable amount at all. */
-    private static BigDecimal sameLineLabeledAmount(List<List<PositionedText>> rows, String label) {
-        BigDecimal found = null;
-        for (List<PositionedText> row : rows) {
+    /** A row index paired with the amount found on that same row -- see {@link #findLabeledRow}. */
+    private record LabeledRow(int index, BigDecimal amount) {}
+
+    /** Locates the row carrying a cell whose trimmed text matches {@code label}
+     *  case-insensitively, together with the parseable amount on that SAME row -- an ordinary
+     *  "Label ... Value" line, not the label-above-value grid {@link StatementSummaryExtractor}
+     *  matches. One combined lookup used both to bracket the ledger region ({@link
+     *  #tryCorroboratedFallback}) and to read the reconciliation amount ({@link
+     *  #corroboratedByPrintedBalanceReconciliation}) -- a single pure function of {@code (rows,
+     *  label)} so the row a positional bracket is built from and the row a reconciliation amount
+     *  is read from can never silently diverge, the way two independently-matching helpers could.
+     *  Null (never a guess) when the label isn't found, is found on more than one row with
+     *  DIFFERENT amounts (ambiguous -- which one is real?), or the matching row carries no
+     *  parseable amount at all. When the label is found on more than one row with the SAME
+     *  amount, the first occurrence's row index is used -- the value is unambiguous even when its
+     *  exact physical position isn't. */
+    private static LabeledRow findLabeledRow(List<List<PositionedText>> rows, String label) {
+        int foundIndex = -1;
+        BigDecimal foundAmount = null;
+        for (int i = 0; i < rows.size(); i++) {
             boolean labelPresent = false;
             BigDecimal amount = null;
-            for (PositionedText cell : row) {
+            for (PositionedText cell : rows.get(i)) {
                 String text = cell.text().trim();
                 if (text.equalsIgnoreCase(label)) labelPresent = true;
                 if (amount == null && text.contains(".") && CsvParser.parseNumeric(text) != null) {
@@ -5341,52 +5398,65 @@ public class PdfTableLocator {
                 }
             }
             if (labelPresent && amount != null) {
-                if (found != null && found.compareTo(amount) != 0) return null;
-                found = amount;
+                if (foundAmount != null && foundAmount.compareTo(amount) != 0) return null;
+                if (foundIndex < 0) foundIndex = i;
+                foundAmount = amount;
             }
         }
-        return found;
+        return foundIndex < 0 ? null : new LabeledRow(foundIndex, foundAmount);
     }
 
-    /** The index of the first row carrying a cell whose trimmed text matches {@code label}
-     *  case-insensitively -- companion lookup to {@link #sameLineLabeledAmount}, used by {@link
-     *  #tryCorroboratedFallback} to bracket the ledger region rather than read its value. -1 when
-     *  not found. */
-    private static int rowIndexOfLabel(List<List<PositionedText>> rows, String label) {
-        for (int i = 0; i < rows.size(); i++) {
-            for (PositionedText cell : rows.get(i)) {
-                if (cell.text().trim().equalsIgnoreCase(label)) return i;
+    /** True/false for a row's own credit/debit marker when EXACTLY one cell in the row carries
+     *  one; null when no cell does, or when more than one does (ambiguous -- never guesses which
+     *  is authoritative). Shared by {@link #signedTransactionAmount} and {@link
+     *  #buildSectionFromSignedCandidates} so the two can never disagree about a row's sign -- see
+     *  {@link #buildSectionFromSignedCandidates}'s own doc comment for the real inconsistency this
+     *  replaced. Reuses {@link CsvParser#hasTrailingDrCrMarker}/{@link
+     *  CsvParser#detectSignFromRawAmount} (bare or parenthesized, either case, case-insensitive)
+     *  rather than an exact "CR"/"DR" cell-text match, so a glued or parenthesized marker (e.g. a
+     *  Union Bank-style "50000.00(Cr)") is recognized the same way every other marker check in
+     *  this codebase already is -- deliberately not {@code detectSignFromRawAmount}'s own leading
+     *  "+" signal, which exists for a different bank's different convention and would false-fire
+     *  on any unrelated cell starting with "+" (a phone number, for instance) if applied to every
+     *  cell in a row rather than a single already-known amount column. */
+    private static Boolean rowMarkerCredit(List<PositionedText> row) {
+        Boolean credit = null;
+        int markerCells = 0;
+        for (PositionedText cell : row) {
+            String text = cell.text().trim();
+            if (CsvParser.hasTrailingDrCrMarker(text)) {
+                markerCells++;
+                credit = CsvParser.detectSignFromRawAmount(text);
             }
         }
-        return -1;
+        return markerCells == 1 ? credit : null;
     }
 
     /** A transaction candidate's own contribution to a credit-card outstanding balance, signed by
      *  its printed CR/DR marker -- the OPPOSITE convention from {@link CsvParser#parseNumeric}'s
      *  own Dr/Cr handling, which exists for a bank account's own balance (Dr = negative, Cr =
      *  positive). A credit-card payment (CR) REDUCES what is owed; a purchase (DR) increases it --
-     *  so this negates parseNumeric's own sign rather than reusing it directly. When a marker cell
-     *  is present, it decides the sign (HSBC evidence: "1,582.00" and "CR" are two separate
-     *  {@link PositionedText} runs, never one combined token). When no marker cell is found at
-     *  all, defaults to DR (a purchase) -- a second real HSBC document shows most genuine debit
-     *  rows print no marker; only credits (payments, refunds, EMI-conversion reversals) are
-     *  marked. Safe only because the caller ({@link #tryCorroboratedFallback}) already restricts
-     *  candidates to the document's own OPENING BALANCE .. NET OUTSTANDING BALANCE bracket, and
-     *  because {@link #corroboratedByPrintedBalanceReconciliation}'s exact-arithmetic check is a
-     *  second, independent guard that still refuses to corroborate if this default is ever wrong
-     *  for a given row. Null, never a guess, when no amount cell is found at all. */
+     *  so this negates parseNumeric's own sign rather than reusing it directly. When {@link
+     *  #rowMarkerCredit} finds exactly one marker cell, it decides the sign (HSBC evidence: the
+     *  amount and its CR/DR marker are two separate {@link PositionedText} runs, never one
+     *  combined token). When no marker cell is found at all (or more than one, ambiguously), defaults to
+     *  DR (a purchase) -- a second real HSBC document shows most genuine debit rows print no
+     *  marker; only credits (payments, refunds, EMI-conversion reversals) are marked. Safe only
+     *  because the caller ({@link #tryCorroboratedFallback}) already restricts candidates to the
+     *  document's own OPENING BALANCE .. NET OUTSTANDING BALANCE bracket, and because {@link
+     *  #corroboratedByPrintedBalanceReconciliation}'s exact-arithmetic check is a second,
+     *  independent guard that still refuses to corroborate if this default is ever wrong for a
+     *  given row. Null, never a guess, when no amount cell is found at all. */
     private static BigDecimal signedTransactionAmount(List<PositionedText> row) {
         BigDecimal amount = null;
-        Boolean credit = null;
         for (PositionedText cell : row) {
             String text = cell.text().trim();
             if (amount == null && text.contains(".") && CsvParser.parseNumeric(text) != null) {
                 amount = CsvParser.parseNumeric(text);
             }
-            if (text.equalsIgnoreCase("CR")) credit = true;
-            else if (text.equalsIgnoreCase("DR")) credit = false;
         }
         if (amount == null) return null;
+        Boolean credit = rowMarkerCredit(row);
         boolean isCredit = credit != null && credit;
         BigDecimal magnitude = amount.abs();
         return isCredit ? magnitude.negate() : magnitude;
