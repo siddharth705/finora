@@ -3,6 +3,44 @@ import { render, screen, waitFor, fireEvent, within } from '@testing-library/rea
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+
+// Phase 4b's wizard-step AnimatePresence, mocked out the same way Button.tsx/IconButton.tsx's own
+// tests treat framer-motion: an implementation detail, not something worth exercising for real.
+// Without this, AnimatePresence's real mode="wait" exit-then-enter sequencing depends on jsdom's
+// requestAnimationFrame timing, which a synchronous getByRole() right after a step-changing click
+// (e.g. pickAndUploadPdf -> "Confirm Import") outruns -- the outgoing step's content is still
+// mid-exit and the incoming step hasn't mounted yet. AnimatePresence here is a plain passthrough
+// (every child renders immediately, none held back for an exit animation) and motion.div is a
+// plain div, so step swaps in tests are synchronous like everything else on this page.
+vi.mock('framer-motion', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('framer-motion')>();
+  const React = await import('react');
+  // Defined once at mock-module-eval time, not inside the Proxy's `get` trap -- a `get` trap that
+  // built a fresh forwardRef(...) component on every property access gave `motion.div` a new
+  // component identity on every single render (JSX evaluates `motion.div` as a property read each
+  // render), so React tore down and remounted the whole step subtree every render, wiping the file
+  // input's pending change before Import.tsx's onChange handler ever saw it.
+  const MockedMotionDiv = React.forwardRef((props: any, ref: any) => {
+    const { initial, animate, exit, transition, ...domProps } = props;
+    return React.createElement('div', { ref, ...domProps });
+  });
+  return {
+    ...actual,
+    AnimatePresence: ({ children }: { children?: React.ReactNode }) => React.createElement(React.Fragment, null, children),
+    // `actual.motion` is itself a Proxy that manufactures `motion.button`/`.svg`/etc. (and
+    // `.create`) lazily on access -- spreading it into a plain object silently drops every one of
+    // those except whichever happened to already be accessed, which broke Button.tsx/IconButton.tsx
+    // (imported transitively by design-system/index.ts) the moment this mock is active. Wrapping
+    // it in a Proxy instead intercepts only `div` and forwards everything else to the real thing.
+    motion: new Proxy(actual.motion, {
+      get(target, prop, receiver) {
+        if (prop === 'div') return MockedMotionDiv;
+        return Reflect.get(target, prop, receiver);
+      },
+    }),
+  };
+});
+
 import Import from './Import';
 import { AuthProvider } from '../context/AuthContext';
 import { importApi, importJobsApi, statementImportsApi, categoriesApi, accountsApi, type ImportJobProgress } from '../api/endpoints';
@@ -895,6 +933,49 @@ describe('Import — duplicate review gates the import', () => {
       statementPeriodStart: null, statementPeriodEnd: null, importDurationMs: 12, source: 'PDF',
     } as never);
     expect(await screen.findByText(/import complete/i)).toBeInTheDocument();
+  });
+
+  /**
+   * Phase 4b regression test. Collapsing the summary step's two early `return`s into one
+   * AnimatePresence tree removed the structural guarantee that the discard-confirmation dialog
+   * could never render alongside the summary screen -- every step now shares one render tree, and
+   * that dialog sits outside it as persistent chrome. Without `disabled={confirming}` on the link,
+   * a user who has second thoughts and clicks "Discard and start over" while their confirm is
+   * already in flight ends up with the discard dialog stacked on top of the success screen that
+   * confirm just produced -- and answering it fires discardSession() against a session the backend
+   * has already finalized. Caught by adversarial review, not by the suite as it stood.
+   */
+  it('blocks "Discard and start over" while the confirm request is in flight', async () => {
+    stageRows([stagedRow('BLINKIT GROCERIES 9982', false)]);
+    let resolveConfirm: (r: Awaited<ReturnType<typeof importApi.confirm>>) => void;
+    vi.mocked(importApi.confirm).mockReset().mockReturnValue(
+      new Promise((resolve) => { resolveConfirm = resolve; })
+    );
+    const user = userEvent.setup();
+    renderImport();
+
+    await pickAndUploadPdf(user);
+    await waitFor(() => expect(confirmButton()).toBeEnabled());
+
+    const discardLink = screen.getByRole('button', { name: /discard and start over/i });
+    expect(discardLink).toBeEnabled();
+
+    await user.click(confirmButton());
+    expect(discardLink).toBeDisabled();
+    // The click a real user would make anyway -- it must not open the dialog.
+    await user.click(discardLink);
+    expect(screen.queryByText('Discard this import and start over?')).not.toBeInTheDocument();
+
+    resolveConfirm!({
+      imported: 1, skipped: 0, duplicatesDetected: 0, transfersIdentified: 0, newMerchantsLearned: 0,
+      accountsCreated: [], productsCreated: {}, categoriesAssigned: {}, warnings: [], account: null,
+      totalCredits: 0, totalDebits: 486, statementOpeningBalance: null, statementClosingBalance: null,
+      statementPeriodStart: null, statementPeriodEnd: null, importDurationMs: 12, source: 'PDF',
+    } as never);
+
+    // The summary screen arrives clean -- no discard dialog stacked on top of it.
+    expect(await screen.findByText(/import complete/i)).toBeInTheDocument();
+    expect(screen.queryByText('Discard this import and start over?')).not.toBeInTheDocument();
   });
 
   /**

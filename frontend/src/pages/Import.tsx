@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { CheckCircle2, UploadCloud, AlertTriangle, Clock, FileText, FileSpreadsheet, Trash2, RefreshCw } from 'lucide-react';
 import { importApi, importJobsApi, statementImportsApi, categoriesApi, accountsApi, type StagingResult } from '../api/endpoints';
@@ -140,6 +141,19 @@ export default function Import() {
   const retryState = navState?.kind === 'retry' ? navState : null;
 
   const [step, setStep] = useState<Step>('upload');
+  // "disables both motion props entirely rather than just shrinking them" -- same convention
+  // Button.tsx/QuickActionCard.tsx already established: an empty props object means the step's
+  // motion.div mounts/unmounts in its final state with no transition at all, and AnimatePresence
+  // never delays the unmount waiting on an exit animation that isn't there.
+  const prefersReducedMotion = useReducedMotion();
+  const stepMotionProps = prefersReducedMotion
+    ? {}
+    : {
+        initial: { opacity: 0, y: 8 },
+        animate: { opacity: 1, y: 0 },
+        exit: { opacity: 0, y: -8 },
+        transition: { duration: 0.18, ease: 'easeOut' as const },
+      };
   const [error, setError] = useState<string | null>(null);
   // Sprint 4 item 22. Whether the CURRENT error banner is one the user can fix themselves --
   // distinct from `error` itself so the banner can pick warning (ACTION_REQUIRED) vs danger
@@ -756,15 +770,13 @@ export default function Import() {
     setPasswordState(null);
     setOwnershipWarningOpen(false);
     setOwnershipWarningAcknowledged(false);
+    // Same reset the line above does for the ownership dialog, which this one was missing. Before
+    // Phase 4b the omission was invisible -- the summary step early-returned above this dialog's
+    // render, so a left-open flag could never resurface. Now that every step shares one tree, a
+    // stale `true` would pop the discard dialog open again on the NEXT import's review step.
+    setConfirmDiscardReviewOpen(false);
     accountsApi.list().then(setExistingAccounts).catch((e) => console.error('Failed to load accounts', e));
     clearArrivalState();
-  }
-
-  if (step === 'summary' && summary) {
-    return <ImportSummaryScreen summary={summary} onDone={() => navigate('/app')} onImportAnother={startOver} />;
-  }
-  if (step === 'summary' && multiSummary) {
-    return <MultiImportSummaryScreen summaries={multiSummary} onDone={() => navigate('/app')} onImportAnother={startOver} />;
   }
 
   // Multi-account gate, derived rather than tracked -- one number over every section's own review,
@@ -785,160 +797,561 @@ export default function Import() {
 
   return (
     <div className="space-y-4">
-      {/* A queued import replaces the dropzone while it runs -- there is nothing useful to do on
-          this page until it lands, and offering a second upload alongside it would start a race
-          the user did not ask for. */}
-      {step === 'upload' && jobId && (
-        <>
-          <ImportProgress
-            jobId={jobId}
-            onReady={(sessionId) => void openReviewedJob(sessionId)}
-            onGaveUp={(job) => {
-              // Cancelling is the user's own decision and needs no explanation, so that path
-              // returns straight to the dropzone. A failure does NOT reset here -- ImportTimeline
-              // (below) is about to show the curated reason and the way back to the dropzone; an
-              // immediate reset would unmount it before anyone could read either.
-              if (job.status !== 'FAILED') {
-                setJobId(null);
-                setUploadProgress(null);
-                clearArrivalState();
-              }
-            }}
-          />
-          <ImportTimeline
-            jobId={jobId}
-            onDismiss={() => {
-              setJobId(null);
-              setUploadProgress(null);
-              clearError();
-              clearArrivalState();
-            }}
-          />
-        </>
+      {error && (
+        // Sprint 4 item 22: warning (amber) for a code the user can fix themselves, matching the
+        // password panel a few lines below and ImportTimeline's identical ACTION_REQUIRED/FAILED
+        // split for the async path; danger (red) stays the default for everything else, unchanged.
+        //
+        // One banner above the step content, rather than one per step. Pre-Phase-4b this sat
+        // between the two steps' blocks in source order, so its position was step-dependent: above
+        // the transaction table on 'review', but below the dropzone on 'upload'. Consolidating to
+        // a single instance means picking one position, and above wins -- a confirmImport() failure
+        // buried under a long transaction table is the case that actually goes unnoticed. The
+        // deliberate consequence is that an upload-step error now renders above the dropzone
+        // instead of below it.
+        <p className={`text-sm flex items-center gap-2 ${errorActionRequired ? 'text-warning' : 'text-danger'}`}>
+          <AlertTriangle size={14} /> {error}
+        </p>
       )}
 
-      {step === 'upload' && !jobId && pendingPdf && (
-        <form
-          data-testid="pdf-password-panel"
-          className="bg-card rounded p-6 shadow border border-border space-y-4"
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (uploadProgress === null) void upload(pendingPdf, true, pdfPassword || undefined);
-          }}
-        >
-          <div className="flex items-center gap-2 text-sm text-ink">
-            <FileText size={16} className="text-primary shrink-0" />
-            <span className="font-medium break-all">{pendingPdf.name}</span>
-          </div>
-
-          <div>
-            <label htmlFor="pdf-password" className="block text-sm font-medium text-ink mb-1">
-              Statement password <span className="font-normal text-muted">(optional)</span>
-            </label>
-            <input
-              id="pdf-password"
-              ref={passwordInput}
-              type="password"
-              // This is the bank's password for this document, not a Fynora credential -- offering
-              // to save it in a password manager would put it in the user's vault alongside real
-              // logins, and it changes with every statement anyway.
-              autoComplete="off"
-              className="w-full border border-border rounded px-3 py-2 text-sm"
-              placeholder="Leave blank if the file isn't protected"
-              value={pdfPassword}
-              onChange={(e) => setPdfPassword(e.target.value)}
-              disabled={uploadProgress !== null}
-              aria-describedby="pdf-password-help"
-            />
-            <p
-              id="pdf-password-help"
-              className={`text-xs mt-1 ${passwordState === 'invalid' ? 'text-danger' : 'text-muted'}`}
-              role={passwordState ? 'alert' : undefined}
-            >
-              {passwordState === 'invalid'
-                ? "That password didn't open this statement — check it and try again."
-                : passwordState === 'required'
-                  ? 'This statement is password protected. Enter the password your bank uses for it.'
-                  : 'Many banks protect statements with a password — often a mix of your name, PAN, date of birth or account number. Check the email the statement came in.'}
-            </p>
-          </div>
-
-          {uploadProgress !== null ? (
-            <div data-testid="upload-progress">
-              <p className="font-medium text-sm text-ink mb-2">
-                {uploadProgress < 100 ? `Uploading… ${uploadProgress}%` : 'Processing statement…'}
-              </p>
-              <div className="w-full bg-border rounded-full h-2 overflow-hidden">
-                <div
-                  className="bg-primary h-2 rounded-full transition-all duration-150"
-                  style={{ width: `${uploadProgress}%` }}
-                />
-              </div>
-            </div>
-          ) : (
-            <div className="flex items-center gap-3">
-              <Button type="submit">Upload statement</Button>
-              <button
-                type="button"
-                className="text-sm text-muted underline"
-                onClick={() => {
-                  setPendingPdf(null);
-                  setPdfPassword('');
-                  setPasswordState(null);
-                  clearError();
+      {/* Wizard-step transition (Phase 4b): 'upload' -> 'review' -> 'summary' fade/slide in place
+          of the hard cut. mode="wait" lets the leaving step's exit finish before the next one
+          enters, rather than cross-fading two full step screens on top of each other. Persistent
+          chrome (error banner above, ConfirmDialogs below) stays OUTSIDE this block on purpose --
+          it can be visible mid-step (e.g. a confirmImport() failure while still in 'review') and
+          isn't part of the step being swapped. */}
+      <AnimatePresence mode="wait">
+        {/* `summary` takes precedence over `multiSummary` -- an `else`, not two independent `&&`
+            blocks. AnimatePresence requires at most one child at a time for mode="wait" to work;
+            the two used to be sequential early `return`s (structurally impossible for both to
+            render), and collapsing them into a plain `else` keeps that same guarantee rather than
+            leaning on setSummary/setMultiSummary never being out of sync with each other, which
+            startOver() happens to maintain today but nothing enforces. */}
+        {step === 'summary' && summary ? (
+          <motion.div key="summary-single" {...stepMotionProps}>
+            <ImportSummaryScreen summary={summary} onDone={() => navigate('/app')} onImportAnother={startOver} />
+          </motion.div>
+        ) : step === 'summary' && multiSummary ? (
+          <motion.div key="summary-multi" {...stepMotionProps}>
+            <MultiImportSummaryScreen summaries={multiSummary} onDone={() => navigate('/app')} onImportAnother={startOver} />
+          </motion.div>
+        ) : null}
+        {step === 'upload' && (
+          <motion.div key="upload" className="space-y-4" {...stepMotionProps}>
+          {/* A queued import replaces the dropzone while it runs -- there is nothing useful to do on
+              this page until it lands, and offering a second upload alongside it would start a race
+              the user did not ask for. */}
+          {jobId && (
+            <>
+              <ImportProgress
+                jobId={jobId}
+                onReady={(sessionId) => void openReviewedJob(sessionId)}
+                onGaveUp={(job) => {
+                  // Cancelling is the user's own decision and needs no explanation, so that path
+                  // returns straight to the dropzone. A failure does NOT reset here -- ImportTimeline
+                  // (below) is about to show the curated reason and the way back to the dropzone; an
+                  // immediate reset would unmount it before anyone could read either.
+                  if (job.status !== 'FAILED') {
+                    setJobId(null);
+                    setUploadProgress(null);
+                    clearArrivalState();
+                  }
                 }}
-              >
-                Choose a different file
-              </button>
-            </div>
+              />
+              <ImportTimeline
+                jobId={jobId}
+                onDismiss={() => {
+                  setJobId(null);
+                  setUploadProgress(null);
+                  clearError();
+                  clearArrivalState();
+                }}
+              />
+            </>
           )}
-        </form>
-      )}
 
-      {showUploadPicker && !!unfinishedSessions?.length && (
-        <div className="bg-card rounded-xl2 shadow-card border border-border overflow-hidden">
-          <div className="px-5 py-4 border-b border-border">
-            <h2 className="font-semibold text-ink text-sm">Continue previous import</h2>
-            <p className="text-xs text-muted">
-              You started importing these statements but didn't finish reviewing them.
-            </p>
-          </div>
-          <div className="divide-y divide-border">
-            {unfinishedSessions.map((s) => (
-              <div key={s.id} className="px-5 py-3.5 flex items-center justify-between gap-4 flex-wrap">
-                <div className="min-w-0 flex items-center gap-2.5">
-                  <FileText size={16} className="text-muted flex-shrink-0" />
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium text-ink truncate">{s.fileName}</p>
-                    <p className="text-xs text-muted">
-                      Uploaded {formatDate(s.createdAt)} · {s.rowCount} row{s.rowCount === 1 ? '' : 's'}
-                    </p>
+          {!jobId && pendingPdf && (
+            <form
+              data-testid="pdf-password-panel"
+              className="bg-card rounded p-6 shadow border border-border space-y-4"
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (uploadProgress === null) void upload(pendingPdf, true, pdfPassword || undefined);
+              }}
+            >
+              <div className="flex items-center gap-2 text-sm text-ink">
+                <FileText size={16} className="text-primary shrink-0" />
+                <span className="font-medium break-all">{pendingPdf.name}</span>
+              </div>
+
+              <div>
+                <label htmlFor="pdf-password" className="block text-sm font-medium text-ink mb-1">
+                  Statement password <span className="font-normal text-muted">(optional)</span>
+                </label>
+                <input
+                  id="pdf-password"
+                  ref={passwordInput}
+                  type="password"
+                  // This is the bank's password for this document, not a Fynora credential -- offering
+                  // to save it in a password manager would put it in the user's vault alongside real
+                  // logins, and it changes with every statement anyway.
+                  autoComplete="off"
+                  className="w-full border border-border rounded px-3 py-2 text-sm"
+                  placeholder="Leave blank if the file isn't protected"
+                  value={pdfPassword}
+                  onChange={(e) => setPdfPassword(e.target.value)}
+                  disabled={uploadProgress !== null}
+                  aria-describedby="pdf-password-help"
+                />
+                <p
+                  id="pdf-password-help"
+                  className={`text-xs mt-1 ${passwordState === 'invalid' ? 'text-danger' : 'text-muted'}`}
+                  role={passwordState ? 'alert' : undefined}
+                >
+                  {passwordState === 'invalid'
+                    ? "That password didn't open this statement — check it and try again."
+                    : passwordState === 'required'
+                      ? 'This statement is password protected. Enter the password your bank uses for it.'
+                      : 'Many banks protect statements with a password — often a mix of your name, PAN, date of birth or account number. Check the email the statement came in.'}
+                </p>
+              </div>
+
+              {uploadProgress !== null ? (
+                <div data-testid="upload-progress">
+                  <p className="font-medium text-sm text-ink mb-2">
+                    {uploadProgress < 100 ? `Uploading… ${uploadProgress}%` : 'Processing statement…'}
+                  </p>
+                  <div className="w-full bg-border rounded-full h-2 overflow-hidden">
+                    <div
+                      className="bg-primary h-2 rounded-full transition-all duration-150"
+                      style={{ width: `${uploadProgress}%` }}
+                    />
                   </div>
                 </div>
-                <div className="flex items-center gap-1.5 flex-shrink-0">
-                  <Button
-                    size="sm"
-                    onClick={() => void resumeSession(s.id)}
-                    disabled={discardingSessionId === s.id}
-                    loading={resumingSessionIds.has(s.id)}
+              ) : (
+                <div className="flex items-center gap-3">
+                  <Button type="submit">Upload statement</Button>
+                  <button
+                    type="button"
+                    className="text-sm text-muted underline"
+                    onClick={() => {
+                      setPendingPdf(null);
+                      setPdfPassword('');
+                      setPasswordState(null);
+                      clearError();
+                    }}
                   >
-                    {!resumingSessionIds.has(s.id) && <RefreshCw size={12} />}
-                    Continue Import
-                  </Button>
-                  <IconButton
-                    variant="danger"
-                    icon={<Trash2 size={14} />}
-                    aria-label="Discard unfinished import"
-                    title="Discard Unfinished Import"
-                    onClick={() => setConfirmDiscardId(s.id)}
-                    disabled={discardingSessionId === s.id}
+                    Choose a different file
+                  </button>
+                </div>
+              )}
+            </form>
+          )}
+
+          {showUploadPicker && !!unfinishedSessions?.length && (
+            <div className="bg-card rounded-xl2 shadow-card border border-border overflow-hidden">
+              <div className="px-5 py-4 border-b border-border">
+                <h2 className="font-semibold text-ink text-sm">Continue previous import</h2>
+                <p className="text-xs text-muted">
+                  You started importing these statements but didn't finish reviewing them.
+                </p>
+              </div>
+              <div className="divide-y divide-border">
+                {unfinishedSessions.map((s) => (
+                  <div key={s.id} className="px-5 py-3.5 flex items-center justify-between gap-4 flex-wrap">
+                    <div className="min-w-0 flex items-center gap-2.5">
+                      <FileText size={16} className="text-muted flex-shrink-0" />
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-ink truncate">{s.fileName}</p>
+                        <p className="text-xs text-muted">
+                          Uploaded {formatDate(s.createdAt)} · {s.rowCount} row{s.rowCount === 1 ? '' : 's'}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1.5 flex-shrink-0">
+                      <Button
+                        size="sm"
+                        onClick={() => void resumeSession(s.id)}
+                        disabled={discardingSessionId === s.id}
+                        loading={resumingSessionIds.has(s.id)}
+                      >
+                        {!resumingSessionIds.has(s.id) && <RefreshCw size={12} />}
+                        Continue Import
+                      </Button>
+                      <IconButton
+                        variant="danger"
+                        icon={<Trash2 size={14} />}
+                        aria-label="Discard unfinished import"
+                        title="Discard Unfinished Import"
+                        onClick={() => setConfirmDiscardId(s.id)}
+                        disabled={discardingSessionId === s.id}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Arrival from the Failed Imports section's "Try again" action (Premium Import
+              Reliability v1, §2.5) -- purely informational, since there is no staged data to hydrate:
+              the person still has to pick the file themselves, same as any fresh upload, so this
+              exists only to remind them which file and why it failed last time. */}
+          {showUploadPicker && retryState && (
+            <div
+              data-testid="retry-import-banner"
+              className="bg-warning-bg border border-warning/30 rounded-xl2 px-5 py-3.5 flex items-start gap-2.5"
+            >
+              <AlertTriangle size={16} className="text-warning flex-shrink-0 mt-0.5" />
+              <div>
+                <p className="text-sm text-ink">
+                  Retrying <span className="font-medium">{retryState.retryFileName}</span>
+                </p>
+                <p className="text-xs text-muted mt-0.5">
+                  Last attempt: {importFailureMessage(retryState.retryFailureCode) ?? "Fynora couldn't complete this import."} Select the file below to try again.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {showUploadPicker && (
+            <div
+              data-testid="statement-dropzone"
+              role="button"
+              tabIndex={uploadProgress === null ? 0 : -1}
+              aria-disabled={uploadProgress !== null}
+              className={`bg-card rounded p-8 shadow border-2 border-dashed border-border text-center ${uploadProgress === null ? 'cursor-pointer' : 'cursor-default'}`}
+              onClick={() => uploadProgress === null && fileInput.current?.click()}
+              // Bug fix: the actual <input type="file"> is visually hidden (className="hidden",
+              // display:none), which removes it from the tab order entirely -- a keyboard-only user
+              // had no way to open the file picker on this page at all, the primary way data enters
+              // Fynora. This div is now itself a focusable, keyboard-operable trigger (Enter/Space),
+              // matching the standard accessible-clickable-div pattern.
+              onKeyDown={(e) => {
+                if (uploadProgress !== null) return;
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  fileInput.current?.click();
+                }
+              }}
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={(e) => {
+                e.preventDefault();
+                if (uploadProgress === null && e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
+              }}
+            >
+              {uploadProgress !== null ? (
+                <div data-testid="upload-progress">
+                  <UploadCloud size={28} className="mx-auto mb-3 text-primary animate-pulse" />
+                  <p className="font-medium text-sm text-ink mb-3">
+                    {uploadProgress < 100 ? `Uploading… ${uploadProgress}%` : 'Processing statement…'}
+                  </p>
+                  <div className="w-full max-w-xs mx-auto bg-border rounded-full h-2 overflow-hidden">
+                    <div
+                      className="bg-primary h-2 rounded-full transition-all duration-150"
+                      style={{ width: `${uploadProgress}%` }}
+                    />
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <UploadCloud size={28} className="mx-auto mb-3 text-primary" />
+                  <p className="font-medium text-sm text-ink">
+                    <strong>Click to upload</strong> or drag a bank/credit card statement here
+                  </p>
+                  <p className="text-xs text-muted mt-2 flex items-center justify-center gap-3">
+                    <span className="flex items-center gap-1"><FileSpreadsheet size={13} /> CSV exports</span>
+                    <span className="flex items-center gap-1"><FileText size={13} /> PDF statements</span>
+                  </p>
+                  <p className="text-[11px] text-muted mt-2">
+                    PDF support covers digital, text-based statements for now — a scanned or photographed
+                    PDF won't have selectable text for us to read, so those still need a CSV export instead.
+                  </p>
+                </>
+              )}
+              <input
+                ref={fileInput}
+                type="file"
+                accept=".csv,.pdf"
+                data-testid="statement-file-input"
+                className="hidden"
+                disabled={uploadProgress !== null}
+                onChange={(e) => {
+                  const picked = e.target.files?.[0];
+                  // Clearing the input matters now that a PDF can bounce back here via "Choose a
+                  // different file": without it, re-picking the SAME file fires no change event and
+                  // the page appears to ignore the click.
+                  e.target.value = '';
+                  if (picked) handleFile(picked);
+                }}
+              />
+            </div>
+          )}
+          </motion.div>
+        )}
+
+        {step === 'review' && (
+          <motion.div key="review" className="space-y-4" {...stepMotionProps}>
+          {multiSections && (
+            <>
+              {/* Multi-account PDF (e.g. an HSBC-style composite statement bundling a savings
+                  account and a credit-card account in one file) -- one card per detected section,
+                  each independently reviewable, all confirmed together via one button below. */}
+              <div className="bg-card rounded-xl2 shadow-card border border-border p-5">
+                <h2 className="font-semibold text-ink text-sm mb-1">
+                  This statement covers {multiSections.length} accounts
+                </h2>
+                <p className="text-xs text-muted flex items-center gap-2 flex-wrap">
+                  <span>
+                    We found {multiSections.length} separate accounts in this file — review each one below, then confirm
+                    them all together.
+                  </span>
+                  {sessionId && (
+                    <button
+                      type="button"
+                      onClick={() => setConfirmDiscardReviewOpen(true)}
+                      // Disabled mid-confirm. This was harmless before Phase 4b, because reaching
+                      // the summary step early-returned above the dialog's own render; collapsing
+                      // those returns into one AnimatePresence tree means a dialog opened during an
+                      // in-flight confirm now overlays the success screen instead -- and its
+                      // "Discard" would fire discardSession() against an already-confirmed session.
+                      disabled={confirming}
+                      className="text-xs text-muted underline flex-shrink-0 disabled:opacity-50"
+                    >
+                      Not what you expected? Discard and start over
+                    </button>
+                  )}
+                </p>
+              </div>
+
+              {multiSections.map((section, sectionIndex) => (
+                /* data-testid scopes each card so a test (and Playwright's strict mode) can address one
+                   section's duplicate review unambiguously -- N sections render N review panels, and
+                   the panel keeps the same testids it has on the single-account path rather than
+                   growing a per-section variant of its own. */
+                <div
+                  key={sectionIndex}
+                  data-testid={`account-section-${sectionIndex}`}
+                  className="bg-card rounded-xl2 shadow-card border border-border p-5 space-y-4"
+                >
+                  <h3 className="font-semibold text-ink text-sm">
+                    {sectionLabel(section, sectionIndex, multiSections.length)}
+                  </h3>
+
+                  {/* This section's own report. Composite statements are exactly where a merged verdict
+                      would mislead -- a savings section can verify while a credit-card section does not. */}
+                  <VerificationPanel verification={section.verification} />
+
+                  <AccountChoiceFields
+                    existingAccounts={existingAccounts}
+                    detectedAccount={section.detectedAccount}
+                    accountChoice={section.accountChoice}
+                    setAccountChoice={(v) => updateSection(setMultiSections, sectionIndex, { accountChoice: v })}
+                    selectedAccountId={section.selectedAccountId}
+                    setSelectedAccountId={(v) => updateSection(setMultiSections, sectionIndex, { selectedAccountId: v })}
+                    newName={section.newName}
+                    setNewName={(v) => updateSection(setMultiSections, sectionIndex, { newName: v })}
+                    newType={section.newType}
+                    setNewType={(v) => updateSection(setMultiSections, sectionIndex, { newType: v })}
+                    newOpeningBalance={section.newOpeningBalance}
+                    setNewOpeningBalance={(v) => updateSection(setMultiSections, sectionIndex, { newOpeningBalance: v })}
+                    newCreditLimit={section.newCreditLimit}
+                    setNewCreditLimit={(v) => updateSection(setMultiSections, sectionIndex, { newCreditLimit: v })}
+                    newDueDate={section.newDueDate}
+                    setNewDueDate={(v) => updateSection(setMultiSections, sectionIndex, { newDueDate: v })}
+                  />
+
+                  <TransactionPreviewTable
+                    rows={section.rows}
+                    review={section.review}
+                    onToggleIncluded={(rowIndex, include) =>
+                      updateSection(setMultiSections, sectionIndex, (s) => ({ review: setIncluded(s.review, rowIndex, include) }))
+                    }
+                    chosenCategory={section.chosenCategory}
+                    setChosenCategory={(updater) => updateSection(setMultiSections, sectionIndex, { chosenCategory: updater(section.chosenCategory) })}
+                    categories={categories}
+                  />
+
+                  <UnparseableRowsPanel rows={section.unparseableRows} />
+
+                  {/* The same review the single-account path gets, once per detected account. Rendered
+                      per section rather than merged into one list because a decision is about a row in
+                      a specific account's ledger -- and because two sections can flag the same
+                      description against different existing transactions, which one merged list would
+                      present as one question. */}
+                  <DuplicateReview
+                    rows={section.rows}
+                    decisions={section.review.decisions}
+                    onDecide={(rowIndex, decision) =>
+                      updateSection(setMultiSections, sectionIndex, (s) => ({ review: decide(s.rows, s.review, rowIndex, decision) }))
+                    }
+                    onApplyToSimilar={(rowIndex) =>
+                      updateSection(setMultiSections, sectionIndex, (s) => ({ review: applyDecisionToSimilar(s.rows, s.review, rowIndex) }))
+                    }
+                    onDecideAll={(decision) =>
+                      updateSection(setMultiSections, sectionIndex, (s) => ({ review: decideAllUnresolved(s.rows, s.review, decision) }))
+                    }
                   />
                 </div>
+              ))}
+
+              <div className="bg-card rounded shadow p-4">
+                {/* The gate is one button over N sections, so it has to say WHICH account is still
+                    blocking -- a disabled button with the reason three screens up is a dead end. */}
+                {outstandingMultiDuplicates > 0 && (
+                  <p data-testid="multi-duplicate-gate" role="status" className="text-xs text-danger mb-3">
+                    {outstandingMultiDuplicates} possible duplicate{outstandingMultiDuplicates === 1 ? '' : 's'} still{' '}
+                    {outstandingMultiDuplicates === 1 ? 'needs' : 'need'} a decision, in{' '}
+                    {blockedSectionLabels.join(' and ')}. Nothing is imported or skipped until you decide.
+                  </p>
+                )}
+                <Button
+                  onClick={confirmMultiImport}
+                  loading={confirming}
+                  disabled={
+                    multiSections.some((s) => s.accountChoice === 'existing' && !s.selectedAccountId) ||
+                    // The same gate the single-account path applies, summed across every section. A
+                    // statement covering two accounts is not two imports the user can partially
+                    // approve -- confirmMulti posts them together, so one unanswered row anywhere
+                    // blocks all of it, exactly as one unanswered row blocks a single-account import.
+                    outstandingMultiDuplicates > 0
+                  }
+                >
+                  Confirm All {multiSections.length} Accounts
+                </Button>
               </div>
-            ))}
-          </div>
-        </div>
-      )}
+            </>
+          )}
+
+          {!multiSections && (
+            <>
+              {/* Above the account card on purpose: whether the numbers can be trusted is worth
+                  reading before deciding where to put them. */}
+              <VerificationPanel verification={verification} />
+
+              {reimportState ? (
+                <div className="bg-card rounded-xl2 shadow-card border border-border p-5">
+                  <h2 className="font-semibold text-ink text-sm mb-1">Re-importing statement</h2>
+                  <p className="text-xs text-muted">
+                    Into <span className="text-ink font-medium">{reimportState.accountName}</span> — the account this
+                    statement was originally imported into. Duplicate detection below runs against everything already on
+                    the books, including this statement's own prior transactions.
+                  </p>
+                </div>
+              ) : (
+              /* Account: existing vs. auto-created new one */
+              <div className="bg-card rounded-xl2 shadow-card border border-border p-5">
+                <h2 className="font-semibold text-ink text-sm mb-1">Which account is this statement for?</h2>
+                <p className="text-xs text-muted mb-4">
+                  Fields below were detected from the file where possible — review and edit before confirming.
+                </p>
+
+                <div className="flex gap-4 mb-4">
+                  <label className="flex items-center gap-2 text-sm text-ink">
+                    <input
+                      type="radio"
+                      checked={accountChoice === 'existing'}
+                      onChange={() => setAccountChoice('existing')}
+                      disabled={existingAccounts.length === 0}
+                    />
+                    Use an existing account
+                  </label>
+                  <label className="flex items-center gap-2 text-sm text-ink">
+                    <input type="radio" checked={accountChoice === 'new'} onChange={() => setAccountChoice('new')} />
+                    Create a new account from this statement
+                  </label>
+                </div>
+
+                <AccountChoiceFields
+                  existingAccounts={existingAccounts}
+                  detectedAccount={detectedAccount}
+                  accountChoice={accountChoice}
+                  setAccountChoice={setAccountChoice}
+                  selectedAccountId={selectedAccountId}
+                  setSelectedAccountId={setSelectedAccountId}
+                  newName={newName}
+                  setNewName={setNewName}
+                  newType={newType}
+                  setNewType={setNewType}
+                  newOpeningBalance={newOpeningBalance}
+                  setNewOpeningBalance={setNewOpeningBalance}
+                  newCreditLimit={newCreditLimit}
+                  setNewCreditLimit={setNewCreditLimit}
+                  newDueDate={newDueDate}
+                  setNewDueDate={setNewDueDate}
+                  hideChoiceRadio
+                />
+              </div>
+              )}
+
+              {/* Transaction preview */}
+              <div className="bg-card rounded shadow p-4 overflow-x-auto">
+                <p className="text-sm mb-3 text-ink flex items-center gap-2 flex-wrap">
+                  <span>
+                    {rows.length} row(s) parsed and auto-categorized. Low-confidence guesses (marked below) will still
+                    import, but land on your Dashboard's review card afterward instead of being learned silently.
+                  </span>
+                  {fileFormat && (
+                    <span className="text-[10px] uppercase font-semibold text-muted border border-border rounded px-1.5 py-0.5 flex items-center gap-1 flex-shrink-0">
+                      {fileFormat === 'PDF' ? <FileText size={11} /> : <FileSpreadsheet size={11} />} {fileFormat}
+                    </span>
+                  )}
+                  {sessionId && !reimportState && (
+                    <button
+                      type="button"
+                      onClick={() => setConfirmDiscardReviewOpen(true)}
+                      // Disabled mid-confirm. This was harmless before Phase 4b, because reaching
+                      // the summary step early-returned above the dialog's own render; collapsing
+                      // those returns into one AnimatePresence tree means a dialog opened during an
+                      // in-flight confirm now overlays the success screen instead -- and its
+                      // "Discard" would fire discardSession() against an already-confirmed session.
+                      disabled={confirming}
+                      className="text-xs text-muted underline flex-shrink-0 disabled:opacity-50"
+                    >
+                      Not what you expected? Discard and start over
+                    </button>
+                  )}
+                </p>
+                <TransactionPreviewTable
+                  rows={rows}
+                  review={review}
+                  onToggleIncluded={toggleRowIncluded}
+                  chosenCategory={chosenCategory}
+                  setChosenCategory={setChosenCategory}
+                  categories={categories}
+                />
+
+                <UnparseableRowsPanel rows={unparseableRows} />
+
+                <DuplicateReview
+                  rows={rows}
+                  decisions={review.decisions}
+                  onDecide={decideDuplicate}
+                  onApplyToSimilar={applyDuplicateDecisionToSimilar}
+                  onDecideAll={decideAllDuplicates}
+                />
+
+                <Button
+                  onClick={() => void confirmImport()}
+                  loading={confirming}
+                  className="mt-4"
+                  disabled={
+                    (!reimportState && !sessionId) ||
+                    (!reimportState && accountChoice === 'existing' && !selectedAccountId) ||
+                    // The gate. Every flagged row must have an explicit answer before anything is
+                    // written to the ledger -- which is what stops a duplicate being resolved by
+                    // inattention rather than by a decision.
+                    unresolvedCount(rows, review.decisions) > 0
+                  }
+                >
+                  Confirm Import
+                </Button>
+              </div>
+            </>
+          )}
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {confirmDiscardId && (
         <ConfirmDialog
@@ -985,356 +1398,6 @@ export default function Import() {
             startOver();
           }}
         />
-      )}
-
-      {/* Arrival from the Failed Imports section's "Try again" action (Premium Import
-          Reliability v1, §2.5) -- purely informational, since there is no staged data to hydrate:
-          the person still has to pick the file themselves, same as any fresh upload, so this
-          exists only to remind them which file and why it failed last time. */}
-      {showUploadPicker && retryState && (
-        <div
-          data-testid="retry-import-banner"
-          className="bg-warning-bg border border-warning/30 rounded-xl2 px-5 py-3.5 flex items-start gap-2.5"
-        >
-          <AlertTriangle size={16} className="text-warning flex-shrink-0 mt-0.5" />
-          <div>
-            <p className="text-sm text-ink">
-              Retrying <span className="font-medium">{retryState.retryFileName}</span>
-            </p>
-            <p className="text-xs text-muted mt-0.5">
-              Last attempt: {importFailureMessage(retryState.retryFailureCode) ?? "Fynora couldn't complete this import."} Select the file below to try again.
-            </p>
-          </div>
-        </div>
-      )}
-
-      {showUploadPicker && (
-        <div
-          data-testid="statement-dropzone"
-          role="button"
-          tabIndex={uploadProgress === null ? 0 : -1}
-          aria-disabled={uploadProgress !== null}
-          className={`bg-card rounded p-8 shadow border-2 border-dashed border-border text-center ${uploadProgress === null ? 'cursor-pointer' : 'cursor-default'}`}
-          onClick={() => uploadProgress === null && fileInput.current?.click()}
-          // Bug fix: the actual <input type="file"> is visually hidden (className="hidden",
-          // display:none), which removes it from the tab order entirely -- a keyboard-only user
-          // had no way to open the file picker on this page at all, the primary way data enters
-          // Fynora. This div is now itself a focusable, keyboard-operable trigger (Enter/Space),
-          // matching the standard accessible-clickable-div pattern.
-          onKeyDown={(e) => {
-            if (uploadProgress !== null) return;
-            if (e.key === 'Enter' || e.key === ' ') {
-              e.preventDefault();
-              fileInput.current?.click();
-            }
-          }}
-          onDragOver={(e) => e.preventDefault()}
-          onDrop={(e) => {
-            e.preventDefault();
-            if (uploadProgress === null && e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
-          }}
-        >
-          {uploadProgress !== null ? (
-            <div data-testid="upload-progress">
-              <UploadCloud size={28} className="mx-auto mb-3 text-primary animate-pulse" />
-              <p className="font-medium text-sm text-ink mb-3">
-                {uploadProgress < 100 ? `Uploading… ${uploadProgress}%` : 'Processing statement…'}
-              </p>
-              <div className="w-full max-w-xs mx-auto bg-border rounded-full h-2 overflow-hidden">
-                <div
-                  className="bg-primary h-2 rounded-full transition-all duration-150"
-                  style={{ width: `${uploadProgress}%` }}
-                />
-              </div>
-            </div>
-          ) : (
-            <>
-              <UploadCloud size={28} className="mx-auto mb-3 text-primary" />
-              <p className="font-medium text-sm text-ink">
-                <strong>Click to upload</strong> or drag a bank/credit card statement here
-              </p>
-              <p className="text-xs text-muted mt-2 flex items-center justify-center gap-3">
-                <span className="flex items-center gap-1"><FileSpreadsheet size={13} /> CSV exports</span>
-                <span className="flex items-center gap-1"><FileText size={13} /> PDF statements</span>
-              </p>
-              <p className="text-[11px] text-muted mt-2">
-                PDF support covers digital, text-based statements for now — a scanned or photographed
-                PDF won't have selectable text for us to read, so those still need a CSV export instead.
-              </p>
-            </>
-          )}
-          <input
-            ref={fileInput}
-            type="file"
-            accept=".csv,.pdf"
-            data-testid="statement-file-input"
-            className="hidden"
-            disabled={uploadProgress !== null}
-            onChange={(e) => {
-              const picked = e.target.files?.[0];
-              // Clearing the input matters now that a PDF can bounce back here via "Choose a
-              // different file": without it, re-picking the SAME file fires no change event and
-              // the page appears to ignore the click.
-              e.target.value = '';
-              if (picked) handleFile(picked);
-            }}
-          />
-        </div>
-      )}
-
-      {error && (
-        // Sprint 4 item 22: warning (amber) for a code the user can fix themselves, matching the
-        // password panel a few lines below and ImportTimeline's identical ACTION_REQUIRED/FAILED
-        // split for the async path; danger (red) stays the default for everything else, unchanged.
-        <p className={`text-sm flex items-center gap-2 ${errorActionRequired ? 'text-warning' : 'text-danger'}`}>
-          <AlertTriangle size={14} /> {error}
-        </p>
-      )}
-
-      {step === 'review' && multiSections && (
-        <>
-          {/* Multi-account PDF (e.g. an HSBC-style composite statement bundling a savings
-              account and a credit-card account in one file) -- one card per detected section,
-              each independently reviewable, all confirmed together via one button below. */}
-          <div className="bg-card rounded-xl2 shadow-card border border-border p-5">
-            <h2 className="font-semibold text-ink text-sm mb-1">
-              This statement covers {multiSections.length} accounts
-            </h2>
-            <p className="text-xs text-muted flex items-center gap-2 flex-wrap">
-              <span>
-                We found {multiSections.length} separate accounts in this file — review each one below, then confirm
-                them all together.
-              </span>
-              {sessionId && (
-                <button
-                  type="button"
-                  onClick={() => setConfirmDiscardReviewOpen(true)}
-                  className="text-xs text-muted underline flex-shrink-0"
-                >
-                  Not what you expected? Discard and start over
-                </button>
-              )}
-            </p>
-          </div>
-
-          {multiSections.map((section, sectionIndex) => (
-            /* data-testid scopes each card so a test (and Playwright's strict mode) can address one
-               section's duplicate review unambiguously -- N sections render N review panels, and
-               the panel keeps the same testids it has on the single-account path rather than
-               growing a per-section variant of its own. */
-            <div
-              key={sectionIndex}
-              data-testid={`account-section-${sectionIndex}`}
-              className="bg-card rounded-xl2 shadow-card border border-border p-5 space-y-4"
-            >
-              <h3 className="font-semibold text-ink text-sm">
-                {sectionLabel(section, sectionIndex, multiSections.length)}
-              </h3>
-
-              {/* This section's own report. Composite statements are exactly where a merged verdict
-                  would mislead -- a savings section can verify while a credit-card section does not. */}
-              <VerificationPanel verification={section.verification} />
-
-              <AccountChoiceFields
-                existingAccounts={existingAccounts}
-                detectedAccount={section.detectedAccount}
-                accountChoice={section.accountChoice}
-                setAccountChoice={(v) => updateSection(setMultiSections, sectionIndex, { accountChoice: v })}
-                selectedAccountId={section.selectedAccountId}
-                setSelectedAccountId={(v) => updateSection(setMultiSections, sectionIndex, { selectedAccountId: v })}
-                newName={section.newName}
-                setNewName={(v) => updateSection(setMultiSections, sectionIndex, { newName: v })}
-                newType={section.newType}
-                setNewType={(v) => updateSection(setMultiSections, sectionIndex, { newType: v })}
-                newOpeningBalance={section.newOpeningBalance}
-                setNewOpeningBalance={(v) => updateSection(setMultiSections, sectionIndex, { newOpeningBalance: v })}
-                newCreditLimit={section.newCreditLimit}
-                setNewCreditLimit={(v) => updateSection(setMultiSections, sectionIndex, { newCreditLimit: v })}
-                newDueDate={section.newDueDate}
-                setNewDueDate={(v) => updateSection(setMultiSections, sectionIndex, { newDueDate: v })}
-              />
-
-              <TransactionPreviewTable
-                rows={section.rows}
-                review={section.review}
-                onToggleIncluded={(rowIndex, include) =>
-                  updateSection(setMultiSections, sectionIndex, (s) => ({ review: setIncluded(s.review, rowIndex, include) }))
-                }
-                chosenCategory={section.chosenCategory}
-                setChosenCategory={(updater) => updateSection(setMultiSections, sectionIndex, { chosenCategory: updater(section.chosenCategory) })}
-                categories={categories}
-              />
-
-              <UnparseableRowsPanel rows={section.unparseableRows} />
-
-              {/* The same review the single-account path gets, once per detected account. Rendered
-                  per section rather than merged into one list because a decision is about a row in
-                  a specific account's ledger -- and because two sections can flag the same
-                  description against different existing transactions, which one merged list would
-                  present as one question. */}
-              <DuplicateReview
-                rows={section.rows}
-                decisions={section.review.decisions}
-                onDecide={(rowIndex, decision) =>
-                  updateSection(setMultiSections, sectionIndex, (s) => ({ review: decide(s.rows, s.review, rowIndex, decision) }))
-                }
-                onApplyToSimilar={(rowIndex) =>
-                  updateSection(setMultiSections, sectionIndex, (s) => ({ review: applyDecisionToSimilar(s.rows, s.review, rowIndex) }))
-                }
-                onDecideAll={(decision) =>
-                  updateSection(setMultiSections, sectionIndex, (s) => ({ review: decideAllUnresolved(s.rows, s.review, decision) }))
-                }
-              />
-            </div>
-          ))}
-
-          <div className="bg-card rounded shadow p-4">
-            {/* The gate is one button over N sections, so it has to say WHICH account is still
-                blocking -- a disabled button with the reason three screens up is a dead end. */}
-            {outstandingMultiDuplicates > 0 && (
-              <p data-testid="multi-duplicate-gate" role="status" className="text-xs text-danger mb-3">
-                {outstandingMultiDuplicates} possible duplicate{outstandingMultiDuplicates === 1 ? '' : 's'} still{' '}
-                {outstandingMultiDuplicates === 1 ? 'needs' : 'need'} a decision, in{' '}
-                {blockedSectionLabels.join(' and ')}. Nothing is imported or skipped until you decide.
-              </p>
-            )}
-            <Button
-              onClick={confirmMultiImport}
-              loading={confirming}
-              disabled={
-                multiSections.some((s) => s.accountChoice === 'existing' && !s.selectedAccountId) ||
-                // The same gate the single-account path applies, summed across every section. A
-                // statement covering two accounts is not two imports the user can partially
-                // approve -- confirmMulti posts them together, so one unanswered row anywhere
-                // blocks all of it, exactly as one unanswered row blocks a single-account import.
-                outstandingMultiDuplicates > 0
-              }
-            >
-              Confirm All {multiSections.length} Accounts
-            </Button>
-          </div>
-        </>
-      )}
-
-      {step === 'review' && !multiSections && (
-        <>
-          {/* Above the account card on purpose: whether the numbers can be trusted is worth
-              reading before deciding where to put them. */}
-          <VerificationPanel verification={verification} />
-
-          {reimportState ? (
-            <div className="bg-card rounded-xl2 shadow-card border border-border p-5">
-              <h2 className="font-semibold text-ink text-sm mb-1">Re-importing statement</h2>
-              <p className="text-xs text-muted">
-                Into <span className="text-ink font-medium">{reimportState.accountName}</span> — the account this
-                statement was originally imported into. Duplicate detection below runs against everything already on
-                the books, including this statement's own prior transactions.
-              </p>
-            </div>
-          ) : (
-          /* Account: existing vs. auto-created new one */
-          <div className="bg-card rounded-xl2 shadow-card border border-border p-5">
-            <h2 className="font-semibold text-ink text-sm mb-1">Which account is this statement for?</h2>
-            <p className="text-xs text-muted mb-4">
-              Fields below were detected from the file where possible — review and edit before confirming.
-            </p>
-
-            <div className="flex gap-4 mb-4">
-              <label className="flex items-center gap-2 text-sm text-ink">
-                <input
-                  type="radio"
-                  checked={accountChoice === 'existing'}
-                  onChange={() => setAccountChoice('existing')}
-                  disabled={existingAccounts.length === 0}
-                />
-                Use an existing account
-              </label>
-              <label className="flex items-center gap-2 text-sm text-ink">
-                <input type="radio" checked={accountChoice === 'new'} onChange={() => setAccountChoice('new')} />
-                Create a new account from this statement
-              </label>
-            </div>
-
-            <AccountChoiceFields
-              existingAccounts={existingAccounts}
-              detectedAccount={detectedAccount}
-              accountChoice={accountChoice}
-              setAccountChoice={setAccountChoice}
-              selectedAccountId={selectedAccountId}
-              setSelectedAccountId={setSelectedAccountId}
-              newName={newName}
-              setNewName={setNewName}
-              newType={newType}
-              setNewType={setNewType}
-              newOpeningBalance={newOpeningBalance}
-              setNewOpeningBalance={setNewOpeningBalance}
-              newCreditLimit={newCreditLimit}
-              setNewCreditLimit={setNewCreditLimit}
-              newDueDate={newDueDate}
-              setNewDueDate={setNewDueDate}
-              hideChoiceRadio
-            />
-          </div>
-          )}
-
-          {/* Transaction preview */}
-          <div className="bg-card rounded shadow p-4 overflow-x-auto">
-            <p className="text-sm mb-3 text-ink flex items-center gap-2 flex-wrap">
-              <span>
-                {rows.length} row(s) parsed and auto-categorized. Low-confidence guesses (marked below) will still
-                import, but land on your Dashboard's review card afterward instead of being learned silently.
-              </span>
-              {fileFormat && (
-                <span className="text-[10px] uppercase font-semibold text-muted border border-border rounded px-1.5 py-0.5 flex items-center gap-1 flex-shrink-0">
-                  {fileFormat === 'PDF' ? <FileText size={11} /> : <FileSpreadsheet size={11} />} {fileFormat}
-                </span>
-              )}
-              {sessionId && !reimportState && (
-                <button
-                  type="button"
-                  onClick={() => setConfirmDiscardReviewOpen(true)}
-                  className="text-xs text-muted underline flex-shrink-0"
-                >
-                  Not what you expected? Discard and start over
-                </button>
-              )}
-            </p>
-            <TransactionPreviewTable
-              rows={rows}
-              review={review}
-              onToggleIncluded={toggleRowIncluded}
-              chosenCategory={chosenCategory}
-              setChosenCategory={setChosenCategory}
-              categories={categories}
-            />
-
-            <UnparseableRowsPanel rows={unparseableRows} />
-
-            <DuplicateReview
-              rows={rows}
-              decisions={review.decisions}
-              onDecide={decideDuplicate}
-              onApplyToSimilar={applyDuplicateDecisionToSimilar}
-              onDecideAll={decideAllDuplicates}
-            />
-
-            <Button
-              onClick={() => void confirmImport()}
-              loading={confirming}
-              className="mt-4"
-              disabled={
-                (!reimportState && !sessionId) ||
-                (!reimportState && accountChoice === 'existing' && !selectedAccountId) ||
-                // The gate. Every flagged row must have an explicit answer before anything is
-                // written to the ledger -- which is what stops a duplicate being resolved by
-                // inattention rather than by a decision.
-                unresolvedCount(rows, review.decisions) > 0
-              }
-            >
-              Confirm Import
-            </Button>
-          </div>
-        </>
       )}
     </div>
   );
