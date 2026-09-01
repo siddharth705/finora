@@ -868,6 +868,36 @@ describe('Import — duplicate review gates the import', () => {
   });
 
   /**
+   * Phase 4a: `confirming` moved from the button's `disabled` prop into its `loading` prop (a
+   * separate change from the validation-gate conditions, which stayed in `disabled`). Regression
+   * test for that split -- without it, the button could stay clickable while confirmImport() is
+   * still in flight.
+   */
+  it('disables Confirm Import and shows a spinner while the confirm request is in flight', async () => {
+    stageRows([stagedRow('BLINKIT GROCERIES 9982', false)]);
+    let resolveConfirm: (r: Awaited<ReturnType<typeof importApi.confirm>>) => void;
+    vi.mocked(importApi.confirm).mockReset().mockReturnValue(
+      new Promise((resolve) => { resolveConfirm = resolve; })
+    );
+    const user = userEvent.setup();
+    renderImport();
+
+    await pickAndUploadPdf(user);
+    await waitFor(() => expect(confirmButton()).toBeEnabled());
+
+    await user.click(confirmButton());
+    expect(confirmButton()).toBeDisabled();
+
+    resolveConfirm!({
+      imported: 1, skipped: 0, duplicatesDetected: 0, transfersIdentified: 0, newMerchantsLearned: 0,
+      accountsCreated: [], productsCreated: {}, categoriesAssigned: {}, warnings: [], account: null,
+      totalCredits: 0, totalDebits: 486, statementOpeningBalance: null, statementClosingBalance: null,
+      statementPeriodStart: null, statementPeriodEnd: null, importDurationMs: 12, source: 'PDF',
+    } as never);
+    expect(await screen.findByText(/import complete/i)).toBeInTheDocument();
+  });
+
+  /**
    * The decision has to reach the payload, not just the button. "Skip" that still imports the row
    * would be worse than the silent filter it replaced, because the user was told it was handled.
    */
@@ -1744,6 +1774,79 @@ describe('Import — continuing an unfinished import', () => {
     // server-side from the original upload.
     expect(importApi.stageCsv).not.toHaveBeenCalled();
     expect(importApi.stagePdf).not.toHaveBeenCalled();
+  });
+
+  /**
+   * Phase 4a (animation-polish roadmap): resumeSession() awaits importApi.getSession() before
+   * setStep('review') ever fires, but the "Continue Import" button had no in-flight feedback at
+   * all -- no spinner, no disabled state, nothing -- so clicking it looked like a dead button for
+   * however long that fetch took. Regression test for the fix: a resumingSessionId state now
+   * drives the button's `loading` prop.
+   */
+  it('disables Continue Import and shows a spinner while its own session fetch is in flight', async () => {
+    vi.mocked(importApi.listSessions).mockReset().mockResolvedValue([unfinishedSession()]);
+    let resolveGetSession: (r: ReturnType<typeof stagingResultWith>) => void;
+    vi.mocked(importApi.getSession).mockReset().mockReturnValue(
+      new Promise((resolve) => { resolveGetSession = resolve; })
+    );
+    const user = userEvent.setup();
+    renderImport();
+
+    await screen.findByText('hdfc-july.pdf');
+    const continueButton = screen.getByRole('button', { name: /continue import/i });
+    expect(continueButton).not.toBeDisabled();
+
+    await user.click(continueButton);
+    expect(continueButton).toBeDisabled();
+
+    resolveGetSession!(stagingResultWith({ sessionId: 'sess-1' }));
+    await screen.findByText(/which account is this statement for/i);
+  });
+
+  /**
+   * Regression test for a bug an adversarial review caught in the fix above: the first version
+   * tracked "which session is resuming" as a single id, not a set. Every row's Continue Import
+   * button is independently clickable with nothing gating a second click while the first row's
+   * fetch is still in flight -- so clicking a second unfinished session's button silently cleared
+   * the first row's spinner (the shared value got overwritten), and whichever fetch's `finally`
+   * ran last wiped out the other's loading state even while its own request was still pending.
+   */
+  it('tracks two concurrent resumes independently, so neither row\'s spinner clears the other\'s', async () => {
+    vi.mocked(importApi.listSessions).mockReset().mockResolvedValue([
+      unfinishedSession({ id: 'sess-a', fileName: 'a.csv' }),
+      unfinishedSession({ id: 'sess-b', fileName: 'b.csv' }),
+    ]);
+    let rejectA: (e: unknown) => void;
+    let resolveB: (r: ReturnType<typeof stagingResultWith>) => void;
+    vi.mocked(importApi.getSession).mockReset().mockImplementation((id: unknown) => {
+      if (id === 'sess-a') return new Promise((_resolve, reject) => { rejectA = reject; });
+      return new Promise((resolve) => { resolveB = resolve; });
+    });
+    const user = userEvent.setup();
+    renderImport();
+
+    await screen.findByText('a.csv');
+    const [continueA, continueB] = screen.getAllByRole('button', { name: /continue import/i });
+
+    await user.click(continueA);
+    expect(continueA).toBeDisabled();
+    expect(continueB).not.toBeDisabled();
+
+    await user.click(continueB);
+    // The bug: this click used to clear session A's loading state too.
+    expect(continueA).toBeDisabled();
+    expect(continueB).toBeDisabled();
+
+    // A fails (kept as a rejection, not a resolve, so both rows stay mounted and B's state stays
+    // observable -- a successful resume navigates the whole page to the review step).
+    rejectA!(new Error('expired'));
+    await screen.findByText(/no longer available/i);
+    // The bug: A's finally used to unconditionally clear the shared id, wiping out B's spinner too
+    // even though B's own fetch was still pending.
+    expect(continueB).toBeDisabled();
+
+    resolveB!(stagingResultWith({ sessionId: 'sess-b' }));
+    await screen.findByText(/which account is this statement for/i);
   });
 
   it('shows a clear message and refreshes the list when a session expired before it was resumed', async () => {
