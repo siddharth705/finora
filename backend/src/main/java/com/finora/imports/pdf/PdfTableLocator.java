@@ -822,6 +822,16 @@ public class PdfTableLocator {
         Map<Integer, Set<Integer>> yearsByPage = yearsByPage(rows);
 
         List<LocatedSection> sections = new ArrayList<>();
+        // The physical row index of the document's OWN first recognized header, wherever it turns
+        // out to be -- -1 until that happens. See its one read site, after the main loop, for why
+        // this exists: a real header found LATE in the document (page 2's own, unrelated table)
+        // stops the sections.isEmpty() gate below from ever giving the content BEFORE it a chance
+        // at headerless inference, even when that earlier content is itself a real, genuinely
+        // headerless transaction table. Captured once, at the FIRST header event only -- a later
+        // header changing this would silently narrow or widen the pre-header slice depending on
+        // unrelated document structure further down, which has nothing to do with what came before
+        // the first one.
+        int firstHeaderRowIndex = -1;
         List<String> pendingAuxiliary = new ArrayList<>();
         // Row-accounting evidence: physical rows that had transaction shape (a date-shaped cell
         // and a decimal-amount cell on the same line -- see isTransactionShapedRow) but were about
@@ -1139,6 +1149,9 @@ public class PdfTableLocator {
                 recordIfHeaderReconstructionCandidate(row, pendingHeaderReconstructionVocab);
             }
             if (looksLikeHeaderRow(headerRow)) {
+                // Captured before `rowIndex` advances for a wrapped header just below, and only
+                // once -- see firstHeaderRowIndex's own doc comment.
+                if (firstHeaderRowIndex < 0) firstHeaderRowIndex = rowIndex;
                 row = headerRow;
                 if (wrappedHeaderLines > 0) {
                     rowIndex += wrappedHeaderLines;
@@ -1635,6 +1648,24 @@ public class PdfTableLocator {
             mergedAuxiliary.addAll(pendingAuxiliary);
             sections.set(sections.size() - 1,
                     new LocatedSection(mergedAuxiliary, last.rows(), last.evidence()));
+        }
+        // Real HSBC evidence: a genuinely headerless transaction table can sit BEFORE a later,
+        // completely unrelated table whose own header IS recognized (there, a "Loan Summary
+        // Table" EMI schedule on a later page) -- once ANY header is found anywhere in the
+        // document, sections is never empty again, and the sections.isEmpty() gate below never
+        // gives the earlier, real content a chance at headerless inference at all, independent of
+        // how many transactions it has. Tried BEFORE that gate, on ONLY the physical rows before
+        // the document's own first recognized header (see firstHeaderRowIndex's own doc comment) --
+        // deliberately not a comparison of which interpretation "found more," which would risk
+        // overriding an already-correct header-based section on some other document; this only
+        // ever ADDS content nothing else was going to claim. Inserted at the front of `sections`
+        // (not appended) since it physically precedes everything else found.
+        if (firstHeaderRowIndex > 0) {
+            LocatedSection preHeaderInferred = inferHeaderlessSection(rows.subList(0, firstHeaderRowIndex), ctx);
+            if (preHeaderInferred != null) {
+                if (ctx != null) ctx.record("HEADERLESS_LAYOUT_BEFORE_LATER_HEADER");
+                sections.add(0, preHeaderInferred);
+            }
         }
         // INFERRED_HEADERLESS_LAYOUT. Only ever attempted once the loop above has already found
         // nothing -- see this capability's own doc comment on inferHeaderlessSection for why a
@@ -5141,11 +5172,208 @@ public class PdfTableLocator {
         return new HeaderlessBucketResult(result, auxiliaryText, droppedTransactionCandidates);
     }
 
+    /** {@link #HEADERLESS_MIN_TRANSACTION_ROWS}'s own escape hatch: a candidate pool too small to
+     *  trust on row count alone can still be trusted when the document's own printed balance
+     *  summary proves it. Real HSBC evidence: a genuinely headerless statement with exactly ONE
+     *  real transaction (one short of the floor) prints both "OPENING BALANCE 1,582.00" and
+     *  "NET OUTSTANDING BALANCE 0.00" as ordinary same-line label/value pairs, and that one
+     *  transaction is itself "1,582.00 CR" -- a payment that exactly and only accounts for the
+     *  difference. Same "the printed data proves itself, not an invented threshold" reasoning
+     *  {@link #resolveDebitCreditByBalanceChain} already uses for header-based tables, just against
+     *  explicit summary labels instead of a printed running-balance column (this document's
+     *  transaction line carries no balance column of its own to chain against).
+     *
+     *  <p>Exact match only, no tolerance -- same discipline every other reconciliation check in
+     *  this codebase uses (see {@link com.finora.imports.BalanceSequenceResolver}'s own "no forced
+     *  guess" philosophy). A near-miss proves nothing; it is not treated as corroboration.
+     *
+     *  <p>Narrow by design and evidenced by exactly one real document: only the two exact label
+     *  phrases HSBC prints are recognized, not a general "any balance summary" pattern -- see
+     *  {@link #sameLineLabeledAmount}. Returns false (never guesses) whenever either label is
+     *  absent, any candidate's own sign cannot be determined, or the arithmetic doesn't land
+     *  exactly -- the caller's existing floor rejection is always the safe default. */
+    private boolean corroboratedByPrintedBalanceReconciliation(
+            List<List<PositionedText>> candidates, List<List<PositionedText>> rows, DocumentContext ctx) {
+        if (candidates.isEmpty()) return false;
+        BigDecimal opening = sameLineLabeledAmount(rows, "opening balance");
+        BigDecimal closing = sameLineLabeledAmount(rows, "net outstanding balance");
+        if (opening == null || closing == null) return false;
+
+        BigDecimal projected = opening;
+        for (List<PositionedText> candidate : candidates) {
+            BigDecimal signed = signedTransactionAmount(candidate);
+            if (signed == null) return false;
+            projected = projected.add(signed);
+        }
+        if (projected.compareTo(closing) != 0) return false;
+        if (ctx != null) ctx.record("HEADERLESS_BALANCE_RECONCILIATION_CORROBORATED");
+        return true;
+    }
+
+    /** Test-only accessor -- see {@link #corroboratedByPrintedBalanceReconciliation}. */
+    boolean corroboratedByPrintedBalanceReconciliationForTest(
+            List<List<PositionedText>> candidates, List<List<PositionedText>> rows) {
+        return corroboratedByPrintedBalanceReconciliation(candidates, rows, null);
+    }
+
+    /** Recomputes the transaction-shaped candidate pool (same as
+     *  {@link #inferHeaderlessSectionViaClustering}'s own, but the clustering path's `candidates`
+     *  local isn't visible here) and narrows it to SIGNED candidates only -- those carrying their
+     *  own explicit CR/DR marker, which {@link #signedTransactionAmount} requires to identify a
+     *  row's contribution at all. This is deliberately a stricter pool than the clustering path's
+     *  own: real HSBC evidence (see {@link #corroboratedByPrintedBalanceReconciliation}'s own doc
+     *  comment) shows unrelated date+amount noise never carries a CR/DR marker, so requiring one
+     *  here is what keeps this fallback from being poisoned by the exact contamination that
+     *  defeated the clustering path it exists behind. Null when no signed candidates exist, or
+     *  when the ones that do exist don't reconcile against the document's own printed balance
+     *  summary -- same "never guess" contract as every other point in this class that can return
+     *  null. */
+    private LocatedSection tryCorroboratedFallback(List<List<PositionedText>> rows, DocumentContext ctx) {
+        Map<Integer, Set<Integer>> yearsByPage = yearsByPage(rows);
+        List<List<PositionedText>> signedCandidates = new ArrayList<>();
+        // Every OTHER row's own flattened line -- becomes this section's auxiliaryText below, the
+        // same "everything that wasn't a staged row" contract bucketHeaderlessRowsWithContinuation
+        // already keeps for the ordinary clustering path. Without this, real HSBC evidence shows
+        // the recovered section carries no account identity or product signal at all (its own
+        // "OPENING BALANCE"/"Available Credit Limit"/cardholder-name text sits in these
+        // surrounding rows, not in the transaction row itself) -- PdfMetadataExtractor and
+        // ProductDiscovery both need this text to do their own jobs on this section.
+        List<String> auxiliaryText = new ArrayList<>();
+        for (List<PositionedText> row : rows) {
+            Set<Integer> rowYears = row.isEmpty() ? Set.of()
+                    : yearsByPage.getOrDefault(row.get(0).pageIndex(), Set.of());
+            List<PositionedText> resolved = substituteYearlessDates(row, rowYears);
+            if (isTransactionShapedRow(resolved, rowYears) && signedTransactionAmount(resolved) != null) {
+                signedCandidates.add(resolved);
+            } else {
+                String line = lineOf(row);
+                if (!line.isBlank()) auxiliaryText.add(line);
+            }
+        }
+        signedCandidates = dedupeAdjacentIdenticalRows(signedCandidates);
+        if (signedCandidates.isEmpty()) return null;
+        if (!corroboratedByPrintedBalanceReconciliation(signedCandidates, rows, ctx)) return null;
+        return buildSectionFromSignedCandidates(signedCandidates, auxiliaryText, ctx);
+    }
+
+    /** Builds a section directly from candidates a printed balance reconciliation has already
+     *  vouched for -- no statistical column inference at all. A signed candidate's own shape
+     *  states its Date/Amount/Description cells directly (the first date-parseable cell, the
+     *  first decimal-shaped cell, the CR/DR marker, everything else joined as narration) the same
+     *  "read what the document already states" discipline every other extractor in this file
+     *  already uses; there is nothing left to infer once a row has been individually vouched for.
+     *  Amount is staged as "<value> <CR|DR>" -- the same same-column marker-suffix shape Axis's
+     *  own real credit-card statement already uses ("10,081.99 Cr"), so
+     *  {@link CsvParser#detectSignFromRawAmount} classifies it correctly downstream without any
+     *  new sign-handling logic. Returns null (never a partial section) if a candidate turns out
+     *  not to carry all three of a date, an amount and a marker once individually inspected --
+     *  should not happen given {@link #tryCorroboratedFallback}'s own admission gate, but this
+     *  method makes no assumption about how its candidates were selected. */
+    private LocatedSection buildSectionFromSignedCandidates(
+            List<List<PositionedText>> signedCandidates, List<String> auxiliaryText, DocumentContext ctx) {
+        List<Map<String, String>> staged = new ArrayList<>();
+        for (List<PositionedText> candidate : signedCandidates) {
+            String date = null;
+            String amount = null;
+            String marker = null;
+            StringBuilder description = new StringBuilder();
+            for (PositionedText cell : candidate) {
+                String text = cell.text().trim();
+                if (text.isEmpty()) continue;
+                if (date == null && CsvParser.parseDate(text) != null) {
+                    date = text;
+                } else if (marker == null && (text.equalsIgnoreCase("CR") || text.equalsIgnoreCase("DR"))) {
+                    marker = text.toUpperCase(Locale.ENGLISH);
+                } else if (amount == null && text.contains(".") && CsvParser.parseNumeric(text) != null) {
+                    amount = text;
+                } else {
+                    if (description.length() > 0) description.append(' ');
+                    description.append(text);
+                }
+            }
+            if (date == null || amount == null || marker == null) return null;
+            Map<String, String> bucketed = new LinkedHashMap<>();
+            bucketed.put("Date", date);
+            bucketed.put("Description", description.toString());
+            bucketed.put("Amount", amount + " " + marker);
+            staged.add(bucketed);
+        }
+        if (staged.isEmpty()) return null;
+        if (ctx != null) ctx.record("INFERRED_HEADERLESS_LAYOUT");
+        return new LocatedSection(auxiliaryText, staged, ExtractionEvidence.NONE);
+    }
+
+    /** The value on the SAME physical row as a label whose trimmed text matches {@code label}
+     *  case-insensitively -- an ordinary "Label ... Value" line, not the label-above-value grid
+     *  {@link StatementSummaryExtractor} matches. Null (never a guess) when the label isn't found,
+     *  found more than once with different amounts (ambiguous -- which one is real?), or the row
+     *  carries no parseable amount at all. */
+    private static BigDecimal sameLineLabeledAmount(List<List<PositionedText>> rows, String label) {
+        BigDecimal found = null;
+        for (List<PositionedText> row : rows) {
+            boolean labelPresent = false;
+            BigDecimal amount = null;
+            for (PositionedText cell : row) {
+                String text = cell.text().trim();
+                if (text.equalsIgnoreCase(label)) labelPresent = true;
+                if (amount == null && text.contains(".") && CsvParser.parseNumeric(text) != null) {
+                    amount = CsvParser.parseNumeric(text);
+                }
+            }
+            if (labelPresent && amount != null) {
+                if (found != null && found.compareTo(amount) != 0) return null;
+                found = amount;
+            }
+        }
+        return found;
+    }
+
+    /** A transaction candidate's own contribution to a credit-card outstanding balance, signed by
+     *  its printed CR/DR marker -- the OPPOSITE convention from {@link CsvParser#parseNumeric}'s
+     *  own Dr/Cr handling, which exists for a bank account's own balance (Dr = negative, Cr =
+     *  positive). A credit-card payment (CR) REDUCES what is owed; a purchase (DR) increases it --
+     *  so this negates parseNumeric's own sign rather than reusing it directly. Requires the
+     *  marker as its own standalone cell (HSBC evidence: "1,582.00" and "CR" are two separate
+     *  {@link PositionedText} runs, never one combined token) -- null, never a guess, when no
+     *  amount cell or no standalone marker is found. */
+    private static BigDecimal signedTransactionAmount(List<PositionedText> row) {
+        BigDecimal amount = null;
+        Boolean credit = null;
+        for (PositionedText cell : row) {
+            String text = cell.text().trim();
+            if (amount == null && text.contains(".") && CsvParser.parseNumeric(text) != null) {
+                amount = CsvParser.parseNumeric(text);
+            }
+            if (text.equalsIgnoreCase("CR")) credit = true;
+            else if (text.equalsIgnoreCase("DR")) credit = false;
+        }
+        if (amount == null || credit == null) return null;
+        BigDecimal magnitude = amount.abs();
+        return credit ? magnitude.negate() : magnitude;
+    }
+
     /** Entry point for the whole INFERRED_HEADERLESS_LAYOUT capability -- see its top-level doc
      *  comment above {@link #HEADERLESS_COLUMN_CLUSTER_TOLERANCE}. Returns null, never partially,
      *  when the document doesn't fit this shape well enough to trust; the caller's contract on null
      *  is "leave sections exactly as they were" -- today's zero-section outcome. */
     private LocatedSection inferHeaderlessSection(List<List<PositionedText>> rows, DocumentContext ctx) {
+        LocatedSection viaClustering = inferHeaderlessSectionViaClustering(rows, ctx);
+        if (viaClustering != null) return viaClustering;
+        // Last resort, tried only once the normal statistical-clustering path above has already
+        // failed for any reason -- see corroboratedByPrintedBalanceReconciliation's own doc
+        // comment for the real HSBC evidence this exists for. Deliberately NOT folded into the
+        // clustering path's own candidate pool: real HSBC evidence shows the SAME pre-header
+        // region that contains one genuine transaction also contains coincidental date+amount
+        // noise (the statement generation date, the billing period, the closing-balance line
+        // itself) that clears HEADERLESS_MIN_TRANSACTION_ROWS on raw count but shares no
+        // consistent column geometry with the real transaction -- clustering fails regardless of
+        // which floor gated it in. A signed candidate (one carrying its own explicit CR/DR
+        // marker) needs no statistical inference to identify its own Date/Amount/Description
+        // cells; its own shape states them directly.
+        return tryCorroboratedFallback(rows, ctx);
+    }
+
+    private LocatedSection inferHeaderlessSectionViaClustering(List<List<PositionedText>> rows, DocumentContext ctx) {
         // Computed once, from every physical row (not just the transaction-shaped candidates
         // below) -- see yearsByPage's own doc comment for why the full dates that supply year
         // context live in the surrounding account-summary rows this candidate filter excludes.
