@@ -203,6 +203,13 @@ public class CapabilityCoverageService {
             // PdfMetadataExtractor, which only ever sees auxiliaryText (the lines BEFORE a header is
             // recognized). See TransactionTableDateRangeExtractor.
             "PRINTED_TRANSACTION_TABLE_DATE_RANGE",
+            // A real Kotak Mahindra Bank SAVINGS statement prints its period as a bare,
+            // unlabeled date range directly beneath its own "Account Statement" title -- no
+            // "Statement Period"/"From"/"To" label anywhere near it, so PdfMetadataExtractor's
+            // line-based patterns can never match. Recognized only by its document-structure
+            // relationship to the title (see StatementTitleDateRangeExtractor's own doc comment
+            // for why this is not a general bare-date-range pattern).
+            "PRINTED_TITLE_ADJACENT_DATE_RANGE",
             // Two real, independently-uploaded savings-account statements (Central Bank of India,
             // PNB ONE) each close with a regulatory-boilerplate discrepancy-notification sentence
             // that sits before either document's own true end -- swept into the last real
