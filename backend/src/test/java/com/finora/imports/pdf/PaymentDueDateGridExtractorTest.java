@@ -53,6 +53,25 @@ class PaymentDueDateGridExtractorTest {
         assertThat(PaymentDueDateGridExtractor.extract(runs)).isEqualTo(LocalDate.of(2026, 8, 27));
     }
 
+    // Coordinates copied verbatim from a direct PositionedText inspection of the real HDFC
+    // credit.pdf (previously entirely out of scope): "DUE DATE" (not "Payment Due Date") at
+    // y=279.9, x=512.1-541.6; its value "09 Aug, 2026" at y=297.7, x=512.1-555.0, 17.8pt below.
+    // "(Including Cash)" -- part of the same panel's unrelated credit-limit column -- sits in an
+    // intervening row bucket (y=282.4) but does not x-overlap this label's own column, unlike its
+    // effect on CreditLimitGridExtractor's own label. "MINIMUM DUE" and its value present at their
+    // real positions to prove the column match picks the right one.
+    @Test
+    void extract_readsTheRealHdfcPaymentSummaryGrid() {
+        var runs = List.of(
+                run("MINIMUM DUE", 445.9f, 491.2f, 279.9f),
+                run("DUE DATE", 512.1f, 541.6f, 279.9f),
+                run("(Including Cash)", 71.0f, 117.2f, 282.4f),
+                run("C200.00", 445.9f, 472.3f, 297.7f),
+                run("09 Aug, 2026", 512.1f, 555.0f, 297.7f));
+
+        assertThat(PaymentDueDateGridExtractor.extract(runs)).isEqualTo(LocalDate.of(2026, 8, 9));
+    }
+
     @Test
     void extract_returnsNull_whenNoDueDateLabelRowExists() {
         var runs = List.of(

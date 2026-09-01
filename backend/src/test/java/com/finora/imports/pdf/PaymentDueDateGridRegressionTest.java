@@ -54,4 +54,22 @@ class PaymentDueDateGridRegressionTest {
         assertThat(ctx.capabilities().stream().map(c -> c.capability()))
                 .doesNotContain("PRINTED_PAYMENT_DUE_DATE_GRID");
     }
+
+    // HDFC's own committed trace has both the label AND the intervening "(Including Cash)" row --
+    // the shape that needed the forward-scan fix -- but redacts the due-date VALUE itself (width
+    // 0.0, same redaction policy as SBI's own trace above), so this cannot prove the recovered date
+    // VALUE. What it proves instead: this real document's own "DUE DATE" label (distinct from the
+    // "Payment Due Date" spelling Axis/SBI use) IS recognized, and the extractor correctly declines
+    // on the redacted text near it rather than guessing.
+    @Test
+    void extract_returnsNull_onTheRealRedactedHdfcTrace() {
+        List<PositionedText> runs = PdfTrace.load("hdfc-credit-card-ledger-validation");
+        boolean labelPresent = runs.stream().anyMatch(t -> t.text().trim().equalsIgnoreCase("Due Date"));
+        assertThat(labelPresent).as("'Due Date' label must be present in the real trace").isTrue();
+
+        DocumentContext ctx = new DocumentContext("PDF", "test");
+        assertThat(PaymentDueDateGridExtractor.extract(runs, ctx)).isNull();
+        assertThat(ctx.capabilities().stream().map(c -> c.capability()))
+                .doesNotContain("PRINTED_PAYMENT_DUE_DATE_GRID");
+    }
 }
