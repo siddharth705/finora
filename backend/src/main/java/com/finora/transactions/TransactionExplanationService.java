@@ -65,6 +65,11 @@ public class TransactionExplanationService {
                     "KEYWORD_MATCH",
                     "Matched a keyword Finora recognizes in the description.",
                     List.of(), confidence, reconciliation);
+            case STRUCTURAL_P2P -> new TransactionExplanationDto(
+                    "STRUCTURAL_P2P",
+                    "Recognized as a transfer to a person based on the wording of the description.",
+                    List.of("No merchant was involved, so this wasn't matched against a merchant category."),
+                    confidence, reconciliation);
             case FILE_PROVIDED -> new TransactionExplanationDto(
                     "FILE_PROVIDED",
                     "The imported file specified this category directly.",

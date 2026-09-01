@@ -9,6 +9,7 @@ import com.finora.exception.ApiException;
 import com.finora.repository.CategoryRepository;
 import com.finora.repository.MerchantCategoryLearningRepository;
 import com.finora.util.CategoryRules;
+import com.finora.util.PersonToPersonTransferDetector;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -125,7 +126,9 @@ public class CategorizationService {
     }
 
     /** Rule engine (user rules, then global rules) > learned distribution (real evidence) >
-     *  keyword rules > "Other". See docs/rule-engine-relationship-engine-eds.md §4. */
+     *  keyword rules (including a merchant-canonical-name retry) > structural person-to-person
+     *  transfer detection > "Other". See docs/rule-engine-relationship-engine-eds.md §4 and
+     *  docs/superpowers/specs/2026-09-01-transaction-categorization-design.md §2. */
     public Suggestion suggest(UUID userId, String description) {
         return suggest(userId, description, null, null);
     }
@@ -164,10 +167,16 @@ public class CategorizationService {
         }
 
         String ruleCat = suggestCategoryWithMerchantFallback(description, merchant.getCanonicalName());
-        boolean matchedKeyword = !ruleCat.equals("Other");
-        return new Suggestion(ruleCat, matchedKeyword ? "rule" : "default", merchant.getId(),
-                matchedKeyword ? Transaction.DecisionSource.KEYWORD_MATCH : Transaction.DecisionSource.MERCHANT_DEFAULT, null,
-                matchedKeyword ? ConfidenceEngine.INITIAL_RULE_CONFIDENCE : ConfidenceEngine.INITIAL_DEFAULT_CONFIDENCE);
+        if (!ruleCat.equals("Other")) {
+            return new Suggestion(ruleCat, "rule", merchant.getId(), Transaction.DecisionSource.KEYWORD_MATCH, null,
+                    ConfidenceEngine.INITIAL_RULE_CONFIDENCE);
+        }
+        if (PersonToPersonTransferDetector.isNamedIndividualTransfer(description)) {
+            return new Suggestion("Transfer", "structural_p2p", merchant.getId(),
+                    Transaction.DecisionSource.STRUCTURAL_P2P, null, ConfidenceEngine.INITIAL_RULE_CONFIDENCE);
+        }
+        return new Suggestion("Other", "default", merchant.getId(), Transaction.DecisionSource.MERCHANT_DEFAULT, null,
+                ConfidenceEngine.INITIAL_DEFAULT_CONFIDENCE);
     }
 
     /**
@@ -263,10 +272,16 @@ public class CategorizationService {
         }
 
         String ruleCat = suggestCategoryWithMerchantFallback(description, merchantName);
-        boolean matchedKeyword = !ruleCat.equals("Other");
-        return new Suggestion(ruleCat, matchedKeyword ? "rule" : "default", merchantId,
-                matchedKeyword ? Transaction.DecisionSource.KEYWORD_MATCH : Transaction.DecisionSource.MERCHANT_DEFAULT, null,
-                matchedKeyword ? ConfidenceEngine.INITIAL_RULE_CONFIDENCE : ConfidenceEngine.INITIAL_DEFAULT_CONFIDENCE);
+        if (!ruleCat.equals("Other")) {
+            return new Suggestion(ruleCat, "rule", merchantId, Transaction.DecisionSource.KEYWORD_MATCH, null,
+                    ConfidenceEngine.INITIAL_RULE_CONFIDENCE);
+        }
+        if (PersonToPersonTransferDetector.isNamedIndividualTransfer(description)) {
+            return new Suggestion("Transfer", "structural_p2p", merchantId,
+                    Transaction.DecisionSource.STRUCTURAL_P2P, null, ConfidenceEngine.INITIAL_RULE_CONFIDENCE);
+        }
+        return new Suggestion("Other", "default", merchantId, Transaction.DecisionSource.MERCHANT_DEFAULT, null,
+                ConfidenceEngine.INITIAL_DEFAULT_CONFIDENCE);
     }
 
     /**
@@ -304,6 +319,7 @@ public class CategorizationService {
             case "learned" -> Transaction.DecisionSource.LEARNED_PATTERN;
             case "rule" -> Transaction.DecisionSource.KEYWORD_MATCH;
             case "file" -> Transaction.DecisionSource.FILE_PROVIDED;
+            case "structural_p2p" -> Transaction.DecisionSource.STRUCTURAL_P2P;
             default -> Transaction.DecisionSource.MERCHANT_DEFAULT;
         };
     }

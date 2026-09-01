@@ -105,6 +105,42 @@ class CategorizationServiceTest {
     }
 
     @Test
+    void suggest_detectsStructuralP2pTransfer_whenNothingElseMatches() {
+        UUID merchantId = UUID.randomUUID();
+        Merchant merchant = merchantWith(merchantId, "Unknown Merchant");
+        when(merchantNormalizationEngine.resolve(eq(userId), anyString())).thenReturn(merchant);
+        when(learningRepository.findByUserIdAndMerchantId(userId, merchantId)).thenReturn(List.of());
+
+        var suggestion = categorizationService.suggest(userId, "UPI-RAJESH KUMAR-sampleuser@ybl-REF881234");
+
+        assertThat(suggestion.category()).isEqualTo("Transfer");
+        assertThat(suggestion.source()).isEqualTo("structural_p2p");
+        assertThat(suggestion.decisionSource()).isEqualTo(Transaction.DecisionSource.STRUCTURAL_P2P);
+    }
+
+    @Test
+    void suggest_keywordMatchStillWinsOverStructuralP2pDetection() {
+        // "UBER" is a Transport keyword; even though this narration also carries a UPI marker,
+        // the keyword table -- which runs first -- must still win. The P2P detector is wired in
+        // strictly as the last resort, never as an override.
+        UUID merchantId = UUID.randomUUID();
+        Merchant merchant = merchantWith(merchantId, "Uber");
+        when(merchantNormalizationEngine.resolve(eq(userId), anyString())).thenReturn(merchant);
+        when(learningRepository.findByUserIdAndMerchantId(userId, merchantId)).thenReturn(List.of());
+
+        var suggestion = categorizationService.suggest(userId, "UPI-UBER TRIP-sampleuser@ybl-REF881234");
+
+        assertThat(suggestion.category()).isEqualTo("Transport");
+        assertThat(suggestion.decisionSource()).isEqualTo(Transaction.DecisionSource.KEYWORD_MATCH);
+    }
+
+    @Test
+    void decisionSourceFor_mapsStructuralP2pString() {
+        assertThat(CategorizationService.decisionSourceFor("structural_p2p"))
+                .isEqualTo(Transaction.DecisionSource.STRUCTURAL_P2P);
+    }
+
+    @Test
     void suggest_fallsBackToRuleEngine_whenMerchantHasNoLearnedDistribution() {
         UUID merchantId = UUID.randomUUID();
         when(merchantNormalizationEngine.resolve(eq(userId), anyString())).thenReturn(merchantWithId(merchantId));
