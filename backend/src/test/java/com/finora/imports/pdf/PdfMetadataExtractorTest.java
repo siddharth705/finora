@@ -956,6 +956,23 @@ class PdfMetadataExtractorTest {
         assertThat(metadata.paymentDueDate()).isEqualTo(java.time.LocalDate.of(2026, 9, 15));
     }
 
+    /** Real ICICI Bank credit-card statement evidence: label and value both survive intact into
+     *  separate nearby lines ("PAYMENT DUE DATE" ... "July 29, 2026 Scan to Pay using"), well
+     *  within GRID_VALUE_SEARCH_WINDOW -- but DATE_LIKE only recognised "Day MonthName Year"
+     *  order, not ICICI's "MonthName Day, Year" order, so the value was never even located.
+     *  DATE_FORMATS already had a parser entry for exactly this shape ("MMMM d, yyyy", added "for
+     *  a real ICICI credit-card statement" per its own comment) -- it was simply unreachable
+     *  because DATE_LIKE never handed it the substring. */
+    @Test
+    void extract_findsPaymentDueDate_whenTheMonthNameComesBeforeTheDay() {
+        var metadata = extractor.extract(List.of(
+                "PAYMENT DUE DATE l To update mobile number, visit the nearest branch",
+                "l Click here to access your Credit Card One View Statement",
+                "July 29, 2026 Scan to Pay using"));
+
+        assertThat(metadata.paymentDueDate()).isEqualTo(java.time.LocalDate.of(2026, 7, 29));
+    }
+
     /** The same-line fallback must still yield to the genuine multi-line grid shape
      *  ({@link #extract_findsPaymentDueDate_inAMultiColumnGrid_skippingTheStatementPeriodRangeOnTheSameRow})
      *  when the label's own line has no date-shaped value at all -- proving the two fallbacks are

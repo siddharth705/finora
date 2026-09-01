@@ -473,13 +473,22 @@ public class PdfMetadataExtractor {
     // trace happens to have. Bounded to one whitespace-delimited token instead -- a trailing clause
     // ("to avoid late fees") stops the capture at the space before it; trailing punctuation directly
     // against the date ("2026.") is still captured (it's non-whitespace) and stripped below before
-    // parsing. (DATE_LIKE below, despite the name, cannot substitute for this: its two alternatives
-    // are digit-only-separated and space-separated-month-name, neither of which matches this
-    // document's own hyphenated day-Mon-year shape, "02-Apr-2026".)
+    // parsing. (DATE_LIKE below, despite the name, cannot substitute for this: none of its
+    // alternatives (digit-only-separated, space-separated day-then-month-name, or
+    // space-separated month-name-then-day) matches this document's own hyphenated day-Mon-year
+    // shape, "02-Apr-2026".)
     private static final Pattern PAYMENT_DUE_DATE_SENTENCE = Pattern.compile(
             "(?i)remember\\s+to\\s+pay\\s+by\\s+(\\S+)");
+    // Bug fix: real ICICI Bank credit-card statement evidence prints the grid's own Payment Due
+    // Date value as "July 29, 2026" -- month name FIRST, then day, then a comma before the year --
+    // which the two alternatives below never matched (both require the day first). DATE_FORMATS
+    // already carries an "MMMM d, yyyy" parser entry for exactly this shape ("added ... for a real
+    // ICICI credit-card statement", see its own comment); it was simply unreachable because this
+    // pattern never handed it the matching substring. Purely additive: a third alternative, not a
+    // change to either existing one.
     private static final Pattern DATE_LIKE = Pattern.compile(
-            "\\b\\d{1,2}[-/]\\d{1,2}[-/]\\d{2,4}\\b|\\b\\d{1,2}\\s+[A-Za-z]{3,9}\\.?,?\\s+\\d{4}\\b");
+            "\\b\\d{1,2}[-/]\\d{1,2}[-/]\\d{2,4}\\b|\\b\\d{1,2}\\s+[A-Za-z]{3,9}\\.?,?\\s+\\d{4}\\b"
+                    + "|\\b[A-Za-z]{3,9}\\s+\\d{1,2},?\\s+\\d{4}\\b");
     // A date immediately preceded or followed by " - " is one half of an explicit range (e.g. a
     // Statement Period column, "24/06/2026 - 22/07/2026") -- excluded from findGridValue's
     // date-shape scan so a standalone field like Payment Due Date is never confused with the

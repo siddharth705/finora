@@ -247,6 +247,14 @@ public class PdfPreviewGenerator {
             }
         }
 
+        // A credit-card statement's own "Payment Summary" grid (Axis, SBI evidence): read
+        // document-wide, same reasoning as printedCreditCardSummary above ("a real credit-card
+        // statement is effectively always one account") -- not gated on section count, since this
+        // is a whole-account fact, not a per-section transaction range the way printedDateRange is.
+        // See PaymentDueDateGridExtractor's own doc comment for why PdfMetadataExtractor's
+        // line-based reading can never recover this on these two real documents at all.
+        LocalDate gridPaymentDueDate = PaymentDueDateGridExtractor.extract(positioned, ctx);
+
         if (doc.sections().isEmpty()) {
             // "Never lose information" (see the engineering principles doc) applies at the
             // whole-document level too: previously this returned a well-formed but silently empty
@@ -268,7 +276,7 @@ public class PdfPreviewGenerator {
             // section and there is no other candidate it could describe. Withholding it here left
             // the contradiction -- printed activity, nothing staged -- with nothing to state it.
             StagedAccountSection section = buildLedgerSection(userId, filename, emptySection, unknown, ctx,
-                    printedSummary, printedCreditCardSummary, printedDateRange);
+                    printedSummary, printedCreditCardSummary, printedDateRange, gridPaymentDueDate);
             return new PdfGenerationResult(List.of(surfaceUnrecognizedText(section, empty.preTableLines())), ctx,
                     printedCreditCardSummary);
         }
@@ -281,7 +289,7 @@ public class PdfPreviewGenerator {
             // every section exists.
             List<StagedAccountSection> staged = buildSections(userId, filename, doc.sections().get(i),
                     i, doc.sections().size(), ctx, PrintedSummary.NONE, printedCreditCardSummary,
-                    printedDateRange);
+                    printedDateRange, gridPaymentDueDate);
             for (StagedAccountSection s : staged) unparseableAcrossDocument.addAll(s.unparseableRows());
             result.addAll(staged);
         }
@@ -314,7 +322,8 @@ public class PdfPreviewGenerator {
                                                       int sectionIndex, int sectionCount, DocumentContext ctx,
                                                       PrintedSummary printedSummary,
                                                       CreditCardSummaryEvidence printedCreditCardSummary,
-                                                      TransactionTableDateRangeExtractor.PrintedDateRange printedDateRange) {
+                                                      TransactionTableDateRangeExtractor.PrintedDateRange printedDateRange,
+                                                      LocalDate gridPaymentDueDate) {
         List<String> columns = section.rows().isEmpty() ? List.of() : List.copyOf(section.rows().get(0).keySet());
         ProductDiscovery.DiscoveredProduct product = productDiscovery.discover(
                 new ProductEvidenceCollector.Section(columns, section.auxiliaryText(), null,
@@ -333,7 +342,7 @@ public class PdfPreviewGenerator {
             return buildProductSections(filename, section, product, ctx);
         }
         return List.of(buildLedgerSection(userId, filename, section, product, ctx, printedSummary,
-                printedCreditCardSummary, printedDateRange));
+                printedCreditCardSummary, printedDateRange, gridPaymentDueDate));
     }
 
     /**
@@ -357,7 +366,7 @@ public class PdfPreviewGenerator {
             // credit-card-ledger-only concept.
             DetectedAccountInfo detected = facts.toDetectedAccountInfo(product, suggestedAccountType,
                     null, null, facts.metadata().statementPeriodStart(), facts.metadata().statementPeriodEnd(), attrs,
-                    null);
+                    null, facts.metadata().paymentDueDate());
             result.add(new StagedAccountSection(detected, List.of(), 0, 0, List.of()));
         }
         return result;
@@ -368,7 +377,8 @@ public class PdfPreviewGenerator {
                                                     ProductDiscovery.DiscoveredProduct product,
                                                     DocumentContext ctx, PrintedSummary printedSummary,
                                                     CreditCardSummaryEvidence printedCreditCardSummary,
-                                                    TransactionTableDateRangeExtractor.PrintedDateRange printedDateRange) {
+                                                    TransactionTableDateRangeExtractor.PrintedDateRange printedDateRange,
+                                                    LocalDate gridPaymentDueDate) {
         List<StagedRow> staged = new ArrayList<>();
         // "Never lose information" (see the engineering principles doc) -- a row that fails to
         // normalize is reported with WHY, not just silently absent from the row count. Real cost
@@ -481,7 +491,7 @@ public class PdfPreviewGenerator {
 
         int dupCount = (int) staged.stream().filter(StagedRow::likelyDuplicate).count();
         DetectedAccountInfo detected = buildDetectedAccountInfo(filename, section, staged, balancePoints, product, ctx,
-                printedCreditCardSummary, printedDateRange);
+                printedCreditCardSummary, printedDateRange, gridPaymentDueDate);
         // Per section rather than per file: a composite statement's sections have separate balance
         // chains, and one can verify while another does not.
         var verification = importVerifier.verify(documentOrder,
@@ -576,7 +586,8 @@ public class PdfPreviewGenerator {
                                                            ProductDiscovery.DiscoveredProduct product,
                                                            DocumentContext ctx,
                                                            CreditCardSummaryEvidence printedCreditCardSummary,
-                                                           TransactionTableDateRangeExtractor.PrintedDateRange printedDateRange) {
+                                                           TransactionTableDateRangeExtractor.PrintedDateRange printedDateRange,
+                                                           LocalDate gridPaymentDueDate) {
         LocalDate statementStart = null;
         LocalDate statementEnd = null;
         BigDecimal openingBalance = null;
@@ -623,9 +634,17 @@ public class PdfPreviewGenerator {
             closingBalance = resolution.closingBalance();
         }
 
+        // Same precedence as statementStart/statementEnd above: PdfMetadataExtractor's own
+        // line-based field wins when present, and the positioned-text grid reading is only tried
+        // once that comes up empty -- see PaymentDueDateGridExtractor's own doc comment for why
+        // its two real evidencing documents (Axis, SBI) can never be read the line-based way.
+        LocalDate paymentDueDate = facts.metadata().paymentDueDate() != null
+                ? facts.metadata().paymentDueDate() : gridPaymentDueDate;
+
         return facts.toDetectedAccountInfo(product, suggestedAccountTypeFor(product, facts.creditCardSignals()),
                 openingBalance, closingBalance, statementStart, statementEnd, ProductAttributes.empty(),
-                printedCreditCardSummary == null ? null : printedCreditCardSummary.totalAmountDue());
+                printedCreditCardSummary == null ? null : printedCreditCardSummary.totalAmountDue(),
+                paymentDueDate);
     }
 
     /**
@@ -687,12 +706,12 @@ public class PdfPreviewGenerator {
                                                   String suggestedAccountType, BigDecimal openingBalance,
                                                   BigDecimal closingBalance, LocalDate statementStart,
                                                   LocalDate statementEnd, ProductAttributes attrs,
-                                                  BigDecimal totalAmountDue) {
+                                                  BigDecimal totalAmountDue, LocalDate paymentDueDate) {
             return new DetectedAccountInfo(
                     suggestedName, suggestedAccountType,
                     openingBalance, closingBalance, statementStart, statementEnd,
                     metadata.accountNumberMasked(), metadata.creditLimit(), totalAmountDue,
-                    metadata.paymentDueDate(),
+                    paymentDueDate,
                     metadata.accountHolderName(), metadata.branchName(), metadata.ifscCode(),
                     AccountDto.BankDto.from(bank),
                     product.type().name(), product.confidence(), product.needsReview(), product.report(),

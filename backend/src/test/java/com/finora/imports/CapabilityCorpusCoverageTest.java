@@ -148,6 +148,15 @@ class CapabilityCorpusCoverageTest {
                         + "that the capability correctly does NOT fire on redacted text. Real date-value "
                         + "recovery is covered by StatementTitleDateRangeExtractorTest using the real "
                         + "unredacted date string at the trace's own coordinates.");
+        DECLARED_WITHOUT_A_TRACE.put("PRINTED_PAYMENT_DUE_DATE_GRID",
+                "no trace -- same scoping gap as PRINTED_TITLE_ADJACENT_DATE_RANGE above: this fires in "
+                        + "PaymentDueDateGridExtractor, called from PdfPreviewGenerator, never from "
+                        + "PdfTableLocator.locateAll. Two real evidencing documents have committed traces "
+                        + "(axis-credit-card-statement, sbi-credit-card-statement) and both are exercised "
+                        + "directly by PaymentDueDateGridRegressionTest -- Axis's trace keeps its dates "
+                        + "unredacted, so that test proves the real recovered VALUE end to end, not just "
+                        + "that the capability fires. SBI's trace has its date redacted, and that test "
+                        + "proves the extractor correctly declines rather than fabricating one.");
         DECLARED_WITHOUT_A_TRACE.put("CREDIT_CARD_SUMMARY_TOTALS",
                 "no trace yet -- CreditCardSummaryExtractorTest exercises the GRID strategy on "
                         + "synthetic fixtures reproducing real observed shapes (a clean stacked grid, "

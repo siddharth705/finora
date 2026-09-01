@@ -210,6 +210,14 @@ public class CapabilityCoverageService {
             // relationship to the title (see StatementTitleDateRangeExtractor's own doc comment
             // for why this is not a general bare-date-range pattern).
             "PRINTED_TITLE_ADJACENT_DATE_RANGE",
+            // Real Axis Bank and SBI credit-card statements each print their payment due date as
+            // one column of a dense multi-column "Payment Summary" grid -- confirmed the label
+            // text is dropped/detached from its value once PdfTableLocator's line-based
+            // preTableLines view joins the panel's several visual rows into one text line, so no
+            // line-based pattern can ever recover it. Recognized by reading the same raw
+            // positioned-text grid CreditCardSummaryExtractor already reads for its own money
+            // fields (see PaymentDueDateGridExtractor's own doc comment).
+            "PRINTED_PAYMENT_DUE_DATE_GRID",
             // Two real, independently-uploaded savings-account statements (Central Bank of India,
             // PNB ONE) each close with a regulatory-boilerplate discrepancy-notification sentence
             // that sits before either document's own true end -- swept into the last real
