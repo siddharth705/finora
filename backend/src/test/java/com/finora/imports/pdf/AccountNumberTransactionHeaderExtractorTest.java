@@ -51,6 +51,35 @@ class AccountNumberTransactionHeaderExtractorTest {
         assertThat(AccountNumberTransactionHeaderExtractor.extract(runs, null)).isNull();
     }
 
+    /** A hyphen-separated transaction date ("dd-MM-yyyy", a real format PdfMetadataExtractor.
+     *  DATE_FORMATS already supports elsewhere in this corpus, e.g. Kotak's "16-Feb-2026" dates)
+     *  matches CARD_NUMBER_VALUE's shape too, since that pattern allows '-' as an internal separator
+     *  -- without a date check first, this would be misread as the account number. */
+    @Test
+    void extract_returnsNull_whenTheRowBelowTheHeaderIsARealTransaction_withAHyphenSeparatedDate() {
+        var runs = List.of(
+                run("Date", 207.8f, 221.0f, 376.2f),
+                run("Amount (in`)", 521.9f, 556.9f, 376.2f),
+                run("17-06-2026", 207.8f, 239.1f, 411.7f),
+                run("1,652.00", 533.3f, 556.9f, 411.7f));
+
+        assertThat(AccountNumberTransactionHeaderExtractor.extract(runs, null)).isNull();
+    }
+
+    /** The forward scan must continue past a hyphen-dated transaction row (not stop or misread it)
+     *  to find a genuine account number a few rows further down within the same gap window. */
+    @Test
+    void extract_skipsAHyphenDateRow_toReachARealAccountNumberBelowIt() {
+        var runs = List.of(
+                run("Date", 207.8f, 221.0f, 376.2f),
+                run("Amount (in`)", 521.9f, 556.9f, 376.2f),
+                run("17-06-2026", 207.8f, 239.1f, 383.0f),
+                run("100200XXXXXX3400", 207.8f, 285.5f, 398.3f));
+
+        assertThat(AccountNumberTransactionHeaderExtractor.extract(runs, null))
+                .isEqualTo("100200XXXXXX3400");
+    }
+
     @Test
     void extract_returnsNull_whenNoHeaderRowHasBothADateCellAndAnAmountCell() {
         var runs = List.of(

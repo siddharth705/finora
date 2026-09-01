@@ -76,6 +76,12 @@ public final class AccountNumberTransactionHeaderExtractor {
             PositionedText value = StatementSummaryExtractor.valueUnder(dateHeader, candidateRow);
             if (value == null) continue;
             String candidate = value.text().trim();
+            // A real transaction date can share the masked-number shape when it uses hyphens
+            // ("17-06-2026" -- CARD_NUMBER_VALUE's char class allows '-' as an internal separator,
+            // and dd-MM-yyyy is a real, already-supported format elsewhere in this codebase) --
+            // reject anything that actually parses as a date before the shape checks below get a
+            // chance to accept it as an account number.
+            if (PdfMetadataExtractor.looksLikeADate(candidate)) continue;
             if (!PdfMetadataExtractor.CARD_NUMBER_VALUE.matcher(candidate).matches()) continue;
             if (!PdfMetadataExtractor.looksLikeCardOrAccountNumber(candidate)) continue;
             return PdfMetadataExtractor.normalizeCardOrAccountNumberValue(candidate)[0];
