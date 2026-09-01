@@ -734,6 +734,59 @@ actually found.
    now show the real recovered dates. Regenerated and reviewed — the diff touches only the
    `statementPeriod` line in each file, nothing else changed.
 
+## Group F: implemented as a follow-up, with positional evidence
+
+Deferred above (line 9, line 53) pending "a separate investigation with positional evidence rather
+than adding a heuristic now." That investigation found:
+
+- Direct `PositionedText` inspection of `new kotak.pdf` page 1: `"Account Statement"` (the document
+  title) at `x=33.9, y=110.5`, and the bare date range `"01 Jul 2026 - 31 Jul 2026"` immediately
+  below it at `x=33.9, y=126.0` — same x, 15.5pt gap, no label anywhere near the date range.
+- A corpus-wide sweep of all 27 real documents' page-1 text for any bare (unlabeled) two-date-range
+  shape found exactly one: this one. The three other superficial matches (`SC bank.pdf`, `canara.pdf`,
+  `HSBC CC.pdf`) each carry an explicit label on the same line and are handled elsewhere.
+- Direct architectural precedent already existed for "a period stated in a shape
+  `PdfMetadataExtractor`'s line-based view can never reach": `TransactionTableDateRangeExtractor`,
+  reading Kotak's own credit-card table-header text the same way.
+
+Approved with an explicit condition: keep it a **dedicated, narrowly-scoped fallback** — not a
+generic "any bare date range" pattern. Safety comes from the positional relationship to the
+document's own title, not from the date shape alone.
+
+**Implemented:**
+- `StatementTitleDateRangeExtractor` (new class, mirrors `TransactionTableDateRangeExtractor`'s
+  shape): matches only a row whose text is exactly (case-insensitive) `"Account Statement"`,
+  immediately followed by a row that is *only* a `DATE - DATE` range (regex anchored start-to-end,
+  so any row carrying a label alongside the range is correctly left to the extractors that already
+  handle labelled shapes), left-aligned within 3pt, within a 40pt vertical gap (the same tolerance
+  `StatementSummaryExtractor.MAX_VALUE_ROW_GAP` uses for its own "label row, value row below" shape).
+- Wired into `PdfPreviewGenerator` as a third fallback tier — tried only when neither
+  `PdfMetadataExtractor`'s own fields nor `TransactionTableDateRangeExtractor`'s table-header
+  reading found a period — folded into the existing `printedDateRange` value rather than threaded
+  through every downstream method as a new parameter.
+- `StatementTitleDateRangeExtractorTest`: 10 synthetic-`PositionedText` cases (real shape recovers
+  the correct dates; case-insensitive title; and one negative test per safety condition — no title
+  row, labelled row below the title, misaligned x, oversized gap, different pages, no match at all,
+  empty input) — proves this is not a generic bare-date-range pattern.
+- `KotakSavingsTitleDateRangeRegressionTest`: runs directly against the real committed trace
+  `kotak-savings-ledger-validation.trace`. That trace's date text is redacted
+  (`"99 Xxx 9999 - 99 Xxx 9999"`, the same policy every transaction date in it is under), so it
+  cannot prove the recovered date VALUE — it independently re-derives the row grouping from the raw
+  trace (not by calling into the extractor) to prove the real document's own geometry is exactly the
+  title-row/adjacent-date-row/left-aligned/small-gap shape the extractor keys off, and confirms the
+  extractor itself correctly returns `NONE` rather than fabricating a value from the redacted month
+  token.
+- `CapabilityCoverageService.KNOWN_CAPABILITIES` / `CapabilityCorpusCoverageTest.DECLARED_WITHOUT_A_TRACE`
+  gained matching `PRINTED_TITLE_ADJACENT_DATE_RANGE` entries (same "fires in PdfPreviewGenerator,
+  not PdfTableLocator.locateAll" scoping gap as `PRINTED_TRANSACTION_TABLE_DATE_RANGE`).
+
+**Verification:** full backend suite green (4091 tests; the one failure seen in a full run,
+`MerchantLearningNudgeIT`, is an unrelated async-timing test — confirmed by rerunning it alone,
+green). Fresh corpus re-run: `statementPeriodStart`/`End` both **15/15** (up from 14/15), zero
+mismatches, `new kotak.pdf` now reads `2026-07-01 .. 2026-07-31` (matching its real printed range
+exactly), no new verification warnings anywhere in the corpus (savings or credit-card), no
+implausible dates.
+
 4. **`FROM_TO_LABELED_PERIOD` (Task A) kept its `continue`, unlike Tasks D/E above** — its own test
    fixture's trailing text ("Statement of account") is exactly what a separate account-number
    pattern (`STATEMENT_OF_ACCOUNT_SAME_LINE`) looks for, raising the same class of risk found in
