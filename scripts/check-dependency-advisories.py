@@ -79,6 +79,20 @@ ACCEPTED = [
     # version, and that newer metro no longer resolves to a vulnerable image-size at all --
     # confirmed via `npm ls image-size` in mobile/ returning empty. Both entries are removed
     # together, as their own text said to.
+    #
+    # GHSA-vcc3-ghjq-m6fr (decode-uri-component: denial of service via exponential decoding of
+    # malformed percent-encoded input) surfaced for mobile 2026-09-01, reached as
+    # @react-navigation/core -> query-string -> decode-uri-component (query-string parses the
+    # `finora://` deep-link scheme's query string -- see RootNavigator's `linking` config -- so
+    # this IS externally-triggerable attack surface, not build-time-only tooling). `npm audit`
+    # reported `fixAvailable: false` because query-string@7.1.3 declares `decode-uri-component:
+    # ^0.4.1`, and no 0.4.x release ever fixed the advisory -- the only patched version is 0.5.0,
+    # outside that declared range. Never added here as an ACCEPTED entry: fixed directly instead,
+    # via an `"overrides": {"decode-uri-component": "^0.5.0"}` entry in mobile/package.json,
+    # verified by the full mobile Jest suite (555 tests, including the deep-link-specific
+    # useEmailChangeDeepLink.test.ts) and `tsc --noEmit` both passing clean against it -- the same
+    # "override + verify, don't just accept" preference the uuid entry above already established
+    # for this file.
 ]
 
 ACCEPTED_BY_GHSA = {a.ghsa: a for a in ACCEPTED}

@@ -230,6 +230,22 @@ public class PdfPreviewGenerator {
                 doc.sections().size() <= 1
                         ? TransactionTableDateRangeExtractor.extract(positioned, ctx)
                         : TransactionTableDateRangeExtractor.PrintedDateRange.NONE;
+        // Third tier, same single-section caution as printedDateRange above: a real Kotak Mahindra
+        // Bank SAVINGS statement prints its period as a bare, title-adjacent date range that reaches
+        // neither PdfMetadataExtractor's auxiliaryText nor TransactionTableDateRangeExtractor's
+        // table-header reading (see StatementTitleDateRangeExtractor's own doc comment). Tried only
+        // when the table-header reading above found nothing, and folded into the same
+        // printedDateRange value rather than threaded through every downstream signature as a third
+        // parameter -- every consumer below already treats printedDateRange as "the best positional
+        // reading available," and this is exactly that, just from a third source.
+        if (printedDateRange.start() == null && doc.sections().size() <= 1) {
+            StatementTitleDateRangeExtractor.PrintedDateRange titleDateRange =
+                    StatementTitleDateRangeExtractor.extract(positioned, ctx);
+            if (titleDateRange.start() != null) {
+                printedDateRange = new TransactionTableDateRangeExtractor.PrintedDateRange(
+                        titleDateRange.start(), titleDateRange.end());
+            }
+        }
 
         if (doc.sections().isEmpty()) {
             // "Never lose information" (see the engineering principles doc) applies at the
