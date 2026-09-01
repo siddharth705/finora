@@ -267,7 +267,16 @@ class MultiSectionZeroExtractionTest {
 
     private static final List<String> ALREADY_REJECTED_BEFORE_THIS_FIX = List.of(
             "hsbc-savings-ledger-validation",
-            "kotak-savings-ledger-validation");
+            "kotak-savings-ledger-validation",
+            // Captured later, for a different fix entirely (PdfTableLocator.resolveYearlessDate
+            // -- see docs/superpowers/plans/2026-09-01-hsbc-yearless-date-resolution.md), and
+            // rejected for a reason unrelated to that fix or to this one: its header-based path
+            // (untouched by either fix) picks up 2 garbage rows from this document's own
+            // unrelated Loan Summary table, none of which normalize into a real transaction, so
+            // rejectIfNothingWasExtracted correctly refuses it -- IMPORT_NO_TRANSACTIONS_FOUND,
+            // same as every other entry in this list. Belongs here, not in REJECTED_BY_FIX_1,
+            // because P-002 Fix 1 has nothing to do with why this one is rejected.
+            "hsbc-credit-card-yearless-dates");
 
     @Test
     void everyCorpusDocumentThatStagesTransactions_stagesExactlyWhatItStagedBefore() {
