@@ -13,6 +13,7 @@ build the project.
 ```bash
 cd backend
 ./mvnw -o test -Dtest='ReconciliationScalingBenchmark#measureReconcileAndDetectAcrossHistorySizes' \
+  -Dfinora.benchmark=true \
   -DfailIfNoTests=false \
   -DargLine="-XX:StartFlightRecording=filename=recon.jfr,settings=profile,dumponexit=true"
 
