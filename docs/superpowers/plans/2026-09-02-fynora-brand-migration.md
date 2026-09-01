@@ -54,14 +54,17 @@ These are decisions, not open questions. Each has a concrete failure mode.
 
 5. **`slug: 'finora-mobile'`** (`mobile/app.config.ts:66`). The EAS project slug binds the local project to the EAS/Expo build project. Changing it re-points builds at a project that does not exist. Cosmetic, internal, and build-breaking — not worth it.
 
+6. **The transaction-alert SMS template** — `TwoFactorSmsProvider.java:108`, the string beginning `"Finora Alert: Rs.%s ..."`. **Owner-confirmed 2026-09-02: this template is registered with the SMS operator.** Indian DLT rules match the delivered message against the registered template; if the text no longer matches, the operator **rejects the message outright** — users silently stop receiving transaction alerts on a financial app. This string stays `Finora` until the owner re-registers a Fynora template with the operator, which is an owner action with its own approval lead time, not a code change. This is the one place in the product where a user will still legitimately see "Finora", and that is a deliberate, documented trade rather than a missed rename.
+
 **If you want any of items 1–3 done anyway,** that is a legitimate call, but it belongs in its own dedicated PR with a maintenance window and a Railway change staged in advance — never bundled into a copy change.
 
 ---
 
 ## Owner actions (cannot be done from the codebase)
 
-- [ ] **Instagram handle.** `frontend/src/pages/landing/landing-config.ts:257-258` links the live landing page to `https://www.instagram.com/finoratech.info/` with handle `@finoratech.info`. That handle is named after a **domain that was sold**. The code change is trivial, but it needs you to first decide: rename the Instagram account to a Fynora handle, or remove the link. Until you do, the code cannot be corrected — Task 5 is blocked on this answer.
-- [ ] **Email sender identity.** Confirm whether the Resend sender display name and any pre-registered SMS template header need re-registering with the provider before their brand text changes. An SMS template header registered with an Indian operator under an exact string will have messages **rejected** if the sent text no longer matches the registered template.
+- [x] **Instagram handle.** Resolved 2026-09-02: the account has been renamed to Fynora. Task 5 is unblocked; confirm the exact handle when applying it.
+- [x] **SMS template.** Resolved 2026-09-02: the transaction-alert template **is** registered with the operator, and stays as-is. See "Do not rename" item 6. Re-registering a Fynora template with the operator is a future owner action, not part of this plan.
+- [ ] **Email sender identity.** Still open. The sender sits on the email provider's shared test domain rather than a Fynora domain — a pre-existing issue this plan does not fix, but worth resolving separately, since a financial app sending from a generic test domain hurts deliverability and looks untrustworthy in a user's inbox.
 
 ---
 
@@ -107,13 +110,29 @@ class BrandNameGuardTest {
 
     private static final Path SOURCE_ROOT = Path.of("src/main/java");
 
+    /**
+     * The one permitted exception, and the only place a user should still see "Finora".
+     *
+     * <p>The transaction-alert SMS body is registered as a DLT template with the SMS operator.
+     * The operator matches the delivered message against the registered text and rejects
+     * anything that does not match, so renaming this string would silently stop transaction
+     * alerts from being delivered at all. It changes only when the owner re-registers a Fynora
+     * template with the operator.
+     *
+     * <p>Owner-confirmed 2026-09-02. Do not extend this list to make a failure go away -- any
+     * other match is copy that should simply be renamed.
+     */
+    private static final String REGISTERED_SMS_TEMPLATE_FILE = "TwoFactorSmsProvider.java";
+
     @Test
     @DisplayName("no user-facing string literal says Finora")
     void noUserFacingFinoraStrings() throws IOException {
         List<String> offenders = new ArrayList<>();
 
         try (Stream<Path> files = Files.walk(SOURCE_ROOT)) {
-            files.filter(p -> p.toString().endsWith(".java")).forEach(p -> {
+            files.filter(p -> p.toString().endsWith(".java"))
+                    .filter(p -> !p.getFileName().toString().equals(REGISTERED_SMS_TEMPLATE_FILE))
+                    .forEach(p -> {
                 List<String> lines;
                 try {
                     lines = Files.readAllLines(p, StandardCharsets.UTF_8);
@@ -187,7 +206,9 @@ Work down the list literally. Examples of what these look like (from the audit):
 
 Each becomes the same sentence with `Fynora`. **Do not reword** — this task changes one word per string and nothing else, so the diff is reviewable at a glance.
 
-Two need judgement rather than a blind swap:
+**Do not touch `TwoFactorSmsProvider.java`.** Its `"Finora Alert: ..."` string is a DLT-registered SMS template — see "Do not rename" item 6. The guard test in Task 1 already skips that file.
+
+Two more need judgement rather than a blind swap:
 - `"Finora API"` and `"Finora Admin"` — these are OpenAPI/Swagger document titles. Rename them, but check first whether any generated client or saved Postman collection keys off the title.
 - The **email FROM identity** (a `"Finora <...>"` sender string in the email config — grep for it rather than pasting the address around). This is not body copy. Renaming the display-name half is safe; the address half sits on the email provider's shared test domain, which is a separate pre-existing issue. Change only the display name here, and flag the test-domain sender to the owner rather than fixing it in this plan.
 
@@ -302,16 +323,21 @@ git commit -m "feat: rename user-facing admin and mobile copy to Fynora"
 
 ---
 
-## Task 5: Fix the stale Instagram link (BLOCKED on owner)
+## Task 5: Fix the stale Instagram link
 
 **Files:**
 - Modify: `frontend/src/pages/landing/landing-config.ts:257-258`
 
-**Do not start this task until the owner has answered the Instagram question above.** The live landing page currently links to an Instagram account named after a sold domain.
+**Unblocked — owner confirmed 2026-09-02 that the Instagram account has been renamed to Fynora.** The live landing page still links to the old handle, which is named after a sold domain.
 
-- [ ] **Step 1: Apply the owner's decision**
+- [ ] **Step 1: Point both lines at the new handle**
 
-If the account is renamed to a Fynora handle, update both lines to the new handle. If the account is being retired, remove the entry and confirm the landing page renders correctly with one fewer social link — check for a layout that assumes a fixed number of icons.
+```typescript
+  instagram: 'https://www.instagram.com/fynora/',
+  instagramHandle: '@fynora',
+```
+
+**Verify the exact handle before committing** — open the URL and confirm it resolves to the real account. The owner said the account was "renamed to fynora"; if the actual handle carries a suffix (`fynora.app`, `fynora.net`, `fynoratech`), use that instead. A landing page linking to a handle that does not exist, or to someone else's account, is a worse outcome than the stale link this task is fixing.
 
 - [ ] **Step 2: Verify**
 
@@ -352,7 +378,7 @@ The mobile deep-link scheme is still `finora` / `finora-dev`, and links like `fi
 ## Plan completion checklist
 
 - [ ] `BrandNameGuardTest` passes.
-- [ ] No user-visible string in backend, frontend, admin-portal, or mobile says "Finora".
+- [ ] No user-visible string in backend, frontend, admin-portal, or mobile says "Finora" — **except** the DLT-registered SMS template in `TwoFactorSmsProvider.java`, which stays by design.
 - [ ] `grep -rn "finoratech" frontend/src admin-portal/src` returns nothing (comments in `_headers` are the deliberate exception and stay).
 - [ ] `com.finora.*` packages untouched.
 - [ ] No `FINORA_*` environment variable renamed.
