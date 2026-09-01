@@ -46,10 +46,18 @@ public class ImportRuleLearningService {
      * so it fell through to Other — and review left it as Other) teaches nothing. Learning from one
      * would poison the merchant map with "this merchant = Other" for no reason.
      *
+     * <p>A structurally-detected person-to-person transfer that review left as Transfer is the same
+     * kind of non-decision, for a sharper reason: that detector discloses an 8-12% error bound, and
+     * a learned confirmation outranks the keyword table permanently — so teaching from an
+     * unconfirmed misfire would file a real business as a personal transfer forever, invisibly. See
+     * {@link CategorizationService#isUnconfirmedGuess}, which is the single definition both this
+     * and the review-queue flag are derived from.
+     *
      * <p>No longer applies the learning itself: see this class's doc comment.
      */
     public Decision recordDecision(UUID userId, ConfirmedRow row, Category category) {
-        boolean isUnresolvedGuess = "default".equals(row.categorySource()) && "Other".equals(row.category());
+        boolean isUnresolvedGuess =
+                CategorizationService.isUnconfirmedGuess(row.categorySource(), row.category());
 
         // This IS the actual write, unlike the suggest() call at staging time (preview, possibly
         // never confirmed) -- row.ruleId() is the same ASSIGN_CATEGORY rule id resolved there and

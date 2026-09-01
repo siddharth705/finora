@@ -37,6 +37,15 @@ public class CategorizationService {
 
     private static final Logger log = LoggerFactory.getLogger(CategorizationService.class);
 
+    /** The {@code Suggestion.source()} string for a structurally-detected person-to-person
+     *  transfer -- see {@link com.finora.util.PersonToPersonTransferDetector}. */
+    public static final String STRUCTURAL_P2P_SOURCE = "structural_p2p";
+
+    /** Where a detected person-to-person transfer lands. Already a system category in every user's
+     *  default taxonomy (see {@code AuthService.DEFAULT_CATEGORIES}) -- this detector routes into
+     *  the existing taxonomy, it never invents a category. */
+    public static final String P2P_CATEGORY = "Transfer";
+
     private final MerchantNormalizationEngine merchantNormalizationEngine;
     private final MerchantLearningService merchantLearningService;
     private final MerchantLearningEventPublisher learningEventPublisher;
@@ -166,13 +175,13 @@ public class CategorizationService {
             }
         }
 
-        String ruleCat = suggestCategoryWithMerchantFallback(description, merchant.getCanonicalName());
+        String ruleCat = suggestCategoryWithMerchantFallback(description, trustedNameOf(merchant));
         if (!ruleCat.equals("Other")) {
             return new Suggestion(ruleCat, "rule", merchant.getId(), Transaction.DecisionSource.KEYWORD_MATCH, null,
                     ConfidenceEngine.INITIAL_RULE_CONFIDENCE);
         }
         if (PersonToPersonTransferDetector.isNamedIndividualTransfer(description)) {
-            return new Suggestion("Transfer", "structural_p2p", merchant.getId(),
+            return new Suggestion(P2P_CATEGORY, STRUCTURAL_P2P_SOURCE, merchant.getId(),
                     Transaction.DecisionSource.STRUCTURAL_P2P, null, ConfidenceEngine.INITIAL_RULE_CONFIDENCE);
         }
         return new Suggestion("Other", "default", merchant.getId(), Transaction.DecisionSource.MERCHANT_DEFAULT, null,
@@ -271,13 +280,13 @@ public class CategorizationService {
             }
         }
 
-        String ruleCat = suggestCategoryWithMerchantFallback(description, merchantName);
+        String ruleCat = suggestCategoryWithMerchantFallback(description, trustedNameOf(merchant.orElse(null)));
         if (!ruleCat.equals("Other")) {
             return new Suggestion(ruleCat, "rule", merchantId, Transaction.DecisionSource.KEYWORD_MATCH, null,
                     ConfidenceEngine.INITIAL_RULE_CONFIDENCE);
         }
         if (PersonToPersonTransferDetector.isNamedIndividualTransfer(description)) {
-            return new Suggestion("Transfer", "structural_p2p", merchantId,
+            return new Suggestion(P2P_CATEGORY, STRUCTURAL_P2P_SOURCE, merchantId,
                     Transaction.DecisionSource.STRUCTURAL_P2P, null, ConfidenceEngine.INITIAL_RULE_CONFIDENCE);
         }
         return new Suggestion("Other", "default", merchantId, Transaction.DecisionSource.MERCHANT_DEFAULT, null,
@@ -288,23 +297,85 @@ public class CategorizationService {
      * Retries the static keyword table against the resolved merchant's canonical name when the
      * raw description alone doesn't match anything.
      *
-     * <p>{@code merchantName} generalizes across every raw narration variant that has ever
-     * resolved to this merchant (exact alias match or first-significant-token match, see
-     * {@link MerchantNormalizationEngine}) -- not just the current transaction's own text. A
-     * merchant's canonical name is set once, from whichever description first created it (or from
-     * an admin/user rename via the Merchant Review Center), so fixing it once retroactively helps
-     * every future transaction for that merchant hit the keyword table, even ones whose own raw
-     * text carries no recognizable brand token at all.
+     * <p>A canonical name generalizes across every raw narration variant that has resolved to that
+     * merchant -- not just the current transaction's own text -- so a merchant identified once
+     * helps every later transaction for it hit the keyword table, including ones whose own raw text
+     * carries no recognizable brand token at all.
      *
      * <p>Never used to REPLACE the raw-description attempt, only to extend it: a raw match always
      * wins first, so this cannot change the category for any narration that already matched on its
      * own text.
+     *
+     * <p><b>{@code trustedMerchantName} is APPROVED-only, and that restriction is load-bearing
+     * twice over</b> (both caught by adversarial review before this shipped, neither hypothetical):
+     *
+     * <ol>
+     *   <li><b>It is what keeps {@link #suggest} and {@link #suggestReadOnly} identical.</b>
+     *       {@code suggest} resolves through {@code MerchantNormalizationEngine.resolve}, which
+     *       CREATES a merchant on a miss -- so a first-sighting description always had a canonical
+     *       name to retry against, derived from that very description. {@code suggestReadOnly}
+     *       resolves read-only and gets nothing on a miss. Retrying against any name therefore made
+     *       staging and confirm disagree on a first sighting, which both methods' doc comments
+     *       explicitly forbid ("a preview that used different logic from the confirm behind it
+     *       would show the user a category they are not going to get"). It was a real divergence,
+     *       not a theoretical one: {@code CategoryRules.extractMerchant} strips reference tokens,
+     *       making previously separated words adjacent, so e.g. an IMPS transfer to a person could
+     *       match the {@code "imps to"} Transfer keyword on the confirm path while the preview
+     *       showed Other. A freshly created merchant is {@code TEMPORARY} and an unresolved one is
+     *       absent, so gating on APPROVED makes both paths skip the retry in exactly the same
+     *       cases.</li>
+     *   <li><b>It stops a merchant-grouping guess from silently choosing a category.</b>
+     *       {@code MerchantNormalizationEngine} groups an unseen description onto an existing
+     *       merchant by first significant token -- "a deliberately simple heuristic, not fuzzy
+     *       matching or NLP", by its own class doc, whose misses "are exactly what the manual
+     *       'merge merchants' feature exists to fix by hand". Until this method existed, that
+     *       over-grouping only cost display and learning quality. Retrying keywords against a
+     *       TEMPORARY (engine-guessed) canonical name would have promoted it into the category
+     *       decision itself: a merchant created from "UPI/RAJESH TEA CAFE/..." groups a later
+     *       "UPI/RAJESH KUMAR/..." onto itself by the token {@code rajesh}, and the retry would
+     *       then file a person-to-person transfer as Dining at rule-grade confidence, unflagged.
+     *       {@code Merchant.Lifecycle.APPROVED} means "confirmed by a person" -- the only state in
+     *       which the canonical name is evidence rather than a guess.</li>
+     * </ol>
      */
-    private static String suggestCategoryWithMerchantFallback(String description, String merchantName) {
+    private static String suggestCategoryWithMerchantFallback(String description, String trustedMerchantName) {
         String ruleCat = CategoryRules.suggestCategory(description);
         if (!ruleCat.equals("Other")) return ruleCat;
-        if (merchantName == null || merchantName.isBlank()) return ruleCat;
-        return CategoryRules.suggestCategory(merchantName);
+        if (trustedMerchantName == null || trustedMerchantName.isBlank()) return ruleCat;
+        return CategoryRules.suggestCategory(trustedMerchantName);
+    }
+
+    /** The canonical name only if a person has confirmed this merchant's identity -- see
+     *  {@link #suggestCategoryWithMerchantFallback} for why an engine-guessed (TEMPORARY) name
+     *  must never reach the keyword table. */
+    private static String trustedNameOf(Merchant merchant) {
+        if (merchant == null || merchant.getLifecycleStatus() != Merchant.Lifecycle.APPROVED) return null;
+        return merchant.getCanonicalName();
+    }
+
+    /**
+     * Whether a suggestion is an engine guess no human has confirmed -- the single definition of
+     * that question, shared by the two things that must agree on it: whether to flag the row for
+     * the Ask Once review queue, and whether it is safe to teach the merchant's learned
+     * distribution from it.
+     *
+     * <p>Before this existed, both callers tested {@code "default".equals(source)} inline. That was
+     * correct while "default" was the only unconfirmed outcome, and became wrong the moment
+     * {@code structural_p2p} was added: a structural person-to-person guess is not "default", so it
+     * was flagged for review by neither caller AND queued as a real learning confirmation by
+     * {@code ImportRuleLearningService} -- meaning a misfire (the detector discloses an 8-12% error
+     * bound) was invisible to the user and simultaneously taught to a merchant's distribution,
+     * where it outranks the keyword table permanently. That is strictly worse than the "Other"
+     * these rows used to get, which at least asked for help and taught nothing.
+     *
+     * <p>Pairs source WITH category deliberately, preserving the existing "did review change it"
+     * test: a row still carrying the category its unconfirmed source produced is still unconfirmed,
+     * while one the user re-categorized during import review is a real decision worth learning.
+     */
+    public static boolean isUnconfirmedGuess(String categorySource, String category) {
+        if ("default".equals(categorySource)) return "Other".equals(category);
+        if (STRUCTURAL_P2P_SOURCE.equals(categorySource)) return P2P_CATEGORY.equals(category);
+        return false;
     }
 
     /** Maps the persisted-through-review categorySource string (StagedRow/ConfirmedRow,
@@ -319,7 +390,7 @@ public class CategorizationService {
             case "learned" -> Transaction.DecisionSource.LEARNED_PATTERN;
             case "rule" -> Transaction.DecisionSource.KEYWORD_MATCH;
             case "file" -> Transaction.DecisionSource.FILE_PROVIDED;
-            case "structural_p2p" -> Transaction.DecisionSource.STRUCTURAL_P2P;
+            case STRUCTURAL_P2P_SOURCE -> Transaction.DecisionSource.STRUCTURAL_P2P;
             default -> Transaction.DecisionSource.MERCHANT_DEFAULT;
         };
     }

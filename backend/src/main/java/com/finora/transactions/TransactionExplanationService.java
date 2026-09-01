@@ -67,8 +67,16 @@ public class TransactionExplanationService {
                     List.of(), confidence, reconciliation);
             case STRUCTURAL_P2P -> new TransactionExplanationDto(
                     "STRUCTURAL_P2P",
-                    "Recognized as a transfer to a person based on the wording of the description.",
-                    List.of("No merchant was involved, so this wasn't matched against a merchant category."),
+                    "Recognized as a transfer to a person, from the wording of the description.",
+                    // Deliberately NOT "no merchant was involved": every transaction carries a
+                    // merchantId (ImportService sets it unconditionally, and suggest() returns
+                    // one), so the ledger shows a merchant on this very row -- a panel denying it
+                    // would contradict the screen it sits on. What is actually true is that no
+                    // rule, learned pattern, or keyword matched, and the description's SHAPE was
+                    // the remaining signal.
+                    List.of("No rule, learned pattern, or keyword matched — the description's "
+                            + "structure was the signal.",
+                            "If this isn't right, correcting it teaches Finora for next time."),
                     confidence, reconciliation);
             case FILE_PROVIDED -> new TransactionExplanationDto(
                     "FILE_PROVIDED",

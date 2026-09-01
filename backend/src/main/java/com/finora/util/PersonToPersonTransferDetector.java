@@ -37,12 +37,11 @@ public final class PersonToPersonTransferDetector {
     // transfer, so reusing that broader set here would be wrong, not just imprecise).
     private static final Pattern TRANSFER_MARKER = Pattern.compile("\\b(UPI|NEFT|IMPS|RTGS)\\b");
 
-    // A statement's own bank sometimes prefixes its own institution name onto the line (e.g.
-    // "HDFC BANK LIMITED UPI-<person name>-..."). Left in, "BANK"/"LIMITED" spuriously read as a
-    // business signal for a line whose actual counterparty is a person. Stripped before any other
-    // check runs.
-    private static final Pattern OWN_BANK_PREFIX = Pattern.compile(
-            "^[A-Za-z][A-Za-z]*\\s+BANK\\s+(LIMITED|LTD)\\.?\\s*", Pattern.CASE_INSENSITIVE);
+    // Splits a narration into pure-letter tokens -- equivalent to whole-word (\b-bounded) matching
+    // for the alphabetic vocabularies below, without compiling one Pattern per vocabulary word on
+    // every call. CategoryRules.RULE_PATTERNS establishes this convention in this same package
+    // ("recompiling the same ~90 patterns on every row would be pure waste").
+    private static final Pattern NON_LETTERS = Pattern.compile("[^A-Za-z]+");
 
     // Business-entity suffix/trade-name words -- checked GLOBALLY across the whole narration (not
     // per-segment), because a genuine business name can span multiple delimiter-separated segments
@@ -64,7 +63,21 @@ public final class PersonToPersonTransferDetector {
             "REALTY", "INFRA", "INFRASTRUCTURE", "ACADEMY", "INSTITUTE", "COACHING",
             "LAUNDRY", "SALON", "SPA", "GYM", "FITNESS", "STUDIO", "PRINTERS", "PRINTING",
             "STATIONERY", "HARDWARE", "ELECTRICALS", "TRAVELS", "TOURS", "CARGO",
-            "LOGISTICS", "TRANSPORT", "COURIER", "BANK", "NBFC", "AMC", "MUTUAL"
+            "LOGISTICS", "TRANSPORT", "COURIER", "BANK", "NBFC", "AMC", "MUTUAL",
+            // Retail/trade-name vocabulary. Added after an adversarial review demonstrated real
+            // misfires without it -- a national electronics chain, a sweets brand, a neighbourhood
+            // pharmacy and a print shop all read as "a person" to the checks above, because none
+            // of them carry a corporate suffix. Every word here only ever ADDS a veto, so the
+            // failure direction is a missed P2P transfer (falls through to "Other", the honest
+            // pre-existing answer), never a business confidently filed as a personal transfer.
+            "SALES", "RETAIL", "RETAILS", "DIGITAL", "SNACKS", "MEDICOS", "MEDICALS",
+            "XEROX", "PRINTS", "TRADING", "AGENCY", "PROVISION", "PROVISIONS",
+            "SUPERMARKET", "DEPARTMENTAL", "EMPORIUM", "COLLECTION", "JEWELLERY",
+            "OPTICALS", "GARAGE", "WORKSHOP", "TUITIONS", "PHOTOGRAPHY", "PARLOUR",
+            "PARLOR", "JUNCTION", "PALACE", "DHABA", "WINES", "CATERERS", "CATERING",
+            "DECORATORS", "TAILORS", "FURNITURE", "CEMENT", "STEEL", "PAINTS", "TYRES",
+            "SPARES", "AUTO", "BOOKS", "TOYS", "NURSERY", "PUMP", "FILLING", "ENERGY",
+            "SOLAR", "TELECOM", "NETWORKS", "COMMUNICATIONS", "FRESH", "SUPER"
     );
 
     // Banking/protocol/channel abbreviations and routine transaction-flow boilerplate -- never
@@ -111,11 +124,20 @@ public final class PersonToPersonTransferDetector {
      */
     public static boolean isNamedIndividualTransfer(String description) {
         if (description == null || description.isBlank()) return false;
-        if (!TRANSFER_MARKER.matcher(description.toUpperCase()).find()) return false;
         if (VPA_BUSINESS_QR.matcher(description).find()) return false;
 
-        String body = OWN_BANK_PREFIX.matcher(description).replaceFirst("");
-        if (containsBusinessSignal(body.toUpperCase())) return false;
+        // Everything from the transfer marker onward -- the counterparty always follows the rail
+        // in these narrations, and whatever precedes it is the STATEMENT OWNER's own institution
+        // and account boilerplate ("HDFC BANK LIMITED UPI-<person>-...", "KOTAK MAHINDRA BANK
+        // LIMITED NEFT-...", "STATE BANK OF INDIA UPI-..."). Left in, those issuer names hit
+        // BANK/LIMITED in BUSINESS_SUFFIX_TOKENS and globally veto a line whose actual
+        // counterparty is a person. Slicing at the marker handles every issuer uniformly, with no
+        // bank-name list to maintain -- and doubles as the transfer-marker gate itself.
+        var marker = TRANSFER_MARKER.matcher(description.toUpperCase());
+        if (!marker.find()) return false;
+        String body = description.substring(marker.start());
+
+        if (containsBusinessSignal(body)) return false;
 
         for (String segment : body.split("[\\-/_]+")) {
             if (looksLikePersonName(segment.trim())) return true;
@@ -123,13 +145,12 @@ public final class PersonToPersonTransferDetector {
         return false;
     }
 
-    /** True when a {@link #BUSINESS_SUFFIX_TOKENS} word appears anywhere in the text, as a whole
-     *  word -- checked across the FULL narration, not per-segment (see that set's own comment). */
-    private static boolean containsBusinessSignal(String textUpper) {
-        for (String token : BUSINESS_SUFFIX_TOKENS) {
-            if (Pattern.compile("\\b" + Pattern.quote(token) + "\\b").matcher(textUpper).find()) {
-                return true;
-            }
+    /** True when a {@link #BUSINESS_SUFFIX_TOKENS} word appears anywhere in the text as a whole
+     *  word -- checked across the WHOLE counterparty portion, not per-segment, because a genuine
+     *  business name can span several delimiter-separated segments (see that set's own comment). */
+    private static boolean containsBusinessSignal(String text) {
+        for (String token : NON_LETTERS.split(text.toUpperCase())) {
+            if (BUSINESS_SUFFIX_TOKENS.contains(token)) return true;
         }
         return false;
     }
