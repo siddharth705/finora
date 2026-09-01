@@ -4,6 +4,7 @@ import com.finora.entity.Account;
 import com.finora.entity.Transaction;
 import com.finora.repository.AccountRepository;
 import com.finora.repository.TransactionRepository;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
 
@@ -32,12 +33,19 @@ import static org.mockito.Mockito.when;
  * build-ahead-of-evidence this repository has written down a rule against. So: measure first,
  * decide second.
  *
- * <p><b>Not part of the normal suite.</b> The class name ends in Benchmark, which matches none of
- * surefire's include patterns (see backend/pom.xml), so it never runs in CI and never slows the
- * build. Run it deliberately:
+ * <p><b>Not part of the normal suite, and opt-in even when it is selected.</b> The class name ends
+ * in Benchmark, which matches none of surefire's include patterns (see backend/pom.xml), so a bare
+ * {@code mvn test} never picks it up. That alone is not enough, and the comment here used to claim
+ * it was: {@code -Dtest} REPLACES surefire's includes rather than intersecting with them, so a
+ * broad explicit selection ({@code -Dtest="com.finora.**"}) does match this class. It would then
+ * sweep 50,000 transactions through the quadratic pass in the middle of somebody's unrelated
+ * regression run, silently, because this asserts nothing and so cannot announce itself by failing.
+ * Both methods therefore also require {@code -Dfinora.benchmark=true} and skip themselves without
+ * it -- the same guard {@code PdfPipelineDiagnostic} puts on {@code -DpdfPath}. Run it
+ * deliberately:
  *
  * <pre>
- *   ./mvnw -o test -Dtest=ReconciliationScalingBenchmark -DfailIfNoTests=false
+ *   ./mvnw -o test -Dtest=ReconciliationScalingBenchmark -Dfinora.benchmark=true -DfailIfNoTests=false
  * </pre>
  *
  * <p><b>What it measures, and what it does not.</b> The repository is mocked, so this isolates the
@@ -132,8 +140,21 @@ class ReconciliationScalingBenchmark {
                 mock(AuditService.class), mock(FeatureFlagService.class));
     }
 
+    /**
+     * A skip rather than a failure, because nothing is wrong when this is swept into a broad run --
+     * the benchmark simply was not asked for. Read via {@link Boolean#getBoolean}, matching
+     * {@code finora.golden.regenerate}, the repository's other opt-in test flag; that also means
+     * the property must be spelled {@code =true} rather than merely being present.
+     */
+    private static void assumeBenchmarkRequested() {
+        Assumptions.assumeTrue(Boolean.getBoolean("finora.benchmark"),
+                "Set -Dfinora.benchmark=true to run this benchmark -- it sweeps 50,000 transactions "
+                        + "through the quadratic pass and asserts nothing, so it is opt-in.");
+    }
+
     @Test
     void measureReconcileAndDetectAcrossHistorySizes() {
+        assumeBenchmarkRequested();
         System.out.println();
         System.out.println("Scaling measurement -- one synchronous call, per scaling-triggers.md");
         System.out.println("In-memory comparison cost only; repository mocked. See class doc.");
@@ -212,6 +233,7 @@ class ReconciliationScalingBenchmark {
      */
     @Test
     void measureRefundCandidateReductionFromAccountBucketing() {
+        assumeBenchmarkRequested();
         System.out.println();
         System.out.println("Refund pass: cross-account candidates examined per run, at 50k transactions");
         System.out.println("(the work account bucketing would remove -- see class doc)");
