@@ -175,6 +175,17 @@ public class PdfMetadataExtractor {
             Pattern.compile("(?i)^\\s*Statement\\s+of\\s+Account\\s*:?\\s*$");
     private static final Pattern ACCOUNT_NUMBER_DIGITS = Pattern.compile("\\d{6,20}");
 
+    // SAVING_ACCOUNT_NO_SAME_LINE: a real ICICI savings statement's own account-number field is
+    // embedded mid-sentence, ended by a PERIOD rather than a colon -- "Statement of Transactions
+    // in Saving Account no. <number> in INR for the period ...". ACCOUNT_NUMBER's own
+    // labelPattern-built regex requires a colon for its mid-line branch (see labelPattern's own
+    // doc comment), so this real shape matches neither branch: it is not at the start of the line
+    // (ACCOUNT_NUMBER's start-anchored branch), and it has no colon (ACCOUNT_NUMBER's mid-line
+    // branch). Same optional-colon, unanchored shape as STATEMENT_OF_ACCOUNT_SAME_LINE just above,
+    // for the same reason -- "for the period ..." always trails the value on the same line.
+    private static final Pattern SAVING_ACCOUNT_NO_SAME_LINE =
+            Pattern.compile("(?i)\\bSaving(?:s)?\\s+Account\\s*no\\.?\\s*:?\\s*(\\d{6,20})\\b");
+
     // The account PRODUCTS a statement names when it banners its own identity ("SAVINGS ACCOUNT -
     // <number>") rather than labelling a field. Held as one shared constant, not inlined, because
     // this vocabulary is the thing that drifts: the same words already appear inside
@@ -1007,6 +1018,17 @@ public class PdfMetadataExtractor {
                     if (ctx != null) ctx.record("GRID_METADATA_FALLBACK");
                 }
                 continue;
+            }
+            // SAVING_ACCOUNT_NO_SAME_LINE (see that constant's own doc comment -- the real ICICI
+            // savings shape neither ACCOUNT_NUMBER nor STATEMENT_OF_ACCOUNT_SAME_LINE covers).
+            if (accountNumberMasked == null) {
+                Matcher savingAcctNo = SAVING_ACCOUNT_NO_SAME_LINE.matcher(line);
+                if (savingAcctNo.find()) {
+                    accountNumberFull = savingAcctNo.group(1);
+                    accountNumberMasked = com.finora.imports.CsvParser.maskAccountNumber(savingAcctNo.group(1));
+                    if (ctx != null) ctx.record("GRID_METADATA_TRAILING_LABEL");
+                    continue;
+                }
             }
             // A_C_ACCOUNT_NUMBER_SAME_LINE (see that constant's own doc comment -- the real canara
             // shape neither ACCOUNT_NUMBER nor STATEMENT_OF_ACCOUNT_SAME_LINE covers). Validated
