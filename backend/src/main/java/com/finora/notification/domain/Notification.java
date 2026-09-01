@@ -122,17 +122,29 @@ public class Notification {
                 message, now);
     }
 
+    /** No-op on a terminal row (SENT / DEAD_LETTER) -- same defensive short-circuit as recordFailure. */
     public void markQueued(Instant now) {
+        if (status.isTerminal()) {
+            return;
+        }
         this.status = NotificationStatus.QUEUED;
         this.nextAttemptAt = now;
     }
 
+    /** No-op on a terminal row (SENT / DEAD_LETTER) -- same defensive short-circuit as recordFailure. */
     public void markProcessing(Instant now) {
+        if (status.isTerminal()) {
+            return;
+        }
         this.status = NotificationStatus.PROCESSING;
         this.nextAttemptAt = now;
     }
 
+    /** No-op on a terminal row (SENT / DEAD_LETTER) -- same defensive short-circuit as recordFailure. */
     public void markSent(Instant now) {
+        if (status.isTerminal()) {
+            return;
+        }
         this.status = NotificationStatus.SENT;
         this.sentAt = now;
         this.lastError = null;
