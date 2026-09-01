@@ -51,6 +51,31 @@ class CategoryRulesTest {
         assertThat(CategoryRules.suggestCategory("CC PYMT AUTOPAY VISA")).isEqualTo("Transfer");
     }
 
+    /**
+     * Real corpus finding (docs/superpowers/specs/2026-09-01-transaction-categorization-design.md
+     * §1): "ASSPL" is how Amazon Seller Services actually appears on real Indian card statements
+     * -- never the word "amazon" itself.
+     */
+    @Test
+    void suggestCategory_matchesAsspl_amazonSellerServicesAbbreviation() {
+        assertThat(CategoryRules.suggestCategory("ASSPL PAYTM 4471829")).isEqualTo("Shopping");
+    }
+
+    /**
+     * Real corpus finding: a BharatBillPay credit-card-bill narration abbreviated to "CC PAYMENT"
+     * -- a near-miss of the already-seeded "credit card payment"/"card bill payment" phrases that
+     * the existing CONTAINS-style keywords don't cover.
+     */
+    @Test
+    void suggestCategory_matchesCcPayment_billerAbbreviation() {
+        assertThat(CategoryRules.suggestCategory("BPPY CC PAYMENT REF882134")).isEqualTo("Transfer");
+    }
+
+    @Test
+    void suggestCategory_matchesCinnabon() {
+        assertThat(CategoryRules.suggestCategory("UPI-Cinnabon CP-REF7719923")).isEqualTo("Dining");
+    }
+
     @Test
     void suggestCategory_fallsBackToOtherWhenNoRuleMatches() {
         assertThat(CategoryRules.suggestCategory("SOME RANDOM MERCHANT XYZ")).isEqualTo("Other");
