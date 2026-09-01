@@ -1,5 +1,6 @@
 package com.finora.exception;
 
+import com.finora.security.RefreshTokenCookie;
 import org.junit.jupiter.api.Test;
 import org.springframework.core.env.Environment;
 
@@ -29,7 +30,7 @@ class GlobalExceptionHandlerTest {
     void handleGeneric_inProdProfile_withholdsTheRawExceptionMessage() {
         Environment environment = mock(Environment.class);
         when(environment.getActiveProfiles()).thenReturn(new String[]{"prod"});
-        GlobalExceptionHandler handler = new GlobalExceptionHandler(environment);
+        GlobalExceptionHandler handler = new GlobalExceptionHandler(environment, mock(RefreshTokenCookie.class));
 
         var response = handler.handleGeneric(new RuntimeException("column \"ssn\" violates not-null constraint"), request());
 
@@ -41,7 +42,7 @@ class GlobalExceptionHandlerTest {
     void handleGeneric_outsideProdProfile_includesTheRawMessageForDeveloperConvenience() {
         Environment environment = mock(Environment.class);
         when(environment.getActiveProfiles()).thenReturn(new String[]{"dev"});
-        GlobalExceptionHandler handler = new GlobalExceptionHandler(environment);
+        GlobalExceptionHandler handler = new GlobalExceptionHandler(environment, mock(RefreshTokenCookie.class));
 
         var response = handler.handleGeneric(new RuntimeException("boom"), request());
 
@@ -54,7 +55,7 @@ class GlobalExceptionHandlerTest {
         // behave as if it were prod just because the profiles array is empty.
         Environment environment = mock(Environment.class);
         when(environment.getActiveProfiles()).thenReturn(new String[]{});
-        GlobalExceptionHandler handler = new GlobalExceptionHandler(environment);
+        GlobalExceptionHandler handler = new GlobalExceptionHandler(environment, mock(RefreshTokenCookie.class));
 
         var response = handler.handleGeneric(new RuntimeException("boom"), request());
 
@@ -65,7 +66,7 @@ class GlobalExceptionHandlerTest {
     void handleGeneric_alwaysReturns500() {
         Environment environment = mock(Environment.class);
         when(environment.getActiveProfiles()).thenReturn(new String[]{"prod"});
-        GlobalExceptionHandler handler = new GlobalExceptionHandler(environment);
+        GlobalExceptionHandler handler = new GlobalExceptionHandler(environment, mock(RefreshTokenCookie.class));
 
         var response = handler.handleGeneric(new RuntimeException("boom"), request());
 
@@ -82,7 +83,7 @@ class GlobalExceptionHandlerTest {
     @Test
     void handleOptimisticLock_returns409_withAClearRetryMessage_notTheGeneric500() {
         Environment environment = mock(Environment.class);
-        GlobalExceptionHandler handler = new GlobalExceptionHandler(environment);
+        GlobalExceptionHandler handler = new GlobalExceptionHandler(environment, mock(RefreshTokenCookie.class));
 
         var response = handler.handleOptimisticLock(
                 new org.springframework.orm.ObjectOptimisticLockingFailureException("Account", "some-id"));
@@ -118,7 +119,7 @@ class GlobalExceptionHandlerTest {
         appender.start();
         logger.addAppender(appender);
         try {
-            GlobalExceptionHandler handler = new GlobalExceptionHandler(mock(Environment.class));
+            GlobalExceptionHandler handler = new GlobalExceptionHandler(mock(Environment.class), mock(RefreshTokenCookie.class));
 
             var response = handler.handleApiException(
                     new ApiException(ErrorCode.INTERNAL_ERROR), request());
@@ -155,7 +156,7 @@ class GlobalExceptionHandlerTest {
         appender.start();
         logger.addAppender(appender);
         try {
-            GlobalExceptionHandler handler = new GlobalExceptionHandler(mock(Environment.class));
+            GlobalExceptionHandler handler = new GlobalExceptionHandler(mock(Environment.class), mock(RefreshTokenCookie.class));
 
             var response = handler.handleApiException(
                     new ApiException(ErrorCode.IMPORT_SYSTEM_BUSY), request());
@@ -186,7 +187,7 @@ class GlobalExceptionHandlerTest {
     @Test
     void handleMalformedRequestBody_returns400_notTheGeneric500() {
         Environment environment = mock(Environment.class);
-        GlobalExceptionHandler handler = new GlobalExceptionHandler(environment);
+        GlobalExceptionHandler handler = new GlobalExceptionHandler(environment, mock(RefreshTokenCookie.class));
 
         var response = handler.handleMalformedRequestBody(
                 new org.springframework.http.converter.HttpMessageNotReadableException(
@@ -203,7 +204,7 @@ class GlobalExceptionHandlerTest {
     @Test
     void handleMalformedRequestBody_neverLeaksTheParsersOwnMessage() {
         Environment environment = mock(Environment.class);
-        GlobalExceptionHandler handler = new GlobalExceptionHandler(environment);
+        GlobalExceptionHandler handler = new GlobalExceptionHandler(environment, mock(RefreshTokenCookie.class));
 
         // synthetic-ok: placeholder token standing in for "whatever sensitive text Jackson's own
         // parse-error message might quote back" -- not a real account/card/phone number.
@@ -226,7 +227,7 @@ class GlobalExceptionHandlerTest {
      */
     @Test
     void handleApiException_addsUserActionRequiredTrue_forAnActionableCode() {
-        GlobalExceptionHandler handler = new GlobalExceptionHandler(mock(Environment.class));
+        GlobalExceptionHandler handler = new GlobalExceptionHandler(mock(Environment.class), mock(RefreshTokenCookie.class));
 
         var response = handler.handleApiException(
                 new ApiException(ErrorCode.IMPORT_NO_HEADER_DETECTED), request());
@@ -236,7 +237,7 @@ class GlobalExceptionHandlerTest {
 
     @Test
     void handleApiException_addsUserActionRequiredFalse_forANonActionableCode() {
-        GlobalExceptionHandler handler = new GlobalExceptionHandler(mock(Environment.class));
+        GlobalExceptionHandler handler = new GlobalExceptionHandler(mock(Environment.class), mock(RefreshTokenCookie.class));
 
         var response = handler.handleApiException(
                 new ApiException(ErrorCode.IMPORT_CORRUPT_PDF), request());
@@ -252,7 +253,7 @@ class GlobalExceptionHandlerTest {
      */
     @Test
     void handleApiException_addsNoUserActionRequiredKey_whenTheExceptionCarriesNoErrorCode() {
-        GlobalExceptionHandler handler = new GlobalExceptionHandler(mock(Environment.class));
+        GlobalExceptionHandler handler = new GlobalExceptionHandler(mock(Environment.class), mock(RefreshTokenCookie.class));
 
         var response = handler.handleApiException(
                 new ApiException(org.springframework.http.HttpStatus.BAD_REQUEST, "plain message"), request());
@@ -269,7 +270,7 @@ class GlobalExceptionHandlerTest {
      */
     @Test
     void handleApiException_preservesTheThrowSitesOwnDetails_whileAddingUserActionRequired() {
-        GlobalExceptionHandler handler = new GlobalExceptionHandler(mock(Environment.class));
+        GlobalExceptionHandler handler = new GlobalExceptionHandler(mock(Environment.class), mock(RefreshTokenCookie.class));
 
         var response = handler.handleApiException(
                 new ApiException(ErrorCode.IMPORT_NO_HEADER_DETECTED.defaultStatus(),
@@ -295,7 +296,7 @@ class GlobalExceptionHandlerTest {
         appender.start();
         logger.addAppender(appender);
         try {
-            GlobalExceptionHandler handler = new GlobalExceptionHandler(mock(Environment.class));
+            GlobalExceptionHandler handler = new GlobalExceptionHandler(mock(Environment.class), mock(RefreshTokenCookie.class));
 
             var response = handler.handleApiException(
                     new ApiException(ErrorCode.IMPORT_NO_TRANSACTIONS_FOUND), request());
@@ -316,7 +317,7 @@ class GlobalExceptionHandlerTest {
      */
     @Test
     void handleMethodNotSupported_returns405_notTheGeneric500() {
-        GlobalExceptionHandler handler = new GlobalExceptionHandler(mock(Environment.class));
+        GlobalExceptionHandler handler = new GlobalExceptionHandler(mock(Environment.class), mock(RefreshTokenCookie.class));
 
         var response = handler.handleMethodNotSupported(
                 new org.springframework.web.HttpRequestMethodNotSupportedException("GET"));
@@ -329,7 +330,7 @@ class GlobalExceptionHandlerTest {
     /** Bug 09's other half -- a wrong Content-Type used to hit the same catch-all. */
     @Test
     void handleMediaTypeNotSupported_returns415_notTheGeneric500() {
-        GlobalExceptionHandler handler = new GlobalExceptionHandler(mock(Environment.class));
+        GlobalExceptionHandler handler = new GlobalExceptionHandler(mock(Environment.class), mock(RefreshTokenCookie.class));
 
         var response = handler.handleMediaTypeNotSupported(
                 new org.springframework.web.HttpMediaTypeNotSupportedException(

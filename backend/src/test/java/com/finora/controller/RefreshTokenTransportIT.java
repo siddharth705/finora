@@ -2,10 +2,13 @@ package com.finora.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.finora.AbstractIntegrationTest;
+import com.finora.entity.RefreshToken;
 import com.finora.entity.User;
+import com.finora.repository.RefreshTokenRepository;
 import com.finora.repository.UserRepository;
 import com.finora.security.RefreshTokenCookie;
 import com.finora.service.RefreshTokenService;
+import com.finora.util.TokenHasher;
 import jakarta.servlet.http.Cookie;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -15,6 +18,8 @@ import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
+import java.time.Duration;
+import java.time.Instant;
 import java.util.Map;
 import java.util.UUID;
 
@@ -43,6 +48,8 @@ class RefreshTokenTransportIT extends AbstractIntegrationTest {
     @Autowired private ObjectMapper objectMapper;
     @Autowired private UserRepository userRepository;
     @Autowired private RefreshTokenService refreshTokenService;
+    @Autowired private RefreshTokenRepository refreshTokenRepository;
+    @Autowired private org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
     @Autowired private org.springframework.security.crypto.password.PasswordEncoder passwordEncoder;
 
     private String rawToken;
@@ -230,6 +237,98 @@ class RefreshTokenTransportIT extends AbstractIntegrationTest {
         mockMvc.perform(post("/api/v1/auth/refresh")
                         .cookie(new Cookie(RefreshTokenCookie.NAME, rotated)))
                 .andExpect(status().isUnauthorized());
+    }
+
+    /** Pushes an already-issued token's timestamps into the past, simulating a session that has
+     *  sat idle or aged past the absolute cap. createdAt/sessionStartedAt are {@code updatable =
+     *  false} (RefreshToken's own doc comment), so a plain entity save -- the technique
+     *  RefreshTokenSessionLimitsTest uses against a MOCKED repository -- silently never reaches a
+     *  real database: Hibernate omits an updatable=false column from the generated UPDATE
+     *  entirely. A raw JDBC update bypasses that without needing this test method itself to be
+     *  transactional -- the MockMvc call below opens its own request-scoped transaction and must
+     *  see this write already committed, not merely pending in one this method doesn't have. */
+    private void backdate(String rawToken, Duration tokenAge, Duration sessionAge) {
+        RefreshToken rt = refreshTokenRepository.findByTokenHash(TokenHasher.sha256(rawToken)).orElseThrow();
+        jdbcTemplate.update("UPDATE refresh_tokens SET created_at = ?, session_started_at = ? WHERE id = ?",
+                java.sql.Timestamp.from(Instant.now().minus(tokenAge)),
+                java.sql.Timestamp.from(Instant.now().minus(sessionAge)),
+                rt.getId());
+    }
+
+    /** Each new test below gets its own simulated client IP -- RateLimitFilter buckets
+     *  /api/v1/auth/refresh per resolved IP (ClientIpResolver, trust-proxy-headers off in tests,
+     *  so this is request.getRemoteAddr(), not a header), and this class's pre-existing tests
+     *  already sit close to the default 15-per-5-minutes ceiling on their own. Sharing MockMvc's
+     *  one default remote address would make these tests fail depending on run order/class
+     *  composition rather than on the behavior they exist to check. */
+    private static org.springframework.test.web.servlet.request.RequestPostProcessor fromIp(String ip) {
+        return request -> {
+            request.setRemoteAddr(ip);
+            return request;
+        };
+    }
+
+    /**
+     * A revoked-but-not-yet-cleared HttpOnly cookie cannot be removed by the client -- script
+     * cannot touch it, and neither AuthContext.tsx's bootstrap catch nor client.ts's
+     * clearSessionAndRedirect() calls anything that would. Left as-is, the very next automatic
+     * silent refresh (landing on /auth after this failure redirects there) re-presents the same
+     * dead cookie and escalates an ordinary idle timeout into reuse-detection's "all sessions
+     * signed out" response -- a real user-visible incident traced back to exactly this gap.
+     */
+    @Test
+    void refreshOnAnIdleSessionClearsTheCookie() throws Exception {
+        backdate(rawToken, Duration.ofMinutes(31), Duration.ofHours(1));
+
+        MvcResult result = mockMvc.perform(post("/api/v1/auth/refresh")
+                        .with(fromIp("10.0.1.1"))
+                        .cookie(new Cookie(RefreshTokenCookie.NAME, rawToken)))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.errorCode").value("AUTH_005"))
+                .andReturn();
+
+        String setCookie = result.getResponse().getHeader("Set-Cookie");
+        assertThat(setCookie).as("the idle-timeout response must clear the now-dead cookie, or the "
+                + "browser keeps sending it and the next bootstrap refresh sees reuse instead")
+                .contains(RefreshTokenCookie.NAME).contains("Max-Age=0");
+        assertSecurityAttributes(setCookie);
+    }
+
+    /** Same gap, the absolute-cap path. */
+    @Test
+    void refreshPastTheAbsoluteCapClearsTheCookie() throws Exception {
+        backdate(rawToken, Duration.ofMinutes(1), Duration.ofDays(8));
+
+        MvcResult result = mockMvc.perform(post("/api/v1/auth/refresh")
+                        .with(fromIp("10.0.1.2"))
+                        .cookie(new Cookie(RefreshTokenCookie.NAME, rawToken)))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.errorCode").value("AUTH_006"))
+                .andReturn();
+
+        String setCookie = result.getResponse().getHeader("Set-Cookie");
+        assertThat(setCookie).contains(RefreshTokenCookie.NAME).contains("Max-Age=0");
+        assertSecurityAttributes(setCookie);
+    }
+
+    /** Same gap, the reuse-detection path -- the specific one that produced AUTH_004 for a real
+     *  stale-cookie replay in production. Revokes rawToken directly at the service layer (a plain
+     *  Java call, not an HTTP request) so this test needs only the ONE HTTP call it's actually
+     *  asserting on. */
+    @Test
+    void refreshOfAnAlreadyRevokedTokenClearsTheCookie() throws Exception {
+        refreshTokenService.rotate(rawToken);
+
+        MvcResult result = mockMvc.perform(post("/api/v1/auth/refresh")
+                        .with(fromIp("10.0.1.3"))
+                        .cookie(new Cookie(RefreshTokenCookie.NAME, rawToken)))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.errorCode").value("AUTH_004"))
+                .andReturn();
+
+        String setCookie = result.getResponse().getHeader("Set-Cookie");
+        assertThat(setCookie).contains(RefreshTokenCookie.NAME).contains("Max-Age=0");
+        assertSecurityAttributes(setCookie);
     }
 
     @Test

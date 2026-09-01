@@ -1,12 +1,14 @@
 package com.finora.exception;
 
 import com.finora.dto.ApiResponse;
+import com.finora.security.RefreshTokenCookie;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.env.Environment;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.OptimisticLockingFailureException;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
@@ -29,10 +31,23 @@ public class GlobalExceptionHandler {
 
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
-    private final Environment environment;
+    /**
+     * Every code that ends a refresh session without reissuing a replacement (rotate()'s idle-
+     * timeout, absolute-cap and reuse-detection branches -- see RefreshTokenService). A refresh
+     * cookie is HttpOnly, so the client cannot clear it itself: leaving it in place after one of
+     * these responses means the browser's very next automatic refresh attempt re-presents the
+     * same now-dead token, turning an ordinary idle timeout into a reuse-detection response that
+     * reads as a suspected theft.
+     */
+    private static final java.util.Set<ErrorCode> TERMINATES_REFRESH_SESSION = java.util.Set.of(
+            ErrorCode.AUTH_SESSION_IDLE, ErrorCode.AUTH_SESSION_MAX_AGE, ErrorCode.AUTH_SESSION_REVOKED);
 
-    public GlobalExceptionHandler(Environment environment) {
+    private final Environment environment;
+    private final RefreshTokenCookie refreshTokenCookie;
+
+    public GlobalExceptionHandler(Environment environment, RefreshTokenCookie refreshTokenCookie) {
         this.environment = environment;
+        this.refreshTokenCookie = refreshTokenCookie;
     }
 
     // An unmapped route (typo'd path, wrong method, disabled feature) should 404, not 500 —
@@ -86,8 +101,11 @@ public class GlobalExceptionHandler {
                     errorCode, request.getMethod(), request.getRequestURI(), ex.getMessage(), ex);
         }
 
-        return ResponseEntity.status(ex.getStatus())
-                .body(ApiResponse.error(ex.getMessage(), errorCode, detailsWithActionRequired(ex)));
+        ResponseEntity.BodyBuilder response = ResponseEntity.status(ex.getStatus());
+        if (ex.getCode() != null && TERMINATES_REFRESH_SESSION.contains(ex.getCode())) {
+            response.header(HttpHeaders.SET_COOKIE, refreshTokenCookie.clear().toString());
+        }
+        return response.body(ApiResponse.error(ex.getMessage(), errorCode, detailsWithActionRequired(ex)));
     }
 
     /**
