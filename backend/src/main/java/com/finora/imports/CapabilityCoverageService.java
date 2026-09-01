@@ -293,7 +293,15 @@ public class CapabilityCoverageService {
             // A statement period labeled "For Period:" -- found on a real PNB ONE savings
             // statement, whose own line also carries an unrelated "Statement of Account:<number>"
             // label before it. See PdfMetadataExtractor.FOR_PERIOD_LABELED.
-            "STATEMENT_PERIOD_FOR_PERIOD_LABEL");
+            "STATEMENT_PERIOD_FOR_PERIOD_LABEL",
+            // A header block whose column GROUPS wrap to unequal depths -- some columns print
+            // across the top and bottom lines of a multi-line heading, skipping a middle line
+            // entirely, while a second group of columns prints ONLY on that middle line. Found on
+            // a real third-party-generated SBI (Indian Overseas Bank) savings statement and a real
+            // Standard Chartered savings statement, both of which located a table with 2-3 garbled
+            // columns instead of 6-7 and staged zero transaction rows. See
+            // PdfTableLocator.mergeHeaderLinesAdmittingInteriorTierColumns.
+            "WRAPPED_HEADER_INTERIOR_TIER_COLUMNS");
 
     /**
      * @param importsAnalysed    how many imports these counts are drawn from -- a coverage figure

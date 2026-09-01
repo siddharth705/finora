@@ -313,6 +313,14 @@ class HeaderProseRejectionTest {
         // AccountNumberTransactionHeaderRegressionTest, not this class; listed here only so this
         // inventory sweep accounts for it at all.
         put("icici-credit-card-account-number-above-transactions", 1);
+        // Captured for PdfTableLocator.mergeHeaderLinesAdmittingInteriorTierColumns -- its own
+        // content is verified by InteriorTierWrappedHeaderRealCorpusRegressionTest, not this
+        // class; listed here only so this inventory sweep accounts for it at all.
+        put("iob-savings-interior-tier-header", 1);
+        // Captured for the single-cell exception to refinesRatherThanRedefines' Gate 1 -- its own
+        // content is verified by SingleCellHeaderRenameRealCorpusRegressionTest, not this class;
+        // listed here only so this inventory sweep accounts for it at all.
+        put("scb-savings-single-cell-header-rename", 1);
     }};
 
     @Test
