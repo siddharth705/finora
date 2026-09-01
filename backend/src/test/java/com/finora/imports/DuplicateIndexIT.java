@@ -119,6 +119,59 @@ class DuplicateIndexIT extends AbstractIntegrationTest {
     }
 
     @Test
+    void aDescriptionDifferingOnlyByCaseOrSurroundingWhitespaceIsStillADuplicate() {
+        // A2 (two-pass mobile audit, 2026-09-01; see mobile-correctness-trust-roadmap.md, Track
+        // A). Two extractions of the same underlying bank line (a CSV export vs. a re-scraped
+        // PDF, or a bank that shifts capitalization between monthly exports) can differ by
+        // nothing more than case or a stray leading/trailing space -- exact string equality
+        // treated those as two different transactions, a false negative that silently
+        // double-counts real money with no duplicate badge shown at all.
+        User user = user();
+        LocalDate date = LocalDate.of(2026, 7, 10);
+        existing(user.getId(), date, new BigDecimal("486.00"), "SWIGGY ORDER 4471");
+
+        assertBothPathsAgree(user.getId(), date, new BigDecimal("486.00"), " swiggy order 4471 ");
+        assertThat(duplicateDetector.findMatch(user.getId(), date, new BigDecimal("486.00"), " swiggy order 4471 "))
+                .as("case and surrounding spaces must not decide identity")
+                .isPresent();
+    }
+
+    @Test
+    void tabAndNewlinePaddingIsAnsweredIDENTICALLYByBothPaths() {
+        // The equivalence contract's sharpest edge, and the reason DuplicateMatching exists.
+        //
+        // Java's String.trim() strips every character <= U+0020 (tabs and newlines included); SQL
+        // TRIM() strips the space character and nothing else. An in-memory key built with trim()
+        // would therefore fold a tab-padded description while this query left it alone, and the
+        // two paths would silently disagree about whether it is a duplicate -- a divergence that
+        // did NOT exist while both sides were exact equality, i.e. one that the A2 fix would have
+        // introduced. The CSV path can genuinely produce these: CsvParser.firstNonBlank returns
+        // the cell value untrimmed.
+        //
+        // The assertion is deliberately "both paths agree", not "these match" -- what must hold is
+        // that the query and the index answer the same question, whatever that answer is.
+        User user = user();
+        LocalDate date = LocalDate.of(2026, 7, 13);
+        existing(user.getId(), date, new BigDecimal("742.00"), "ZOMATO ORDER 8891");
+
+        assertBothPathsAgree(user.getId(), date, new BigDecimal("742.00"), "\tZOMATO ORDER 8891\t");
+        assertBothPathsAgree(user.getId(), date, new BigDecimal("742.00"), "\nZOMATO ORDER 8891\n");
+        assertBothPathsAgree(user.getId(), date, new BigDecimal("742.00"), " \tZOMATO ORDER 8891\t ");
+    }
+
+    @Test
+    void aStoredDescriptionPaddedWithTabsIsAlsoAnsweredIdenticallyByBothPaths() {
+        // The mirror of the case above -- the padding is on the STORED side this time, which is the
+        // shape a CSV import actually produces (the staged row is what carries the raw cell value).
+        User user = user();
+        LocalDate date = LocalDate.of(2026, 7, 14);
+        existing(user.getId(), date, new BigDecimal("305.00"), "\tBLINKIT GROCERIES\t");
+
+        assertBothPathsAgree(user.getId(), date, new BigDecimal("305.00"), "BLINKIT GROCERIES");
+        assertBothPathsAgree(user.getId(), date, new BigDecimal("305.00"), "blinkit groceries");
+    }
+
+    @Test
     void aDifferentDateIsNotADuplicate() {
         User user = user();
         existing(user.getId(), LocalDate.of(2026, 7, 10), new BigDecimal("486.00"), "SWIGGY ORDER");

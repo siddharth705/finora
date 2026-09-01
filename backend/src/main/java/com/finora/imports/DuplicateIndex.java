@@ -2,6 +2,7 @@ package com.finora.imports;
 
 import com.finora.entity.Transaction;
 import com.finora.repository.TransactionRepository;
+import com.finora.util.DuplicateMatching;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -107,8 +108,20 @@ public final class DuplicateIndex {
     }
 
     /** A newline separator because a description can contain anything else, and a description
-     *  ending in the separator followed by an empty one must not collide with its neighbour. */
+     *  ending in the separator followed by an empty one must not collide with its neighbour.
+     *
+     *  <p>A2 (two-pass mobile audit, 2026-09-01). Case- and space-folded via {@link
+     *  DuplicateMatching#normalizeDescription}, matching {@code
+     *  TransactionRepository.findPotentialDuplicatesByUserAndAccountIdIn} and {@code
+     *  ReconciliationService.duplicateKey} -- all three implement the same "is this the same
+     *  transaction" question and must agree, per this class's own equivalence contract
+     *  ({@code DuplicateIndexIT.assertBothPathsAgree}). Two extractions of the same underlying
+     *  bank line (a CSV export vs. a re-scraped PDF) can differ by nothing more than case or a
+     *  stray leading/trailing space; raw equality treated those as two different transactions.
+     *  Note the shared helper rather than an inlined {@code trim().toLowerCase()}: Java's {@code
+     *  trim()} and SQL's {@code TRIM()} disagree about tabs and newlines, which would break the
+     *  very equivalence this is meant to strengthen -- see {@link DuplicateMatching}. */
     private static String key(BigDecimal amount, String description) {
-        return normaliseAmount(amount) + "\n" + description;
+        return normaliseAmount(amount) + "\n" + DuplicateMatching.normalizeDescription(description);
     }
 }
