@@ -26,7 +26,7 @@ import {
   type RowReview,
 } from '../lib/importReview';
 import { toNewAccountPayload } from '../lib/newAccountPayload';
-import { ConfirmDialog } from '../design-system';
+import { Button, ConfirmDialog, IconButton } from '../design-system';
 import type { ImportNavState } from '../lib/importNavState';
 import { useAuth } from '../context/AuthContext';
 import type { Account, DetectedAccountInfo, VerificationReport, ImportSummary, StagedAccountSection, StagedRow, SupersedeResult, UnparseableRow } from '../types';
@@ -233,6 +233,18 @@ export default function Import() {
   // sessions (ImportSessionService.listActiveSessions), so there is no ownership check to add
   // here -- only whether to show what it returns.
   const [discardingSessionId, setDiscardingSessionId] = useState<string | null>(null);
+  // "Continue Import" had no in-flight feedback at all -- resumeSession() awaits
+  // importApi.getSession() before setStep('review') ever fires, so the button sat inert with no
+  // spinner, no disabled state, nothing, for however long that fetch took.
+  //
+  // A Set, not a single id: unlike discardingSessionId (only ever one at a time, since it's gated
+  // behind a single ConfirmDialog), every row's Continue Import button is independently clickable
+  // with nothing stopping a user from starting a second row's resume while the first is still in
+  // flight. A single `string | null` here would make the two fetches fight over one slot -- the
+  // second click would silently clear the first row's spinner, and whichever fetch's `finally` ran
+  // last would wipe out the other's, even while its own request was still pending. Caught by
+  // adversarial review.
+  const [resumingSessionIds, setResumingSessionIds] = useState<Set<string>>(new Set());
   // Which unfinished session's discard confirmation is showing, if any -- a custom in-app modal
   // (ConfirmDialog) instead of the browser's own confirm(), which rendered as unstyled OS chrome
   // (literally titled with the page's own origin) rather than looking like part of the product.
@@ -420,6 +432,7 @@ export default function Import() {
    */
   async function resumeSession(id: string, accountsForMatch?: Account[]) {
     clearError();
+    setResumingSessionIds((prev) => new Set(prev).add(id));
     try {
       const session = await importApi.getSession(id);
       setSessionId(session.sessionId);
@@ -442,6 +455,12 @@ export default function Import() {
       // the list as a button that will fail again the same way.
       void queryClient.invalidateQueries({ queryKey: ['import-sessions'] });
       showError('This staged import is no longer available -- it may have expired. Please upload the statement again.');
+    } finally {
+      setResumingSessionIds((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
     }
   }
 
@@ -858,9 +877,7 @@ export default function Import() {
             </div>
           ) : (
             <div className="flex items-center gap-3">
-              <button type="submit" className="bg-primary text-on-primary rounded px-4 py-2 text-sm font-medium">
-                Upload statement
-              </button>
+              <Button type="submit">Upload statement</Button>
               <button
                 type="button"
                 className="text-sm text-muted underline"
@@ -899,24 +916,23 @@ export default function Import() {
                   </div>
                 </div>
                 <div className="flex items-center gap-1.5 flex-shrink-0">
-                  <button
-                    type="button"
+                  <Button
+                    size="sm"
                     onClick={() => void resumeSession(s.id)}
                     disabled={discardingSessionId === s.id}
-                    className="bg-primary text-on-primary text-xs font-semibold rounded-lg px-3 py-1.5 disabled:opacity-40 flex items-center gap-1.5"
+                    loading={resumingSessionIds.has(s.id)}
                   >
-                    <RefreshCw size={12} />
+                    {!resumingSessionIds.has(s.id) && <RefreshCw size={12} />}
                     Continue Import
-                  </button>
-                  <button
-                    type="button"
+                  </Button>
+                  <IconButton
+                    variant="danger"
+                    icon={<Trash2 size={14} />}
+                    aria-label="Discard unfinished import"
                     title="Discard Unfinished Import"
                     onClick={() => setConfirmDiscardId(s.id)}
                     disabled={discardingSessionId === s.id}
-                    className="w-8 h-8 rounded-lg border border-border flex items-center justify-center text-muted hover:bg-danger-bg hover:text-danger disabled:opacity-40"
-                  >
-                    <Trash2 size={14} />
-                  </button>
+                  />
                 </div>
               </div>
             ))}
@@ -1182,10 +1198,10 @@ export default function Import() {
                 {blockedSectionLabels.join(' and ')}. Nothing is imported or skipped until you decide.
               </p>
             )}
-            <button
+            <Button
               onClick={confirmMultiImport}
+              loading={confirming}
               disabled={
-                confirming ||
                 multiSections.some((s) => s.accountChoice === 'existing' && !s.selectedAccountId) ||
                 // The same gate the single-account path applies, summed across every section. A
                 // statement covering two accounts is not two imports the user can partially
@@ -1193,10 +1209,9 @@ export default function Import() {
                 // blocks all of it, exactly as one unanswered row blocks a single-account import.
                 outstandingMultiDuplicates > 0
               }
-              className="bg-primary text-on-primary hover:bg-primary-dark px-4 py-2 rounded-lg text-xs font-semibold disabled:opacity-50"
             >
-              {confirming ? 'Importing…' : `Confirm All ${multiSections.length} Accounts`}
-            </button>
+              Confirm All {multiSections.length} Accounts
+            </Button>
           </div>
         </>
       )}
@@ -1303,10 +1318,11 @@ export default function Import() {
               onDecideAll={decideAllDuplicates}
             />
 
-            <button
+            <Button
               onClick={() => void confirmImport()}
+              loading={confirming}
+              className="mt-4"
               disabled={
-                confirming ||
                 (!reimportState && !sessionId) ||
                 (!reimportState && accountChoice === 'existing' && !selectedAccountId) ||
                 // The gate. Every flagged row must have an explicit answer before anything is
@@ -1314,10 +1330,9 @@ export default function Import() {
                 // inattention rather than by a decision.
                 unresolvedCount(rows, review.decisions) > 0
               }
-              className="bg-primary text-on-primary hover:bg-primary-dark px-4 py-2 rounded-lg text-xs font-semibold disabled:opacity-50 mt-4"
             >
-              {confirming ? 'Importing…' : 'Confirm Import'}
-            </button>
+              Confirm Import
+            </Button>
           </div>
         </>
       )}
@@ -1874,12 +1889,8 @@ function ImportSummaryScreen({
       <StatementWarnings summary={summary} />
 
       <div className="flex gap-3">
-        <button onClick={onDone} className="bg-primary text-on-primary hover:bg-primary-dark px-4 py-2 rounded-lg text-xs font-semibold">
-          Go to Dashboard
-        </button>
-        <button onClick={onImportAnother} className="border border-border text-ink px-4 py-2 rounded-lg text-xs font-semibold">
-          Import another statement
-        </button>
+        <Button onClick={onDone}>Go to Dashboard</Button>
+        <Button variant="secondary" onClick={onImportAnother}>Import another statement</Button>
       </div>
     </div>
   );
@@ -1961,12 +1972,8 @@ function MultiImportSummaryScreen({
       )}
 
       <div className="flex gap-3">
-        <button onClick={onDone} className="bg-primary text-on-primary hover:bg-primary-dark px-4 py-2 rounded-lg text-xs font-semibold">
-          Go to Dashboard
-        </button>
-        <button onClick={onImportAnother} className="border border-border text-ink px-4 py-2 rounded-lg text-xs font-semibold">
-          Import another statement
-        </button>
+        <Button onClick={onDone}>Go to Dashboard</Button>
+        <Button variant="secondary" onClick={onImportAnother}>Import another statement</Button>
       </div>
     </div>
   );
