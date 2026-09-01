@@ -250,6 +250,12 @@ class MultiSectionZeroExtractionTest {
         // plans -- see AccountNumberInheritanceRegressionTest, which verifies this trace's actual
         // content, not this row count) -- listed here only so this inventory sweep accounts for it.
         m.put("indusland-credit-card-account-number-inheritance", 8);
+        // Captured for AccountNumberTransactionHeaderExtractor -- same real document as
+        // icici-credit-card-statement above (3 real transactions), captured separately because that
+        // trace predates this fix. See AccountNumberTransactionHeaderRegressionTest, which verifies
+        // this trace's actual capability behavior, not this row count -- listed here only so this
+        // inventory sweep accounts for it.
+        m.put("icici-credit-card-account-number-above-transactions", 3);
         return m;
     }
 

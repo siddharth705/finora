@@ -172,6 +172,19 @@ class CapabilityCorpusCoverageTest {
                         + "real coordinates from both of the document's own layouts (grid and same-row), "
                         + "and independently confirmed against the actual un-redacted PDF via "
                         + "scripts/corpus-run.py.");
+        DECLARED_WITHOUT_A_TRACE.put("PRINTED_ACCOUNT_NUMBER_ABOVE_TRANSACTIONS",
+                "no trace -- same scoping gap as PRINTED_ACCOUNT_NUMBER_GRID above: this fires in "
+                        + "AccountNumberTransactionHeaderExtractor, called from PdfPreviewGenerator, never "
+                        + "from PdfTableLocator.locateAll. The one real evidencing document's committed "
+                        + "trace (icici-credit-card-account-number-above-transactions) redacts the value "
+                        + "cell with width=0.0, the same redaction limitation already documented for "
+                        + "PRINTED_ACCOUNT_NUMBER_GRID/PRINTED_PAYMENT_DUE_DATE_GRID above, breaking the "
+                        + "x-overlap match against the Date header cell -- see "
+                        + "AccountNumberTransactionHeaderRegressionTest, which asserts against that trace "
+                        + "that the capability correctly does NOT fire on the redacted text. Real recovery "
+                        + "against real geometry is covered by AccountNumberTransactionHeaderExtractorTest "
+                        + "using the real header/value coordinates, and independently confirmed against the "
+                        + "actual un-redacted PDF via scripts/corpus-run.py.");
         DECLARED_WITHOUT_A_TRACE.put("CREDIT_CARD_SUMMARY_TOTALS",
                 "no trace yet -- CreditCardSummaryExtractorTest exercises the GRID strategy on "
                         + "synthetic fixtures reproducing real observed shapes (a clean stacked grid, "

@@ -259,6 +259,13 @@ public class PdfPreviewGenerator {
         // scrambled the same way its Payment Due Date is -- see AccountNumberGridExtractor's own
         // doc comment.
         String gridAccountNumberMasked = AccountNumberGridExtractor.extract(positioned, ctx);
+        // A different real document (ICICI) prints its own account number with no label at all,
+        // positioned directly under the transaction table's own "Date" column header -- neither
+        // scrambled nor label-anchored, so AccountNumberGridExtractor alone can't recover it. See
+        // AccountNumberTransactionHeaderExtractor's own doc comment.
+        if (gridAccountNumberMasked == null) {
+            gridAccountNumberMasked = AccountNumberTransactionHeaderExtractor.extract(positioned, ctx);
+        }
 
         if (doc.sections().isEmpty()) {
             // "Never lose information" (see the engineering principles doc) applies at the
