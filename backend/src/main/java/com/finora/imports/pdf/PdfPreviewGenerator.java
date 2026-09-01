@@ -779,9 +779,22 @@ public class PdfPreviewGenerator {
                                                   BigDecimal totalAmountDue, LocalDate paymentDueDate,
                                                   String gridAccountNumberMasked) {
             // Same precedence as paymentDueDate: PdfMetadataExtractor's own line-based field wins
-            // when present, and the positioned-text grid reading (AccountNumberGridExtractor) is
-            // only tried once that comes up empty -- see that class's own doc comment for why a
-            // real Axis document's "Credit Card Number" field can never be read the line-based way.
+            // when present, and the positioned-text grid reading (AccountNumberGridExtractor /
+            // AccountNumberTransactionHeaderExtractor) is only tried once that comes up empty -- see
+            // those classes' own doc comments for why a real Axis/ICICI document's own account
+            // number can never be read the line-based way.
+            //
+            // NOT gated on this section's own detectedProduct -- CARD_NUMBER_LABEL_SRC matches
+            // "Account Number" as well as "Card No"/"Credit Card Number" (see PdfMetadataExtractor),
+            // so both grid extractors are real, evidenced signals on SAVINGS statements too (a real
+            // HSBC savings document only recovers its account number via AccountNumberGridExtractor's
+            // PRINTED_ACCOUNT_NUMBER_GRID path) -- gating on "CREDIT_CARD" specifically silently
+            // broke that document, and ICICI CC.pdf's own detectedProduct is UNKNOWN (low-confidence
+            // classification) even though its section genuinely needs this exact fallback. Document-
+            // wide, ungated application carries the same theoretical cross-section leak risk
+            // gridPaymentDueDate already accepts (see that field's own precedent from PR #708); no
+            // real corpus document currently exercises a composite statement with two genuinely
+            // different, positively-identified accounts where this would misfire.
             String accountNumberMasked = metadata.accountNumberMasked() != null
                     ? metadata.accountNumberMasked() : gridAccountNumberMasked;
             return new DetectedAccountInfo(
