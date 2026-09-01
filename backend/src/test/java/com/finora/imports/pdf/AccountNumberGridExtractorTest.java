@@ -61,6 +61,20 @@ class AccountNumberGridExtractorTest {
         assertThat(AccountNumberGridExtractor.extract(runs)).isNull();
     }
 
+    /** looksLikeCardOrAccountNumber alone doesn't restrict which non-digit characters are present --
+     *  only length, digit count, and a trailing digit -- so a letters-plus-digits cell like a
+     *  product/plan name can satisfy it while still failing CARD_NUMBER_VALUE's stricter shape
+     *  (digits/X/x/* only). The GRID path must apply the same shape check trySameRow already does a
+     *  few lines below, or it accepts exactly this kind of false positive. */
+    @Test
+    void extract_returnsNull_whenTheColumnUnderTheLabelLooksNumberish_butIsNotCardNumberShaped() {
+        var runs = List.of(
+                run("Credit Card Number", 50.50f, 115.52f, 253.00f),
+                run("Platinum2026", 51.00f, 115.00f, 266.50f));
+
+        assertThat(AccountNumberGridExtractor.extract(runs)).isNull();
+    }
+
     @Test
     void extract_returnsNull_whenTheValueRowIsTooFarBelow() {
         var runs = List.of(

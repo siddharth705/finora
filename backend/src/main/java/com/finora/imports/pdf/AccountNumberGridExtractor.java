@@ -119,6 +119,12 @@ public final class AccountNumberGridExtractor {
 
     private static String normalizedMaskedValue(String rawText) {
         String candidate = rawText.trim();
+        // Same two-check discipline trySameRow already applies (CARD_NUMBER_VALUE for the character
+        // shape, looksLikeCardOrAccountNumber for length/digit-count) -- looksLikeCardOrAccountNumber
+        // alone doesn't restrict which non-digit characters are present, so without this a
+        // letters-plus-digits cell that happens to end in a digit (e.g. a product name) could be
+        // accepted as an account number by this GRID path alone.
+        if (!PdfMetadataExtractor.CARD_NUMBER_VALUE.matcher(candidate).matches()) return null;
         if (!PdfMetadataExtractor.looksLikeCardOrAccountNumber(candidate)) return null;
         String[] normalized = PdfMetadataExtractor.normalizeCardOrAccountNumberValue(candidate);
         return normalized[0];

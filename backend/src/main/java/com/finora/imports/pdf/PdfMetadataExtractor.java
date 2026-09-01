@@ -1395,4 +1395,18 @@ public class PdfMetadataExtractor {
         }
         return null;
     }
+
+    // Package-private so a raw-PositionedText reader (AccountNumberTransactionHeaderExtractor) can
+    // reject a transaction-table Date-column cell before mistaking it for an unlabeled account
+    // number -- CARD_NUMBER_VALUE's char class allows hyphens as an internal separator, so a real
+    // "dd-MM-yyyy" date (DATE_FORMATS itself already supports this exact shape, e.g. a Kotak
+    // statement's "16-Feb-2026") fully matches the masked-number shape too. Static, unlike
+    // tryEveryFormat/tryFormats above, since this has no instance state to share with them -- kept
+    // separate rather than widening those two to avoid changing an existing, already-tested path.
+    static boolean looksLikeADate(String candidate) {
+        for (DateTimeFormatter fmt : DATE_FORMATS) {
+            try { LocalDate.parse(candidate, fmt); return true; } catch (Exception ignored) {}
+        }
+        return false;
+    }
 }
