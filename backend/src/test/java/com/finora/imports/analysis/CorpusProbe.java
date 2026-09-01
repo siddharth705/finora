@@ -5,6 +5,11 @@ import com.finora.imports.TestAccountRepositories;
 import com.finora.imports.*;
 import com.finora.dto.ImportDto.StagedAccountSection;
 import com.finora.imports.pdf.*;
+import com.finora.imports.pdf.acquisition.DocumentTextAcquirer;
+import com.finora.imports.pdf.acquisition.NativePdfAcquirer;
+import com.finora.imports.pdf.acquisition.RoutingTextAcquirer;
+import com.finora.imports.pdf.ocr.TesseractEngine;
+import com.finora.imports.pdf.ocr.TesseractRecogniser;
 import com.finora.imports.product.ProductAttributeExtractor;
 import com.finora.imports.product.ProductDiscovery;
 import org.apache.pdfbox.Loader;
@@ -65,16 +70,19 @@ public final class CorpusProbe {
 
     public static void main(String[] args) {
         boolean synthetic = false;
+        boolean ocr = false;
         String pdfArg = null;
         for (String arg : args) {
             if ("--synthetic".equals(arg)) {
                 synthetic = true;
+            } else if ("--ocr".equals(arg)) {
+                ocr = true;
             } else {
                 pdfArg = arg;
             }
         }
         if (pdfArg == null) {
-            System.err.println("Usage: CorpusProbe [--synthetic] <path-to.pdf>");
+            System.err.println("Usage: CorpusProbe [--synthetic] [--ocr] <path-to.pdf>");
             System.exit(2);
             return;
         }
@@ -83,7 +91,7 @@ public final class CorpusProbe {
         // record rather than a stack trace. Throwable, not Exception: a malformed PDF can surface as
         // an Error from a decoder, and a corpus that stops at file 3 of 16 is not a corpus.
         try {
-            System.out.println(probe(pdf, synthetic));
+            System.out.println(probe(pdf, synthetic, ocr));
         } catch (Throwable t) {
             System.out.println(errorRecord(pdf, t));
         }
@@ -100,6 +108,21 @@ public final class CorpusProbe {
      * flag loses capability rather than gaining permission to leak real transaction content.
      */
     static String probe(Path pdf, boolean synthetic) throws Exception {
+        return probe(pdf, synthetic, false);
+    }
+
+    /**
+     * {@code ocr}, when {@code true}, routes acquisition through {@link RoutingTextAcquirer} with a
+     * real {@link TesseractRecogniser} deployed instead of the plain {@link PdfTextExtractor} this
+     * probe has always used -- see {@code ScannedDocumentRoutingTest.generator} for the identical
+     * wiring. Without it, this probe (and therefore every {@code corpus-run.py} sweep) only ever
+     * exercises {@link NativePdfAcquirer}, so a scanned, text-layer-free statement -- and any
+     * regression in {@code RunAssembler}, {@code TesseractRecogniser}, or {@code RoutingTextAcquirer}
+     * -- is invisible to it even though that path is live in production behind
+     * {@code @Primary RoutingTextAcquirer}. Off by default: it requires the {@code tesseract} binary
+     * on {@code PATH} and rasterizes + OCRs every page, which is far slower than the native path.
+     */
+    static String probe(Path pdf, boolean synthetic, boolean ocr) throws Exception {
         byte[] bytes = Files.readAllBytes(pdf);
 
         int pages;
@@ -116,10 +139,23 @@ public final class CorpusProbe {
         PdfTableLocator tableLocator = new PdfTableLocator();
         int positionedRuns = textExtractor.extract(bytes).size();
 
-        // Constructed exactly as PdfPipelineDiagnostic does, so this probe cannot drift into
-        // exercising a different pipeline than the one the human-readable report describes.
+        DocumentTextAcquirer acquirer;
+        if (ocr) {
+            if (!TesseractEngine.available()) {
+                throw new IllegalStateException(
+                        "--ocr requested but tesseract is not installed / not on PATH");
+            }
+            acquirer = new RoutingTextAcquirer(new NativePdfAcquirer(textExtractor),
+                    List.of(new TesseractRecogniser()));
+        } else {
+            acquirer = new NativePdfAcquirer(textExtractor);
+        }
+
+        // Constructed exactly as PdfPipelineDiagnostic does (native path) / ScannedDocumentRoutingTest
+        // does (OCR path), so this probe cannot drift into exercising a different pipeline than the
+        // one those describe.
         PdfPreviewGenerator generator = new PdfPreviewGenerator(
-                textExtractor, tableLocator, new PdfMetadataExtractor(), stubbedNormalizer(),
+                acquirer, tableLocator, new PdfMetadataExtractor(), stubbedNormalizer(),
                 ProductDiscovery.standard(), new ProductAttributeExtractor(),
                 new ImportVerifier(new BalanceChainValidator(), new StatementTotalsValidator(),
                         new SummaryTotalsValidator(), new ColumnAmbiguityValidator(), new RowAccountingValidator(), new com.finora.imports.CreditCardStatementTotalsValidator(), new com.finora.imports.CreditCardFlowReconciliationValidator()),
