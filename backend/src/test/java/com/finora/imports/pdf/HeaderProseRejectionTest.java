@@ -300,6 +300,11 @@ class HeaderProseRejectionTest {
         // join order) is verified by TraceFixtureRegressionTest, not this class; listed here only
         // so this inventory sweep accounts for it at all.
         put("bob-transaction-row-x-ordering", 1);
+        // Captured for PdfTableLocator.resolveYearlessDate (docs/superpowers/plans/
+        // 2026-09-01-hsbc-yearless-date-resolution.md) -- its own content is verified by
+        // YearlessDateResolutionTest and HsbcCreditCardYearlessDateRegressionTest, not this
+        // class; listed here only so this inventory sweep accounts for it at all.
+        put("hsbc-credit-card-yearless-dates", 1);
     }};
 
     @Test
