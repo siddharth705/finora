@@ -4025,7 +4025,39 @@ public class PdfTableLocator {
             // since those are left-aligned and the right edge means nothing there. Requires a real
             // measured width, so hand-built fixtures and traces recorded before widths existed
             // (width 0, endX == x) keep exactly their previous behaviour.
-            if (t.width() > 0 && headerEnds != null && CsvParser.parseNumeric(t.text().trim()) != null) {
+            // Also fires for a bare "-" -- the empty-cell placeholder glyph CsvParser.parseNumeric
+            // already treats as "no value" (see its own `s.equals("-")` check) rather than a real
+            // number, which is exactly why this block used to skip it: parseNumeric("-") is null,
+            // so the run never reached the right-edge check at all and stayed wherever its LEFT
+            // edge (nearestColumn's default) put it.
+            //
+            // Verified against a real Indian Overseas Bank savings statement (see
+            // EmptyCellDashPlaceholderPdfTableLocatorTest for the anonymized fixture -- coordinates
+            // only, no document content reproduced here per the Synthetic Fixture Policy) with
+            // adjacent Debit(Rs)/Credit(Rs)/Balance(Rs) columns (header anchors/ends x=398.4/437.9,
+            // 455.6/497.8, 507.3/556.8). This bank right-aligns its empty-cell "-" exactly like a
+            // real amount -- e.g. one row's empty Credit(Rs) cell prints "-" at x=495.8/endX=498.8,
+            // dead center on Credit's own header end (497.8), NOT anywhere near Credit's header
+            // anchor (455.6, 40.2pt away). By LEFT edge that "-" is only 11.5pt from Balance(Rs)'s
+            // anchor (507.3) vs 40.2pt from its own Credit anchor, so plain nearestColumn bucketed
+            // it into Balance(Rs) -- landing right before that row's real balance run (itself
+            // correctly placed in Balance by this same right-edge rule) and gluing onto its front,
+            // e.g. "- 12,345.67". That string is no longer the empty-cell marker
+            // CsvParser.parseNumeric recognizes on its own -- it is a real number STRING with a
+            // leading "-" it does not special-case, so BigDecimal parses a POSITIVE running balance
+            // as negative, failing BALANCE_CHAIN verification even though the transaction's own
+            // amount and direction (Debit(Rs)) were untouched and correct. The mirror case (an
+            // empty Debit(Rs) glued onto a real Credit(Rs) value the same way) is fixed by the same
+            // change, symmetrically: an empty Debit(Rs)'s "-" prints at x=436.9/endX=439.9, dead
+            // center on Debit's own header end (437.9) but by left edge nearer to Credit's anchor
+            // (455.6, 18.7pt) than its own (398.4, 38.5pt).
+            //
+            // Scoped to the LITERAL placeholder glyph, not "any non-numeric text" -- t.text() must
+            // trim to exactly "-", so this can never redirect real narration or reference text that
+            // merely happens to sit near an amount column's right edge.
+            boolean isEmptyCellDashPlaceholder = t.text().trim().equals("-");
+            if (t.width() > 0 && headerEnds != null
+                    && (CsvParser.parseNumeric(t.text().trim()) != null || isEmptyCellDashPlaceholder)) {
                 int byRightEdge = nearestColumn(t.endX(), headerEnds);
                 if (byRightEdge != nearest && isAmountColumn(headerNames.get(byRightEdge))) {
                     nearest = byRightEdge;
