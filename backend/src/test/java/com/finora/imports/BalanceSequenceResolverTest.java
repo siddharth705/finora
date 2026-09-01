@@ -240,4 +240,100 @@ class BalanceSequenceResolverTest {
         assertThat(resolution.openingBalance()).isEqualByComparingTo("10000.00");
         assertThat(resolution.closingBalance()).isEqualByComparingTo("9500.00");
     }
+
+    // ================================================================
+    // Print order as a last-resort, self-calibrated tiebreaker
+    // ================================================================
+
+    /**
+     * The exact real-world shape confirmed on BOB.pdf: two pairs of duplicate &plusmn;2.00
+     * micro-transactions on one day, each pair producing two candidates with identical implied
+     * predecessors -- a genuine tie {@link #resolve_aSameDayReversalOnDayOneWithNoAnchor_isAmbiguous_notAGuess}
+     * already proves this class refuses to guess on its own. Here an EARLIER day resolves uniquely
+     * through pure balance math AND happens to match its own print order, which is real, checkable
+     * evidence this document's print order can be trusted -- so the later, genuinely tied day is
+     * resolved by print order instead of left ambiguous. Values mirror the real BOB.pdf document
+     * exactly (verified against its own printed "Closing Balance" row during this fix's own
+     * development), scaled down for a compact fixture.
+     */
+    @Test
+    void resolve_aGenuineSameDayTie_isResolvedByPrintOrder_whenAnEarlierDayConfirmsItIsReliable() {
+        // Day 1: resolves uniquely via pure balance math, AND its resolved order equals its print
+        // order -- this is the independent evidence that calibrates trust for day 2.
+        Obs d1a = obs("2026-06-01", "-10.00", "90.00");
+        Obs d1b = obs("2026-06-01", "-5.00", "85.00");
+
+        // Day 2: a genuine tie -- two distinct -2.00/+2.00 pairs, both ending at the same two
+        // balances, exactly the BOB.pdf shape. Balance math alone cannot tell d2a from d2c, nor
+        // d2b from d2d; print order (the list's own order below) is the only thing that can.
+        Obs d2a = obs("2026-06-02", "-2.00", "83.00");
+        Obs d2b = obs("2026-06-02", "2.00", "85.00");
+        Obs d2c = obs("2026-06-02", "-2.00", "83.00");
+        Obs d2d = obs("2026-06-02", "2.00", "85.00");
+        Obs d2e = obs("2026-06-02", "-40.00", "45.00");
+
+        var resolution = BalanceSequenceResolver.resolve(List.of(d1a, d1b, d2a, d2b, d2c, d2d, d2e));
+
+        assertThat(resolution.ambiguityStatus()).isEqualTo(BalanceSequenceResolver.AmbiguityStatus.UNIQUE);
+        assertThat(resolution.closingBalance()).isEqualByComparingTo("45.00");
+        assertThat(resolution.orderedTransactions())
+                .isEqualTo(List.of(d1a, d1b, d2a, d2b, d2c, d2d, d2e));
+        assertThat(resolution.evidence()).contains("Print order used to break a genuine same-day tie");
+    }
+
+    /**
+     * The exact real-world PNB ONE shape -- confirmed newest-first, the reverse of true order (see
+     * {@link #resolve_withANewestFirstSameDayCluster_matchesBalanceChainUtilsOwnAnswer}). If a
+     * document like this ever also contains a genuine tie elsewhere, the tiebreaker must refuse to
+     * use print order rather than risk the exact wrong-direction guess this document's own shape
+     * would produce -- proven here by attaching a genuine tie (mirroring the test above) to a
+     * document whose OTHER day is newest-first, and confirming the whole resolution stays honestly
+     * AMBIGUOUS rather than silently resolving in the wrong direction.
+     */
+    @Test
+    void resolve_doesNotUsePrintOrderTiebreak_whenAnotherDayInTheSameDocumentIsNewestFirst() {
+        // Day 1: resolves uniquely via pure balance math, but printed newest-first -- its resolved
+        // order does NOT match its print order. This is the PNB ONE shape, and must poison trust
+        // for the whole document.
+        Obs d1First = obs("2026-06-01", "100.00", "200.00");   // true first, printed LAST
+        Obs d1Last = obs("2026-06-01", "-50.00", "150.00");    // true last (200-50=150), printed FIRST
+        List<Obs> day1PrintedNewestFirst = List.of(d1Last, d1First);
+
+        // Day 2: the same genuine tie as the test above -- would resolve via print order if trust
+        // were (wrongly) granted.
+        Obs d2a = obs("2026-06-02", "-2.00", "148.00");
+        Obs d2b = obs("2026-06-02", "2.00", "150.00");
+        Obs d2c = obs("2026-06-02", "-2.00", "148.00");
+        Obs d2d = obs("2026-06-02", "2.00", "150.00");
+
+        List<Obs> observations = new java.util.ArrayList<>(day1PrintedNewestFirst);
+        observations.addAll(List.of(d2a, d2b, d2c, d2d));
+
+        var resolution = BalanceSequenceResolver.resolve(observations);
+
+        assertThat(resolution.ambiguityStatus()).isEqualTo(BalanceSequenceResolver.AmbiguityStatus.AMBIGUOUS);
+        assertThat(resolution.openingBalance()).isNull();
+        assertThat(resolution.closingBalance()).isNull();
+    }
+
+    /** No OTHER day in the document ever resolves independently (day 1 is a single transaction,
+     *  which needs no resolution at all and so proves nothing about print order) -- there is no
+     *  evidence anywhere to calibrate trust from, so the tie on day 2 must stay ambiguous exactly
+     *  as it did before this tiebreaker existed. "No evidence" and "evidence says untrustworthy"
+     *  must reach the identical, safe conclusion. */
+    @Test
+    void resolve_doesNotUsePrintOrderTiebreak_whenNoOtherDayInTheDocumentProvidesEvidence() {
+        Obs day1Single = obs("2026-06-01", "50.00", "100.00"); // size 1: trivial, no evidence
+
+        Obs d2a = obs("2026-06-02", "-2.00", "98.00");
+        Obs d2b = obs("2026-06-02", "2.00", "100.00");
+        Obs d2c = obs("2026-06-02", "-2.00", "98.00");
+        Obs d2d = obs("2026-06-02", "2.00", "100.00");
+
+        var resolution = BalanceSequenceResolver.resolve(List.of(day1Single, d2a, d2b, d2c, d2d));
+
+        assertThat(resolution.ambiguityStatus()).isEqualTo(BalanceSequenceResolver.AmbiguityStatus.AMBIGUOUS);
+        assertThat(resolution.openingBalance()).isNull();
+        assertThat(resolution.closingBalance()).isNull();
+    }
 }
