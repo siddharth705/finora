@@ -66,6 +66,44 @@ class CategorizationServiceTest {
         return m;
     }
 
+    private Merchant merchantWith(UUID id, String canonicalName) {
+        Merchant m = new Merchant();
+        ReflectionTestUtils.setField(m, "id", id);
+        m.setCanonicalName(canonicalName);
+        return m;
+    }
+
+    @Test
+    void suggest_fallsBackToMerchantCanonicalName_whenRawDescriptionHasNoKeyword() {
+        UUID merchantId = UUID.randomUUID();
+        // Simulates a merchant whose canonical name was correctly identified from an EARLIER
+        // transaction's narration (or an admin/user rename) -- this transaction's own raw text
+        // carries no recognizable brand token at all.
+        Merchant merchant = merchantWith(merchantId, "Swiggy Bangalore");
+        when(merchantNormalizationEngine.resolve(eq(userId), anyString())).thenReturn(merchant);
+        when(learningRepository.findByUserIdAndMerchantId(userId, merchantId)).thenReturn(List.of());
+
+        var suggestion = categorizationService.suggest(userId, "UPI/REF88213764/SETTLEMENT");
+
+        assertThat(suggestion.category()).isEqualTo("Dining");
+        assertThat(suggestion.source()).isEqualTo("rule");
+        assertThat(suggestion.decisionSource()).isEqualTo(Transaction.DecisionSource.KEYWORD_MATCH);
+    }
+
+    @Test
+    void suggestReadOnly_fallsBackToMerchantCanonicalName_whenRawDescriptionHasNoKeyword() {
+        UUID merchantId = UUID.randomUUID();
+        Merchant merchant = merchantWith(merchantId, "Swiggy Bangalore");
+        when(merchantNormalizationEngine.resolveReadOnly(eq(userId), anyString()))
+                .thenReturn(Optional.of(merchant));
+        when(learningRepository.findByUserIdAndMerchantId(userId, merchantId)).thenReturn(List.of());
+
+        var suggestion = categorizationService.suggestReadOnly(userId, "UPI/REF88213764/SETTLEMENT");
+
+        assertThat(suggestion.category()).isEqualTo("Dining");
+        assertThat(suggestion.decisionSource()).isEqualTo(Transaction.DecisionSource.KEYWORD_MATCH);
+    }
+
     @Test
     void suggest_fallsBackToRuleEngine_whenMerchantHasNoLearnedDistribution() {
         UUID merchantId = UUID.randomUUID();

@@ -163,7 +163,7 @@ public class CategorizationService {
             }
         }
 
-        String ruleCat = CategoryRules.suggestCategory(description);
+        String ruleCat = suggestCategoryWithMerchantFallback(description, merchant.getCanonicalName());
         boolean matchedKeyword = !ruleCat.equals("Other");
         return new Suggestion(ruleCat, matchedKeyword ? "rule" : "default", merchant.getId(),
                 matchedKeyword ? Transaction.DecisionSource.KEYWORD_MATCH : Transaction.DecisionSource.MERCHANT_DEFAULT, null,
@@ -262,11 +262,34 @@ public class CategorizationService {
             }
         }
 
-        String ruleCat = CategoryRules.suggestCategory(description);
+        String ruleCat = suggestCategoryWithMerchantFallback(description, merchantName);
         boolean matchedKeyword = !ruleCat.equals("Other");
         return new Suggestion(ruleCat, matchedKeyword ? "rule" : "default", merchantId,
                 matchedKeyword ? Transaction.DecisionSource.KEYWORD_MATCH : Transaction.DecisionSource.MERCHANT_DEFAULT, null,
                 matchedKeyword ? ConfidenceEngine.INITIAL_RULE_CONFIDENCE : ConfidenceEngine.INITIAL_DEFAULT_CONFIDENCE);
+    }
+
+    /**
+     * Retries the static keyword table against the resolved merchant's canonical name when the
+     * raw description alone doesn't match anything.
+     *
+     * <p>{@code merchantName} generalizes across every raw narration variant that has ever
+     * resolved to this merchant (exact alias match or first-significant-token match, see
+     * {@link MerchantNormalizationEngine}) -- not just the current transaction's own text. A
+     * merchant's canonical name is set once, from whichever description first created it (or from
+     * an admin/user rename via the Merchant Review Center), so fixing it once retroactively helps
+     * every future transaction for that merchant hit the keyword table, even ones whose own raw
+     * text carries no recognizable brand token at all.
+     *
+     * <p>Never used to REPLACE the raw-description attempt, only to extend it: a raw match always
+     * wins first, so this cannot change the category for any narration that already matched on its
+     * own text.
+     */
+    private static String suggestCategoryWithMerchantFallback(String description, String merchantName) {
+        String ruleCat = CategoryRules.suggestCategory(description);
+        if (!ruleCat.equals("Other")) return ruleCat;
+        if (merchantName == null || merchantName.isBlank()) return ruleCat;
+        return CategoryRules.suggestCategory(merchantName);
     }
 
     /** Maps the persisted-through-review categorySource string (StagedRow/ConfirmedRow,
