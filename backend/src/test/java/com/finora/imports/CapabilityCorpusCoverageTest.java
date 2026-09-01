@@ -138,6 +138,16 @@ class CapabilityCorpusCoverageTest {
                         + "makes against a committed trace. Covered instead by "
                         + "KotakCreditCardCategoryAndFooterRegressionTest, run directly against the same "
                         + "committed trace through TransactionTableDateRangeExtractor.extract.");
+        DECLARED_WITHOUT_A_TRACE.put("PRINTED_TITLE_ADJACENT_DATE_RANGE",
+                "no trace -- same scoping gap as PRINTED_TRANSACTION_TABLE_DATE_RANGE above: this "
+                        + "fires in StatementTitleDateRangeExtractor, called from PdfPreviewGenerator, "
+                        + "never from PdfTableLocator.locateAll. The one real evidencing document's "
+                        + "committed trace (kotak-savings-ledger-validation) has its date text redacted, "
+                        + "so it cannot exercise this capability's recording path either -- see "
+                        + "KotakSavingsTitleDateRangeRegressionTest, which asserts against that same trace "
+                        + "that the capability correctly does NOT fire on redacted text. Real date-value "
+                        + "recovery is covered by StatementTitleDateRangeExtractorTest using the real "
+                        + "unredacted date string at the trace's own coordinates.");
         DECLARED_WITHOUT_A_TRACE.put("CREDIT_CARD_SUMMARY_TOTALS",
                 "no trace yet -- CreditCardSummaryExtractorTest exercises the GRID strategy on "
                         + "synthetic fixtures reproducing real observed shapes (a clean stacked grid, "
