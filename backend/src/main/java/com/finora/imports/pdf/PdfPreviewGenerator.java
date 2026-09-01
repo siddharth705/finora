@@ -597,12 +597,19 @@ public class PdfPreviewGenerator {
      * <p>Scoped narrowly to avoid mis-attributing a genuinely DIFFERENT account's number onto a
      * sibling: only ever copies FROM a {@code CREDIT_CARD} section (the "one relationship"
      * assumption applies to a credit card specifically, not to a generic multi-account composite
-     * statement) INTO a sibling whose own {@code detectedProduct} is {@code UNKNOWN} -- never into a
-     * section the pipeline has already positively identified as its own distinct product. A real
-     * composite statement (Shivani_HDFC) has a genuine {@code RECURRING_DEPOSIT} section with its
-     * own certificate number, which must never be overwritten by a sibling account's number; gating
-     * on {@code UNKNOWN} specifically (not "any section missing a number") is what keeps that case
-     * untouched.
+     * statement) INTO a sibling whose own {@code detectedProduct} is {@code UNKNOWN} OR that same
+     * {@code CREDIT_CARD} -- never into a section the pipeline has positively identified as some
+     * OTHER, distinct product. A real composite statement (Shivani_HDFC) has a genuine {@code
+     * RECURRING_DEPOSIT} section with its own certificate number, which must never be overwritten
+     * by a sibling account's number; gating on {@code UNKNOWN}/{@code CREDIT_CARD} specifically
+     * (not "any section missing a number") is what keeps that case untouched.
+     *
+     * <p>The {@code CREDIT_CARD} half of that gate was added once WRAPPED_HEADER_INTERIOR_TIER_COLUMNS
+     * started recognizing IndusInd's own malformed rewards/purchase-detail fragment's Description/
+     * Merchant Category columns well enough for {@code ProductDiscovery} to positively identify it
+     * as {@code CREDIT_CARD} too, rather than leaving it {@code UNKNOWN} -- a genuine improvement
+     * that, left ungated, would have silently stopped this section from ever getting its account
+     * number back: it is still a fragment of the SAME card, just no longer an unidentified one.
      */
     private List<StagedAccountSection> inheritAccountNumberAcrossSections(List<StagedAccountSection> sections) {
         if (sections.size() <= 1) return sections;
@@ -619,7 +626,8 @@ public class PdfPreviewGenerator {
         List<StagedAccountSection> revised = new ArrayList<>(sections.size());
         for (StagedAccountSection s : sections) {
             DetectedAccountInfo acc = s.detectedAccount();
-            if (acc != null && acc.accountNumberMasked() == null && "UNKNOWN".equals(acc.detectedProduct())) {
+            if (acc != null && acc.accountNumberMasked() == null
+                    && ("UNKNOWN".equals(acc.detectedProduct()) || "CREDIT_CARD".equals(acc.detectedProduct()))) {
                 DetectedAccountInfo updated = new DetectedAccountInfo(
                         acc.suggestedName(), acc.suggestedAccountType(), acc.openingBalance(), acc.closingBalance(),
                         acc.statementPeriodStart(), acc.statementPeriodEnd(), sourceAccountNumber, acc.creditLimit(),

@@ -256,6 +256,11 @@ class MultiSectionZeroExtractionTest {
         // this trace's actual capability behavior, not this row count -- listed here only so this
         // inventory sweep accounts for it.
         m.put("icici-credit-card-account-number-above-transactions", 3);
+        // Captured for PdfTableLocator.mergeHeaderLinesAdmittingInteriorTierColumns -- see
+        // InteriorTierWrappedHeaderRealCorpusRegressionTest, which verifies this trace's actual
+        // header/capability behavior, not this row count -- listed here only so this inventory
+        // sweep accounts for it.
+        m.put("iob-savings-interior-tier-header", 15);
         return m;
     }
 
@@ -286,7 +291,18 @@ class MultiSectionZeroExtractionTest {
             // rejectIfNothingWasExtracted correctly refuses it -- IMPORT_NO_TRANSACTIONS_FOUND,
             // same as every other entry in this list. Belongs here, not in REJECTED_BY_FIX_1,
             // because P-002 Fix 1 has nothing to do with why this one is rejected.
-            "hsbc-credit-card-yearless-dates");
+            "hsbc-credit-card-yearless-dates",
+            // Captured for the single-cell exception to refinesRatherThanRedefines' Gate 1 -- see
+            // SingleCellHeaderRenameRealCorpusRegressionTest, which verifies that half of this
+            // trace's real behavior directly. Rejected here for a reason unrelated to either
+            // fix: this real document's OTHER defect (month-first yearless transaction dates,
+            // "May 01") is destroyed by redaction -- "May" masks to "Xxx", which no longer
+            // matches WEAK_MONTH_DAY -- so no row ever registers as a transaction anchor on this
+            // REDACTED trace specifically. The real, unredacted mechanism is covered separately
+            // by MonthFirstYearlessDatePdfTableLocatorTest, a synthetic fixture built with real
+            // coordinates and values; the real PDF itself (not this trace) is verified end to end
+            // via scripts/corpus-run.py.
+            "scb-savings-single-cell-header-rename");
 
     @Test
     void everyCorpusDocumentThatStagesTransactions_stagesExactlyWhatItStagedBefore() {

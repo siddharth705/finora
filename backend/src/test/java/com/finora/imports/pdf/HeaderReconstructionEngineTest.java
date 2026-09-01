@@ -189,6 +189,14 @@ class HeaderReconstructionEngineTest {
      * ({@code nonBlankCount(above) != 1}); this is the fill-empty generalization design doc §9.3
      * describes, mirroring IOB's real coordinate geometry (traced via a throwaway reflection probe
      * against the real document, not reproduced here) -- not its actual values.
+     *
+     * <p>SUPERSEDED, capability-wise, by INTERIOR_TIER_COLUMNS: {@code
+     * mergeHeaderLinesAdmittingInteriorTierColumns} now recognizes this exact shape directly, during
+     * the ordinary wrapped-header merge, rather than needing this narrower fill-empty prototype to
+     * run afterward -- the row data below is unchanged (still fully recovered, asserted below), only
+     * which capability fires changed. Verified end to end against the REAL Indian Overseas Bank
+     * statement this fixture models: with real coordinates, every one of its 15 real transactions
+     * now stages correctly (previously: zero, with the import reporting success).
      */
     @Test
     void multiCellPartitionedTierImmediatelyAbove_recoversAllFourColumns() {
@@ -224,7 +232,7 @@ class HeaderReconstructionEngineTest {
         assertThat(rows.get(1)).containsEntry("Credit", "10,000.00");
 
         assertThat(ctx.capabilities().stream().map(c -> c.capability()))
-                .contains("HEADER_RECONSTRUCTED");
+                .contains("WRAPPED_HEADER", "WRAPPED_HEADER_INTERIOR_TIER_COLUMNS");
     }
 
     /**
