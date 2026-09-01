@@ -734,6 +734,15 @@ actually found.
    now show the real recovered dates. Regenerated and reviewed — the diff touches only the
    `statementPeriod` line in each file, nothing else changed.
 
+4. **`FROM_TO_LABELED_PERIOD` (Task A) kept its `continue`, unlike Tasks D/E above** — its own test
+   fixture's trailing text ("Statement of account") is exactly what a separate account-number
+   pattern (`STATEMENT_OF_ACCOUNT_SAME_LINE`) looks for, raising the same class of risk found in
+   points 1-2. Checked directly via `PositionedText` inspection against all four real evidencing
+   documents (`HDFC sav.pdf`, `Mann HDFC.pdf`, `Sanjay HDFC.pdf`; `HDFC 3 month.pdf` is
+   byte-identical to `HDFC sav.pdf` per ground truth) — every one's row ends at "Statement of
+   account" with nothing trailing it, so `continue` is safe for all real evidence. Documented in
+   `FROM_TO_LABELED_PERIOD`'s own doc comment; revisit if a real document ever shows otherwise.
+
 ## Group F: implemented as a follow-up, with positional evidence
 
 Deferred above (line 9, line 53) pending "a separate investigation with positional evidence rather
@@ -786,12 +795,3 @@ green). Fresh corpus re-run: `statementPeriodStart`/`End` both **15/15** (up fro
 mismatches, `new kotak.pdf` now reads `2026-07-01 .. 2026-07-31` (matching its real printed range
 exactly), no new verification warnings anywhere in the corpus (savings or credit-card), no
 implausible dates.
-
-4. **`FROM_TO_LABELED_PERIOD` (Task A) kept its `continue`, unlike Tasks D/E above** — its own test
-   fixture's trailing text ("Statement of account") is exactly what a separate account-number
-   pattern (`STATEMENT_OF_ACCOUNT_SAME_LINE`) looks for, raising the same class of risk found in
-   points 1-2. Checked directly via `PositionedText` inspection against all four real evidencing
-   documents (`HDFC sav.pdf`, `Mann HDFC.pdf`, `Sanjay HDFC.pdf`; `HDFC 3 month.pdf` is
-   byte-identical to `HDFC sav.pdf` per ground truth) — every one's row ends at "Statement of
-   account" with nothing trailing it, so `continue` is safe for all real evidence. Documented in
-   `FROM_TO_LABELED_PERIOD`'s own doc comment; revisit if a real document ever shows otherwise.

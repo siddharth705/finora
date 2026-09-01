@@ -60,10 +60,12 @@ describe('IconButton', () => {
     expect(screen.queryByTestId('pencil-icon')).not.toBeInTheDocument();
   });
 
-  it('applies the danger variant', () => {
+  it('applies the danger variant as always-red at rest, not muted-until-hover', () => {
+    // Matches Button's own danger variant (text-danger unconditional) -- see IconButton.tsx's
+    // own comment on this exact regression, caught only once something actually used this variant.
     vi.mocked(useReducedMotion).mockReturnValue(false);
     render(<IconButton icon={<Pencil />} aria-label="Delete" variant="danger" />);
-    expect(screen.getByRole('button', { name: 'Delete' })).toHaveClass('hover:text-danger');
+    expect(screen.getByRole('button', { name: 'Delete' })).toHaveClass('text-danger', 'hover:bg-danger-bg');
   });
 
   it('applies the sm size', () => {
