@@ -3,6 +3,7 @@ package com.finora.imports;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -62,6 +63,28 @@ import java.util.Map;
  * value nothing downstream could distinguish from a confirmed one. This is the same standing
  * "unknown is better than confidently wrong" discipline {@code ImportVerifier}'s own class comment
  * already states for a different reason (an invented weighting policy).
+ *
+ * <p><b>Print order as a last-resort, self-calibrated tiebreaker.</b> {@link #walkFromAnchor} can
+ * still hit a genuine tie -- more than one remaining transaction implies the same running balance
+ * (confirmed on a real BOB.pdf statement: two pairs of duplicate &plusmn;2.00 micro-transactions on
+ * one day produce two candidates with identical implied predecessors). A real document's OWN
+ * printed row order is additional information from outside the balance chain, exactly the kind of
+ * anchor the class-level note above says this problem needs -- but it is not universally reliable:
+ * a real PNB ONE statement (confirmed, and the direct reason {@link #findExplicitOpeningRow}/
+ * {@link BalanceChainUtil} exist at all) prints its same-day cluster newest-first, the reverse of
+ * true order. Trusting print order unconditionally would silently reintroduce this class's own bug
+ * on exactly that kind of document, just via a different wrong assumption.
+ *
+ * <p>The fix is to never assume -- verify. {@link #isPrintOrderReliable} checks the SAME document's
+ * own other days: every day that already resolves uniquely via {@link #resolveInternally} alone
+ * (pure balance math, no anchor, no print-order assumption) is compared against its own printed
+ * order. Only when every one of those checks agrees -- and at least one exists to check -- is print
+ * order trusted as a tiebreaker for a DIFFERENT day on the SAME document that balance math alone
+ * cannot resolve. Confirmed against the real corpus (2026-09-01): every checkable day across every
+ * document except PNB ONE matches its own print order (220/220); PNB ONE's own days mismatch
+ * uniformly (0/13) -- a clean, self-evident split with no document landing in between. A document
+ * with no independently-resolvable days at all (nothing to check) is treated the same as one that
+ * failed the check: refuse rather than guess.
  */
 public final class BalanceSequenceResolver {
 
@@ -107,24 +130,31 @@ public final class BalanceSequenceResolver {
         List<LocalDate> days = new ArrayList<>(byDate.keySet());
         days.sort(LocalDate::compareTo);
 
+        boolean printOrderTrusted = isPrintOrderReliable(byDate);
+
         List<T> ordered = new ArrayList<>();
         AnchorSource anchorSource = AnchorSource.NONE;
         BigDecimal openingBalance = null;
         BigDecimal runningAnchor = null; // the previous day's resolved close; null until day 1 resolves
+        boolean usedPrintOrderTiebreak = false;
 
         for (int i = 0; i < days.size(); i++) {
             List<T> day = byDate.get(days.get(i));
             boolean isFirstDay = i == 0;
             T explicitOpeningRow = isFirstDay ? findExplicitOpeningRow(day) : null;
 
-            List<T> dayOrdered = resolveDay(day, explicitOpeningRow, runningAnchor);
-            if (dayOrdered == null) {
+            DayResolution<T> dayResolved = resolveDay(day, explicitOpeningRow, runningAnchor, printOrderTrusted);
+            if (dayResolved == null) {
                 return ambiguous(observations, "Day " + days.get(i) + " has more than one "
                         + "transaction and no unique ordering could be found -- neither the day's "
                         + "own transactions, nor" + (runningAnchor != null || explicitOpeningRow != null
                                 ? " the available anchor," : " any anchor (none available),")
+                        + (printOrderTrusted ? " nor this document's own (independently verified reliable)"
+                                + " print order," : "")
                         + " determine it uniquely.");
             }
+            List<T> dayOrdered = dayResolved.ordered();
+            if (dayResolved.usedPrintOrderTiebreak()) usedPrintOrderTiebreak = true;
             ordered.addAll(dayOrdered);
 
             if (isFirstDay) {
@@ -137,32 +167,59 @@ public final class BalanceSequenceResolver {
         }
 
         String evidence = "Resolved " + days.size() + " day(s), " + observations.size()
-                + " transaction(s) from anchor=" + anchorSource + "; same-day ambiguity: none.";
+                + " transaction(s) from anchor=" + anchorSource + "; same-day ambiguity: none."
+                + (usedPrintOrderTiebreak ? " Print order used to break a genuine same-day tie on at "
+                        + "least one day (verified reliable against this document's own other days)." : "");
         return new Resolution(ordered, openingBalance, runningAnchor, anchorSource, AmbiguityStatus.UNIQUE, evidence);
     }
+
+    /** One day's resolved order, and whether reaching it needed the print-order tiebreaker -- kept
+     *  separate from the {@code List<T>} itself so {@link #resolve}'s evidence string can report
+     *  the tiebreak honestly without re-deriving whether it fired. */
+    private record DayResolution<T extends DatedLink>(List<T> ordered, boolean usedPrintOrderTiebreak) {}
 
     /**
      * Resolves one day's transaction order. A day's own internal resolution (does the day's own
      * balances form a unique, self-contained chain?) is tried first and, if unique, used as-is --
      * never second-guessed against an incoming anchor (see the class-level note on why). The anchor
      * is consulted only when internal resolution is itself ambiguous: an explicit opening-balance
-     * declaration for day 1, or the previous day's resolved close for every later day.
+     * declaration for day 1, or the previous day's resolved close for every later day. Print order
+     * (see the class-level "last-resort, self-calibrated tiebreaker" note) is consulted only when
+     * even the anchor walk hits a genuine tie, and only when {@code printOrderTrusted}.
      */
-    private static <T extends DatedLink> List<T> resolveDay(List<T> day, T explicitOpeningRow, BigDecimal incomingAnchor) {
-        if (day.size() == 1) return new ArrayList<>(day);
+    private static <T extends DatedLink> DayResolution<T> resolveDay(
+            List<T> day, T explicitOpeningRow, BigDecimal incomingAnchor, boolean printOrderTrusted) {
+        if (day.size() == 1) return new DayResolution<>(new ArrayList<>(day), false);
 
         if (explicitOpeningRow != null) {
             // An explicit declaration is authoritative for day 1 and is not itself a real
             // transaction (see StatementValidator/PdfPreviewGenerator's own isExplicitOpeningRow
             // history) -- always anchor from it directly rather than attempting internal
             // resolution, which has no meaningful "implied pre-balance" for a label row.
-            return walkFromAnchor(day, explicitOpeningRow.balanceAfter(), explicitOpeningRow);
+            return walkFromAnchorWithFallback(day, explicitOpeningRow.balanceAfter(), explicitOpeningRow, printOrderTrusted);
         }
 
+        // resolveInternally is deliberately never offered the print-order tiebreaker -- it is the
+        // pure, anchor-free signal isPrintOrderReliable itself calibrates trust from, and letting
+        // it lean on the conclusion it is used to validate would be circular.
         List<T> internal = resolveInternally(day);
-        if (internal != null) return internal;
+        if (internal != null) return new DayResolution<>(internal, false);
 
-        return incomingAnchor != null ? walkFromAnchor(day, incomingAnchor, null) : null;
+        return incomingAnchor != null
+                ? walkFromAnchorWithFallback(day, incomingAnchor, null, printOrderTrusted) : null;
+    }
+
+    /** {@link #walkFromAnchor} first, exactly as before; only on a genuine tie ({@code null}) and
+     *  only when {@code printOrderTrusted}, retries with the tiebreaker enabled. Two separate calls
+     *  rather than one parameterized one, so the ordinary (non-ambiguous) path -- the overwhelming
+     *  majority of days -- never even evaluates whether a tie exists more than once. */
+    private static <T extends DatedLink> DayResolution<T> walkFromAnchorWithFallback(
+            List<T> group, BigDecimal startBalance, T alreadyPlaced, boolean printOrderTrusted) {
+        List<T> resolved = walkFromAnchor(group, startBalance, alreadyPlaced, false);
+        if (resolved != null) return new DayResolution<>(resolved, false);
+        if (!printOrderTrusted) return null;
+        List<T> tieBroken = walkFromAnchor(group, startBalance, alreadyPlaced, true);
+        return tieBroken == null ? null : new DayResolution<>(tieBroken, true);
     }
 
     /**
@@ -182,8 +239,14 @@ public final class BalanceSequenceResolver {
      *                      declaration, or the day's own uniquely-determined first transaction),
      *                      placed without being searched for; {@code null} when nothing is
      *                      pre-placed and {@code startBalance} is itself the value to search for
+     * @param printOrderTiebreak when a step's candidates are otherwise indistinguishable by
+     *                      balance, break the tie by picking whichever one appears earliest in
+     *                      {@code group}'s own original (print) order, instead of refusing --
+     *                      see the class-level "last-resort, self-calibrated tiebreaker" note for
+     *                      when a caller may safely set this
      */
-    private static <T extends DatedLink> List<T> walkFromAnchor(List<T> group, BigDecimal startBalance, T alreadyPlaced) {
+    private static <T extends DatedLink> List<T> walkFromAnchor(
+            List<T> group, BigDecimal startBalance, T alreadyPlaced, boolean printOrderTiebreak) {
         List<T> remaining = new ArrayList<>(group);
         List<T> result = new ArrayList<>();
         BigDecimal running = startBalance;
@@ -197,8 +260,14 @@ public final class BalanceSequenceResolver {
                 BigDecimal impliedPre = candidate.balanceAfter().subtract(candidate.signedAmount());
                 if (impliedPre.compareTo(running) == 0) matches.add(candidate);
             }
-            if (matches.size() != 1) return null;
-            T next = matches.get(0);
+            T next;
+            if (matches.size() == 1) {
+                next = matches.get(0);
+            } else if (matches.size() > 1 && printOrderTiebreak) {
+                next = matches.stream().min(Comparator.comparingInt(group::indexOf)).orElseThrow();
+            } else {
+                return null;
+            }
             result.add(next);
             remaining.remove(next);
             running = next.balanceAfter();
@@ -222,7 +291,27 @@ public final class BalanceSequenceResolver {
         }
         if (withNoPredecessor.size() != 1) return null;
         T first = withNoPredecessor.get(0);
-        return walkFromAnchor(group, first.balanceAfter(), first);
+        return walkFromAnchor(group, first.balanceAfter(), first, false);
+    }
+
+    /**
+     * Whether this document's own printed row order can safely be trusted as a last-resort
+     * tiebreaker (see the class-level note). Checks every day that resolves uniquely through
+     * {@link #resolveInternally} alone -- pure balance math, no anchor, no print-order assumption
+     * -- against that same day's own print order. Trusted only when every checked day agrees AND
+     * at least one exists to check; a single disagreement (the real PNB ONE shape) or no evidence
+     * at all (nothing multi-transaction resolves on its own) both refuse rather than assume.
+     */
+    private static <T extends DatedLink> boolean isPrintOrderReliable(Map<LocalDate, List<T>> byDate) {
+        boolean anyEvidence = false;
+        for (List<T> day : byDate.values()) {
+            if (day.size() <= 1) continue;
+            List<T> resolved = resolveInternally(day);
+            if (resolved == null) continue;
+            anyEvidence = true;
+            if (!resolved.equals(day)) return false;
+        }
+        return anyEvidence;
     }
 
     private static <T extends DatedLink> T findExplicitOpeningRow(List<T> day) {
