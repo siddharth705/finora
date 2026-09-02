@@ -83,6 +83,21 @@ public class CapabilityCoverageService {
             // are inferred from data-row geometry and content shape instead of a label. See
             // PdfTableLocator.inferHeaderlessSection.
             "INFERRED_HEADERLESS_LAYOUT",
+            // A genuinely headerless transaction table sitting BEFORE a completely unrelated table
+            // further down the same document whose own header IS recognized -- found on a real
+            // HSBC credit-card statement whose real ledger has no header at all, but a later page
+            // carries an unrelated EMI "Loan Summary Table" with a genuine one. Once any header is
+            // found, INFERRED_HEADERLESS_LAYOUT's own sections.isEmpty() gate never fires for the
+            // earlier content; this tries headerless inference on just the pre-header slice,
+            // independent of what the main loop found afterward. See
+            // PdfTableLocator.locateAll's own firstHeaderRowIndex doc comment.
+            "HEADERLESS_LAYOUT_BEFORE_LATER_HEADER",
+            // The escape hatch INFERRED_HEADERLESS_LAYOUT's own row-count floor needed to recover
+            // that same real HSBC document's genuine transaction: one real transaction, one short
+            // of the floor, whose "signed" candidacy (an explicit CR/DR marker) and amount exactly
+            // reconcile the document's own printed OPENING BALANCE against its own printed NET
+            // OUTSTANDING BALANCE. See PdfTableLocator.corroboratedByPrintedBalanceReconciliation.
+            "HEADERLESS_BALANCE_RECONCILIATION_CORROBORATED",
             // A fictional worked-example table inside a real AU Small Finance Bank credit-card
             // statement's fee/interest-calculation appendix, indistinguishable from a real header
             // by vocabulary alone -- three of them opened three garbage sections and blocked real
