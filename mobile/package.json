@@ -43,6 +43,7 @@
     "react-native-worklets": "0.12.1"
   },
   "devDependencies": {
+    "@react-native/assets-registry": "^0.87.1",
     "@testing-library/react-native": "13.3.3",
     "@types/jest": "29.5.14",
     "@types/node": "^26.1.2",
@@ -74,7 +75,7 @@
       "<rootDir>/src/test/setup.ts"
     ],
     "testTimeout": 15000,
-    "resolver": "react-native-worklets/jest/resolver",
+    "resolver": "<rootDir>/jest/reanimatedResolver.js",
     "moduleNameMapper": {
       "^react-native-reanimated$": "<rootDir>/node_modules/react-native-reanimated/src/index.ts",
       "^react-native-worklets$": "<rootDir>/node_modules/react-native-worklets/src/index.ts"
