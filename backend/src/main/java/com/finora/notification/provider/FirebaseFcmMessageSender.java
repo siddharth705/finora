@@ -31,6 +31,35 @@ import org.slf4j.LoggerFactory;
  * scope in the Firebase/GCP console (or by exercising a real send against a non-prod project)
  * before relying on this in production.
  *
+ * <h2>iOS tokens need no branch here (Ruling O, Task 11)</h2>
+ *
+ * <p>{@link #send} builds one {@link Message} shape for every token, Android or iOS. That is
+ * correct, not an oversight: iOS devices in this app register an FCM registration token (via
+ * {@code @react-native-firebase/messaging}, Task 14), not a raw APNs device token, so the same
+ * {@code Message.builder().setToken(...)} call FCM already routes for Android also routes
+ * correctly for iOS -- FCM relays to APNs using the Authentication Keys uploaded in the Firebase
+ * console for {@code com.fynora.app}, entirely on Google's side, without this class or
+ * {@code PushConfig} holding any APNs credential. See {@link FcmPushProvider}'s class doc for the
+ * fuller account of why a direct-to-Apple client was rejected.
+ *
+ * <h3>Why no {@code ApnsConfig} is set (yet)</h3>
+ *
+ * <p>{@link Message} supports a per-platform {@code ApnsConfig} (APNs {@code aps} fields --
+ * sound, badge, {@code content-available}, {@code apns-priority}) alongside the {@code AndroidConfig}
+ * this class also does not set. Left unset, FCM derives the APNs {@code aps.alert.title}/
+ * {@code aps.alert.body} from the shared {@link Notification} payload automatically, so the push
+ * still arrives and displays on iOS -- the one documented gap is that, without an explicit
+ * {@code aps.sound}, iOS delivers the banner silently where Android's default channel plays a
+ * sound. That asymmetry is deliberately left alone here rather than patched with an iOS-only
+ * {@code ApnsConfig.aps.sound("default")}: this class sets no {@code AndroidConfig} either, so
+ * every platform-specific delivery knob (sound, badge, priority) is currently at parity in the
+ * sense that none of them are configured anywhere, for any platform. Badge counts specifically
+ * cannot be set correctly yet regardless -- there is no unread-count feature behind this provider
+ * to compute one from, and shipping a hardcoded/guessed badge value would be worse than none. If
+ * per-platform sound/badge/priority tuning is wanted, it should be designed for both platforms
+ * together (not iOS alone) as its own follow-up, informed by
+ * {@link com.finora.notification.domain.NotificationPriority} rather than guessed here.
+ *
  * <h2>Error-code mapping to {@link FcmSendOutcome}</h2>
  *
  * <p>Only {@link MessagingErrorCode#UNREGISTERED} and {@link MessagingErrorCode#INVALID_ARGUMENT}

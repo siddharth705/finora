@@ -16,10 +16,29 @@ import org.slf4j.LoggerFactory;
  * credential check, matching EmailConfig/SmsConfig. This codebase does not use {@code @Profile}
  * for provider selection.
  *
- * <p>Task 11 scope, not this one: {@link ActiveDeviceToken#platform()} comes back from
- * {@link DeviceTokenService#activeTokensFor} but is deliberately ignored here -- every registered
- * token (Android or iOS) is sent through FCM today. Routing iOS tokens to APNs instead is Task
- * 11's job; sending to both channels today is a known, accepted gap, not an oversight.
+ * <h2>iOS delivery: FCM's APNs relay, not a direct Apple client (Ruling O, Task 11)</h2>
+ *
+ * <p>{@link ActiveDeviceToken#platform()} comes back from {@link DeviceTokenService#activeTokensFor}
+ * and is deliberately NOT branched on here -- every registered token, Android or iOS, is sent
+ * through the single {@link FcmMessageSender} seam. This is a considered decision, not a deferred
+ * one: the mobile app registers iOS devices through {@code @react-native-firebase/messaging}
+ * (Task 14), which hands the client an FCM registration token, the same token shape ANDROID
+ * already gets -- never a raw APNs device token. The project's Firebase console has the APNs
+ * Authentication Keys (Development and Production, Key ID {@code 656Q43Q4GD}, Team ID
+ * {@code A28NNDT4LN}) uploaded for the iOS app {@code com.fynora.app}, so Firebase relays every
+ * send to Apple on our behalf once it reaches FCM; this backend never talks to Apple directly and
+ * holds no APNs credential of its own. A second, direct-to-APNs client would be a second
+ * credential path and a second failure mode for a token type ({@code IOS} raw APNs device tokens)
+ * this system never actually stores -- see {@link FirebaseFcmMessageSender} for the send call
+ * itself, including why it needs no per-platform branch either, and its own note on why it sets no
+ * {@code ApnsConfig} today.
+ *
+ * <p>{@code platform} is retained on {@link ActiveDeviceToken} (and on
+ * {@code DeviceToken}/{@code ActiveDeviceToken} generally) for diagnostics, per-platform delivery
+ * metrics, and as the field a future direct-APNs path would dispatch on -- it is not, and must not
+ * be treated as, evidence that iOS support is missing here. If a genuine reason to branch on it
+ * ever shows up (a direct APNs client, per-platform throttling), add that branch deliberately with
+ * its own credential/config surface; do not infer routing from this field's mere existence.
  *
  * <h2>Dead tokens are revoked, transient failures are not</h2>
  *

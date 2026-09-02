@@ -31,6 +31,14 @@ import org.junit.jupiter.api.Test;
  * returns {@link FcmSendOutcome} (from fix round 1 of this task, so a permanently dead token can be
  * distinguished from a merely transient failure and only the former gets revoked). Every fixture
  * below is built against the real signatures.
+ *
+ * <p>Ruling O (Task 11) rejected building a separate {@code ApnsMessageSender}/routing seam: iOS
+ * devices register an FCM registration token (via {@code @react-native-firebase/messaging}), and
+ * FCM relays to APNs on this project's behalf once the Firebase console holds the APNs
+ * Authentication Keys, which it does. So {@code platform} must never change which sender a token
+ * goes through or whether it is attempted at all -- the tests below with an {@code "IOS"} platform
+ * assert exactly that parity, as a regression lock against someone later "fixing" this by adding a
+ * platform branch that skips or misroutes iOS tokens.
  */
 class FcmPushProviderTest {
 
@@ -137,6 +145,54 @@ class FcmPushProviderTest {
         when(deviceTokenService.activeTokensFor(any())).thenThrow(new RuntimeException("db down"));
 
         assertThat(provider.send(notification()).success()).isFalse();
+    }
+
+    @Test
+    void send_iosTokenGoesThroughTheSameFcmSenderAsAndroid() {
+        // Platform is carried on ActiveDeviceToken (Task 9) precisely so a future direct-APNs path
+        // could dispatch on it -- but Ruling O (Task 11) means that path was never built. An IOS
+        // token must be attempted through the very same FcmMessageSender, not skipped and not
+        // routed anywhere else.
+        when(deviceTokenService.activeTokensFor(any())).thenReturn(
+                List.of(new ActiveDeviceToken("iosToken", "IOS")));
+        when(messageSender.send(any(), any(), any())).thenReturn(FcmSendOutcome.ACCEPTED);
+
+        ChannelSendResult result = provider.send(notification());
+
+        assertThat(result.success()).isTrue();
+        assertThat(result.detail()).isEqualTo("1 of 1 devices accepted");
+        verify(messageSender).send(eq("iosToken"), any(), any());
+    }
+
+    @Test
+    void send_mixedPlatformTokensAreBothAttemptedThroughTheSameSender() {
+        // A user with an Android phone and an iPhone must have BOTH devices attempted through the
+        // one FcmMessageSender -- platform must not cause either token to be skipped or diverted.
+        when(deviceTokenService.activeTokensFor(any())).thenReturn(List.of(
+                new ActiveDeviceToken("androidToken", "ANDROID"),
+                new ActiveDeviceToken("iosToken", "IOS")));
+        when(messageSender.send(any(), any(), any())).thenReturn(FcmSendOutcome.ACCEPTED);
+
+        ChannelSendResult result = provider.send(notification());
+
+        assertThat(result.success()).isTrue();
+        assertThat(result.detail()).isEqualTo("2 of 2 devices accepted");
+        verify(messageSender).send(eq("androidToken"), any(), any());
+        verify(messageSender).send(eq("iosToken"), any(), any());
+    }
+
+    @Test
+    void send_iosDeadTokenIsRevokedTheSameWayAnAndroidOneWouldBe() {
+        // Dead-token revocation must not depend on platform either -- an IOS token FCM reports as
+        // UNREGISTERED gets revoked through the exact same call as an ANDROID one would.
+        UUID userId = UUID.randomUUID();
+        when(deviceTokenService.activeTokensFor(userId)).thenReturn(
+                List.of(new ActiveDeviceToken("deadIosToken", "IOS")));
+        when(messageSender.send(any(), any(), any())).thenReturn(FcmSendOutcome.TOKEN_DEAD);
+
+        provider.send(notification(userId));
+
+        verify(deviceTokenService).revoke(userId, "deadIosToken");
     }
 
     @Test
