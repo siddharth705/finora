@@ -1518,8 +1518,8 @@ public class ImportService {
     }
 
     /**
-     * Whether this statement is the newest one on file for the account, so its stated closing
-     * balance may be treated as where the account actually ended.
+     * Whether this statement outranks everything else already on the books for the account, so
+     * its stated closing balance may be treated as where the account actually ended.
      *
      * <p>BH-024. This used to load EVERY statement import the user has and filter in memory, once
      * per confirm and once per section for a composite statement -- a full read of the largest
@@ -1536,12 +1536,39 @@ public class ImportService {
      * one and we simply cannot tell. Defaulting to {@code true} there risked silently overwriting the
      * account's balance with an older statement's, so it is disambiguated via a second, cheap
      * COUNT query: only the genuinely-no-siblings case still defaults to {@code true}.
+     *
+     * <p>A1 (two-pass mobile audit, 2026-09-01). "Outranks everything" used to mean "outranks
+     * every OTHER STATEMENT" only, so a late-arriving corroborated statement for an OLDER period
+     * could overwrite the balance outright and silently discard what a newer live transaction had
+     * already contributed to it. The clearest case is a MANUAL entry, which creates no {@code
+     * StatementImport} row at all and so was wholly invisible to the two queries below. A
+     * Gmail-synced receipt was only partly invisible -- it does get a {@code StatementImport} row
+     * (see {@code TransactionRepository.existsLiveTransactionAfterDate}'s own comment), with a null
+     * period end, which the {@code countOtherStatementsForAccount} fallback already caught whenever
+     * the account had no OTHER dated sibling; the genuinely new coverage for Gmail is the case where
+     * such a sibling does exist.
+     *
+     * <p><b>Boundary.</b> {@code thisStatementLastActivity} is the statement's own {@code maxDate}
+     * -- its last transaction date -- deliberately, not its printed period end. A live transaction
+     * dated strictly between the two is by construction NOT on this statement (its last row is
+     * {@code maxDate}), so it is real off-ledger activity the stated closing balance does not
+     * account for, and blocking is correct; keying off the period end would miss it. The residual,
+     * accepted gap is the same-day case: a manual entry dated exactly ON {@code maxDate} is not
+     * blocked. {@code >=} is not the fix -- a manual row duplicating a statement row shares its
+     * date, and would then block universally.
+     *
+     * <p>Ordered first because it short-circuits the common case cheaply. Note the whole method
+     * only runs when {@code ClosingBalanceGuard} has already returned CORROBORATED (see the {@code
+     * &&} at this method's call site), so this is a minority of confirms, not every one.
      */
-    private boolean isMostRecentStatementForAccount(UUID userId, UUID accountId, LocalDate thisStatementEnd, UUID thisStatementId) {
-        if (thisStatementEnd == null) return true; // nothing to compare against — apply rather than never updating
+    private boolean isMostRecentStatementForAccount(UUID userId, UUID accountId, LocalDate thisStatementLastActivity, UUID thisStatementId) {
+        if (thisStatementLastActivity == null) return true; // nothing to compare against — apply rather than never updating
+        if (transactionRepository.existsLiveTransactionAfterDate(userId, accountId, thisStatementLastActivity, thisStatementId)) {
+            return false;
+        }
         Optional<LocalDate> latestOther =
                 statementImportRepository.findLatestPeriodEndForAccount(userId, accountId, thisStatementId);
-        if (latestOther.isPresent()) return !latestOther.get().isAfter(thisStatementEnd);
+        if (latestOther.isPresent()) return !latestOther.get().isAfter(thisStatementLastActivity);
         // No dated sibling found -- distinguish "no siblings at all" (safe to apply) from "siblings
         // exist but none states a period" (unsafe to assume this one is newest).
         return statementImportRepository.countOtherStatementsForAccount(userId, accountId, thisStatementId) == 0;
