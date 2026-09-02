@@ -153,6 +153,32 @@ public class BackgroundWorkConfig {
     }
 
     /**
+     * A small, dedicated pool for notification-queue nudges. Same shape and reasoning as
+     * {@link #learningQueueExecutor()} / {@link #importQueueExecutor()} above -- database-bound
+     * work against a connection pool capped at 10, so more threads here would only queue harder on
+     * connections rather than deliver anything faster.
+     *
+     * <p>{@code CallerRunsPolicy}, matching the pools above: durability lives in the
+     * {@code notifications} row, so under saturation running the nudge on the caller's thread is
+     * strictly better than dropping it -- the poller is the backstop either way.
+     */
+    @Bean("notificationQueueExecutor")
+    public Executor notificationQueueExecutor() {
+        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+        executor.setCorePoolSize(1);
+        executor.setMaxPoolSize(2);
+        executor.setQueueCapacity(100);
+        executor.setThreadNamePrefix("notification-queue-");
+        // CallerRunsPolicy, never a discard policy: durability lives in the DB row, and running
+        // on the caller's thread under saturation is strictly better than dropping the nudge.
+        executor.setRejectedExecutionHandler(new ThreadPoolExecutor.CallerRunsPolicy());
+        executor.setWaitForTasksToCompleteOnShutdown(true);
+        executor.setAwaitTerminationSeconds(20);
+        executor.initialize();
+        return executor;
+    }
+
+    /**
      * Explicit transaction boundaries, for code that needs more than one of them in a single
      * method.
      *

@@ -646,6 +646,13 @@ app:
         paytm:
           enabled: ${GMAIL_PARSER_PAYTM_ENABLED:false}
 
+  # NotificationDispatcher's poller/nudge -- same enabled-flag shape as learning/import above.
+  notification:
+    queue:
+      enabled: ${NOTIFICATION_QUEUE_ENABLED:true}
+      poll-interval-ms: 30000
+      initial-delay-ms: 15000
+
 # Reversible encryption at rest for third-party credentials Finora must read back -- OAuth refresh
 # tokens first (ADR-007). NOT for passwords or Finora's own session tokens, which are hashed via
 # TokenHasher; see com.finora.security.crypto's package doc for why the two are not interchangeable.
