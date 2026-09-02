@@ -208,10 +208,15 @@ public interface TransactionRepository extends JpaRepository<Transaction, UUID> 
             Pageable pageable
     );
 
+    /** A2 (two-pass mobile audit, 2026-09-01). Description compared space-trimmed and case-folded,
+     *  not raw -- see {@link #findPotentialDuplicatesByUserAndAccountIdIn}'s doc comment for why.
+     *  No production call site (only {@code TransactionRepositoryIT} exercises it); kept consistent
+     *  with its siblings so a future caller doesn't silently inherit the exact-match bug this fixed
+     *  elsewhere. */
     @Query("""
         SELECT t FROM Transaction t
         WHERE t.userId = :userId AND t.accountId = :accountId AND t.txnDate = :date
-          AND t.amount = :amount AND t.description = :description
+          AND t.amount = :amount AND LOWER(TRIM(t.description)) = LOWER(TRIM(:description))
         """)
     List<Transaction> findPotentialDuplicates(
             @Param("userId") UUID userId, @Param("accountId") UUID accountId,
@@ -224,11 +229,15 @@ public interface TransactionRepository extends JpaRepository<Transaction, UUID> 
      * created the account this import is going into. Also incidentally catches "you already
      * logged this transaction under a different account by mistake," which the account-scoped
      * version can't.
+     *
+     * <p>No call site -- kept consistent with {@link
+     * #findPotentialDuplicatesByUserAndAccountIdIn}'s description normalization for the same
+     * reason as {@link #findPotentialDuplicates} above.
      */
     @Query("""
         SELECT t FROM Transaction t
         WHERE t.userId = :userId AND t.txnDate = :date
-          AND t.amount = :amount AND t.description = :description
+          AND t.amount = :amount AND LOWER(TRIM(t.description)) = LOWER(TRIM(:description))
         """)
     List<Transaction> findPotentialDuplicatesByUser(
             @Param("userId") UUID userId, @Param("date") LocalDate date,
@@ -237,11 +246,29 @@ public interface TransactionRepository extends JpaRepository<Transaction, UUID> 
     /** Like {@link #findPotentialDuplicatesByUser}, scoped to a set of live account ids --
      *  excludes a soft-deleted account's transactions, which the unscoped version would keep
      *  matching against forever (see {@link #findByUserIdAndAccountIdIn}'s own doc comment).
-     *  Pass the caller's own live account ids rather than re-deriving them here. */
+     *  Pass the caller's own live account ids rather than re-deriving them here.
+     *
+     *  <p>A2 (two-pass mobile audit, 2026-09-01; see
+     *  docs/project-management/plans/mobile-correctness-trust-roadmap.md, Track A). Description
+     *  compared space-trimmed and case-folded ({@code LOWER(TRIM(...))} on both sides), not the raw
+     *  column value: two extractions of the same underlying bank line (a CSV export vs. a
+     *  re-scraped PDF, or a bank that shifts capitalization between monthly exports) can differ
+     *  by nothing more than case or a stray leading/trailing space, and exact equality treated
+     *  those as two different transactions -- a false negative that silently double-counts real
+     *  money, with no duplicate badge ever shown to the user.
+     *
+     *  <p>This SQL is the CONSTRAINT the two Java paths are held to, not the other way round:
+     *  {@code TRIM()} here strips the space character only, while Java's {@code String.trim()}
+     *  also strips tabs and newlines, so {@code DuplicateIndex.key} and {@code
+     *  ReconciliationService.duplicateKey} both go through {@code
+     *  com.finora.util.DuplicateMatching.normalizeDescription} to match this exactly rather than
+     *  inlining {@code trim()}. {@code DuplicateIndexIT} asserts that equivalence against a real
+     *  Postgres -- widening either side without the other silently changes which duplicates get
+     *  surfaced, which is the failure mode this whole cluster of comments exists to prevent. */
     @Query("""
         SELECT t FROM Transaction t
         WHERE t.userId = :userId AND t.txnDate = :date
-          AND t.amount = :amount AND t.description = :description
+          AND t.amount = :amount AND LOWER(TRIM(t.description)) = LOWER(TRIM(:description))
           AND t.accountId IN :accountIds
         """)
     List<Transaction> findPotentialDuplicatesByUserAndAccountIdIn(
@@ -364,6 +391,52 @@ public interface TransactionRepository extends JpaRepository<Transaction, UUID> 
            """)
     List<LocalDate> findDistinctTransactionDates(@Param("userId") UUID userId,
                                                    @Param("accountIds") java.util.Collection<UUID> accountIds);
+
+    /**
+     * Whether this account already has a live transaction dated after {@code afterDate} that
+     * isn't part of the statement now being confirmed.
+     *
+     * <p>A1 (two-pass mobile audit, 2026-09-01; see
+     * docs/project-management/plans/mobile-correctness-trust-roadmap.md, Track A). {@code
+     * ImportService.isMostRecentStatementForAccount} only ever compared a statement against OTHER
+     * STATEMENTS. With no sibling statement newer than this one, an older-but-late-arriving
+     * import's corroborated closing balance was applied outright, silently discarding whatever a
+     * live transaction dated after it had already contributed to the balance, while that
+     * transaction stayed fully visible (and counted) in the Ledger -- two disagreeing numbers with
+     * no warning.
+     *
+     * <p><b>Which rows the two branches actually cover, precisely -- do not narrow this without
+     * re-reading it.</b> {@code statementImportId IS NULL} covers MANUAL rows only ({@code
+     * TransactionService.create} is the sole path that leaves it null; {@code
+     * ImportService.persistSection} is the only {@code setStatementImportId} call site in the whole
+     * of {@code main/}). A Gmail-synced receipt is NOT null here -- {@code
+     * GmailReviewService.approve} routes through {@code ImportService.confirmSession}, so it gets a
+     * {@code StatementImport} row of its own like any other import. Gmail rows are therefore caught
+     * by the {@code <> :excludingStatementId} branch, not by the null branch. Both branches are
+     * load-bearing for a different source, and the {@code IS NULL} half is still required on its own
+     * terms because SQL {@code NULL <> x} is unknown rather than true, so a manual row would
+     * otherwise be silently excluded.
+     *
+     * <p>Excludes the statement being confirmed by id, not by date: {@code ImportService.confirm}
+     * has already saved this statement's own rows (with this statement's id) by the time this runs.
+     * With today's caller that exclusion is belt-and-braces rather than load-bearing -- {@code
+     * afterDate} is the statement's own {@code maxDate}, so none of its rows can satisfy {@code
+     * txnDate > :afterDate} anyway -- but it becomes essential the moment the boundary is moved to
+     * the printed period end, which is the obvious next edit here.
+     */
+    @Query("""
+           SELECT CASE WHEN EXISTS (
+                  SELECT 1 FROM Transaction t
+                   WHERE t.userId = :userId
+                     AND t.accountId = :accountId
+                     AND t.txnDate > :afterDate
+                     AND (t.statementImportId IS NULL OR t.statementImportId <> :excludingStatementId)
+                  ) THEN true ELSE false END
+           """)
+    boolean existsLiveTransactionAfterDate(@Param("userId") UUID userId,
+                                            @Param("accountId") UUID accountId,
+                                            @Param("afterDate") LocalDate afterDate,
+                                            @Param("excludingStatementId") UUID excludingStatementId);
 
     /**
      * Every refund leg this user has, whenever it landed.
