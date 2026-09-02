@@ -166,7 +166,7 @@ class CategorizationServiceTest {
         // The single definition the review-queue flag and the learning gate both derive from --
         // if these two ever disagree, a misfire becomes invisible AND permanently learned.
         assertThat(CategorizationService.isUnconfirmedGuess("default", "Other")).isTrue();
-        assertThat(CategorizationService.isUnconfirmedGuess("structural_p2p", "Paid a Person")).isTrue();
+        assertThat(CategorizationService.isUnconfirmedGuess("structural_p2p", "Personal Transfer")).isTrue();
         // Review changed it -- a real decision, worth learning from. "Transfer" is a genuine
         // change now that it is no longer where the detector puts these: a user moving a row from
         // "Paid a Person" to "Transfer" is telling us it really was money moved, not spent.
@@ -192,8 +192,11 @@ class CategorizationServiceTest {
         // The literal, not the constant: this test exists to pin the product decision that a
         // detected person-to-person payment does NOT claim to be a transfer. Asserting
         // P2P_CATEGORY would just restate whatever the constant happens to say.
-        assertThat(suggestion.category()).isEqualTo("Paid a Person");
+        assertThat(suggestion.category()).isEqualTo("Personal Transfer");
         assertThat(suggestion.category()).isNotEqualTo("Transfer");
+        // Direction-neutral: the detector never inspects txn_type, and ~23% of the rows it matches
+        // on the real corpus are money received, so a name asserting a direction is wrong for them.
+        assertThat(suggestion.category()).doesNotContain("Paid").doesNotContain("Received");
         assertThat(suggestion.source()).isEqualTo("structural_p2p");
         assertThat(suggestion.decisionSource()).isEqualTo(Transaction.DecisionSource.STRUCTURAL_P2P);
     }
