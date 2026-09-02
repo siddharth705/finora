@@ -39,16 +39,3 @@ export function reviewNudgeLabel(count: number): string {
   const noun = count === 1 ? 'transaction needs' : 'transactions need';
   return `${count.toLocaleString('en-IN')} ${noun} a quick look`;
 }
-
-/**
- * Undo an optimistic removal by putting the row back where it was.
- *
- * Positional on purpose: the queue is ordered by date, so appending a failed save to the bottom
- * would silently reorder the list under the user — they'd see the row "move" and have no reason to
- * connect that to the save having failed.
- */
-export function reinsertAt<T>(list: T[], index: number, item: T): T[] {
-  const next = [...list];
-  next.splice(Math.min(index, next.length), 0, item);
-  return next;
-}
