@@ -94,4 +94,29 @@ describe('pushRegistration', () => {
 
     await expect(revokeDeviceToken({ deleteDeviceToken, messaging })).resolves.not.toThrow();
   });
+
+  it('never throws when the stored onTokenRefresh unsubscribe itself throws, and does not retry it next time', async () => {
+    // registerDeviceToken() stashes onTokenRefresh's returned unsubscribe in module-level state;
+    // revokeDeviceToken() calls it on the way out. Overriding what THIS onTokenRefresh call
+    // returns (rather than trusting requestPermissionMock's default no-op) is what lets this test
+    // control that stashed value deterministically, regardless of what any earlier test in this
+    // file left behind.
+    const throwingUnsubscribe = jest.fn(() => {
+      throw new Error('native removeListener failed');
+    });
+    const messaging = requestPermissionMock('granted', 'fcm-token-abc');
+    messaging.onTokenRefresh.mockReturnValueOnce(throwingUnsubscribe);
+    await registerDeviceToken({ postDeviceToken, messaging });
+
+    await expect(revokeDeviceToken({ deleteDeviceToken, messaging })).resolves.not.toThrow();
+    expect(throwingUnsubscribe).toHaveBeenCalledTimes(1);
+    // The backend revoke call must still happen even though the unsubscribe attempt above failed
+    // -- a broken native listener removal is not a reason to skip telling the backend.
+    expect(deleteDeviceToken).toHaveBeenCalledWith({ token: 'fcm-token-abc' });
+
+    // Proves the stored reference was actually cleared (not left dangling for a later call to
+    // retry): a second revoke must not invoke the same already-thrown closure again.
+    await expect(revokeDeviceToken({ deleteDeviceToken, messaging })).resolves.not.toThrow();
+    expect(throwingUnsubscribe).toHaveBeenCalledTimes(1);
+  });
 });

@@ -168,8 +168,25 @@ export interface RevokeDeviceTokenDeps {
  * the backend.
  */
 export async function revokeDeviceToken(deps: RevokeDeviceTokenDeps = {}): Promise<void> {
-  unsubscribeTokenRefresh?.();
+  // Read-then-clear-then-call, in that order, and in its OWN try/catch separate from the actual
+  // revoke call below: `unsubscribe` ultimately calls RNFB's native event-removal, which can throw
+  // synchronously, and every production caller fires this whole function with
+  // `void revokeDeviceToken()` (AuthContext.tsx's logout() awaits it, but with no .catch() of its
+  // own) -- so an unguarded throw here would surface as an unhandled rejection during logout
+  // despite this function's own "never throws" contract. Clearing the stored reference BEFORE
+  // calling it means a throw from a stale/already-broken closure can never leave it behind for a
+  // later registerDeviceToken()/revokeDeviceToken() call to stack another subscription on top of,
+  // or retry the same failing unsubscribe again. A SEPARATE try/catch from the revoke call below
+  // (not one shared try wrapping both) matters just as much: a broken native listener removal is
+  // unrelated to whether the backend can still be told to revoke the token, so it must not abort
+  // that call.
+  const unsubscribe = unsubscribeTokenRefresh;
   unsubscribeTokenRefresh = null;
+  try {
+    unsubscribe?.();
+  } catch (error) {
+    logPushFailure('failed to unsubscribe from token refresh', error);
+  }
 
   // See registerDeviceToken()'s own comment on why dependency resolution happens inside the try.
   try {
