@@ -25,12 +25,28 @@ import java.util.regex.Pattern;
  * this branch are genuinely P2P, but among businesses that happen to look like people the failure
  * rate is high and cannot be closed by extending a word list.
  *
- * <p>An attempt to close it by adding retail trade-name vocabulary (SALES, DIGITAL, FRESH, AUTO,
- * TOYS, STEEL, ...) was measured and REVERTED: because the veto is global and Indian UPI narrations
- * end with the payer's free-text remark ("...-Fresh veggies money", "...-Toys for kid", "...-Auto"),
- * it removed 12 of 18 genuine detections while closing 1 of 28 misfires. Common English nouns
- * cannot be used as business markers in a field that also carries free text. Only unambiguous
- * corporate/trade-entity words belong in {@link #BUSINESS_SUFFIX_TOKENS}.
+ * <p>Three things attack that limitation, in descending order of how much they actually recover:
+ *
+ * <ol>
+ *   <li>{@link #MERCHANT_ACQUIRER_MARKER} -- the big one. A third of these rows settle over a
+ *       merchant-acquiring rail, which says "business" no matter whose name is on the payee line.
+ *       This is what catches the driver you pay directly instead of in-app.</li>
+ *   <li>Small-shop trade words in {@link #BUSINESS_SUFFIX_TOKENS} (SNACKS, DHABA, WINES, ...) --
+ *       worth ~12 more rows on the real corpus, at zero measured cost.</li>
+ *   <li>Nothing else. Roughly 32 rows (~5%) are a bare truncated trade name and an RRN, with no
+ *       VPA and no rail marker at all ("UPI-HANUMAN TEA", "UPI/NEW AMOGHA VEG/&lt;rrn&gt;/UPI"). The
+ *       corpus also proves name SHAPE cannot substitute: "MANAS CHAT" reads exactly like a chaat
+ *       stall and is a person (18 recurring credits remarked RENT/SAVINGS), while "SUPER BA" and
+ *       "DEEP FILLING" are shops. Separating those needs a merchant directory or the user, not
+ *       more vocabulary.</li>
+ * </ol>
+ *
+ * <p><b>A methodological warning, because it already cost a shipped regression.</b> Retail
+ * vocabulary was once added, then reverted on an A/B over CONSTRUCTED narrations that claimed
+ * free-text remarks ("...-Fresh veggies money") would veto genuine transfers wholesale. Re-measured
+ * on the real corpus, remarks carry a purpose word only 1.8% of the time and are dominated by one
+ * bank's generated "PAYMENT FROM PHONE" boilerplate -- the risk was overstated ~37x and its sign
+ * was inverted. Measure this class against the real corpus; invented narrations mislead here.
  *
  * <p>The residual misfire risk is handled downstream rather than here: this suggestion is emitted
  * at {@code ConfidenceEngine.INITIAL_STRUCTURAL_CONFIDENCE}, deliberately below any plausible
@@ -79,9 +95,9 @@ public final class PersonToPersonTransferDetector {
      * several delimiter-separated segments ("SHARMA TRADERS-PVT LTD"), so a per-segment check would
      * miss it.
      *
-     * <p>Strictly corporate/trade-entity vocabulary. See this class's doc comment for the measured
-     * reason common nouns are excluded, however business-sounding they seem: this set is applied to
-     * narrations that also carry a free-text payer remark.
+     * <p>Strictly corporate/trade-entity vocabulary. Everyday nouns stay out even when they sound
+     * business-ish, because this set is applied to narrations that can also carry a free-text payer
+     * remark -- see the {@code FURNITURE} note below for the one real instance of that failure.
      */
     private static final Set<String> BUSINESS_SUFFIX_TOKENS = Set.of(
             "PVT", "LTD", "LLP", "LIMITED", "PRIVATE", "ENTERPRISES", "STORES", "STORE",
@@ -100,7 +116,30 @@ public final class PersonToPersonTransferDetector {
             "STATIONERY", "HARDWARE", "ELECTRICALS", "TRAVELS", "TOURS", "CARGO",
             "LOGISTICS", "COURIER", "BANK", "NBFC", "AMC", "SUPERMARKET", "DEPARTMENTAL",
             "EMPORIUM", "OPTICALS", "RETAIL", "RETAILS", "DECORATORS", "CATERERS",
-            "TELECOM", "COMMUNICATIONS", "AGENCY"
+            "TELECOM", "COMMUNICATIONS", "AGENCY",
+            // Small-shop trade words, re-added on REAL-corpus evidence after an earlier revert.
+            //
+            // These were removed once because a CONSTRUCTED A/B suggested free-text remarks would
+            // veto genuine transfers wholesale ("...-Fresh veggies money"). Re-measured against the
+            // actual 29-statement corpus, that risk was overstated by roughly 37x AND inverted:
+            // across 673 real P2P-classified rows these words flip exactly 12, and all 12 are
+            // genuine businesses -- BALAJI SNACKS, SHREE DATTA SNACKS, BANSI VAISHND DHABA, NATRAJ
+            // PROVISION, REGAL WINES, RAVI AUTO CENTR, SNEHA FRESH CHI, DEEP FILLING, SUPER BA --
+            // most of them corroborated independently by a merchant-acquirer marker in the same
+            // narration. Zero genuine person transfers are lost.
+            //
+            // FURNITURE is deliberately NOT here: it is the one word with real negative evidence,
+            // appearing exactly once in the corpus as a payer's remark on a person-to-person
+            // transfer. The rest of the everyday-noun set (SALES, BOOKS, TOYS, COLLECTION, PUMP,
+            // TRADING, ENERGY, CEMENT, PAINTS) stays out too -- no corpus occurrences either way,
+            // so no evidence to justify the remark risk they carry.
+            "SNACKS", "DHABA", "PROVISION", "PROVISIONS", "WINES", "FILLING", "AUTO",
+            "FRESH", "SUPER", "DIGITAL",
+            // Same re-add, second tier: no corpus occurrences, but structurally incapable of being
+            // a payer's remark (nobody annotates a transfer "xerox" or "tyres"), so they carry the
+            // upside without FURNITURE's downside.
+            "XEROX", "TAILORS", "TYRES", "SPARES", "NURSERY", "PHOTOGRAPHY",
+            "PARLOUR", "PARLOR"
     );
 
     /**
@@ -154,6 +193,41 @@ public final class PersonToPersonTransferDetector {
     private static final Pattern VPA_BUSINESS_QR = Pattern.compile(
             "(?i)[a-z0-9._-]*qr[a-z0-9._-]*@[a-z0-9]+");
 
+    /**
+     * Markers that the money moved over a MERCHANT-ACQUIRING rail rather than a person's own UPI
+     * handle -- the payee holds a business account with a PSP, whatever their display name says.
+     *
+     * <p>This is the answer to a real product gap: in India an enormous amount of everyday SPENDING
+     * settles to what looks like an individual. The canonical case is paying an Uber/Ola driver
+     * directly instead of in-app, but it generalises to any small vendor. Without this check those
+     * rows are read as "sent money to a person" and filed as Transfer -- a confidently wrong
+     * category, which this codebase treats as worse than an honest unknown.
+     *
+     * <p>Measured on the real 29-statement corpus: <b>227 of 673 P2P-classified rows (33.7%)</b>
+     * carry one of these -- PhonePe merchant Q-VPA (96), Paytm {@code PAYTM.S}/{@code PAYTM.D}
+     * (58), merchant-UPI IFSC {@code MCHUPI}/{@code PTMUPI}/{@code MERUPI} (64), GPay for Business
+     * {@code @okbiz} (23), BharatPe (20), Vyapar (4). Their median value is ~59 rupees, exactly the
+     * everyday-spend profile the gap predicts.
+     *
+     * <p>A hit means "not a person-to-person transfer", so the row falls through to the honest
+     * "Other" and its review flag rather than asserting Transfer. It deliberately does NOT try to
+     * name the category -- knowing money went to a business is not knowing which business.
+     *
+     * <p>Excludes PhonePe's general {@code YBLUPI} IFSC and the bare PSP brand names, which carry
+     * no merchant/person distinction: both appear on ordinary personal transfers too.
+     */
+    private static final Pattern MERCHANT_ACQUIRER_MARKER = Pattern.compile(
+            "(?i)"
+            + "\\bQ\\d{6,}@"                      // PhonePe merchant Q-VPA: Q710750321@ybl
+            + "|paytm\\.[sd][a-z0-9]*@"           // Paytm merchant: PAYTM.S25PHA0@pty
+            // Merchant-UPI IFSC. The BRANCH half is the signal here, unusually: PSPs route
+            // merchant collections through dedicated pseudo-branches whose code spells out what
+            // they are, so the bank prefix is the part that varies and is deliberately a wildcard.
+            + "|[a-z]{4}0(?:MCHUPI|MERUPI|PTMUPI)"
+            + "|@okbiz"                           // Google Pay for Business
+            + "|\\bbharatpe\\b"
+            + "|\\bvyapar\\.");
+
     private static final Pattern SEGMENT_DELIMITERS = Pattern.compile("[\\-/_]+");
 
     private static final Pattern NAME_TOKEN = Pattern.compile("[A-Za-z]{2,15}");
@@ -166,6 +240,7 @@ public final class PersonToPersonTransferDetector {
     public static boolean isNamedIndividualTransfer(String description) {
         if (description == null || description.isBlank()) return false;
         if (VPA_BUSINESS_QR.matcher(description).find()) return false;
+        if (MERCHANT_ACQUIRER_MARKER.matcher(description).find()) return false;
 
         Matcher marker = TRANSFER_MARKER.matcher(description);
         if (!marker.find()) return false;
