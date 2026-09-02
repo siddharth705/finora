@@ -36,13 +36,21 @@ public final class CategoryRules {
         // safe as bare keywords: neither is a substring of any other keyword or common English/
         // Indian-banking-narration word, so word-boundary matching has nothing plausible to
         // misfire against.
-        RULES.put("Dining", List.of("swiggy", "zomato", "restaurant", "cafe", "starbucks", "dominos", "mcdonald", "kfc", "cinnabon"));
+        // "gokhana" is a workplace-cafeteria ordering platform, and the single highest-frequency
+        // unmatched brand in the corpus: 105 rows across 6 of the 29 statements, i.e. multiple
+        // distinct people, which is what separates real vocabulary from overfitting to one payer.
+        RULES.put("Dining", List.of("swiggy", "zomato", "restaurant", "cafe", "starbucks", "dominos", "mcdonald", "kfc", "cinnabon", "gokhana"));
         RULES.put("Transport", List.of("uber", "ola", "rapido", "irctc", "petrol", "fuel", "metro", "fastag", "parking"));
         RULES.put("Utilities", List.of("electricity", "power bill", "water bill", "gas bill", "broadband", "airtel", "jio", "recharge"));
         RULES.put("Shopping", List.of("amazon", "flipkart", "myntra", "ajio", "nykaa", "decathlon", "asspl"));
         RULES.put("Health", List.of("pharmacy", "apollo", "medplus", "hospital", "clinic", "netmeds", "1mg"));
         RULES.put("Entertainment", List.of("netflix", "prime video", "hotstar", "spotify", "bookmyshow", "pvr", "inox"));
-        RULES.put("Investments", List.of("mutual fund", "sip", "zerodha", "groww", "upstox", "nps", "ppf", "demat"));
+        // "mutualfunds" is not redundant with "mutual fund": matching is word-boundary over the
+        // NORMALIZED description, and normalize() only replaces non-alphanumerics with spaces -- it
+        // never splits a run-together word. The unspaced form is what actually appears on real
+        // statements (12 rows on the corpus, all previously "Other"), so the spaced keyword could
+        // never reach them.
+        RULES.put("Investments", List.of("mutual fund", "mutualfunds", "sip", "zerodha", "groww", "upstox", "nps", "ppf", "demat"));
         RULES.put("Fees/Interest", List.of("annual fee", "late fee", "finance charge", "interest charged", "penalty"));
         // "cc payment" added after checking this project's own real bank-statement corpus (see
         // Shopping/Dining comment above) -- a real BharatBillPay narration ("BPPY CC PAYMENT")
