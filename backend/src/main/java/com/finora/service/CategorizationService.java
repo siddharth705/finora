@@ -182,7 +182,7 @@ public class CategorizationService {
         }
         if (PersonToPersonTransferDetector.isNamedIndividualTransfer(description)) {
             return new Suggestion(P2P_CATEGORY, STRUCTURAL_P2P_SOURCE, merchant.getId(),
-                    Transaction.DecisionSource.STRUCTURAL_P2P, null, ConfidenceEngine.INITIAL_RULE_CONFIDENCE);
+                    Transaction.DecisionSource.STRUCTURAL_P2P, null, ConfidenceEngine.INITIAL_STRUCTURAL_CONFIDENCE);
         }
         return new Suggestion("Other", "default", merchant.getId(), Transaction.DecisionSource.MERCHANT_DEFAULT, null,
                 ConfidenceEngine.INITIAL_DEFAULT_CONFIDENCE);
@@ -287,7 +287,7 @@ public class CategorizationService {
         }
         if (PersonToPersonTransferDetector.isNamedIndividualTransfer(description)) {
             return new Suggestion(P2P_CATEGORY, STRUCTURAL_P2P_SOURCE, merchantId,
-                    Transaction.DecisionSource.STRUCTURAL_P2P, null, ConfidenceEngine.INITIAL_RULE_CONFIDENCE);
+                    Transaction.DecisionSource.STRUCTURAL_P2P, null, ConfidenceEngine.INITIAL_STRUCTURAL_CONFIDENCE);
         }
         return new Suggestion("Other", "default", merchantId, Transaction.DecisionSource.MERCHANT_DEFAULT, null,
                 ConfidenceEngine.INITIAL_DEFAULT_CONFIDENCE);
