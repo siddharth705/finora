@@ -25,3 +25,28 @@ export function deriveRefreshing(
 ): boolean {
   return queries.some((q) => q.isFetching && !q.isLoading) && !initialLoad;
 }
+
+/**
+ * True when a query has never loaded and is currently PAUSED for lack of connectivity -- the state
+ * React Query puts a first fetch into when onlineManager says the device is offline (queryClient.ts
+ * wires that to NetInfo).
+ *
+ * This is a third outcome that screens were collapsing into "empty". A paused query is not an
+ * error, so every `isError` guard skips it; and it has no data, so every `length === 0` /
+ * `?? 0` fallback treats it as a settled answer. The result on Investments was ₹0 printed as this
+ * person's net worth and liabilities -- underneath a banner reading "No connection — showing the
+ * last data loaded", when in fact nothing had been loaded at all. 'networth' is deliberately kept
+ * out of the persistence allowlist, so there is never a cached figure to fall back on: going to
+ * that screen offline reliably produced fabricated zeroes.
+ *
+ * Deliberately narrow. `data === undefined` keeps it false whenever there IS something real to
+ * show -- a paused REFETCH over restored or already-fetched data is exactly the "showing the last
+ * data loaded" case the banner describes, and should keep showing it rather than blanking.
+ */
+export function isPausedCold(query: {
+  isPending: boolean;
+  fetchStatus: string;
+  data: unknown;
+}): boolean {
+  return query.isPending && query.fetchStatus === 'paused' && query.data === undefined;
+}

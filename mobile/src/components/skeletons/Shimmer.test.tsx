@@ -1,5 +1,5 @@
-import { AccessibilityInfo } from 'react-native';
-import { render, screen } from '@testing-library/react-native';
+import { AccessibilityInfo, Animated } from 'react-native';
+import { act, render, screen } from '@testing-library/react-native';
 import { Shimmer } from './Shimmer';
 import { ThemeProvider } from '../../theme';
 
@@ -77,5 +77,70 @@ describe('Shimmer', () => {
       );
       expect(announce).toHaveBeenCalledTimes(1);
     });
+  });
+});
+
+/**
+ * The one animation in this app that has to ask about Reduce Motion itself. AnimatedNumber and
+ * ChartReveal are Reanimated-based, and Reanimated defaults every animation to
+ * `ReduceMotion.System`, so they already honour the setting for free. This loop is React Native's
+ * own Animated API, which has no such behaviour -- and it is the worst offender of the three: an
+ * indefinitely repeating pulse (exactly what the setting exists to suppress) that is on screen
+ * during every loading state in the app, not for one 450ms transition.
+ */
+describe('Reduce Motion', () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  it('does not start the pulse loop when the OS setting is on', async () => {
+    jest.spyOn(AccessibilityInfo, 'isReduceMotionEnabled').mockResolvedValue(true);
+    const loop = jest.spyOn(Animated, 'loop');
+
+    renderShimmer();
+    // The check is a native round trip, so the decision lands a microtask later.
+    await act(async () => {});
+
+    expect(loop).not.toHaveBeenCalled();
+  });
+
+  it('still renders a visible placeholder rather than a frozen invisible one', async () => {
+    jest.spyOn(AccessibilityInfo, 'isReduceMotionEnabled').mockResolvedValue(true);
+
+    renderShimmer();
+    await act(async () => {});
+
+    // Suppressing the motion must not suppress the block: it is still standing in for content.
+    expect(screen.getByTestId('shimmer-block', { hidden: true })).toBeTruthy();
+  });
+
+  it('still announces loading, since that is not motion', async () => {
+    jest.spyOn(AccessibilityInfo, 'isReduceMotionEnabled').mockResolvedValue(true);
+    const announce = jest.spyOn(AccessibilityInfo, 'announceForAccessibility');
+
+    renderShimmer();
+    await act(async () => {});
+
+    expect(announce).toHaveBeenCalledWith('Loading');
+  });
+
+  it('animates as before when the setting is off', async () => {
+    jest.spyOn(AccessibilityInfo, 'isReduceMotionEnabled').mockResolvedValue(false);
+    const loop = jest.spyOn(Animated, 'loop');
+
+    renderShimmer();
+    await act(async () => {});
+
+    expect(loop).toHaveBeenCalled();
+  });
+
+  it('falls back to animating when the device cannot answer', async () => {
+    // Failing toward the pre-existing behaviour beats a placeholder frozen at a fixed opacity,
+    // which reads as a broken screen rather than a loading one.
+    jest.spyOn(AccessibilityInfo, 'isReduceMotionEnabled').mockRejectedValue(new Error('nope'));
+    const loop = jest.spyOn(Animated, 'loop');
+
+    renderShimmer();
+    await act(async () => {});
+
+    expect(loop).toHaveBeenCalled();
   });
 });
