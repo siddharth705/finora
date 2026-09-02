@@ -42,13 +42,26 @@ export function usePrefetchAdjacentScreens() {
     useCallback(() => {
       if (!onlineRef.current) return;
 
-      void queryClient.prefetchInfiniteQuery({
-        queryKey: ['transactions', DEFAULT_LEDGER_FILTERS],
-        queryFn: ({ pageParam }) =>
-          transactionsApi.search({ ...DEFAULT_LEDGER_FILTERS, page: pageParam as number }),
-        initialPageParam: 0,
-        getNextPageParam: getLedgerNextPageParam,
-      });
+      // Only ever warms a COLD ledger cache, which is the whole point of a prefetch. Unconditional,
+      // this stopped being a prefetch as soon as the user had actually used the Ledger: refetching
+      // an infinite query refetches every page it currently holds, not just the first --
+      // query-core's infiniteQueryBehavior computes `remainingPages = pages ?? oldPages.length` --
+      // so someone who had scrolled to page 20 and come back to Dashboard replayed all 20 requests
+      // sequentially on each focus, once the 30s staleTime had lapsed.
+      //
+      // Capping it with `pages: 1` would be worse than leaving it alone: the refetch rebuilds
+      // data.pages from what it fetched, so it would truncate the user's scrolled list back to a
+      // single page. Skipping outright when there is already data is the only option that neither
+      // storms the network nor discards state -- and a warm ledger has nothing left to warm.
+      if (!queryClient.getQueryData(['transactions', DEFAULT_LEDGER_FILTERS])) {
+        void queryClient.prefetchInfiniteQuery({
+          queryKey: ['transactions', DEFAULT_LEDGER_FILTERS],
+          queryFn: ({ pageParam }) =>
+            transactionsApi.search({ ...DEFAULT_LEDGER_FILTERS, page: pageParam as number }),
+          initialPageParam: 0,
+          getNextPageParam: getLedgerNextPageParam,
+        });
+      }
 
       void queryClient.prefetchQuery({ queryKey: ['budgets'], queryFn: () => budgetsApi.list() });
 
@@ -56,6 +69,12 @@ export function usePrefetchAdjacentScreens() {
       // report-months resolves. Reuses fetchQuery (not prefetchQuery) here specifically because its
       // return value is needed to pick the latest month -- both still respect staleTime and skip
       // the network when Dashboard's own ['report-months'] query is already warm.
+      // `.catch` rather than bare `void`: unlike prefetchQuery (which swallows its own errors),
+      // fetchQuery REJECTS on failure, so `void`-ing this IIFE left an unhandled rejection on every
+      // /reports/months failure -- and on the entirely ordinary path of signing out while the
+      // request is in flight, since the 401 handler rejects everything pending. Nothing here is
+      // recoverable and nothing is shown: a prefetch that fails just means the screen it was
+      // warming loads normally when opened.
       void (async () => {
         const months = await queryClient.fetchQuery({
           queryKey: ['report-months'],
@@ -68,7 +87,7 @@ export function usePrefetchAdjacentScreens() {
           queryFn: () => reportsApi.forMonth(latest),
           staleTime: 5 * 60_000, // matches Dashboard's/ReportsScreen's own staleTime for a past month
         });
-      })();
+      })().catch(() => {});
     }, [queryClient])
   );
 }

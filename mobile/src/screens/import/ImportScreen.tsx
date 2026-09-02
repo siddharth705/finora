@@ -15,6 +15,7 @@ import { apiErrorCode, toUserMessage } from '../../lib/apiError';
 import { fmtCurrency } from '../../lib/format';
 import { hapticError, hapticSuccess } from '../../lib/haptics';
 import { invalidateFinancialData } from '../../lib/invalidateFinancialData';
+import { isPausedCold } from '../../lib/refreshingIndicator';
 import {
   buildNewAccountPayload, buildRowPayload, initialAccountForm, initialCategories,
   type NewAccountForm,
@@ -84,10 +85,19 @@ export function ImportScreen() {
     queryKey: ['categories'],
     queryFn: () => categoriesApi.list().then((cs) => cs.map((x) => x.name)),
   });
-  const { data: existingAccounts = [] } = useQuery({
+  const accountsQ = useQuery({
     queryKey: ['accounts'],
     queryFn: () => accountsApi.list(),
   });
+  const existingAccounts = accountsQ.data ?? [];
+  // An empty list and a list that failed to load are the same [] -- and here the difference
+  // decides where a statement gets filed. With the list unavailable, matchExistingAccount finds
+  // nothing, the flow silently defaults to "A new account" with the detected name prefilled, and
+  // the "An existing account" chip is disabled, so there is no way back. Confirming then files the
+  // statement into a DUPLICATE account and splits one real bank account's history in two. The chip
+  // stays disabled (there is genuinely no list to choose from), but saying why is what turns a
+  // silent wrong default into a decision the user can make.
+  const accountsUnavailable = accountsQ.isError || isPausedCold(accountsQ);
 
   const includedCount = useMemo(() => review.included.filter(Boolean).length, [review.included]);
   // The gate. Confirm stays disabled while the engine has asked a question nobody has answered --
@@ -519,6 +529,14 @@ export function ImportScreen() {
                   );
                 })}
               </View>
+
+              {accountsUnavailable ? (
+                <Text style={[styles.helpText, { color: c.danger }]}>
+                  Couldn&apos;t load your existing accounts, so this can only be filed as a new one.
+                  If this statement belongs to an account you already have, go back and retry rather
+                  than importing it here — filing it as new would split that account&apos;s history.
+                </Text>
+              ) : null}
 
               {accountChoice === 'existing' ? (
                 existingAccounts.map((a) => {
