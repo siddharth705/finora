@@ -5,6 +5,7 @@ import com.finora.notification.api.DeviceTokenService;
 import com.finora.notification.domain.Notification;
 import com.finora.notification.domain.NotificationChannel;
 import java.util.List;
+import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -20,16 +21,27 @@ import org.slf4j.LoggerFactory;
  * token (Android or iOS) is sent through FCM today. Routing iOS tokens to APNs instead is Task
  * 11's job; sending to both channels today is a known, accepted gap, not an oversight.
  *
+ * <h2>Dead tokens are revoked, transient failures are not</h2>
+ *
+ * <p>{@link FcmMessageSender#send} reports {@link FcmSendOutcome#TOKEN_DEAD} when FCM says a token
+ * will never work again (app uninstalled, token expired/rotated). This class revokes exactly that
+ * token via {@link DeviceTokenService#revoke} so it stops being retried on every future
+ * notification -- without this, a single-device user who uninstalled the app would burn every
+ * retry and dead-letter on every subsequent push forever, with no way back. A
+ * {@link FcmSendOutcome#TRANSIENT_FAILURE} (an outage, a rate limit, or anything not confidently
+ * permanent -- see {@link FirebaseFcmMessageSender}'s mapping) is never revoked: that would
+ * silently and permanently disable a device that never actually rejected the token.
+ *
  * <h2>Security: no token ever reaches a ChannelSendResult</h2>
  *
  * <p>{@link ActiveDeviceToken} is a record with a {@code token} component, so its default
  * {@code toString()} prints the raw device token -- an {@code ActiveDeviceToken} or a
  * {@code List<ActiveDeviceToken>} must never be logged or interpolated into a result. This class
- * only ever extracts {@link ActiveDeviceToken#token()} to pass to {@link FcmMessageSender#send},
- * and only ever reports counts back in {@link ChannelSendResult#detail()} -- never a token, and
- * never an SDK exception's message (which can itself echo the token FCM rejected; see
- * {@link FirebaseFcmMessageSender} for where that boundary is actually enforced against the live
- * SDK).
+ * only ever extracts {@link ActiveDeviceToken#token()} to pass to {@link FcmMessageSender#send}
+ * and {@link DeviceTokenService#revoke}, and only ever reports counts back in
+ * {@link ChannelSendResult#detail()} -- never a token, and never an SDK exception's message
+ * (which can itself echo the token FCM rejected; see {@link FirebaseFcmMessageSender} for where
+ * that boundary is actually enforced against the live SDK).
  */
 public class FcmPushProvider implements NotificationChannelProvider {
 
@@ -82,24 +94,50 @@ public class FcmPushProvider implements NotificationChannelProvider {
      * devices where FCM rejects one (e.g. UNREGISTERED) must still receive the push on the other
      * two. Each send gets its own try/catch rather than relying solely on
      * {@link FcmMessageSender}'s "must not throw" contract -- a bug in a future implementation of
-     * that seam must not abort the remaining devices in this batch.
+     * that seam must not abort the remaining devices in this batch. A send that throws is treated
+     * the same as {@link FcmSendOutcome#TRANSIENT_FAILURE} -- not accepted, not revoked -- since an
+     * unexpected exception carries no evidence the token itself is the problem.
      */
     private int sendToEach(List<ActiveDeviceToken> tokens, Notification notification) {
         int accepted = 0;
         for (ActiveDeviceToken deviceToken : tokens) {
+            FcmSendOutcome outcome;
             try {
-                if (messageSender.send(deviceToken.token(), notification.getTitle(),
-                        notification.getMessage())) {
-                    accepted++;
-                }
+                outcome = messageSender.send(deviceToken.token(), notification.getTitle(),
+                        notification.getMessage());
             } catch (RuntimeException e) {
                 // Never log the exception itself or its message -- only the class name. A real
                 // FcmMessageSender's underlying exception can carry the rejected token in its
                 // description; this is the last line of defense against that reaching a log line.
                 log.warn("A device send threw ({}) for notification {}; treating it as rejected",
                         e.getClass().getSimpleName(), notification.getId());
+                continue;
             }
+            if (outcome == FcmSendOutcome.ACCEPTED) {
+                accepted++;
+            } else if (outcome == FcmSendOutcome.TOKEN_DEAD) {
+                revokeDeadToken(notification.getUserId(), deviceToken.token(), notification.getId());
+            }
+            // TRANSIENT_FAILURE: not accepted, not revoked -- retried on the notification's own
+            // backoff the next time this user gets a push.
         }
         return accepted;
+    }
+
+    /**
+     * Revoking must not be able to take down delivery to this user's remaining devices -- same
+     * containment discipline as {@link #sendToEach}'s own per-device try/catch. A revoke failure
+     * (e.g. a transient DB error) just means this dead token gets retried -- and re-discovered as
+     * dead -- on a future send; that is a wasted call, not a correctness problem, and strictly
+     * better than losing delivery to a device that is still live.
+     */
+    private void revokeDeadToken(UUID userId, String token, UUID notificationId) {
+        try {
+            deviceTokenService.revoke(userId, token);
+        } catch (RuntimeException e) {
+            // Class name only -- never the token, never the exception's message.
+            log.warn("Could not revoke a dead device token found while sending notification {} ({})",
+                    notificationId, e.getClass().getSimpleName());
+        }
     }
 }

@@ -2,7 +2,12 @@ package com.finora.notification.provider;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.finora.notification.api.ActiveDeviceToken;
@@ -20,12 +25,12 @@ import org.junit.jupiter.api.Test;
 
 /**
  * The task-10 brief's own test snippet mocks {@code activeTokensFor} to return
- * {@code List<String>} -- stale against what Task 9 actually shipped.
- * {@link DeviceTokenService#activeTokensFor} returns {@code List<ActiveDeviceToken>} (token +
- * platform, see that record's own doc comment for why), so every fixture below builds
- * {@link ActiveDeviceToken} instances instead of bare strings. The scenarios themselves are the
- * brief's, adapted to the real signature, plus a few this class's own partial-failure guarantee
- * (see {@link FcmPushProvider#send}) needs covered.
+ * {@code List<String>} and {@code messageSender.send} to return {@code boolean} -- both stale
+ * against what this class actually depends on. {@link DeviceTokenService#activeTokensFor} returns
+ * {@code List<ActiveDeviceToken>} (token + platform, from Task 9), and {@link FcmMessageSender#send}
+ * returns {@link FcmSendOutcome} (from fix round 1 of this task, so a permanently dead token can be
+ * distinguished from a merely transient failure and only the former gets revoked). Every fixture
+ * below is built against the real signatures.
  */
 class FcmPushProviderTest {
 
@@ -40,11 +45,15 @@ class FcmPushProviderTest {
         provider = new FcmPushProvider(deviceTokenService, messageSender);
     }
 
-    private Notification notification() {
-        return Notification.create(UUID.randomUUID(), NotificationType.IMPORT_STATEMENT_READY,
+    private Notification notification(UUID userId) {
+        return Notification.create(userId, NotificationType.IMPORT_STATEMENT_READY,
                 NotificationCategory.FINANCIAL, NotificationChannel.PUSH,
                 NotificationPriority.NORMAL, "K1:PUSH", "Statement ready", "Your import finished.",
                 Instant.now());
+    }
+
+    private Notification notification() {
+        return notification(UUID.randomUUID());
     }
 
     @Test
@@ -76,7 +85,9 @@ class FcmPushProviderTest {
         when(deviceTokenService.activeTokensFor(any())).thenReturn(List.of(
                 new ActiveDeviceToken("tokenA", "ANDROID"),
                 new ActiveDeviceToken("tokenB", "ANDROID")));
-        when(messageSender.send(any(), any(), any())).thenReturn(false).thenReturn(true);
+        when(messageSender.send(any(), any(), any()))
+                .thenReturn(FcmSendOutcome.TRANSIENT_FAILURE)
+                .thenReturn(FcmSendOutcome.ACCEPTED);
 
         assertThat(provider.send(notification()).success()).isTrue();
     }
@@ -85,7 +96,7 @@ class FcmPushProviderTest {
     void send_failsWhenEveryDeviceRejects() {
         when(deviceTokenService.activeTokensFor(any())).thenReturn(
                 List.of(new ActiveDeviceToken("tokenA", "ANDROID")));
-        when(messageSender.send(any(), any(), any())).thenReturn(false);
+        when(messageSender.send(any(), any(), any())).thenReturn(FcmSendOutcome.TRANSIENT_FAILURE);
 
         ChannelSendResult result = provider.send(notification());
 
@@ -97,7 +108,7 @@ class FcmPushProviderTest {
     void send_neverLeaksARawTokenIntoTheResultDetail() {
         when(deviceTokenService.activeTokensFor(any())).thenReturn(
                 List.of(new ActiveDeviceToken("secret-token-value", "ANDROID")));
-        when(messageSender.send(any(), any(), any())).thenReturn(false);
+        when(messageSender.send(any(), any(), any())).thenReturn(FcmSendOutcome.TRANSIENT_FAILURE);
 
         // The detail is persisted to notification_logs, which admins read.
         assertThat(provider.send(notification()).detail()).doesNotContain("secret-token-value");
@@ -114,9 +125,9 @@ class FcmPushProviderTest {
                 new ActiveDeviceToken("tokenB", "ANDROID"),
                 new ActiveDeviceToken("tokenC", "ANDROID")));
         when(messageSender.send(any(), any(), any()))
-                .thenReturn(false)
+                .thenReturn(FcmSendOutcome.TRANSIENT_FAILURE)
                 .thenThrow(new RuntimeException("unexpected"))
-                .thenReturn(true);
+                .thenReturn(FcmSendOutcome.ACCEPTED);
 
         assertThat(provider.send(notification()).success()).isTrue();
     }
@@ -126,5 +137,70 @@ class FcmPushProviderTest {
         when(deviceTokenService.activeTokensFor(any())).thenThrow(new RuntimeException("db down"));
 
         assertThat(provider.send(notification()).success()).isFalse();
+    }
+
+    @Test
+    void send_revokesATokenFcmReportsAsDead() {
+        UUID userId = UUID.randomUUID();
+        when(deviceTokenService.activeTokensFor(userId)).thenReturn(
+                List.of(new ActiveDeviceToken("deadToken", "ANDROID")));
+        when(messageSender.send(any(), any(), any())).thenReturn(FcmSendOutcome.TOKEN_DEAD);
+
+        provider.send(notification(userId));
+
+        verify(deviceTokenService).revoke(userId, "deadToken");
+    }
+
+    @Test
+    void send_doesNotRevokeATokenThatFailsTransiently() {
+        // This is the test that protects a live device: a transient failure must never be treated
+        // as evidence the token is dead.
+        UUID userId = UUID.randomUUID();
+        when(deviceTokenService.activeTokensFor(userId)).thenReturn(
+                List.of(new ActiveDeviceToken("liveToken", "ANDROID")));
+        when(messageSender.send(any(), any(), any())).thenReturn(FcmSendOutcome.TRANSIENT_FAILURE);
+
+        provider.send(notification(userId));
+
+        verify(deviceTokenService, never()).revoke(any(), any());
+    }
+
+    @Test
+    void send_revokesOnlyTheDeadTokenAmongThreeDevices() {
+        UUID userId = UUID.randomUUID();
+        when(deviceTokenService.activeTokensFor(userId)).thenReturn(List.of(
+                new ActiveDeviceToken("tokenA", "ANDROID"),
+                new ActiveDeviceToken("tokenB", "ANDROID"),
+                new ActiveDeviceToken("tokenC", "ANDROID")));
+        when(messageSender.send(eq("tokenA"), any(), any())).thenReturn(FcmSendOutcome.ACCEPTED);
+        when(messageSender.send(eq("tokenB"), any(), any())).thenReturn(FcmSendOutcome.TOKEN_DEAD);
+        when(messageSender.send(eq("tokenC"), any(), any())).thenReturn(FcmSendOutcome.ACCEPTED);
+
+        ChannelSendResult result = provider.send(notification(userId));
+
+        // The other two devices still received the push.
+        assertThat(result.success()).isTrue();
+        // Only the dead one was revoked.
+        verify(deviceTokenService, times(1)).revoke(any(), any());
+        verify(deviceTokenService).revoke(userId, "tokenB");
+        verify(deviceTokenService, never()).revoke(userId, "tokenA");
+        verify(deviceTokenService, never()).revoke(userId, "tokenC");
+    }
+
+    @Test
+    void send_deliversToRemainingDevicesWhenRevokeThrows() {
+        UUID userId = UUID.randomUUID();
+        when(deviceTokenService.activeTokensFor(userId)).thenReturn(List.of(
+                new ActiveDeviceToken("deadToken", "ANDROID"),
+                new ActiveDeviceToken("liveToken", "ANDROID")));
+        when(messageSender.send(eq("deadToken"), any(), any())).thenReturn(FcmSendOutcome.TOKEN_DEAD);
+        when(messageSender.send(eq("liveToken"), any(), any())).thenReturn(FcmSendOutcome.ACCEPTED);
+        doThrow(new RuntimeException("db down")).when(deviceTokenService).revoke(any(), any());
+
+        ChannelSendResult result = provider.send(notification(userId));
+
+        // The revoke failure for the dead token must not prevent delivery to the live one.
+        assertThat(result.success()).isTrue();
+        assertThat(result.detail()).isEqualTo("1 of 2 devices accepted");
     }
 }
