@@ -41,10 +41,34 @@ public class CategorizationService {
      *  transfer -- see {@link com.finora.util.PersonToPersonTransferDetector}. */
     public static final String STRUCTURAL_P2P_SOURCE = "structural_p2p";
 
-    /** Where a detected person-to-person transfer lands. Already a system category in every user's
-     *  default taxonomy (see {@code AuthService.DEFAULT_CATEGORIES}) -- this detector routes into
-     *  the existing taxonomy, it never invents a category. */
-    public static final String P2P_CATEGORY = "Transfer";
+    /**
+     * Where a detected person-to-person payment lands. A system category in every user's default
+     * taxonomy (see {@code AuthService.DEFAULT_CATEGORIES}), seeded at registration and backfilled
+     * for existing users by {@code V123__paid_a_person_category.sql}.
+     *
+     * <p><b>This was "Transfer" when the detector first shipped, and that was wrong for what the
+     * detector now actually matches.</b> Before merchant-rail detection existed, a narration naming
+     * an individual mostly did mean money moved between two people's own accounts. Once the
+     * merchant-acquiring rails (PhonePe Q-VPAs, {@code PAYTM.S}, GPay for Business, BharatPe, the
+     * merchant-UPI pseudo-branch IFSCs) were split off, what is LEFT is deliberately the residue:
+     * genuine transfers mixed with everyday payments to individuals who are being paid for
+     * something -- a driver taken directly rather than through the app, a maid, a landlord, a
+     * tutor, a vegetable seller with no merchant account. "Transfer" asserts of every one of those
+     * that no spending occurred, which is a confident claim this code has no evidence for, and the
+     * one thing the design review names as worse than an honest unknown.
+     *
+     * <p>"Paid a Person" claims only what the detector actually established: money left the
+     * account, it went to a named individual, and the purpose is unknown. It is a weaker claim than
+     * "Transfer" and than "Friend Repayment" (which additionally asserts a debt being settled), and
+     * weaker is the point.
+     *
+     * <p>Being a distinct category does NOT change how the money is counted. Nothing in this
+     * codebase excludes spend by category NAME -- {@code RefundNetting.reportable} excludes by
+     * {@code ReconciliationStatus}, and a full grep of the category-name literals finds no
+     * dashboard, budget or analytics path keying off one. So these rows counted as spend under
+     * "Transfer" and still count as spend here; only the label the user reads changed.
+     */
+    public static final String P2P_CATEGORY = "Paid a Person";
 
     private final MerchantNormalizationEngine merchantNormalizationEngine;
     private final MerchantLearningService merchantLearningService;

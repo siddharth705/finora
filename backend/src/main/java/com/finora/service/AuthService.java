@@ -87,6 +87,16 @@ public class AuthService {
         DEFAULT_CATEGORIES.put("Fees/Interest", new String[]{"percent", "gray"});
         DEFAULT_CATEGORIES.put("Transfer", new String[]{"repeat", "blue"});
         DEFAULT_CATEGORIES.put("Friend Repayment", new String[]{"users", "teal"});
+        // The 26th category, placed next to its two nearest neighbours rather than appended, so a
+        // user reading their category list meets the three people-shaped options together. This is
+        // where CategorizationService.P2P_CATEGORY routes a structurally-detected payment to a
+        // named individual. Deliberately a WEAKER claim than either neighbour -- "Transfer" asserts
+        // no spending occurred and "Friend Repayment" asserts a debt was settled, and the detector
+        // has evidence for neither. See P2P_CATEGORY's own comment for why this stopped being
+        // "Transfer". Reuses the existing `users` icon token (CategoryPalette.ICONS is a closed
+        // vocabulary and both clients map icons by TOKEN, not by category name, so no client change
+        // is needed), in a different colour from Friend Repayment so the two stay tellable apart.
+        DEFAULT_CATEGORIES.put("Paid a Person", new String[]{"users", "orange"});
         DEFAULT_CATEGORIES.put("Loan EMI", new String[]{"landmark", "red"});
         DEFAULT_CATEGORIES.put("Insurance", new String[]{"shield", "blue"});
         DEFAULT_CATEGORIES.put("Education", new String[]{"graduation-cap", "purple"});
