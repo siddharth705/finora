@@ -8,6 +8,7 @@ import com.finora.imports.storage.ContentAddress;
 import com.finora.imports.storage.StatementStorage;
 import com.finora.repository.ImportJobRepository;
 import com.finora.repository.UserRepository;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.mock.web.MockMultipartFile;
@@ -55,6 +56,14 @@ class ImportJobSourceFormatIT extends AbstractIntegrationTest {
     @Autowired private ImportJobStore jobStore;
     @Autowired private ImportJobService jobService;
     @Autowired private ImportJobWorker worker;
+
+    /** BH-058. The suite shares one import_jobs table and leaves jobs QUEUED in it; drainOnce()
+     *  claims only the oldest ImportJobStore.BATCH_SIZE of them, so without this the job each test
+     *  enqueues below can fall outside the batch and never run. See ImportJobQueueBacklog. */
+    @BeforeEach
+    void emptyTheQueueTheRestOfTheSuiteLeftBehind() {
+        ImportJobQueueBacklog.empty(worker);
+    }
     @Autowired private StatementStorage storage;
 
     private User user() {
