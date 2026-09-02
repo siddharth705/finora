@@ -63,8 +63,10 @@ public class MerchantLearningEventWorker {
      * How many batches one nudge will drain before leaving the rest to the poller.
      *
      * <p>Bounds the work a single caller's nudge can do on the shared executor thread. Twenty
-     * passes is {@code 20 * BATCH_SIZE} events, far more than any one import produces, so in
-     * practice the loop stops because the queue ran dry rather than because it hit this.
+     * passes is {@code 20 * BATCH_SIZE} events — twice
+     * {@code AdminLearningQueueService.MAX_RETRY_ALL}, the largest requeue any single nudge has to
+     * answer for — so in practice the loop stops because the queue ran dry rather than because it
+     * hit this.
      */
     private static final int MAX_NUDGE_PASSES = 20;
 
@@ -140,10 +142,18 @@ public class MerchantLearningEventWorker {
      *
      * <p><b>Drains until a pass comes back short, rather than exactly once.</b> A pass that claims
      * a full {@link #BATCH_SIZE} is itself evidence more work is waiting, and stopping there left
-     * the remainder for the next poll — so an import confirming more merchants than one batch had
-     * its tail silently deferred by a poll interval, despite a nudge having just run. Never a
-     * correctness bug (the rows are durable and the poller collects them), but the delay was
-     * invisible and served no purpose.
+     * the remainder for the next poll despite a worker having just been woken.
+     *
+     * <p>The path where that actually bites is a <em>bulk</em> requeue, not an ordinary import:
+     * {@code AdminLearningQueueService.retryAll} returns up to five hundred FAILED events to the
+     * queue and nudges exactly <b>once</b>, so a single batch of fifty left the other four hundred
+     * and fifty draining fifty per poll — minutes, after an operator action that looked immediate.
+     * An import confirming many merchants was never this problem: {@code enqueue} registers an
+     * afterCommit nudge per event, so a burst of them already drains itself. {@link
+     * #MAX_NUDGE_PASSES} is sized against the bulk path for that reason.
+     *
+     * <p>Never a correctness bug either way — the rows are durable and the poller collects them —
+     * but the delay was invisible and served no purpose.
      *
      * <p>Still bounded, for the reason {@link #BATCH_SIZE} is: this occupies a thread in a small
      * pool, and an unbounded loop would let one caller hold it for as long as the queue keeps

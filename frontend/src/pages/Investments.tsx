@@ -1,11 +1,13 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Doughnut, Line } from 'react-chartjs-2';
 import { Chart as ChartJS, ArcElement, LineElement, PointElement, LinearScale, CategoryScale, Tooltip, Legend } from 'chart.js';
-import { LineChart as LineChartIcon, TrendingUp, TrendingDown, Wallet } from 'lucide-react';
+import { LineChart as LineChartIcon, TrendingUp, TrendingDown, Wallet, Loader2 } from 'lucide-react';
 import { accountsApi, networthApi, type NetWorthData } from '../api/endpoints';
 import type { Account } from '../types';
 import { formatDate } from '../utils/date';
-import { FinoraCard, MetricCard, EmptyState, SectionHeader, ChartContainer, baseChartOptions, ConfirmDialog } from '../design-system';
+import { useAsyncGuard } from '../hooks/useAsyncGuard';
+import { useDelayedLoading } from '../hooks/useDelayedLoading';
+import { Button, FinoraCard, MetricCard, EmptyState, SectionHeader, ChartContainer, baseChartOptions, ConfirmDialog, Skeleton } from '../design-system';
 
 ChartJS.register(ArcElement, LineElement, PointElement, LinearScale, CategoryScale, Tooltip, Legend);
 
@@ -46,22 +48,65 @@ export default function Investments() {
   const [value, setValue] = useState('');
   const [kind, setKind] = useState('Mutual Fund');
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  // Distinct from `error`, which is also set by add/delete failures while real data is on screen.
+  // This one means "the data below is not trustworthy", and is what stops the empty states from
+  // telling a user with holdings that they have none when the fetch simply failed.
+  const [loadFailed, setLoadFailed] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [savingSnapshot, setSavingSnapshot] = useState(false);
   const [confirmRemoveId, setConfirmRemoveId] = useState<string | null>(null);
+  const { beginRequest } = useAsyncGuard();
 
-  function load() {
-    setLoading(true);
-    Promise.all([accountsApi.list(), networthApi.current()])
+  /**
+   * `mode` exists because this function serves two very different situations. On mount there is
+   * nothing on screen, so a skeleton is right. After an add or a delete the page is fully rendered
+   * and merely stale -- collapsing it back into a skeleton there would be the "replace visible
+   * content with a skeleton on every refresh" behaviour the roadmap's UX table explicitly routes
+   * to a spinner instead. Before this split, both went through one `loading` flag.
+   *
+   * Returns the promise so a caller can keep its own pending state up until the data is actually
+   * fresh, rather than declaring itself done while the refetch is still running.
+   */
+  // useCallback, not a bare function: the old `useEffect(load, [])` passed `load` straight through
+  // as the effect body, which exhaustive-deps does not flag. Calling it inside an arrow (needed now
+  // that it takes a mode) does get flagged, and `npm run lint` runs with --max-warnings 0. Every
+  // value this closes over is stable -- state setters, and beginRequest is itself a useCallback --
+  // so an identity tied to [beginRequest] is honest rather than a suppression.
+  const load = useCallback((mode: 'initial' | 'refresh' = 'refresh') => {
+    // Guarded because keeping the list on screen during a refresh is exactly what makes a SECOND
+    // load reachable: pre-Phase-5 the page-level gate replaced everything, so there were no Delete
+    // buttons and no Add form to start one from. Now there are. Without this, deleting a second
+    // holding while the first delete's refetch is still running lets the older response -- whose
+    // GET was issued before the second delete -- land last and resurrect the deleted row as a live,
+    // deletable entry. Same single-slot guard Reports uses for its month switches.
+    const isCurrent = beginRequest();
+    if (mode === 'initial') setLoading(true);
+    else setRefreshing(true);
+    return Promise.all([accountsApi.list(), networthApi.current()])
       .then(([accounts, nw]) => {
+        if (!isCurrent()) return;
         setHoldings(accounts.filter((a) => a.accountType === 'INVESTMENT'));
         setNetWorth(nw);
+        setLoadFailed(false);
       })
-      .catch(() => setError('Could not load investments.'))
-      .finally(() => setLoading(false));
-  }
-  useEffect(load, []);
+      .catch(() => {
+        if (!isCurrent()) return;
+        setError('Could not load investments.');
+        setLoadFailed(true);
+      })
+      // Both flags clear together, and only for the newest request. Clearing per-mode would strand
+      // `loading` true forever whenever a refresh superseded an in-flight initial load; clearing
+      // unguarded would let a superseded request switch the indicator off while the request whose
+      // data is actually awaited is still running.
+      .finally(() => {
+        if (!isCurrent()) return;
+        setLoading(false);
+        setRefreshing(false);
+      });
+  }, [beginRequest]);
+  useEffect(() => { void load('initial'); }, [load]);
 
   async function addHolding() {
     if (!name || !value) return;
@@ -78,7 +123,9 @@ export default function Investments() {
     try {
       await accountsApi.create({ name, accountType: 'INVESTMENT', balance: currentValue, investmentKind: kind });
       setName(''); setValue('');
-      load();
+      // Awaited, so the button keeps its spinner until the new holding is actually on screen.
+      // Firing and forgetting would drop the spinner while the list was still the old one.
+      await load();
     } catch {
       setError('Could not add this holding.');
     } finally {
@@ -89,7 +136,7 @@ export default function Investments() {
   async function removeHolding(id: string) {
     try {
       await accountsApi.remove(id);
-      load();
+      await load();
     } catch {
       setError('Could not delete this holding.');
     }
@@ -111,8 +158,15 @@ export default function Investments() {
     }
   }
 
-  if (loading) return <p className="text-muted">Loading…</p>;
-
+  // No page-level gate any more. Each section below shows its own skeleton, which is what lets the
+  // two ChartContainers take a real `loading` prop -- behind an early return they would render only
+  // after loading finished, making that prop dead code. It also fixes a flash the early return was
+  // masking: both charts' `isEmpty` tests (`holdings.length === 0`, `!netWorth || history < 2`) and
+  // the holdings list's own empty state are indistinguishable from "still loading", so without a
+  // loading branch they would each announce an empty state to a user who has data. ChartContainer
+  // checks `loading` before `isEmpty`, so passing it is the fix for the charts; the holdings list
+  // gets the same treatment explicitly below.
+  const showSkeleton = useDelayedLoading(loading);
   const totalInvestments = holdings.reduce((s, h) => s + h.balance, 0);
 
   return (
@@ -123,26 +177,45 @@ export default function Investments() {
           <button onClick={() => setError(null)}>×</button>
         </div>
       )}
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-        <MetricCard label="Total Investments" value={fmt(totalInvestments)} icon={LineChartIcon} iconBg="bg-primary-light" iconColor="text-primary" />
-        <MetricCard label="Net Worth" value={fmt(netWorth?.netWorth ?? 0)} icon={TrendingUp} iconBg="bg-green-100" iconColor="text-green-600" valueColor="text-success" />
-        <MetricCard label="Liabilities" value={fmt(netWorth?.totalLiabilities ?? 0)} icon={TrendingDown} iconBg="bg-red-100" iconColor="text-red-600" valueColor="text-danger" />
-      </div>
+      {loading ? (
+        <Skeleton.Region label="Loading your investment totals">
+          {showSkeleton && (
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+              {[0, 1, 2].map((i) => <Skeleton.Card key={i} />)}
+            </div>
+          )}
+        </Skeleton.Region>
+      ) : (
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+          <MetricCard label="Total Investments" value={fmt(totalInvestments)} icon={LineChartIcon} iconBg="bg-primary-light" iconColor="text-primary" />
+          <MetricCard label="Net Worth" value={fmt(netWorth?.netWorth ?? 0)} icon={TrendingUp} iconBg="bg-green-100" iconColor="text-green-600" valueColor="text-success" />
+          <MetricCard label="Liabilities" value={fmt(netWorth?.totalLiabilities ?? 0)} icon={TrendingDown} iconBg="bg-red-100" iconColor="text-red-600" valueColor="text-danger" />
+        </div>
+      )}
 
       <div className="grid md:grid-cols-2 gap-6">
         <FinoraCard>
           <SectionHeader title="Allocation" />
           <ChartContainer
             height={224}
+            loading={loading}
+            loadingLabel="Loading your allocation"
             isEmpty={holdings.length === 0}
             emptyState={
-              <EmptyState
-                icon={Wallet}
-                iconBg="bg-blue-100"
-                iconColor="text-blue-600"
-                title="No investments yet"
-                desc="Add your first investment or asset below to see its allocation."
-              />
+              // "No data to chart" is true either way; WHY differs. Claiming "no investments yet"
+              // to someone whose fetch just failed is the same false-empty message the loading
+              // branch above exists to prevent, one state later.
+              loadFailed ? (
+                <p className="text-muted text-sm">Couldn't load your investments.</p>
+              ) : (
+                <EmptyState
+                  icon={Wallet}
+                  iconBg="bg-blue-100"
+                  iconColor="text-blue-600"
+                  title="No investments yet"
+                  desc="Add your first investment or asset below to see its allocation."
+                />
+              )
             }
           >
             <Doughnut
@@ -157,25 +230,31 @@ export default function Investments() {
         <FinoraCard>
           <div className="flex justify-between items-center mb-4">
             <h2 className="font-semibold text-ink">Net Worth Trend</h2>
-            <button
-              onClick={saveSnapshot}
-              disabled={savingSnapshot}
-              className="text-xs uppercase border border-border rounded px-3 py-1.5 disabled:opacity-50"
-            >
-              {savingSnapshot ? 'Saving…' : "Save Today's Snapshot"}
-            </button>
+            {/* Static label + Button's own spinner, replacing the manual "Saving…" text swap --
+                the convention every earlier phase adopted. The `if (savingSnapshot) return`
+                re-entrancy guard in saveSnapshot() stays: Button disabling itself while `loading`
+                covers the pointer path, not a programmatic second call. */}
+            <Button variant="secondary" size="sm" onClick={saveSnapshot} loading={savingSnapshot} className="uppercase">
+              Save Today's Snapshot
+            </Button>
           </div>
           <ChartContainer
             height={224}
+            loading={loading}
+            loadingLabel="Loading your net worth trend"
             isEmpty={!netWorth || netWorth.history.length < 2}
             emptyState={
-              <EmptyState
-                icon={TrendingUp}
-                iconBg="bg-primary-light"
-                iconColor="text-primary"
-                title="Start tracking your trend"
-                desc="Save a snapshot periodically to build a net worth trend — history starts accumulating from when you begin saving snapshots."
-              />
+              loadFailed ? (
+                <p className="text-muted text-sm">Couldn't load your net worth history.</p>
+              ) : (
+                <EmptyState
+                  icon={TrendingUp}
+                  iconBg="bg-primary-light"
+                  iconColor="text-primary"
+                  title="Start tracking your trend"
+                  desc="Save a snapshot periodically to build a net worth trend — history starts accumulating from when you begin saving snapshots."
+                />
+              )
             }
           >
             <Line
@@ -196,7 +275,15 @@ export default function Investments() {
         </FinoraCard>
       </div>
 
-      <FinoraCard>
+      {/* `relative` positions the refetch indicator below. A delete has no pending affordance of
+          its own once its dialog closes -- the add button keeps its own spinner through the
+          refetch, but a removal would otherwise leave stale rows on screen silently. */}
+      <FinoraCard className="relative">
+        {refreshing && (
+          <div className="absolute top-3 right-4 text-[10px] uppercase text-primary flex items-center gap-1">
+            <Loader2 size={11} className="animate-spin" aria-hidden="true" /> Refreshing…
+          </div>
+        )}
         <SectionHeader title="Add Investment / Asset" />
         <div className="grid md:grid-cols-4 gap-2 items-end mb-4">
           <div>
@@ -213,10 +300,25 @@ export default function Investments() {
               <option>Mutual Fund</option><option>Stocks</option><option>FD</option><option>PPF/NPS</option><option>Other</option>
             </select>
           </div>
-          <button onClick={addHolding} disabled={adding} className="bg-primary text-on-primary hover:bg-primary-dark disabled:opacity-50 px-4 py-2 rounded text-xs uppercase">{adding ? 'Adding…' : 'Add'}</button>
+          <Button onClick={addHolding} loading={adding} className="uppercase">Add</Button>
         </div>
 
-        {holdings.length === 0 ? (
+        {loading ? (
+          <Skeleton.Region label="Loading your holdings">
+            {showSkeleton && (
+              <div className="space-y-2">
+                {Array.from({ length: 3 }, (_, i) => (
+                  <div key={i} className="flex justify-between items-center border-b border-dashed py-2">
+                    <Skeleton.Text width="w-2/5" />
+                    <Skeleton.Text width="w-20" className="h-2.5" />
+                  </div>
+                ))}
+              </div>
+            )}
+          </Skeleton.Region>
+        ) : loadFailed ? (
+          <p className="text-muted text-sm">Couldn't load your holdings — please try again later.</p>
+        ) : holdings.length === 0 ? (
           <EmptyState
             icon={Wallet}
             iconBg="bg-blue-100"
@@ -232,7 +334,10 @@ export default function Investments() {
                   <span>{h.name} <span className="text-[10px] uppercase text-gray-400 ml-2">{h.investmentKind}</span></span>
                   <span className="flex items-center gap-3">
                     {fmt(h.balance)}
-                    <button onClick={() => setConfirmRemoveId(h.id)} className="text-danger border border-danger rounded px-2 py-0.5 text-[10px] uppercase">Delete</button>
+                    {/* size="sm" rather than this row's old px-2 py-0.5 text-[10px]: it makes the
+                        control identical to Goals.tsx's per-item Delete, which is the same action
+                        opening the same ConfirmDialog. Normalising matches that precedent. */}
+                    <Button variant="danger" size="sm" onClick={() => setConfirmRemoveId(h.id)} className="uppercase">Delete</Button>
                   </span>
                 </div>
                 <DepositTerms holding={h} />
