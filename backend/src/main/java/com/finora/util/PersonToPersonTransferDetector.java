@@ -227,7 +227,15 @@ public final class PersonToPersonTransferDetector {
             + "|[a-z]{4}0(?:MCHUPI|MERUPI|PTMUPI)"
             + "|@okbiz"                           // Google Pay for Business
             + "|\\bbharatpe\\b"
-            + "|\\bvyapar\\.");
+            + "|\\bvyapar\\."
+            // Second wave, mined from the 1,098 rows still landing in "Other" after the first.
+            // Two acquirer QR/soundbox families and two payment gateways. A gateway in the
+            // narration is as conclusive as a merchant VPA: PayU, Razorpay and Cashfree settle
+            // only to onboarded businesses -- an individual cannot collect through one.
+            + "|paytmqr"                          // Paytm merchant QR / soundbox
+            + "|\\bpayu\\b"
+            + "|razorpay|\\brzp\\b"
+            + "|cashfree");
 
     private static final Pattern SEGMENT_DELIMITERS = Pattern.compile("[\\-/_]+");
 
