@@ -274,6 +274,76 @@ class PasswordChangeServiceTest {
         verify(auditService).record(userId, "INVALID_OTP", "User", userId);
     }
 
+    // --- verifyOtp() attempt cap (Task 13) ---
+    //
+    // Mirrors AuthService's login lockout (failedLoginAttempts / lockedUntil on User), scoped to
+    // one session instead of the account: PasswordChangeService.MAX_OTP_ATTEMPTS is the cap, a
+    // wrong/unverifiable token increments PasswordChangeSession.otpAttemptCount, and once the cap
+    // is reached every later verify -- even one presenting a token that would otherwise pass --
+    // is rejected before PhoneVerificationProvider is ever called again.
+
+    @Test
+    void verifyOtp_withAWrongToken_incrementsTheAttemptCounterButLeavesTheSessionUsable() {
+        PasswordChangeSession session = sessionWith(PasswordChangeSession.Status.STARTED, Instant.now().plusSeconds(600));
+        when(sessionRepository.findByIdAndUserId(session.getId(), userId)).thenReturn(Optional.of(session));
+        when(userRepository.findById(userId)).thenReturn(Optional.of(existingUser()));
+        when(phoneVerificationProvider.verifyAndGetPhoneNumber("someone-elses-token")).thenReturn("+911111111111");
+
+        assertThatThrownBy(() -> service.verifyOtp(userId, new VerifyOtpRequest(session.getId().toString(), "someone-elses-token")))
+                .isInstanceOf(ApiException.class);
+
+        assertThat(session.getOtpAttemptCount()).isEqualTo(1);
+        assertThat(session.getStatus()).isEqualTo(PasswordChangeSession.Status.STARTED);
+        verify(sessionRepository).save(session);
+    }
+
+    @Test
+    void verifyOtp_onTheNthWrongAttempt_invalidatesTheSessionAndAuditsExhaustion() {
+        PasswordChangeSession session = sessionWith(PasswordChangeSession.Status.STARTED, Instant.now().plusSeconds(600));
+        session.setOtpAttemptCount(PasswordChangeService.MAX_OTP_ATTEMPTS - 1);
+        when(sessionRepository.findByIdAndUserId(session.getId(), userId)).thenReturn(Optional.of(session));
+        when(userRepository.findById(userId)).thenReturn(Optional.of(existingUser()));
+        when(phoneVerificationProvider.verifyAndGetPhoneNumber("someone-elses-token")).thenReturn("+911111111111");
+
+        assertThatThrownBy(() -> service.verifyOtp(userId, new VerifyOtpRequest(session.getId().toString(), "someone-elses-token")))
+                .isInstanceOf(ApiException.class);
+
+        assertThat(session.getOtpAttemptCount()).isEqualTo(PasswordChangeService.MAX_OTP_ATTEMPTS);
+        verify(auditService).record(eq(userId), eq("OTP_ATTEMPTS_EXHAUSTED"), eq("User"), eq(userId), any());
+    }
+
+    @Test
+    void verifyOtp_withACorrectOtp_resetsTheAttemptCounter() {
+        PasswordChangeSession session = sessionWith(PasswordChangeSession.Status.STARTED, Instant.now().plusSeconds(600));
+        session.setOtpAttemptCount(2);
+        when(sessionRepository.findByIdAndUserId(session.getId(), userId)).thenReturn(Optional.of(session));
+        when(userRepository.findById(userId)).thenReturn(Optional.of(existingUser()));
+        when(phoneVerificationProvider.verifyAndGetPhoneNumber("valid-firebase-token")).thenReturn("+919876543210"); // synthetic-ok
+
+        service.verifyOtp(userId, new VerifyOtpRequest(session.getId().toString(), "valid-firebase-token"));
+
+        assertThat(session.getOtpAttemptCount()).isEqualTo(0);
+        assertThat(session.getStatus()).isEqualTo(PasswordChangeSession.Status.OTP_VERIFIED);
+    }
+
+    /** The whole point of a cap: once exhausted, even the RIGHT code must not get through. The
+     *  session is rejected before PhoneVerificationProvider is ever called, so a token that would
+     *  have verified successfully never gets the chance to. */
+    @Test
+    void verifyOtp_onAnAlreadyExhaustedSession_rejectsEvenACorrectOtp() {
+        PasswordChangeSession session = sessionWith(PasswordChangeSession.Status.STARTED, Instant.now().plusSeconds(600));
+        session.setOtpAttemptCount(PasswordChangeService.MAX_OTP_ATTEMPTS);
+        when(sessionRepository.findByIdAndUserId(session.getId(), userId)).thenReturn(Optional.of(session));
+        when(phoneVerificationProvider.verifyAndGetPhoneNumber(anyString())).thenReturn("+919876543210"); // synthetic-ok
+
+        assertThatThrownBy(() -> service.verifyOtp(userId, new VerifyOtpRequest(session.getId().toString(), "valid-firebase-token")))
+                .isInstanceOf(ApiException.class);
+
+        assertThat(session.getStatus()).isEqualTo(PasswordChangeSession.Status.STARTED);
+        verify(phoneVerificationProvider, never()).verifyAndGetPhoneNumber(any());
+        verify(userRepository, never()).findById(any());
+    }
+
     @Test
     void verifyOtp_onASessionThatAlreadyCompletedThisStep_rejectsWithoutCallingFirebaseAgain() {
         PasswordChangeSession session = sessionWith(PasswordChangeSession.Status.OTP_VERIFIED, Instant.now().plusSeconds(600));
