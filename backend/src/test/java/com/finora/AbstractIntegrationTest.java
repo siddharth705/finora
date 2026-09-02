@@ -1,7 +1,10 @@
 package com.finora;
 
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.parallel.Isolated;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -51,6 +54,10 @@ import org.testcontainers.containers.PostgreSQLContainer;
  * other as it always has been, interleaved with (not blocked from) the unit tests running
  * concurrently around it, without requiring every other stateful singleton bean in the app to be
  * individually audited for concurrent-test-time safety first.
+ *
+ * <p><b>{@link #emptyTheSharedWorkQueues()}.</b> The flip side of sharing one database: the work
+ * queues in it are shared too, and they are the one kind of table where another class's leftovers
+ * change what a test observes. See that method for the failure it prevents.
  */
 @Isolated
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
@@ -67,6 +74,46 @@ public abstract class AbstractIntegrationTest {
     static {
         // Started here, not by the JUnit extension, so that no per-class lifecycle can stop it.
         POSTGRES.start();
+    }
+
+    @Autowired private JdbcTemplate queueCleanupJdbc;
+
+    /**
+     * Empties the work queues before every integration test — BH-058, fixed at the source rather
+     * than in each test that trips over it.
+     *
+     * <p>Both queues are claimed by a table-wide, {@code LIMIT}ed query ordered oldest-first:
+     * {@code claimDueEvents} takes {@code MerchantLearningEventWorker.BATCH_SIZE} (50) and
+     * {@code claimDueJobs} takes {@code ImportJobStore.BATCH_SIZE} (10). Neither is scoped by user
+     * — a worker claims work, not one user's work, which is correct in production and hostile
+     * here. Both queues are also disabled under test ({@code app.learning.queue.enabled} and
+     * {@code app.import.queue.enabled} both default off), so rows a test enqueues stay PENDING or
+     * QUEUED for the rest of the run unless that test drains them. Most do not.
+     *
+     * <p>So a test that enqueues its own row and then drains once is really asserting "fewer than
+     * BATCH_SIZE older rows exist" — an assumption about the whole suite that it cannot see and
+     * does not state. Past that threshold the drain claims a batch of other tests' leftovers and
+     * the row under test is never claimed at all. It does not run late; it never runs. That
+     * presents as an ordering-dependent flake and invites raising a timeout, which cannot help.
+     *
+     * <p>Measured before this existed: {@code ImportJobEndpointIT} climbed from one leftover job to
+     * eight across its own methods, and {@code QueueOverheadMeasurementIT} began a method with
+     * eleven — past its batch size of ten already, surviving only because its own warm-up happened
+     * to drain ten first. {@code MerchantLearningNudgeIT} did fail, for exactly this reason.
+     *
+     * <p>Deleting rather than draining: draining runs real work (an import parse is not cheap) and
+     * would make every test pay for whatever the previous one abandoned. Safe to delete outright —
+     * these are queue tables, every dependent FK on {@code import_jobs} is {@code ON DELETE
+     * CASCADE} (V72), and nothing references {@code merchant_learning_events} at all.
+     *
+     * <p>A superclass {@code @BeforeEach} runs before the subclass's, so a test class that enqueues
+     * in its own setup is unaffected. {@code @Isolated} above means no other class is running to
+     * refill the queues underneath this.
+     */
+    @BeforeEach
+    void emptyTheSharedWorkQueues() {
+        queueCleanupJdbc.update("DELETE FROM import_jobs");
+        queueCleanupJdbc.update("DELETE FROM merchant_learning_events");
     }
 
     @DynamicPropertySource

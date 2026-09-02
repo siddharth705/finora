@@ -57,7 +57,16 @@ public class MerchantLearningEventWorker {
 
     /** How many events one pass claims. Bounded so a backlog drains steadily instead of holding a
      *  connection from a pool capped at 10 for an unbounded stretch. */
-    private static final int BATCH_SIZE = 50;
+    static final int BATCH_SIZE = 50;
+
+    /**
+     * How many batches one nudge will drain before leaving the rest to the poller.
+     *
+     * <p>Bounds the work a single caller's nudge can do on the shared executor thread. Twenty
+     * passes is {@code 20 * BATCH_SIZE} events, far more than any one import produces, so in
+     * practice the loop stops because the queue ran dry rather than because it hit this.
+     */
+    private static final int MAX_NUDGE_PASSES = 20;
 
     /** How many stuck rows one pass recovers. Same reasoning as the batch size. */
     private static final int RECOVERY_BATCH_SIZE = 50;
@@ -128,11 +137,27 @@ public class MerchantLearningEventWorker {
      * <p>Runs on a separate thread deliberately: the caller is a request thread that has just
      * committed a user's import, and it must not wait for learning to be applied. Concurrent runs
      * with the poller are safe — {@code SKIP LOCKED} is what makes that true.
+     *
+     * <p><b>Drains until a pass comes back short, rather than exactly once.</b> A pass that claims
+     * a full {@link #BATCH_SIZE} is itself evidence more work is waiting, and stopping there left
+     * the remainder for the next poll — so an import confirming more merchants than one batch had
+     * its tail silently deferred by a poll interval, despite a nudge having just run. Never a
+     * correctness bug (the rows are durable and the poller collects them), but the delay was
+     * invisible and served no purpose.
+     *
+     * <p>Still bounded, for the reason {@link #BATCH_SIZE} is: this occupies a thread in a small
+     * pool, and an unbounded loop would let one caller hold it for as long as the queue keeps
+     * refilling. Past {@link #MAX_NUDGE_PASSES} the poller takes over, which is exactly the
+     * backstop it exists to be. Note the bound is on passes, not connections — each pass opens and
+     * releases its own transactions rather than holding one across the loop.
      */
     @Async("learningQueueExecutor")
     public void nudge() {
         if (!enabled) return;
-        drainOnce();
+        int passes = 1;
+        while (drainOnce() == BATCH_SIZE && passes++ < MAX_NUDGE_PASSES) {
+            // A full batch means the queue had at least one more event than this pass could take.
+        }
     }
 
     /**
