@@ -71,6 +71,27 @@ export function ReportsScreen() {
     staleTime: 5 * 60_000, // a past month's totals don't change once the month is over
   });
 
+  /**
+   * The denominator for each category's share, and deliberately NOT `report.expense`.
+   *
+   * The backend builds those two figures from different transaction sets, on purpose:
+   * ReportService narrows to `txnsForTotals = RefundNetting.excludingInvestmentTransfers(txns)` for
+   * income/expense, while `byCategory` keeps reading the wider `txns` "so an Investments line still
+   * shows up in the report's own category table". So in any month containing an investment outflow
+   * -- a SIP, a Groww/Zerodha/Upstox debit -- the categories sum to MORE than report.expense, and
+   * each row was being divided by a total it was excluded from.
+   *
+   * The visible result was percentages over 100 ("Investments: 150 percent of this month's
+   * spending", spoken verbatim by VoiceOver) and, because ProgressBar clamps to 100, two rows of a
+   * 40/60 split both rendering as full-width bars -- the breakdown's whole purpose, comparing
+   * relative size, silently defeated. Summing the rows keeps every share honest against the total
+   * those rows actually belong to, and leaves the backend's deliberate split alone.
+   */
+  const categoryTotal = useMemo(
+    () => (report?.categories ?? []).reduce((sum, cat) => sum + cat.amount, 0),
+    [report?.categories]
+  );
+
   async function runExport(kind: 'csv' | 'pdf') {
     if (!report || exporting) return;
     setExportError(null);
@@ -206,7 +227,7 @@ export function ReportsScreen() {
               <EmptyState message="No expenses recorded this month." />
             ) : (
               report.categories.map((cat) => {
-                const pct = report.expense > 0 ? (cat.amount / report.expense) * 100 : 0;
+                const pct = categoryTotal > 0 ? (cat.amount / categoryTotal) * 100 : 0;
                 return (
                   <View
                     key={cat.category}
