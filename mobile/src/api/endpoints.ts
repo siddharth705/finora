@@ -566,3 +566,23 @@ export const devicesApi = {
   list: () => api.get<DeviceSession[]>('/users/me/devices').then((r) => r.data),
   revoke: (id: string) => api.delete<{ message: string }>(`/users/me/devices/${id}`).then((r) => r.data),
 };
+
+// --- Push notification device tokens (Task 14) ---
+// Mirrors backend DeviceTokenController exactly: POST /device-tokens registers this device's FCM
+// token, POST /device-tokens/revoke removes it. Revoke is a POST, not a DELETE-with-body -- the
+// backend has no precedent for a DELETE carrying a body (some proxies strip it), and the client
+// identifies the token to revoke by its own raw string, never a server-side row id it was never
+// given. `platform` must be exactly 'ANDROID' or 'IOS' (backend validates
+// @Pattern(regexp = "ANDROID|IOS")) -- it routes delivery to FCM or APNs on this exact string.
+export type DevicePlatform = 'ANDROID' | 'IOS';
+export interface RegisteredDeviceToken {
+  id: string;
+  platform: DevicePlatform;
+  registeredAt: string;
+}
+export const deviceTokensApi = {
+  register: (body: { token: string; platform: DevicePlatform }) =>
+    api.post<RegisteredDeviceToken>('/device-tokens', body).then((r) => r.data),
+  revoke: (body: { token: string }) =>
+    api.post<{ message: string }>('/device-tokens/revoke', body).then((r) => r.data),
+};
