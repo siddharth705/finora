@@ -23,6 +23,22 @@ import type { ConfirmedRowPayload } from '../api/endpoints';
  * Every function here is pure and returns a new state — no path can half-apply a decision.
  */
 
+/**
+ * Whether the engine's category for this row is a guess no human has confirmed — the rows actually
+ * worth a look before confirming an import.
+ *
+ * <p>Mirrors the backend's single definition, `CategorizationService.isUnconfirmedGuess`. Both
+ * clients previously tested `categorySource === 'default'` inline, which was complete while
+ * "default" was the only unconfirmed outcome. Adding `structural_p2p` broke that silently and in
+ * the worst possible direction: person-to-person transfers are the LARGEST bucket of formerly-Other
+ * rows, so they stopped rendering the "low confidence" affordance entirely and became
+ * indistinguishable from a confident keyword or learned match — on the one screen where correcting
+ * them is free.
+ */
+export function isUnconfirmedGuess(categorySource: string | null | undefined): boolean {
+  return categorySource === 'default' || categorySource === 'structural_p2p';
+}
+
 export type DuplicateDecision = 'unresolved' | 'import' | 'skip';
 
 export interface RowReview {

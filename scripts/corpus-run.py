@@ -182,6 +182,22 @@ def summarise(records: list[dict]) -> None:
     print(f"  expected transaction counts known: 0 / {len(records)}  (ground truth not yet established)")
 
 
+def discover_pdfs(corpus: Path):
+    """Every PDF in {corpus}, matching the extension case-insensitively.
+
+    Real statements arrive named however the bank or the customer named them (e.g. an uppercase
+    ".PDF"), and glob("*.pdf") is case-sensitive regardless of the underlying filesystem, so it
+    silently drops those. Filtering by suffix instead catches every case.
+
+    Shared in shape (and covered by one cross-checking test) with run-corpus-ground-truth.py's own
+    discover_pdfs: the tool that MEASURES the corpus and the tool that JUDGES it must never disagree
+    about which documents the corpus contains, because that disagreement is invisible in both
+    outputs -- each simply reports on the set it saw.
+    """
+    return sorted((p for p in corpus.iterdir() if p.is_file() and p.suffix.lower() == ".pdf"),
+                  key=lambda p: p.name)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -204,12 +220,7 @@ def main() -> int:
 
     _refuse_if_inside_repo(corpus, "corpus", args.allow_in_repo_synthetic_corpus)
 
-    # Real statements arrive named however the bank or the customer named them (e.g.
-    # "SBI Credit Card.PDF") -- glob("*.pdf") is case-sensitive regardless of the underlying
-    # filesystem, so it silently drops uppercase-extension files. Filtering by suffix instead
-    # catches every case.
-    pdfs = sorted((p for p in corpus.iterdir() if p.is_file() and p.suffix.lower() == ".pdf"),
-                  key=lambda p: p.name)
+    pdfs = discover_pdfs(corpus)
     if not pdfs:
         sys.exit(f"no .pdf files in {corpus}")
 

@@ -44,7 +44,7 @@ public class ImportDto {
             BigDecimal amount,
             String type,
             String suggestedCategory,
-            String categorySource,   // "learned" | "rule" | "user_rule" | "global_rule" | "default" | "file"
+            String categorySource,   // "learned" | "rule" | "user_rule" | "global_rule" | "structural_p2p" | "default" | "file"
             UUID ruleId,             // set only when categorySource is "user_rule" or "global_rule"
             boolean likelyDuplicate,
             String referenceNumber,  // best-effort, null when the source had no recognizable reference/cheque column
@@ -742,7 +742,7 @@ public class ImportDto {
     public record ConfirmedRow(
             LocalDate date, String description, BigDecimal amount, String type,
             String category, boolean include,
-            String categorySource,   // "learned" | "rule" | "user_rule" | "global_rule" | "default" | "file" — carried from staging
+            String categorySource,   // "learned" | "rule" | "user_rule" | "global_rule" | "structural_p2p" | "default" | "file" — carried from staging
             UUID ruleId,             // carried from staging — see StagedRow.ruleId
             boolean likelyDuplicate, // carried from staging, so the summary can report it honestly
             @Size(max = 64) String referenceNumber,  // carried from staging — see StagedRow.referenceNumber

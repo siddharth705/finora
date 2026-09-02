@@ -142,6 +142,25 @@ def match_against_ground_truth(ground_truth_path: Path, record: dict, workdir: P
                 "detail": (result.stderr or result.stdout or "no output")[-500:]}
 
 
+def discover_pdfs(corpus: Path):
+    """Every PDF in {corpus}, matching the extension case-insensitively.
+
+    Deliberately not glob("*.pdf"). At least one real statement in the corpus is named with an
+    uppercase extension ("SBI Credit Card.PDF"), and Path.glob is case-sensitive regardless of
+    whether the underlying filesystem is -- so globbing silently dropped that document from every
+    run of this script. A correctness gate that SKIPS a file it was asked to judge is worse than one
+    that fails on it: the run still summarises as a clean pass, so the gap is invisible in exactly
+    the output someone would check. (That document turned out to have no ground-truth file either,
+    which is precisely the sort of thing this script exists to surface and could not.)
+
+    scripts/corpus-run.py already carries this same fix and its own comment explaining it; this is
+    that fix, ported, so the measuring tool and the judging tool can never disagree about which
+    documents the corpus contains.
+    """
+    return sorted((p for p in corpus.iterdir() if p.is_file() and p.suffix.lower() == ".pdf"),
+                  key=lambda p: p.name)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                   formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -165,7 +184,7 @@ def main() -> int:
     ground_truth_dir = (args.ground_truth or (corpus / "ground-truth")).resolve()
     _refuse_if_inside_repo(ground_truth_dir, "ground-truth directory", args.allow_in_repo_synthetic_corpus)
 
-    pdfs = sorted(corpus.glob("*.pdf"), key=lambda p: p.name)
+    pdfs = discover_pdfs(corpus)
     if not pdfs:
         sys.exit(f"no .pdf files in {corpus}")
 
