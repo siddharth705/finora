@@ -381,24 +381,56 @@ class RateLimitFilterTest {
         assertThat(completeResponse.getStatus()).isEqualTo(429);
     }
 
-    /** Fix wave: register and revoke share one bucket (deviceTokenLimiter), matching this class's
-     *  established shape for a small resource's multi-step/multi-action flow (see
-     *  passwordChangeSteps_shareOneRateLimitBucket above) -- a caller alternating between the two
-     *  must not get double the effective quota by rotating across them. */
+    /**
+     * Bug fix (post-merge review): register and revoke used to share ONE bucket
+     * (deviceTokenLimiter), on the reasoning that a caller legitimately hits both together. That
+     * missed how often register actually fires: AuthContext.tsx (mobile) calls
+     * registerDeviceToken() on EVERY background -> active transition with no client-side dedupe --
+     * on iOS, Control Center, the app switcher, and system dialogs alone can produce several such
+     * transitions inside one rate-limit window, which is ordinary use, not abuse. A shared bucket
+     * meant that ordinary foreground churn could exhaust the SAME quota a logout's revoke call
+     * draws from: revoke fails closed on a 429 the client swallows (best-effort), leaving the
+     * token active server-side and this backend pushing to a device the user just signed out of.
+     *
+     * <p>register and revoke now have INDEPENDENT buckets (deviceTokenRegisterLimiter/
+     * deviceTokenRevokeLimiter) -- exhausting one must never trip the other, the opposite property
+     * of passwordChangeSteps_shareOneRateLimitBucket above, which is exactly the point: those three
+     * steps are one flow that SHOULD share a budget, register/revoke are two independent actions
+     * that should not.
+     */
     @Test
-    void deviceTokenRegisterAndRevoke_shareOneRateLimitBucket() throws Exception {
+    void deviceTokenRegisterAndRevoke_haveIndependentRateLimitBuckets() throws Exception {
         RateLimitFilter filter = newFilter(false);
         FilterChain chain = mock(FilterChain.class);
 
-        boolean tripped = false;
-        for (int i = 0; i < 20; i++) {
-            String path = i % 2 == 0 ? "/api/v1/device-tokens" : "/api/v1/device-tokens/revoke";
-            HttpServletRequest request = requestFor(path, "10.0.0.11", null);
-            MockHttpServletResponse response = new MockHttpServletResponse();
-            filter.doFilterInternal(request, response, chain);
-            if (response.getStatus() == 429) tripped = true;
-        }
-        assertThat(tripped).isTrue();
+        // Exhaust register's own bucket for this IP (foreground-transition churn).
+        assertThat(tripsRateLimitAfterManyRequests(filter,
+                requestFor("/api/v1/device-tokens", "10.0.0.11", null)))
+                .as("register must still trip its own ceiling eventually")
+                .isTrue();
+
+        // Revoke, from the SAME IP, must still be allowed -- a shared bucket would already have
+        // this blocked, which is precisely the starved-logout bug this split fixes.
+        MockHttpServletResponse afterRegisterExhausted = new MockHttpServletResponse();
+        filter.doFilterInternal(requestFor("/api/v1/device-tokens/revoke", "10.0.0.11", null),
+                afterRegisterExhausted, chain);
+        assertThat(afterRegisterExhausted.getStatus())
+                .as("a logout's revoke call must not be starved by register's own foreground-churn bucket")
+                .isNotEqualTo(429);
+
+        // And the reverse: exhausting revoke's (tighter) bucket must not touch register's.
+        RateLimitFilter secondFilter = newFilter(false);
+        assertThat(tripsRateLimitAfterManyRequests(secondFilter,
+                requestFor("/api/v1/device-tokens/revoke", "10.0.0.12", null)))
+                .as("revoke must still trip its own ceiling eventually")
+                .isTrue();
+
+        MockHttpServletResponse afterRevokeExhausted = new MockHttpServletResponse();
+        secondFilter.doFilterInternal(requestFor("/api/v1/device-tokens", "10.0.0.12", null),
+                afterRevokeExhausted, chain);
+        assertThat(afterRevokeExhausted.getStatus())
+                .as("register must not be starved by revoke's own bucket either")
+                .isNotEqualTo(429);
     }
 
     /**
@@ -448,8 +480,10 @@ class RateLimitFilterTest {
                 Map.entry("app.rate-limit.mfa-verify.window-seconds", DEFAULT_MFA_VERIFY_WINDOW),
                 Map.entry("app.rate-limit.refresh.max", DEFAULT_REFRESH_MAX),
                 Map.entry("app.rate-limit.refresh.window-seconds", DEFAULT_REFRESH_WINDOW),
-                Map.entry("app.rate-limit.device-token.max", DEFAULT_DEVICE_TOKEN_MAX),
-                Map.entry("app.rate-limit.device-token.window-seconds", DEFAULT_DEVICE_TOKEN_WINDOW));
+                Map.entry("app.rate-limit.device-token-register.max", DEFAULT_DEVICE_TOKEN_REGISTER_MAX),
+                Map.entry("app.rate-limit.device-token-register.window-seconds", DEFAULT_DEVICE_TOKEN_REGISTER_WINDOW),
+                Map.entry("app.rate-limit.device-token-revoke.max", DEFAULT_DEVICE_TOKEN_REVOKE_MAX),
+                Map.entry("app.rate-limit.device-token-revoke.window-seconds", DEFAULT_DEVICE_TOKEN_REVOKE_WINDOW));
 
         // Selects on an actual @Value annotation being present, not a parameter-count threshold --
         // a count threshold silently breaks the moment another plain (non-@Value) dependency is
