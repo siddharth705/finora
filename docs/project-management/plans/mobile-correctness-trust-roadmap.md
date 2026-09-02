@@ -1,8 +1,8 @@
 # Finora Mobile — Correctness & Trust Roadmap
 
-**Baselined:** 2026-09-01
+**Baselined:** 2026-09-01 · **Re-baselined:** 2026-09-02 (Track A's first three items shipped — PR [#736](https://github.com/siddharth705/finora/pull/736))
 **Owner:** Siddharth Tiwari · **Maintained by:** the PM role
-**Status:** Not started (0% — this is the initial baseline)
+**Status:** In progress — **22% overall**, Track A 75% (A1/A2/A3 merged, A4 not started)
 **Scope:** Mobile app hardening and trust-surface work, post-launch. This is **not** part of the
 `project-plan-v1.0.md` GA gate — it is what comes after, informed by a two-pass mobile audit. See
 that file for GA status; do not merge this plan's tracks into its weighted table without a deliberate
@@ -30,7 +30,13 @@ explain or let the user correct).
 
 This repo runs concurrent sessions in shared history, with a documented record of collisions
 (three separate Flyway migration-number collisions; see `CLAUDE.md`). At the time this plan was first
-drafted, three related branches were still open; **rechecked 2026-09-01, two have since merged:**
+drafted, three related branches were still open; **rechecked 2026-09-02, two have since merged:**
+
+> **Track A's own experience confirms this section earns its keep.** While PR #736 was in review,
+> `main` took a 1,069-line refactor of `frontend/src/pages/Import.tsx` — the exact file A3's fix
+> mirrors. The port survived (verified byte-identical after merging `main`, and the web gate guard
+> A3 copies moved line but kept its logic), but only because it was re-checked before merge rather
+> than assumed. Re-run that check, don't inherit this table's verdicts.
 
 | Branch | Status | Relevance |
 |---|---|---|
@@ -45,13 +51,13 @@ drafted, three related branches were still open; **rechecked 2026-09-01, two hav
 
 Weighted by risk-adjusted priority, not task count — proposed by the PM role, adjustable by the owner.
 
-| Track | Weight | Done | Why this weight |
-|---|---|---|---|
-| A — Financial Correctness | 30% | 0% | Silent wrong numbers are the single worst failure mode for a finance app; nothing here crashes or errors, so nothing catches it without a fix |
-| B — Import Hardening | 25% | 0% | The app's crown-jewel flow concentrates the highest-severity findings in either audit — duplicate-import race, no idempotency, no recovery after app kill |
-| C — Trust Layer | 25% | 0% | Highest strategic ROI identified across both audits: the backend/web already compute this, mobile just doesn't render it — cheap relative to its differentiation value |
-| D — Security Cleanup | 20% | 0% | Real, traceable gaps (fail-open lock, indefinite unencrypted statement retention) but narrower blast radius than A/B, and mobile-only so it parallelizes cleanly |
-| **Total** | **100%** | **0%** | Initial baseline — nothing in this plan has started |
+| Track | Weight | Done | Contribution | Why this weight |
+|---|---|---|---|---|
+| A — Financial Correctness | 30% | **75%** ▲ | 22.5 | Silent wrong numbers are the single worst failure mode for a finance app; nothing here crashes or errors, so nothing catches it without a fix. A1/A2/A3 merged in PR #736; only A4 (the categorization-correction loop, the largest single item) remains |
+| B — Import Hardening | 25% | 0% | 0 | The app's crown-jewel flow concentrates the highest-severity findings in either audit — duplicate-import race, no idempotency, no recovery after app kill |
+| C — Trust Layer | 25% | 0% | 0 | Highest strategic ROI identified across both audits: the backend/web already compute this, mobile just doesn't render it — cheap relative to its differentiation value |
+| D — Security Cleanup | 20% | 0% | 0 | Real, traceable gaps (fail-open lock, indefinite unencrypted statement retention) but narrower blast radius than A/B, and mobile-only so it parallelizes cleanly |
+| **Total** | **100%** | | **22.5%** | Track A's three well-scoped items shipped 2026-09-02. A4 is deliberately the remaining quarter of that track because it is not a defect fix but a missing feature — see its own row below |
 
 **Sequencing note:** Tracks A and B both land in `ImportService.java` / `ImportScreen.tsx` and share the
 import confirm/duplicate/supersede subsystem — sequence them one at a time within a single track owner,
@@ -65,26 +71,44 @@ already exists; D is mobile-only and touches different files than A/B).
 
 | # | Item | Severity | Files | Status |
 |---|---|---|---|---|
-| A1 | ABSOLUTE-mode balance overwrite checks only other statements for recency, never live transactions dated after the statement period | High | `backend/.../imports/ImportService.java:1206-1231,1540-1548` | Not started |
-| A2 | Duplicate detection is exact-string match on description — no trim/case-fold, a real false-negative gap | Medium | `backend/.../repository/TransactionRepository.java:228-250`, `imports/DuplicateIndex.java:104-113` | Not started |
-| A3 | Import silently defaults to `existingAccounts[0]` instead of matching the already-detected masked account number | High | `mobile/src/screens/import/ImportScreen.tsx:228-234` | Not started |
-| A4 | Categorization correction loop doesn't exist on mobile — Settings promises a review queue that isn't there; a wrong category is permanently uncorrectable | Critical | `mobile/src/screens/SettingsScreen.tsx:291-355`, `api/endpoints.ts:134,138,144` (zero callers), vs. `frontend/src/components/AskOnceCard.tsx`/`MerchantGroupReviewCard.tsx` (shipped on web, never ported) | Not started |
+| # | Item | Severity | Files | Status |
+|---|---|---|---|---|
+| A1 | ABSOLUTE-mode balance overwrite checks only other statements for recency, never live transactions dated after the statement period | High | `backend/.../imports/ImportService.java`, `repository/TransactionRepository.java` | ✅ **Merged** — PR [#736](https://github.com/siddharth705/finora/pull/736) |
+| A2 | Duplicate detection is exact-string match on description — no trim/case-fold, a real false-negative gap | Medium | `backend/.../repository/TransactionRepository.java`, `imports/DuplicateIndex.java`, `service/ReconciliationService.java`, new `util/DuplicateMatching.java` | ✅ **Merged** — PR [#736](https://github.com/siddharth705/finora/pull/736) |
+| A3 | Import silently defaults to `existingAccounts[0]` instead of matching the already-detected masked account number | High | `mobile/src/screens/import/ImportScreen.tsx`, new `lib/accountMatch.ts`, new `lib/importGate.ts` | ✅ **Merged** — PR [#736](https://github.com/siddharth705/finora/pull/736) |
+| A4 | Categorization correction loop doesn't exist on mobile — Settings promises a review queue that isn't there; a wrong category is permanently uncorrectable | Critical | `mobile/src/screens/SettingsScreen.tsx:291-355`, `api/endpoints.ts:134,138,144` (zero callers), vs. `frontend/src/components/AskOnceCard.tsx`/`MerchantGroupReviewCard.tsx` (shipped on web, never ported) | **Not started** — next up |
 
-**A1 fix:** extend the recency check to also query the account's latest live transaction date;
-refuse/warn using the same pattern `ClosingBalanceGuard` already uses for uncorroborated balances.
-**Do before broader Gmail-sync rollout** — the trigger condition (a transaction landing between
-periodic statement imports) becomes routine, not rare, once that ships further.
+### What shipped in PR #736, and what it changed about the plan
 
-**A2 fix:** normalize (trim + case-fold) description before keying/comparing. Do not loosen further
-into fuzzy matching — that would trade a low false-positive rate for a worse one; the reconciliation
-layer already has a separately-labeled fuzzy tier for cross-source matching where that's appropriate.
+**A1** — the recency check now also asks whether the account has a live transaction dated after the
+statement's own last row (`TransactionRepository.existsLiveTransactionAfterDate`). Two details worth
+carrying forward: the boundary is the statement's `maxDate`, **not** its printed period end (a
+transaction between the two is by construction not on the statement, so it is genuine off-ledger
+activity the closing balance does not account for); and the same-day case is a **documented, accepted
+gap** — `>=` would over-block, since a manual row duplicating a statement row shares its date.
 
-**A3 fix:** match `detected.accountNumberMasked` against existing accounts before falling back to
-index 0; only default to "new account" or an explicit unresolved state when no match is found.
+**A2** — normalized in all three paths, but via a shared `com.finora.util.DuplicateMatching` helper
+rather than an inline `trim().toLowerCase()`. The reason is load-bearing and easy to undo by accident:
+**Java's `String.trim()` strips every character `<= U+0020`; SQL `TRIM()` strips only the space.** An
+inline trim would have made the in-memory index and the SQL query disagree about tab-padded
+descriptions — which the CSV path really can produce — introducing a divergence that did not exist
+while both sides were exact equality. `DuplicateIndexIT` now pins that equivalence against real
+Postgres with tab/newline cases. **Do not "simplify" this helper back to `trim()`.**
 
-**A4 fix:** port `AskOnceCard`/`MerchantGroupReviewCard` (or a mobile-appropriate needs-review list)
-into Ledger/Dashboard; wire a change-category affordance onto the ledger row via the existing
-`OptionPickerModal`. This is the largest single item in Track A — treat as its own sub-effort.
+**A3** — the original plan said "match the detected number, else fall back". That is *not* what
+shipped, and the plan was wrong: `frontend/src/lib/accountMatch.ts` already solved this exact problem
+(its doc comment quotes the identical `existingAccounts[0]` defect), so it was **ported verbatim**
+instead. It filters by bank first, requires four digits before trusting a masked number, matches by
+suffix across inconsistent masking, and returns null on ambiguity. A hand-rolled first draft lost every
+one of those and would have matched two different banks' accounts sharing last-4. The two copies must
+stay in sync — any future fix belongs in both.
+
+**A4 remains, and is a different kind of work.** A1–A3 were defect fixes; A4 is a missing feature —
+port `AskOnceCard`/`MerchantGroupReviewCard` (or a mobile-appropriate needs-review list) into
+Ledger/Dashboard, and wire a change-category affordance onto the ledger row via the existing
+`OptionPickerModal`. Treat as its own sub-effort. Note the standing lesson from A3: **check what the
+web app already does before designing it fresh** — `AskOnceCard` is a working implementation, not just
+a reference.
 
 ---
 
