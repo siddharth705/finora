@@ -10,7 +10,6 @@ import com.finora.repository.UserRepository;
 import com.finora.security.JwtService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.web.client.TestRestTemplate;
@@ -53,14 +52,6 @@ class ImportJobWorkerStageIT extends AbstractIntegrationTest {
     @Autowired private UserRepository userRepository;
     @Autowired private ImportJobRepository jobRepository;
     @Autowired private ImportJobWorker worker;
-
-    /** BH-058. The suite shares one import_jobs table and leaves jobs QUEUED in it; drainOnce()
-     *  claims only the oldest ImportJobStore.BATCH_SIZE of them, so without this the job each test
-     *  enqueues below can fall outside the batch and never run. See ImportJobQueueBacklog. */
-    @BeforeEach
-    void emptyTheQueueTheRestOfTheSuiteLeftBehind() {
-        ImportJobQueueBacklog.empty(worker);
-    }
     @Autowired private ImportJobStageRepository stageRepository;
     @Autowired private ImportTraceService traceService;
     @Autowired private JwtService jwtService;

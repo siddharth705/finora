@@ -6,13 +6,16 @@ import com.finora.entity.Merchant;
 import com.finora.entity.User;
 import com.finora.repository.CategoryRepository;
 import com.finora.repository.MerchantCategoryLearningRepository;
+import com.finora.repository.MerchantLearningEventRepository;
 import com.finora.repository.MerchantRepository;
 import com.finora.repository.UserRepository;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.transaction.support.TransactionTemplate;
+
+import java.util.ArrayList;
+import java.util.List;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -34,31 +37,11 @@ import static org.assertj.core.api.Assertions.assertThat;
  * transaction results in the learning being applied <em>without anybody calling the worker</em>,
  * and nothing else.
  *
- * <h2>Why {@link #emptyTheQueueTheRestOfTheSuiteLeftBehind()} exists</h2>
- * This test used to fail under full-suite runs while passing whenever it was run narrowly, and the
- * reason was not timing. {@code merchant_learning_events} is <em>global</em>: one Testcontainers
- * Postgres is shared by every {@code *IT} class in the JVM, and the queue is disabled under test,
- * so every event any other test enqueues — {@code ImportService.confirm} and
- * {@code CategorizationService} both do, on paths a lot of tests exercise — stays PENDING for the
- * rest of the run unless that test happens to drain it explicitly. Most do not.
- *
- * <p>{@code claimDueEvents} is {@code ORDER BY next_attempt_at ... LIMIT 50}, unscoped by user. So
- * once the suite has leaked more than one batch of older PENDING events, the single {@code
- * drainOnce()} that this test's nudge performs claims fifty of <em>other tests' leftovers</em> and
- * returns, having never reached the event under test. The nudge fired correctly, the executor ran
- * correctly, and the assertion still failed — the event was simply never in the batch, and no
- * timeout would have changed that.
- *
- * <p>Measured while diagnosing it: six neighbouring classes alone left fifteen events behind, and
- * seeding a backlog of sixty reproduces the full-suite failure exactly — the same full-budget 20s
- * timeout, in an otherwise isolated run. Which backlog a given run has accumulated by the time
- * this class is scheduled is what decided whether it passed, and is why it read as flakiness.
- *
- * <p>Draining the backlog first restores the precondition this test always silently assumed — that
- * its own event is the one the nudge will find. It runs before the event under test exists, so the
- * claim above still holds: from the enqueue onwards, nothing calls the worker. Safe to do here
- * because {@code AbstractIntegrationTest} is {@code @Isolated}, so no other {@code *IT} class is
- * running to enqueue anything concurrently.
+ * <p>This test is why {@code AbstractIntegrationTest.emptyTheSharedWorkQueues()} exists. It used
+ * to fail under full-suite runs and pass whenever run narrowly, because a nudge drains one batch
+ * of a table-wide queue and the rest of the suite had filled that batch with its own leftovers.
+ * The precondition it needs — that its event is one a single drain will reach — is established
+ * there now, for every test rather than this one.
  */
 @TestPropertySource(properties = {
         "app.learning.queue.enabled=true",
@@ -82,10 +65,6 @@ class MerchantLearningNudgeIT extends AbstractIntegrationTest {
      */
     private static final Duration TIMEOUT = Duration.ofSeconds(20);
 
-    /** Bound on the setup drain, so a queue that somehow refuses to empty fails loudly here rather
-     *  than spinning. Each pass claims up to the worker's batch size of 50. */
-    private static final int MAX_DRAIN_PASSES = 100;
-
     @Autowired private MerchantLearningEventPublisher publisher;
     @Autowired private MerchantLearningEventWorker worker;
     @Autowired private MerchantCategoryLearningRepository learningRepository;
@@ -93,21 +72,7 @@ class MerchantLearningNudgeIT extends AbstractIntegrationTest {
     @Autowired private MerchantRepository merchantRepository;
     @Autowired private CategoryRepository categoryRepository;
     @Autowired private TransactionTemplate transactionTemplate;
-
-    /** Clears events other test classes left in the shared queue, so the nudge under test finds
-     *  its own event rather than fifty of theirs. See the class comment for why this is load-
-     *  bearing rather than tidiness. */
-    @BeforeEach
-    void emptyTheQueueTheRestOfTheSuiteLeftBehind() {
-        int passes = 0;
-        while (worker.drainOnce() > 0) {
-            if (++passes >= MAX_DRAIN_PASSES) {
-                throw new IllegalStateException("The learning queue would not drain in "
-                        + MAX_DRAIN_PASSES + " passes; this test cannot establish its precondition "
-                        + "that the event it enqueues is the one the nudge will claim.");
-            }
-        }
-    }
+    @Autowired private MerchantLearningEventRepository eventRepository;
 
     @Test
     void committingAnImportTriggersLearningWithoutAnyoneCallingTheWorker() {
@@ -136,6 +101,90 @@ class MerchantLearningNudgeIT extends AbstractIntegrationTest {
         assertThat(learningAppliedWithin(TIMEOUT, savedUser.getId(), savedMerchant.getId()))
                 .as("the afterCommit nudge should have applied the learning without an explicit drain")
                 .isTrue();
+    }
+
+    /**
+     * A nudge must drain the queue it was handed, not just the first batch of it.
+     *
+     * <p>{@code drainOnce()} claims at most {@link MerchantLearningEventWorker#BATCH_SIZE}. A pass
+     * that comes back full is itself evidence there is more waiting, and before this was fixed the
+     * nudge stopped there anyway — so a burst larger than one batch left the remainder sitting
+     * until the next poll, thirty seconds later, for no reason. The row was durable and the poller
+     * would have collected it, so this was never a correctness bug; it was the user's
+     * categorisation silently not taking effect for half a minute after an import that had
+     * visibly succeeded.
+     *
+     * <p>Seeds the backlog directly rather than through the publisher on purpose: {@code enqueue}
+     * registers one afterCommit nudge per call, so enqueueing the whole burst would fire fifty-odd
+     * nudges and prove nothing about what a single one does.
+     */
+    @Test
+    void oneNudgeDrainsABacklogLargerThanASingleBatch() {
+        User savedUser = userRepository.save(newUser());
+        Category savedCategory = categoryRepository.save(newCategory(savedUser));
+
+        int backlog = MerchantLearningEventWorker.BATCH_SIZE + 5;
+        List<UUID> merchantIds = new ArrayList<>();
+        for (int i = 0; i < backlog; i++) {
+            merchantIds.add(merchantRepository.save(newMerchant(savedUser)).getId());
+        }
+        // All but the last land with no nudge behind them -- this is the backlog a real burst
+        // leaves. The last one commits through the publisher, so exactly ONE nudge fires.
+        merchantIds.subList(0, backlog - 1).forEach(merchantId ->
+                eventRepository.save(com.finora.entity.MerchantLearningEvent.pending(
+                        savedUser.getId(), merchantId, savedCategory.getId(), null, null)));
+        UUID last = merchantIds.get(backlog - 1);
+        transactionTemplate.executeWithoutResult(status ->
+                publisher.enqueue(savedUser.getId(), last, savedCategory.getId(), null, null));
+
+        assertThat(everyLearningAppliedWithin(TIMEOUT, savedUser.getId(), backlog))
+                .as("one nudge should drain past the first batch of %d", MerchantLearningEventWorker.BATCH_SIZE)
+                .isTrue();
+    }
+
+    /** True once the user has {@code expected} learning rows, or false if the budget runs out. */
+    private boolean everyLearningAppliedWithin(Duration timeout, UUID userId, int expected) {
+        Instant deadline = Instant.now().plus(timeout);
+        while (Instant.now().isBefore(deadline)) {
+            if (learningRepository.findByUserId(userId).size() >= expected) {
+                return true;
+            }
+            if (!sleepBriefly()) return false;
+        }
+        return false;
+    }
+
+    private User newUser() {
+        User user = new User();
+        user.setEmail("learning-nudge-it-" + UUID.randomUUID() + "@example.com");
+        user.setPasswordHash("irrelevant-for-this-test");
+        user.setFullName("Learning Nudge IT User");
+        user.setPhoneVerified(true);
+        return user;
+    }
+
+    private Merchant newMerchant(User owner) {
+        Merchant merchant = new Merchant();
+        merchant.setUserId(owner.getId());
+        merchant.setCanonicalName("Nudge Merchant " + UUID.randomUUID());
+        return merchant;
+    }
+
+    private Category newCategory(User owner) {
+        Category category = new Category();
+        category.setUserId(owner.getId());
+        category.setName("Nudge Category " + UUID.randomUUID());
+        return category;
+    }
+
+    private boolean sleepBriefly() {
+        try {
+            Thread.sleep(100);
+            return true;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        }
     }
 
     /** Polls rather than sleeping a fixed interval: the nudge normally lands in milliseconds, so a
