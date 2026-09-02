@@ -2,13 +2,14 @@ import { useMemo, useState } from 'react';
 import {
   ActivityIndicator, Alert, FlatList, Pressable, ScrollView, StyleSheet, Text, TextInput, View,
 } from 'react-native';
-import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { transactionsApi, type PagedResponse, type TransactionFilters } from '../api/endpoints';
+import { categoriesApi, transactionsApi, type PagedResponse, type TransactionFilters } from '../api/endpoints';
+import { OptionPickerModal } from '../components/OptionPickerModal';
 import { SkeletonTransactionRow } from '../components/skeletons/Skeletons';
 import { invalidateFinancialData } from '../lib/invalidateFinancialData';
 import { toUserMessage } from '../lib/apiError';
-import { hapticError, hapticImpact } from '../lib/haptics';
+import { hapticError, hapticImpact, hapticSuccess } from '../lib/haptics';
 import { useDebouncedValue } from '../lib/useDebouncedValue';
 import { useLargeFontScale } from '../lib/useLargeFontScale';
 import { fmtCurrency } from '../lib/format';
@@ -47,7 +48,15 @@ export function LedgerScreen() {
   const debouncedKeyword = useDebouncedValue(keywordInput, 300);
   const [typeFilter, setTypeFilter] = useState<TypeFilter>('ALL');
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [recategorizing, setRecategorizing] = useState<Transaction | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // Loaded lazily: only fetched once, cheap, and the picker needs it the instant a row is tapped.
+  const { data: categories = [] } = useQuery({
+    queryKey: ['categories'],
+    queryFn: () => categoriesApi.list(),
+    staleTime: 5 * 60_000, // the category list barely changes within a session
+  });
 
   const filters: TransactionFilters = useMemo(
     () => ({
@@ -78,6 +87,44 @@ export function LedgerScreen() {
 
   const txns = data?.pages.flatMap((p) => p.content) ?? [];
   const totalElements = data?.pages[0]?.totalElements ?? 0;
+
+  /**
+   * Change a transaction's category.
+   *
+   * This is the half of the correction loop the review queue can't reach. That queue only holds
+   * transactions the engine knew it was unsure about (needsCategoryReview); a transaction it
+   * categorized *confidently and wrongly* never appears there, so before this the ledger had no
+   * way to fix one -- long-press to delete was the only write on the row, which meant the only
+   * route to correcting a category was destroying the transaction and re-entering it.
+   *
+   * PATCH .../category is the same endpoint the review queue uses, so a correction here teaches
+   * the merchant map identically and sets categoryManuallySet, which stops any later suggestion
+   * layer from silently overwriting the answer.
+   */
+  async function applyCategory(t: Transaction, categoryName: string) {
+    setRecategorizing(null);
+    if (categoryName === t.categoryName) return;
+    setError(null);
+    // Deliberately NOT wrapped in useSingleFlight, unlike the write paths on Goals/Budgets. That
+    // guard serializes every call through one ref, which is right for a screen with a single
+    // submit button where a second press means "the same save, twice". Here each row is its own
+    // action: correcting one transaction while another's request is still in flight would be
+    // silently discarded, and on a ledger the natural way to use this is to fix several rows in a
+    // row. The double-submit it protects against is a non-event anyway -- PATCH .../category sets
+    // an explicit category rather than mutating a running value, so applying the same one twice
+    // is indistinguishable from applying it once.
+    try {
+      await transactionsApi.updateCategory(t.id, categoryName);
+      hapticSuccess();
+      // Not an optimistic edit: the row stays put and only its label changes, so there is no
+      // felt latency to hide -- and a category move shifts spend-by-category, budget progress
+      // and insights, none of which this screen can guess correctly on its own.
+      invalidateFinancialData(queryClient);
+    } catch (e) {
+      setError(toUserMessage(e, 'Could not change this category.'));
+      hapticError();
+    }
+  }
 
   function confirmDelete(t: Transaction) {
     // Before the alert, not after a choice is made -- the same convention iOS's own system apps
@@ -227,6 +274,7 @@ export function LedgerScreen() {
           }
           renderItem={({ item: t }) => (
             <Pressable
+              onPress={() => setRecategorizing(t)}
               onLongPress={() => confirmDelete(t)}
               style={[styles.row, { backgroundColor: c.card, borderColor: c.border }]}
               android_ripple={{ color: c.border }}
@@ -234,14 +282,22 @@ export function LedgerScreen() {
               // using a screen reader -- there's no gesture equivalent in the rotor. Declaring it
               // as an accessibility action exposes it properly, and the hint tells sighted users
               // the gesture exists at all, since nothing on the row advertises it.
+              //
+              // Tap now opens the category picker, so it gets the same treatment: an explicit
+              // action as well as the hint, because "changing a category" is the row's primary
+              // action and a screen reader user shouldn't have to discover it by guessing.
               accessibilityRole="button"
               accessibilityLabel={`${t.description || t.merchant || 'Transaction'}, ${
                 t.type === 'INCOME' ? 'income' : 'expense'
               } ${fmtCurrency(Math.abs(t.amount))}, ${t.categoryName}, ${t.date}`}
-              accessibilityHint="Double tap and hold to delete"
-              accessibilityActions={[{ name: 'delete', label: 'Delete transaction' }]}
+              accessibilityHint="Double tap to change category, or double tap and hold to delete"
+              accessibilityActions={[
+                { name: 'activate', label: 'Change category' },
+                { name: 'delete', label: 'Delete transaction' },
+              ]}
               onAccessibilityAction={(e) => {
                 if (e.nativeEvent.actionName === 'delete') confirmDelete(t);
+                if (e.nativeEvent.actionName === 'activate') setRecategorizing(t);
               }}
             >
               <View style={styles.rowMain}>
@@ -265,6 +321,20 @@ export function LedgerScreen() {
           )}
         />
       )}
+
+      {/* Seeded with the row's current category so the sheet opens showing what it is now, not a
+          blank slate -- the user is correcting an answer, not supplying a missing one. */}
+      <OptionPickerModal
+        visible={recategorizing !== null}
+        title="Change category"
+        options={categories.map((x) => x.name)}
+        selected={recategorizing?.categoryName ?? null}
+        onSelect={(name) => {
+          const target = recategorizing;
+          if (target) void applyCategory(target, name);
+        }}
+        onClose={() => setRecategorizing(null)}
+      />
     </View>
   );
 }

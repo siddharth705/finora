@@ -3,6 +3,8 @@ import {
   Pressable, RefreshControl, ScrollView, StyleSheet, Text, useWindowDimensions, View,
 } from 'react-native';
 import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useNavigation } from '@react-navigation/native';
+import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { usePreventScreenCapture } from 'expo-screen-capture';
 import { AnimatedNumber } from '../components/AnimatedNumber';
@@ -18,8 +20,10 @@ import { CHART_PALETTE, bucketTopSlices } from '../lib/chartGeometry';
 import { fmtCurrency, greeting, monthLabel } from '../lib/format';
 import { usePrefetchAdjacentScreens } from '../lib/prefetchAdjacentScreens';
 import { deriveRefreshing } from '../lib/refreshingIndicator';
+import { reviewNudgeLabel, reviewQueueCount } from '../lib/reviewQueue';
 import { useLargeFontScale } from '../lib/useLargeFontScale';
 import { radius, spacing, useTheme } from '../theme';
+import type { AppTabParamList } from '../navigation/types';
 
 type CashFlowRange = '3M' | '6M' | '12M';
 const RANGE_MONTHS: Record<CashFlowRange, number> = { '3M': 3, '6M': 6, '12M': 12 };
@@ -45,6 +49,7 @@ export function DashboardScreen() {
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
   const { fullName } = useAuth();
+  const navigation = useNavigation<BottomTabNavigationProp<AppTabParamList>>();
   const queryClient = useQueryClient();
   const [cashFlowRange, setCashFlowRange] = useState<CashFlowRange>('6M');
 
@@ -70,6 +75,25 @@ export function DashboardScreen() {
   const availableMonthsQ = useQuery({
     queryKey: ['report-months'],
     queryFn: () => reportsApi.availableMonths(),
+  });
+
+  // The categorization backlog behind the nudge below. Kept out of the useQueries block above so
+  // the destructured indices there stay stable, and `retry: false` because a nudge is the one
+  // thing on this screen that should fail silently: no count simply means no nudge, which is
+  // exactly what a user with an empty queue sees anyway.
+  const reviewSinglesQ = useQuery({
+    queryKey: ['needs-review'],
+    queryFn: () => transactionsApi.needsReview(),
+    retry: false,
+  });
+  const reviewGroupsQ = useQuery({
+    queryKey: ['needs-review-groups'],
+    queryFn: () => transactionsApi.needsReviewGroups(),
+    retry: false,
+  });
+  const reviewCount = reviewQueueCount({
+    singles: reviewSinglesQ.data ?? [],
+    groups: reviewGroupsQ.data ?? [],
   });
   // Server returns these ascending, so the tail is the most recent N. Depends on
   // availableMonthsQ.data directly, not a `?? []`-derived local -- that fallback would build a new
@@ -112,12 +136,14 @@ export function DashboardScreen() {
   // keeps that later-mounted query from flipping the spinner back on with no pull gesture.
   const initialLoad = summaryQ.isLoading || recentTxnsQ.isLoading;
   const refreshing = deriveRefreshing(
-    [summaryQ, recentTxnsQ, goalsQ, insightsQ, availableMonthsQ, ...monthlyReportsQ],
+    [summaryQ, recentTxnsQ, goalsQ, insightsQ, availableMonthsQ, ...monthlyReportsQ,
+     reviewSinglesQ, reviewGroupsQ],
     initialLoad
   );
 
   function refresh() {
-    ['dashboard-summary', 'accounts', 'recent-transactions', 'goals', 'insights', 'report-months', 'report']
+    ['dashboard-summary', 'accounts', 'recent-transactions', 'goals', 'insights', 'report-months',
+      'report', 'needs-review', 'needs-review-groups']
       .forEach((key) => void queryClient.invalidateQueries({ queryKey: [key] }));
   }
 
@@ -201,6 +227,30 @@ export function DashboardScreen() {
         Here's what's happening with your finances.
         {!periodIsCurrent && ` Your latest figures are from ${periodLabel}.`}
       </Text>
+
+      {/* A count of work, never a chart slice. The categorization design spec (§3) draws a hard
+          line here: "Other" is a real category a user chose, while "needs review" is a queue
+          state, and rendering the latter as a wedge in the spending donut is an admission of not
+          knowing dressed up as information about their money. So it lives here, above the numbers
+          it would otherwise quietly distort, as a nudge with somewhere to go. */}
+      {reviewCount > 0 ? (
+        <Pressable
+          onPress={() => navigation.navigate('More', { screen: 'CategoryReview' })}
+          accessibilityRole="button"
+          accessibilityLabel={reviewNudgeLabel(reviewCount)}
+          accessibilityHint="Opens the category review queue"
+        >
+          <Card style={styles.nudge}>
+            <View style={styles.nudgeText}>
+              <Text style={[styles.nudgeTitle, { color: c.ink }]}>{reviewNudgeLabel(reviewCount)}</Text>
+              <Text style={[styles.nudgeBody, { color: c.muted }]} numberOfLines={2}>
+                Label them once and Fynora remembers the merchant for good.
+              </Text>
+            </View>
+            <Text style={[styles.nudgeChevron, { color: c.primary }]} accessibilityElementsHidden importantForAccessibility="no">›</Text>
+          </Card>
+        </Pressable>
+      ) : null}
 
       <View style={styles.kpiGrid}>
         {summary
@@ -362,6 +412,11 @@ export function DashboardScreen() {
 }
 
 const styles = StyleSheet.create({
+  nudge: { flexDirection: 'row', alignItems: 'center', marginBottom: spacing.md },
+  nudgeText: { flex: 1, marginRight: spacing.sm },
+  nudgeTitle: { fontSize: 14, fontWeight: '600' },
+  nudgeBody: { fontSize: 12, marginTop: 2 },
+  nudgeChevron: { fontSize: 20, lineHeight: 20 },
   centered: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: spacing.sm },
   errorText: { fontSize: 14 },
   retry: { fontSize: 14, fontWeight: '600' },
