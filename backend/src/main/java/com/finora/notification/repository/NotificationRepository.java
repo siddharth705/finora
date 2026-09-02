@@ -1,6 +1,7 @@
 package com.finora.notification.repository;
 
 import com.finora.notification.domain.Notification;
+import com.finora.notification.domain.NotificationChannel;
 import com.finora.notification.domain.NotificationStatus;
 import java.time.Instant;
 import java.util.List;
@@ -21,6 +22,12 @@ public interface NotificationRepository extends JpaRepository<Notification, UUID
     Page<Notification> findByStatus(NotificationStatus status, Pageable pageable);
 
     long countByStatus(NotificationStatus status);
+
+    /** Backs the admin dashboard's per-channel send-outcome breakdown (Task 12) -- six cheap
+     *  indexed-enough counts (3 channels x {SENT, DEAD_LETTER}) rather than a GROUP BY, matching
+     *  the "simple indexed counts, not a reporting subsystem" discipline AdminStatsService and
+     *  AdminLearningQueueService.summary() already use for their own filter-chip counts. */
+    long countByChannelAndStatus(NotificationChannel channel, NotificationStatus status);
 
     /**
      * Claims a batch of due notifications for this worker only.
