@@ -88,6 +88,16 @@ public class DeviceToken {
         this.revokedAt = null;
     }
 
+    /**
+     * Corrects a stale platform on re-registration. A device's install can change platform under
+     * the same fingerprint only in contrived scenarios, but a re-registration is the moment
+     * {@code DeviceTokenService} knows the true current value -- leaving an old one in place would
+     * silently route this device's pushes to the wrong provider (Task 11 dispatches on this field).
+     */
+    public void updatePlatform(String platform) {
+        this.platform = platform;
+    }
+
     /** Soft revoke on logout or uninstall detection -- never a hard delete, so the trail survives. */
     public void revoke(Instant now) {
         this.revokedAt = now;

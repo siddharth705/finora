@@ -39,19 +39,48 @@ public class DeviceTokenService {
      * what keeps {@code UNIQUE (user_id, token_fingerprint)} in the migration safe even though a
      * revoked row and a freshly re-registered one are the same physical token: there is always at
      * most one row per (user, token), and revoke/re-register mutate it rather than replacing it.
+     *
+     * <p>Before touching this user's own row, every OTHER user's row for the identical token is
+     * revoked (see {@link #revokeOtherUsersHoldingThisToken}). FCM/APNs tokens are per app-install,
+     * not per user: without this, an account switch on a shared or handed-down device (or a
+     * reinstall under a different account) leaves the PREVIOUS user's row active forever, and
+     * {@link #activeTokensFor} keeps delivering that person's transaction alerts and password-change
+     * notices to the new owner's phone. Never rely on the client calling {@link #revoke} first -- an
+     * uninstall, a token expiry, or a forced logout never triggers it.
      */
     @Transactional
     public DeviceToken register(UUID userId, String platform, String rawToken) {
         String fingerprint = fingerprint(rawToken);
         Instant now = Instant.now();
+
+        revokeOtherUsersHoldingThisToken(userId, fingerprint, now);
+
         Optional<DeviceToken> existing =
                 repository.findByUserIdAndTokenFingerprint(userId, fingerprint);
         if (existing.isPresent()) {
-            existing.get().touch(now);
-            return repository.save(existing.get());
+            DeviceToken token = existing.get();
+            token.touch(now);
+            token.updatePlatform(platform);
+            return repository.save(token);
         }
         return repository.save(DeviceToken.register(userId, platform,
                 encryptionService.encrypt(rawToken), fingerprint, now));
+    }
+
+    /**
+     * Revokes every row -- belonging to a user OTHER than {@code userId} -- that already holds this
+     * exact token. Deliberately queries across users; do not let this get confused with
+     * {@link #revoke(UUID, String)} below, whose entire correctness rests on being scoped to the
+     * caller's own {@code userId}. This method exists specifically to reach past that boundary for
+     * one narrow purpose (de-duplicating a shared physical device token) and must never be reused
+     * anywhere an authorization check is expected.
+     */
+    private void revokeOtherUsersHoldingThisToken(UUID userId, String fingerprint, Instant now) {
+        for (DeviceToken other : repository
+                .findByTokenFingerprintAndUserIdNotAndRevokedAtIsNull(fingerprint, userId)) {
+            other.revoke(now);
+            repository.save(other);
+        }
     }
 
     /**
@@ -59,6 +88,16 @@ public class DeviceTokenService {
      * under (see {@link ActiveDeviceToken}). One unreadable row must not silence a whole user, so a
      * decryption failure is logged (by id only -- never the ciphertext or key material) and that
      * row is skipped rather than failing the whole batch.
+     *
+     * <p>Catches both {@link EncryptionException} (a malformed or tampered ciphertext) and
+     * {@link IllegalStateException} -- the latter is what {@code KeyProvider.keyById} throws when
+     * {@code encryption_key_id} no longer resolves to a configured key (a rotation that dropped the
+     * old key too early, or {@code FINORA_ENCRYPTION_KEY} out of sync with what wrote this row).
+     * That call happens before {@code EncryptionService}'s own try/catch begins, so it is NOT
+     * wrapped as an {@code EncryptionException} -- it is exactly the scenario this method's log
+     * message already names, and without this second catch it would propagate out of the loop and
+     * silence every OTHER device for this user too, the opposite of the guarantee this method
+     * promises.
      */
     @Transactional(readOnly = true)
     public List<ActiveDeviceToken> activeTokensFor(UUID userId) {
@@ -67,7 +106,7 @@ public class DeviceTokenService {
             try {
                 String decrypted = encryptionService.decrypt(token.credential());
                 tokens.add(new ActiveDeviceToken(decrypted, token.getPlatform()));
-            } catch (EncryptionException e) {
+            } catch (EncryptionException | IllegalStateException e) {
                 log.error("Cannot decrypt device token {} -- skipping it. Check "
                         + "FINORA_ENCRYPTION_KEY against the runbook.", token.getId());
             }
