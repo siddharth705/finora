@@ -53,11 +53,34 @@ describe('IconButton', () => {
   it('swaps to a spinner and disables while loading, hiding the icon', () => {
     vi.mocked(useReducedMotion).mockReturnValue(false);
     render(<IconButton icon={<Pencil data-testid="pencil-icon" />} aria-label="Edit" loading />);
-    const button = screen.getByRole('button', { name: 'Edit' });
+    // Name carries the pending state now -- see the accessible-name test below.
+    const button = screen.getByRole('button', { name: 'Edit, loading' });
 
     expect(button).toBeDisabled();
     expect(button.querySelector('.animate-spin')).toBeInTheDocument();
     expect(screen.queryByTestId('pencil-icon')).not.toBeInTheDocument();
+  });
+
+  /**
+   * Deliberately a label suffix rather than the sr-only span Button uses: `aria-label` REPLACES an
+   * element's contents when computing its accessible name, so sr-only text inside this button
+   * would never be announced. Regression test for that asymmetry -- the obvious "just do what
+   * Button does" fix is silently a no-op here.
+   */
+  it('puts the pending state in its label, since aria-label replaces element content', () => {
+    vi.mocked(useReducedMotion).mockReturnValue(false);
+    render(<IconButton icon={<Pencil />} aria-label="Suspend user" loading />);
+
+    const button = screen.getByRole('button', { name: 'Suspend user, loading' });
+    expect(button).toHaveAttribute('aria-busy', 'true');
+  });
+
+  it('leaves the label alone when not loading', () => {
+    vi.mocked(useReducedMotion).mockReturnValue(false);
+    render(<IconButton icon={<Pencil />} aria-label="Suspend user" />);
+
+    const button = screen.getByRole('button', { name: 'Suspend user' });
+    expect(button).toHaveAttribute('aria-busy', 'false');
   });
 
   it('applies the danger variant as always-red at rest, not muted-until-hover', () => {

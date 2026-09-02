@@ -64,11 +64,18 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
       whileTap={prefersReducedMotion ? undefined : { scale: 0.96 }}
       whileHover={hoverScale && !prefersReducedMotion ? { scale: 1.02 } : undefined}
       disabled={disabled || loading}
+      aria-busy={loading}
       className={`inline-flex items-center justify-center gap-1.5 rounded-lg font-semibold transition-colors duration-200 ease-out disabled:opacity-50 ${VARIANT_CLASSES[variant]} ${SIZE_CLASSES[size]} ${className}`}
       {...rest}
     >
       {loading && <Loader2 size={13} className="animate-spin" aria-hidden="true" />}
       {children}
+      {/* The spinner is aria-hidden, so without this the pending state is conveyed to assistive
+          tech only as "disabled" -- strictly less than the "Adding…"/"Saving…" label swaps this
+          component replaced, which were real readable text. The leading comma is deliberate: it
+          separates the state from the label in the computed accessible name ("Add, loading")
+          rather than running the two words together. */}
+      {loading && <span className="sr-only">, loading</span>}
     </motion.button>
   );
 });
