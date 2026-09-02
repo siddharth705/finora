@@ -167,4 +167,25 @@ class CategoryRulesTest {
     void suggestCategory_stillMatchesRealInvestmentSips() {
         assertThat(CategoryRules.suggestCategory("UPI-GROWW INVEST TECH")).isEqualTo("Investments");
     }
+
+    @Test
+    void theUnspacedMutualFundsTokenMatches_whichTheSpacedKeywordCannotReach() {
+        // normalize() replaces non-alphanumerics with spaces; it never splits a run-together word,
+        // so "mutual fund" can never match "MUTUALFUNDS". Both spellings are needed, and this test
+        // fails if either is removed.
+        assertThat(CategoryRules.suggestCategory("SIP MUTUALFUNDS DEBIT")).isEqualTo("Investments");
+        assertThat(CategoryRules.suggestCategory("MUTUAL FUND PURCHASE")).isEqualTo("Investments");
+    }
+
+    @Test
+    void gokhanaIsDining() {
+        assertThat(CategoryRules.suggestCategory("UPI-GOKHANA-sample@ybl-REF19")).isEqualTo("Dining");
+    }
+
+    @Test
+    void theNewKeywordsAreWordBoundedLikeEveryOther() {
+        // Guards the same class of bug the word-boundary comment in CategoryRules describes: a new
+        // keyword must not match inside a longer word.
+        assertThat(CategoryRules.suggestCategory("GOKHANAPUR LAND TAX")).isEqualTo("Other");
+    }
 }

@@ -12,7 +12,7 @@ import java.util.regex.Pattern;
  * docs/superpowers/specs/2026-09-01-transaction-categorization-design.md §1): 42.2% of every
  * "Other" transaction is a UPI/NEFT/IMPS/RTGS transfer naming an individual, not a business. No
  * keyword list, no merchant corpus, no LLM can ever categorize these correctly by merchant lookup,
- * because there is no merchant -- this is a taxonomy answer ("Paid a Person", see
+ * because there is no merchant -- this is a taxonomy answer ("Personal Transfer", see
  * {@code CategorizationService.P2P_CATEGORY}), not a smarter match.
  *
  * <h2>Known limitation, measured rather than assumed</h2>
@@ -227,7 +227,15 @@ public final class PersonToPersonTransferDetector {
             + "|[a-z]{4}0(?:MCHUPI|MERUPI|PTMUPI)"
             + "|@okbiz"                           // Google Pay for Business
             + "|\\bbharatpe\\b"
-            + "|\\bvyapar\\.");
+            + "|\\bvyapar\\."
+            // Second wave, mined from the 1,098 rows still landing in "Other" after the first.
+            // Two acquirer QR/soundbox families and two payment gateways. A gateway in the
+            // narration is as conclusive as a merchant VPA: PayU, Razorpay and Cashfree settle
+            // only to onboarded businesses -- an individual cannot collect through one.
+            + "|paytmqr"                          // Paytm merchant QR / soundbox
+            + "|\\bpayu\\b"
+            + "|razorpay|\\brzp\\b"
+            + "|cashfree");
 
     private static final Pattern SEGMENT_DELIMITERS = Pattern.compile("[\\-/_]+");
 
