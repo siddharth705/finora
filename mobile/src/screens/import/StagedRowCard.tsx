@@ -2,7 +2,7 @@ import { memo } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { fmtCurrency } from '../../lib/format';
 import type { DuplicateDecision } from '../../lib/importReview';
-import { isUnderReview } from '../../lib/importReview';
+import { isUnconfirmedGuess, isUnderReview } from '../../lib/importReview';
 import { radius, spacing, useTheme } from '../../theme';
 import type { StagedRow } from '../../types';
 
@@ -96,10 +96,11 @@ function StagedRowCardInner({
           </Text>
         </Pressable>
 
-        {/* The engine says where each suggestion came from; "default" means it had no idea and
-            filed it under Other rather than inventing a decision. Worth surfacing, because those
-            are the rows actually worth a human look. */}
-        {row.categorySource === 'default' ? (
+        {/* The engine says where each suggestion came from; an unconfirmed guess is one it had no
+            real evidence for -- "default" (no idea, filed under Other) or a structural
+            person-to-person detection. Worth surfacing, because those are the rows actually worth a
+            human look. See importReview.isUnconfirmedGuess. */}
+        {isUnconfirmedGuess(row.categorySource) ? (
           <Text style={[styles.badge, { color: c.muted, backgroundColor: c.bg }]}>Needs a look</Text>
         ) : null}
 

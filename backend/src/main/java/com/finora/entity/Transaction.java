@@ -53,7 +53,11 @@ public class Transaction extends BaseEntity {
     // input (see docs/rule-engine-relationship-engine-eds.md §3.2). KEYWORD_MATCH is the static
     // CategoryRules table (util package); GLOBAL_RULE/USER_RULE are the new category_rules DB
     // table (RuleEngineService); MERCHANT_DEFAULT is "nothing matched, fell through to Other".
-    public enum DecisionSource { GLOBAL_RULE, USER_RULE, LEARNED_PATTERN, KEYWORD_MATCH, MERCHANT_DEFAULT, MANUAL, FILE_PROVIDED }
+    // STRUCTURAL_P2P is PersonToPersonTransferDetector -- a person-to-person transfer recognized
+    // by narration SHAPE (no merchant involved at all), the last resort tried before
+    // MERCHANT_DEFAULT. No DB CHECK constrains this column (VARCHAR(20), V17), so this value
+    // needed no migration.
+    public enum DecisionSource { GLOBAL_RULE, USER_RULE, LEARNED_PATTERN, KEYWORD_MATCH, MERCHANT_DEFAULT, MANUAL, FILE_PROVIDED, STRUCTURAL_P2P }
 
     @Column(name = "user_id", nullable = false)
     private UUID userId;

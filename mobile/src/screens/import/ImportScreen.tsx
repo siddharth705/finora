@@ -23,6 +23,8 @@ import {
   applyDecisionToSimilar, beginReview, decide, EMPTY_REVIEW, isUnderReview, setIncluded,
   unresolvedCount, type DuplicateDecision, type RowReview,
 } from '../../lib/importReview';
+import { matchExistingAccount } from '../../lib/accountMatch';
+import { canConfirmImport } from '../../lib/importGate';
 import { pickStatement, type StatementFormat } from '../../lib/statementFile';
 import { radius, spacing, useTheme } from '../../theme';
 import type { AppTabParamList } from '../../navigation/types';
@@ -140,6 +142,15 @@ export function ImportScreen() {
     setChosenCategory(initialCategories(reimportParam.staging.rows));
     setUnparseableRows(reimportParam.staging.unparseableRows);
     setDetected(reimportParam.staging.detectedAccount);
+    // A re-import IS pinned to an existing account, so say so in the state rather than leaving
+    // whatever the previous statement happened to select. confirmImport posts reimport.accountId
+    // regardless (this pair is not what the request is built from), but the review screen's
+    // re-import branch renders no account picker at all -- so a stale 'existing' with an empty
+    // selectedAccountId would otherwise leave the Import button disabled by the account gate below
+    // with no control on screen able to satisfy it. Mirrors frontend/src/pages/Import.tsx, which
+    // sets the same pair on its own re-import entry for the same reason.
+    setAccountChoice('existing');
+    setSelectedAccountId(reimportParam.accountId);
     setStep('review');
   }
 
@@ -156,6 +167,14 @@ export function ImportScreen() {
     setDetected(null);
     setSummary(null);
     setAccountForm(initialAccountForm(null));
+    // Cleared here as well as being set explicitly on every successful upload: leaving the
+    // previous statement's account selected is how a stale choice survives into the next import,
+    // and "Import another" runs this between two imports that may well belong to different
+    // accounts. upload() always overwrites both, so this is defence in depth rather than the
+    // primary guard -- but the primary guard only runs once staging has SUCCEEDED, and an upload
+    // that fails or is cancelled returns the user to this screen with the old pair still set.
+    setAccountChoice('new');
+    setSelectedAccountId('');
     setPendingPdf(null);
     setPdfPassword('');
     setPasswordState(null);
@@ -224,14 +243,21 @@ export function ImportScreen() {
       setDetected(staging.detectedAccount);
       setAccountForm(initialAccountForm(staging.detectedAccount));
 
-      // Default to filing into an account that already exists when there is one -- creating a
-      // duplicate account is the more annoying mistake to undo.
-      if (existingAccounts.length > 0) {
-        setAccountChoice('existing');
-        setSelectedAccountId(existingAccounts[0].id);
-      } else {
-        setAccountChoice('new');
-      }
+      // Default to filing into the existing account this statement's own signals actually point
+      // at -- same bank, same account number -- rather than blindly picking the first account in
+      // the list. See matchExistingAccount's own comment for the bug this replaced and why
+      // anything short of a real match deliberately falls back to "create a new account" (a
+      // visible, deletable mistake) rather than guessing at an existing one (a silent, wrong
+      // balance).
+      //
+      // selectedAccountId is cleared, not left alone, when there is no match. Before this change
+      // the 'new' branch was only reachable with zero existing accounts, so a stale id could
+      // never coexist with a populated account list; now it can, and leaving it set would render
+      // the previous import's account as the highlighted, apparently-considered choice the moment
+      // the user tapped "An existing account".
+      const matched = matchExistingAccount(staging.detectedAccount, existingAccounts);
+      setAccountChoice(matched ? 'existing' : 'new');
+      setSelectedAccountId(matched ? matched.id : '');
 
       setStep('review');
     } catch (e) {
@@ -604,7 +630,17 @@ export function ImportScreen() {
                 label={`Import ${includedCount} transaction${includedCount === 1 ? '' : 's'}`}
                 onPress={confirmImport}
                 loading={confirming}
-                disabled={includedCount === 0 || outstanding > 0}
+                // Every reason this button may refuse lives in canConfirmImport, with tests --
+                // see that function's own comment for why it is not inline here.
+                disabled={
+                  !canConfirmImport({
+                    includedCount,
+                    outstanding,
+                    isReimport: reimport !== null,
+                    accountChoice,
+                    selectedAccountId,
+                  })
+                }
               />
               <View style={styles.cancel}>
                 <Button label="Cancel" variant="link" onPress={resetToUpload} />
