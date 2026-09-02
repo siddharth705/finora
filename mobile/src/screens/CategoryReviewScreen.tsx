@@ -12,7 +12,6 @@ import { toUserMessage } from '../lib/apiError';
 import { fmtCurrency } from '../lib/format';
 import { hapticError, hapticSuccess } from '../lib/haptics';
 import { invalidateFinancialData } from '../lib/invalidateFinancialData';
-import { reinsertAt } from '../lib/reviewQueue';
 import { spacing, useTheme } from '../theme';
 import type { MerchantGroup, Transaction } from '../types';
 
@@ -41,6 +40,10 @@ export function CategoryReviewScreen() {
   const [target, setTarget] = useState<PickerTarget | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  // Rows the user has already resolved this visit, HIDDEN rather than removed from the query
+  // cache -- see apply() for why that distinction is the whole fix.
+  const [resolvedTxnIds, setResolvedTxnIds] = useState(() => new Set());
+  const [resolvedMerchantIds, setResolvedMerchantIds] = useState(() => new Set());
 
   const singlesQ = useQuery({
     queryKey: ['needs-review'],
@@ -50,18 +53,23 @@ export function CategoryReviewScreen() {
     queryKey: ['needs-review-groups'],
     queryFn: () => transactionsApi.needsReviewGroups(),
   });
-  const { data: categories = [] } = useQuery({
+  const categoriesQ = useQuery({
     queryKey: ['categories'],
     queryFn: () => categoriesApi.list(),
     staleTime: 5 * 60_000, // the category list barely changes within a session
   });
+  const categories = categoriesQ.data ?? [];
 
-  const singles = singlesQ.data ?? [];
-  const groups = groupsQ.data ?? [];
+  const singles = (singlesQ.data ?? []).filter((t) => !resolvedTxnIds.has(t.id));
+  const groups = (groupsQ.data ?? []).filter((g) => !resolvedMerchantIds.has(g.merchantId));
   const loading = singlesQ.isLoading || groupsQ.isLoading;
-  // Only a total failure is worth a banner: if one half loaded, its rows are still fully
-  // actionable, and blanking the screen over the other half would strand work the user can do.
-  const failed = singlesQ.isError && groupsQ.isError;
+  // Both halves down AND nothing left to show. The `.length === 0` half is not redundant: in
+  // TanStack v5 a query KEEPS its data and flips to status 'error' when a *background* refetch
+  // fails, so deriving this from isError alone replaced a full, perfectly actionable queue with
+  // an error card the moment a refresh blipped -- losing the user's place mid-way through it.
+  // LedgerScreen.tsx guards the identical case as `isError && txns.length === 0`; this screen
+  // shipped without the second half.
+  const failed = singlesQ.isError && groupsQ.isError && singles.length === 0 && groups.length === 0;
   // Exactly one half down. The rows that loaded stay fully usable, but the queue on screen is
   // incomplete and saying nothing about that would quietly understate the user's backlog.
   const partiallyFailed = !failed && (singlesQ.isError || groupsQ.isError);
@@ -69,7 +77,10 @@ export function CategoryReviewScreen() {
   async function refresh() {
     setRefreshing(true);
     try {
-      await Promise.all([singlesQ.refetch(), groupsQ.refetch()]);
+      // categoriesQ included deliberately: it is the query whose failure makes the picker open
+      // with nothing in it, so leaving it out of the recovery path made "Try again" unable to
+      // fix the one thing most likely to be broken.
+      await Promise.all([singlesQ.refetch(), groupsQ.refetch(), categoriesQ.refetch()]);
     } finally {
       setRefreshing(false);
     }
@@ -89,44 +100,55 @@ export function CategoryReviewScreen() {
     setTarget(null);
     setError(null);
 
-    // Deliberately NOT wrapped in useSingleFlight, unlike the write paths on Goals/Budgets.
-    // That guard serializes ALL calls through one ref, which is right when a screen has a single
-    // submit button and a second press means "the same save, twice". Here every row is a
-    // different action, so on a slow connection it would silently discard the user's correction
-    // to row B because row A's request hadn't landed yet -- in a queue whose entire purpose is
-    // working through rows quickly. The double-submit it would protect against is harmless
-    // anyway: both writes go through PATCH/bulk-category, which set an explicit category rather
-    // than mutating a running value, so applying the same one twice is indistinguishable from
-    // applying it once. The row also vanishes optimistically on the first press.
+    // Resolved rows are hidden via `resolved*Ids`, NOT removed with queryClient.setQueryData.
+    //
+    // The cache-mutating version had a race with its own success path: this screen's queue lives
+    // under 'needs-review'/'needs-review-groups', and invalidateFinancialData refetches exactly
+    // those keys. Resolve row A, then row B before A's request lands; A succeeds and invalidates;
+    // the refetch runs while B's write is still in flight, so the server still reports B as
+    // needing review and B pops back onto the screen as uncategorized. The user then re-answers a
+    // row they already answered, and the two writes race. The failure rollback made it worse --
+    // it re-inserted a row the refetch had already restored, giving two rows with one React key.
+    //
+    // Hiding sidesteps all of it: the cache stays the server's to own, so a refetch landing at any
+    // moment cannot contradict the UI, and rollback is just un-hiding -- which restores the row to
+    // its original position for free, with no index arithmetic to get wrong.
+    //
+    // Still deliberately NOT wrapped in useSingleFlight: each row is its own action, and
+    // serializing them would silently discard a correction to row B while row A was in flight.
+    // Concurrency is the point here, which is precisely why the race above had to be closed
+    // properly rather than by re-serializing.
     if (chosen.kind === 'single') {
-      const index = singles.findIndex((t) => t.id === chosen.txn.id);
-      if (index === -1) return;
-      queryClient.setQueryData<Transaction[]>(['needs-review'], (prev) =>
-        (prev ?? []).filter((t) => t.id !== chosen.txn.id));
+      const id = chosen.txn.id;
+      setResolvedTxnIds((prev) => new Set(prev).add(id));
       try {
-        await transactionsApi.updateCategory(chosen.txn.id, categoryName);
+        await transactionsApi.updateCategory(id, categoryName);
         hapticSuccess();
         invalidateFinancialData(queryClient);
       } catch (e) {
-        queryClient.setQueryData<Transaction[]>(['needs-review'], (prev) =>
-          reinsertAt(prev ?? [], index, chosen.txn));
+        setResolvedTxnIds((prev) => {
+          const next = new Set(prev);
+          next.delete(id);
+          return next;
+        });
         setError(toUserMessage(e, 'Could not save that category.'));
         hapticError();
       }
       return;
     }
 
-    const index = groups.findIndex((g) => g.merchantId === chosen.group.merchantId);
-    if (index === -1) return;
-    queryClient.setQueryData<MerchantGroup[]>(['needs-review-groups'], (prev) =>
-      (prev ?? []).filter((g) => g.merchantId !== chosen.group.merchantId));
+    const merchantId = chosen.group.merchantId;
+    setResolvedMerchantIds((prev) => new Set(prev).add(merchantId));
     try {
       await transactionsApi.bulkRecategorize(chosen.group.transactionIds, categoryName);
       hapticSuccess();
       invalidateFinancialData(queryClient);
     } catch (e) {
-      queryClient.setQueryData<MerchantGroup[]>(['needs-review-groups'], (prev) =>
-        reinsertAt(prev ?? [], index, chosen.group));
+      setResolvedMerchantIds((prev) => {
+        const next = new Set(prev);
+        next.delete(merchantId);
+        return next;
+      });
       setError(toUserMessage(e, 'Could not apply that category.'));
       hapticError();
     }

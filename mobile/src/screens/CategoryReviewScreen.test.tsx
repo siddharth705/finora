@@ -56,11 +56,15 @@ function group(over: Partial<MerchantGroup> = {}): MerchantGroup {
 
 function renderScreen() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
-  return render(
+  const utils = render(
     <QueryClientProvider client={queryClient}>
       <CategoryReviewScreen />
     </QueryClientProvider>
   );
+  // Returned so a test can trigger the refetch that invalidateFinancialData performs in
+  // production -- it is mocked out here, so without this the post-save refetch never runs and the
+  // race it used to cause is invisible.
+  return { ...utils, queryClient };
 }
 
 beforeEach(() => {
@@ -256,5 +260,108 @@ describe('corrections to different rows do not block each other', () => {
 
     releaseFirst({});
     await waitFor(() => expect(transactions.updateCategory).toHaveBeenCalledTimes(2));
+  });
+});
+
+/**
+ * Regression: the queue used to live in the TanStack cache, and every successful save invalidated
+ * the very keys holding it. Both bugs below shipped in the original A4 commit.
+ */
+describe('the queue survives its own refetches', () => {
+  it('keeps a resolved row hidden when a refetch still reports it as needing review', async () => {
+    // The race: resolve A, resolve B before A lands, A succeeds and invalidates. The refetch runs
+    // while B's write is still in flight, so the server still lists BOTH -- and the old
+    // cache-mutating version let that response put the resolved row back on screen, where the user
+    // would answer it a second time.
+    //
+    // The refetch deliberately returns an EXTRA row that was not in the first response. Waiting for
+    // that row to appear is what proves the refetch actually landed and re-rendered; without it the
+    // assertion below races React's flush and passes even against the broken implementation.
+    transactions.needsReview
+      .mockResolvedValueOnce([
+        txn({ id: 't-1', description: 'First row' }),
+        txn({ id: 't-2', description: 'Second row' }),
+      ])
+      .mockResolvedValue([
+        txn({ id: 't-1', description: 'First row' }),
+        txn({ id: 't-2', description: 'Second row' }),
+        txn({ id: 't-3', description: 'Late arrival' }),
+      ]);
+    transactions.updateCategory.mockResolvedValue({} as never);
+
+    const { queryClient } = renderScreen();
+
+    fireEvent.press(await screen.findByText('First row'));
+    fireEvent.press(await screen.findByText('Food'));
+    await waitFor(() => expect(screen.queryByText('First row')).toBeNull());
+
+    // Server has not caught up: needs-review still reports the row just resolved.
+    await queryClient.refetchQueries({ queryKey: ['needs-review'] });
+    expect(await screen.findByText('Late arrival')).toBeTruthy();   // refetch has rendered
+
+    expect(screen.queryByText('First row')).toBeNull();
+    expect(screen.getByText('Second row')).toBeTruthy();
+  });
+
+  it('does not blank a populated queue when a background refetch fails', async () => {
+    // TanStack v5 keeps data and flips status to 'error' when a BACKGROUND refetch fails. Deriving
+    // the failure card from isError alone therefore threw away a full, still-actionable queue on
+    // the first blip -- losing the user's place partway through it. LedgerScreen guards the same
+    // case with `isError && txns.length === 0`; this screen shipped without the second half.
+    transactions.needsReview
+      .mockResolvedValueOnce([txn({ description: 'Still actionable' })])
+      .mockRejectedValue(new Error('blip'));
+    transactions.needsReviewGroups
+      .mockResolvedValueOnce([group()])
+      .mockRejectedValue(new Error('blip'));
+
+    const { queryClient } = renderScreen();
+    expect(await screen.findByText('Still actionable')).toBeTruthy();
+
+    await queryClient.refetchQueries().catch(() => {});
+
+    // Wait on a signal only the CORRECT behaviour produces: an errored-but-populated queue is the
+    // partial-failure banner, not the failure card. Waiting on cache status instead would race
+    // React's flush and pass against the broken version, which renders the card and drops the
+    // rows entirely.
+    expect(await screen.findByText(/Part of your review queue couldn’t be loaded/i)).toBeTruthy();
+
+    expect(screen.getByText('Still actionable')).toBeTruthy();
+    expect(screen.getByText('Swiggy')).toBeTruthy();
+    expect(screen.queryByText(/Couldn’t load your review queue/i)).toBeNull();
+  });
+
+  it('rolls a failed save back to the row’s original position', async () => {
+    // Un-hiding restores position for free; the old index-based re-insertion had to compute it.
+    transactions.needsReview.mockResolvedValue([
+      txn({ id: 't-1', description: 'Alpha' }),
+      txn({ id: 't-2', description: 'Beta' }),
+      txn({ id: 't-3', description: 'Gamma' }),
+    ]);
+    transactions.updateCategory.mockRejectedValue(new Error('nope'));
+
+    renderScreen();
+    fireEvent.press(await screen.findByText('Beta'));
+    fireEvent.press(await screen.findByText('Food'));
+
+    expect(await screen.findByText(/Could not save that category/i)).toBeTruthy();
+    const rows = screen.getAllByText(/Alpha|Beta|Gamma/).map((n) => n.props.children);
+    expect(rows).toEqual(['Alpha', 'Beta', 'Gamma']);
+  });
+});
+
+describe('recovering from a failed category list', () => {
+  it('refetches categories on Try again, not just the two queue halves', async () => {
+    // The picker draws its options from ['categories']. Leaving that query out of the recovery
+    // path meant a failed category fetch left every row opening an empty sheet, permanently, with
+    // Try again unable to fix it.
+    transactions.needsReview.mockRejectedValue(new Error('down'));
+    transactions.needsReviewGroups.mockRejectedValue(new Error('down'));
+    categories.list.mockRejectedValueOnce(new Error('down'));
+
+    renderScreen();
+    fireEvent.press(await screen.findByText(/Try again/i));
+
+    await waitFor(() => expect(categories.list).toHaveBeenCalledTimes(2));
   });
 });
