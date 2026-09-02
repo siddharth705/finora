@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import { Dimensions, RefreshControl } from 'react-native';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider, onlineManager } from '@tanstack/react-query';
 import { DashboardScreen } from './DashboardScreen';
 import {
   accountsApi, budgetsApi, dashboardApi, goalsApi, insightsApi, reportsApi, transactionsApi, userApi,
@@ -181,10 +181,20 @@ describe('M0-A: the spending donut must not understate the period total', () => 
    *     + Health 1,500 + Education 800 + Misc 700  =  35,500
    *   top six only                                 =  34,000
    *
-   * The backend builds spendByCategory and monthlyExpense from the same filtered transaction list
-   * (DashboardService.java:104 and the expenseCur it shares), so their totals agree by
-   * construction: 35,500 is the authoritative figure for the period, and any smaller number shown
-   * as a spend total is wrong rather than merely rounded.
+   * NOTE -- this suite's original premise no longer holds, and the fixture below is what keeps it
+   * true here. It used to read: "the backend builds spendByCategory and monthlyExpense from the
+   * same filtered transaction list, so their totals agree by construction". PR #596 (2026-08-30)
+   * ended that: DashboardService now feeds monthlyExpense from
+   * `RefundNetting.excludingInvestmentTransfers(active)` while spendByCategory still streams the
+   * unfiltered list, so in any real month containing a SIP or a broker debit the category sum is
+   * LARGER than monthlyExpense. This fixture sets the two equal by hand, so these tests still pass
+   * -- they simply no longer describe production.
+   *
+   * What they DO still protect is the bug they were written for: the centre must show the whole
+   * period total, not just the six slices that fit. That is unaffected. The open question they no
+   * longer answer is which figure the centre should claim when the two genuinely disagree -- the
+   * screen currently shows "TOTAL ₹35,500" in the donut next to "Expenses ₹32,500" in the KPI, with
+   * nothing distinguishing the two definitions. That is a product call, deliberately not made here.
    */
   const CATEGORIES = {
     Rent: 20000, Food: 5000, Transport: 3000, Bills: 2500,
@@ -469,6 +479,97 @@ describe('Recent Transactions error state', () => {
 
     expect(await screen.findByText(/Couldn't load your transactions/)).toBeTruthy();
     expect(screen.queryByText(/No transactions yet/i)).toBeNull();
+  });
+});
+
+/**
+ * Cash Flow is fed by its own two-step chain -- report-months, then one report query per month --
+ * which the card used to render nothing about: its only gate was `summary`, an unrelated query.
+ * That made every failure and every intermediate state indistinguishable from "you have no data".
+ */
+describe('Cash Flow loading and failure states', () => {
+  afterEach(() => onlineManager.setOnline(true));
+
+  const summaryOnly = () => {
+    dashboard.summary.mockResolvedValue(emptySummary());
+  };
+
+  it('does not claim there is no monthly data while the months are still loading', async () => {
+    // `summary` resolves; the months list never does. This is the ordinary cold-start ordering,
+    // not an error case -- the two requests are sequential, so this window happens on every launch.
+    dashboard.summary.mockResolvedValue(emptySummary({ currentBalance: 4200 }));
+    reports.availableMonths.mockReturnValue(new Promise(() => {}) as never);
+
+    renderScreen();
+
+    // Anchored on the KPI section, which only renders once summary has landed -- not on the static
+    // "Cash Flow" heading, which is present during the skeleton state too and would let this
+    // assertion run before summary arrived, passing without ever entering the window it tests.
+    // (The balance itself goes through AnimatedNumber, so it is not a queryable Text node.)
+    await screen.findByText('Total Balance');
+
+    expect(screen.queryByText(/No monthly data yet/i)).toBeNull();
+  });
+
+  it('says it could not load the cash flow rather than showing an empty chart', async () => {
+    summaryOnly();
+    reports.availableMonths.mockResolvedValue(['2026-07', '2026-08']);
+    reports.forMonth.mockRejectedValue(new Error('boom'));
+
+    renderScreen();
+
+    expect(await screen.findByText(/Couldn’t load your cash flow/)).toBeTruthy();
+    expect(screen.queryByText(/No monthly data yet/i)).toBeNull();
+  });
+
+  it('admits when only some months are missing instead of drawing the gap as continuous', async () => {
+    summaryOnly();
+    reports.availableMonths.mockResolvedValue(['2026-06', '2026-07', '2026-08']);
+    reports.forMonth.mockImplementation((month: string) =>
+      month === '2026-07'
+        ? Promise.reject(new Error('boom'))
+        : Promise.resolve({ month, income: 100, expense: 50, categories: [] })
+    );
+
+    renderScreen();
+
+    // The chart still renders what it has -- but says what it doesn't have, because the x-axis is
+    // index-based and would otherwise join June straight to August as one even segment.
+    expect(await screen.findByText(/One month couldn’t be loaded/)).toBeTruthy();
+  });
+
+  it('does not spin a skeleton forever when offline with no cached months', async () => {
+    // The realistic offline shape, not a blanket one: 'dashboard-summary' IS in the persistence
+    // allowlist, so it warm-starts from disk, while a device that has never loaded this month's
+    // report list has nothing for 'report-months'. That query then PAUSES rather than failing --
+    // pending, and staying pending until the network returns. Gating the skeleton on isPending
+    // alone would trade the old false empty state for a spinner that implies data is coming.
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0 } },
+    });
+    queryClient.setQueryData(['dashboard-summary'], emptySummary({ currentBalance: 4200 }));
+    onlineManager.setOnline(false);
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <DashboardScreen />
+      </QueryClientProvider>
+    );
+
+    expect(await screen.findByText(/Couldn’t load your cash flow/)).toBeTruthy();
+    expect(screen.queryByText(/No monthly data yet/i)).toBeNull();
+  });
+
+  it('still shows the genuine empty state when there really are no months', async () => {
+    // The other side of the guard: a user with no statements at all must keep getting the real
+    // answer rather than an error.
+    summaryOnly();
+    reports.availableMonths.mockResolvedValue([]);
+
+    renderScreen();
+
+    expect(await screen.findByText(/No monthly data yet/i)).toBeTruthy();
+    expect(screen.queryByText(/Couldn’t load your cash flow/)).toBeNull();
   });
 });
 

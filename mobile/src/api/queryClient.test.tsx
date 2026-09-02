@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { QueryClient, QueryClientProvider, dehydrate, useQuery } from '@tanstack/react-query';
 import { renderHook, waitFor } from '@testing-library/react-native';
+import { PERSISTED_QUERY_KEY_PREFIXES } from './queryPersistence';
 import {
   clearPersistedQueryCache,
   pauseQueryPersistence,
@@ -10,6 +11,9 @@ import {
 } from './queryClient';
 
 const PERSIST_KEY = 'finora_query_cache';
+// Mirrors queryClient.ts's own constant -- not exported from there, so asserted against a local
+// copy rather than loosening that module's surface for a test.
+const PERSIST_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 function blob(clientState: unknown, over: Partial<{ timestamp: number; buster: string }> = {}) {
   return JSON.stringify({ timestamp: Date.now(), buster: '1', clientState, ...over });
@@ -140,6 +144,71 @@ describe('startQueryPersistence', () => {
 });
 
 describe('pauseQueryPersistence', () => {
+  /**
+   * The leak this closes, and why the sibling test below could not catch it.
+   *
+   * createAsyncStoragePersister throttles persistClient at 1000ms, and asyncThrottle has no cancel
+   * path: once a call is queued it WILL run when the interval elapses. persistQueryClientSave also
+   * dehydrates eagerly, so the queued call is already holding a finished snapshot of the departing
+   * user's cache -- clearing the live cache afterwards cannot empty it, and stopPersisting() only
+   * detaches the cache subscription sitting ABOVE the throttle.
+   *
+   * So the write outlived the wipe by ~1s and re-created the blob with a fresh timestamp. Since
+   * AuthContext.login never clears the cache, the next cold start hydrated it and painted the next
+   * person's first frame with the previous account's balances.
+   *
+   * The sibling test cannot see this: it deliberately sleeps out the 1000ms interval BEFORE
+   * logging out ("wait out its 1000ms interval so only a write genuinely triggered by the clear
+   * below would show up"), which is exactly the state in which no write is pending. This one does
+   * the opposite -- it makes sure a write IS in flight at the moment of logout.
+   */
+  it('refuses a write already queued inside the persister throttle when the logout happened', async () => {
+    await AsyncStorage.removeItem(PERSIST_KEY);
+    startQueryPersistence();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    // asyncThrottle runs the FIRST call straight away and only then opens its 1000ms window, so a
+    // single write is never pending long enough to race anything. This first one exists to open
+    // that window.
+    queryClient.setQueryData(['dashboard-summary'], { currentBalance: 111 });
+    await waitFor(async () => expect(await AsyncStorage.getItem(PERSIST_KEY)).not.toBeNull());
+
+    // ...and this one lands inside it, so it is queued rather than executed. This is the write that
+    // used to outlive the wipe, carrying this balance with it.
+    queryClient.setQueryData(['dashboard-summary'], { currentBalance: 555000 });
+
+    pauseQueryPersistence();
+    queryClient.clear();
+    await clearPersistedQueryCache();
+    expect(await AsyncStorage.getItem(PERSIST_KEY)).toBeNull();
+
+    // The queued write fires somewhere in here.
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+
+    expect(await AsyncStorage.getItem(PERSIST_KEY)).toBeNull();
+  });
+
+  it('lets the next session persist normally once it has signed in', async () => {
+    // The guard must invalidate the departing session's queued write WITHOUT wedging persistence
+    // for whoever signs in next -- otherwise the fix would silently disable warm starts from the
+    // first logout onwards, which no existing test would notice.
+    await AsyncStorage.removeItem(PERSIST_KEY);
+    startQueryPersistence();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    pauseQueryPersistence();
+    queryClient.clear();
+    await clearPersistedQueryCache();
+
+    queryClient.setQueryData(['dashboard-summary'], { currentBalance: 42 });
+
+    await waitFor(async () => {
+      const raw = await AsyncStorage.getItem(PERSIST_KEY);
+      expect(raw).not.toBeNull();
+      expect(raw).toContain('42');
+    });
+  });
+
   it('stops a subsequent queryClient.clear() from triggering a reactive disk write', async () => {
     await AsyncStorage.removeItem(PERSIST_KEY);
     startQueryPersistence();
@@ -182,5 +251,28 @@ describe('clearPersistedQueryCache', () => {
     await clearPersistedQueryCache();
 
     expect(await AsyncStorage.getItem(PERSIST_KEY)).toBeNull();
+  });
+});
+
+/**
+ * TanStack's persistence contract: a query garbage-collected out of memory is also dropped from the
+ * next persisted write. With gcTime left at the 5-minute default against a 24h PERSIST_MAX_AGE, the
+ * disk cache eroded during the session -- anything restored or prefetched and not looked at within
+ * five minutes (Budgets and Reports live in the More stack, so they are unmounted most of the time)
+ * was evicted and erased, and the next cold start showed the skeleton persistence exists to remove.
+ */
+describe('gcTime vs the persisted maxAge', () => {
+  it('keeps every persisted key in memory at least as long as it is kept on disk', () => {
+    for (const prefix of PERSISTED_QUERY_KEY_PREFIXES) {
+      const defaults = queryClient.getQueryDefaults([prefix]);
+      expect(defaults?.gcTime).toBeGreaterThanOrEqual(PERSIST_MAX_AGE_MS);
+    }
+  });
+
+  it('leaves non-persisted keys on the shorter default', () => {
+    // The scoping is the point: pinning every screen's data in memory for a day costs real memory
+    // on a phone and buys nothing, since none of it is on disk to warm-start from.
+    expect(queryClient.getQueryDefaults(['insights'])?.gcTime).toBeUndefined();
+    expect(queryClient.getQueryDefaults(['statement-imports'])?.gcTime).toBeUndefined();
   });
 });

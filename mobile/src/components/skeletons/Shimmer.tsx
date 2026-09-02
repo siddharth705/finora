@@ -25,6 +25,56 @@ const sharedPulse = new Animated.Value(0.35);
 let activeShimmerCount = 0;
 let sharedLoop: Animated.CompositeAnimation | null = null;
 
+/** Static opacity used instead of the pulse when the OS "Reduce Motion" setting is on. Deliberately
+ *  toward the bright end of the 0.35 -> 1 range the animation sweeps: the block still has to read
+ *  as a visible placeholder, it just stops moving. */
+const REDUCED_MOTION_OPACITY = 0.7;
+
+/**
+ * Starts the pulse only if the OS "Reduce Motion" setting is off.
+ *
+ * This is the one animation in the app that had to ask. AnimatedNumber and ChartReveal are built on
+ * Reanimated, whose withTiming defaults to `ReduceMotion.System` and so already goes instant when
+ * the setting is on -- but this loop is React Native's own Animated API, which has no equivalent
+ * behaviour and will happily run forever. And of the three it is the one that matters most: an
+ * indefinitely repeating pulse is precisely the motion class that setting exists to suppress, and
+ * a skeleton is on screen during every loading state in the app rather than for one 450ms
+ * transition.
+ *
+ * Async because isReduceMotionEnabled() is a native round trip, so the count can have fallen back
+ * to zero (a fast response, nothing left loading) before it resolves -- starting the loop then
+ * would leave it running with no Shimmer mounted to ever release it.
+ */
+function startPulse() {
+  // Guarded rather than assumed: isReduceMotionEnabled() is a native round trip, so by the time it
+  // answers the count can have fallen back to zero (a fast response, nothing left loading) or
+  // another episode can already have started a loop. Starting one here in either case would leave
+  // it running with no Shimmer mounted to ever release it.
+  if (activeShimmerCount === 0 || sharedLoop) return;
+  sharedLoop = Animated.loop(
+    Animated.sequence([
+      Animated.timing(sharedPulse, { toValue: 1, duration: 700, useNativeDriver: true }),
+      Animated.timing(sharedPulse, { toValue: 0.35, duration: 700, useNativeDriver: true }),
+    ])
+  );
+  sharedLoop.start();
+}
+
+function startPulseUnlessReducedMotion() {
+  void AccessibilityInfo.isReduceMotionEnabled()
+    .then((reduceMotion) => {
+      if (!reduceMotion) {
+        startPulse();
+        return;
+      }
+      if (activeShimmerCount === 0) return;
+      sharedPulse.setValue(REDUCED_MOTION_OPACITY);
+    })
+    // A device that can't answer gets the animation rather than a frozen placeholder: fail toward
+    // the pre-existing behaviour, not toward a skeleton that looks broken.
+    .catch(startPulse);
+}
+
 function acquireSharedLoop() {
   activeShimmerCount += 1;
   if (activeShimmerCount === 1) {
@@ -32,13 +82,7 @@ function acquireSharedLoop() {
     // necessarily back at 0.35 -- without this reset, the first pulse of a new loading episode
     // starts from that leftover value instead of the intended minimum, reading as a stutter.
     sharedPulse.setValue(0.35);
-    sharedLoop = Animated.loop(
-      Animated.sequence([
-        Animated.timing(sharedPulse, { toValue: 1, duration: 700, useNativeDriver: true }),
-        Animated.timing(sharedPulse, { toValue: 0.35, duration: 700, useNativeDriver: true }),
-      ])
-    );
-    sharedLoop.start();
+    startPulseUnlessReducedMotion();
     // Every individual Shimmer block is hidden from the accessibility tree below (a screen reader
     // reading out a dozen unlabelled "gray rectangle" placeholders is worse than reading nothing),
     // but that leaves NO signal at all that the screen is loading -- the old spinner this system
