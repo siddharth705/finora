@@ -12,6 +12,7 @@ import com.finora.repository.PasswordChangeSessionRepository;
 import com.finora.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.util.ReflectionTestUtils;
 
@@ -295,6 +296,49 @@ class PasswordChangeServiceTest {
         assertThat(session.getOtpAttemptCount()).isEqualTo(1);
         assertThat(session.getStatus()).isEqualTo(PasswordChangeSession.Status.STARTED);
         verify(sessionRepository).save(session);
+    }
+
+    /** Review catch (Important 1): the phone-mismatch tests above never touch the catch block in
+     *  verifyOtp() -- they drive PhoneVerificationProvider to a normal return, not a thrown
+     *  ApiException. An invalid/expired Firebase token (or one with no phone claim at all) is a
+     *  real, distinct failure path and the most security-sensitive branch in this change, since it
+     *  decides whether repeatedly presenting garbage tokens burns the attempt budget. A configured
+     *  provider throwing 401 must count. */
+    @Test
+    void verifyOtp_withAnInvalidFirebaseToken_countsTowardTheCap() {
+        PasswordChangeSession session = sessionWith(PasswordChangeSession.Status.STARTED, Instant.now().plusSeconds(600));
+        when(sessionRepository.findByIdAndUserId(session.getId(), userId)).thenReturn(Optional.of(session));
+        when(userRepository.findById(userId)).thenReturn(Optional.of(existingUser()));
+        when(phoneVerificationProvider.isConfigured()).thenReturn(true);
+        when(phoneVerificationProvider.verifyAndGetPhoneNumber("garbage-token"))
+                .thenThrow(new ApiException(HttpStatus.UNAUTHORIZED, "Could not verify phone number — the code may be invalid or expired."));
+
+        assertThatThrownBy(() -> service.verifyOtp(userId, new VerifyOtpRequest(session.getId().toString(), "garbage-token")))
+                .isInstanceOf(ApiException.class);
+
+        assertThat(session.getOtpAttemptCount()).isEqualTo(1);
+        assertThat(session.getStatus()).isEqualTo(PasswordChangeSession.Status.STARTED);
+    }
+
+    /** Review catch (Important 2): the carve-out is gated on PhoneVerificationProvider.isConfigured(),
+     *  not on the exception's HTTP status -- a provider that was simply never set up on this server
+     *  (local/dev; production hard-fails boot otherwise, see ProductionConfigValidator) must not
+     *  burn the caller's attempt budget on a condition retrying correctly can never fix. */
+    @Test
+    void verifyOtp_whenThePhoneProviderIsNotConfigured_doesNotCountTowardTheCap() {
+        PasswordChangeSession session = sessionWith(PasswordChangeSession.Status.STARTED, Instant.now().plusSeconds(600));
+        when(sessionRepository.findByIdAndUserId(session.getId(), userId)).thenReturn(Optional.of(session));
+        when(userRepository.findById(userId)).thenReturn(Optional.of(existingUser()));
+        when(phoneVerificationProvider.isConfigured()).thenReturn(false);
+        when(phoneVerificationProvider.verifyAndGetPhoneNumber("some-token"))
+                .thenThrow(new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "Phone verification is not configured on this server."));
+
+        assertThatThrownBy(() -> service.verifyOtp(userId, new VerifyOtpRequest(session.getId().toString(), "some-token")))
+                .isInstanceOf(ApiException.class);
+
+        assertThat(session.getOtpAttemptCount()).isEqualTo(0);
+        assertThat(session.getStatus()).isEqualTo(PasswordChangeSession.Status.STARTED);
+        verify(sessionRepository, never()).save(any());
     }
 
     @Test

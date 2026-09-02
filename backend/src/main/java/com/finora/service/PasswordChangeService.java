@@ -8,6 +8,7 @@ import com.finora.exception.ApiException;
 import com.finora.repository.PasswordChangeSessionRepository;
 import com.finora.repository.UserRepository;
 import com.finora.util.PhoneMasking;
+import com.finora.util.PhoneNumbers;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -163,13 +164,19 @@ public class PasswordChangeService {
         try {
             verifiedPhone = phoneVerificationProvider.verifyAndGetPhoneNumber(request.firebaseIdToken());
         } catch (ApiException e) {
-            // Counts toward the cap unless the provider itself isn't configured (503) -- that's a
-            // server-side outage, not a wrong guess, and burning the caller's attempt budget on an
-            // infra problem they can't fix by retrying correctly would be a self-inflicted lockout.
-            // Every other failure here (invalid/expired token, a token with no phone claim at all)
-            // is exactly the "this attempt failed" case AuthService's own catch block broadens to,
-            // for the same reason: nothing about WHY a token failed changes that it was an attempt.
-            if (e.getStatus() != HttpStatus.SERVICE_UNAVAILABLE) {
+            // Counts toward the cap unless the provider was never configured on this server at all
+            // (local/dev only -- ProductionConfigValidator hard-fails boot in production if it
+            // isn't, so this is not a live path there). Gated on isConfigured(), the same predicate
+            // FirebasePhoneVerificationProvider itself uses to decide whether to even attempt a
+            // call, rather than on the exception's HTTP status: a real outage (Firebase down, or a
+            // failure fetching Google's signing keys) still throws a 401 here, same as a genuinely
+            // wrong token, and 401 is squarely an "this attempt failed" case. Deliberately NOT
+            // keyed on SERVICE_UNAVAILABLE -- that status is shared with whatever a future provider
+            // implementation might map an upstream 429/503 to, and that condition IS attacker-
+            // influenceable in a way "never configured" never is; keying the carve-out to a status
+            // code instead of this predicate would risk silently becoming an unlimited-attempts
+            // bypass the day that mapping is added.
+            if (phoneVerificationProvider.isConfigured()) {
                 registerFailedOtpAttempt(userId, session);
             }
             throw e;
@@ -208,14 +215,19 @@ public class PasswordChangeService {
         sessionRepository.save(session);
     }
 
-    /** Firebase's phone_number claim is always E.164 ("+919876543210"); User.phoneNumber may or
-     *  may not carry the leading "+" depending on how it was typed at registration -- compares
-     *  digits only so that difference alone never causes a false mismatch. Same helper as
-     *  AuthService's own phoneNumbersMatch(); not shared beyond copy-paste since both are small,
-     *  private, and each service already keeps its own dependency set narrow by design. */
+    /** Delegates to {@link PhoneNumbers#sameNumber} -- see that method's own doc for why digit
+     *  equality alone isn't enough: a legacy row holding a bare 10-digit Indian number (written
+     *  before AuthService.normalizePhoneNumber existed, or via the admin support-edit path that
+     *  predates PhoneNumbers.normalize) must still match Firebase's E.164 claim, or that account
+     *  can never verify again. Task 13 review catch: this used to be its own naive digit-only
+     *  comparison, independently reimplementing the exact bug PhoneNumbers.sameNumber's own doc
+     *  comment describes AuthService as having already been bitten by and fixed -- an affected user
+     *  hitting this branch would have deterministically failed every one of their MAX_OTP_ATTEMPTS
+     *  tries and landed on the generic "no longer valid" message instead of a fixable one. Same
+     *  helper AuthService.phoneNumbersMatch() itself now delegates to; not inlined directly at the
+     *  call site so both services keep the same short, obviously-named local wrapper. */
     private boolean phoneNumbersMatch(String a, String b) {
-        if (a == null || b == null) return false;
-        return a.replaceAll("[^0-9]", "").equals(b.replaceAll("[^0-9]", ""));
+        return PhoneNumbers.sameNumber(a, b);
     }
 
     /** Step 3: set the new password. Only reachable once the session itself shows OTP_VERIFIED --
