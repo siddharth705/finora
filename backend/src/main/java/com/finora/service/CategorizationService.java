@@ -57,10 +57,19 @@ public class CategorizationService {
      * that no spending occurred, which is a confident claim this code has no evidence for, and the
      * one thing the design review names as worse than an honest unknown.
      *
-     * <p>"Paid a Person" claims only what the detector actually established: money left the
-     * account, it went to a named individual, and the purpose is unknown. It is a weaker claim than
-     * "Transfer" and than "Friend Repayment" (which additionally asserts a debt being settled), and
-     * weaker is the point.
+     * <p>"Personal Transfer" claims only what the detector actually established: this movement of
+     * money had an individual on the other side, and the purpose is unknown. It is a weaker claim
+     * than "Transfer" and than "Friend Repayment" (which additionally asserts a debt being
+     * settled), and weaker is the point.
+     *
+     * <p><b>It is deliberately DIRECTION-NEUTRAL, and the first attempt was not.</b> This shipped as
+     * "Paid a Person" (V123), which reads as an outbound payment -- but the detector matches on
+     * narration SHAPE and has never looked at direction, so 99 of the 434 rows it classified on the
+     * real corpus (22.8% of them, 20.9% by value) were money RECEIVED and were being described as
+     * money paid. The old "Transfer" label hid the defect because it is directionless. Direction is
+     * already a property of the transaction ({@code txn_type}); encoding it a second time in the
+     * category name only creates a second place for it to be wrong. A UI that wants to say "Sent to"
+     * or "Received from" composes it from the two.
      *
      * <p>Being a distinct category does NOT change how the money is counted. Nothing in this
      * codebase excludes spend by category NAME -- {@code RefundNetting.reportable} excludes by
@@ -68,7 +77,7 @@ public class CategorizationService {
      * dashboard, budget or analytics path keying off one. So these rows counted as spend under
      * "Transfer" and still count as spend here; only the label the user reads changed.
      */
-    public static final String P2P_CATEGORY = "Paid a Person";
+    public static final String P2P_CATEGORY = "Personal Transfer";
 
     private final MerchantNormalizationEngine merchantNormalizationEngine;
     private final MerchantLearningService merchantLearningService;

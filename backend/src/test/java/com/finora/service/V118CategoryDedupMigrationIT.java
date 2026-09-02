@@ -478,7 +478,7 @@ class V118CategoryDedupMigrationIT {
      * in the same order as that map so a drift between the two is obvious when reading them side
      * by side.
      *
-     * <p>That map has since grown a 26th entry ("Paid a Person", V123). It is deliberately absent
+     * <p>That map has since grown a 26th entry (added by V123, renamed "Personal Transfer" by V124). It is deliberately absent
      * here and must stay absent: this fixture describes the schema V118 itself backfills, and this
      * test migrates only as far as V118, so a category introduced five migrations later does not
      * exist yet at the point these assertions run.
