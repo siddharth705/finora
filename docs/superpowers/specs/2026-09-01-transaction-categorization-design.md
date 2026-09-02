@@ -26,6 +26,60 @@ HDFC savings) account for most of the volume, while others (ICICI CC, AU CC, Ind
 matched fine. That unevenness itself is a clue: this isn't one uniform failure, it's several
 distinct failure modes stacked on top of each other.
 
+### Re-baseline after shipping — 2026-09-02
+
+Measured again once #743, #750 and #762 were all on `main`, because the 83.4% above is the number
+this whole document argues from and it should not be left as the last word.
+
+The corpus was **regenerated from the 29 real PDFs with current extraction** rather than reusing
+the earlier dump — #744 changed how right-margin panel text is bucketed, so the older row set was
+stale. 29 documents, 0 extraction failures, **1,869 rows** (the stale dump had 1,875; the six-row
+difference is #744 correctly dropping margin text it used to read as ledger data).
+
+Same pipeline as the original measurement — the V19 global seed, then `CategoryRules`, then (new)
+the structural detector, with no user rules and no learned history, i.e. a brand-new user's first
+import.
+
+| "Other" rate | Before the detector | After #743 + #750 + #762 |
+|---|---|---|
+| By transaction **count** | 1,543 / 1,869 = **82.6%** | 1,098 / 1,869 = **58.7%** |
+| By transaction **value** | **91.7%** | **63.0%** |
+
+**−23.8 points by count, −28.7 by value.** Which layer decided:
+
+| Layer | Rows | Share |
+|---|---|---|
+| fell through to "Other" | 1,098 | 58.7% |
+| structural P2P → "Personal Transfer" | 445 | 23.8% |
+| V19 global rule | 290 | 15.5% |
+| `CategoryRules` keyword table | 36 | 1.9% |
+
+Three corrections to the original write-up, recorded rather than quietly fixed:
+
+- It says "the 47 CONTAINS keywords seeded in `V19`". V19 contains **46** `ASSIGN_CATEGORY` rows,
+  all `DESCRIPTION`/`CONTAINS`. Off by one.
+- The 83.4% was measured over **1,679** narrations from a different extraction run; this is 1,869.
+  The two "before" figures (83.4% and 82.6%) are close and consistent, but they are not the same
+  denominator — subtract down a column, never across.
+- The merchant-canonical-name retry is **not modelled** here, in either column. It needs live
+  merchant state, and for a new user it can only fire for the ~37 curated brands
+  `MerchantSeedService` seeds as `APPROVED` — brands V19 and `CategoryRules` already match on the
+  raw description. Excluding it keeps this honest rather than flattering.
+
+**What the remaining 58.7% is.** Not re-classified from scratch; this is the original stratified
+sample's breakdown with the P2P bucket removed and the rest rescaled, so treat it as a projection
+pointing at the next lever rather than as a measurement:
+
+| Remaining bucket | Projected share of the 1,098 | Approx. rows |
+|---|---|---|
+| Real business missing from the vocabulary | ~36% | ~400 |
+| Garbled / truncated (an *extraction* defect) | ~30% | ~330 |
+| Unclear | ~20% | ~215 |
+| UPI/VPA pattern | ~13% | ~145 |
+
+Missing-business vocabulary is now the largest single lever, and unlike the P2P bucket it *is* a
+matching problem — which is what §5's sequencing predicted.
+
 ### The bucket breakdown (42-item stratified sample, real transactions)
 
 | Bucket | Share | What it actually is |
@@ -307,6 +361,19 @@ needs to extend to *narration grammar*, not just page layout.
 - Fix the normalization-is-inert bug: retry the keyword fallback against the merchant's canonical
   name when the raw description misses, since right now the normalization layer is built but
   disconnected from where most decisions happen.
+  > **Shipped in #743, but operator-gated — 2026-09-02.** The retry is correct and live, and it
+  > fires only for `APPROVED` merchants. Only `MerchantSeedService` (~37 curated brands, seeded per
+  > user at registration) and the admin Merchant Review Center reach that state, so for merchants
+  > discovered from a user's own statements it stays inert until an operator curates them. Count it
+  > as operator-gated capability, not as shipped per-user value.
+  >
+  > It cannot be widened by promoting a merchant when the user corrects a category: `suggest`
+  > consults the learned distribution *before* this retry, and every user correction writes that
+  > distribution row — so that would promote exactly the merchants whose retry can never fire
+  > again. Nor can the gate be dropped, because the retry's value and its risk are the same
+  > mechanism (first-significant-token grouping). Widening it needs a user-facing confirmation of
+  > merchant **identity** — rename/merge, which today exist only on `AdminUserMerchantController`.
+  > Full reasoning on `CategorizationService.suggestCategoryWithMerchantFallback`.
 - Add a real "Transfer" / "Sent to a person" category (already exists in the default taxonomy) and
   a structural P2P detector (named individual + no business-VPA signal) — this alone likely
   resolves the single largest bucket in the real data, with zero matching-logic cleverness
@@ -318,8 +385,11 @@ needs to extend to *narration grammar*, not just page layout.
   > for something (a driver, a maid, a landlord, a vegetable seller with no merchant account).
   > "Transfer" asserts of all of them that no spending occurred. The detector has no evidence for
   > that, and §14 rates a confident wrong answer as worse than an honest unknown. The target is
-  > now **"Paid a Person"**, which claims only what was established: money left the account, to a
-  > named individual, purpose unknown. It is a weaker claim than "Transfer" and weaker than
+  > now **"Personal Transfer"** (named "Paid a Person" by V123, renamed direction-neutral by V124
+  > once measurement showed 99 of its 434 rows — 22.8%, 20.9% by value — are money RECEIVED, and the
+  > detector has never inspected direction). It claims only what was established: this movement of
+  > money had a named individual on the other side, purpose unknown. It is a weaker claim than
+  > "Transfer" and weaker than
   > "Friend Repayment" (which further asserts a debt being settled), and weaker is the point.
 - Expand the global keyword/rule seed using the real corpus findings directly — `ASSPL`, biller
   abbreviations like `BPPY`/`CC PAYMENT`, and similar real misses cost nothing to add and are
@@ -532,7 +602,7 @@ categories can't drift. The gap is real for **user-created custom categories** �
 user from creating a category that happens to share a name with a system category's rule target.
 This plan's P2P detector returns a plain category-name string, the same way every other
 `Suggestion` in `CategorizationService` already does — consistent with existing behavior, not a new
-risk this plan introduces. (That string was `"Transfer"` as shipped and is `"Paid a Person"` from
+risk this plan introduces. (That string was `"Transfer"` as shipped and is `"Personal Transfer"` from
 V123 on; see the resolution note in §7. The name is a system category either way, so
 `CategoryService`'s 403-on-rename still protects it from drift.)
 
