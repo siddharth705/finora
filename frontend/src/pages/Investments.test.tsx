@@ -1,0 +1,206 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen, waitFor, within, act } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import Investments from './Investments';
+import { accountsApi, networthApi, type NetWorthData } from '../api/endpoints';
+import type { Account } from '../types';
+
+// The charts themselves are not under test here and chart.js needs a real canvas, which jsdom
+// doesn't provide -- the page's loading behaviour is what these tests are about.
+vi.mock('react-chartjs-2', () => ({
+  Doughnut: () => <div data-testid="allocation-chart" />,
+  Line: () => <div data-testid="trend-chart" />,
+}));
+
+vi.mock('../api/endpoints', () => ({
+  accountsApi: { list: vi.fn(), create: vi.fn(), remove: vi.fn() },
+  networthApi: { current: vi.fn(), saveSnapshot: vi.fn() },
+}));
+
+function holding(overrides: Partial<Account> = {}): Account {
+  return {
+    id: 'a1',
+    name: 'Index Fund',
+    accountType: 'INVESTMENT',
+    balance: 50000,
+    investmentKind: 'Mutual Fund',
+    ...overrides,
+  } as Account;
+}
+
+function netWorth(overrides: Partial<NetWorthData> = {}): NetWorthData {
+  return {
+    totalAssets: 50000,
+    totalLiabilities: 0,
+    netWorth: 50000,
+    history: [
+      { date: '2026-07-01', netWorth: 40000 },
+      { date: '2026-08-01', netWorth: 50000 },
+    ],
+    ...overrides,
+  } as NetWorthData;
+}
+
+function pending<T>(): Promise<T> {
+  return new Promise<T>(() => {});
+}
+
+describe('Investments — loading states', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  /**
+   * The page-level `if (loading) return <p>Loading…</p>` is gone in favour of per-section regions.
+   * Each announces immediately, before useDelayedLoading's window lets any shape render.
+   */
+  it('announces each loading section immediately instead of gating the whole page', () => {
+    vi.mocked(accountsApi.list).mockReturnValue(pending<Account[]>());
+    vi.mocked(networthApi.current).mockReturnValue(pending<NetWorthData>());
+
+    render(<Investments />);
+
+    expect(screen.getByText('Loading your investment totals')).toBeInTheDocument();
+    expect(screen.getByText('Loading your holdings')).toBeInTheDocument();
+    // Both charts route their own loading through ChartContainer's Region.
+    expect(screen.getByText('Loading your allocation')).toBeInTheDocument();
+    expect(screen.getByText('Loading your net worth trend')).toBeInTheDocument();
+  });
+
+  /**
+   * Removing the page gate exposes every `length === 0` empty state to the loading window. A user
+   * with holdings must never be told they have none just because the fetch hasn't landed --
+   * the flash-of-empty-state bug class §2 was written to kill.
+   */
+  it('never shows an empty state while the initial fetch is still in flight', () => {
+    vi.mocked(accountsApi.list).mockReturnValue(pending<Account[]>());
+    vi.mocked(networthApi.current).mockReturnValue(pending<NetWorthData>());
+
+    render(<Investments />);
+
+    expect(screen.queryByText('No holdings yet')).not.toBeInTheDocument();
+    expect(screen.queryByText('No investments yet')).not.toBeInTheDocument();
+    expect(screen.queryByText('Start tracking your trend')).not.toBeInTheDocument();
+  });
+
+  /**
+   * The trap the roadmap missed: load() is also called after add and delete, so a mutation refetch
+   * used to re-enter the SAME page-level gate. Turned into a skeleton that would mean the entire
+   * page collapsing after every add -- the opposite of the roadmap's UX rule, which puts a refetch
+   * on the "stale content stays, spinner shows" row.
+   */
+  it('does not collapse into a skeleton when a delete triggers a refetch', async () => {
+    const user = userEvent.setup();
+    vi.mocked(accountsApi.list).mockResolvedValue([holding()]);
+    vi.mocked(networthApi.current).mockResolvedValue(netWorth());
+    vi.mocked(accountsApi.remove).mockResolvedValue(undefined as never);
+
+    render(<Investments />);
+    expect(await screen.findByText('Index Fund')).toBeInTheDocument();
+
+    // The refetch after the delete never settles, so the in-flight state is inspectable.
+    vi.mocked(accountsApi.list).mockReturnValue(pending<Account[]>());
+    vi.mocked(networthApi.current).mockReturnValue(pending<NetWorthData>());
+
+    // Two "Delete" buttons exist once the dialog opens (the row's and the dialog's confirm), so the
+    // second click is scoped to the dialog rather than relying on query order.
+    await user.click(screen.getByRole('button', { name: 'Delete' }));
+    const dialog = await screen.findByRole('alertdialog');
+    await user.click(within(dialog).getByRole('button', { name: 'Delete' }));
+
+    expect(await screen.findByText('Refreshing…')).toBeInTheDocument();
+    // Content stayed put; no section fell back to a loading region.
+    expect(screen.getByText('Index Fund')).toBeInTheDocument();
+    expect(screen.queryByText('Loading your holdings')).not.toBeInTheDocument();
+    expect(screen.queryByText('Loading your investment totals')).not.toBeInTheDocument();
+  });
+
+  /**
+   * Keeping the list on screen during a refresh is what makes a SECOND load reachable at all --
+   * before Phase 5 the page-level gate replaced every Delete button while the refetch ran. Without
+   * a request guard, the first delete's refetch (whose GET was issued BEFORE the second delete)
+   * lands last and overwrites the correct result, resurrecting the deleted holding as a live,
+   * deletable row until the page is reloaded.
+   */
+  it('ignores a superseded refetch instead of resurrecting a deleted holding', async () => {
+    const user = userEvent.setup();
+    const alpha = holding({ id: 'a1', name: 'Alpha' });
+    const beta = holding({ id: 'a2', name: 'Beta' });
+
+    const listDeferred: Array<(a: Account[]) => void> = [];
+    vi.mocked(accountsApi.list).mockImplementation(
+      () => new Promise<Account[]>((resolve) => { listDeferred.push(resolve); })
+    );
+    vi.mocked(networthApi.current).mockResolvedValue(netWorth());
+    vi.mocked(accountsApi.remove).mockResolvedValue(undefined as never);
+
+    render(<Investments />);
+
+    // Initial load.
+    await waitFor(() => expect(listDeferred).toHaveLength(1));
+    listDeferred[0]([alpha, beta]);
+    expect(await screen.findByText('Alpha')).toBeInTheDocument();
+
+    async function deleteRow(name: string) {
+      const row = screen.getByText(name).closest('div')!;
+      await user.click(within(row).getByRole('button', { name: 'Delete' }));
+      const dialog = await screen.findByRole('alertdialog');
+      await user.click(within(dialog).getByRole('button', { name: 'Delete' }));
+    }
+
+    await deleteRow('Alpha');
+    await waitFor(() => expect(listDeferred).toHaveLength(2));
+    // Second delete starts while the first refetch is still in flight.
+    await deleteRow('Beta');
+    await waitFor(() => expect(listDeferred).toHaveLength(3));
+
+    // The newer refetch (post-both-deletes) resolves first...
+    listDeferred[2]([]);
+    await waitFor(() => expect(screen.queryByText('Beta')).not.toBeInTheDocument());
+
+    // ...then the superseded one lands with its pre-second-delete snapshot. It must be ignored.
+    listDeferred[1]([beta]);
+    await act(async () => { await Promise.resolve(); });
+
+    expect(screen.queryByText('Beta')).not.toBeInTheDocument();
+    expect(screen.queryByText('Alpha')).not.toBeInTheDocument();
+  });
+
+  /**
+   * The empty states are gated on `loading`, which the shared `.finally` clears on the error path
+   * too -- so a failed initial fetch used to leave a user with holdings told, in three places, that
+   * they have none.
+   */
+  it('does not claim the user has nothing when the initial fetch failed', async () => {
+    vi.mocked(accountsApi.list).mockRejectedValue(new Error('offline'));
+    vi.mocked(networthApi.current).mockRejectedValue(new Error('offline'));
+
+    render(<Investments />);
+
+    expect(await screen.findByText('Could not load investments.')).toBeInTheDocument();
+    expect(screen.queryByText('No holdings yet')).not.toBeInTheDocument();
+    expect(screen.queryByText('No investments yet')).not.toBeInTheDocument();
+    expect(screen.queryByText('Start tracking your trend')).not.toBeInTheDocument();
+  });
+
+  it('keeps the Add button spinning until the refetched list is on screen', async () => {
+    const user = userEvent.setup();
+    vi.mocked(accountsApi.list).mockResolvedValue([]);
+    vi.mocked(networthApi.current).mockResolvedValue(netWorth({ history: [] }));
+    vi.mocked(accountsApi.create).mockResolvedValue(holding() as never);
+
+    render(<Investments />);
+    await screen.findByText('No holdings yet');
+
+    await user.type(screen.getByLabelText('Name'), 'Index Fund');
+    await user.type(screen.getByLabelText('Current value'), '50000');
+
+    // create() resolves but the follow-up refetch does not -- the button must still be busy.
+    vi.mocked(accountsApi.list).mockReturnValue(pending<Account[]>());
+    vi.mocked(networthApi.current).mockReturnValue(pending<NetWorthData>());
+
+    await user.click(screen.getByRole('button', { name: 'Add' }));
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Add' })).toBeDisabled());
+  });
+});
