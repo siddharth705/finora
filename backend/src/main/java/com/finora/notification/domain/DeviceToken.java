@@ -92,7 +92,11 @@ public class DeviceToken {
      * Corrects a stale platform on re-registration. A device's install can change platform under
      * the same fingerprint only in contrived scenarios, but a re-registration is the moment
      * {@code DeviceTokenService} knows the true current value -- leaving an old one in place would
-     * silently route this device's pushes to the wrong provider (Task 11 dispatches on this field).
+     * corrupt this device's diagnostics and per-platform delivery metrics, and would mislead any
+     * future routing built on this field. {@code platform} is not used to route a send today (see
+     * {@link com.finora.notification.api.ActiveDeviceToken}'s class doc, Ruling O / Task 11) --
+     * every token goes through the same FCM path regardless -- but it is still read and reported
+     * on, so a stale value is a real, observable bug here, not a cosmetic one.
      */
     public void updatePlatform(String platform) {
         this.platform = platform;

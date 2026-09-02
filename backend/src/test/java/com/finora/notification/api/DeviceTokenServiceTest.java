@@ -79,10 +79,14 @@ class DeviceTokenServiceTest {
     }
 
     // CORRECTION applied to the brief: activeTokensFor returns List<ActiveDeviceToken> (token +
-    // platform), not List<String>. Task 11 must route each token to FCM (ANDROID) or APNs (IOS) by
-    // its stored platform; a bare token string carries no platform, which would have forced either
-    // a breaking signature change after Task 10 already depends on it, or the push provider
-    // re-querying the repository itself. See task-9-report.md for the full rationale.
+    // platform), not List<String>. Ruling O (Task 11) means platform is NOT used to route each
+    // token to a per-platform provider -- iOS devices register an FCM token just like Android's,
+    // and Firebase relays to APNs on our behalf, so FcmPushProvider sends every token through the
+    // same single FCM path. platform is still carried for diagnostics and per-platform delivery
+    // metrics; a bare token string would still have been the wrong shape regardless, forcing
+    // either a breaking signature change after Task 10 already depends on it, or the push provider
+    // re-querying the repository itself. See task-9-report.md and task-11-report.md for the full
+    // rationale.
     @Test
     void activeTokensFor_returnsDecryptedTokensWithPlatformForSending() {
         DeviceToken token = DeviceToken.register(userId, "ANDROID",
@@ -126,8 +130,10 @@ class DeviceTokenServiceTest {
         verify(repository).save(othersToken);
     }
 
-    // Fix round 1, IMPORTANT 5: Task 11 routes FCM vs APNs by this field. A stale platform on
-    // re-registration means a push silently sent to the wrong provider and dropped.
+    // Fix round 1, IMPORTANT 5: platform is read for diagnostics and per-platform delivery metrics
+    // (Ruling O, Task 11 -- it does not route a send; every token goes through the same FCM path).
+    // A stale platform on re-registration means those diagnostics/metrics silently misreport this
+    // device's real platform going forward.
     @Test
     void register_updatesThePlatformOnAnExistingRow() {
         DeviceToken existing = DeviceToken.register(userId, "IOS",
