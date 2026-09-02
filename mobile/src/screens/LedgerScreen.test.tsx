@@ -300,7 +300,11 @@ describe('correcting a category from the ledger', () => {
     await waitFor(() => expect(transactions.updateCategory).toHaveBeenCalledWith('t-2', 'Food'));
 
     releaseFirst({});
-    await waitFor(() => expect(transactions.updateCategory).toHaveBeenCalledTimes(2));
+
+    // Assert an outcome, not the call count -- that count was already satisfied before the release
+    // above, so alone it pinned nothing. Both saves must reach invalidateFinancialData; a guard
+    // that dropped the second would leave only one.
+    await waitFor(() => expect(invalidateFinancialData).toHaveBeenCalledTimes(2));
   });
 
   it('still offers delete: tap and long-press stay different actions on the same row', async () => {

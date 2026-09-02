@@ -259,7 +259,38 @@ describe('corrections to different rows do not block each other', () => {
     await waitFor(() => expect(transactions.updateCategory).toHaveBeenCalledWith('t-2', 'Travel'));
 
     releaseFirst({});
-    await waitFor(() => expect(transactions.updateCategory).toHaveBeenCalledTimes(2));
+
+    // Assert the SCREEN, not the mock. `toHaveBeenCalledTimes(2)` was already true before the
+    // release above, so on its own it verified nothing: swapping the functional set update for
+    // `setResolvedTxnIds(new Set([id]))` un-hides row A the moment row B resolves -- the exact bug
+    // this block is named for -- and both API calls still fire with the right arguments.
+    await waitFor(() => expect(screen.queryByText('First row')).toBeNull());
+    expect(screen.queryByText('Second row')).toBeNull();
+  });
+
+  it('keeps the other row resolved when one of two concurrent saves fails', async () => {
+    // The path where sharing one pending-row slot actually corrupts state: A fails and must come
+    // back, B succeeded and must stay gone.
+    let failFirst: (e: unknown) => void = () => {};
+    transactions.needsReview.mockResolvedValue([
+      txn({ id: 't-1', description: 'First row' }),
+      txn({ id: 't-2', description: 'Second row' }),
+    ]);
+    transactions.updateCategory
+      .mockImplementationOnce(() => new Promise((_, reject) => { failFirst = reject; }) as never)
+      .mockResolvedValueOnce({} as never);
+
+    renderScreen();
+    fireEvent.press(await screen.findByText('First row'));
+    fireEvent.press(await screen.findByText('Food'));
+    fireEvent.press(await screen.findByText('Second row'));
+    fireEvent.press(await screen.findByText('Travel'));
+
+    failFirst(new Error('nope'));
+
+    expect(await screen.findByText(/Could not save that category/i)).toBeTruthy();
+    expect(screen.getByText('First row')).toBeTruthy();
+    expect(screen.queryByText('Second row')).toBeNull();
   });
 });
 

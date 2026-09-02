@@ -533,6 +533,21 @@ describe('categorization review nudge', () => {
     expect(await screen.findByText('1 transaction needs a quick look')).toBeTruthy();
   });
 
+  it('shows no count at all when only one half of the backlog loads', async () => {
+    // The two queries are disjoint halves of one number. If one fails and the other returns rows,
+    // `data ?? []` still produces a specific, confident, WRONG total -- and it is the
+    // accessibilityLabel too. Suppressing the nudge is the only honest option; the review screen
+    // is where the partial outage gets disclosed.
+    transactions.needsReview.mockResolvedValue([{ id: 't-1' }, { id: 't-2' }] as never);
+    transactions.needsReviewGroups.mockRejectedValue(new Error('down'));
+
+    renderScreen();
+
+    await screen.findByTestId('kpi-Expenses');
+    await waitFor(() => expect(transactions.needsReviewGroups).toHaveBeenCalled());
+    expect(screen.queryByText(/needs? a quick look/i)).toBeNull();
+  });
+
   it('renders the rest of the dashboard when the backlog lookup fails', async () => {
     // A nudge is the one thing on this screen that should fail silently: no count means no nudge,
     // which is exactly what a user with an empty queue already sees.
