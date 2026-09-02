@@ -237,4 +237,44 @@ class PersonToPersonTransferDetectorTest {
         assertThat(PersonToPersonTransferDetector.isNamedIndividualTransfer("")).isFalse();
         assertThat(PersonToPersonTransferDetector.isNamedIndividualTransfer("   ")).isFalse();
     }
+
+    @Test
+    void aPaytmMerchantQrIsABusinessPaymentEvenWhenAPersonalNameIsOnThePayeeLine() {
+        // The whole point of the acquirer markers: the payee line looks exactly like a person,
+        // because for a small merchant it IS a person -- but the money settled over a merchant QR.
+        assertThat(PersonToPersonTransferDetector.isNamedIndividualTransfer(
+                "UPI-RAJESH KUMAR-PAYTMQR281005050101V2SAMPLE@paytm-REF11")).isFalse();  // synthetic-ok
+    }
+
+    @Test
+    void aPaymentGatewayInTheNarrationIsConclusiveOfABusiness() {
+        // PayU, Razorpay and Cashfree settle only to onboarded businesses -- an individual cannot
+        // collect through one, so the gateway name alone is sufficient regardless of the payee name.
+        assertThat(PersonToPersonTransferDetector.isNamedIndividualTransfer(
+                "UPI-SUNIL VERMA-payu@sample-REF12")).isFalse();
+        assertThat(PersonToPersonTransferDetector.isNamedIndividualTransfer(
+                "UPI-SUNIL VERMA-razorpay@sample-REF13")).isFalse();
+        assertThat(PersonToPersonTransferDetector.isNamedIndividualTransfer(
+                "UPI/ANITA DESAI/RZP/sample@icici/REF14")).isFalse();
+        assertThat(PersonToPersonTransferDetector.isNamedIndividualTransfer(
+                "UPI-SUNIL VERMA-cashfree@sample-REF15")).isFalse();
+    }
+
+    @Test
+    void theGatewayMarkersAreWordBoundedSoTheyCannotFireOnALongerWord() {
+        // "payu" and "rzp" are short enough to appear inside unrelated tokens; without the word
+        // boundaries these would silently veto genuine person-to-person transfers.
+        assertThat(PersonToPersonTransferDetector.isNamedIndividualTransfer(
+                "UPI-SUNIL VERMA-payupi@sample-REF16")).isTrue();
+        assertThat(PersonToPersonTransferDetector.isNamedIndividualTransfer(
+                "UPI-SUNIL VERMA-rzpay@sample-REF17")).isTrue();
+    }
+
+    @Test
+    void anOrdinaryPersonalVpaIsStillAPersonToPersonTransfer() {
+        // Counterweight to the four markers above: the second wave must not have widened the veto
+        // into ordinary personal payments, which are the entire population this detector exists for.
+        assertThat(PersonToPersonTransferDetector.isNamedIndividualTransfer(
+                "UPI-SUNIL VERMA-sampleuser@ybl-REF18")).isTrue();
+    }
 }
