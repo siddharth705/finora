@@ -201,6 +201,8 @@ describe('Investments — loading states', () => {
 
     await user.click(screen.getByRole('button', { name: 'Add' }));
 
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Add' })).toBeDisabled());
+    // Its accessible name gains the busy suffix while loading, which is itself the assertion that
+    // the pending state is announced rather than conveyed only as "disabled".
+    await waitFor(() => expect(screen.getByRole('button', { name: /^Add\s*,\s*loading$/ })).toBeDisabled());
   });
 });
