@@ -4086,7 +4086,49 @@ public class PdfTableLocator {
     private Map<String, String> bucketRow(List<PositionedText> row, List<String> headerNames, List<Float> headerAnchors,
                                            List<Float> headerEnds, DocumentContext ctx, Set<Integer> candidateYears) {
         Map<String, String> result = new LinkedHashMap<>();
+        float tableRightEdge = rightEdgeOfTable(headerAnchors, headerEnds);
         for (PositionedText t : row) {
+            // A run printed entirely to the RIGHT of every column this table has is not this
+            // table's data. Every other rule in this method redirects a run BETWEEN columns; none
+            // of them can express "this belongs to no column at all", and nearestColumn has no
+            // maximum-distance cap (see DESCRIPTION_COLUMN_LABELS' own doc comment, which already
+            // names that as the hazard behind a different real defect), so such a run is silently
+            // appended to whichever column happens to be least far away -- always the rightmost one.
+            //
+            // Verified against a real IndusInd credit-card statement, which prints a summary panel
+            // in the right margin at the same heights as the ledger. Its transaction table's
+            // rightmost column ends at x=417.9 and its amounts are right-aligned to end at 422.6
+            // (so they START at 386-395, well inside the column), while the margin panel's own runs
+            // begin at x=455.8 and beyond -- a clean 38pt of white space between the two, with no
+            // horizontal overlap at all. One panel label landed in the amount cell of a real
+            // transaction, making it "<amount> CR Statement Date"; that string fails
+            // CsvParser.parseNumeric, so TransactionNormalizer dropped the entire row and the
+            // document still classified PARSED_COMPLETE. Silent single-row data loss, invisible
+            // in every summary.
+            //
+            // Deliberately one-sided and overlap-free rather than a distance tolerance: only a run
+            // that starts beyond the right edge of EVERY column is excluded, so anything that so
+            // much as touches a column's span is kept and left to the redirect rules below. The
+            // left margin is not treated the same way on purpose -- an unnamed leading column is a
+            // real shape in this corpus (an unlabelled "S No.") and is handled by recovering the
+            // column, not by discarding its values.
+            //
+            // Restricted further, to runs that do not parse as a number, because the unrestricted
+            // form regressed a real Kotak savings statement: its Balance column's header is narrower
+            // than the values printed under it, so every right-aligned balance legitimately begins
+            // past the rightmost header END. Excluding those silently replaced the document's
+            // closing balance with an earlier row's and turned STATEMENT_TOTALS from VERIFIED to
+            // FAILED while the row count stayed identical -- a wrong number with no missing row to
+            // point at it. A numeric run out there is exactly that case and must be kept for the
+            // redirect rules below to place; a run that is not a number at all cannot be the value
+            // of any amount or balance column, which is the only kind of column that legitimately
+            // overflows its header this way. That is the whole margin-panel case: prose labels, not
+            // figures.
+            if (tableRightEdge > 0 && t.x() > tableRightEdge
+                    && CsvParser.parseNumeric(t.text().trim()) == null) {
+                if (ctx != null) ctx.record("MARGIN_PANEL_TEXT_EXCLUDED");
+                continue;
+            }
             int nearest = nearestColumn(t.x(), headerAnchors);
             // RIGHT_ALIGNED_AMOUNTS. Every rule below places a run by its LEFT edge, which is the
             // right question for left-aligned text and the wrong one for a number. Financial
@@ -4403,6 +4445,31 @@ public class PdfTableLocator {
             if (!isAmountColumn(headerNames.get(i)) && !isDateColumn(headerNames.get(i))) return i;
         }
         return -1;
+    }
+
+    /** The x beyond which nothing belongs to this table any more -- the rightmost column's own
+     *  right edge -- or 0 when that cannot be established, which disables the check entirely.
+     *
+     *  <p>Returns 0 unless the header ends carry REAL measured widths, proven by at least one
+     *  column ending strictly right of where it starts. Without that proof {@code headerEnds}
+     *  degenerates to a copy of {@code headerAnchors} (hand-built fixtures and traces recorded
+     *  before run widths existed), and the rightmost ANCHOR is a boundary that sits in the middle
+     *  of the last column's own data -- every right-aligned amount in it starts to the right of its
+     *  own anchor, so treating that as the table edge would discard exactly the values this method
+     *  exists to place. The same "requires a real measured width, older fixtures keep their previous
+     *  behaviour" condition the RIGHT_ALIGNED_AMOUNTS rule above already applies, for the same
+     *  reason. */
+    private static float rightEdgeOfTable(List<Float> headerAnchors, List<Float> headerEnds) {
+        if (headerEnds == null || headerAnchors == null || headerEnds.size() != headerAnchors.size()) return 0f;
+        float widestEnd = 0f;
+        float widestAnchor = 0f;
+        boolean anyRealWidth = false;
+        for (int i = 0; i < headerEnds.size(); i++) {
+            widestEnd = Math.max(widestEnd, headerEnds.get(i));
+            widestAnchor = Math.max(widestAnchor, headerAnchors.get(i));
+            if (headerEnds.get(i) > headerAnchors.get(i)) anyRealWidth = true;
+        }
+        return anyRealWidth && widestEnd > widestAnchor ? widestEnd : 0f;
     }
 
     private int nearestColumn(float x, List<Float> anchors) {
