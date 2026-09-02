@@ -1,4 +1,5 @@
-import { act, render, renderHook, screen } from '@testing-library/react-native';
+import { act, fireEvent, render, renderHook, screen } from '@testing-library/react-native';
+import { useEffect, useState } from 'react';
 import { AccessibilityInfo, Platform, Text } from 'react-native';
 import { onlineManager } from '@tanstack/react-query';
 import { OfflineBoundary, useOnline } from './OfflineBanner';
@@ -87,6 +88,50 @@ describe('OfflineBoundary', () => {
 
     expect(screen.queryByText(OFFLINE_TEXT)).toBeNull();
     expect(screen.getByText('protected content')).toBeTruthy();
+  });
+
+  /**
+   * The boundary used to early-return a bare <>{children}</> while online and a wrapped tree
+   * otherwise, which changed the returned root's element type and re-parented the navigator two
+   * levels deeper. React reconciles per position by element type, so every connectivity flip
+   * unmounted and remounted the whole app below the boundary -- a lift, a tunnel or a
+   * WiFi->cellular handoff silently discarded a part-reviewed statement import, since those staged
+   * rows and decisions are component state.
+   *
+   * Asserted through a child that both counts its mounts AND holds state, because either alone is
+   * weak: a mount counter can be satisfied by a memoized element that never re-renders, and state
+   * alone would survive a remount if it happened to be re-derived from props.
+   */
+  it('keeps the subtree mounted across connectivity flips instead of remounting the app', () => {
+    const onMount = jest.fn();
+
+    function StatefulChild() {
+      const [draft, setDraft] = useState('nothing entered yet');
+      useEffect(() => onMount(), []);
+      return <Text onPress={() => setDraft('half-finished import review')}>{draft}</Text>;
+    }
+
+    setOnline(true);
+    render(
+      <ThemeProvider>
+        <OfflineBoundary>
+          <StatefulChild />
+        </OfflineBoundary>
+      </ThemeProvider>
+    );
+    expect(onMount).toHaveBeenCalledTimes(1);
+
+    fireEvent.press(screen.getByText('nothing entered yet'));
+    expect(screen.getByText('half-finished import review')).toBeTruthy();
+
+    setOnline(false);
+    expect(screen.getByText(OFFLINE_TEXT)).toBeTruthy();
+    setOnline(true);
+
+    // Both transitions crossed, including the transient back-online strip: still the original
+    // mount, still the user's in-progress work.
+    expect(onMount).toHaveBeenCalledTimes(1);
+    expect(screen.getByText('half-finished import review')).toBeTruthy();
   });
 
   it('announces itself to a screen reader as a live region', () => {

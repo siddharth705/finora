@@ -14,6 +14,7 @@ import { accountsApi, networthApi } from '../api/endpoints';
 import { toUserMessage } from '../lib/apiError';
 import { CHART_PALETTE, bucketTopSlices } from '../lib/chartGeometry';
 import { fmtCurrency, fmtDate } from '../lib/format';
+import { isPausedCold } from '../lib/refreshingIndicator';
 import { useSingleFlight } from '../lib/useSingleFlight';
 import { parsePositiveAmount } from '../lib/validation';
 import { radius, spacing, useTheme } from '../theme';
@@ -73,6 +74,11 @@ export function InvestmentsScreen() {
   );
   const netWorth = netWorthQ.data;
   const loading = accountsQ.isLoading || netWorthQ.isLoading;
+  // A cold query paused for lack of connectivity is neither an error nor an answer -- see
+  // isPausedCold. Folded in alongside isError everywhere a figure or an empty state would
+  // otherwise be stated as fact, so going offline reads as "not available" rather than as ₹0.
+  const accountsUnknown = accountsQ.isError || isPausedCold(accountsQ);
+  const netWorthUnknown = netWorthQ.isError || isPausedCold(netWorthQ);
   const refreshing = (accountsQ.isFetching || netWorthQ.isFetching) && !loading;
 
   function refresh() {
@@ -234,26 +240,48 @@ export function InvestmentsScreen() {
         <Card style={styles.totalCard}>
           <Text style={[styles.totalLabel, { color: c.muted }]}>Investments</Text>
           <Text style={[styles.totalValue, { color: c.ink }]} numberOfLines={1} adjustsFontSizeToFit>
-            {fmtCurrency(totalInvestments)}
+            {/* '—' on failure, matching the two cards beside it. totalInvestments is derived from
+                `holdings`, which is [] when the accounts fetch failed -- so this used to state a
+                confident ₹0 for a portfolio it had simply been unable to load, sitting directly
+                next to two cards that correctly admitted they didn't know. A fabricated zero is
+                the worst of the three outcomes here: it is indistinguishable from a real answer. */}
+            {accountsUnknown ? '—' : fmtCurrency(totalInvestments)}
           </Text>
         </Card>
         <Card style={styles.totalCard}>
           <Text style={[styles.totalLabel, { color: c.muted }]}>Net Worth</Text>
-          <Text style={[styles.totalValue, { color: c.success }]} numberOfLines={1} adjustsFontSizeToFit>
-            {netWorthQ.isError ? '—' : fmtCurrency(netWorth?.netWorth ?? 0)}
+          {/* Sign-aware, like ReportsScreen's own Net card. Net worth is a genuinely signed figure
+              -- AccountBalanceConvention treats a credit card as a liability, so anyone who imports
+              a card statement before a bank one is legitimately negative -- and painting that green
+              inverts the only signal the colour carries. */}
+          <Text
+            style={[
+              styles.totalValue,
+              { color: (netWorth?.netWorth ?? 0) >= 0 ? c.success : c.danger },
+            ]}
+            numberOfLines={1}
+            adjustsFontSizeToFit
+          >
+            {netWorthUnknown ? '—' : fmtCurrency(netWorth?.netWorth ?? 0)}
           </Text>
         </Card>
         <Card style={styles.totalCard}>
           <Text style={[styles.totalLabel, { color: c.muted }]}>Liabilities</Text>
           <Text style={[styles.totalValue, { color: c.danger }]} numberOfLines={1} adjustsFontSizeToFit>
-            {netWorthQ.isError ? '—' : fmtCurrency(netWorth?.totalLiabilities ?? 0)}
+            {netWorthUnknown ? '—' : fmtCurrency(netWorth?.totalLiabilities ?? 0)}
           </Text>
         </Card>
       </View>
 
       <Card style={styles.section}>
         <SectionHeading title="Allocation" />
-        {holdings.length === 0 ? (
+        {/* The isError branch has to come first, for the same reason the Holdings card below states
+            it: `holdings` is [] both when the user genuinely has none and when the fetch failed,
+            and only one of those is an answer. Without this, one failed /accounts told the user
+            "No investment holdings yet" here and "Could not load holdings." forty lines down. */}
+        {accountsUnknown ? (
+          <Text style={[styles.inlineError, { color: c.danger }]}>Could not load your allocation.</Text>
+        ) : holdings.length === 0 ? (
           <EmptyState message="No investment holdings yet. Add one above, or import a deposit statement." />
         ) : (
           <DonutChart slices={slices} centerLabel={fmtCurrency(totalInvestments)} />
@@ -278,7 +306,16 @@ export function InvestmentsScreen() {
             </Pressable>
           }
         />
-        {history.length < 2 ? (
+        {/* Same rule as the Allocation card above. `history` falls back to [] on failure, so a
+            failed /networth told someone with a year of saved snapshots that they had never saved
+            one -- while the Net Worth card immediately above it, fed by that identical query,
+            correctly showed '—'. Reliably reachable: 'networth' is deliberately excluded from the
+            persistence allowlist, so there is never a cached value to fall back on. */}
+        {netWorthUnknown ? (
+          <Text style={[styles.inlineError, { color: c.danger }]}>
+            Could not load your net worth history.
+          </Text>
+        ) : history.length < 2 ? (
           <EmptyState message="Save a snapshot periodically to build a trend — history starts from the first one you save." />
         ) : (
           <TrendChart
@@ -290,7 +327,7 @@ export function InvestmentsScreen() {
 
       <Card style={styles.section}>
         <SectionHeading title="Holdings" />
-        {accountsQ.isError ? (
+        {accountsUnknown ? (
           <Text style={[styles.inlineError, { color: c.danger }]}>Could not load holdings.</Text>
         ) : holdings.length === 0 ? (
           <EmptyState message="No holdings yet." />

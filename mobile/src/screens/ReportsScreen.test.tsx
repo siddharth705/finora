@@ -168,3 +168,39 @@ describe('ReportsScreen', () => {
     });
   });
 });
+
+/**
+ * The backend builds report.expense and report.categories from different transaction sets on
+ * purpose: ReportService narrows to excludingInvestmentTransfers(txns) for the income/expense
+ * totals, while byCategory keeps the wider list "so an Investments line still shows up in the
+ * report's own category table". Dividing a category by report.expense therefore divided some rows
+ * by a total they were excluded from -- yielding shares over 100% which ProgressBar then clamped,
+ * so two rows of very different size both rendered as full-width bars.
+ */
+describe('category shares', () => {
+  it('keeps shares within 100% when the month contains an investment transfer', async () => {
+    api.availableMonths.mockReset().mockResolvedValue(['2026-07']);
+    api.forMonth.mockReset().mockResolvedValue({
+      month: '2026-07',
+      income: 100000,
+      // Deliberately LESS than the categories below sum to -- the SIP is excluded from the total
+      // but still listed as a category, exactly as the backend produces it.
+      expense: 2000,
+      categories: [
+        { category: 'Investments', amount: 3000 },
+        { category: 'Groceries', amount: 2000 },
+      ],
+    } as never);
+
+    renderScreen();
+
+    // 3000 / 5000 and 2000 / 5000 -- shares of the breakdown they actually belong to, not of a
+    // total one of them was excluded from (which gave 150% and 100%).
+    expect(
+      await screen.findByLabelText(/Investments: ₹3,000, 60 percent of this month's spending/)
+    ).toBeTruthy();
+    expect(
+      screen.getByLabelText(/Groceries: ₹2,000, 40 percent of this month's spending/)
+    ).toBeTruthy();
+  });
+});
