@@ -45,7 +45,7 @@ public class NotificationService {
      *
      * <h2>The {@code exists} check is a fast path; {@code insertIfAbsent} is the real guarantee</h2>
      *
-     * <p>{@code notification_key} is UNIQUE (V123). Checking {@code existsByNotificationKey} and
+     * <p>{@code notification_key} is UNIQUE (V124). Checking {@code existsByNotificationKey} and
      * then inserting is a classic check-then-act race: two concurrent requests for the same key can
      * both see {@code false} and both attempt to insert. The actual insert therefore goes through
      * {@link NotificationRepository#insertIfAbsent}, an {@code INSERT ... ON CONFLICT DO NOTHING} --
