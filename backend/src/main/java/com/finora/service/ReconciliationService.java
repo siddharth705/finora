@@ -312,8 +312,14 @@ public class ReconciliationService {
                             && t.getBalanceAfter().compareTo(canonical.getBalanceAfter()) == 0;
                     boolean sameReferenceNumber = t.getReferenceNumber() != null && canonical.getReferenceNumber() != null
                             && t.getReferenceNumber().equals(canonical.getReferenceNumber());
+                    // Whether the two descriptions are identical verbatim or merely equal under the
+                    // key's case/space folding (A2). The evidence below is read by a human
+                    // comparing the two rows side by side, so it must not claim "same description"
+                    // for two visibly different strings -- see ReconciliationExplanation.duplicate.
+                    boolean descriptionsIdenticalVerbatim =
+                            java.util.Objects.equals(t.getDescription(), canonical.getDescription());
                     Map<String, Object> explanation = ReconciliationExplanation.duplicate(
-                            canonical.getId(), sameBalance, sameReferenceNumber);
+                            canonical.getId(), sameBalance, sameReferenceNumber, descriptionsIdenticalVerbatim);
                     t.setReconciliationExplanation(explanation);
                     dirty.add(t);
                     newDuplicates++;
@@ -1060,8 +1066,22 @@ public class ReconciliationService {
 
     private String duplicateKey(Transaction t) {
         if (t.getDescription() == null) return "no-desc-" + t.getId();
+        // A2 (two-pass mobile audit, 2026-09-01). Case- and space-folded, not the raw column
+        // value: two extractions of the same underlying bank line (a CSV export vs. a re-scraped
+        // PDF, or a bank that shifts capitalization between monthly exports) can differ by
+        // nothing more than case or a stray leading/trailing space. Exact equality on the raw
+        // string treats those as two different transactions -- a false negative that silently
+        // double-counts a real one, which for a finance app is worse than the false positive
+        // this key already accepts elsewhere (see the class comment on why over-matching here is
+        // the safer failure mode: a wrongly-grouped pair costs the user one tap to un-duplicate,
+        // a missed group costs them nothing they can see is wrong).
+        //
+        // Via the shared DuplicateMatching helper rather than an inlined trim().toLowerCase(),
+        // because Java's trim() and SQL's TRIM() disagree about tabs and newlines and the three
+        // duplicate paths have to answer identically -- see that class's own comment.
         return t.getAccountId() + "|" + t.getTxnDate() + "|"
-                + t.getAmount().stripTrailingZeros().toPlainString() + "|" + t.getDescription();
+                + t.getAmount().stripTrailingZeros().toPlainString() + "|"
+                + com.finora.util.DuplicateMatching.normalizeDescription(t.getDescription());
     }
 
     /**

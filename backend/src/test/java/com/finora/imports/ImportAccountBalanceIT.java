@@ -10,6 +10,8 @@ import com.finora.repository.StatementImportRepository;
 import com.finora.repository.UserRepository;
 import com.finora.service.StatementImportService;
 import com.finora.repository.MerchantLearningEventRepository;
+import com.finora.transactions.TransactionDto;
+import com.finora.transactions.TransactionService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -44,6 +46,7 @@ class ImportAccountBalanceIT extends AbstractIntegrationTest {
 
     @Autowired private ImportService importService;
     @Autowired private StatementImportService statementImportService;
+    @Autowired private TransactionService transactionService;
     @Autowired private AccountRepository accountRepository;
     @Autowired private StatementImportRepository statementImportRepository;
     @Autowired private UserRepository userRepository;
@@ -339,5 +342,67 @@ class ImportAccountBalanceIT extends AbstractIntegrationTest {
         assertThat(balanceOf(f))
                 .as("only the repeated row comes back off; the new one is real spending")
                 .isEqualByComparingTo("835.00");
+    }
+
+    // ---- A1: a live (non-statement) transaction dated after this statement's own activity must
+    // ---- not be silently discarded by an older, corroborated statement's stated closing balance ----
+
+    @Test
+    @DisplayName("A1: a manual transaction dated after this statement's own rows blocks the "
+            + "closing balance from overwriting it")
+    void aLaterManualTransactionBlocksAnOlderStatementsClosingBalanceFromOverwritingIt() throws Exception {
+        Fixture f = fixture(Account.Type.SAVINGS, "1000.00");
+
+        // A manual entry (or a Gmail-synced receipt) the user already has on the books, dated
+        // AFTER the statement about to be imported below -- moves the balance for real, the same
+        // way any live transaction does.
+        transactionService.create(f.user().getId(), new TransactionDto.CreateRequest(
+                f.account().getId(), "Income", LocalDate.of(2026, 7, 20), "SALARY",
+                new BigDecimal("500.00"), "INCOME", List.of()));
+        assertThat(balanceOf(f)).isEqualByComparingTo("1500.00");
+
+        // An older statement (its latest row is 2026-07-10) whose own closing balance is
+        // arithmetically corroborated. isMostRecentStatementForAccount only ever compares against
+        // OTHER STATEMENTS -- with none on file yet, it defaults to true, and the corroborated
+        // 955.00 overwrites the account, silently discarding the SALARY transaction from the
+        // balance while it stays fully visible (and counted) in the Ledger.
+        importRows(f, new BigDecimal("1000.00"), new BigDecimal("955.00"),
+                row(LocalDate.of(2026, 7, 10), "METRO FARE", "45.00", "EXPENSE"));
+
+        assertThat(balanceOf(f))
+                .as("a later live transaction must not be silently overwritten by an older "
+                        + "statement's stale closing figure -- only the statement's own delta "
+                        + "(-45) may apply, on top of the 1500.00 the manual transaction already "
+                        + "moved to")
+                .isEqualByComparingTo("1455.00");
+    }
+
+    @Test
+    @DisplayName("A1: a manual transaction dated BEFORE the statement's own rows still lets the "
+            + "closing balance apply")
+    void anEarlierManualTransactionDoesNotBlockTheClosingBalance() throws Exception {
+        // The negative half of the check above, and the one that actually pins the boundary.
+        // Without it, widening the predicate to >= -- or dropping the txnDate comparison entirely
+        // and blocking on ANY live transaction -- would leave the suite green while silently
+        // disabling every corroborated closing balance in the product.
+        Fixture f = fixture(Account.Type.SAVINGS, "1000.00");
+
+        // Dated 1 July, BEFORE this statement's only row (10 July), so it is activity the
+        // statement's own closing balance already accounts for -- exactly what an ABSOLUTE set is
+        // supposed to supersede.
+        transactionService.create(f.user().getId(), new TransactionDto.CreateRequest(
+                f.account().getId(), "Income", LocalDate.of(2026, 7, 1), "EARLIER SALARY",
+                new BigDecimal("500.00"), "INCOME", List.of()));
+        assertThat(balanceOf(f)).isEqualByComparingTo("1500.00");
+
+        // Opening 1500 (where the account actually stands) - 45 = 1455, so the guard corroborates
+        // and the statement is authoritative.
+        importRows(f, new BigDecimal("1500.00"), new BigDecimal("1455.00"),
+                row(LocalDate.of(2026, 7, 10), "METRO FARE", "45.00", "EXPENSE"));
+
+        assertThat(balanceOf(f))
+                .as("nothing postdates this statement, so its corroborated closing balance is "
+                        + "still the authoritative answer and must be applied")
+                .isEqualByComparingTo("1455.00");
     }
 }

@@ -259,6 +259,31 @@ class ReconciliationServiceTest {
         assertThat(duplicate.getIsDuplicateOf()).isEqualTo(original.getId());
     }
 
+    @Test
+    void reconcileForUser_matchesDuplicatesRegardlessOfDescriptionCaseOrSurroundingWhitespace() {
+        // A2 (two-pass mobile audit, 2026-09-01; see mobile-correctness-trust-roadmap.md, Track
+        // A). Exact string equality on description is case- and whitespace-sensitive -- two
+        // extractions of the same underlying bank line (a CSV export vs. a re-scraped PDF, or a
+        // bank that shifts capitalization between monthly exports) can differ by nothing more
+        // than case or a stray leading/trailing space and silently stop matching, double-counting
+        // the same real-world transaction with no duplicate badge at all.
+        UUID accountId = UUID.randomUUID();
+        LocalDate date = LocalDate.of(2026, 7, 10);
+
+        Transaction original = txn(UUID.randomUUID(), accountId, date, new BigDecimal("486.00"),
+                Transaction.Type.EXPENSE, "SWIGGY*ORDR9182 BLR", Instant.parse("2026-07-10T10:00:00Z"));
+        Transaction duplicate = txn(UUID.randomUUID(), accountId, date, new BigDecimal("486.00"),
+                Transaction.Type.EXPENSE, " swiggy*ordr9182 blr ", Instant.parse("2026-07-10T10:05:00Z"));
+
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(original, duplicate));
+
+        reconciliationService.reconcileForUser(userId);
+
+        assertThat(duplicate.getIsDuplicateOf())
+                .as("same underlying transaction, differing only by case and surrounding whitespace")
+                .isEqualTo(original.getId());
+    }
+
     // --- Batch-processed same-day/same-amount/same-description rows are not one duplicate group.
     // Real bug: a PNB statement with four separate ACH mandate debits of ₹500 each on the same
     // day, identical description ("ACH/INDIAN CLEARING CORP/30473", no per-row reference number
