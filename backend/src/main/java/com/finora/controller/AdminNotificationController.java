@@ -23,7 +23,7 @@ import java.util.UUID;
  * yet to make anything richer meaningful, and {@code NotificationDispatcher} (Task 3) remains the
  * only thing that can move a notification's status.
  *
- * <p>Gated on {@code NOTIFICATION_MANAGE} (V129) rather than reusing {@code
+ * <p>Gated on {@code NOTIFICATION_MANAGE} (V130) rather than reusing {@code
  * PLATFORM_DIAGNOSTICS_VIEW}, for the same reason {@code AdminLearningQueueController}'s own doc
  * comment gives for its own permission: the read-only operational-visibility permission is a
  * deliberately narrow grant covering unrelated surfaces, and tying every new read-only capability

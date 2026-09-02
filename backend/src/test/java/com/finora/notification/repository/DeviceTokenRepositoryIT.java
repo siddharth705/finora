@@ -17,7 +17,7 @@ import org.springframework.transaction.annotation.Transactional;
  * {@link DeviceTokenRepository} wiring, not mocks -- can validate:
  *
  * <ul>
- *   <li>The whole argument behind V128's plain {@code UNIQUE (user_id, token_fingerprint)}
+ *   <li>The whole argument behind V129's plain {@code UNIQUE (user_id, token_fingerprint)}
  *       (rather than a partial index): re-registering a revoked token reactivates the SAME row via
  *       UPDATE, so it never collides with the constraint.</li>
  *   <li>Fix round 1, CRITICAL 1: registering a token already held by a different user actually

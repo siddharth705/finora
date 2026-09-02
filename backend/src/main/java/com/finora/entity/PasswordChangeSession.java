@@ -84,7 +84,7 @@ public class PasswordChangeSession {
     // session rather than the account: incremented by PasswordChangeService.verifyOtp() on a wrong
     // or unverifiable OTP token, reset to 0 on a successful verify, and checked against
     // MAX_OTP_ATTEMPTS before ever contacting PhoneVerificationProvider again once exhausted. See
-    // V130__password_change_session_otp_attempts.sql for why this defaults to 0 rather than being
+    // V131__password_change_session_otp_attempts.sql for why this defaults to 0 rather than being
     // nullable.
     @Column(name = "otp_attempt_count", nullable = false)
     private int otpAttemptCount = 0;

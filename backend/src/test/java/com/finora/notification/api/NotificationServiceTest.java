@@ -142,7 +142,7 @@ class NotificationServiceTest {
      * length, which raises a Postgres statement error INSIDE the caller's own ambient transaction --
      * see this class's own doc comment on {@code request} for the SQLSTATE 25P02 mechanism. These
      * three tests prove each of the three unbounded inputs is cut down to its column width
-     * (V124: title VARCHAR(300), message VARCHAR(2000), notification_key VARCHAR(200)) before ever
+     * (V125: title VARCHAR(300), message VARCHAR(2000), notification_key VARCHAR(200)) before ever
      * reaching {@code insertIfAbsent}.
      */
     @Test

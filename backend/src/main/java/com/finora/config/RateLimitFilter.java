@@ -193,7 +193,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
     // Fix wave (final review of the notification platform). POST /device-tokens (register) had a
     // real, compounding per-call cost with no limiter at all: register() has a cross-user write
     // side effect (revokeOtherUsersHoldingThisToken), AND ran an unindexed fingerprint-leading scan
-    // before idx_device_tokens_fingerprint was added (see V128), AND had no ceiling -- so any
+    // before idx_device_tokens_fingerprint was added (see V129), AND had no ceiling -- so any
     // holder of a valid JWT could issue unbounded registrations, each a distinct token, each
     // inserting a row into a table it simultaneously scanned. Same bucket covers POST
     // /device-tokens/revoke: a cheaper call (one indexed lookup, no cross-user write), but sharing

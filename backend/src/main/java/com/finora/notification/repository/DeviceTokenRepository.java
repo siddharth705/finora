@@ -12,7 +12,7 @@ public interface DeviceTokenRepository extends JpaRepository<DeviceToken, UUID> 
      * Deliberately NOT filtered by {@code revokedAt} -- that is what lets
      * {@code DeviceTokenService.register} reactivate a previously-revoked row with an UPDATE
      * instead of colliding with {@code UNIQUE (user_id, token_fingerprint)} on a blind INSERT (see
-     * V128's migration comment for the full argument). Adding {@code AndRevokedAtIsNull} here would
+     * V129's migration comment for the full argument). Adding {@code AndRevokedAtIsNull} here would
      * turn every re-registration of a revoked token into a 409 CONFLICT.
      */
     Optional<DeviceToken> findByUserIdAndTokenFingerprint(UUID userId, String tokenFingerprint);

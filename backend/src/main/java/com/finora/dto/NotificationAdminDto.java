@@ -13,7 +13,7 @@ import java.util.UUID;
  * <p>Deliberately carries no email or phone number: {@code userId} is a bare UUID with no join
  * back to the user's contact details, and {@code title} comes from {@code notification_templates}'
  * own placeholder-substituted copy (a bank name is the only substitution any template uses today
- * -- see V126), never from a raw provider payload. See {@link NotificationAdminDetailDto} for the
+ * -- see V127), never from a raw provider payload. See {@link NotificationAdminDetailDto} for the
  * per-attempt log, whose {@code response} field is redacted at write time by
  * {@code NotificationLog.of}, not by anything in this DTO.
  */
@@ -59,7 +59,7 @@ public record NotificationAdminDto(
      * NotificationStatus#DEAD_LETTER} -- the actual terminal-failure state {@code
      * Notification.recordFailure} assigns once a notification exhausts its retry budget.
      * {@code NotificationStatus.FAILED} is declared in the enum and documented on the
-     * {@code notifications.status} column comment (V124), but no code path in this codebase ever
+     * {@code notifications.status} column comment (V125), but no code path in this codebase ever
      * assigns it to a row -- {@code Notification}'s own state machine only ever moves a row
      * through CREATED/QUEUED/PROCESSING/RETRYING to SENT or DEAD_LETTER. Counting the unused
      * FAILED value here would always report zero and silently under-count every real failure, so

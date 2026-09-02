@@ -27,7 +27,7 @@ public class NotificationService {
 
     private static final Logger log = LoggerFactory.getLogger(NotificationService.class);
 
-    // Mirror V124's own column widths (notifications.title/message/notification_key). Written in
+    // Mirror V125's own column widths (notifications.title/message/notification_key). Written in
     // exactly one place each -- see #truncate's own doc for why an over-length value must never
     // reach the insert below at all.
     private static final int MAX_TITLE_LENGTH = 300;
@@ -56,7 +56,7 @@ public class NotificationService {
      *
      * <h2>The {@code exists} check is a fast path; {@code insertIfAbsent} is the real guarantee</h2>
      *
-     * <p>{@code notification_key} is UNIQUE (V124). Checking {@code existsByNotificationKey} and
+     * <p>{@code notification_key} is UNIQUE (V125). Checking {@code existsByNotificationKey} and
      * then inserting is a classic check-then-act race: two concurrent requests for the same key can
      * both see {@code false} and both attempt to insert. The actual insert therefore goes through
      * {@link NotificationRepository#insertIfAbsent}, an {@code INSERT ... ON CONFLICT DO NOTHING} --
@@ -73,7 +73,7 @@ public class NotificationService {
      * institution text) into a template with no length check of its own; {@code key} is
      * {@code request.notificationKey() + ":" + channel.name()}, similarly unbounded. An over-length
      * value hitting {@code title VARCHAR(300)}/{@code message VARCHAR(2000)}/
-     * {@code notification_key VARCHAR(200)} (V124) raises a Postgres statement error INSIDE the
+     * {@code notification_key VARCHAR(200)} (V125) raises a Postgres statement error INSIDE the
      * caller's own ambient transaction -- the surrounding {@code catch (RuntimeException)} below
      * swallows the exception but does not un-abort that transaction, so every later statement on it
      * fails and the caller's own COMMIT silently downgrades to ROLLBACK (SQLSTATE 25P02, the same

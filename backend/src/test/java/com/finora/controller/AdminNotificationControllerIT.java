@@ -121,7 +121,7 @@ class AdminNotificationControllerIT extends AbstractIntegrationTest {
     }
 
     /**
-     * The permission this surface is gated on is its own (V129's {@code NOTIFICATION_MANAGE}),
+     * The permission this surface is gated on is its own (V130's {@code NOTIFICATION_MANAGE}),
      * not one an admin happens to already hold -- the same thing
      * {@code AdminLearningQueueControllerIT.adminWithTheGrantedPermission_canReadTheQueue} proves
      * for its own surface, and for the same reason: a future refactor gating this controller on

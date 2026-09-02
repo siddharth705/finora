@@ -19,11 +19,11 @@ CREATE TABLE device_tokens (
 
 -- Plain multi-column UNIQUE, not a partial index: unlike the mutable-flag bug Task 7 shipped (a
 -- "retired" boolean baked directly into a multi-column UNIQUE, which blocked a SECOND retirement --
--- see V126's idx_notification_templates_active comment), revoked_at is NOT one of this constraint's
+-- see V127's idx_notification_templates_active comment), revoked_at is NOT one of this constraint's
 -- columns at all. user_id/token_fingerprint are this row's whole identity and never change after
 -- insert: token_fingerprint is a deterministic hash of the raw token's own bytes, fixed the moment
 -- the row is created. revoked_at is mutated later by revoke()/touch(), entirely outside the
--- constrained tuple -- the same shape V127 already used for notification_preferences, and for the
+-- constrained tuple -- the same shape V128 already used for notification_preferences, and for the
 -- same reason: there is no mutable column inside this uniqueness pair to trap a future update
 -- against.
 --
