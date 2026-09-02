@@ -5,8 +5,8 @@ import { encodeBase64 } from '../lib/base64';
 import { isOffline } from '../lib/apiError';
 import type {
   Account, AccountStatementGroup, Budget, DashboardSummary, DetectedAccountInfo, Goal,
-  ImportSummary, ReimportResult, StagedAccountSection, StagedRow, StatementSummary, Transaction,
-  WorkspaceSettings, UnparseableRow,
+  ImportSummary, MerchantGroup, ReimportResult, StagedAccountSection, StagedRow, StatementSummary,
+  Transaction, WorkspaceSettings, UnparseableRow,
 } from '../types';
 
 // Ported from frontend/src/api/endpoints.ts -- these are plain axios calls with TS types, no DOM
@@ -132,6 +132,10 @@ export const transactionsApi = {
   search: (filters: TransactionFilters) =>
     api.get<PagedResponse<Transaction>>('/transactions', { params: filters }).then((r) => r.data),
   needsReview: () => api.get<Transaction[]>('/transactions/needs-review').then((r) => r.data),
+  // The bulk half of the review backlog. Disjoint from needsReview() above -- the server removes
+  // anything it returns here from that list, so the two are rendered together, not as alternatives.
+  needsReviewGroups: () =>
+    api.get<MerchantGroup[]>('/transactions/groups/needs-review').then((r) => r.data),
   create: (body: unknown) => api.post<Transaction>('/transactions', body).then((r) => r.data),
   update: (id: string, body: UpdateTransactionPayload) =>
     api.put<Transaction>(`/transactions/${id}`, body).then((r) => r.data),

@@ -7,6 +7,7 @@ import { AccountsScreen } from '../screens/AccountsScreen';
 import { StatementHistoryScreen } from '../screens/StatementHistoryScreen';
 import { ImportScreen } from '../screens/import/ImportScreen';
 import { MoreScreen } from '../screens/MoreScreen';
+import { CategoryReviewScreen } from '../screens/CategoryReviewScreen';
 import { BudgetsScreen } from '../screens/BudgetsScreen';
 import { GoalsScreen } from '../screens/GoalsScreen';
 import { ReportsScreen } from '../screens/ReportsScreen';
@@ -35,6 +36,8 @@ function MoreNavigator() {
           there's a native back affordance. */}
       <MoreStack.Screen name="MoreHome" component={MoreScreen} options={{ headerShown: false }} />
       <MoreStack.Screen name="Accounts" component={AccountsScreen} options={{ headerShown: false }} />
+      {/* Header hidden: the screen renders its own title, same as MoreHome/Accounts above. */}
+      <MoreStack.Screen name="CategoryReview" component={CategoryReviewScreen} options={{ headerShown: false }} />
       <MoreStack.Screen name="Statements" component={StatementHistoryScreen} options={{ headerShown: false }} />
       {/* Header shown, unlike Accounts/Statements above: these five render no title of their own
           and rely on it for both the screen name and the back button. A pushed screen with neither
