@@ -81,6 +81,17 @@ public class ImportJobWorker {
     private static final String WORKER = "import";
     private static final String JOB_KIND = "import-job";
 
+    /**
+     * How many batches one nudge drains before leaving the rest to the poller.
+     *
+     * <p>{@code MAX_NUDGE_PASSES * ImportJobStore.BATCH_SIZE} is exactly
+     * {@link ImportJobStore#RECOVERY_BATCH_SIZE} -- one nudge clears a full recovery batch and
+     * stops. Deliberately not larger: each pass is up to ten statement parses on a pool with one
+     * core thread, so an unbounded loop would let one caller hold that thread for minutes while
+     * other users' uploads waited behind it.
+     */
+    private static final int MAX_NUDGE_PASSES = 5;
+
     /** The furthest this worker takes a job. Everything after staging is still the user's review. */
     private static final ImportJob.Status LAST_STAGE_THIS_WORKER_RUNS = ImportJob.Status.ANALYZING;
 
@@ -143,13 +154,33 @@ public class ImportJobWorker {
         drainOnce();
     }
 
-    /** Fire-and-forget trigger for the upload path, so an import usually starts within milliseconds
-     *  rather than waiting for the next poll. Concurrent runs with the poller are safe -- that is
-     *  what SKIP LOCKED is for. */
+    /**
+     * Fire-and-forget trigger for the upload path, so an import usually starts within milliseconds
+     * rather than waiting for the next poll. Concurrent runs with the poller are safe -- that is
+     * what SKIP LOCKED is for.
+     *
+     * <p><b>Drains until a pass comes back short, rather than exactly once.</b> A pass that claims
+     * a full {@link ImportJobStore#BATCH_SIZE} is evidence more work is waiting, and stopping there
+     * left the remainder for the next poll even though a worker had just been woken and the queue
+     * was demonstrably not empty. The path that makes this matter is
+     * {@link ImportJobStore#recoverAbandoned()}: it returns up to
+     * {@link ImportJobStore#RECOVERY_BATCH_SIZE} jobs to QUEUED at once, and a single drain of ten
+     * left the rest waiting out a poll interval each. Ordinary uploads were never the problem --
+     * each one registers its own nudge, so a burst of them already drains itself.
+     *
+     * <p>Bounded far more tightly than {@code MerchantLearningEventWorker}'s equivalent, and for a
+     * concrete reason: a pass there is fifty small writes, whereas a pass here is up to ten whole
+     * statement parses on a pool with one core thread. {@link #MAX_NUDGE_PASSES} is sized to clear
+     * exactly one full recovery batch and no more; a genuine backlog beyond that is the poller's
+     * job, which is what it is for.
+     */
     @Async("importQueueExecutor")
     public void nudge() {
         if (!enabled) return;
-        drainOnce();
+        int passes = 1;
+        while (drainOnce() == ImportJobStore.BATCH_SIZE && passes++ < MAX_NUDGE_PASSES) {
+            // A full batch means the queue had at least one more job than this pass could take.
+        }
     }
 
     /** Claims and runs one batch. Public and synchronous so tests can drive the queue

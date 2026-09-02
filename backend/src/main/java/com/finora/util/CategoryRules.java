@@ -30,15 +30,25 @@ public final class CategoryRules {
         RULES.put("Salary", List.of("salary", "payroll", "income tax refund", "stipend"));
         RULES.put("Rent", List.of("house rent", "rent paid", "rent payment", "monthly rent", "rent due", "landlord", "housing society", "maintenance chg"));
         RULES.put("Groceries", List.of("bigbasket", "blinkit", "zepto", "grofers", "dmart", "grocery", "supermarket"));
-        RULES.put("Dining", List.of("swiggy", "zomato", "restaurant", "cafe", "starbucks", "dominos", "mcdonald", "kfc"));
+        // "asspl" (Amazon Seller Services' actual card-statement abbreviation) and "cinnabon"
+        // added after checking this project's own real bank-statement corpus (docs/superpowers/
+        // specs/2026-09-01-transaction-categorization-design.md §1) -- both real, verified misses,
+        // safe as bare keywords: neither is a substring of any other keyword or common English/
+        // Indian-banking-narration word, so word-boundary matching has nothing plausible to
+        // misfire against.
+        RULES.put("Dining", List.of("swiggy", "zomato", "restaurant", "cafe", "starbucks", "dominos", "mcdonald", "kfc", "cinnabon"));
         RULES.put("Transport", List.of("uber", "ola", "rapido", "irctc", "petrol", "fuel", "metro", "fastag", "parking"));
         RULES.put("Utilities", List.of("electricity", "power bill", "water bill", "gas bill", "broadband", "airtel", "jio", "recharge"));
-        RULES.put("Shopping", List.of("amazon", "flipkart", "myntra", "ajio", "nykaa", "decathlon"));
+        RULES.put("Shopping", List.of("amazon", "flipkart", "myntra", "ajio", "nykaa", "decathlon", "asspl"));
         RULES.put("Health", List.of("pharmacy", "apollo", "medplus", "hospital", "clinic", "netmeds", "1mg"));
         RULES.put("Entertainment", List.of("netflix", "prime video", "hotstar", "spotify", "bookmyshow", "pvr", "inox"));
         RULES.put("Investments", List.of("mutual fund", "sip", "zerodha", "groww", "upstox", "nps", "ppf", "demat"));
         RULES.put("Fees/Interest", List.of("annual fee", "late fee", "finance charge", "interest charged", "penalty"));
-        RULES.put("Transfer", List.of("credit card payment", "card bill payment", "autopay", "neft to", "imps to", "billdesk"));
+        // "cc payment" added after checking this project's own real bank-statement corpus (see
+        // Shopping/Dining comment above) -- a real BharatBillPay narration ("BPPY CC PAYMENT")
+        // abbreviated past what "credit card payment"/"card bill payment" already catch. Safe as a
+        // two-word phrase: word-boundary matching means "cc" alone is never checked in isolation.
+        RULES.put("Transfer", List.of("credit card payment", "card bill payment", "cc payment", "autopay", "neft to", "imps to", "billdesk"));
         // Appended after the original set (see AuthService.DEFAULT_CATEGORIES, which this list
         // now mirrors) rather than interleaved — insertion order is match priority for
         // suggestCategory's first-match-wins loop, and none of these keywords collide with the
