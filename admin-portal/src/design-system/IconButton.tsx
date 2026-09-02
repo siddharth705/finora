@@ -36,7 +36,7 @@ interface IconButtonProps extends Omit<HTMLMotionProps<'button'>, 'children' | '
  * more admin-portal pages migrate to it.
  */
 export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(function IconButton(
-  { icon, variant = 'default', size = 'md', loading = false, disabled, className = '', type = 'button', ...rest },
+  { icon, variant = 'default', size = 'md', loading = false, disabled, className = '', type = 'button', 'aria-label': ariaLabel, ...rest },
   ref
 ) {
   const prefersReducedMotion = useReducedMotion();
@@ -47,6 +47,12 @@ export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(functio
       type={type}
       whileTap={prefersReducedMotion ? undefined : { scale: 0.9 }}
       disabled={disabled || loading}
+      // Suffixed onto the label rather than added as sr-only content the way Button does it:
+      // `aria-label` REPLACES an element's contents for accessible-name purposes, so an sr-only
+      // span inside this button would never be announced at all. Kept identical to the user-facing
+      // app's IconButton per §1's anti-drift rule.
+      aria-label={loading ? `${ariaLabel}, loading` : ariaLabel}
+      aria-busy={loading}
       className={`inline-flex items-center justify-center rounded-lg border border-border transition-colors duration-200 ease-out disabled:opacity-40 disabled:hover:bg-transparent ${SIZE_CLASSES[size]} ${VARIANT_CLASSES[variant]} ${className}`}
       {...rest}
     >
