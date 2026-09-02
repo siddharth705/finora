@@ -352,11 +352,15 @@ describe('Ledger — Phase 2 table skeleton and IconButton migration', () => {
     await user.click(await screen.findByRole('button', { name: 'Delete transaction' }));
     await user.click(await screen.findByRole('button', { name: 'Delete' })); // ConfirmDialog
 
-    const deleteButton = await screen.findByRole('button', { name: 'Delete transaction' });
+    // IconButton suffixes its aria-label while loading -- that suffix IS the announcement of the
+    // pending state, since aria-label replaces content so an sr-only span would never be read.
+    const deleteButton = await screen.findByRole('button', { name: 'Delete transaction, loading' });
     expect(deleteButton).toBeDisabled();
 
     resolveRemove();
     await waitFor(() => expect(deleteButton).not.toBeDisabled());
+    // ...and the suffix is gone once the request settles.
+    expect(screen.getByRole('button', { name: 'Delete transaction' })).toBe(deleteButton);
   });
 
   it('exposes Previous/Next pagination controls by their accessible names', async () => {

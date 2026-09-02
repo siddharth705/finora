@@ -78,10 +78,36 @@ describe('Button', () => {
   it('shows a spinner and disables the button while loading', () => {
     vi.mocked(useReducedMotion).mockReturnValue(false);
     render(<Button loading>Save</Button>);
-    const button = screen.getByRole('button', { name: 'Save' });
+    // Accessible-name computation joins the label and the sr-only busy text as separate nodes, so
+    // the computed name carries whitespace between them ("Save , loading"). Matched loosely rather
+    // than hardcoding that quirk -- the comma is what matters, the spacing is not spoken.
+    const button = screen.getByRole('button', { name: /^Save\s*,\s*loading$/ });
 
     expect(button).toBeDisabled();
     expect(button.querySelector('.animate-spin')).toBeInTheDocument();
+  });
+
+  /**
+   * The spinner is `aria-hidden`, and `disabled` conveys only "you can't press this" -- so before
+   * this the pending state reached assistive tech as nothing more than a disabled control. The
+   * state now lives in the accessible name, plus aria-busy for AT that uses it. Mirrors the
+   * user-facing app's Button spec per the anti-drift rule.
+   */
+  it('announces the pending state rather than conveying it only as "disabled"', () => {
+    vi.mocked(useReducedMotion).mockReturnValue(false);
+    render(<Button loading>Add</Button>);
+
+    const button = screen.getByRole('button', { name: /^Add\s*,\s*loading$/ });
+    expect(button).toHaveAttribute('aria-busy', 'true');
+  });
+
+  it('leaves the accessible name alone when not loading', () => {
+    vi.mocked(useReducedMotion).mockReturnValue(false);
+    render(<Button>Add</Button>);
+
+    const button = screen.getByRole('button', { name: 'Add' });
+    expect(button).toHaveAttribute('aria-busy', 'false');
+    expect(button.textContent).not.toMatch(/loading/i);
   });
 
   it('stays disabled and spinner-free when explicitly disabled without loading', () => {
