@@ -46,7 +46,7 @@ public class ImportRuleLearningService {
      * so it fell through to Other — and review left it as Other) teaches nothing. Learning from one
      * would poison the merchant map with "this merchant = Other" for no reason.
      *
-     * <p>A structurally-detected person-to-person payment that review left as "Paid a Person" is
+     * <p>A structurally-detected person-to-person payment that review left as "Personal Transfer" is
      * the same kind of non-decision, for a sharper reason: that detector discloses an 8-12% error
      * bound, and a learned confirmation outranks the keyword table permanently — so teaching from
      * an unconfirmed misfire would file a real business as a personal payment forever, invisibly.
