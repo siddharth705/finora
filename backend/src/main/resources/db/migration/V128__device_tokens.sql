@@ -41,6 +41,17 @@ CREATE INDEX idx_device_tokens_active
     ON device_tokens (user_id)
     WHERE revoked_at IS NULL;
 
+-- Fix-wave addition (still unmerged, so edited into this migration directly rather than as a new
+-- version -- see the migration's own header). DeviceTokenService.register() calls
+-- findByTokenFingerprintAndUserIdNotAndRevokedAtIsNull, a FINGERPRINT-leading lookup used to
+-- de-duplicate a shared physical token across accounts (revokeOtherUsersHoldingThisToken). Neither
+-- index above serves it: the UNIQUE constraint is user_id-leading, and idx_device_tokens_active is
+-- scoped to (user_id) alone. Without this, every register() call -- i.e. every app cold start --
+-- seq-scans a table that only ever grows (soft-revoke, never a hard delete).
+CREATE INDEX idx_device_tokens_fingerprint
+    ON device_tokens (token_fingerprint)
+    WHERE revoked_at IS NULL;
+
 COMMENT ON TABLE device_tokens IS
     'Push tokens, encrypted at rest. Encrypted and NOT hashed on purpose: the dispatcher hands the '
     'real token to FCM/APNs on every send, so it must be recoverable -- a one-way hash would make '

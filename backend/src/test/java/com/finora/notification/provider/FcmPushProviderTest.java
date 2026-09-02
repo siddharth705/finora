@@ -86,6 +86,12 @@ class FcmPushProviderTest {
 
         assertThat(result.success()).isFalse();
         assertThat(result.detail()).isEqualTo("no registered device");
+        // Fix wave, IMPORTANT 4: at launch most users have no device token, so this is the COMMON
+        // push outcome, not an edge case -- it must dead-letter on the first attempt rather than
+        // burning all 5 retries over their full backoff window first.
+        assertThat(result.permanent())
+                .as("no registered device can never succeed on retry")
+                .isTrue();
     }
 
     @Test
@@ -110,6 +116,9 @@ class FcmPushProviderTest {
 
         assertThat(result.success()).isFalse();
         assertThat(result.detail()).isEqualTo("all 1 devices rejected");
+        // Unlike "no registered device", a device that rejected today may still accept a future
+        // push (see TRANSIENT_FAILURE's own handling below) -- this must stay retryable.
+        assertThat(result.permanent()).isFalse();
     }
 
     @Test
@@ -144,7 +153,12 @@ class FcmPushProviderTest {
     void send_neverThrowsWhenDeviceTokenServiceThrows() {
         when(deviceTokenService.activeTokensFor(any())).thenThrow(new RuntimeException("db down"));
 
-        assertThat(provider.send(notification()).success()).isFalse();
+        ChannelSendResult result = provider.send(notification());
+
+        assertThat(result.success()).isFalse();
+        // A transient infrastructure exception carries no evidence this is permanently
+        // undeliverable -- must stay on the ordinary retry path.
+        assertThat(result.permanent()).isFalse();
     }
 
     @Test

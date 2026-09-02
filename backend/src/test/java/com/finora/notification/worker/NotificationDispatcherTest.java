@@ -299,4 +299,73 @@ class NotificationDispatcherTest {
         assertThat(captor.getAllValues()).extracting(NotificationLog::getAttempt)
                 .containsExactly(1, 2);
     }
+
+    /**
+     * Fix wave, IMPORTANT 4: a permanently-undeliverable notification (e.g. FCM's "no registered
+     * device", the common push outcome at launch since most users have no device token yet) used to
+     * burn all {@code Notification.MAX_ATTEMPTS} retries over the full backoff window before
+     * dead-lettering. A {@link ChannelSendResult#permanent()} result must dead-letter on the FIRST
+     * drain pass instead.
+     */
+    @Test
+    void drainOnce_deadLettersImmediatelyWhenTheProviderReportsAPermanentFailure() {
+        when(repository.claimDue(any(), anyInt())).thenReturn(List.of(pending));
+        when(emailProvider.send(any()))
+                .thenReturn(ChannelSendResult.permanentFailure("resend", "no email address on file"));
+
+        dispatcher.drainOnce();
+
+        assertThat(pending.getStatus()).isEqualTo(NotificationStatus.DEAD_LETTER);
+        assertThat(pending.getAttemptCount()).isEqualTo(Notification.MAX_ATTEMPTS);
+    }
+
+    /**
+     * Unlike the no-configured-provider terminal path (which logs "unconfigured" because no
+     * provider was ever called), a permanent failure DID call a real provider, and that provider's
+     * own name must be logged rather than papered over.
+     */
+    @Test
+    void drainOnce_logsTheRealProviderNameOnAPermanentFailure_notUnconfigured() {
+        when(repository.claimDue(any(), anyInt())).thenReturn(List.of(pending));
+        when(emailProvider.send(any()))
+                .thenReturn(ChannelSendResult.permanentFailure("resend", "no email address on file"));
+
+        dispatcher.drainOnce();
+
+        ArgumentCaptor<NotificationLog> captor = ArgumentCaptor.forClass(NotificationLog.class);
+        verify(logRepository).save(captor.capture());
+        NotificationLog written = captor.getValue();
+        assertThat(written.getProvider()).isEqualTo("resend");
+        assertThat(written.getResponse()).isEqualTo("no email address on file");
+        assertThat(written.isSuccess()).isFalse();
+        assertThat(written.getAttempt()).isEqualTo(1);
+    }
+
+    /** One provider call happened, so exactly one log row -- not the five a naive "loop
+     *  recordFailure until dead-lettered" implementation would have written one per burned
+     *  attempt. */
+    @Test
+    void drainOnce_writesOnlyOneLogRowForAPermanentFailure() {
+        when(repository.claimDue(any(), anyInt())).thenReturn(List.of(pending));
+        when(emailProvider.send(any()))
+                .thenReturn(ChannelSendResult.permanentFailure("resend", "no email address on file"));
+
+        dispatcher.drainOnce();
+
+        verify(logRepository, times(1)).save(any(NotificationLog.class));
+    }
+
+    /** The flip side, locking in no regression: an ordinary (non-permanent) failure must still go
+     *  through the ordinary retry path, not the terminal one. */
+    @Test
+    void drainOnce_stillSchedulesRetryForAnOrdinaryNonPermanentFailure() {
+        when(repository.claimDue(any(), anyInt())).thenReturn(List.of(pending));
+        when(emailProvider.send(any()))
+                .thenReturn(ChannelSendResult.failure("resend", "502 from provider"));
+
+        dispatcher.drainOnce();
+
+        assertThat(pending.getStatus()).isEqualTo(NotificationStatus.RETRYING);
+        assertThat(pending.getAttemptCount()).isEqualTo(1);
+    }
 }

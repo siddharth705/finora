@@ -155,13 +155,21 @@ public class Notification {
      *
      * <p>Backoff is 2^attemptCount minutes, the same exponential shape MerchantLearningEvent
      * already uses -- not an immediate infinite retry loop.
+     *
+     * <p>{@code error} is redacted through {@link PiiRedactor} before it is stored, the same way
+     * {@link NotificationLog#of} redacts the identical {@code ChannelSendResult.detail()} string
+     * before writing it to {@code notification_logs.response}. {@code last_error} is read straight
+     * back by the admin portal ({@code NotificationAdminDto}/{@code NotificationAdminDetailDto}),
+     * so it needs the same unconditional guarantee -- a future provider that echoes an unmasked
+     * exception message must not be able to land an email, phone number, or token here just
+     * because {@code NotificationLog}'s own redaction lives on a different write path.
      */
     public FailureOutcome recordFailure(String error, Instant now) {
         if (status.isTerminal()) {
             return FailureOutcome.ALREADY_FINISHED;
         }
         this.attemptCount++;
-        this.lastError = truncate(error);
+        this.lastError = truncate(PiiRedactor.redact(error));
         if (attemptCount >= MAX_ATTEMPTS) {
             this.status = NotificationStatus.DEAD_LETTER;
             this.nextAttemptAt = now;

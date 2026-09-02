@@ -179,6 +179,13 @@ public class NotificationDispatcher {
 
         if (result.success()) {
             recordSuccess(execution, notification, result);
+        } else if (result.permanent()) {
+            // Same reasoning as the unconfigured-provider branch above, but the provider WAS
+            // called and DID report which one -- e.g. FCM's "no registered device", email/SMS's
+            // "user account deleted"/"no address on file". Retrying five times over the backoff
+            // window cannot fix any of these; go straight to the terminal path on this first
+            // attempt instead of burning the whole retry budget to land on the same DEAD_LETTER.
+            failTerminally(execution, notification, result.providerName(), result.detail());
         } else {
             recordFailure(execution, notification, result);
         }
@@ -238,14 +245,32 @@ public class NotificationDispatcher {
         writeLog(notification.getId(), result.providerName(), result.detail(), false, attempt);
     }
 
-    /** See {@link #recordSuccess}'s doc comment for why this has its own outer catch. */
+    /**
+     * The no-configured-provider case: no {@link NotificationChannelProvider} was ever called, so
+     * there is no real providerName to log -- "unconfigured" records what actually happened, the
+     * channel had nobody to call. See the other overload for a provider that WAS called and
+     * reported its own failure as permanent.
+     */
     private void failTerminally(WorkerExecution execution, Notification notification,
             String reason) {
-        // One real attempt happened here -- the attempt that discovered there was no provider to
-        // call -- even though the loop below burns through every remaining retry at once to land
-        // the notification straight on DEAD_LETTER. Captured before that loop for the same reason
-        // as recordFailure: it should name the attempt that was actually made, not the exhausted
-        // count the loop leaves behind.
+        failTerminally(execution, notification, "unconfigured", reason);
+    }
+
+    /**
+     * See {@link #recordSuccess}'s doc comment for why this has its own outer catch.
+     *
+     * <p>Shared by two callers: the no-configured-provider branch above (via the other overload,
+     * providerName always {@code "unconfigured"}) and a {@link ChannelSendResult#permanent()}
+     * failure, where a real provider WAS called and its own name must be logged rather than
+     * papered over as "unconfigured".
+     */
+    private void failTerminally(WorkerExecution execution, Notification notification,
+            String providerName, String reason) {
+        // One real attempt happened here -- the attempt that discovered this notification is
+        // permanently undeliverable -- even though the loop below burns through every remaining
+        // retry at once to land the notification straight on DEAD_LETTER. Captured before that loop
+        // for the same reason as recordFailure: it should name the attempt that was actually made,
+        // not the exhausted count the loop leaves behind.
         int attempt = notification.getAttemptCount() + 1;
         try {
             transactionTemplate.executeWithoutResult(status -> {
@@ -260,9 +285,7 @@ public class NotificationDispatcher {
             log.error("Could not record dead-letter for notification {}", notification.getId(), e);
             execution.failureNotRecorded(notification.getId(), e);
         }
-        // No NotificationChannelProvider was ever called, so there is no providerName to log --
-        // "unconfigured" records what actually happened: the channel had nobody to call.
-        writeLog(notification.getId(), "unconfigured", reason, false, attempt);
+        writeLog(notification.getId(), providerName, reason, false, attempt);
     }
 
     /**

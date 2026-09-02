@@ -7,7 +7,6 @@ import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import java.time.Instant;
 import java.util.UUID;
-import java.util.regex.Pattern;
 
 /**
  * One delivery attempt against one provider. Append-only: the notifications row holds current
@@ -27,26 +26,16 @@ import java.util.regex.Pattern;
  * or a stack trace that happens to embed a bearer token) must not be able to land an email
  * address, phone number, or token in this table just because it failed to redact one itself.
  * {@link #of} therefore redacts common PII/secret shapes out of {@code response} before
- * truncating and storing it, unconditionally, on every row.
+ * truncating and storing it, unconditionally, on every row. The redaction rules themselves live in
+ * {@link PiiRedactor}, shared with {@link Notification#recordFailure}, which took the same
+ * {@code detail} string and, until a fix-wave review caught it, only truncated it -- see
+ * {@link PiiRedactor}'s own class doc for why the two must not drift apart.
  */
 @Entity
 @Table(name = "notification_logs")
 public class NotificationLog {
 
     private static final int MAX_RESPONSE_LENGTH = 2000;
-
-    private static final Pattern EMAIL_PATTERN =
-            Pattern.compile("[A-Za-z0-9+_.-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}");
-
-    /** A run of 7+ digits, optionally broken up by spaces/dashes/dots/parens -- covers most phone
-     * number formats (with or without a country code) without also eating short numbers like an
-     * HTTP status code or a retry count. */
-    private static final Pattern PHONE_PATTERN =
-            Pattern.compile("(?<![\\w.])\\+?(?:\\d[ .\\-()]{0,2}){7,}\\d(?![\\w.])");
-
-    /** A long run of token-alphabet characters -- covers API keys, bearer tokens, and JWT segments,
-     * which are all built from this alphabet and are never this long by coincidence. */
-    private static final Pattern TOKEN_PATTERN = Pattern.compile("\\b[A-Za-z0-9_-]{24,}\\b");
 
     @Id
     @GeneratedValue
@@ -93,16 +82,13 @@ public class NotificationLog {
     /** Redacts, then truncates. Redaction must run first: truncating first can cut a PII shape in
      * half at the boundary and let the remaining half slip through unredacted. */
     private static String sanitize(String response) {
-        if (response == null) {
-            return null;
-        }
-        String redacted = EMAIL_PATTERN.matcher(response).replaceAll("[redacted-email]");
-        redacted = PHONE_PATTERN.matcher(redacted).replaceAll("[redacted-phone]");
-        redacted = TOKEN_PATTERN.matcher(redacted).replaceAll("[redacted-token]");
-        return truncate(redacted);
+        return truncate(PiiRedactor.redact(response));
     }
 
     private static String truncate(String response) {
+        if (response == null) {
+            return null;
+        }
         return response.length() <= MAX_RESPONSE_LENGTH
                 ? response
                 : response.substring(0, MAX_RESPONSE_LENGTH);

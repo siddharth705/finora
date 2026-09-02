@@ -42,7 +42,8 @@ public class SmsNotificationProvider implements NotificationChannelProvider {
         try {
             Optional<User> user = userRepository.findById(notification.getUserId());
             if (user.isEmpty()) {
-                return ChannelSendResult.failure(PROVIDER_NAME, "no phone number on file");
+                // Permanent: retrying cannot make a user row that doesn't exist appear.
+                return ChannelSendResult.permanentFailure(PROVIDER_NAME, "no phone number on file");
             }
             User u = user.get();
             // A purged account currently happens to have its phoneNumber nulled by
@@ -51,12 +52,14 @@ public class SmsNotificationProvider implements NotificationChannelProvider {
             // status explicitly means SMS stays safe even if purge later moves to a phone
             // sentinel the way it already does for email.
             if (u.isDeleted()) {
-                return ChannelSendResult.failure(PROVIDER_NAME, "user account deleted");
+                // Permanent: a purge is not undone by waiting and retrying.
+                return ChannelSendResult.permanentFailure(PROVIDER_NAME, "user account deleted");
             }
             if (u.getPhoneNumber() == null || u.getPhoneNumber().isBlank()) {
                 // Never put the (missing or present) phone number in the detail -- it lands in
-                // notification_logs, which admins read.
-                return ChannelSendResult.failure(PROVIDER_NAME, "no phone number on file");
+                // notification_logs, which admins read. Permanent: nothing about a retry populates
+                // this user's phone number.
+                return ChannelSendResult.permanentFailure(PROVIDER_NAME, "no phone number on file");
             }
             SmsResult result = smsProvider.send(buildRequest(u.getPhoneNumber(),
                     notification.getMessage()));

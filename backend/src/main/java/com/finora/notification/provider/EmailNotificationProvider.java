@@ -45,7 +45,8 @@ public class EmailNotificationProvider implements NotificationChannelProvider {
         try {
             Optional<User> user = userRepository.findById(notification.getUserId());
             if (user.isEmpty()) {
-                return ChannelSendResult.failure(PROVIDER_NAME, "no email address on file");
+                // Permanent: retrying cannot make a user row that doesn't exist appear.
+                return ChannelSendResult.permanentFailure(PROVIDER_NAME, "no email address on file");
             }
             User u = user.get();
             // A purged account's email is overwritten with a synthetic, non-blank sentinel
@@ -54,12 +55,14 @@ public class EmailNotificationProvider implements NotificationChannelProvider {
             // still be in flight (queued, mid-retry-backoff, or recovered from an abandoned
             // PROCESSING row) after the purge runs, and must not be handed to the real provider.
             if (u.isDeleted()) {
-                return ChannelSendResult.failure(PROVIDER_NAME, "user account deleted");
+                // Permanent: a purge is not undone by waiting and retrying.
+                return ChannelSendResult.permanentFailure(PROVIDER_NAME, "user account deleted");
             }
             if (u.getEmail() == null || u.getEmail().isBlank()) {
                 // Never put the (missing or present) address in the detail -- it lands in
-                // notification_logs, which admins read.
-                return ChannelSendResult.failure(PROVIDER_NAME, "no email address on file");
+                // notification_logs, which admins read. Permanent: nothing about a retry populates
+                // this user's email address.
+                return ChannelSendResult.permanentFailure(PROVIDER_NAME, "no email address on file");
             }
             EmailResult result = emailProvider.send(buildMessage(u.getEmail(),
                     notification.getTitle(), notification.getMessage()));

@@ -16,6 +16,7 @@ import com.finora.notification.domain.NotificationType;
 import com.finora.notification.repository.NotificationRepository;
 import com.finora.notification.template.RenderedMessage;
 import com.finora.notification.template.TemplateRenderer;
+import com.finora.notification.worker.NotificationDispatcher;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -23,6 +24,8 @@ import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionSynchronizationUtils;
 
 /**
  * Mockito-based unit tests against mocked repositories, matching this codebase's established
@@ -40,6 +43,7 @@ class NotificationServiceTest {
     private NotificationRepository repository;
     private TemplateRenderer templateRenderer;
     private NotificationPreferenceResolver preferenceResolver;
+    private NotificationDispatcher dispatcher;
     private NotificationService service;
 
     private final UUID userId = UUID.randomUUID();
@@ -49,7 +53,8 @@ class NotificationServiceTest {
         repository = mock(NotificationRepository.class);
         templateRenderer = mock(TemplateRenderer.class);
         preferenceResolver = mock(NotificationPreferenceResolver.class);
-        service = new NotificationService(repository, templateRenderer, preferenceResolver);
+        dispatcher = mock(NotificationDispatcher.class);
+        service = new NotificationService(repository, templateRenderer, preferenceResolver, dispatcher);
 
         when(repository.insertIfAbsent(any(), anyString(), anyString(), anyString(), anyString(),
                 anyString(), anyString(), anyString(), any()))
@@ -130,5 +135,112 @@ class NotificationServiceTest {
 
         // A notification failure must never fail the caller's own business transaction.
         assertThat(service.request(request(Set.of(NotificationChannel.EMAIL), "K1"))).isEmpty();
+    }
+
+    /**
+     * Fix wave, IMPORTANT 2: an over-length title/message/key used to reach the insert at full
+     * length, which raises a Postgres statement error INSIDE the caller's own ambient transaction --
+     * see this class's own doc comment on {@code request} for the SQLSTATE 25P02 mechanism. These
+     * three tests prove each of the three unbounded inputs is cut down to its column width
+     * (V124: title VARCHAR(300), message VARCHAR(2000), notification_key VARCHAR(200)) before ever
+     * reaching {@code insertIfAbsent}.
+     */
+    @Test
+    void request_truncatesAnOverLengthTitleToTheColumnWidth() {
+        when(templateRenderer.render(any(), any(), any()))
+                .thenReturn(new RenderedMessage("T".repeat(301), "Body"));
+
+        service.request(request(Set.of(NotificationChannel.EMAIL), "K1"));
+
+        ArgumentCaptor<String> titleCaptor = ArgumentCaptor.forClass(String.class);
+        verify(repository).insertIfAbsent(any(), anyString(), anyString(), anyString(), anyString(),
+                anyString(), titleCaptor.capture(), anyString(), any());
+        assertThat(titleCaptor.getValue()).hasSize(300);
+    }
+
+    @Test
+    void request_truncatesAnOverLengthMessageToTheColumnWidth() {
+        when(templateRenderer.render(any(), any(), any()))
+                .thenReturn(new RenderedMessage("Title", "B".repeat(2001)));
+
+        service.request(request(Set.of(NotificationChannel.EMAIL), "K1"));
+
+        ArgumentCaptor<String> bodyCaptor = ArgumentCaptor.forClass(String.class);
+        verify(repository).insertIfAbsent(any(), anyString(), anyString(), anyString(), anyString(),
+                anyString(), anyString(), bodyCaptor.capture(), any());
+        assertThat(bodyCaptor.getValue()).hasSize(2000);
+    }
+
+    @Test
+    void request_truncatesAnOverLengthNotificationKeyToTheColumnWidth() {
+        String overLongKey = "K".repeat(250);
+
+        service.request(request(Set.of(NotificationChannel.EMAIL), overLongKey));
+
+        ArgumentCaptor<String> keyCaptor = ArgumentCaptor.forClass(String.class);
+        verify(repository).insertIfAbsent(any(), keyCaptor.capture(), anyString(), anyString(),
+                anyString(), anyString(), anyString(), anyString(), any());
+        assertThat(keyCaptor.getValue()).hasSize(200);
+    }
+
+    /**
+     * Fix wave, IMPORTANT 3: {@code nudge()} was never wired to {@code request()}, so every
+     * notification -- PASSWORD_CHANGED included -- waited for the 30-second poller. These prove the
+     * after-commit wiring itself: no nudge before commit (the row is not visible to the dispatcher's
+     * own claim query yet), a nudge once the transaction actually commits, no nudge at all if it
+     * rolls back instead, and an immediate nudge when there is no ambient transaction to wait for.
+     *
+     * <p>{@code TransactionSynchronizationManager.initSynchronization()}/{@code
+     * TransactionSynchronizationUtils.triggerAfterCommit()} simulate a real transaction's commit
+     * without a Spring context or a database -- the same technique
+     * {@code MerchantNormalizationEngineTest} already uses for transaction-scoped behaviour in a
+     * plain Mockito unit test.
+     */
+    @Test
+    void request_nudgesTheDispatcherOnlyAfterTheCallersTransactionCommits() {
+        TransactionSynchronizationManager.initSynchronization();
+        try {
+            service.request(request(Set.of(NotificationChannel.EMAIL), "K1"));
+
+            verify(dispatcher, never()).nudge();
+
+            TransactionSynchronizationUtils.triggerAfterCommit();
+
+            verify(dispatcher).nudge();
+        } finally {
+            TransactionSynchronizationManager.clearSynchronization();
+        }
+    }
+
+    @Test
+    void request_doesNotNudgeWhenTheCallersTransactionRollsBack() {
+        TransactionSynchronizationManager.initSynchronization();
+        try {
+            service.request(request(Set.of(NotificationChannel.EMAIL), "K1"));
+        } finally {
+            // No triggerAfterCommit() here -- simulating a rollback, on which afterCommit is never
+            // invoked at all.
+            TransactionSynchronizationManager.clearSynchronization();
+        }
+
+        verify(dispatcher, never()).nudge();
+    }
+
+    @Test
+    void request_nudgesImmediatelyWhenThereIsNoAmbientTransaction() {
+        // No TransactionSynchronizationManager.initSynchronization() -- matches every other test in
+        // this class, and any real caller with no transaction in play.
+        service.request(request(Set.of(NotificationChannel.EMAIL), "K1"));
+
+        verify(dispatcher).nudge();
+    }
+
+    @Test
+    void request_doesNotNudgeWhenNothingWasActuallyWritten() {
+        when(repository.existsByNotificationKey(anyString())).thenReturn(true);
+
+        service.request(request(Set.of(NotificationChannel.EMAIL), "K1"));
+
+        verify(dispatcher, never()).nudge();
     }
 }

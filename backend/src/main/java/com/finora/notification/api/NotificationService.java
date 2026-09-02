@@ -4,6 +4,8 @@ import com.finora.notification.domain.NotificationChannel;
 import com.finora.notification.repository.NotificationRepository;
 import com.finora.notification.template.RenderedMessage;
 import com.finora.notification.template.TemplateRenderer;
+import com.finora.notification.worker.NotificationDispatcher;
+import com.finora.util.AfterCommit;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -25,15 +27,24 @@ public class NotificationService {
 
     private static final Logger log = LoggerFactory.getLogger(NotificationService.class);
 
+    // Mirror V124's own column widths (notifications.title/message/notification_key). Written in
+    // exactly one place each -- see #truncate's own doc for why an over-length value must never
+    // reach the insert below at all.
+    private static final int MAX_TITLE_LENGTH = 300;
+    private static final int MAX_MESSAGE_LENGTH = 2000;
+    private static final int MAX_KEY_LENGTH = 200;
+
     private final NotificationRepository repository;
     private final TemplateRenderer templateRenderer;
     private final NotificationPreferenceResolver preferenceResolver;
+    private final NotificationDispatcher dispatcher;
 
     public NotificationService(NotificationRepository repository, TemplateRenderer templateRenderer,
-            NotificationPreferenceResolver preferenceResolver) {
+            NotificationPreferenceResolver preferenceResolver, NotificationDispatcher dispatcher) {
         this.repository = repository;
         this.templateRenderer = templateRenderer;
         this.preferenceResolver = preferenceResolver;
+        this.dispatcher = dispatcher;
     }
 
     /**
@@ -55,6 +66,36 @@ public class NotificationService {
      * resolves atomically and silently at the database, so no exception is ever raised for it and
      * the caller's ambient transaction is never poisoned by it.
      *
+     * <h2>Every insert is truncated to its column width first</h2>
+     *
+     * <p>{@code title}/{@code message} come from {@code TemplateRenderer.render}, which substitutes
+     * caller-supplied params (e.g. {@code {{bank}}}, whose value can come from PDF-parsed
+     * institution text) into a template with no length check of its own; {@code key} is
+     * {@code request.notificationKey() + ":" + channel.name()}, similarly unbounded. An over-length
+     * value hitting {@code title VARCHAR(300)}/{@code message VARCHAR(2000)}/
+     * {@code notification_key VARCHAR(200)} (V124) raises a Postgres statement error INSIDE the
+     * caller's own ambient transaction -- the surrounding {@code catch (RuntimeException)} below
+     * swallows the exception but does not un-abort that transaction, so every later statement on it
+     * fails and the caller's own COMMIT silently downgrades to ROLLBACK (SQLSTATE 25P02, the same
+     * mechanism {@code MerchantNormalizationEngine.addAlias} and
+     * {@link NotificationRepository#insertIfAbsent} already document). Truncating before the insert
+     * is what actually keeps the promise this class's own doc comment makes: a caller's business
+     * transaction must never fail because of a notification.
+     *
+     * <h2>Delivery is nudged once this call's transaction actually commits</h2>
+     *
+     * <p>{@link NotificationDispatcher#nudge()} exists specifically for this ("near-immediate
+     * delivery") but nothing called it -- every notification, including {@code PASSWORD_CHANGED},
+     * used to wait for the 30-second poller. {@link AfterCommit#run} mirrors
+     * {@code MerchantLearningEventPublisher.nudgeAfterCommit()}'s own
+     * {@code TransactionSynchronizationManager} pattern (also used by {@code ImportJobService} and
+     * {@code AdminLearningQueueService}) rather than a fifth hand-rolled copy of it: nudging before
+     * the row is visible would race the dispatcher's own claim query against a row that was never
+     * actually committed, so this only fires {@code afterCommit} -- or immediately when {@code
+     * request} is called with no ambient transaction, since there is then nothing to wait for. Only
+     * fires when this call actually wrote at least one row; a call that only hit the duplicate/
+     * preference-suppressed paths has nothing new for the dispatcher to claim.
+     *
      * @return the ids actually written; a channel suppressed by preference or idempotency is
      *     simply absent.
      */
@@ -66,7 +107,8 @@ public class NotificationService {
                 if (!preferenceResolver.isEnabled(request.userId(), request.category(), channel)) {
                     continue;
                 }
-                String key = request.notificationKey() + ":" + channel.name();
+                String key = truncate(request.notificationKey() + ":" + channel.name(),
+                        MAX_KEY_LENGTH);
                 if (repository.existsByNotificationKey(key)) {
                     log.debug("Notification {} already requested, skipping duplicate", key);
                     continue;
@@ -75,7 +117,8 @@ public class NotificationService {
                         templateRenderer.render(request.type(), channel, request.params());
                 repository.insertIfAbsent(request.userId(), key, request.type().name(),
                                 request.category().name(), channel.name(), request.priority().name(),
-                                rendered.title(), rendered.body(), now)
+                                truncate(rendered.title(), MAX_TITLE_LENGTH),
+                                truncate(rendered.body(), MAX_MESSAGE_LENGTH), now)
                         .ifPresentOrElse(written::add, () -> log.debug(
                                 "Notification {} already requested, skipping duplicate", key));
             } catch (RuntimeException e) {
@@ -84,6 +127,19 @@ public class NotificationService {
                         channel, request.userId(), e);
             }
         }
+        if (!written.isEmpty()) {
+            AfterCommit.run("notification dispatch nudge", dispatcher::nudge);
+        }
         return written;
+    }
+
+    /** Null-safe truncate to a column's own width -- {@code maxLength} differs per caller (title,
+     *  message, key), which is why this is parameterized instead of reusing one of
+     *  {@code Notification}/{@code NotificationLog}'s own hardcoded-to-2000 truncate helpers. */
+    private static String truncate(String value, int maxLength) {
+        if (value == null || value.length() <= maxLength) {
+            return value;
+        }
+        return value.substring(0, maxLength);
     }
 }

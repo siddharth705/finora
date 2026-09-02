@@ -91,7 +91,9 @@ public class FcmPushProvider implements NotificationChannelProvider {
             List<ActiveDeviceToken> tokens =
                     deviceTokenService.activeTokensFor(notification.getUserId());
             if (tokens.isEmpty()) {
-                return ChannelSendResult.failure(PROVIDER_NAME, "no registered device");
+                // Permanent, not merely transient: retrying this exact attempt five times over the
+                // dispatcher's backoff window cannot conjure a device this user never registered.
+                return ChannelSendResult.permanentFailure(PROVIDER_NAME, "no registered device");
             }
             int accepted = sendToEach(tokens, notification);
             // Counts only -- a raw token must never reach the detail, which is persisted to

@@ -15,6 +15,8 @@ import com.finora.notification.domain.NotificationPriority;
 import com.finora.notification.domain.NotificationType;
 import com.finora.repository.UserRepository;
 import com.finora.service.EmailProvider;
+import com.finora.service.EmailResult;
+import com.finora.service.ProviderType;
 import java.time.Instant;
 import java.util.Optional;
 import java.util.UUID;
@@ -55,6 +57,8 @@ class EmailNotificationProviderTest {
 
         assertThat(result.success()).isFalse();
         assertThat(result.detail()).doesNotContain("@");
+        // Fix wave, IMPORTANT 4: retrying cannot make a user row that doesn't exist appear.
+        assertThat(result.permanent()).isTrue();
     }
 
     @Test
@@ -64,6 +68,9 @@ class EmailNotificationProviderTest {
         ChannelSendResult result = provider.send(notification());
 
         assertThat(result.success()).isFalse();
+        // A transient infrastructure exception carries no evidence this is permanently
+        // undeliverable -- must stay on the ordinary retry path.
+        assertThat(result.permanent()).isFalse();
     }
 
     @Test
@@ -77,6 +84,7 @@ class EmailNotificationProviderTest {
 
         assertThat(result.success()).isFalse();
         assertThat(result.detail()).doesNotContain("@");
+        assertThat(result.permanent()).isTrue();
         verify(emailProvider, never()).send(any());
     }
 
@@ -91,6 +99,7 @@ class EmailNotificationProviderTest {
 
         assertThat(result.success()).isFalse();
         assertThat(result.detail()).doesNotContain("@");
+        assertThat(result.permanent()).isTrue();
         verify(emailProvider, never()).send(any());
     }
 
@@ -107,6 +116,25 @@ class EmailNotificationProviderTest {
 
         assertThat(result.success()).isFalse();
         assertThat(result.detail()).doesNotContain("@");
+        // A purge is not undone by waiting and retrying.
+        assertThat(result.permanent()).isTrue();
         verify(emailProvider, never()).send(any());
+    }
+
+    /** The flip side: a real provider call that itself reports failure is not confidently
+     *  permanent (could be a transient outage on the provider's side) and must stay retryable. */
+    @Test
+    void send_aProviderReportedFailureIsNotPermanent() {
+        User user = new User();
+        user.setEmail("user@example.com");
+        user.setStatus(User.STATUS_ACTIVE);
+        when(userRepository.findById(any())).thenReturn(Optional.of(user));
+        when(emailProvider.send(any()))
+                .thenReturn(EmailResult.failure(ProviderType.RESEND, "provider outage"));
+
+        ChannelSendResult result = provider.send(notification());
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.permanent()).isFalse();
     }
 }

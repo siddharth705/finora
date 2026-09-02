@@ -93,6 +93,34 @@ class NotificationTest {
         assertThat(n.getAttemptCount()).isEqualTo(Notification.MAX_ATTEMPTS);
     }
 
+    /**
+     * Fix wave, IMPORTANT 1: {@code recordFailure} used to only truncate {@code error}, while
+     * {@code NotificationLog.of} redacted the exact same {@code ChannelSendResult.detail()} string
+     * before writing it to {@code notification_logs.response}. {@code last_error} is read straight
+     * back by the admin portal, so an unredacted email/phone/token-shaped provider detail landing
+     * here was just as much of a leak as it would have been in the log table. Same fixture shape as
+     * {@code NotificationLogRepositoryIT.of_redactsEmailPhoneAndTokenShapesBeforePersisting} -- a
+     * repeated-letter placeholder instead of a real-looking token, so this doesn't trip the repo's
+     * gitleaks pre-commit scan.
+     */
+    @Test
+    void recordFailure_redactsEmailPhoneAndTokenShapesFromLastError() {
+        Notification n = newNotification();
+        Instant now = Instant.parse("2026-09-02T10:00:00Z");
+        String placeholderToken = "x".repeat(28);
+        String raw = "550 no such user: alice@example.com, MSISDN +91 98765 43210, "
+                + "token=" + placeholderToken;
+
+        n.recordFailure(raw, now);
+
+        assertThat(n.getLastError()).doesNotContain("alice@example.com")
+                .doesNotContain("98765 43210")
+                .doesNotContain(placeholderToken)
+                .contains("[redacted-email]")
+                .contains("[redacted-phone]")
+                .contains("[redacted-token]");
+    }
+
     @Test
     void recordFailure_onAlreadySentNotificationIsIgnored() {
         Notification n = newNotification();

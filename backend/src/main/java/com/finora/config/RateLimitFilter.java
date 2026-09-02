@@ -190,6 +190,21 @@ public class RateLimitFilter extends OncePerRequestFilter {
     // stopper on the 6-digit code space, which the challenge's own 5-minute expiry already makes
     // infeasible to exhaust over the network regardless of any limiter.
     private final RateLimiter mfaVerifyLimiter;
+    // Fix wave (final review of the notification platform). POST /device-tokens (register) had a
+    // real, compounding per-call cost with no limiter at all: register() has a cross-user write
+    // side effect (revokeOtherUsersHoldingThisToken), AND ran an unindexed fingerprint-leading scan
+    // before idx_device_tokens_fingerprint was added (see V128), AND had no ceiling -- so any
+    // holder of a valid JWT could issue unbounded registrations, each a distinct token, each
+    // inserting a row into a table it simultaneously scanned. Same bucket covers POST
+    // /device-tokens/revoke: a cheaper call (one indexed lookup, no cross-user write), but sharing
+    // one limiter for a controller's whole small resource is this class's own established shape
+    // (see passwordChangeLimiter/phoneChangeLimiter/emailChangeLimiter's multi-step flows above) and
+    // a caller legitimately hits both register and revoke together (e.g. logout revokes, a later
+    // login re-registers). Same 10/10min ceiling as importStageLimiter/resetPasswordLimiter: this
+    // bounds a token holder retrying in a loop, not an anonymous guesser (register/revoke both
+    // require a valid JWT), and 10/10min is the ceiling this class already uses for exactly that
+    // threat model.
+    private final RateLimiter deviceTokenLimiter;
     // Bug fix: this used to be `new ObjectMapper()` -- a second, freshly-constructed mapper with
     // none of the auto-configuration Spring Boot's own JacksonAutoConfiguration applies to its
     // managed ObjectMapper bean (in particular, no JavaTimeModule). ApiResponse.timestamp is a
@@ -268,6 +283,10 @@ public class RateLimitFilter extends OncePerRequestFilter {
     // probe (RateLimitFilterTest) -- every limiter this class defines needs a max under that
     // probe's iteration count for the shared "does this endpoint actually trip" test to work.
     static final int DEFAULT_REFRESH_MAX = 15, DEFAULT_REFRESH_WINDOW = 300;
+    // Fix wave. Same ceiling as importStageLimiter/resetPasswordLimiter/mfaVerifyLimiter -- see
+    // deviceTokenLimiter's own field comment for why 10/10min is the right bucket for this
+    // endpoint's threat model.
+    static final int DEFAULT_DEVICE_TOKEN_MAX = 10, DEFAULT_DEVICE_TOKEN_WINDOW = 600;
 
     /**
      * The shipped configuration, for tests.
@@ -293,7 +312,8 @@ public class RateLimitFilter extends OncePerRequestFilter {
                 DEFAULT_GOOGLE_MAX, DEFAULT_GOOGLE_WINDOW,
                 DEFAULT_APPLE_MAX, DEFAULT_APPLE_WINDOW,
                 DEFAULT_MFA_VERIFY_MAX, DEFAULT_MFA_VERIFY_WINDOW,
-                DEFAULT_REFRESH_MAX, DEFAULT_REFRESH_WINDOW);
+                DEFAULT_REFRESH_MAX, DEFAULT_REFRESH_WINDOW,
+                DEFAULT_DEVICE_TOKEN_MAX, DEFAULT_DEVICE_TOKEN_WINDOW);
     }
 
     /**
@@ -341,7 +361,9 @@ public class RateLimitFilter extends OncePerRequestFilter {
             @Value("${app.rate-limit.mfa-verify.max:10}") int mfaVerifyMax,
             @Value("${app.rate-limit.mfa-verify.window-seconds:600}") int mfaVerifyWindow,
             @Value("${app.rate-limit.refresh.max:15}") int refreshMax,
-            @Value("${app.rate-limit.refresh.window-seconds:300}") int refreshWindow) {
+            @Value("${app.rate-limit.refresh.window-seconds:300}") int refreshWindow,
+            @Value("${app.rate-limit.device-token.max:10}") int deviceTokenMax,
+            @Value("${app.rate-limit.device-token.window-seconds:600}") int deviceTokenWindow) {
         this.objectMapper = objectMapper;
         this.clientIpResolver = clientIpResolver;
         this.corsConfigurationSource = corsConfigurationSource;
@@ -360,6 +382,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
         this.appleLimiter = new RateLimiter(appleMax, appleWindow);
         this.mfaVerifyLimiter = new RateLimiter(mfaVerifyMax, mfaVerifyWindow);
         this.refreshLimiter = new RateLimiter(refreshMax, refreshWindow);
+        this.deviceTokenLimiter = new RateLimiter(deviceTokenMax, deviceTokenWindow);
         this.limitedEndpoints = List.of(
                 new LimitedEndpoint(PARSER.parse("/api/v1/auth/login"), loginLimiter),
                 new LimitedEndpoint(PARSER.parse("/api/v1/auth/refresh"), refreshLimiter),
@@ -426,7 +449,10 @@ public class RateLimitFilter extends OncePerRequestFilter {
                 new LimitedEndpoint(PARSER.parse("/api/v1/users/me/email-change/verify"), emailChangeLimiter),
                 new LimitedEndpoint(PARSER.parse("/api/v1/users/me/email-change/complete"), emailChangeLimiter),
                 new LimitedEndpoint(PARSER.parse("/api/v1/users/me/data-export"), dataExportLimiter),
-                new LimitedEndpoint(PARSER.parse("/api/v1/auth/mfa/verify"), mfaVerifyLimiter));
+                new LimitedEndpoint(PARSER.parse("/api/v1/auth/mfa/verify"), mfaVerifyLimiter),
+                // Fix wave. See deviceTokenLimiter's own field comment.
+                new LimitedEndpoint(PARSER.parse("/api/v1/device-tokens"), deviceTokenLimiter),
+                new LimitedEndpoint(PARSER.parse("/api/v1/device-tokens/revoke"), deviceTokenLimiter));
     }
 
     @Override

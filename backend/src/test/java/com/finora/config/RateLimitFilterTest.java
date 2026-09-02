@@ -288,6 +288,8 @@ class RateLimitFilterTest {
                 "/api/v1/users/me/account/deactivate",
                 "/api/v1/users/me/account/delete",
                 "/api/v1/auth/mfa/verify",
+                "/api/v1/device-tokens",
+                "/api/v1/device-tokens/revoke",
         };
 
         for (String path : mustBeLimited) {
@@ -379,6 +381,26 @@ class RateLimitFilterTest {
         assertThat(completeResponse.getStatus()).isEqualTo(429);
     }
 
+    /** Fix wave: register and revoke share one bucket (deviceTokenLimiter), matching this class's
+     *  established shape for a small resource's multi-step/multi-action flow (see
+     *  passwordChangeSteps_shareOneRateLimitBucket above) -- a caller alternating between the two
+     *  must not get double the effective quota by rotating across them. */
+    @Test
+    void deviceTokenRegisterAndRevoke_shareOneRateLimitBucket() throws Exception {
+        RateLimitFilter filter = newFilter(false);
+        FilterChain chain = mock(FilterChain.class);
+
+        boolean tripped = false;
+        for (int i = 0; i < 20; i++) {
+            String path = i % 2 == 0 ? "/api/v1/device-tokens" : "/api/v1/device-tokens/revoke";
+            HttpServletRequest request = requestFor(path, "10.0.0.11", null);
+            MockHttpServletResponse response = new MockHttpServletResponse();
+            filter.doFilterInternal(request, response, chain);
+            if (response.getStatus() == 429) tripped = true;
+        }
+        assertThat(tripped).isTrue();
+    }
+
     /**
      * Bug fix (self-review after PR #142): the data-export ceiling was raised from 3/day to 5/day
      * in two places (DEFAULT_DATA_EXPORT_MAX and application.yml's own default) but the
@@ -425,7 +447,9 @@ class RateLimitFilterTest {
                 Map.entry("app.rate-limit.mfa-verify.max", DEFAULT_MFA_VERIFY_MAX),
                 Map.entry("app.rate-limit.mfa-verify.window-seconds", DEFAULT_MFA_VERIFY_WINDOW),
                 Map.entry("app.rate-limit.refresh.max", DEFAULT_REFRESH_MAX),
-                Map.entry("app.rate-limit.refresh.window-seconds", DEFAULT_REFRESH_WINDOW));
+                Map.entry("app.rate-limit.refresh.window-seconds", DEFAULT_REFRESH_WINDOW),
+                Map.entry("app.rate-limit.device-token.max", DEFAULT_DEVICE_TOKEN_MAX),
+                Map.entry("app.rate-limit.device-token.window-seconds", DEFAULT_DEVICE_TOKEN_WINDOW));
 
         // Selects on an actual @Value annotation being present, not a parameter-count threshold --
         // a count threshold silently breaks the moment another plain (non-@Value) dependency is
