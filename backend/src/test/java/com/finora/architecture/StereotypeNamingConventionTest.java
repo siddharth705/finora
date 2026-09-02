@@ -2,8 +2,6 @@ package com.finora.architecture;
 
 import com.finora.architecture.registry.GuardianRule;
 import com.tngtech.archunit.core.domain.JavaClasses;
-import com.tngtech.archunit.core.importer.ClassFileImporter;
-import com.tngtech.archunit.core.importer.ImportOption;
 import org.junit.jupiter.api.Test;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.data.repository.Repository;
@@ -28,9 +26,7 @@ import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.classes;
 class StereotypeNamingConventionTest {
 
     private JavaClasses productionClasses() {
-        return new ClassFileImporter()
-                .withImportOption(ImportOption.Predefined.DO_NOT_INCLUDE_TESTS)
-                .importPackages("com.finora");
+        return ProductionClasses.INSTANCE;
     }
 
     @GuardianRule(
