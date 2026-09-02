@@ -167,6 +167,24 @@ class CapabilityCorpusCoverageTest {
                         + "end to end for each -- none of the three redact their own credit limit value, so "
                         + "unlike PRINTED_PAYMENT_DUE_DATE_GRID's SBI case this needs no separate "
                         + "value-withheld test.");
+        DECLARED_WITHOUT_A_TRACE.put("HEADERLESS_LAYOUT_BEFORE_LATER_HEADER",
+                "no trace -- the one real evidencing document's committed trace "
+                        + "(hsbc-credit-card-yearless-dates) has its closing-balance label redacted "
+                        + "(\"NET OUTSTANDING BALANCE\" -> \"XXX OUTSTANDING BALANCE\", same allowlist "
+                        + "artifact as PRINTED_PAYMENT_DUE_DATE_GRID's SBI case), which "
+                        + "HEADERLESS_BALANCE_RECONCILIATION_CORROBORATED below needs an exact match on to "
+                        + "admit the one real transaction below the row-count floor -- so calling "
+                        + "PdfTableLocator.locateAll against this trace as-is exercises neither capability. "
+                        + "Both are proven directly by HeaderlessBalanceReconciliationTest and "
+                        + "HeaderlessLayoutBeforeLaterHeaderTest, end to end through locateAll itself, on "
+                        + "fixtures whose row/column GEOMETRY is motivated by the real documents but whose "
+                        + "every text value is hand-synthesized per the Synthetic Fixture Policy. Both "
+                        + "suites also carry differential guards that were confirmed to FAIL against the "
+                        + "pre-fix behaviour, so they pin the mechanism rather than merely covering it.");
+        DECLARED_WITHOUT_A_TRACE.put("HEADERLESS_BALANCE_RECONCILIATION_CORROBORATED",
+                "no trace -- same reason as HEADERLESS_LAYOUT_BEFORE_LATER_HEADER immediately above; both "
+                        + "fire together on the same real document and are blocked by the same trace "
+                        + "redaction. See that entry.");
         DECLARED_WITHOUT_A_TRACE.put("PRINTED_ACCOUNT_NUMBER_GRID",
                 "no trace -- same scoping gap as PRINTED_PAYMENT_DUE_DATE_GRID above: this fires in "
                         + "AccountNumberGridExtractor, called from PdfPreviewGenerator, never from "

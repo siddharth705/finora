@@ -80,4 +80,96 @@ describe('ConfirmDialog', () => {
 
     expect(onCancel).not.toHaveBeenCalled();
   });
+
+  /**
+   * Focus management. Before this, the dialog was only VISUALLY modal: its backdrop swallows mouse
+   * clicks, but nothing stopped Tab walking out of the dialog and into the controls it was covering,
+   * so a destructive confirmation could sit open while the user operated the very screen it was
+   * asking about. That is how a discard confirmation could end up stacked over Import's summary
+   * screen, with "Discard" then firing against an already-finalized session.
+   */
+  describe('focus management', () => {
+    /** A page behind the dialog, so "did focus escape?" is a question with a real answer. */
+    function renderOverPage(props: Partial<Parameters<typeof ConfirmDialog>[0]> = {}) {
+      return render(
+        <div>
+          <button type="button">Behind before</button>
+          <ConfirmDialog title="Sure?" message="..." onConfirm={vi.fn()} onCancel={vi.fn()} {...props} />
+          <button type="button">Behind after</button>
+        </div>
+      );
+    }
+
+    it('moves focus to Cancel on open, not to the destructive action', () => {
+      renderOverPage({ danger: true, confirmLabel: 'Delete' });
+
+      // WAI-ARIA: land on the least destructive action, so a reflexive Enter dismisses.
+      expect(screen.getByRole('button', { name: 'Cancel' })).toHaveFocus();
+    });
+
+    it('keeps Tab inside the dialog instead of reaching the page behind it', async () => {
+      const user = userEvent.setup();
+      renderOverPage({ confirmLabel: 'Delete' });
+
+      expect(screen.getByRole('button', { name: 'Cancel' })).toHaveFocus();
+      await user.tab();
+      expect(screen.getByRole('button', { name: 'Delete' })).toHaveFocus();
+      // The escape hatch this closes: from the last control, Tab used to land on "Behind after".
+      await user.tab();
+      expect(screen.getByRole('button', { name: 'Cancel' })).toHaveFocus();
+    });
+
+    it('wraps backwards too, rather than falling out of the top of the dialog', async () => {
+      const user = userEvent.setup();
+      renderOverPage({ confirmLabel: 'Delete' });
+
+      expect(screen.getByRole('button', { name: 'Cancel' })).toHaveFocus();
+      await user.tab({ shift: true });
+      expect(screen.getByRole('button', { name: 'Delete' })).toHaveFocus();
+    });
+
+    it('holds focus even while busy, when both buttons are disabled and nothing inside is tabbable', async () => {
+      const user = userEvent.setup();
+      renderOverPage({ busy: true });
+
+      await user.tab();
+
+      // Whatever it landed on, it must not be a control on the page behind the backdrop -- busy is
+      // exactly when an escaped Tab is most dangerous, since an action is already in flight.
+      expect(screen.getByRole('button', { name: 'Behind before' })).not.toHaveFocus();
+      expect(screen.getByRole('button', { name: 'Behind after' })).not.toHaveFocus();
+    });
+
+    it('restores focus to whatever opened it once it closes', async () => {
+      const user = userEvent.setup();
+      // The dialog has to MOUNT while the opener already holds focus -- that mount is the moment the
+      // component captures where to hand focus back to, so a dialog present in the first render
+      // would capture <body> and this would be testing nothing.
+      function Page({ open }: { open: boolean }) {
+        return (
+          <div>
+            <button type="button">Opener</button>
+            {open && <ConfirmDialog title="Sure?" message="..." onConfirm={vi.fn()} onCancel={vi.fn()} />}
+          </div>
+        );
+      }
+      const { rerender } = render(<Page open={false} />);
+
+      const opener = screen.getByRole('button', { name: 'Opener' });
+      opener.focus();
+      expect(opener).toHaveFocus();
+
+      rerender(<Page open />);
+
+      // Focus has to have genuinely LEFT the opener first, or "restored" would pass trivially on a
+      // component that never moved focus at all -- which is exactly what the unfixed version did.
+      expect(screen.getByRole('button', { name: 'Cancel' })).toHaveFocus();
+      expect(opener).not.toHaveFocus();
+
+      await user.keyboard('{Escape}');
+      rerender(<Page open={false} />);
+
+      expect(opener).toHaveFocus();
+    });
+  });
 });
