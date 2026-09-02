@@ -261,7 +261,9 @@ public class TransactionService {
             t.setMerchantId(suggestion.merchantId()); // already resolved as part of suggest() — no need to resolve twice
             category = categorizationService.resolveOrCreateCategory(userId, suggestion.category());
             t.setNeedsCategoryReview(categorizationService.needsCategoryReview(
-                    userId, suggestion.source().equals("default"), suggestion.confidence()));
+                    userId,
+                    CategorizationService.isUnconfirmedGuess(suggestion.source(), suggestion.category()),
+                    suggestion.confidence()));
             t.setDecisionSource(suggestion.decisionSource());
             t.setDecisionRuleId(suggestion.ruleId());
             t.setDecisionConfidence(suggestion.confidence());

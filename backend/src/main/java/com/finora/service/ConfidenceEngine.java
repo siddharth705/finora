@@ -24,6 +24,24 @@ public class ConfidenceEngine {
 
     public static final int INITIAL_RULE_CONFIDENCE = 70;
     public static final int INITIAL_DEFAULT_CONFIDENCE = 20;
+
+    /**
+     * A structurally-detected person-to-person transfer (see
+     * {@link com.finora.util.PersonToPersonTransferDetector}).
+     *
+     * <p>Its own value rather than {@link #INITIAL_RULE_CONFIDENCE}, and deliberately below any
+     * plausible {@code autoApplyConfidenceThreshold}. Emitting it at 70 -- the same number a
+     * verified keyword match earns -- made the row assert rule-grade certainty while
+     * {@code CategorizationService.isUnconfirmedGuess} simultaneously declared it unconfirmed, and
+     * the contradiction was load-bearing: {@code needsCategoryReview} clears the review flag as
+     * soon as confidence meets the user's threshold, so any user who lowered theirs to 70 or below
+     * silently auto-applied every structural guess unreviewed -- strictly weaker than the
+     * pre-detector behaviour, where the same row was a 20-confidence "default" and got flagged.
+     *
+     * <p>Above {@link #INITIAL_DEFAULT_CONFIDENCE} because this is a real positive signal rather
+     * than "nothing matched", but low enough that the review flag is unconditional in practice.
+     */
+    public static final int INITIAL_STRUCTURAL_CONFIDENCE = 40;
     // Schema default for WorkspaceSettings.autoApplyConfidenceThreshold (see V22 migration and
     // WorkspaceSettingsService) -- kept in sync manually since that table's default is duplicated
     // in SQL, not read from this constant, to avoid a migration-time dependency on service code.

@@ -65,6 +65,19 @@ public class TransactionExplanationService {
                     "KEYWORD_MATCH",
                     "Matched a keyword Finora recognizes in the description.",
                     List.of(), confidence, reconciliation);
+            case STRUCTURAL_P2P -> new TransactionExplanationDto(
+                    "STRUCTURAL_P2P",
+                    "Recognized as a transfer to a person, from the wording of the description.",
+                    // Deliberately NOT "no merchant was involved": every transaction carries a
+                    // merchantId (ImportService sets it unconditionally, and suggest() returns
+                    // one), so the ledger shows a merchant on this very row -- a panel denying it
+                    // would contradict the screen it sits on. What is actually true is that no
+                    // rule, learned pattern, or keyword matched, and the description's SHAPE was
+                    // the remaining signal.
+                    List.of("No rule, learned pattern, or keyword matched — the description's "
+                            + "structure was the signal.",
+                            "If this isn't right, correcting it teaches Finora for next time."),
+                    confidence, reconciliation);
             case FILE_PROVIDED -> new TransactionExplanationDto(
                     "FILE_PROVIDED",
                     "The imported file specified this category directly.",
