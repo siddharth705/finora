@@ -6,8 +6,12 @@ import com.finora.notification.template.RenderedMessage;
 import com.finora.notification.template.TemplateRenderer;
 import com.finora.notification.worker.NotificationDispatcher;
 import com.finora.util.AfterCommit;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.UUID;
 import org.slf4j.Logger;
@@ -82,6 +86,15 @@ public class NotificationService {
      * is what actually keeps the promise this class's own doc comment makes: a caller's business
      * transaction must never fail because of a notification.
      *
+     * <p>{@code key} is truncated by {@link #truncateKey}, not the same blind
+     * {@link #truncate(String, int)} used for {@code title}/{@code message}. {@code key} is UNIQUE
+     * and is what {@code insertIfAbsent}'s {@code ON CONFLICT DO NOTHING} keys idempotency off of --
+     * a blind cut to 200 characters would make two DIFFERENT over-length keys that happen to share
+     * their first 200 characters collide, and the second notification would be silently dropped as
+     * if it were a duplicate of the first, with nothing but a {@code log.debug} (invisible at this
+     * app's default INFO level) to show for it. {@code title}/{@code message} have no such
+     * constraint -- they are display strings, not identifiers -- so a blind cut is fine for them.
+     *
      * <h2>Delivery is nudged once this call's transaction actually commits</h2>
      *
      * <p>{@link NotificationDispatcher#nudge()} exists specifically for this ("near-immediate
@@ -107,8 +120,7 @@ public class NotificationService {
                 if (!preferenceResolver.isEnabled(request.userId(), request.category(), channel)) {
                     continue;
                 }
-                String key = truncate(request.notificationKey() + ":" + channel.name(),
-                        MAX_KEY_LENGTH);
+                String key = truncateKey(request.notificationKey() + ":" + channel.name());
                 if (repository.existsByNotificationKey(key)) {
                     log.debug("Notification {} already requested, skipping duplicate", key);
                     continue;
@@ -141,5 +153,38 @@ public class NotificationService {
             return value;
         }
         return value.substring(0, maxLength);
+    }
+
+    /**
+     * Truncates an over-length {@code notification_key} to {@link #MAX_KEY_LENGTH} without the
+     * blind-cut collision a plain {@link #truncate(String, int)} would create -- see this class's
+     * {@code request} doc comment for why {@code key} needs different treatment from
+     * {@code title}/{@code message}. Two different over-length keys sharing their first 167
+     * characters are still made distinct by the hash of each one's own FULL, untruncated value;
+     * the same key hashes the same way every time, so idempotency across retries still holds.
+     *
+     * <p>167 header characters + {@code '#'} + 32 hex hash characters = 200 = exactly
+     * {@link #MAX_KEY_LENGTH}, so the result always fits the column, never more.
+     */
+    private static String truncateKey(String key) {
+        if (key == null || key.length() <= MAX_KEY_LENGTH) {
+            return key;
+        }
+        return key.substring(0, 167) + "#" + sha256Hex(key).substring(0, 32);
+    }
+
+    /** Lowercase hex SHA-256, used only to disambiguate an over-length {@code notification_key}'s
+     *  truncated tail -- see {@link #truncateKey}. Not a security boundary; collision resistance
+     *  is what matters here, not secrecy. */
+    private static String sha256Hex(String value) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] hash = digest.digest(value.getBytes(StandardCharsets.UTF_8));
+            return HexFormat.of().formatHex(hash);
+        } catch (NoSuchAlgorithmException e) {
+            // SHA-256 is mandated by the JDK spec; absence means a broken runtime, not a case to
+            // handle -- same reasoning as ContentAddress.hashOf's identical catch.
+            throw new IllegalStateException("SHA-256 unavailable", e);
+        }
     }
 }

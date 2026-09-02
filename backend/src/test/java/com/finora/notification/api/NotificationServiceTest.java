@@ -184,6 +184,54 @@ class NotificationServiceTest {
     }
 
     /**
+     * Blocker fix: a blind {@code substring(0, 200)} truncation would make two DIFFERENT
+     * over-length keys that happen to share their first 200 characters collide into the identical
+     * stored value -- {@code insertIfAbsent}'s {@code ON CONFLICT DO NOTHING} then silently drops
+     * the second one as if it were a duplicate of the first, with nothing but an invisible-at-INFO
+     * {@code log.debug} to show for it. {@link NotificationService#truncateKey} hashes the FULL,
+     * untruncated key into the tail instead, so keys that diverge only past character 200 still
+     * produce distinct stored values.
+     */
+    @Test
+    void request_producesDifferentStoredKeysForOverLengthKeysSharingTheirFirst200Characters() {
+        String sharedPrefix = "K".repeat(200);
+        String key1 = sharedPrefix + "AAAA";
+        String key2 = sharedPrefix + "BBBB";
+
+        service.request(request(Set.of(NotificationChannel.EMAIL), key1));
+        service.request(request(Set.of(NotificationChannel.EMAIL), key2));
+
+        ArgumentCaptor<String> keyCaptor = ArgumentCaptor.forClass(String.class);
+        verify(repository, times(2)).insertIfAbsent(any(), keyCaptor.capture(), anyString(),
+                anyString(), anyString(), anyString(), anyString(), anyString(), any());
+
+        var storedKeys = keyCaptor.getAllValues();
+        assertThat(storedKeys.get(0)).hasSize(200);
+        assertThat(storedKeys.get(1)).hasSize(200);
+        assertThat(storedKeys.get(0)).isNotEqualTo(storedKeys.get(1));
+    }
+
+    /**
+     * The other half of the guarantee: hashing the overflow must stay deterministic, or retrying
+     * the exact same over-length key would no longer resolve to the same {@code notification_key}
+     * and idempotency would break for every caller whose key already exceeds 200 characters.
+     */
+    @Test
+    void request_producesTheSameStoredKeyForTheSameOverLengthKeyEveryTime() {
+        String overLongKey = "K".repeat(250);
+
+        service.request(request(Set.of(NotificationChannel.EMAIL), overLongKey));
+        service.request(request(Set.of(NotificationChannel.EMAIL), overLongKey));
+
+        ArgumentCaptor<String> keyCaptor = ArgumentCaptor.forClass(String.class);
+        verify(repository, times(2)).insertIfAbsent(any(), keyCaptor.capture(), anyString(),
+                anyString(), anyString(), anyString(), anyString(), anyString(), any());
+
+        var storedKeys = keyCaptor.getAllValues();
+        assertThat(storedKeys.get(0)).isEqualTo(storedKeys.get(1));
+    }
+
+    /**
      * Fix wave, IMPORTANT 3: {@code nudge()} was never wired to {@code request()}, so every
      * notification -- PASSWORD_CHANGED included -- waited for the 30-second poller. These prove the
      * after-commit wiring itself: no nudge before commit (the row is not visible to the dispatcher's
