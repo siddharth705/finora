@@ -50,7 +50,7 @@ import.
 | Layer | Rows | Share |
 |---|---|---|
 | fell through to "Other" | 1,098 | 58.7% |
-| structural P2P → "Paid a Person" | 445 | 23.8% |
+| structural P2P → "Personal Transfer" | 445 | 23.8% |
 | V19 global rule | 290 | 15.5% |
 | `CategoryRules` keyword table | 36 | 1.9% |
 
@@ -385,8 +385,11 @@ needs to extend to *narration grammar*, not just page layout.
   > for something (a driver, a maid, a landlord, a vegetable seller with no merchant account).
   > "Transfer" asserts of all of them that no spending occurred. The detector has no evidence for
   > that, and §14 rates a confident wrong answer as worse than an honest unknown. The target is
-  > now **"Paid a Person"**, which claims only what was established: money left the account, to a
-  > named individual, purpose unknown. It is a weaker claim than "Transfer" and weaker than
+  > now **"Personal Transfer"** (named "Paid a Person" by V123, renamed direction-neutral by V124
+  > once measurement showed 99 of its 434 rows — 22.8%, 20.9% by value — are money RECEIVED, and the
+  > detector has never inspected direction). It claims only what was established: this movement of
+  > money had a named individual on the other side, purpose unknown. It is a weaker claim than
+  > "Transfer" and weaker than
   > "Friend Repayment" (which further asserts a debt being settled), and weaker is the point.
 - Expand the global keyword/rule seed using the real corpus findings directly — `ASSPL`, biller
   abbreviations like `BPPY`/`CC PAYMENT`, and similar real misses cost nothing to add and are
@@ -599,7 +602,7 @@ categories can't drift. The gap is real for **user-created custom categories** �
 user from creating a category that happens to share a name with a system category's rule target.
 This plan's P2P detector returns a plain category-name string, the same way every other
 `Suggestion` in `CategorizationService` already does — consistent with existing behavior, not a new
-risk this plan introduces. (That string was `"Transfer"` as shipped and is `"Paid a Person"` from
+risk this plan introduces. (That string was `"Transfer"` as shipped and is `"Personal Transfer"` from
 V123 on; see the resolution note in §7. The name is a system category either way, so
 `CategoryService`'s 403-on-rename still protects it from drift.)
 
