@@ -1,8 +1,9 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { DEFAULT_LEDGER_FILTERS, LEDGER_PAGE_SIZE, LedgerScreen, getLedgerNextPageParam } from './LedgerScreen';
-import { transactionsApi } from '../api/endpoints';
+import { categoriesApi, transactionsApi } from '../api/endpoints';
 import { hapticImpact } from '../lib/haptics';
+import { invalidateFinancialData } from '../lib/invalidateFinancialData';
 import type { Transaction } from '../types';
 
 /**
@@ -23,7 +24,8 @@ import type { Transaction } from '../types';
  */
 
 jest.mock('../api/endpoints', () => ({
-  transactionsApi: { search: jest.fn(), remove: jest.fn() },
+  transactionsApi: { search: jest.fn(), remove: jest.fn(), updateCategory: jest.fn() },
+  categoriesApi: { list: jest.fn() },
 }));
 
 jest.mock('../lib/invalidateFinancialData', () => ({
@@ -33,6 +35,7 @@ jest.mock('../lib/invalidateFinancialData', () => ({
 jest.mock('../lib/haptics');
 
 const transactions = transactionsApi as jest.Mocked<typeof transactionsApi>;
+const categories = categoriesApi as jest.Mocked<typeof categoriesApi>;
 
 function txn(over: Partial<Transaction> = {}): Transaction {
   return {
@@ -74,7 +77,13 @@ function renderScreen() {
   );
 }
 
-beforeEach(() => jest.clearAllMocks());
+beforeEach(() => {
+  jest.clearAllMocks();
+  categories.list.mockResolvedValue([
+    { id: 'c-1', name: 'Food', isSystem: true },
+    { id: 'c-2', name: 'Travel', isSystem: true },
+  ] as never);
+});
 
 describe('the three outcomes stay distinguishable', () => {
   it('succeeded with no rows: offers the import prompt', async () => {
@@ -209,5 +218,100 @@ describe('long-press haptic', () => {
     fireEvent(screen.getByRole('button', { name: /Grocery run/ }), 'longPress');
 
     expect(hapticImpact).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * The half of the correction loop the review queue cannot reach.
+ *
+ * `/transactions/needs-review` only returns transactions the engine KNEW it was unsure about. One
+ * it categorized confidently and wrongly never appears there -- so before this the ledger offered
+ * no way to fix it at all: long-press-to-delete was the row's only write, which made "delete it
+ * and re-enter it by hand" the sole route to correcting a category.
+ */
+describe('correcting a category from the ledger', () => {
+  it('opens the picker on tap, seeded with the category the row has now', async () => {
+    transactions.search.mockResolvedValue(page([txn({ categoryName: 'Food' })]) as never);
+
+    renderScreen();
+    fireEvent.press(await screen.findByText('Grocery run'));
+
+    // The sheet's own title, not the row's -- proves the picker itself opened.
+    expect(await screen.findByText('Change category')).toBeTruthy();
+    expect(screen.getByText('Travel')).toBeTruthy();
+  });
+
+  it('saves the picked category and refreshes the figures it moves', async () => {
+    transactions.search.mockResolvedValue(page([txn()]) as never);
+    transactions.updateCategory.mockResolvedValue({} as never);
+
+    renderScreen();
+    fireEvent.press(await screen.findByText('Grocery run'));
+    fireEvent.press(await screen.findByText('Travel'));
+
+    await waitFor(() => expect(transactions.updateCategory).toHaveBeenCalledWith('t-1', 'Travel'));
+    // A category move changes spend-by-category, budget progress and insights -- none of which
+    // this screen renders, and all of which would otherwise keep showing pre-edit figures.
+    expect(invalidateFinancialData).toHaveBeenCalled();
+  });
+
+  it('does not call the API when the picked category is the one already set', async () => {
+    transactions.search.mockResolvedValue(page([txn({ categoryName: 'Food' })]) as never);
+
+    renderScreen();
+    fireEvent.press(await screen.findByText('Grocery run'));
+    fireEvent.press(await screen.findByText('Food'));
+
+    await waitFor(() => expect(screen.queryByText('Change category')).toBeNull());
+    expect(transactions.updateCategory).not.toHaveBeenCalled();
+  });
+
+  it('says so when the save fails, rather than appearing to have worked', async () => {
+    transactions.search.mockResolvedValue(page([txn()]) as never);
+    transactions.updateCategory.mockRejectedValue(new Error('nope'));
+
+    renderScreen();
+    fireEvent.press(await screen.findByText('Grocery run'));
+    fireEvent.press(await screen.findByText('Travel'));
+
+    expect(await screen.findByText(/Could not change this category/i)).toBeTruthy();
+  });
+
+  it('does not drop a correction to one row while another row is still saving', async () => {
+    // Regression: a global useSingleFlight guard here serialized every save through one ref, so
+    // fixing row B while row A's request was in flight silently did nothing at all -- no write, no
+    // error, the old category still on screen. Rows are independent actions, not one submit button.
+    let releaseFirst: (v: unknown) => void = () => {};
+    transactions.search.mockResolvedValue(
+      page([txn({ id: 't-1' }), txn({ id: 't-2', description: 'Fuel top-up' })]) as never);
+    transactions.updateCategory
+      .mockImplementationOnce(() => new Promise((resolve) => { releaseFirst = resolve; }) as never)
+      .mockResolvedValueOnce({} as never);
+
+    renderScreen();
+
+    fireEvent.press(await screen.findByText('Grocery run'));
+    fireEvent.press(await screen.findByText('Travel'));
+
+    // First request deliberately still hanging.
+    fireEvent.press(await screen.findByText('Fuel top-up'));
+    fireEvent.press(await screen.findByText('Food'));
+
+    await waitFor(() => expect(transactions.updateCategory).toHaveBeenCalledWith('t-2', 'Food'));
+
+    releaseFirst({});
+    await waitFor(() => expect(transactions.updateCategory).toHaveBeenCalledTimes(2));
+  });
+
+  it('still offers delete: tap and long-press stay different actions on the same row', async () => {
+    transactions.search.mockResolvedValue(page([txn()]) as never);
+
+    renderScreen();
+    fireEvent(await screen.findByText('Grocery run'), 'longPress');
+
+    // The picker must NOT have opened -- a long-press that also fired the tap handler would put a
+    // category sheet on top of a delete confirmation.
+    expect(screen.queryByText('Change category')).toBeNull();
+    expect(hapticImpact).toHaveBeenCalled();
   });
 });

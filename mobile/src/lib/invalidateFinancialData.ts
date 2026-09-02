@@ -30,6 +30,13 @@ export const FINANCIAL_QUERY_KEYS = [
   // Settings' Data section: statements imported, transactions imported/skipped, last import.
   // Every one of those is a direct count of the thing an import or a statement deletion changes.
   'import-statistics',
+  // The categorization review backlog and its merchant-grouped half. Both shrink when a category
+  // is set anywhere -- including from the Ledger, which is a different screen than the one showing
+  // the queue, and exactly the "key whose screen isn't visible from where the edit happens" case
+  // this module's comment warns about. An import also refills them, so they belong in the cascade
+  // in both directions.
+  'needs-review',
+  'needs-review-groups',
 ] as const;
 
 export function invalidateFinancialData(queryClient: QueryClient) {

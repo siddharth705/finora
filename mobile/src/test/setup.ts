@@ -90,6 +90,14 @@ jest.mock('@react-native-community/netinfo', () => ({
 // package (NavigationContainer, useNavigation, etc.) is provided here as a lightweight stand-in.
 jest.mock('@react-navigation/native', () => {
   const { useEffect } = require('react');
+  // Built inside the factory, not above it: Jest rejects a mock factory that closes over an outer
+  // variable unless its name is `mock`-prefixed, and this reads better than renaming it.
+  const navigationStub: Record<string, unknown> = {
+    navigate: jest.fn(),
+    goBack: jest.fn(),
+    setOptions: jest.fn(),
+  };
+  navigationStub.getParent = jest.fn(() => navigationStub);
   return {
     // `effect` is a passthrough argument from whatever hook calls useFocusEffect, not a value
     // this mock can statically analyze; the real useFocusEffect re-runs on every focus, so
@@ -99,6 +107,17 @@ jest.mock('@react-navigation/native', () => {
       // eslint-disable-next-line react-hooks/exhaustive-deps
       useEffect(effect, []);
     },
+    // Screens that only NAVIGATE (rather than assert on navigation) need this to exist but do not
+    // care what it does -- DashboardScreen's review-queue nudge and SettingsScreen's link into it
+    // are both that case, and without a stand-in here every such screen's whole suite dies at
+    // render with "useNavigation is not a function", which is what the comment above already
+    // promised this mock would prevent.
+    //
+    // One frozen object rather than a fresh one per call: a new identity each render would make
+    // `navigation` an unstable dependency for any useEffect/useMemo that closes over it. A test
+    // that wants to ASSERT a navigation still declares its own file-level jest.mock of this
+    // module, which overrides this one entirely (see StatementHistoryScreen.test.tsx).
+    useNavigation: () => navigationStub,
   };
 });
 
