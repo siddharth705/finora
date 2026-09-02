@@ -361,6 +361,34 @@ public class CategorizationService {
      *       {@code Merchant.Lifecycle.APPROVED} means "confirmed by a person" -- the only state in
      *       which the canonical name is evidence rather than a guess.</li>
      * </ol>
+     *
+     * <h2>How often this actually fires: operator-gated, and knowingly so</h2>
+     *
+     * <p>Only two things ever reach {@code APPROVED}. {@code MerchantSeedService} seeds ~37 curated
+     * brands that way for every user at registration, and {@code MerchantReviewService} (the admin
+     * Merchant Review Center) promotes the rest. So this retry is live for the curated brands and
+     * <b>inert for every merchant discovered from a user's own statements</b> until an operator
+     * curates it. Treat it as operator-gated capability, not as shipped per-user value.
+     *
+     * <p><b>The obvious way to widen it does not work</b>, and the reason is structural rather than
+     * a missing feature. Promoting a merchant when the user corrects a category would promote
+     * exactly the merchants whose retry can never fire again: {@code suggest} consults the learned
+     * merchant distribution BEFORE reaching this retry, and every user correction routes through
+     * {@code learn} / {@code queueLearning} → {@code MerchantLearningService.confirm}, which writes
+     * that very distribution row. The promoted merchant would thereafter always be answered by the
+     * learned layer.
+     *
+     * <p>Nor can the gate simply be dropped, because this retry's value and its risk are the same
+     * mechanism: it only helps when a narration lacking a brand token was grouped onto a merchant
+     * whose canonical name has one, and that grouping is {@code MerchantNormalizationEngine}'s
+     * first-significant-token heuristic -- which is also exactly how it mis-groups. {@code APPROVED}
+     * is the only thing separating the win case from the failure case.
+     *
+     * <p>Widening it therefore needs a confirmation of merchant <b>identity</b> -- a user-facing
+     * rename or merge -- and those exist today only on {@code AdminUserMerchantController}, taking
+     * an {@code actingAdminId}. Note also that {@code MerchantService.rename}/{@code merge} do NOT
+     * touch {@code lifecycleStatus} at all; only {@code MerchantReviewService}'s equivalents do. A
+     * user-facing surface has to mirror the review service, not the management one.
      */
     private static String suggestCategoryWithMerchantFallback(String description, String trustedMerchantName) {
         String ruleCat = CategoryRules.suggestCategory(description);
