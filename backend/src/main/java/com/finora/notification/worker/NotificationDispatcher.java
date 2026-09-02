@@ -72,15 +72,20 @@ public class NotificationDispatcher {
         observability.publishOldestPendingAge(WORKER, JOB_KIND, repository::findOldestPendingAt);
     }
 
+    /**
+     * The backstop. Recovers anything left stranded in PROCESSING before draining, matching
+     * {@code MerchantLearningEventWorker.poll()}'s ordering: recovery runs first so a row a
+     * crashed worker abandoned rejoins the queue in the same pass that goes on to drain it, rather
+     * than waiting for a whole extra poll interval.
+     */
     @Scheduled(fixedDelayString = "${app.notification.queue.poll-interval-ms:30000}",
             initialDelayString = "${app.notification.queue.initial-delay-ms:15000}")
     public void poll() {
         if (!enabled) {
             return;
         }
-        try (WorkerExecution execution = observability.beginScheduled(WORKER, JOB_KIND)) {
-            drain(execution);
-        }
+        recoverAbandoned();
+        drainOnce();
     }
 
     /** Fire-and-forget trigger so a request thread can get near-immediate delivery. */
@@ -153,63 +158,105 @@ public class NotificationDispatcher {
         }
     }
 
+    /**
+     * The catch here mirrors {@code MerchantLearningEventWorker.recordFailure}'s own: recording an
+     * outcome is itself a database write, and it can itself fail. Uncaught, that exception would
+     * propagate out of {@link #deliverOne} and abort {@link #drain}'s loop over the rest of the
+     * claimed batch -- one bad write stranding every other row in this pass at PROCESSING. Caught
+     * and logged instead, the row simply stays PROCESSING and {@link #recoverAbandoned()} returns
+     * it to the queue on a later pass; there is nobody to hand the exception to here (a scheduler
+     * tick or an async nudge), so logging is the only option, same as the reference worker.
+     */
     private void recordSuccess(WorkerExecution execution, Notification notification,
             ChannelSendResult result) {
-        transactionTemplate.executeWithoutResult(status -> {
-            notification.markSent(Instant.now());
-            repository.save(notification);
-            // Task 4 adds a NotificationLog row here, one per send attempt.
-        });
-        execution.completed(notification.getId());
+        try {
+            transactionTemplate.executeWithoutResult(status -> {
+                notification.markSent(Instant.now());
+                repository.save(notification);
+                // Task 4 adds a NotificationLog row here, one per send attempt.
+            });
+            execution.completed(notification.getId());
+        } catch (RuntimeException e) {
+            log.error("Could not record delivery success for notification {}",
+                    notification.getId(), e);
+            execution.failureNotRecorded(notification.getId(), e);
+        }
     }
 
+    /** See {@link #recordSuccess}'s doc comment for why this has its own outer catch. */
     private void recordFailure(WorkerExecution execution, Notification notification,
             ChannelSendResult result) {
-        transactionTemplate.executeWithoutResult(status -> {
-            Notification.FailureOutcome outcome =
-                    notification.recordFailure(result.detail(), Instant.now());
-            repository.save(notification);
-            // Task 4 adds a NotificationLog row here, one per send attempt.
-            if (outcome == Notification.FailureOutcome.DEAD_LETTERED) {
-                execution.deadLettered(notification.getId(), notification.getAttemptCount(),
-                        new IllegalStateException(result.detail()));
-            } else if (outcome == Notification.FailureOutcome.RETRY_SCHEDULED) {
-                execution.retryScheduled(notification.getId(), notification.getAttemptCount());
-            }
-        });
+        try {
+            transactionTemplate.executeWithoutResult(status -> {
+                Notification.FailureOutcome outcome =
+                        notification.recordFailure(result.detail(), Instant.now());
+                repository.save(notification);
+                // Task 4 adds a NotificationLog row here, one per send attempt.
+                if (outcome == Notification.FailureOutcome.DEAD_LETTERED) {
+                    execution.deadLettered(notification.getId(), notification.getAttemptCount(),
+                            new IllegalStateException(result.detail()));
+                } else if (outcome == Notification.FailureOutcome.RETRY_SCHEDULED) {
+                    execution.retryScheduled(notification.getId(), notification.getAttemptCount());
+                }
+            });
+        } catch (RuntimeException e) {
+            log.error("Could not record delivery failure for notification {}",
+                    notification.getId(), e);
+            execution.failureNotRecorded(notification.getId(), e);
+        }
     }
 
+    /** See {@link #recordSuccess}'s doc comment for why this has its own outer catch. */
     private void failTerminally(WorkerExecution execution, Notification notification,
             String reason) {
-        transactionTemplate.executeWithoutResult(status -> {
-            for (int i = notification.getAttemptCount(); i < Notification.MAX_ATTEMPTS; i++) {
-                notification.recordFailure(reason, Instant.now());
-            }
-            repository.save(notification);
-            // Task 4 adds a NotificationLog row here, one per send attempt.
-        });
-        execution.deadLettered(notification.getId(), notification.getAttemptCount(),
-                new IllegalStateException(reason));
+        try {
+            transactionTemplate.executeWithoutResult(status -> {
+                for (int i = notification.getAttemptCount(); i < Notification.MAX_ATTEMPTS; i++) {
+                    notification.recordFailure(reason, Instant.now());
+                }
+                repository.save(notification);
+                // Task 4 adds a NotificationLog row here, one per send attempt.
+            });
+            execution.deadLettered(notification.getId(), notification.getAttemptCount(),
+                    new IllegalStateException(reason));
+        } catch (RuntimeException e) {
+            log.error("Could not record dead-letter for notification {}", notification.getId(), e);
+            execution.failureNotRecorded(notification.getId(), e);
+        }
     }
 
     /**
      * Returns rows stuck in PROCESSING past the timeout to the queue without charging an attempt --
      * the worker that claimed them died, which is not the notification's fault.
+     *
+     * <p>Public and synchronous for the same reason {@link #drainOnce} is: {@link #poll} is gated
+     * by the enabled flag, so a test that switches the scheduler off to stay deterministic cannot
+     * reach recovery through it. Driving it directly is the only way to assert this behaviour
+     * without a live scheduler.
+     *
+     * <p>Opens its own {@link WorkerExecution} (scheduler-prefixed, matching
+     * {@code MerchantLearningEventWorker.recoverAbandoned()}) so a recovery this call makes is
+     * both correlated in its own right and reported through {@link WorkerExecution#recovered(int)}
+     * -- without that signal, a worker dying mid-batch is invisible to anyone watching metrics or
+     * Sentry, not just delayed.
      */
     public int recoverAbandoned() {
-        Instant cutoff = Instant.now().minus(PROCESSING_TIMEOUT);
-        List<Notification> abandoned =
-                repository.findAbandoned(cutoff, PageRequest.of(0, RECOVERY_BATCH_SIZE));
-        if (abandoned.isEmpty()) {
-            return 0;
-        }
-        transactionTemplate.executeWithoutResult(status -> {
-            for (Notification notification : abandoned) {
-                notification.recoverFromAbandonment(Instant.now());
-                repository.save(notification);
+        try (WorkerExecution execution = observability.beginScheduled(WORKER, JOB_KIND)) {
+            Instant cutoff = Instant.now().minus(PROCESSING_TIMEOUT);
+            List<Notification> abandoned =
+                    repository.findAbandoned(cutoff, PageRequest.of(0, RECOVERY_BATCH_SIZE));
+            if (abandoned.isEmpty()) {
+                return 0;
             }
-        });
-        log.info("Recovered {} abandoned notifications", abandoned.size());
-        return abandoned.size();
+            transactionTemplate.executeWithoutResult(status -> {
+                for (Notification notification : abandoned) {
+                    notification.recoverFromAbandonment(Instant.now());
+                    repository.save(notification);
+                }
+            });
+            log.info("Recovered {} abandoned notifications", abandoned.size());
+            execution.recovered(abandoned.size());
+            return abandoned.size();
+        }
     }
 }

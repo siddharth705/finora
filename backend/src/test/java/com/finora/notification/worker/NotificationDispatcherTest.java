@@ -1,6 +1,7 @@
 package com.finora.notification.worker;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.doAnswer;
@@ -18,13 +19,16 @@ import com.finora.notification.provider.NotificationChannelProvider;
 import com.finora.notification.repository.NotificationRepository;
 import com.finora.observability.WorkerExecution;
 import com.finora.observability.WorkerObservability;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.TransactionStatus;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -125,5 +129,58 @@ class NotificationDispatcherTest {
         when(repository.claimDue(any(), anyInt())).thenReturn(List.of());
 
         assertThat(dispatcher.drainOnce()).isZero();
+    }
+
+    /**
+     * Fix round 1, CRITICAL 1: {@code poll()} did not call {@code recoverAbandoned()}, so a row
+     * stranded in PROCESSING by a crashed worker was never returned to the queue -- silently, with
+     * no alert. This proves the fix through {@code poll()} itself, not by calling
+     * {@code recoverAbandoned()} directly (which would only prove that method works in isolation,
+     * not that the scheduled entry point actually reaches it).
+     */
+    @Test
+    void poll_recoversAnAbandonedProcessingRowBeforeDraining() {
+        ReflectionTestUtils.setField(dispatcher, "enabled", true);
+        pending.markProcessing(Instant.now().minus(Duration.ofMinutes(30)));
+        when(repository.findAbandoned(any(), any())).thenReturn(List.of(pending));
+        when(repository.claimDue(any(), anyInt())).thenReturn(List.of());
+
+        dispatcher.poll();
+
+        assertThat(pending.getStatus()).isEqualTo(NotificationStatus.QUEUED);
+    }
+
+    /**
+     * Fix round 1, IMPORTANT 2: the outcome-recording methods had no outer try/catch of their own,
+     * so a persistence failure while recording one row's outcome would propagate out of
+     * {@code deliverOne} and abort the rest of {@code drain}'s loop over the claimed batch. Proven
+     * here by making the SECOND {@code repository.save(pending)} call -- the one inside
+     * {@code recordSuccess}, after the claim-phase save already succeeded -- throw, and checking
+     * that a second row claimed in the same batch still reaches SENT rather than never being
+     * attempted.
+     */
+    @Test
+    void drainOnce_continuesTheBatchWhenRecordingOneItemsOutcomeThrows() {
+        Notification other = Notification.create(UUID.randomUUID(),
+                NotificationType.IMPORT_STATEMENT_READY, NotificationCategory.FINANCIAL,
+                NotificationChannel.EMAIL, NotificationPriority.NORMAL, "K2:EMAIL", "Title", "Body",
+                Instant.now());
+
+        when(repository.claimDue(any(), anyInt())).thenReturn(List.of(pending, other));
+        when(emailProvider.send(any())).thenReturn(ChannelSendResult.success("resend", "ok"));
+        // First save() is claimBatch's markProcessing write and must succeed so both rows are
+        // claimed; the second is recordSuccess's outcome-recording write for `pending`, which
+        // fails -- exactly the persistence failure the outer try/catch exists to contain.
+        when(repository.save(pending))
+                .thenAnswer(inv -> inv.getArgument(0))
+                .thenThrow(new RuntimeException("db unavailable"));
+
+        AtomicInteger processed = new AtomicInteger();
+        assertThatCode(() -> processed.set(dispatcher.drainOnce())).doesNotThrowAnyException();
+
+        assertThat(processed.get()).isEqualTo(2);
+        // `other` is claimed and delivered after `pending` in the batch; it only reaches SENT if
+        // the drain loop moved past pending's recording failure instead of aborting there.
+        assertThat(other.getStatus()).isEqualTo(NotificationStatus.SENT);
     }
 }
