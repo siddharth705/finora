@@ -110,22 +110,85 @@ class PersonToPersonTransferDetectorTest {
     }
 
     @Test
-    void doesNotVetoOnFreeTextRemarkWords() {
-        // Indian UPI narrations end with the PAYER'S FREE-TEXT REMARK. An attempt to catch
-        // suffix-less businesses by adding retail vocabulary (AUTO, BOOKS, FRESH, SUPER, CEMENT,
-        // STEEL, SOLAR, TOYS, ENERGY, TAILORS, FURNITURE, DIGITAL) was measured against realistic
-        // narrations and removed 12 of 18 genuine detections while closing 1 of 28 misfires --
-        // because these are common English nouns, not business markers. Reverted; this pins it.
+    void excludesPaymentsSettlingOverAMerchantAcquiringRail() {
+        // The product gap this closes: in India a large share of everyday SPENDING settles to what
+        // looks like an individual -- paying an Uber/Ola driver directly rather than in-app is the
+        // canonical case. The payee's NAME says person; the rail says business. 33.7% of real
+        // P2P-classified corpus rows carry one of these markers, at a median of ~59 rupees.
+        // Each string below is one real acquirer family.
+        // synthetic-ok: the bank prefixes below are wildcards, and the pseudo-branch halves
+        // (MCHUPI/MERUPI/YBLUPI) are PSP routing constants -- published scheme identifiers that
+        // are literally the structure under test here, not any customer's branch.
         assertThat(PersonToPersonTransferDetector.isNamedIndividualTransfer(
-                "UPI-AMIT VERMA-amit@okicici-REF11-Fresh veggies money")).isTrue();
+                "UPI-RAJESH KUMAR-Q999999999@YBL-XXXX0YBLUPI-REF1")).isFalse(); // synthetic-ok, Q-VPA
+        assertThat(PersonToPersonTransferDetector.isNamedIndividualTransfer(
+                "UPI-RAJESH KUMAR-PAYTM.S25PHA0@PTY-REF2")).isFalse();               // Paytm merchant
+        assertThat(PersonToPersonTransferDetector.isNamedIndividualTransfer(
+                "UPI-RAJESH KUMAR-rajesh@ybl-XXXX0MCHUPI-REF3")).isFalse();          // synthetic-ok
+        assertThat(PersonToPersonTransferDetector.isNamedIndividualTransfer(
+                "UPI-RAJESH KUMAR-rajesh@OKBIZAXIS-REF4")).isFalse();                // GPay business
+        assertThat(PersonToPersonTransferDetector.isNamedIndividualTransfer(
+                "UPI-RAJESH KUMAR-VYAPAR.1234@HDFCBANK-XXXX0MERUPI-REF5")).isFalse(); // synthetic-ok
+    }
+
+    @Test
+    void stillDetectsAPersonOnAnOrdinaryPersonalHandle() {
+        // The counterweight to the test above: PhonePe's GENERAL YBLUPI ifsc and a bare PSP brand
+        // name carry no merchant/person distinction and appear on ordinary personal transfers, so
+        // neither may be treated as an acquirer marker.
+        assertThat(PersonToPersonTransferDetector.isNamedIndividualTransfer(
+                "UPI-RAJESH KUMAR-rajesh1985@ybl-XXXX0YBLUPI-REF6")).isTrue(); // synthetic-ok
+        assertThat(PersonToPersonTransferDetector.isNamedIndividualTransfer(
+                "UPI-SUNITA RAO-sunita@okhdfcbank-REF7")).isTrue();
+    }
+
+    @Test
+    void vetoesSmallShopTradeNames() {
+        // Re-added on real-corpus evidence after an earlier revert: these words flip exactly 12 of
+        // 673 real rows and all 12 are genuine businesses. Each case below is a real corpus shape.
+        assertThat(PersonToPersonTransferDetector.isNamedIndividualTransfer(
+                "UPI/BANSI VAISHND DHABA/RRN1/UPI")).isFalse();
+        assertThat(PersonToPersonTransferDetector.isNamedIndividualTransfer(
+                "UPI/NATRAJ PROVISION/RRN2/UPI")).isFalse();
+        assertThat(PersonToPersonTransferDetector.isNamedIndividualTransfer(
+                "UPI/REGAL WINES/RRN3/UPI")).isFalse();
+        assertThat(PersonToPersonTransferDetector.isNamedIndividualTransfer(
+                "UPI/SNEHA FRESH CHI/RRN4/UPI")).isFalse();
+        assertThat(PersonToPersonTransferDetector.isNamedIndividualTransfer(
+                "UPI-DEEP FILLING")).isFalse();
+    }
+
+    @Test
+    void doesNotVetoOnEverydayNounsLeftOutOfTheVocabulary() {
+        // Indian UPI narrations can end with the PAYER'S FREE-TEXT REMARK, so an everyday noun in
+        // the vocabulary risks vetoing a genuine transfer. That risk is REAL but rare: measured on
+        // the real corpus, remarks carry a purpose word only 1.8% of the time (they are dominated
+        // by one bank's generated "PAYMENT FROM PHONE" boilerplate), which is why the shop words
+        // above could be re-added at zero measured cost.
+        //
+        // These nouns stay OUT because the corpus gives no evidence they are ever trade names --
+        // no upside to weigh against the remark risk. FURNITURE is the sharpest case: its single
+        // real corpus occurrence is exactly this, a remark on a person-to-person transfer.
+        assertThat(PersonToPersonTransferDetector.isNamedIndividualTransfer(
+                "UPI-NEHA AGARWAL-neha@ybl-REF14-Furniture money")).isTrue();
         assertThat(PersonToPersonTransferDetector.isNamedIndividualTransfer(
                 "UPI-GURPREET KAUR-gurpreet@oksbi-REF12-Toys for kid")).isTrue();
         assertThat(PersonToPersonTransferDetector.isNamedIndividualTransfer(
                 "UPI-MANOJ TIWARI-manoj@okhdfcbank-REF13-Steel work")).isTrue();
+    }
+
+    @Test
+    void acceptsTheKnownCostOfReAddingFreshAndAuto() {
+        // The deliberate, measured trade-off, pinned so it cannot be made silently. FRESH and AUTO
+        // ARE now vetoes, because on the real corpus they only ever appear as trade names ("SNEHA
+        // FRESH CHI" - a chicken shop; "RAVI AUTO CENTR"). The cost is that a payer who happens to
+        // remark "Fresh veggies money" or "Auto" loses detection and falls back to "Other" -- the
+        // honest unknown, not a wrong category. Corpus evidence says that shape is rare; if it
+        // turns out common in production, these two are the first words to drop.
         assertThat(PersonToPersonTransferDetector.isNamedIndividualTransfer(
-                "UPI-NEHA AGARWAL-neha@ybl-REF14-Furniture money")).isTrue();
+                "UPI-AMIT VERMA-amit@okicici-REF11-Fresh veggies money")).isFalse();
         assertThat(PersonToPersonTransferDetector.isNamedIndividualTransfer(
-                "UPI-RAJESH KUMAR-rajesh@ybl-REF15-Auto")).isTrue();
+                "UPI-RAJESH KUMAR-rajesh@ybl-REF15-Auto")).isFalse();
     }
 
     @Test
