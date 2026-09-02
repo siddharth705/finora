@@ -20,6 +20,7 @@ import {
   beginReview,
   decide,
   decideAllUnresolved,
+  isUnconfirmedGuess,
   setIncluded,
   toConfirmedRows,
   unresolvedCount,
@@ -1742,7 +1743,7 @@ function TransactionPreviewTable({
                 <div className="text-[10px] text-muted">Detected: {r.merchant}</div>
               )}
               {r.likelyDuplicate && <span className="text-danger text-[10px] uppercase ml-1">duplicate</span>}
-              {r.categorySource === 'default' && (
+              {isUnconfirmedGuess(r.categorySource) && (
                 <span className="text-[10px] uppercase ml-1" style={{ color: '#d97706' }}>low confidence</span>
               )}
             </td>
