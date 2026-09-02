@@ -323,6 +323,13 @@ class NotificationDispatcherTest {
      * Unlike the no-configured-provider terminal path (which logs "unconfigured" because no
      * provider was ever called), a permanent failure DID call a real provider, and that provider's
      * own name must be logged rather than papered over.
+     *
+     * <p>The log-row assertions alone do NOT discriminate this from the ordinary (non-permanent)
+     * failure path: {@code recordFailure} also writes exactly one log row carrying the real
+     * provider name at attempt 1, so this test used to pass even with the {@code permanent()}
+     * branch deleted entirely. The status/attemptCount assertions below are what actually pin the
+     * permanent-failure branch -- only it drives the notification straight to DEAD_LETTER on the
+     * first attempt; the ordinary path leaves it RETRYING with attemptCount 1.
      */
     @Test
     void drainOnce_logsTheRealProviderNameOnAPermanentFailure_notUnconfigured() {
@@ -331,6 +338,9 @@ class NotificationDispatcherTest {
                 .thenReturn(ChannelSendResult.permanentFailure("resend", "no email address on file"));
 
         dispatcher.drainOnce();
+
+        assertThat(pending.getStatus()).isEqualTo(NotificationStatus.DEAD_LETTER);
+        assertThat(pending.getAttemptCount()).isEqualTo(Notification.MAX_ATTEMPTS);
 
         ArgumentCaptor<NotificationLog> captor = ArgumentCaptor.forClass(NotificationLog.class);
         verify(logRepository).save(captor.capture());
@@ -341,9 +351,15 @@ class NotificationDispatcherTest {
         assertThat(written.getAttempt()).isEqualTo(1);
     }
 
-    /** One provider call happened, so exactly one log row -- not the five a naive "loop
-     *  recordFailure until dead-lettered" implementation would have written one per burned
-     *  attempt. */
+    /**
+     * One provider call happened, so exactly one log row -- not the five a naive "loop
+     * recordFailure until dead-lettered" implementation would have written one per burned attempt.
+     *
+     * <p>The log-row-count assertion alone does NOT discriminate this from the ordinary
+     * (non-permanent) failure path either: a single ordinary failure also writes exactly one log
+     * row. The status/attemptCount assertions below are the real discriminator -- see the doc
+     * comment on {@link #drainOnce_logsTheRealProviderNameOnAPermanentFailure_notUnconfigured}.
+     */
     @Test
     void drainOnce_writesOnlyOneLogRowForAPermanentFailure() {
         when(repository.claimDue(any(), anyInt())).thenReturn(List.of(pending));
@@ -352,6 +368,8 @@ class NotificationDispatcherTest {
 
         dispatcher.drainOnce();
 
+        assertThat(pending.getStatus()).isEqualTo(NotificationStatus.DEAD_LETTER);
+        assertThat(pending.getAttemptCount()).isEqualTo(Notification.MAX_ATTEMPTS);
         verify(logRepository, times(1)).save(any(NotificationLog.class));
     }
 
