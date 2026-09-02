@@ -78,19 +78,24 @@ export function DashboardScreen() {
   });
 
   // The categorization backlog behind the nudge below. Kept out of the useQueries block above so
-  // the destructured indices there stay stable, and `retry: false` because a nudge is the one
-  // thing on this screen that should fail silently: no count simply means no nudge, which is
-  // exactly what a user with an empty queue sees anyway.
+  // the destructured indices there stay stable. These two keys never retry -- that policy is set
+  // once in api/queryClient.ts rather than here, because per-observer options on a shared key are
+  // last-writer-wins across screens (see that file's comment).
   const reviewSinglesQ = useQuery({
     queryKey: ['needs-review'],
     queryFn: () => transactionsApi.needsReview(),
-    retry: false,
   });
   const reviewGroupsQ = useQuery({
     queryKey: ['needs-review-groups'],
     queryFn: () => transactionsApi.needsReviewGroups(),
-    retry: false,
   });
+  // BOTH halves have to have loaded before the nudge may state a number. The backlog is the sum of
+  // two disjoint queries, so if one fails and the other returns rows, `data ?? []` yields a
+  // specific, confident, WRONG total -- "2 transactions need a quick look" when the real figure is
+  // 12 -- and it is used verbatim as the accessibilityLabel too. Failing silently was always the
+  // intent here; that only actually holds when a partial failure suppresses the nudge as well.
+  // CategoryReviewScreen (still reachable from More) is where a partial outage gets disclosed.
+  const reviewCountKnown = reviewSinglesQ.isSuccess && reviewGroupsQ.isSuccess;
   const reviewCount = reviewQueueCount({
     singles: reviewSinglesQ.data ?? [],
     groups: reviewGroupsQ.data ?? [],
@@ -258,7 +263,7 @@ export function DashboardScreen() {
           state, and rendering the latter as a wedge in the spending donut is an admission of not
           knowing dressed up as information about their money. So it lives here, above the numbers
           it would otherwise quietly distort, as a nudge with somewhere to go. */}
-      {reviewCount > 0 ? (
+      {reviewCountKnown && reviewCount > 0 ? (
         <Pressable
           onPress={() => navigation.navigate('More', { screen: 'CategoryReview' })}
           accessibilityRole="button"

@@ -24,6 +24,26 @@ export const queryClient = new QueryClient({
 });
 
 /**
+ * The categorization review queue must never retry, and that policy has to live HERE rather than
+ * on the useQuery calls that read it.
+ *
+ * A Query in query-core v5 holds ONE options bag, not one per observer: `setOptions` replaces
+ * `this.options` wholesale every time an observer drives a fetch, and a client-driven refetch
+ * (`invalidateQueries`/`refetchQueries` -> `query.fetch(undefined, ...)`) carries no observer
+ * options at all, so it silently reuses whatever the last fetching observer left behind. Both
+ * consumers of these two keys are mounted at once -- the Dashboard nudge (Home is a bottom tab,
+ * so it stays mounted) and CategoryReviewScreen -- so with the policy expressed per-observer,
+ * whether a refetch retried depended on which screen had fetched most recently, i.e. on
+ * navigation order. The Dashboard's nudge is documented to fail silently; instead it could sit
+ * through ~7s of backoff holding the pull-to-refresh spinner up.
+ *
+ * setQueryDefaults writes into the Query's `#defaultOptions`, which is spread back in on every
+ * setOptions call and therefore survives all of the above.
+ */
+queryClient.setQueryDefaults(['needs-review'], { retry: false });
+queryClient.setQueryDefaults(['needs-review-groups'], { retry: false });
+
+/**
  * Teaches React Query what "online" means on a device.
  *
  * Without this it assumes online forever, which is the right default on the web (the browser has

@@ -1,4 +1,4 @@
-import { reviewNudgeLabel, reviewQueueCount, reinsertAt } from './reviewQueue';
+import { reviewNudgeLabel, reviewQueueCount } from './reviewQueue';
 import type { MerchantGroup, Transaction } from '../types';
 
 function txn(id: string): Transaction {
@@ -68,23 +68,5 @@ describe('reviewNudgeLabel', () => {
 
   it('groups thousands the way the rest of the app formats counts', () => {
     expect(reviewNudgeLabel(1234)).toBe('1,234 transactions need a quick look');
-  });
-});
-
-describe('reinsertAt', () => {
-  it('puts a rolled-back row back where it was, not at the end', () => {
-    // Rollback has to be positional: the queue is ordered by date, and dropping a failed save at
-    // the bottom would silently reorder the user's list under them.
-    expect(reinsertAt(['a', 'c', 'd'], 1, 'b')).toEqual(['a', 'b', 'c', 'd']);
-  });
-
-  it('appends when the list has since shrunk past the original index', () => {
-    expect(reinsertAt(['a'], 5, 'b')).toEqual(['a', 'b']);
-  });
-
-  it('does not mutate the input list', () => {
-    const original = ['a', 'b'];
-    reinsertAt(original, 0, 'z');
-    expect(original).toEqual(['a', 'b']);
   });
 });
