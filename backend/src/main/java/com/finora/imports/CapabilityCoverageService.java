@@ -69,6 +69,13 @@ public class CapabilityCoverageService {
             // frequently exercised capabilities there is, so the map had never reported on the
             // thing it most often does.
             "PRINTED_SUMMARY_TOTALS", "RIGHT_ALIGNED_AMOUNTS",
+            // A statement that prints a summary panel in the right margin at the same heights as
+            // its ledger: those runs share a physical row with real transactions but belong to no
+            // column, and nearestColumn has no maximum-distance cap, so they were appended to the
+            // rightmost column. Found on a real IndusInd credit-card statement where one panel
+            // label landed in a transaction's amount cell, making it unparseable and costing that
+            // row entirely -- while the document still classified PARSED_COMPLETE.
+            "MARGIN_PANEL_TEXT_EXCLUDED",
             // A header split across two or three visual lines, found on a real HDFC combined
             // statement whose fixed-deposit schedule was invisible to table location entirely
             // because neither half of its header scored as one. See
