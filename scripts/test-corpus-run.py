@@ -6,6 +6,8 @@ and cannot reach CI, same split every other test-*.py in this directory already 
 """
 
 import importlib.util
+import shutil
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -65,6 +67,42 @@ class RunCorpusGroundTruthAppliesTheSameOptIn(unittest.TestCase):
     def test_a_sibling_directory_sharing_a_path_prefix_is_not_refused(self):
         sibling = rgt.REPO_ROOT.parent / (rgt.REPO_ROOT.name + "-sibling")
         rgt._refuse_if_inside_repo(sibling, "corpus")                     # does not raise
+
+
+class CorpusDiscoveryIsCaseInsensitiveOnTheExtension(unittest.TestCase):
+    """A real statement in the corpus is named with an uppercase ".PDF".
+
+    run-corpus-ground-truth.py used Path.glob("*.pdf"), which is case-sensitive regardless of the
+    filesystem, so that document was silently skipped by the correctness gate while the run still
+    summarised as a clean pass. These use a temporary directory -- never the real corpus, which
+    lives outside this repository and must not be reachable from a test.
+    """
+
+    def _dir_with(self, *names):
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, True)
+        for n in names:
+            (tmp / n).write_bytes(b"%PDF-1.4\n")
+        return tmp
+
+    def test_an_uppercase_extension_is_discovered(self):
+        corpus = self._dir_with("Upper.PDF")
+        self.assertEqual([p.name for p in rgt.discover_pdfs(corpus)], ["Upper.PDF"])
+
+    def test_mixed_case_extensions_are_all_discovered_and_sorted_by_name(self):
+        corpus = self._dir_with("b.pdf", "A.PDF", "c.Pdf")
+        self.assertEqual([p.name for p in rgt.discover_pdfs(corpus)], ["A.PDF", "b.pdf", "c.Pdf"])
+
+    def test_non_pdf_files_are_ignored(self):
+        corpus = self._dir_with("keep.pdf", "notes.txt", "sheet.csv")
+        self.assertEqual([p.name for p in rgt.discover_pdfs(corpus)], ["keep.pdf"])
+
+    def test_the_measuring_tool_and_the_judging_tool_see_the_same_documents(self):
+        # The specific failure this guards: corpus-run.py reporting N documents while
+        # run-corpus-ground-truth.py judges fewer, with nothing in either output saying so.
+        corpus = self._dir_with("a.pdf", "B.PDF")
+        self.assertEqual([p.name for p in rgt.discover_pdfs(corpus)],
+                         [p.name for p in cr.discover_pdfs(corpus)])
 
 
 if __name__ == "__main__":
