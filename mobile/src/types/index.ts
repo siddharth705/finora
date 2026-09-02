@@ -212,7 +212,7 @@ export interface StagedRow {
   // 'user_rule' / 'global_rule' are the new category_rules-table matches (RuleEngineService);
   // 'rule' stays the pre-existing static-keyword-table match (CategoryRules, util package) --
   // see CategorizationService.decisionSourceFor for the full mapping to the persisted enum.
-  categorySource: 'learned' | 'rule' | 'user_rule' | 'global_rule' | 'default' | 'file';
+  categorySource: 'learned' | 'rule' | 'user_rule' | 'global_rule' | 'structural_p2p' | 'default' | 'file';
   // Set only when categorySource is 'user_rule' or 'global_rule' -- the id of the category_rules
   // row that produced this suggestion. Echoed back unchanged in the confirm request so it lands
   // on Transaction.decisionRuleId (see Import.tsx's confirmImport).
