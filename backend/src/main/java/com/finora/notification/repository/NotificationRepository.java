@@ -54,4 +54,60 @@ public interface NotificationRepository extends JpaRepository<Notification, UUID
                                com.finora.notification.domain.NotificationStatus.RETRYING)
            """)
     Optional<Instant> findOldestPendingAt();
+
+    /**
+     * Inserts a freshly-queued notification row, or does nothing if {@code notification_key} is
+     * already taken -- see {@code NotificationService.request}'s own doc comment for the TOCTOU
+     * race this exists to close, and {@code MerchantAliasRepository#insertIfAbsent} /
+     * {@code MerchantNormalizationEngine.addAlias}'s "Bug fix, second" for why a plain
+     * {@code saveAndFlush()} + {@code catch(DataIntegrityViolationException)} was tried first in
+     * this codebase and replaced: once any statement in an open Postgres transaction fails, every
+     * later statement on it -- a plain SELECT included -- fails until COMMIT or ROLLBACK, so
+     * catching the exception in Java does not, by itself, keep the rest of the caller's transaction
+     * usable. {@code ON CONFLICT DO NOTHING} resolves a benign lost race atomically and silently
+     * instead, so no exception is ever raised for it and the ambient transaction is never poisoned.
+     *
+     * <p>Deliberately stays in the CALLER's transaction, not {@code REQUIRES_NEW}: it is the
+     * caller's own transaction committing that is what makes this row part of the outbox (see
+     * {@code NotificationService.request}'s class-level Javadoc) -- a suspended-and-resumed inner
+     * transaction would not un-poison the ambient one on failure anyway (Postgres's COMMIT against
+     * an aborted transaction silently downgrades to ROLLBACK, discarding the caller's other work
+     * with no exception raised at all), and on success it would let a notification commit and
+     * become dispatchable even if the caller's own business write later rolls back for an unrelated
+     * reason -- exactly what "the caller's transaction is what makes this an outbox" forbids.
+     *
+     * <h2>Kept in sync by hand with {@code Notification.create()} + {@code markQueued()}</h2>
+     *
+     * <p>This statement re-derives, in raw SQL, exactly the row {@link Notification#create} followed
+     * by {@link Notification#markQueued} would produce: {@code status = 'QUEUED'} (never the
+     * column's own {@code DEFAULT 'CREATED'} -- a row written by this path must land in the same
+     * state that sequence produces, not the state before {@code markQueued} ran),
+     * {@code attempt_count = 0}, {@code next_attempt_at} and {@code created_at} both the same
+     * {@code now} instant, and {@code last_error}/{@code sent_at}/{@code read_at} left NULL by
+     * omission (all three are nullable with no default). There is deliberately no single source of
+     * truth shared between the entity and this query -- the same tradeoff
+     * {@code MerchantAliasRepository#insertIfAbsent} accepted, and its doc comment's warning applies
+     * here too: if {@link Notification}'s constructor or {@code markQueued} ever change what a
+     * freshly-queued row looks like, this statement must be updated by hand to match.
+     *
+     * @return the id of the row this call inserted, or empty if {@code notificationKey} already
+     *     existed -- from an earlier call, a retried caller, or a concurrent writer that got there
+     *     first. Either way, by the time this returns, a row for {@code notificationKey} is
+     *     guaranteed to exist.
+     */
+    @Query(value = """
+           INSERT INTO notifications
+               (id, user_id, notification_key, type, category, channel, priority, status, title,
+                message, attempt_count, next_attempt_at, created_at)
+           VALUES
+               (gen_random_uuid(), :userId, :notificationKey, :type, :category, :channel, :priority,
+                'QUEUED', :title, :message, 0, :now, :now)
+           ON CONFLICT (notification_key) DO NOTHING
+           RETURNING id
+           """, nativeQuery = true)
+    Optional<UUID> insertIfAbsent(@Param("userId") UUID userId,
+            @Param("notificationKey") String notificationKey, @Param("type") String type,
+            @Param("category") String category, @Param("channel") String channel,
+            @Param("priority") String priority, @Param("title") String title,
+            @Param("message") String message, @Param("now") Instant now);
 }

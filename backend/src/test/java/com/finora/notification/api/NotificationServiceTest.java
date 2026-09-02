@@ -9,7 +9,6 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.finora.notification.domain.Notification;
 import com.finora.notification.domain.NotificationCategory;
 import com.finora.notification.domain.NotificationChannel;
 import com.finora.notification.domain.NotificationPriority;
@@ -17,19 +16,24 @@ import com.finora.notification.domain.NotificationType;
 import com.finora.notification.repository.NotificationRepository;
 import com.finora.notification.template.RenderedMessage;
 import com.finora.notification.template.TemplateRenderer;
-import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
-import org.springframework.dao.DataIntegrityViolationException;
-import org.springframework.test.util.ReflectionTestUtils;
 
 /**
  * Mockito-based unit tests against mocked repositories, matching this codebase's established
  * pattern (GoalServiceTest, MerchantLearningServiceTest).
+ *
+ * <p>{@code NotificationRepository#insertIfAbsent} is a native {@code INSERT ... ON CONFLICT DO
+ * NOTHING}, so a mock cannot exercise real Postgres transaction-abort semantics in either
+ * direction -- that coverage lives in {@code NotificationConcurrentRequestRaceIT} instead, which
+ * proves the actual race is closed against a real database. These tests only cover
+ * {@code NotificationService.request}'s own branching (preference checks, the {@code exists} fast
+ * path, argument plumbing, and never throwing).
  */
 class NotificationServiceTest {
 
@@ -47,7 +51,9 @@ class NotificationServiceTest {
         preferenceResolver = mock(NotificationPreferenceResolver.class);
         service = new NotificationService(repository, templateRenderer, preferenceResolver);
 
-        when(repository.saveAndFlush(any(Notification.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(repository.insertIfAbsent(any(), anyString(), anyString(), anyString(), anyString(),
+                anyString(), anyString(), anyString(), any()))
+                .thenAnswer(inv -> Optional.of(UUID.randomUUID()));
         when(repository.existsByNotificationKey(anyString())).thenReturn(false);
         when(preferenceResolver.isEnabled(any(), any(), any())).thenReturn(true);
         when(templateRenderer.render(any(), any(), any()))
@@ -64,14 +70,13 @@ class NotificationServiceTest {
     void request_writesOneRowPerChannel() {
         service.request(request(Set.of(NotificationChannel.EMAIL, NotificationChannel.PUSH), "K1"));
 
-        ArgumentCaptor<Notification> captor = ArgumentCaptor.forClass(Notification.class);
-        verify(repository, times(2)).saveAndFlush(captor.capture());
+        ArgumentCaptor<String> keyCaptor = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<String> channelCaptor = ArgumentCaptor.forClass(String.class);
+        verify(repository, times(2)).insertIfAbsent(any(), keyCaptor.capture(), anyString(),
+                anyString(), channelCaptor.capture(), anyString(), anyString(), anyString(), any());
 
-        List<Notification> saved = captor.getAllValues();
-        assertThat(saved).extracting(Notification::getChannel)
-                .containsExactlyInAnyOrder(NotificationChannel.EMAIL, NotificationChannel.PUSH);
-        assertThat(saved).extracting(Notification::getNotificationKey)
-                .containsExactlyInAnyOrder("K1:EMAIL", "K1:PUSH");
+        assertThat(keyCaptor.getAllValues()).containsExactlyInAnyOrder("K1:EMAIL", "K1:PUSH");
+        assertThat(channelCaptor.getAllValues()).containsExactlyInAnyOrder("EMAIL", "PUSH");
     }
 
     @Test
@@ -80,7 +85,8 @@ class NotificationServiceTest {
 
         service.request(request(Set.of(NotificationChannel.EMAIL), "K1"));
 
-        verify(repository, never()).saveAndFlush(any(Notification.class));
+        verify(repository, never()).insertIfAbsent(any(), anyString(), anyString(), anyString(),
+                anyString(), anyString(), anyString(), anyString(), any());
     }
 
     @Test
@@ -90,21 +96,31 @@ class NotificationServiceTest {
 
         service.request(request(Set.of(NotificationChannel.EMAIL, NotificationChannel.SMS), "K1"));
 
-        verify(repository, times(1)).saveAndFlush(any(Notification.class));
+        verify(repository, times(1)).insertIfAbsent(any(), anyString(), anyString(), anyString(),
+                anyString(), anyString(), anyString(), anyString(), any());
     }
 
     @Test
     void request_returnsTheIdsItActuallyWrote() {
         UUID savedId = UUID.randomUUID();
-        when(repository.saveAndFlush(any(Notification.class))).thenAnswer(inv -> {
-            Notification saved = inv.getArgument(0);
-            ReflectionTestUtils.setField(saved, "id", savedId);
-            return saved;
-        });
+        when(repository.insertIfAbsent(any(), anyString(), anyString(), anyString(), anyString(),
+                anyString(), anyString(), anyString(), any()))
+                .thenReturn(Optional.of(savedId));
 
         var ids = service.request(request(Set.of(NotificationChannel.EMAIL), "K1"));
 
         assertThat(ids).containsExactly(savedId);
+    }
+
+    @Test
+    void request_suppressesAnInsertThatLostTheRaceAtTheDatabase() {
+        // insertIfAbsent returns empty when ON CONFLICT DO NOTHING suppressed the row -- the same
+        // outcome as the exists() branch, and must not appear in the returned ids.
+        when(repository.insertIfAbsent(any(), anyString(), anyString(), anyString(), anyString(),
+                anyString(), anyString(), anyString(), any()))
+                .thenReturn(Optional.empty());
+
+        assertThat(service.request(request(Set.of(NotificationChannel.EMAIL), "K1"))).isEmpty();
     }
 
     @Test
@@ -113,19 +129,6 @@ class NotificationServiceTest {
                 .thenThrow(new IllegalStateException("no template"));
 
         // A notification failure must never fail the caller's own business transaction.
-        assertThat(service.request(request(Set.of(NotificationChannel.EMAIL), "K1"))).isEmpty();
-    }
-
-    @Test
-    void request_suppressesARaceLostAgainstAConcurrentWriterForTheSameKey() {
-        // The exists() pre-check can miss a concurrent writer for the identical key: both see
-        // false, both attempt to insert, and the UNIQUE constraint on notification_key decides the
-        // race at the database. saveAndFlush surfaces that as a DataIntegrityViolationException
-        // synchronously, inside this method's own try -- it must be swallowed exactly like the
-        // exists() branch, not propagated to the caller.
-        when(repository.saveAndFlush(any(Notification.class)))
-                .thenThrow(new DataIntegrityViolationException("duplicate key value violates unique constraint"));
-
         assertThat(service.request(request(Set.of(NotificationChannel.EMAIL), "K1"))).isEmpty();
     }
 }
