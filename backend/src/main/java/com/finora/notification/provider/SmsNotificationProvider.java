@@ -41,13 +41,24 @@ public class SmsNotificationProvider implements NotificationChannelProvider {
     public ChannelSendResult send(Notification notification) {
         try {
             Optional<User> user = userRepository.findById(notification.getUserId());
-            if (user.isEmpty() || user.get().getPhoneNumber() == null
-                    || user.get().getPhoneNumber().isBlank()) {
+            if (user.isEmpty()) {
+                return ChannelSendResult.failure(PROVIDER_NAME, "no phone number on file");
+            }
+            User u = user.get();
+            // A purged account currently happens to have its phoneNumber nulled by
+            // AccountPurgeSweepService.purgeOne(), so the blank check below would catch it today --
+            // but that is a coincidence of how purge is implemented, not a guarantee. Checking
+            // status explicitly means SMS stays safe even if purge later moves to a phone
+            // sentinel the way it already does for email.
+            if (u.isDeleted()) {
+                return ChannelSendResult.failure(PROVIDER_NAME, "user account deleted");
+            }
+            if (u.getPhoneNumber() == null || u.getPhoneNumber().isBlank()) {
                 // Never put the (missing or present) phone number in the detail -- it lands in
                 // notification_logs, which admins read.
                 return ChannelSendResult.failure(PROVIDER_NAME, "no phone number on file");
             }
-            SmsResult result = smsProvider.send(buildRequest(user.get().getPhoneNumber(),
+            SmsResult result = smsProvider.send(buildRequest(u.getPhoneNumber(),
                     notification.getMessage()));
             return result.success()
                     ? ChannelSendResult.success(PROVIDER_NAME, "sent")

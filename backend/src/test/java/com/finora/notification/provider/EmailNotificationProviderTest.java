@@ -3,8 +3,11 @@ package com.finora.notification.provider;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.finora.entity.User;
 import com.finora.notification.domain.Notification;
 import com.finora.notification.domain.NotificationCategory;
 import com.finora.notification.domain.NotificationChannel;
@@ -61,5 +64,49 @@ class EmailNotificationProviderTest {
         ChannelSendResult result = provider.send(notification());
 
         assertThat(result.success()).isFalse();
+    }
+
+    @Test
+    void send_failsWithoutLeakingWhenTheUserHasABlankEmail() {
+        User user = new User();
+        user.setEmail("");
+        user.setStatus(User.STATUS_ACTIVE);
+        when(userRepository.findById(any())).thenReturn(Optional.of(user));
+
+        ChannelSendResult result = provider.send(notification());
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.detail()).doesNotContain("@");
+        verify(emailProvider, never()).send(any());
+    }
+
+    @Test
+    void send_failsWithoutLeakingWhenTheUserHasANullEmail() {
+        User user = new User();
+        user.setEmail(null);
+        user.setStatus(User.STATUS_ACTIVE);
+        when(userRepository.findById(any())).thenReturn(Optional.of(user));
+
+        ChannelSendResult result = provider.send(notification());
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.detail()).doesNotContain("@");
+        verify(emailProvider, never()).send(any());
+    }
+
+    @Test
+    void send_refusesDeliveryToAPurgedUserEvenThoughItsSentinelEmailIsNonBlank() {
+        User user = new User();
+        // AccountPurgeSweepService.purgeOne() overwrites a purged account's email with this
+        // synthetic, non-blank sentinel -- a null/blank check alone would miss it.
+        user.setEmail("deleted-" + UUID.randomUUID() + "@deleted.finora.invalid");
+        user.setStatus(User.STATUS_DELETED);
+        when(userRepository.findById(any())).thenReturn(Optional.of(user));
+
+        ChannelSendResult result = provider.send(notification());
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.detail()).doesNotContain("@");
+        verify(emailProvider, never()).send(any());
     }
 }
