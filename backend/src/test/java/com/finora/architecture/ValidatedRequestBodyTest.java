@@ -8,7 +8,6 @@ import com.tngtech.archunit.core.domain.JavaClasses;
 import com.tngtech.archunit.core.domain.JavaMethod;
 import com.tngtech.archunit.core.domain.JavaParameter;
 import com.tngtech.archunit.core.importer.ClassFileImporter;
-import com.tngtech.archunit.core.importer.ImportOption;
 import jakarta.validation.Constraint;
 import jakarta.validation.Valid;
 import org.junit.jupiter.api.Test;
@@ -51,9 +50,7 @@ class ValidatedRequestBodyTest {
     private static final String VALIDATION_CONSTRAINT_PACKAGE = "jakarta.validation.constraints";
 
     private JavaClasses productionClasses() {
-        return new ClassFileImporter()
-                .withImportOption(ImportOption.Predefined.DO_NOT_INCLUDE_TESTS)
-                .importPackages("com.finora");
+        return ProductionClasses.INSTANCE;
     }
 
     /**

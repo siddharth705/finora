@@ -2,8 +2,6 @@ package com.finora.architecture;
 
 import com.finora.architecture.registry.GuardianRule;
 import com.tngtech.archunit.core.domain.JavaClasses;
-import com.tngtech.archunit.core.importer.ClassFileImporter;
-import com.tngtech.archunit.core.importer.ImportOption;
 import org.junit.jupiter.api.Test;
 
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
@@ -34,9 +32,7 @@ class FeatureModuleBoundaryTest {
     };
 
     private JavaClasses productionClasses() {
-        return new ClassFileImporter()
-                .withImportOption(ImportOption.Predefined.DO_NOT_INCLUDE_TESTS)
-                .importPackages("com.finora");
+        return ProductionClasses.INSTANCE;
     }
 
     @GuardianRule(
