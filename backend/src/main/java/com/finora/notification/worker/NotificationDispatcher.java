@@ -2,8 +2,10 @@ package com.finora.notification.worker;
 
 import com.finora.notification.domain.Notification;
 import com.finora.notification.domain.NotificationChannel;
+import com.finora.notification.domain.NotificationLog;
 import com.finora.notification.provider.ChannelSendResult;
 import com.finora.notification.provider.NotificationChannelProvider;
+import com.finora.notification.repository.NotificationLogRepository;
 import com.finora.notification.repository.NotificationRepository;
 import com.finora.observability.WorkerExecution;
 import com.finora.observability.WorkerObservability;
@@ -33,10 +35,32 @@ import org.springframework.transaction.support.TransactionTemplate;
  * <p>{@link #drainOnce()} and {@link #recoverAbandoned()} are public, synchronous, and deliberately
  * do not consult the enabled flag, so tests can drive them with the scheduler switched off.
  *
- * <p><b>Out of scope, deliberately:</b> the per-attempt delivery log ({@code NotificationLog} /
- * {@code NotificationLogRepository}) is Task 4's, together with its own migration. This class's
- * send path -- {@link #recordSuccess}, {@link #recordFailure}, {@link #failTerminally} -- is
- * written so Task 4 can add a log-row write inside each without restructuring anything here.
+ * <h2>The delivery log is written outside the notification's own status transaction</h2>
+ *
+ * <p>{@link #recordSuccess}, {@link #recordFailure} and {@link #failTerminally} each write a
+ * {@link NotificationLog} row after (not inside) the {@code transactionTemplate.executeWithoutResult}
+ * call that updates the notification's own status. Two things forced that choice:
+ *
+ * <ul>
+ *   <li>Hibernate does not flush a fresh UUID-keyed insert synchronously -- it batches it and
+ *       flushes at commit. A log row inserted inside the same transaction as the status update
+ *       would therefore fail (if it fails at all) at commit time, by which point Postgres has
+ *       already bundled both statements into one atomic unit: a broken log write would roll back
+ *       the notification's own status write right along with it. That is exactly backwards --
+ *       "we called the provider" must survive even when the audit trail about it cannot be
+ *       written, not the other way around.
+ *   <li>Writing it as its own {@code logRepository.save(...)} call after the status transaction has
+ *       already committed (or failed and been caught) gives it Spring Data's default
+ *       {@code REQUIRES_NEW}-equivalent transaction of one, entirely independent of the status
+ *       write's outcome, and lets the log capture "we attempted delivery" even on the branch where
+ *       the status write itself failed.
+ * </ul>
+ *
+ * <p>The cost of that independence: on the rare path where the status transaction commits and the
+ * subsequent log write then fails, the notification correctly reaches SENT/RETRYING/DEAD_LETTER
+ * with one fewer log row than attempts made -- an acceptable gap in an audit trail, not in the
+ * primary record. Each log write has its own try/catch for the same reason the status-write
+ * methods do: it must never propagate out and abort the rest of {@link #drain}'s batch.
  */
 @Component
 public class NotificationDispatcher {
@@ -50,6 +74,7 @@ public class NotificationDispatcher {
     private static final Duration PROCESSING_TIMEOUT = Duration.ofMinutes(15);
 
     private final NotificationRepository repository;
+    private final NotificationLogRepository logRepository;
     private final Map<NotificationChannel, NotificationChannelProvider> providers =
             new EnumMap<>(NotificationChannel.class);
     private final WorkerObservability observability;
@@ -59,9 +84,10 @@ public class NotificationDispatcher {
     private boolean enabled;
 
     public NotificationDispatcher(NotificationRepository repository,
-            List<NotificationChannelProvider> providerList, WorkerObservability observability,
-            TransactionTemplate transactionTemplate) {
+            NotificationLogRepository logRepository, List<NotificationChannelProvider> providerList,
+            WorkerObservability observability, TransactionTemplate transactionTemplate) {
         this.repository = repository;
+        this.logRepository = logRepository;
         this.observability = observability;
         this.transactionTemplate = transactionTemplate;
         for (NotificationChannelProvider provider : providerList) {
@@ -169,11 +195,13 @@ public class NotificationDispatcher {
      */
     private void recordSuccess(WorkerExecution execution, Notification notification,
             ChannelSendResult result) {
+        // Captured before markSent (which never touches attemptCount): the attempt this call is
+        // recording is always one more than the count of prior *failed* attempts.
+        int attempt = notification.getAttemptCount() + 1;
         try {
             transactionTemplate.executeWithoutResult(status -> {
                 notification.markSent(Instant.now());
                 repository.save(notification);
-                // Task 4 adds a NotificationLog row here, one per send attempt.
             });
             execution.completed(notification.getId());
         } catch (RuntimeException e) {
@@ -181,17 +209,20 @@ public class NotificationDispatcher {
                     notification.getId(), e);
             execution.failureNotRecorded(notification.getId(), e);
         }
+        writeLog(notification.getId(), result.providerName(), result.detail(), true, attempt);
     }
 
     /** See {@link #recordSuccess}'s doc comment for why this has its own outer catch. */
     private void recordFailure(WorkerExecution execution, Notification notification,
             ChannelSendResult result) {
+        // Captured before recordFailure increments attemptCount, so this always names the attempt
+        // that just happened rather than the count after it -- same convention as recordSuccess.
+        int attempt = notification.getAttemptCount() + 1;
         try {
             transactionTemplate.executeWithoutResult(status -> {
                 Notification.FailureOutcome outcome =
                         notification.recordFailure(result.detail(), Instant.now());
                 repository.save(notification);
-                // Task 4 adds a NotificationLog row here, one per send attempt.
                 if (outcome == Notification.FailureOutcome.DEAD_LETTERED) {
                     execution.deadLettered(notification.getId(), notification.getAttemptCount(),
                             new IllegalStateException(result.detail()));
@@ -204,24 +235,50 @@ public class NotificationDispatcher {
                     notification.getId(), e);
             execution.failureNotRecorded(notification.getId(), e);
         }
+        writeLog(notification.getId(), result.providerName(), result.detail(), false, attempt);
     }
 
     /** See {@link #recordSuccess}'s doc comment for why this has its own outer catch. */
     private void failTerminally(WorkerExecution execution, Notification notification,
             String reason) {
+        // One real attempt happened here -- the attempt that discovered there was no provider to
+        // call -- even though the loop below burns through every remaining retry at once to land
+        // the notification straight on DEAD_LETTER. Captured before that loop for the same reason
+        // as recordFailure: it should name the attempt that was actually made, not the exhausted
+        // count the loop leaves behind.
+        int attempt = notification.getAttemptCount() + 1;
         try {
             transactionTemplate.executeWithoutResult(status -> {
                 for (int i = notification.getAttemptCount(); i < Notification.MAX_ATTEMPTS; i++) {
                     notification.recordFailure(reason, Instant.now());
                 }
                 repository.save(notification);
-                // Task 4 adds a NotificationLog row here, one per send attempt.
             });
             execution.deadLettered(notification.getId(), notification.getAttemptCount(),
                     new IllegalStateException(reason));
         } catch (RuntimeException e) {
             log.error("Could not record dead-letter for notification {}", notification.getId(), e);
             execution.failureNotRecorded(notification.getId(), e);
+        }
+        // No NotificationChannelProvider was ever called, so there is no providerName to log --
+        // "unconfigured" records what actually happened: the channel had nobody to call.
+        writeLog(notification.getId(), "unconfigured", reason, false, attempt);
+    }
+
+    /**
+     * Writes one {@link NotificationLog} row, independent of and after the notification's own
+     * status transaction -- see this class's doc comment for why. Never throws: a failure here
+     * must not undo the status write that already happened, or abort the rest of the batch in
+     * {@link #drain}, so it is logged and swallowed exactly like the outer catches above.
+     */
+    private void writeLog(UUID notificationId, String provider, String response, boolean success,
+            int attempt) {
+        try {
+            logRepository.save(
+                    NotificationLog.of(notificationId, provider, response, success, attempt,
+                            Instant.now()));
+        } catch (RuntimeException e) {
+            log.error("Could not record delivery log for notification {}", notificationId, e);
         }
     }
 

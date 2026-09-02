@@ -6,16 +6,20 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.finora.notification.domain.Notification;
 import com.finora.notification.domain.NotificationCategory;
 import com.finora.notification.domain.NotificationChannel;
+import com.finora.notification.domain.NotificationLog;
 import com.finora.notification.domain.NotificationPriority;
 import com.finora.notification.domain.NotificationStatus;
 import com.finora.notification.domain.NotificationType;
 import com.finora.notification.provider.ChannelSendResult;
 import com.finora.notification.provider.NotificationChannelProvider;
+import com.finora.notification.repository.NotificationLogRepository;
 import com.finora.notification.repository.NotificationRepository;
 import com.finora.observability.WorkerExecution;
 import com.finora.observability.WorkerObservability;
@@ -28,6 +32,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.TransactionStatus;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -36,13 +41,15 @@ import org.springframework.transaction.support.TransactionTemplate;
  * Mockito-based, matching this codebase's established worker-test pattern (ImportJobWorkerTest),
  * rather than a Spring-context IT. The TransactionTemplate is stubbed to run its callback inline.
  *
- * <p>Task 4 owns {@code NotificationLog}/{@code NotificationLogRepository} and will extend
- * {@link NotificationDispatcher} to write a log row per send attempt -- this test does not
- * reference either, by design (see NotificationDispatcher's own class doc).
+ * <p>Task 4 wires {@code NotificationLog}/{@code NotificationLogRepository} into
+ * {@link NotificationDispatcher}: a log row is written for every send attempt, success and
+ * failure alike, and a failure writing that log row must never affect the notification's own
+ * status write. See the "log row" tests below for both halves of that contract.
  */
 class NotificationDispatcherTest {
 
     private NotificationRepository repository;
+    private NotificationLogRepository logRepository;
     private NotificationChannelProvider emailProvider;
     private WorkerObservability observability;
     private TransactionTemplate transactionTemplate;
@@ -53,6 +60,7 @@ class NotificationDispatcherTest {
     @BeforeEach
     void setUp() {
         repository = mock(NotificationRepository.class);
+        logRepository = mock(NotificationLogRepository.class);
         emailProvider = mock(NotificationChannelProvider.class);
         observability = mock(WorkerObservability.class);
         transactionTemplate = mock(TransactionTemplate.class);
@@ -85,8 +93,8 @@ class NotificationDispatcherTest {
         when(repository.findById(any())).thenReturn(Optional.of(pending));
         when(repository.findOldestPendingAt()).thenReturn(Optional.empty());
 
-        dispatcher = new NotificationDispatcher(repository, List.of(emailProvider), observability,
-                transactionTemplate);
+        dispatcher = new NotificationDispatcher(repository, logRepository, List.of(emailProvider),
+                observability, transactionTemplate);
     }
 
     @Test
@@ -182,5 +190,113 @@ class NotificationDispatcherTest {
         // `other` is claimed and delivered after `pending` in the batch; it only reaches SENT if
         // the drain loop moved past pending's recording failure instead of aborting there.
         assertThat(other.getStatus()).isEqualTo(NotificationStatus.SENT);
+    }
+
+    /** Task 4: a log row is written for the success path, not just the failure path -- "we called
+     * the provider" and "it worked" must both be recorded, not just the latter. */
+    @Test
+    void drainOnce_writesALogRowWhenTheProviderSucceeds() {
+        when(repository.claimDue(any(), anyInt())).thenReturn(List.of(pending));
+        when(emailProvider.send(any())).thenReturn(ChannelSendResult.success("resend", "ok"));
+
+        dispatcher.drainOnce();
+
+        ArgumentCaptor<NotificationLog> captor = ArgumentCaptor.forClass(NotificationLog.class);
+        verify(logRepository).save(captor.capture());
+        NotificationLog written = captor.getValue();
+        assertThat(written.getNotificationId()).isEqualTo(pending.getId());
+        assertThat(written.getProvider()).isEqualTo("resend");
+        assertThat(written.getResponse()).isEqualTo("ok");
+        assertThat(written.isSuccess()).isTrue();
+        assertThat(written.getAttempt()).isEqualTo(1);
+    }
+
+    /** Task 4: the failure path writes its own log row, distinct from the success path. */
+    @Test
+    void drainOnce_writesALogRowWhenTheProviderFails() {
+        when(repository.claimDue(any(), anyInt())).thenReturn(List.of(pending));
+        when(emailProvider.send(any()))
+                .thenReturn(ChannelSendResult.failure("resend", "502 from provider"));
+
+        dispatcher.drainOnce();
+
+        ArgumentCaptor<NotificationLog> captor = ArgumentCaptor.forClass(NotificationLog.class);
+        verify(logRepository).save(captor.capture());
+        NotificationLog written = captor.getValue();
+        assertThat(written.getProvider()).isEqualTo("resend");
+        assertThat(written.getResponse()).isEqualTo("502 from provider");
+        assertThat(written.isSuccess()).isFalse();
+        assertThat(written.getAttempt()).isEqualTo(1);
+    }
+
+    /** Task 4: the no-configured-provider terminal path is a send attempt too (an attempt that
+     * discovered there was nobody to call) and gets its own log row. */
+    @Test
+    void drainOnce_writesALogRowWhenNoProviderIsConfigured() {
+        when(emailProvider.isConfigured()).thenReturn(false);
+        when(repository.claimDue(any(), anyInt())).thenReturn(List.of(pending));
+
+        dispatcher.drainOnce();
+
+        ArgumentCaptor<NotificationLog> captor = ArgumentCaptor.forClass(NotificationLog.class);
+        verify(logRepository).save(captor.capture());
+        NotificationLog written = captor.getValue();
+        assertThat(written.isSuccess()).isFalse();
+        assertThat(written.getAttempt()).isEqualTo(1);
+    }
+
+    /**
+     * Task 4, the other half of the contract: a log-write failure must not prevent the
+     * notification's own status write, nor propagate out of {@code drainOnce}. Proven by making
+     * {@code logRepository.save} throw on the success path and asserting the notification still
+     * reaches SENT and the pass completes normally.
+     */
+    @Test
+    void drainOnce_stillMarksSentWhenTheLogWriteThrows() {
+        when(repository.claimDue(any(), anyInt())).thenReturn(List.of(pending));
+        when(emailProvider.send(any())).thenReturn(ChannelSendResult.success("resend", "ok"));
+        when(logRepository.save(any(NotificationLog.class)))
+                .thenThrow(new RuntimeException("db unavailable"));
+
+        assertThatCode(() -> dispatcher.drainOnce()).doesNotThrowAnyException();
+
+        assertThat(pending.getStatus()).isEqualTo(NotificationStatus.SENT);
+        assertThat(pending.getSentAt()).isNotNull();
+    }
+
+    /** Same contract as above, exercised on the failure-recording path. */
+    @Test
+    void drainOnce_stillSchedulesRetryWhenTheLogWriteThrows() {
+        when(repository.claimDue(any(), anyInt())).thenReturn(List.of(pending));
+        when(emailProvider.send(any()))
+                .thenReturn(ChannelSendResult.failure("resend", "502 from provider"));
+        when(logRepository.save(any(NotificationLog.class)))
+                .thenThrow(new RuntimeException("db unavailable"));
+
+        assertThatCode(() -> dispatcher.drainOnce()).doesNotThrowAnyException();
+
+        assertThat(pending.getStatus()).isEqualTo(NotificationStatus.RETRYING);
+        assertThat(pending.getAttemptCount()).isEqualTo(1);
+    }
+
+    /**
+     * Attempt numbering: recordFailure increments {@code attemptCount} before this test's second
+     * delivery, so the second log row's {@code attempt} must be 2, not repeat 1 -- proving the
+     * dispatcher reads the notification's own attempt count rather than hardcoding it.
+     */
+    @Test
+    void drainOnce_incrementsTheLoggedAttemptNumberAcrossRetries() {
+        when(repository.claimDue(any(), anyInt())).thenReturn(List.of(pending));
+        when(emailProvider.send(any()))
+                .thenReturn(ChannelSendResult.failure("resend", "502 from provider"))
+                .thenReturn(ChannelSendResult.success("resend", "ok"));
+
+        dispatcher.drainOnce();
+        dispatcher.drainOnce();
+
+        ArgumentCaptor<NotificationLog> captor = ArgumentCaptor.forClass(NotificationLog.class);
+        verify(logRepository, times(2)).save(captor.capture());
+        assertThat(captor.getAllValues()).extracting(NotificationLog::getAttempt)
+                .containsExactly(1, 2);
     }
 }
