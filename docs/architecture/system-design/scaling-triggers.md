@@ -111,11 +111,15 @@ A repository audit raised `ReconciliationService.reconcileForUser()` as an O(n²
 user's entire transaction history, run synchronously after every transaction create, update,
 delete, import confirm and statement delete. The audit was explicit that it had measured nothing.
 `backend/src/test/java/com/finora/service/ReconciliationScalingBenchmark.java` measures it — it is
-not part of the suite (the name matches none of surefire's includes), so run it deliberately:
+not part of the suite (the name matches none of surefire's includes) and is additionally gated on
+`-Dfinora.benchmark=true`, so that a broad `-Dtest` sweep, which replaces those includes rather than
+intersecting with them, cannot run a 50,000-transaction benchmark by accident. Run it deliberately:
 
 ```bash
-cd backend && ./mvnw -o test -Dtest=ReconciliationScalingBenchmark -DfailIfNoTests=false
+cd backend && ./mvnw -o test -Dtest=ReconciliationScalingBenchmark -Dfinora.benchmark=true -DfailIfNoTests=false
 ```
+
+Without `-Dfinora.benchmark=true` both methods skip rather than fail.
 
 > **Correction, same day.** The numbers first published here were produced under **methodology v1**
 > and were roughly five times too low on both sides — see the section above for what v1 got wrong
