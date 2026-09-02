@@ -91,6 +91,18 @@ export interface Transaction {
   categoryManuallySet: boolean;
 }
 
+/**
+ * Mirrors the backend's `TransactionGroupingService.MerchantGroup`: every needs-review transaction
+ * sharing one merchant, so the user labels "Swiggy" once instead of five times. The server only
+ * ever emits groups of 2+ — singletons stay in the row-by-row `needsReview()` queue, and the two
+ * sets are disjoint (see `lib/reviewQueue.ts`).
+ */
+export interface MerchantGroup {
+  merchantId: string;
+  merchantName: string;
+  transactionIds: string[];
+}
+
 export interface DashboardSummary {
   currentBalance: number;
   totalAssets: number;

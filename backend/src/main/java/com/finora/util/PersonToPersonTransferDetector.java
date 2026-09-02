@@ -12,7 +12,8 @@ import java.util.regex.Pattern;
  * docs/superpowers/specs/2026-09-01-transaction-categorization-design.md §1): 42.2% of every
  * "Other" transaction is a UPI/NEFT/IMPS/RTGS transfer naming an individual, not a business. No
  * keyword list, no merchant corpus, no LLM can ever categorize these correctly by merchant lookup,
- * because there is no merchant -- this is a taxonomy answer ("Transfer"), not a smarter match.
+ * because there is no merchant -- this is a taxonomy answer ("Paid a Person", see
+ * {@code CategorizationService.P2P_CATEGORY}), not a smarter match.
  *
  * <h2>Known limitation, measured rather than assumed</h2>
  *

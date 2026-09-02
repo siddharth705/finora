@@ -41,7 +41,7 @@ function expensesKpiValue(): string {
 jest.mock('../api/endpoints', () => ({
   dashboardApi: { summary: jest.fn() },
   accountsApi: { list: jest.fn() },
-  transactionsApi: { search: jest.fn() },
+  transactionsApi: { search: jest.fn(), needsReview: jest.fn(), needsReviewGroups: jest.fn() },
   goalsApi: { list: jest.fn() },
   insightsApi: { get: jest.fn() },
   userApi: { get: jest.fn() },
@@ -127,6 +127,9 @@ beforeEach(() => {
   // data cannot be undefined" console.error for the ['budgets'] key, since the un-mocked jest.fn()
   // resolves to undefined.
   budgets.list.mockResolvedValue([]);
+  // Default: an empty review backlog, so the nudge stays absent unless a test asks for it.
+  transactions.needsReview.mockResolvedValue([]);
+  transactions.needsReviewGroups.mockResolvedValue([]);
 });
 
 describe('when /dashboard/summary fails', () => {
@@ -587,5 +590,59 @@ describe('adjacent-screen prefetching', () => {
     await waitFor(() => expect(budgets.list).toHaveBeenCalled());
     expect(transactions.search).toHaveBeenCalledWith({ page: 0, size: 20, sortField: 'date', sortDir: 'desc' });
     await waitFor(() => expect(reports.forMonth).toHaveBeenCalledWith('2026-08'));
+  });
+});
+
+/**
+ * The review nudge.
+ *
+ * The categorization design spec (§3) is explicit that "needs review" is a queue state and never a
+ * chart slice -- a wedge of unclassified spend sitting in the donut alongside Food and Travel
+ * reads as information about someone's money when it is actually an admission of not knowing. So
+ * the backlog surfaces here as a count of work with somewhere to go, above the figures it would
+ * otherwise quietly distort.
+ */
+describe('categorization review nudge', () => {
+  beforeEach(() => {
+    dashboard.summary.mockResolvedValue(emptySummary());
+  });
+
+  it('stays absent when there is nothing to review', async () => {
+    renderScreen();
+    await screen.findByTestId('kpi-Expenses');
+    expect(screen.queryByText(/needs? a quick look/i)).toBeNull();
+  });
+
+  it('counts the one-off queue and every transaction inside every merchant group', async () => {
+    // The two queries are disjoint server-side, so the honest total is the sum -- showing only
+    // one of them would understate the user's actual backlog.
+    transactions.needsReview.mockResolvedValue([{ id: 't-1' }, { id: 't-2' }] as never);
+    transactions.needsReviewGroups.mockResolvedValue([
+      { merchantId: 'm-1', merchantName: 'Swiggy', transactionIds: ['t-3', 't-4', 't-5'] },
+    ] as never);
+
+    renderScreen();
+
+    expect(await screen.findByText('5 transactions need a quick look')).toBeTruthy();
+  });
+
+  it('uses the singular for a backlog of one', async () => {
+    transactions.needsReview.mockResolvedValue([{ id: 't-1' }] as never);
+
+    renderScreen();
+
+    expect(await screen.findByText('1 transaction needs a quick look')).toBeTruthy();
+  });
+
+  it('renders the rest of the dashboard when the backlog lookup fails', async () => {
+    // A nudge is the one thing on this screen that should fail silently: no count means no nudge,
+    // which is exactly what a user with an empty queue already sees.
+    transactions.needsReview.mockRejectedValue(new Error('down'));
+    transactions.needsReviewGroups.mockRejectedValue(new Error('down'));
+
+    renderScreen();
+
+    await screen.findByTestId('kpi-Expenses');
+    expect(screen.queryByText(/needs? a quick look/i)).toBeNull();
   });
 });

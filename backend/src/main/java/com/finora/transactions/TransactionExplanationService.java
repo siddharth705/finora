@@ -67,7 +67,12 @@ public class TransactionExplanationService {
                     List.of(), confidence, reconciliation);
             case STRUCTURAL_P2P -> new TransactionExplanationDto(
                     "STRUCTURAL_P2P",
-                    "Recognized as a transfer to a person, from the wording of the description.",
+                    // "payment", not "transfer": this panel used to say transfer back when these
+                    // rows landed in the Transfer category. They now land in "Paid a Person"
+                    // precisely because the detector cannot tell money being moved from money
+                    // being spent, so the wording must not quietly re-assert the half that was
+                    // dropped. See CategorizationService.P2P_CATEGORY.
+                    "Recognized as a payment to a person, from the wording of the description.",
                     // Deliberately NOT "no merchant was involved": every transaction carries a
                     // merchantId (ImportService sets it unconditionally, and suggest() returns
                     // one), so the ledger shows a merchant on this very row -- a panel denying it

@@ -32,6 +32,9 @@ export type AuthStackParamList = {
 export type MoreStackParamList = {
   MoreHome: undefined;
   Accounts: undefined;
+  // The categorization review queue. Reached from the More menu, from Settings' Categorization
+  // section (which promises it), and from the Dashboard nudge when the backlog is non-empty.
+  CategoryReview: undefined;
   Statements: undefined;
   Budgets: undefined;
   Goals: undefined;
