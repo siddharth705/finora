@@ -311,6 +311,16 @@ needs to extend to *narration grammar*, not just page layout.
   a structural P2P detector (named individual + no business-VPA signal) — this alone likely
   resolves the single largest bucket in the real data, with zero matching-logic cleverness
   required.
+  > **Resolved 2026-09-02 — a dedicated category, not "Transfer" (V123).** Shipped first as
+  > "Transfer", which was defensible while the detector matched every narration naming an
+  > individual. Merchant-rail detection then removed the payments settling over a merchant
+  > acquirer, and the residue is deliberately mixed: real transfers alongside people being paid
+  > for something (a driver, a maid, a landlord, a vegetable seller with no merchant account).
+  > "Transfer" asserts of all of them that no spending occurred. The detector has no evidence for
+  > that, and §14 rates a confident wrong answer as worse than an honest unknown. The target is
+  > now **"Paid a Person"**, which claims only what was established: money left the account, to a
+  > named individual, purpose unknown. It is a weaker claim than "Transfer" and weaker than
+  > "Friend Repayment" (which further asserts a debt being settled), and weaker is the point.
 - Expand the global keyword/rule seed using the real corpus findings directly — `ASSPL`, biller
   abbreviations like `BPPY`/`CC PAYMENT`, and similar real misses cost nothing to add and are
   immediately verifiable against this corpus.
@@ -520,9 +530,11 @@ specifically: `CategoryService` throws `403` on any attempt to rename or delete 
 category, and the global rule seed's values match those default names exactly, so the pre-seeded
 categories can't drift. The gap is real for **user-created custom categories** — nothing stops a
 user from creating a category that happens to share a name with a system category's rule target.
-This plan's P2P detector returns the plain string `"Transfer"` (the existing default category, the
-same way every other `Suggestion` in `CategorizationService` already returns a plain category-name
-string) — consistent with existing behavior, not a new risk this plan introduces.
+This plan's P2P detector returns a plain category-name string, the same way every other
+`Suggestion` in `CategorizationService` already does — consistent with existing behavior, not a new
+risk this plan introduces. (That string was `"Transfer"` as shipped and is `"Paid a Person"` from
+V123 on; see the resolution note in §7. The name is a system category either way, so
+`CategoryService`'s 403-on-rename still protects it from drift.)
 
 ---
 
@@ -637,7 +649,9 @@ Continuous, layered — not a periodic report that only catches problems in hind
   new layer is.
 - No new taxonomy categories invented ad hoc by an automated layer — taxonomy changes are a
   deliberate product decision, never a side effect of a rule or LLM change. (This plan's P2P
-  detector routes into "Transfer," an existing default category — it does not add a new one.)
+  detector originally routed into "Transfer," an existing default category. V123 adds "Paid a
+  Person" — which is exactly the deliberate product decision this principle asks for, taken
+  explicitly and separately from the detector change, not a side effect of one. See §7.)
 - No blocking the entire import pipeline on the health of any single categorization layer.
 
 ---
