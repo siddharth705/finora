@@ -57,10 +57,19 @@ public class CategorizationService {
      * that no spending occurred, which is a confident claim this code has no evidence for, and the
      * one thing the design review names as worse than an honest unknown.
      *
-     * <p>"Paid a Person" claims only what the detector actually established: money left the
-     * account, it went to a named individual, and the purpose is unknown. It is a weaker claim than
-     * "Transfer" and than "Friend Repayment" (which additionally asserts a debt being settled), and
-     * weaker is the point.
+     * <p>"Personal Transfer" claims only what the detector actually established: this movement of
+     * money had an individual on the other side, and the purpose is unknown. It is a weaker claim
+     * than "Transfer" and than "Friend Repayment" (which additionally asserts a debt being
+     * settled), and weaker is the point.
+     *
+     * <p><b>It is deliberately DIRECTION-NEUTRAL, and the first attempt was not.</b> This shipped as
+     * "Paid a Person" (V123), which reads as an outbound payment -- but the detector matches on
+     * narration SHAPE and has never looked at direction, so 99 of the 434 rows it classified on the
+     * real corpus (22.8% of them, 20.9% by value) were money RECEIVED and were being described as
+     * money paid. The old "Transfer" label hid the defect because it is directionless. Direction is
+     * already a property of the transaction ({@code txn_type}); encoding it a second time in the
+     * category name only creates a second place for it to be wrong. A UI that wants to say "Sent to"
+     * or "Received from" composes it from the two.
      *
      * <p>Being a distinct category does NOT change how the money is counted. Nothing in this
      * codebase excludes spend by category NAME -- {@code RefundNetting.reportable} excludes by
@@ -68,7 +77,7 @@ public class CategorizationService {
      * dashboard, budget or analytics path keying off one. So these rows counted as spend under
      * "Transfer" and still count as spend here; only the label the user reads changed.
      */
-    public static final String P2P_CATEGORY = "Paid a Person";
+    public static final String P2P_CATEGORY = "Personal Transfer";
 
     private final MerchantNormalizationEngine merchantNormalizationEngine;
     private final MerchantLearningService merchantLearningService;
@@ -361,6 +370,34 @@ public class CategorizationService {
      *       {@code Merchant.Lifecycle.APPROVED} means "confirmed by a person" -- the only state in
      *       which the canonical name is evidence rather than a guess.</li>
      * </ol>
+     *
+     * <h2>How often this actually fires: operator-gated, and knowingly so</h2>
+     *
+     * <p>Only two things ever reach {@code APPROVED}. {@code MerchantSeedService} seeds ~37 curated
+     * brands that way for every user at registration, and {@code MerchantReviewService} (the admin
+     * Merchant Review Center) promotes the rest. So this retry is live for the curated brands and
+     * <b>inert for every merchant discovered from a user's own statements</b> until an operator
+     * curates it. Treat it as operator-gated capability, not as shipped per-user value.
+     *
+     * <p><b>The obvious way to widen it does not work</b>, and the reason is structural rather than
+     * a missing feature. Promoting a merchant when the user corrects a category would promote
+     * exactly the merchants whose retry can never fire again: {@code suggest} consults the learned
+     * merchant distribution BEFORE reaching this retry, and every user correction routes through
+     * {@code learn} / {@code queueLearning} → {@code MerchantLearningService.confirm}, which writes
+     * that very distribution row. The promoted merchant would thereafter always be answered by the
+     * learned layer.
+     *
+     * <p>Nor can the gate simply be dropped, because this retry's value and its risk are the same
+     * mechanism: it only helps when a narration lacking a brand token was grouped onto a merchant
+     * whose canonical name has one, and that grouping is {@code MerchantNormalizationEngine}'s
+     * first-significant-token heuristic -- which is also exactly how it mis-groups. {@code APPROVED}
+     * is the only thing separating the win case from the failure case.
+     *
+     * <p>Widening it therefore needs a confirmation of merchant <b>identity</b> -- a user-facing
+     * rename or merge -- and those exist today only on {@code AdminUserMerchantController}, taking
+     * an {@code actingAdminId}. Note also that {@code MerchantService.rename}/{@code merge} do NOT
+     * touch {@code lifecycleStatus} at all; only {@code MerchantReviewService}'s equivalents do. A
+     * user-facing surface has to mirror the review service, not the management one.
      */
     private static String suggestCategoryWithMerchantFallback(String description, String trustedMerchantName) {
         String ruleCat = CategoryRules.suggestCategory(description);

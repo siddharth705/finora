@@ -163,7 +163,15 @@ export function LedgerScreen() {
       <View style={styles.header}>
         <Text style={[styles.title, { color: c.ink }]}>Transactions</Text>
         <Text style={[styles.count, { color: c.muted }]}>
-          {isLoading ? '' : `${totalElements.toLocaleString('en-IN')} total`}
+          {/* Suppressed on a failed FIRST load as well as while loading. totalElements falls back
+              to 0 when there are no pages, so a cold failure printed a confident "0 total" directly
+              above this screen's own "Couldn't load your transactions." -- contradicting, in the
+              header, the rule the error branch below states explicitly ("a request that failed is
+              not an answer of zero"). Scoped to txns.length === 0 so a failed REFETCH, which keeps
+              the previous pages, still shows their real count rather than blanking it. */}
+          {isLoading || (isError && txns.length === 0)
+            ? ''
+            : `${totalElements.toLocaleString('en-IN')} total`}
         </Text>
       </View>
 

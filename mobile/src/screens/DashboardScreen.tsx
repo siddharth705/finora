@@ -19,7 +19,7 @@ import { useAuth } from '../context/AuthContext';
 import { CHART_PALETTE, bucketTopSlices } from '../lib/chartGeometry';
 import { fmtCurrency, greeting, monthLabel } from '../lib/format';
 import { usePrefetchAdjacentScreens } from '../lib/prefetchAdjacentScreens';
-import { deriveRefreshing } from '../lib/refreshingIndicator';
+import { deriveRefreshing, isPausedCold } from '../lib/refreshingIndicator';
 import { reviewNudgeLabel, reviewQueueCount } from '../lib/reviewQueue';
 import { useLargeFontScale } from '../lib/useLargeFontScale';
 import { radius, spacing, useTheme } from '../theme';
@@ -122,6 +122,31 @@ export function DashboardScreen() {
         .map((d) => ({ label: monthLabel(d.month), income: d.income, expense: d.expense })),
     [monthlyReportsQ]
   );
+
+  // Cash Flow's own loading/error state, kept separate from the screen-wide gates below because it
+  // is fed by its own two-step chain (report-months, then one report query per month in range) that
+  // neither `summary` nor initialLoad knows anything about.
+  //
+  // isPending rather than isLoading: a query that has settled as an error is not pending, so a
+  // failure resolves the skeleton instead of leaving it spinning forever, while a background
+  // refetch of already-successful data leaves the chart on screen rather than blanking it.
+  // isPausedCold is excluded from "settling" deliberately: a query paused for lack of connectivity
+  // is pending and will STAY pending until the network returns, so treating it as loading would
+  // replace the old false empty state with a skeleton that spins forever. Offline with nothing
+  // cached, this card should say it cannot show the chart -- not imply one is on its way.
+  const cashFlowSettling =
+    (availableMonthsQ.isPending && !isPausedCold(availableMonthsQ)) ||
+    monthlyReportsQ.some((q) => q.isPending && !isPausedCold(q));
+  // Paused months count as missing for the same reason they are counted as failed: either way the
+  // month is absent from an index-based chart that would otherwise close the gap silently.
+  const cashFlowMissingMonths = monthlyReportsQ.filter((q) => q.isError || isPausedCold(q)).length;
+  // "Genuinely nothing to draw" is monthsInRange being empty -- that is a real answer and must keep
+  // reaching CashFlowChart's own empty state. This is the other case: months exist but not one of
+  // them could be loaded.
+  const cashFlowUnavailable =
+    availableMonthsQ.isError ||
+    isPausedCold(availableMonthsQ) ||
+    (monthsInRange.length > 0 && cashFlowPoints.length === 0);
 
   // The accounts query's data is never read anywhere on this screen (it only prewarms
   // AccountsScreen's cache), so it stays out of BOTH the initial-load gate (the shell shouldn't
@@ -323,7 +348,34 @@ export function DashboardScreen() {
             </View>
           }
         />
-        {summary ? <CashFlowChart points={cashFlowPoints} width={chartWidth} /> : <SkeletonChart width={chartWidth} />}
+        {/* Gated on the queries that actually FEED this chart, not on `summary`. Those are
+            different requests -- and sequential ones, since the per-month reports can't be issued
+            until the months list resolves -- so on any cold start there was a window where
+            `summary` had arrived, cashFlowPoints was still [], and CashFlowChart's own empty state
+            told a user with years of statements "No monthly data yet."
+
+            The error branches matter for a subtler reason: a dropped month does not leave a gap.
+            CashFlowChart's x-axis is index-based, so filtering a failed month out of the series
+            re-spaces the survivors and joins two non-adjacent months into one continuous segment --
+            the missing month's spike is smoothed away rather than shown as missing, and the range
+            chip still claims the full period. Better to say so than to draw a shape that isn't
+            true. */}
+        {cashFlowSettling ? (
+          <SkeletonChart width={chartWidth} />
+        ) : cashFlowUnavailable ? (
+          <Text style={[styles.errorText, { color: c.danger }]}>Couldn’t load your cash flow.</Text>
+        ) : (
+          <>
+            <CashFlowChart points={cashFlowPoints} width={chartWidth} />
+            {cashFlowMissingMonths > 0 ? (
+              <Text style={[styles.errorText, { color: c.muted }]}>
+                {cashFlowMissingMonths === 1
+                  ? 'One month couldn’t be loaded, so it isn’t shown.'
+                  : `${cashFlowMissingMonths} months couldn’t be loaded, so they aren’t shown.`}
+              </Text>
+            ) : null}
+          </>
+        )}
       </Card>
 
       <Card style={styles.section}>

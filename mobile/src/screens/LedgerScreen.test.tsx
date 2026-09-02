@@ -221,6 +221,20 @@ describe('long-press haptic', () => {
   });
 });
 
+describe('the header count', () => {
+  it('does not print "0 total" for a search that failed', async () => {
+    // totalElements falls back to 0 when there are no pages, so a cold failure asserted a confident
+    // zero directly above this screen's own "Couldn't load your transactions." -- contradicting, in
+    // the header, the rule the error branch states explicitly.
+    transactions.search.mockReset().mockRejectedValue(new Error('500'));
+
+    renderScreen();
+
+    expect(await screen.findByText(/Couldn't load your transactions/i)).toBeTruthy();
+    expect(screen.queryByText('0 total')).toBeNull();
+  });
+});
+
 /**
  * The half of the correction loop the review queue cannot reach.
  *
