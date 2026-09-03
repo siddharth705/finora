@@ -7,6 +7,7 @@ import com.finora.entity.HeldStatementEvent;
 import com.finora.entity.ImportJob;
 import com.finora.exception.ApiException;
 import com.finora.exception.ErrorCode;
+import com.finora.imports.ImportSessionService;
 import com.finora.imports.jobs.StagedForJob;
 import com.finora.imports.jobs.VerificationTelemetry;
 import com.finora.imports.trust.HeldStatementIdGenerator;
@@ -59,19 +60,22 @@ public class HeldStatementService {
     private final ImportJobRepository importJobRepository;
     private final AuditService auditService;
     private final NotificationService notificationService;
+    private final ImportSessionService importSessionService;
 
     public HeldStatementService(HeldStatementRepository repository,
                                 HeldStatementEventRepository eventRepository,
                                 HeldStatementIdGenerator idGenerator,
                                 ImportJobRepository importJobRepository,
                                 AuditService auditService,
-                                NotificationService notificationService) {
+                                NotificationService notificationService,
+                                ImportSessionService importSessionService) {
         this.repository = repository;
         this.eventRepository = eventRepository;
         this.idGenerator = idGenerator;
         this.importJobRepository = importJobRepository;
         this.auditService = auditService;
         this.notificationService = notificationService;
+        this.importSessionService = importSessionService;
     }
 
     /**
@@ -167,6 +171,13 @@ public class HeldStatementService {
                         // Map.of rejects nulls, and an operator is not required to explain
                         // themselves -- the empty string keeps the entry writable either way.
                         "note", note == null ? "" : note));
+
+        // Before the notification, deliberately. The sweep's exemption lifts the moment this job
+        // leaves HELD_FOR_TRUST_REVIEW, and the session's expiresAt is still whatever staging set
+        // it to -- long elapsed for any review worth holding for. Telling the user their statement
+        // is ready and letting the next sweep delete it minutes later is the same broken promise,
+        // moved. They have not seen these rows yet; the wait was ours.
+        importSessionService.renewExpiry(job.getImportSessionId());
 
         notifyStatementReady(job);
         return HeldStatementDto.from(held);
