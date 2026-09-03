@@ -63,6 +63,27 @@ public final class CounterpartyIdentity {
     private static final Pattern NON_LETTERS = Pattern.compile("[^A-Za-z]+");
 
     /**
+     * Hard cap on a returned key, matching {@code transactions.counterparty_key VARCHAR(120)} in
+     * V139. Not decoration -- without it this method is bounded by the DESCRIPTION, not by 120.
+     *
+     * <p>{@code meaningfulPart} concatenates every surviving word of a segment, and {@link
+     * #SEGMENTS} only splits on {@code - / _ | :}, so a space-only narration is one segment and its
+     * key is the whole narration. Measured against the real shapes: a 123-character IMPS line keys
+     * to 118 characters -- two under the column -- and a 500-character description (the width
+     * {@code transactions.description} itself accepts) keys to 505. This pipeline deliberately
+     * joins wrapped continuation rows into a single narration, so the long end of that range is
+     * ordinary input, not a pathological one. Uncapped, the first such row would fail its INSERT,
+     * and in {@code ImportService.confirm} that fails the user's entire statement.
+     *
+     * <p>Truncating rather than returning {@code ""}: two rows carrying the same over-long
+     * narration truncate identically, so grouping -- the only thing this key is for -- survives.
+     * A key AT the cap is near-certainly a whole narration rather than a name, which is a poor
+     * identity but an honest one; {@link #isStrong} already refuses to treat any {@code name:} key
+     * as presentable identity, so nothing user-facing can mistake it for a resolved counterparty.
+     */
+    public static final int MAX_KEY_LENGTH = 120;
+
+    /**
      * A stable key for the counterparty, or {@code ""} when the narration carries nothing usable.
      *
      * <p>A reference-heavy segment is skipped rather than keyed on: a token carrying four or more
@@ -77,7 +98,7 @@ public final class CounterpartyIdentity {
             String local = vpa.group(1).toLowerCase();
             // A bare numeric local part is a phone number, which is a perfectly good identity; a
             // local part that is only punctuation is not.
-            if (!local.replaceAll("[._-]", "").isEmpty()) return "vpa:" + local;
+            if (!local.replaceAll("[._-]", "").isEmpty()) return cap("vpa:" + local);
         }
 
         String best = "";
@@ -90,7 +111,13 @@ public final class CounterpartyIdentity {
             String candidate = meaningfulPart(letters);
             if (candidate.length() > best.length()) best = candidate;
         }
-        return best.isEmpty() ? "" : "name:" + best.toLowerCase();
+        return best.isEmpty() ? "" : cap("name:" + best.toLowerCase());
+    }
+
+    /** Applies {@link #MAX_KEY_LENGTH}. Both key shapes go through here: a VPA local part is
+     *  {@code [A-Za-z0-9._]{2,}} with no upper bound of its own, so it is no safer than a name. */
+    private static String cap(String key) {
+        return key.length() <= MAX_KEY_LENGTH ? key : key.substring(0, MAX_KEY_LENGTH);
     }
 
     /** True when this key came from a VPA, i.e. is safe to treat as an identity rather than a guess. */
