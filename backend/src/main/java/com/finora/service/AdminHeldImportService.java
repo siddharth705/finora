@@ -16,8 +16,10 @@ import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.Instant;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -148,10 +150,27 @@ public class AdminHeldImportService {
         if (held.isEmpty()) return 0;
 
         Instant now = Instant.now();
-        // A job whose bytes are already live under another job cannot go back on the queue without
-        // violating idx_import_jobs_live_content. Skipped rather than aborting the whole batch, and
-        // counted, so the caller is never told "reprocessed everything" when it did not.
-        List<ImportJob> eligible = held.stream().filter(this::hasNoLiveDuplicate).toList();
+        // Two filters, and the second one is not redundant.
+        //
+        // hasNoLiveDuplicate answers "is something ELSE already live on these bytes" -- the case
+        // where the user re-uploaded and that import is still running. It cannot see a collision
+        // between two members of THIS batch, because neither is live yet when it is asked.
+        //
+        // That collision is reachable. V134 deliberately excludes HELD_FOR_REVIEW from
+        // idx_import_jobs_live_content so a user who was told "no action needed" can re-upload
+        // anyway -- which means two held jobs may legitimately share one (user_id, content_hash).
+        // Requeuing both makes them both live, and the unique index rejects the second, failing
+        // the entire batch with a 500 on what the operator experienced as one click.
+        //
+        // The oldest wins, since the page is ordered createdAt ASC and that is the submission the
+        // user has been waiting on longest. The rest stay held and are reported as skipped; once
+        // the winner finishes, a second Reprocess All picks up the next one.
+        Set<String> claimed = new HashSet<>();
+        List<ImportJob> eligible = held.stream()
+                .filter(this::hasNoLiveDuplicate)
+                .filter(job -> job.getContentHash() == null
+                        || claimed.add(job.getUserId() + ":" + job.getContentHash()))
+                .toList();
         eligible.forEach(job -> job.returnToQueueForReprocess(now));
         repository.saveAll(eligible);
 

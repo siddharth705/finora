@@ -63,6 +63,16 @@ class AdminHeldImportServiceTest {
         return job;
     }
 
+    private ImportJob heldJobFor(UUID userId, String contentHash) {
+        ImportJob job = new ImportJob(userId, "statement.pdf", contentHash, "objects/key", "PDF");
+        job.markClaimed("worker", Instant.now());
+        job.markClaimed("worker", Instant.now());
+        job.recordFailure("IllegalStateException: no header row", "IllegalStateException",
+                ErrorCode.RetryPolicy.RETRY_ONCE_THEN_ALERT, Instant.now());
+        job.holdForReview("IllegalStateException", Instant.now());
+        return job;
+    }
+
     private void noLiveDuplicate() {
         when(repository.findFirstByUserIdAndContentHashAndStatusNotInOrderByCreatedAtDesc(
                 any(), anyString(), any())).thenReturn(Optional.empty());
@@ -257,6 +267,47 @@ class AdminHeldImportServiceTest {
         assertThat(reprocessed).isEqualTo(1);
         assertThat(reprocessable.getStatus()).isEqualTo(ImportJob.Status.QUEUED);
         assertThat(blocked.getStatus()).isEqualTo(ImportJob.Status.HELD_FOR_REVIEW);
+    }
+
+    /**
+     * Two held jobs can legitimately hold the same (user, document).
+     *
+     * <p>V134 excludes HELD_FOR_REVIEW from idx_import_jobs_live_content precisely so a user who
+     * was told "no action needed" can re-upload anyway. Requeuing both in one batch makes them both
+     * live and the unique index rejects the second -- failing the whole batch with a 500 on what
+     * the operator experienced as a single click. hasNoLiveDuplicate cannot catch this: neither job
+     * is live at the moment it is asked.
+     */
+    @Test
+    void reprocessAll_requeuesOnlyOneOfTwoHeldJobsForTheSameDocument() {
+        UUID sameUser = UUID.randomUUID();
+        ImportJob first = heldJobFor(sameUser, "same-hash");
+        ImportJob second = heldJobFor(sameUser, "same-hash");
+        when(repository.findByStatus(eq(ImportJob.Status.HELD_FOR_REVIEW), any()))
+                .thenReturn(new PageImpl<>(List.of(first, second)));
+        when(repository.countByStatus(ImportJob.Status.HELD_FOR_REVIEW)).thenReturn(2L);
+        noLiveDuplicate();
+
+        int reprocessed = service.reprocessAll(adminUserId);
+
+        assertThat(reprocessed).isEqualTo(1);
+        assertThat(first.getStatus())
+                .as("the oldest submission is the one the user has waited on longest")
+                .isEqualTo(ImportJob.Status.QUEUED);
+        assertThat(second.getStatus()).isEqualTo(ImportJob.Status.HELD_FOR_REVIEW);
+    }
+
+    /** Different users uploading identical bytes is not a collision -- the index is per user. */
+    @Test
+    void reprocessAll_doesNotConflateIdenticalDocumentsFromDifferentUsers() {
+        ImportJob mine = heldJobFor(UUID.randomUUID(), "same-hash");
+        ImportJob theirs = heldJobFor(UUID.randomUUID(), "same-hash");
+        when(repository.findByStatus(eq(ImportJob.Status.HELD_FOR_REVIEW), any()))
+                .thenReturn(new PageImpl<>(List.of(mine, theirs)));
+        when(repository.countByStatus(ImportJob.Status.HELD_FOR_REVIEW)).thenReturn(2L);
+        noLiveDuplicate();
+
+        assertThat(service.reprocessAll(adminUserId)).isEqualTo(2);
     }
 
     @Test
