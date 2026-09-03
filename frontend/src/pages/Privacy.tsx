@@ -38,15 +38,9 @@ export default function Privacy() {
           your account so you can re-download it or re-process it later from Statement History.
         </p>
         <p>
-          Most imports are processed entirely automatically. If one fails for a reason our systems do not
-          recognise — most often a statement layout we have not seen before — we hold it so an engineer can
-          find out why. That review can involve reading the contents of your statement, and we may use AI
-          tooling to help diagnose the problem. We do it only to make the import work; the statement is not
-          used for any other purpose, and we notify you once it is ready. Every time a member of our team
-          opens a held statement, that access is recorded against them individually.
-        </p>
-        <p>
-          Aside from that review, only you can access your uploaded statements.
+          In most cases statements are processed entirely automatically. When an import cannot be processed
+          automatically, authorized staff may review statement information in order to diagnose and resolve
+          the problem, and we may use AI tooling to help with that diagnosis.
         </p>
       </PublicSection>
 
@@ -78,6 +72,13 @@ export default function Privacy() {
           Passwords are hashed with bcrypt and never stored or logged in plain text. Password reset tokens are
           hashed before storage, so a database compromise alone cannot be used to reset an account. All traffic
           between your browser and Fynora's servers is encrypted in transit (HTTPS).
+        </p>
+      </PublicSection>
+
+      <PublicSection title="Administrative Access">
+        <p>
+          Access to customer data by Fynora staff is restricted to authorized personnel, recorded and
+          audited, and permitted only where it is necessary to operate and support the service.
         </p>
       </PublicSection>
 
