@@ -4,6 +4,8 @@ import com.finora.AbstractIntegrationTest;
 import com.finora.entity.User;
 import com.finora.imports.jobs.StagedForJob;
 import com.finora.imports.jobs.VerificationTelemetry;
+import com.finora.imports.trust.HoldDecision;
+import com.finora.imports.trust.TrustPredicate;
 import com.finora.repository.UserRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -11,6 +13,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -66,7 +69,8 @@ class CorpusTrustTelemetryCalibrationIT extends AbstractIntegrationTest {
      *  instrument's assertion is about. */
     private record Verdict(String file, ImportReliabilityStatus status, String textSource,
                             boolean headerUncertain, int findings, int failed, int warning,
-                            int stagedRows, String error) {
+                            int stagedRows, String error, boolean held, String holdReasons,
+                            String notableRules) {
 
         String display() {
             if (error != null) return "ERROR";
@@ -99,6 +103,25 @@ class CorpusTrustTelemetryCalibrationIT extends AbstractIntegrationTest {
         return userRepository.save(user);
     }
 
+    /**
+     * The rules that did not pass, named.
+     *
+     * <p>Counts alone cannot answer the calibration question that matters once a gate exists: when
+     * a document is NEEDS_ATTENTION and the gate still lets it through, WHICH signal fired and why
+     * is it not one of the three the predicate acts on. Without the names that has to be
+     * reconstructed by hand from a debugger.
+     */
+    private static String notableRulesOf(StagedForJob staged) {
+        return staged.verificationReports().stream()
+                .filter(r -> r != null && r.findings() != null)
+                .flatMap(r -> r.findings().stream())
+                .filter(f -> f != null && !"VERIFIED".equals(f.outcome())
+                        && !"NOT_APPLICABLE".equals(f.outcome()))
+                .map(f -> f.rule() + "=" + f.outcome())
+                .distinct()
+                .collect(java.util.stream.Collectors.joining(", "));
+    }
+
     private Verdict verdictFor(Path statement) {
         String name = statement.getFileName().toString();
         try {
@@ -109,14 +132,21 @@ class CorpusTrustTelemetryCalibrationIT extends AbstractIntegrationTest {
                     user().getId(), name, content, null));
             VerificationTelemetry telemetry = VerificationTelemetry.from(staged.verificationReports());
 
+            // The same call ImportJobWorker makes on its success path, over the same inputs. Not an
+            // approximation of the gate -- it IS the gate, so this row says whether this statement
+            // would reach the user's ledger or be quarantined.
+            HoldDecision decision = TrustPredicate.evaluate(staged.verificationReports(),
+                    staged.statementPeriods(), LocalDate.now(java.time.ZoneOffset.UTC));
+
             return new Verdict(name, telemetry.reliabilityStatus(), telemetry.textSource(),
                     telemetry.headerReconstructionUncertain(), telemetry.findingsCount(),
-                    telemetry.failedCount(), telemetry.warningCount(), staged.stagedRows(), null);
+                    telemetry.failedCount(), telemetry.warningCount(), staged.stagedRows(), null,
+                    decision.hold(), decision.summary(), notableRulesOf(staged));
         } catch (Exception e) {
             String why = e.getClass().getSimpleName()
                     + (e.getMessage() == null ? "" : ": " + e.getMessage().replaceAll("\\s+", " "));
             return new Verdict(name, null, null, false, 0, 0, 0, 0,
-                    why.length() > 120 ? why.substring(0, 120) + "..." : why);
+                    why.length() > 120 ? why.substring(0, 120) + "..." : why, false, "", "");
         }
     }
 
@@ -197,6 +227,33 @@ class CorpusTrustTelemetryCalibrationIT extends AbstractIntegrationTest {
             }
             out.append("-".repeat(104)).append('\n');
         }
+
+        // What the shipped gate would actually do to these documents. Distinct from the verdict
+        // distribution above on purpose: the aggregate ImportReliabilityStatus is NOT the gate, and
+        // seeing the two side by side is what makes that concrete rather than a claim in a comment.
+        List<Verdict> wouldHold = verdicts.stream().filter(Verdict::held).toList();
+        List<Verdict> parsed = verdicts.stream().filter(v -> v.error() == null).toList();
+        out.append("would be HELD by TrustPredicate: ").append(wouldHold.size())
+                .append(" of ").append(parsed.size()).append(" that parsed\n");
+        for (Verdict v : wouldHold) {
+            out.append(String.format("  %-42s %s%n", v.file(), v.holdReasons()));
+        }
+
+        // The documents where the aggregate verdict and the gate disagree. This is the interesting
+        // list, not the held one: every row here is a statement something flagged and the gate
+        // deliberately let through, and reading the rule names is how you check that each is an
+        // excluded-by-design signal rather than a condition that quietly stopped working.
+        List<Verdict> flaggedButReleased = parsed.stream()
+                .filter(v -> !v.held() && !v.notableRules().isBlank())
+                .toList();
+        if (!flaggedButReleased.isEmpty()) {
+            out.append("flagged but NOT held (the aggregate status is not the gate):\n");
+            for (Verdict v : flaggedButReleased) {
+                out.append(String.format("  %-42s %-20s %s%n",
+                        v.file(), v.display(), v.notableRules()));
+            }
+        }
+        out.append("-".repeat(104)).append('\n');
 
         out.append("documents: ").append(verdicts.size()).append('\n');
         out.append("verdicts:  ").append(byStatus).append('\n');
