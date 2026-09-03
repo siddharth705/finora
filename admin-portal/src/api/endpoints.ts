@@ -3,6 +3,7 @@ import type {
 
   AccountDto, ActivationFunnelDto, ActivityTrendPointDto, AdminReferralSummaryDto, AdminUpdateUserRequest, AuditLogDto, BankDto, CategoryConfidencePoint,
   CoverageDto,
+  HeldImportRow, HeldImportDetail, HeldImportSummary,
   CreateAccountRequest, CreateBankRequest, CreateMerchantTemplateRequest, CreateRelationshipRequest,
   CreateRuleRequest, CreateUserRequest, FeatureFlagDto, GmailMerchantParserStatDto, LearningGrowthPoint, LearningPlatformStatsDto, LearningSummaryDto,
   LearningTimelineEntry,
@@ -343,6 +344,23 @@ export const adminNotificationApi = {
   summary: () => api.get<NotificationAdminSummary>('/admin/notifications/summary').then((r) => r.data),
   get: (id: string) =>
     api.get<NotificationAdminDetail>(`/admin/notifications/${id}`).then((r) => r.data),
+};
+
+/** The held-imports triage queue. `get` is the audited call -- it returns the raw parser error,
+ *  and the backend writes a HELD_IMPORT_VIEWED entry for every one. Whether a job can be
+ *  reprocessed is the server's answer (409 with a reason), never re-derived here. */
+export const adminHeldImportApi = {
+  list: (params: { page?: number; size?: number }) =>
+    api.get<PagedResponse<HeldImportRow>>('/admin/held-imports', { params }).then((r) => r.data),
+  summary: () => api.get<HeldImportSummary>('/admin/held-imports/summary').then((r) => r.data),
+  get: (jobId: string) =>
+    api.get<HeldImportDetail>(`/admin/held-imports/${jobId}`).then((r) => r.data),
+  reprocess: (jobId: string) =>
+    api.post<HeldImportRow>(`/admin/held-imports/${jobId}/reprocess`).then((r) => r.data),
+  reprocessAll: () =>
+    api.post<{ reprocessed: number }>('/admin/held-imports/reprocess-all').then((r) => r.data),
+  resolve: (jobId: string, reason: string) =>
+    api.post<HeldImportRow>(`/admin/held-imports/${jobId}/resolve`, { reason }).then((r) => r.data),
 };
 
 /** The Merchant Review Center (WI4). Listing crosses users; every action is scoped to the owner,

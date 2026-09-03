@@ -1113,6 +1113,41 @@ export interface NotificationAdminRow {
   createdAt: string;
 }
 
+/**
+ * One row of the held-imports triage queue.
+ *
+ * Carries no `lastError`, deliberately -- see HeldImportDto's own doc on the backend. That field is
+ * a raw parser message, and a parser message routinely quotes the statement content that defeated
+ * it. The list view is a page an operator leaves open; it gets the curated `failureCode` only.
+ * `userId` is a bare id for the same reason NotificationAdminRow's is: the controller never joins
+ * to a user's contact details, so no email or phone can reach this screen.
+ */
+export interface HeldImportRow {
+  id: string;
+  userId: string;
+  fileName: string;
+  sourceFormat: string | null;
+  failureCode: string | null;
+  attemptCount: number;
+  recoveryCount: number;
+  createdAt: string;
+  heldAt: string | null;
+}
+
+/** A held import plus the diagnostics an engineer needs. Every fetch of this is audited. */
+export interface HeldImportDetail {
+  job: HeldImportRow;
+  lastError: string | null;
+  correlationId: string | null;
+  objectKey: string | null;
+}
+
+/** `reprocessing` counts jobs already sent back to the queue, not every queued import. */
+export interface HeldImportSummary {
+  held: number;
+  reprocessing: number;
+}
+
 /** NotificationAdminRow plus the message body and the provider attempt log, newest first. */
 export interface NotificationAdminDetail extends NotificationAdminRow {
   message: string;

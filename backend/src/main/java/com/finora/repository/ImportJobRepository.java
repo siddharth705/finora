@@ -1,6 +1,7 @@
 package com.finora.repository;
 
 import com.finora.entity.ImportJob;
+import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
@@ -85,6 +86,19 @@ public interface ImportJobRepository extends JpaRepository<ImportJob, UUID> {
 
     /** Queue depth for the {@code finora.worker.queue_depth} gauge. */
     long countByStatus(ImportJob.Status status);
+
+    /** One page of the admin triage queue. Backed by {@code idx_import_jobs_held} (V132). */
+    Page<ImportJob> findByStatus(ImportJob.Status status, Pageable pageable);
+
+    /**
+     * Jobs an admin has already sent back to the queue that have not finished yet.
+     *
+     * <p>Deliberately not "every QUEUED job": the queue is mostly ordinary uploads, and counting
+     * those would make the triage summary report work nobody is waiting on. {@code
+     * wasHeldForReview} is the marker that survives the reprocess, which is what makes this
+     * answerable at all.
+     */
+    long countByStatusAndWasHeldForReviewTrue(ImportJob.Status status);
 
     /**
      * When the oldest claimable job was created, or empty when the queue is drained.
