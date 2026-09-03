@@ -80,6 +80,15 @@ public class PasswordChangeSession {
     @Column(nullable = false)
     private Long version = 0L;
 
+    // Task 13. Mirrors User.failedLoginAttempts (AuthService's login lockout), scoped to this one
+    // session rather than the account: incremented by PasswordChangeService.verifyOtp() on a wrong
+    // or unverifiable OTP token, reset to 0 on a successful verify, and checked against
+    // MAX_OTP_ATTEMPTS before ever contacting PhoneVerificationProvider again once exhausted. See
+    // V131__password_change_session_otp_attempts.sql for why this defaults to 0 rather than being
+    // nullable.
+    @Column(name = "otp_attempt_count", nullable = false)
+    private int otpAttemptCount = 0;
+
     public UUID getId() { return id; }
     public UUID getUserId() { return userId; }
     public void setUserId(UUID userId) { this.userId = userId; }
@@ -100,6 +109,8 @@ public class PasswordChangeSession {
     public void setVerifiedPhoneNumber(String verifiedPhoneNumber) { this.verifiedPhoneNumber = verifiedPhoneNumber; }
     public Boolean getSignedOutOtherDevices() { return signedOutOtherDevices; }
     public void setSignedOutOtherDevices(Boolean signedOutOtherDevices) { this.signedOutOtherDevices = signedOutOtherDevices; }
+    public int getOtpAttemptCount() { return otpAttemptCount; }
+    public void setOtpAttemptCount(int otpAttemptCount) { this.otpAttemptCount = otpAttemptCount; }
 
     public boolean isExpired() {
         return expiresAt.isBefore(Instant.now());

@@ -71,6 +71,24 @@ jest.mock('@react-native-firebase/auth', () => ({
   signOut: jest.fn(async () => {}),
 }));
 
+// Task 14. Same posture as '@react-native-firebase/auth' just above -- needs a real native app
+// registered, which nothing under the runner has. Also sidesteps a real problem, not just a
+// missing native binding: the installed package's main entry (dist/module/index.js) is ESM
+// source, and a bare `jest.mock('@react-native-firebase/messaging')` (automock, no factory) has
+// to `require()` that real file to introspect its shape, which throws ("Must use import to load
+// ES Module") under this project's transform config -- see pushRegistration.test.ts's own comment
+// for how that was found. requestPermission/getToken default to a denied/empty result so any
+// unmocked call site (e.g. AuthContext's fire-and-forget registerDeviceToken()/revokeDeviceToken()
+// calls, exercised incidentally by AuthContext.test.tsx) resolves to "nothing to register" rather
+// than hanging or throwing. pushRegistration.ts is exercised for real via its own dependency-
+// injected `messaging` argument in pushRegistration.test.ts, which does not need this mock at all.
+jest.mock('@react-native-firebase/messaging', () => ({
+  getMessaging: jest.fn(() => ({})),
+  requestPermission: jest.fn(async () => 0),
+  getToken: jest.fn(async () => ''),
+  onTokenRefresh: jest.fn(() => () => {}),
+}));
+
 jest.mock('@react-native-community/netinfo', () => ({
   __esModule: true,
   default: { addEventListener: jest.fn(() => jest.fn()) },

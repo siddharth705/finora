@@ -21,6 +21,7 @@ import type {
   StatementAnalysisDetailDto,
   StatementAnalysisSummaryDto,
   LearningQueueEvent, LearningQueueSummary,
+  NotificationAdminRow, NotificationAdminDetail, NotificationAdminSummary,
   MerchantReviewItem,
   LayoutSummary,
   UnknownHeaderSummary,
@@ -330,6 +331,18 @@ export const adminLearningQueueApi = {
     api.post<{ retried: number }>('/admin/learning-queue/retry-all').then((r) => r.data),
   resolve: (eventId: string, reason?: string) =>
     api.post<LearningQueueEvent>(`/admin/learning-queue/${eventId}/resolve`, { reason }).then((r) => r.data),
+};
+
+/** The admin notification dashboard (Task 12). Read-only: a paged list of the `notifications`
+ *  outbox filtered by status, sent/failed counts by channel, and one detail lookup that includes
+ *  the provider attempt log -- no retry, resend, or any other mutating call, because the backend
+ *  exposes none. */
+export const adminNotificationApi = {
+  list: (params: { status?: string; page?: number; size?: number }) =>
+    api.get<PagedResponse<NotificationAdminRow>>('/admin/notifications', { params }).then((r) => r.data),
+  summary: () => api.get<NotificationAdminSummary>('/admin/notifications/summary').then((r) => r.data),
+  get: (id: string) =>
+    api.get<NotificationAdminDetail>(`/admin/notifications/${id}`).then((r) => r.data),
 };
 
 /** The Merchant Review Center (WI4). Listing crosses users; every action is scoped to the owner,

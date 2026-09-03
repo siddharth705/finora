@@ -28,6 +28,7 @@ const MerchantTemplates = lazy(() => import('./pages/MerchantTemplates'));
 const GlobalRules = lazy(() => import('./pages/GlobalRules'));
 const LearningEngine = lazy(() => import('./pages/LearningEngine'));
 const LearningQueue = lazy(() => import('./pages/LearningQueue'));
+const Notifications = lazy(() => import('./pages/Notifications'));
 const MerchantReview = lazy(() => import('./pages/MerchantReview'));
 const ReconciliationMonitor = lazy(() => import('./pages/ReconciliationMonitor'));
 const ReconciliationExplorer = lazy(() => import('./pages/ReconciliationExplorer'));
@@ -91,6 +92,7 @@ export default function App() {
               <Route path="/learning" element={<ProtectedRoute><LearningEngine /></ProtectedRoute>} />
               <Route path="/merchant-review" element={<ProtectedRoute><MerchantReview /></ProtectedRoute>} />
               <Route path="/learning-queue" element={<ProtectedRoute><LearningQueue /></ProtectedRoute>} />
+              <Route path="/notifications" element={<ProtectedRoute><Notifications /></ProtectedRoute>} />
               <Route path="/reconciliation" element={<ProtectedRoute><ReconciliationMonitor /></ProtectedRoute>} />
               <Route path="/reconciliation-explorer" element={<ProtectedRoute><ReconciliationExplorer /></ProtectedRoute>} />
               <Route path="/insights-explorer" element={<ProtectedRoute><InsightsExplorer /></ProtectedRoute>} />
