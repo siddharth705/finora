@@ -61,4 +61,29 @@ class ExplicitZeroActivityPdfPreviewGeneratorIT extends AbstractIntegrationTest 
         var staged = importService.parseAndStagePdfWithSession(user.getId(), "statement.pdf", pdf, null);
         assertThat(staged.staging().rows()).isNotEmpty();
     }
+
+    /**
+     * The cross-section masking scenario the {@code sectionCount &lt;= 1} guard in {@code
+     * PdfPreviewGenerator.buildLedgerSection} exists to prevent: a composite statement where one
+     * section legitimately declares zero activity and a DIFFERENT section has an unrelated,
+     * genuine extraction failure. Left ungated, the whole document would be rejected with
+     * IMPORT_NO_ACTIVITY_IN_PERIOD ("nothing to import, nothing wrong") -- masking the second
+     * section's real defect behind a message that says the file is fine. The fix withholds the
+     * flag whenever more than one section is located, so this must still get the honest
+     * IMPORT_NO_TRANSACTIONS_FOUND, recovered-lines diagnostic included.
+     */
+    @Test
+    void aCompositeStatementWithOneZeroActivitySectionAndOneGenuineFailure_isNotMisreadAsZeroActivity()
+            throws Exception {
+        byte[] pdf = PdfFixtureBuilder.buildExplicitZeroTransactionCountInACompositeStatementSample();
+        User user = user();
+
+        assertThatThrownBy(() -> importService.parseAndStagePdfWithSession(user.getId(), "statement.pdf", pdf, null))
+                .asInstanceOf(org.assertj.core.api.InstanceOfAssertFactories.type(ApiException.class))
+                .satisfies(e -> {
+                    assertThat(e.getCode()).isEqualTo(ErrorCode.IMPORT_NO_TRANSACTIONS_FOUND);
+                    assertThat(e.getMessage()).containsIgnoringCase("could not read");
+                    assertThat(e.getMessage()).contains("1 line(s) of text were recovered");
+                });
+    }
 }
