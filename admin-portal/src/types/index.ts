@@ -1088,6 +1088,60 @@ export interface LearningQueueSummary {
   resolved: number;
 }
 
+/**
+ * One row of the admin notification dashboard (Task 12). Mirrors the backend's
+ * NotificationAdminDto.
+ *
+ * Deliberately has no email/phone field, unlike LearningQueueEvent's userEmail -- userId is a
+ * bare UUID with no join back to the user's contact details, matching
+ * AdminNotificationController's own no-PII-exposure requirement. There is also no `retryable` or
+ * any action flag: this dashboard is read-only, there is nothing here for the UI to offer.
+ */
+export interface NotificationAdminRow {
+  id: string;
+  userId: string;
+  type: string;
+  category: string;
+  channel: 'EMAIL' | 'SMS' | 'PUSH';
+  priority: string;
+  status: 'CREATED' | 'QUEUED' | 'PROCESSING' | 'SENT' | 'RETRYING' | 'DEAD_LETTER';
+  title: string;
+  attemptCount: number;
+  nextAttemptAt: string | null;
+  lastError: string | null;
+  sentAt: string | null;
+  createdAt: string;
+}
+
+/** NotificationAdminRow plus the message body and the provider attempt log, newest first. */
+export interface NotificationAdminDetail extends NotificationAdminRow {
+  message: string;
+  attempts: NotificationAttempt[];
+}
+
+export interface NotificationAttempt {
+  id: string;
+  provider: string;
+  response: string | null;
+  success: boolean;
+  attempt: number;
+  timestamp: string;
+}
+
+export interface NotificationAdminChannelSummary {
+  channel: string;
+  sent: number;
+  failed: number;
+}
+
+/** The dashboard's stat tiles: sent/failed counts, overall and by channel. Deliberately just
+ *  counts -- no trend charts, no engagement scoring (proposal section 2.5/4). */
+export interface NotificationAdminSummary {
+  sent: number;
+  failed: number;
+  byChannel: NotificationAdminChannelSummary[];
+}
+
 
 /**
  * A merchant the normalization engine invented, awaiting a human decision (WI4).

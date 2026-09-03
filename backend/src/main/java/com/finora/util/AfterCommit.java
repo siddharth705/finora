@@ -31,9 +31,15 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  *
  * <h2>Failures here cannot reach the caller</h2>
  *
- * <p>By the time this runs the transaction has committed and the response is on its way — there is
- * nobody left to hand an exception to, and throwing would only surface as an error in Spring's
- * synchronization loop that could skip other registered callbacks. Logged instead.
+ * <p>Applies to both branches, deliberately. In the deferred (post-commit) branch, by the time this
+ * runs the transaction has committed and the response is on its way — there is nobody left to hand
+ * an exception to, and throwing would only surface as an error in Spring's synchronization loop
+ * that could skip other registered callbacks. In the immediate (no-ambient-transaction) branch, the
+ * caller — {@code NotificationService.request()} among others — is typically documented as never
+ * throwing itself, precisely BECAUSE this method promises not to; a bug fix once let a
+ * {@code RuntimeException} escape this branch uncaught (a {@code TaskRejectedException} from a
+ * shut-down executor was the realistic trigger) and broke exactly that promise for its caller. Both
+ * branches log instead of throwing, for the same reason.
  *
  * <h2>The seven copies this does not yet replace</h2>
  *
@@ -59,7 +65,20 @@ public final class AfterCommit {
      */
     public static void run(String description, Runnable work) {
         if (!TransactionSynchronizationManager.isSynchronizationActive()) {
-            work.run();
+            // Bug fix: this used to call work.run() with no try/catch, contradicting this class's
+            // own "failures here cannot reach the caller" guarantee -- a RuntimeException thrown
+            // with no ambient transaction (e.g. TaskRejectedException from a shut-down executor)
+            // propagated straight out of run() and, from there, out of whatever caller assumed this
+            // could never throw (NotificationService.request()'s own class doc promises exactly
+            // that). The afterCommit() branch below already caught this correctly; this branch is
+            // the same fallback path -- immediate execution instead of a deferred callback -- and
+            // needs the identical guarantee.
+            try {
+                work.run();
+            } catch (RuntimeException e) {
+                log.error("Post-commit work failed: {}. There was no ambient transaction to affect.",
+                        description, e);
+            }
             return;
         }
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
