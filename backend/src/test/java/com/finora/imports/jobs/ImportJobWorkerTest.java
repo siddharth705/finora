@@ -56,6 +56,7 @@ class ImportJobWorkerTest {
     private ImportStageRecorder stageRecorder;
     private NotificationService notificationService;
     private ImportVerificationRecorder verificationRecorder;
+    private com.finora.service.HeldStatementService heldStatementService;
     private ImportJobWorker worker;
 
     private ImportJob job;
@@ -74,8 +75,11 @@ class ImportJobWorkerTest {
         notificationService = mock(NotificationService.class);
         verificationRecorder = mock(ImportVerificationRecorder.class);
 
+        heldStatementService = mock(com.finora.service.HeldStatementService.class);
+
         worker = new ImportJobWorker(jobStore, importService, statementContentService, observability,
-                stageRecorder, new ExceptionClassifier(), notificationService, verificationRecorder);
+                stageRecorder, new ExceptionClassifier(), notificationService, verificationRecorder,
+                heldStatementService);
 
         job = new ImportJob(UUID.randomUUID(), "statement.csv", "hash", "objects/key", "CSV");
         job.markClaimed("worker", Instant.now());
@@ -269,6 +273,25 @@ class ImportJobWorkerTest {
 
     private static ImportDto.StagingSessionResponse staged() {
         return staged("HDFC Bank");
+    }
+
+    /**
+     * A staged result the trust predicate holds: the document's own printed summary and the parsed
+     * rows disagree on how many transactions there are.
+     *
+     * <p>Deliberately a real {@code SUMMARY_TOTALS} finding rather than a stubbed predicate. The
+     * predicate is a pure static function, so wiring it for real here is what proves the worker
+     * actually consults it -- a mock would assert only that the worker called something.
+     */
+    private static ImportDto.StagingSessionResponse stagedWithCountMismatch() {
+        ImportDto.VerificationReport report = new ImportDto.VerificationReport(
+                List.of(new ImportDto.VerificationFinding("SUMMARY_TOTALS", "FAILED",
+                        java.util.Map.of("suspectedCause", "ROW_GROUPING"))),
+                false, "NATIVE_PDF", com.finora.imports.ImportReliabilityStatus.NEEDS_ATTENTION);
+
+        return new ImportDto.StagingSessionResponse(
+                UUID.randomUUID(),
+                new ImportDto.StagingResponse(List.of(), 10, 0, null, List.of(), report));
     }
 
     /** Re-claims the job and runs another pass, exactly as the worker's own poll loop would. */
@@ -515,6 +538,120 @@ class ImportJobWorkerTest {
         runAnotherPass();
 
         assertThat(job.getStatus()).isEqualTo(ImportJob.Status.HELD_FOR_REVIEW);
+        verify(notificationService, never()).request(any());
+    }
+
+    // -------------------------------------------------------------------------------------------
+    // The trust gate. Everything above this line is about extraction FAILING; these are about
+    // extraction succeeding and being distrusted anyway.
+    // -------------------------------------------------------------------------------------------
+
+    /**
+     * A real return value, because a Mockito mock returns null by default and
+     * {@code createHold(...).getId()} would then NPE into the worker's own catch block. Every
+     * "held" assertion would still pass -- for the wrong reason, with the successful-hold path
+     * never actually exercised and the fail-closed test unable to distinguish itself from it.
+     */
+    private com.finora.entity.HeldStatement stubHold() {
+        com.finora.entity.HeldStatement held = new com.finora.entity.HeldStatement(
+                "HLD-2026-000001", job.getId(), job.getUserId(), "objects/key", "counts disagree");
+        when(heldStatementService.createHold(any(), any(), any(), any())).thenReturn(held);
+        return held;
+    }
+
+    /** The behaviour this whole plan exists for: an untrustworthy extraction must not reach
+     *  COMPLETED on its own. */
+    @Test
+    void aHeldExtractionDoesNotComplete() throws IOException {
+        com.finora.entity.HeldStatement hold = stubHold();
+        when(importService.parseAndStageWithSession(any(), any(), any()))
+                .thenReturn(stagedWithCountMismatch());
+
+        worker.drainOnce();
+
+        assertThat(job.getStatus()).isEqualTo(ImportJob.Status.HELD_FOR_TRUST_REVIEW);
+        assertThat(job.getStatus()).isNotEqualTo(ImportJob.Status.COMPLETED);
+        verify(heldStatementService).createHold(any(), any(), any(), any());
+        assertThat(job.getHeldStatementId())
+                .as("the job must point at the review that was opened for it")
+                .isEqualTo(hold.getId());
+    }
+
+    /**
+     * The staged session survives the hold.
+     *
+     * <p>A trust hold is not a discard: the rows are real and the reviewer's whole job is to
+     * compare them against the document. Losing the session would make the review impossible and
+     * force a re-parse under whatever build is current by then.
+     */
+    @Test
+    void aHeldExtractionKeepsItsStagedSession() throws IOException {
+        stubHold();
+        ImportDto.StagingSessionResponse response = stagedWithCountMismatch();
+        when(importService.parseAndStageWithSession(any(), any(), any())).thenReturn(response);
+
+        worker.drainOnce();
+
+        assertThat(job.getImportSessionId()).isEqualTo(response.sessionId());
+    }
+
+    @Test
+    void aTrustworthyExtractionStillCompletes() throws IOException {
+        when(importService.parseAndStageWithSession(any(), any(), any())).thenReturn(staged());
+
+        worker.drainOnce();
+
+        assertThat(job.getStatus()).isEqualTo(ImportJob.Status.COMPLETED);
+        verify(heldStatementService, never()).createHold(any(), any(), any(), any());
+    }
+
+    /**
+     * Creating the hold record must never be able to fail the import itself.
+     *
+     * <p>And specifically, it must fail CLOSED. Falling back to completing would silently release
+     * exactly the import the gate exists to stop -- the database being down is not evidence the
+     * extraction was fine. Holding with no review record is degraded; completing is wrong.
+     */
+    @Test
+    void aFailingHoldRecordStillHoldsTheImport() throws IOException {
+        when(importService.parseAndStageWithSession(any(), any(), any()))
+                .thenReturn(stagedWithCountMismatch());
+        org.mockito.Mockito.doThrow(new IllegalStateException("db down"))
+                .when(heldStatementService).createHold(any(), any(), any(), any());
+
+        worker.drainOnce();
+
+        assertThat(job.getStatus()).isEqualTo(ImportJob.Status.HELD_FOR_TRUST_REVIEW);
+        assertThat(job.getHeldStatementId())
+                .as("no review record exists, and the job must not claim one does")
+                .isNull();
+    }
+
+    /** Telemetry is recorded for a held import too -- it is the evidence the reviewer works from,
+     *  and the readout's denominator would otherwise quietly exclude the interesting cases. */
+    @Test
+    void aHeldExtractionStillRecordsItsTelemetry() throws IOException {
+        stubHold();
+        when(importService.parseAndStageWithSession(any(), any(), any()))
+                .thenReturn(stagedWithCountMismatch());
+
+        worker.drainOnce();
+
+        assertThat(job.getReliabilityStatus())
+                .isEqualTo(com.finora.imports.ImportReliabilityStatus.NEEDS_ATTENTION);
+        assertThat(job.getVerificationFailedCount()).isEqualTo(1);
+    }
+
+    /** A held import is not finished, so it announces nothing -- the same rule the other hold
+     *  follows. The user watching the progress screen sees the held state; nobody is emailed. */
+    @Test
+    void aTrustHeldImportNotifiesNobody() throws IOException {
+        stubHold();
+        when(importService.parseAndStageWithSession(any(), any(), any()))
+                .thenReturn(stagedWithCountMismatch());
+
+        worker.drainOnce();
+
         verify(notificationService, never()).request(any());
     }
 }
