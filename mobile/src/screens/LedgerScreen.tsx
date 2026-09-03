@@ -13,6 +13,7 @@ import { hapticError, hapticImpact, hapticSuccess } from '../lib/haptics';
 import { useDebouncedValue } from '../lib/useDebouncedValue';
 import { useLargeFontScale } from '../lib/useLargeFontScale';
 import { fmtCurrency } from '../lib/format';
+import { counterpartyLabel } from '../lib/counterpartyLabel';
 import { radius, spacing, useTheme } from '../theme';
 import type { Transaction } from '../types';
 
@@ -280,7 +281,12 @@ export function LedgerScreen() {
               </View>
             ) : undefined
           }
-          renderItem={({ item: t }) => (
+          renderItem={({ item: t }) => {
+            // Computed once per row rather than at each of its two call sites below -- it's a pure
+            // function of two already-available fields, so there's nothing to gain from asking it
+            // the same question twice.
+            const cp = counterpartyLabel(t.counterpartyType, t.type);
+            return (
             <Pressable
               onPress={() => setRecategorizing(t)}
               onLongPress={() => confirmDelete(t)}
@@ -297,7 +303,15 @@ export function LedgerScreen() {
               accessibilityRole="button"
               accessibilityLabel={`${t.description || t.merchant || 'Transaction'}, ${
                 t.type === 'INCOME' ? 'income' : 'expense'
-              } ${fmtCurrency(Math.abs(t.amount))}, ${t.categoryName}, ${t.date}`}
+              } ${fmtCurrency(Math.abs(t.amount))}, ${t.categoryName}, ${t.date}${
+                // The FULL direction-composed reading, not the badge's short form: "Sent to a
+                // person" is what someone listening to the row actually needs, and there is no
+                // tooltip on a phone for them to reach for instead. Appended rather than inserted
+                // so the existing announcement order is unchanged, and omitted entirely when the
+                // counterparty is unknown -- padding every row in five with "unknown" would make
+                // the whole list slower to listen to for no information gained.
+                cp ? `, ${cp.full}` : ''
+              }`}
               // Describes the OUTCOME, not the gesture: VoiceOver and TalkBack both append their
               // own "double tap to activate" to a button, so spelling the gesture out here had the
               // row announce the same instruction twice in conflicting words -- and the standard
@@ -315,7 +329,14 @@ export function LedgerScreen() {
                   {t.description || t.merchant || 'Transaction'}
                 </Text>
                 <Text style={[styles.meta, { color: c.mutedInk }]} numberOfLines={1}>
-                  {t.categoryName} · {t.date}
+                  {t.categoryName}
+                  {/* WHO, next to WHAT it was for. The SHORT form here because this line is capped
+                      at one line; the full direction-composed reading goes to the accessibility
+                      label above, where there is no width to run out of and where a screen-reader
+                      user has no tooltip to fall back on. Nothing at all when unknown. */}
+                  {cp ? ` · ${cp.short}` : ''}
+                  {' · '}
+                  {t.date}
                   {t.reconciliationStatus === 'DUPLICATE' ? ' · Duplicate' : ''}
                 </Text>
               </View>
@@ -328,7 +349,8 @@ export function LedgerScreen() {
                 </Text>
               )}
             </Pressable>
-          )}
+            );
+          }}
         />
       )}
 
