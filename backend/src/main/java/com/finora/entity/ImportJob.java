@@ -177,6 +177,45 @@ public class ImportJob implements com.finora.imports.storage.StoredStatement {
     private Instant finishedAt;
 
     /**
+     * Extraction evidence this import already computed, kept so it can be measured later.
+     *
+     * <p>Every one of these is calculated during staging and shown to the user today, then
+     * discarded. Nothing gates on them and this does not change that -- the point is that "how
+     * often would a trust rule have fired?" is currently unanswerable, so any threshold chosen for
+     * one would be a guess. See V141.
+     *
+     * <p>All nullable with no default: NULL means "predates telemetry", which has to stay
+     * distinguishable from a recorded clean result.
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "reliability_status", length = 24)
+    private com.finora.imports.ImportReliabilityStatus reliabilityStatus;
+
+    /** NATIVE / OCR / NATIVE_PLUS_OCR -- provenance, not a defect. Held as the reported string
+     *  rather than the parser's own enum so this entity does not depend on the pdf package. */
+    @Column(name = "text_source", length = 24)
+    private String textSource;
+
+    /** The one NEEDS_ATTENTION input that produces no VerificationFinding, so the only trust signal
+     *  that would otherwise be unmeasurable after the fact. */
+    @Column(name = "header_reconstruction_uncertain")
+    private Boolean headerReconstructionUncertain;
+
+    /** The deploy that parsed this statement. Loop prevention on reprocess, not fix attribution --
+     *  and unrecoverable unless recorded at the time. */
+    @Column(name = "parser_version", length = 40)
+    private String parserVersion;
+
+    @Column(name = "verification_findings_count")
+    private Integer verificationFindingsCount;
+
+    @Column(name = "verification_failed_count")
+    private Integer verificationFailedCount;
+
+    @Column(name = "verification_warning_count")
+    private Integer verificationWarningCount;
+
+    /**
      * Whether this job was ever held for admin review.
      *
      * <p>Set by {@link #holdForReview} and never cleared -- deliberately, including by {@link
@@ -559,6 +598,35 @@ public class ImportJob implements com.finora.imports.storage.StoredStatement {
         this.finishedAt = now;
     }
 
+    /**
+     * Records what verification saw, without acting on any of it.
+     *
+     * <p>Takes finished values rather than the reports themselves: walking a list of DTOs is a
+     * business rule, and an entity that can reach {@code com.finora.dto} stops being the bottom of
+     * the dependency graph -- {@code LayerDependencyDirectionTest} enforces exactly that. The
+     * aggregation lives in {@link com.finora.imports.jobs.VerificationTelemetry}, which is also
+     * what makes it testable without constructing a job.
+     *
+     * <p>Deliberately has no effect on {@link #status} or anything else the worker branches on.
+     * Telemetry that could change an import's outcome would be a gate wearing a different name, and
+     * the whole reason this exists is that nothing is yet calibrated well enough to gate.
+     *
+     * <p>When nothing was observed the evidence columns stay null, so "predates telemetry" and
+     * "verified, found nothing" remain different rows rather than both reading as zero.
+     */
+    public void recordVerificationTelemetry(
+            com.finora.imports.ImportReliabilityStatus reliabilityStatus, String textSource,
+            Boolean headerReconstructionUncertain, Integer findingsCount, Integer failedCount,
+            Integer warningCount, String parserVersion) {
+        this.parserVersion = parserVersion;
+        this.reliabilityStatus = reliabilityStatus;
+        this.textSource = textSource;
+        this.headerReconstructionUncertain = headerReconstructionUncertain;
+        this.verificationFindingsCount = findingsCount;
+        this.verificationFailedCount = failedCount;
+        this.verificationWarningCount = warningCount;
+    }
+
     /** Cancellable only before user-visible data exists -- see the class comment. */
     public boolean isCancellable() {
         return status == Status.QUEUED || status.isBefore(Status.IMPORTING);
@@ -578,6 +646,13 @@ public class ImportJob implements com.finora.imports.storage.StoredStatement {
 
     public UUID getId() { return id; }
     public boolean wasHeldForReview() { return wasHeldForReview; }
+    public com.finora.imports.ImportReliabilityStatus getReliabilityStatus() { return reliabilityStatus; }
+    public String getTextSource() { return textSource; }
+    public Boolean getHeaderReconstructionUncertain() { return headerReconstructionUncertain; }
+    public String getParserVersion() { return parserVersion; }
+    public Integer getVerificationFindingsCount() { return verificationFindingsCount; }
+    public Integer getVerificationFailedCount() { return verificationFailedCount; }
+    public Integer getVerificationWarningCount() { return verificationWarningCount; }
     public UUID getUserId() { return userId; }
     public String getContentHash() { return contentHash; }
     public String getObjectKey() { return objectKey; }

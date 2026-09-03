@@ -9,6 +9,7 @@ import com.finora.imports.storage.StatementIntegrityException;
 import com.finora.imports.storage.StatementStorageException;
 import com.finora.observability.AlertSeverity;
 import com.finora.dto.ImportDto;
+import com.finora.imports.analysis.ImportVerificationRecorder;
 import com.finora.observability.WorkerObservability;
 import com.finora.notification.api.NotificationRequest;
 import com.finora.notification.api.NotificationService;
@@ -54,6 +55,7 @@ class ImportJobWorkerTest {
     private StatementContentService statementContentService;
     private ImportStageRecorder stageRecorder;
     private NotificationService notificationService;
+    private ImportVerificationRecorder verificationRecorder;
     private ImportJobWorker worker;
 
     private ImportJob job;
@@ -70,9 +72,10 @@ class ImportJobWorkerTest {
         WorkerObservability observability = new WorkerObservability(new SimpleMeterRegistry());
 
         notificationService = mock(NotificationService.class);
+        verificationRecorder = mock(ImportVerificationRecorder.class);
 
         worker = new ImportJobWorker(jobStore, importService, statementContentService, observability,
-                stageRecorder, new ExceptionClassifier(), notificationService);
+                stageRecorder, new ExceptionClassifier(), notificationService, verificationRecorder);
 
         job = new ImportJob(UUID.randomUUID(), "statement.csv", "hash", "objects/key", "CSV");
         job.markClaimed("worker", Instant.now());
@@ -397,6 +400,26 @@ class ImportJobWorkerTest {
         runAnotherPass();
 
         assertThat(job.getStatus()).isEqualTo(ImportJob.Status.HELD_FOR_REVIEW);
+    }
+
+    /**
+     * Telemetry must never be able to fail an import.
+     *
+     * <p>The whole point of Phase 0 is to observe without changing behaviour, so a recorder that
+     * throws has to leave the import exactly as it would have been. This is the test that would
+     * fail if the recorder were ever moved inside the job's own transaction.
+     */
+    @Test
+    void aFailingVerificationRecorderDoesNotFailTheImport() throws IOException {
+        when(importService.parseAndStageWithSession(any(), any(), any())).thenReturn(staged());
+        org.mockito.Mockito.doThrow(new IllegalStateException("recorder is down"))
+                .when(verificationRecorder).recordForJob(any(), any());
+
+        worker.drainOnce();
+
+        assertThat(job.getStatus())
+                .as("a diagnostic write failing must not reject a statement that parsed correctly")
+                .isEqualTo(ImportJob.Status.COMPLETED);
     }
 
     // ------------------------------------------------------- completion notification (Phase B)

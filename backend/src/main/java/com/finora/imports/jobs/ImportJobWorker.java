@@ -3,6 +3,7 @@ package com.finora.imports.jobs;
 import com.finora.entity.ImportJob;
 import com.finora.exception.ErrorCode;
 import com.finora.imports.ImportService;
+import com.finora.imports.analysis.ImportVerificationRecorder;
 import com.finora.imports.StatementUpload;
 import com.finora.imports.storage.StatementContentService;
 import com.finora.imports.storage.StatementIntegrityException;
@@ -128,6 +129,17 @@ public class ImportJobWorker {
     private final ImportStageRecorder stageRecorder;
     private final ExceptionClassifier exceptionClassifier;
     private final NotificationService notificationService;
+    private final ImportVerificationRecorder verificationRecorder;
+
+    /**
+     * The deploy that parsed a statement, recorded on every job.
+     *
+     * <p>Railway injects RAILWAY_GIT_COMMIT_SHA on every deploy, the same source
+     * {@code sentry.release} already uses, so this needs no dashboard configuration. Blank
+     * locally and in tests, which is honest -- there is no deploy to name.
+     */
+    @Value("${app.parser-version:${RAILWAY_GIT_COMMIT_SHA:}}")
+    private String parserVersion;
 
     @Value("${app.import.queue.enabled:false}")
     private boolean enabled;
@@ -138,7 +150,8 @@ public class ImportJobWorker {
                             WorkerObservability observability,
                             ImportStageRecorder stageRecorder,
                             ExceptionClassifier exceptionClassifier,
-                            NotificationService notificationService) {
+                            NotificationService notificationService,
+                            ImportVerificationRecorder verificationRecorder) {
         this.jobStore = jobStore;
         this.importService = importService;
         this.statementContentService = statementContentService;
@@ -146,6 +159,7 @@ public class ImportJobWorker {
         this.stageRecorder = stageRecorder;
         this.exceptionClassifier = exceptionClassifier;
         this.notificationService = notificationService;
+        this.verificationRecorder = verificationRecorder;
 
         observability.publishQueueDepth(WORKER, JOB_KIND, jobStore::queueDepth);
         observability.publishOldestPendingAge(WORKER, JOB_KIND, jobStore::oldestQueuedAt);
@@ -276,8 +290,20 @@ public class ImportJobWorker {
                 // unparseable rows look like it had fewer rows than it did.
                 j.recordProgress(staged.totalParsed(), staged.stagedRows());
                 j.complete(staged.sessionId(), Instant.now());
+                // Evidence only. Sets no field the worker branches on and cannot change this
+                // import's outcome -- see the method's own doc for why that separation matters.
+                VerificationTelemetry telemetry =
+                        VerificationTelemetry.from(staged.verificationReports());
+                j.recordVerificationTelemetry(
+                        telemetry.reliabilityStatus(), telemetry.textSource(),
+                        telemetry.isEmpty() ? null : telemetry.headerReconstructionUncertain(),
+                        telemetry.isEmpty() ? null : telemetry.findingsCount(),
+                        telemetry.isEmpty() ? null : telemetry.failedCount(),
+                        telemetry.isEmpty() ? null : telemetry.warningCount(),
+                        parserVersion);
                 notifyIfPreviouslyHeld(j, staged.bankName());
             });
+            recordVerificationFindings(jobId, staged);
             // Only on the success path. A job that failed in PARSING did not skip IMPORTING, it
             // never reached it, and recording that as SKIPPED would turn an honest absence into a
             // false claim.
@@ -437,6 +463,33 @@ public class ImportJobWorker {
      */
     private static boolean isOperatorRemediable(Throwable cause) {
         return !ExceptionClassifier.isIntegrityFailure(cause);
+    }
+
+    /**
+     * Persists the per-rule findings this import produced, so a trust rule can be measured before
+     * it is ever enforced.
+     *
+     * <p>{@code recordForJob} has existed unused since the observability work: only
+     * {@code recordForAnalysis} was ever wired, which keys on an analysis session, so the admin
+     * analysis path accumulated history and the real user import path accumulated none. That is why
+     * "how often would this gate fire?" is currently unanswerable.
+     *
+     * <p><b>Outside the job's own transaction, and swallowing its own failures.</b> Recording
+     * telemetry must never be able to fail an import -- the same rule V62 states for merchant
+     * learning, that "failure can never roll back an import". A statement that parsed correctly
+     * being rejected because a diagnostic write failed would be a strictly worse outcome than the
+     * blindness this fixes.
+     */
+    private void recordVerificationFindings(UUID jobId, StagedForJob staged) {
+        if (staged.verificationReports().isEmpty()) {
+            return;
+        }
+        try {
+            verificationRecorder.recordForJob(jobId, staged.verificationReports());
+        } catch (RuntimeException e) {
+            log.warn("Could not record verification findings for import job {}; the import itself "
+                    + "is unaffected", jobId, e);
+        }
     }
 
     /**
