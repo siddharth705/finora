@@ -46,6 +46,9 @@ function txn(over: Partial<Transaction> = {}): Transaction {
     recurring: false,
     needsCategoryReview: true,
     categoryManuallySet: false,
+    // UNKNOWN by default so no counterparty text renders unless a test asks for it -- the existing
+    // assertions here predate the label and should stay unaffected.
+    counterpartyType: 'UNKNOWN',
     ...over,
   };
 }

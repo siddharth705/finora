@@ -9,6 +9,7 @@ import { CategoryCreateEditPanel } from '../components/CategoryCreateEditPanel';
 import { MerchantGroupReviewCard } from '../components/MerchantGroupReviewCard';
 import { MerchantLogo } from '../components/MerchantLogo';
 import type { Transaction } from '../types';
+import { counterpartyLabel } from '../lib/counterpartyLabel';
 import { ConfirmDialog, Button, IconButton, Skeleton } from '../design-system';
 import { useDelayedLoading } from '../hooks/useDelayedLoading';
 
@@ -239,6 +240,22 @@ export default function Ledger() {
                       <MerchantLogo merchant={t.merchant} size={22} />
                       <span className="truncate min-w-0 flex-1">
                         {t.description || t.merchant}
+                        {/* WHO, next to the narration it was derived from -- deliberately not in the
+                            category cell, because "who" and "what for" are different questions and
+                            putting the answer to one beside the answer to the other is how they get
+                            conflated. Muted, not accented: this is context, not a call to act.
+                            Nothing renders at all when the counterparty is unknown. */}
+                        {(() => {
+                          const cp = counterpartyLabel(t.counterpartyType, t.type);
+                          return cp ? (
+                            <span
+                              className="text-[10px] uppercase bg-gray-200 text-gray-500 px-1.5 py-0.5 rounded ml-1"
+                              title={cp.full}
+                            >
+                              {cp.short}
+                            </span>
+                          ) : null;
+                        })()}
                         {t.needsCategoryReview && <span className="text-[10px] uppercase bg-warning-bg text-warning px-1.5 py-0.5 rounded ml-1">needs review</span>}
                         {t.recurring && <span className="text-[10px] uppercase bg-primary/15 text-primary px-1.5 py-0.5 rounded ml-1">recurring</span>}
                       </span>

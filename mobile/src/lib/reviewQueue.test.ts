@@ -19,6 +19,7 @@ function txn(id: string): Transaction {
     recurring: false,
     needsCategoryReview: true,
     categoryManuallySet: false,
+    counterpartyType: 'UNKNOWN',
   };
 }
 
