@@ -128,6 +128,30 @@ public enum ErrorCode {
             "This statement's own printed summary shows no transactions for the period it covers "
                     + "-- there is nothing to import from this file.", true),
 
+    // Never thrown -- carried on the job by ImportJob.rejectAfterTrustReview so the user is shown a
+    // reason instead of a bare failure. holdForTrustReview clears the job's failure code on the way
+    // in (a trust hold is not a failure), so without this there would be nothing left to explain
+    // the outcome to somebody who had been told we were running additional checks.
+    //
+    // The message says what happened on our side and claims nothing about the document. The
+    // extraction was not trustworthy; that is a statement about our parse, not about their bank or
+    // their statement, and this copy must not let the two blur.
+    //
+    // userActionRequired=true for the same reason IMPORT_014 chose it -- see that code's comment.
+    // There is nothing for the user to correct, and it is the only lever that keeps this off the
+    // red danger treatment IMPORT_FAILURE_MESSAGES gives every other IMPORT_* code.
+    //
+    // Both halves of this -- the calm treatment and this wording -- are a product decision taken by
+    // the repository owner on 2026-09-04, not an implementer's default. The alternatives considered
+    // and rejected were the standard red failure banner (consistent with other import failures, but
+    // reads as "something is wrong with your account" when the fault is our parser), naming the
+    // human reviewer in the copy (more transparent, but tells a customer staff opened their
+    // statement), and inviting them to contact support (a next step instead of a dead end, but
+    // support load nobody wants pre-launch). Changing either half is a product call, not a tidy-up.
+    IMPORT_TRUST_REVIEW_REJECTED("IMPORT_015", HttpStatus.UNPROCESSABLE_ENTITY,
+            "We checked this statement and could not read it accurately enough to import it. "
+                    + "Nothing was added to your accounts.", true),
+
     // Accounts
     ACCOUNT_NOT_FOUND("ACC_001", HttpStatus.NOT_FOUND, "Account not found"),
 
