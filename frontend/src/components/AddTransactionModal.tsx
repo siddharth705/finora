@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { X } from 'lucide-react';
 import { accountsApi, categoriesApi, transactionsApi, type CreateTransactionPayload } from '../api/endpoints';
+import { newIdempotencyKey } from '../lib/idempotencyKey';
 
 /**
  * Wires up TransactionController.create() / transactionsApi.create() -- both already existed,
@@ -38,6 +39,9 @@ export function AddTransactionModal({ onClose, onSaved }: { onClose: () => void;
   const [type, setType] = useState<'INCOME' | 'EXPENSE'>('EXPENSE');
   const [category, setCategory] = useState('');
   const [saving, setSaving] = useState(false);
+  // The key for the current create attempt. A ref, not state: it must be readable synchronously
+  // inside submit() and must not trigger a re-render when it changes.
+  const attemptKey = useRef<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   // accountId starts null (not accounts[0]?.id) specifically because accounts loads
@@ -52,9 +56,16 @@ export function AddTransactionModal({ onClose, onSaved }: { onClose: () => void;
     if (!canSave) return;
     setSaving(true);
     setError(null);
+    // Minted once per attempt and deliberately reused if the user retries after a failure: that is
+    // what makes a retry safe rather than duplicating. If the first request never reached the
+    // server the key is unused and the retry proceeds; if it arrived and committed, the server
+    // returns the ORIGINAL transaction instead of creating a second one and moving the balance
+    // again. Cleared only on success, so a genuinely new transaction always gets a new key.
+    if (attemptKey.current === null) attemptKey.current = newIdempotencyKey();
     try {
       const payload: CreateTransactionPayload = {
         accountId: selectedAccountId,
+        idempotencyKey: attemptKey.current,
         date,
         description: description.trim(),
         amount: parseFloat(amount),
@@ -66,6 +77,7 @@ export function AddTransactionModal({ onClose, onSaved }: { onClose: () => void;
         tags: [],
       };
       await transactionsApi.create(payload);
+      attemptKey.current = null;
       onSaved();
     } catch (e: any) {
       setError(e.response?.data?.message ?? 'Could not add this transaction.');
