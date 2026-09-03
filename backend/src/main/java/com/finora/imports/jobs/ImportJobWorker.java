@@ -5,6 +5,7 @@ import com.finora.exception.ErrorCode;
 import com.finora.imports.ImportService;
 import com.finora.imports.StatementUpload;
 import com.finora.imports.storage.StatementContentService;
+import com.finora.imports.storage.StatementIntegrityException;
 import com.finora.observability.AlertSeverity;
 import com.finora.observability.WorkerExecution;
 import com.finora.observability.WorkerObservability;
@@ -363,6 +364,55 @@ public class ImportJobWorker {
     }
 
     /**
+     * Whether a dead-lettered failure belongs in the admin triage queue.
+     *
+     * <p>The queue exists for one thing: a parser gap on a statement layout this codebase has not
+     * seen. Fix the parser, reprocess, done. Two conditions establish that -- the classification
+     * was RETRY_ONCE_THEN_ALERT (nothing recognised the exception) and the attempt budget is spent.
+     *
+     * <p><b>StatementIntegrityException is excluded, despite satisfying both.</b> Those two
+     * conditions quietly encode a third one -- that a human can fix something and reprocess -- and
+     * this exception is the counterexample. It means storage returned bytes that do not hash to
+     * what the row claims: a wrong object for a key, bit-rot, a bad restore.
+     *
+     * <p>Every other part of the system already treats that as a storage correctness incident
+     * rather than remediable import work: the classifier refuses to give it the five-attempt RETRY
+     * budget a plain outage gets, the exception's own doc says to investigate the provider, and the
+     * alert fires at ERROR. This routing was the one place still treating it as parser triage.
+     *
+     * <ul>
+     *   <li><b>Its only action cannot work.</b> Reprocess re-reads the same key and gets the same
+     *       wrong bytes. The exception's own message says "investigate the storage provider before
+     *       retrying" -- the queue would render a button doing precisely that.</li>
+     *   <li><b>The user message would be a promise we cannot keep.</b> "We'll notify you once it's
+     *       ready" is true of a parser gap. Here the stored document may be gone for good, and the
+     *       honest outcome is the ordinary failure, which is what FAILED already gives them.</li>
+     *   <li><b>It is usually not one statement.</b> A bad migration corrupts objects in bulk. Five
+     *       thousand rows in a parser-remediation queue disguise one storage incident as a backlog
+     *       of unrelated tickets.</li>
+     *   <li><b>Excluding it costs no visibility.</b> The DEAD_LETTERED branch below still alerts at
+     *       {@link AlertSeverity#ERROR} either way -- that path does not depend on the hold.</li>
+     * </ul>
+     *
+     * <p>Nothing here can self-heal, which is what makes exclusion safe rather than merely tidier.
+     * Encryption is AES-256-GCM, so a wrong key throws rather than yielding wrong plaintext;
+     * async job objects are never compressed, so no decode step can corrupt them; and keys are
+     * content-addressed, so a stale or missing replica raises NoSuchKeyException (a plain RETRY),
+     * never a different document under the same key. The one speculative retry this policy allows
+     * has also already been spent by the time this is asked.
+     *
+     * <p>Tested with {@code instanceof} on the cause, matching {@link ExceptionClassifier#classify}
+     * exactly. Both would miss a wrapped integrity exception; neither wraps one today, and keeping
+     * the two checks identical is what stops them disagreeing about the same exception.
+     */
+    private static boolean holdsForTriage(ErrorCode.RetryPolicy policy,
+                                          ImportJob.FailureOutcome outcome, Exception cause) {
+        return outcome == ImportJob.FailureOutcome.DEAD_LETTERED
+                && policy == ErrorCode.RetryPolicy.RETRY_ONCE_THEN_ALERT
+                && !(cause instanceof StatementIntegrityException);
+    }
+
+    /**
      * Closes the loop with a user who was told we were running additional checks.
      *
      * <p>Only a job that was previously held notifies. An ordinary import that succeeds first time
@@ -428,8 +478,7 @@ public class ImportJobWorker {
                 // outcome[0] keeps its DEAD_LETTERED value, so the switch below still fires the
                 // alert. Holding for triage adds a destination; it does not replace engineering
                 // visibility.
-                if (outcome[0] == ImportJob.FailureOutcome.DEAD_LETTERED
-                        && policy == ErrorCode.RetryPolicy.RETRY_ONCE_THEN_ALERT) {
+                if (holdsForTriage(policy, outcome[0], cause)) {
                     job.holdForReview(failureCode, Instant.now());
                 }
             });

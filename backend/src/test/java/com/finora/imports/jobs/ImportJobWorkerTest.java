@@ -158,10 +158,10 @@ class ImportJobWorkerTest {
 
         assertThat(job.getStatus())
                 .as("second occurrence must dead-letter -- not the 5-attempt RETRY budget a plain "
-                        + "StatementStorageException gets -- and a dead-lettered "
-                        + "RETRY_ONCE_THEN_ALERT is now held for triage rather than shown to the "
-                        + "user as a bare failure")
-                .isEqualTo(ImportJob.Status.HELD_FOR_REVIEW);
+                        + "StatementStorageException gets. FAILED, not HELD_FOR_REVIEW: an "
+                        + "integrity mismatch is a storage fault, and the triage queue's only "
+                        + "action re-reads the same wrong bytes")
+                .isEqualTo(ImportJob.Status.FAILED);
         assertThat(job.getAttemptCount()).isEqualTo(2);
         assertThat(job.getFailureCode()).isEqualTo("StatementIntegrityException");
     }
@@ -338,6 +338,30 @@ class ImportJobWorkerTest {
         assertThat(job.getStatus()).isEqualTo(ImportJob.Status.HELD_FOR_REVIEW);
         assertThat(job.getFailureCode()).isEqualTo("IllegalStateException");
         assertThat(job.wasHeldForReview()).isTrue();
+    }
+
+    /**
+     * A corrupt stored object is a storage incident, not a parser gap.
+     *
+     * <p>It satisfies the hold rule -- unclassified policy, budget spent -- and is deliberately
+     * excluded anyway. Reprocess would re-read the same key and get the same wrong bytes, the
+     * holding message would promise a fix that may never come, and a bulk corruption would fill a
+     * parser-remediation queue with one storage incident. The ERROR alert fires either way, so
+     * nothing is hidden by keeping it in FAILED.
+     */
+    @Test
+    void aStorageIntegrityFailureIsNotHeld_becauseReprocessingWouldReadTheSameWrongBytes()
+            throws IOException {
+        when(statementContentService.read(any()))
+                .thenThrow(new StatementIntegrityException("hash mismatch for " + job.getContentHash()));
+
+        worker.drainOnce();
+        runAnotherPass();
+
+        assertThat(job.getStatus()).isEqualTo(ImportJob.Status.FAILED);
+        assertThat(job.wasHeldForReview())
+                .as("no holding message, and nothing for an admin to reprocess")
+                .isFalse();
     }
 
     // ------------------------------------------------------- completion notification (Phase B)
