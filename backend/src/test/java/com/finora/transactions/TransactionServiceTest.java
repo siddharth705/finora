@@ -648,6 +648,43 @@ class TransactionServiceTest {
     }
 
     @Test
+    void update_editingTheDescription_reTypesTheCounterparty() {
+        // The counterparty is derived from the narration, so an edit to the narration has to
+        // re-derive it. This is not something the backfill sweep can clean up later: the row
+        // already carries the current classifier version, so the sweep will never look at it again
+        // and a stale counterparty would be permanent.
+        UUID txnId = UUID.randomUUID();
+        Transaction existing = ownedTransaction(txnId, userId);
+        existing.applyCounterpartyTyping("UPI-PAYTMQR281005-mer@paytm-REF91");
+        assertThat(existing.getCounterpartyType()).isEqualTo(com.finora.util.CounterpartyType.BUSINESS);
+        when(transactionRepository.findById(txnId)).thenReturn(Optional.of(existing));
+
+        var req = new TransactionDto.UpdateRequest(null, "UPI-SUNIL VERMA-sampleuser@ybl-REF92",
+                null, null, null, null, null, null);
+        transactionService.update(userId, txnId, req);
+
+        assertThat(existing.getCounterpartyType()).isEqualTo(com.finora.util.CounterpartyType.PERSON);
+        assertThat(existing.getCounterpartyKey()).isEqualTo("vpa:sampleuser");
+    }
+
+    @Test
+    void update_leavingTheDescriptionAlone_leavesTheCounterpartyAlone() {
+        // The other half: an edit to notes or tags says nothing about who was on the other side,
+        // and must not cause a re-derivation that could differ from what is stored.
+        UUID txnId = UUID.randomUUID();
+        Transaction existing = ownedTransaction(txnId, userId);
+        existing.applyCounterpartyTyping("UPI-PAYTMQR281005-mer@paytm-REF93");
+        when(transactionRepository.findById(txnId)).thenReturn(Optional.of(existing));
+
+        var req = new TransactionDto.UpdateRequest(null, null, null, null, null, null,
+                "Reimbursed by roommate", null);
+        transactionService.update(userId, txnId, req);
+
+        assertThat(existing.getCounterpartyType()).isEqualTo(com.finora.util.CounterpartyType.BUSINESS);
+        assertThat(existing.getCounterpartyKey()).isEqualTo("vpa:mer");
+    }
+
+    @Test
     void updateCategory_marksCategoryAsManuallySet() {
         UUID txnId = UUID.randomUUID();
         Transaction existing = ownedTransaction(txnId, userId);

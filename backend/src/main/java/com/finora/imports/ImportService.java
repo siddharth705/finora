@@ -24,8 +24,6 @@ import com.finora.imports.product.ProductIdentity;
 import com.finora.imports.product.ProductIdentityResolver;
 import com.finora.security.OwnershipGuard;
 import com.finora.service.CategorizationService;
-import com.finora.util.CounterpartyClassifier;
-import com.finora.util.CounterpartyIdentity;
 import com.finora.service.RecurringService;
 import com.finora.service.ReconciliationService;
 import com.finora.util.CategoryRules;
@@ -898,12 +896,12 @@ public class ImportService {
             UUID merchantId = categorizationService.resolveMerchantId(userId, row.description());
             t.setMerchantId(merchantId);
             // Same two calls as TransactionService.create, on the same field. Both paths type from
-            // the raw narration with no branching, so a row cannot be typed one way at import and
-            // another way when created by hand -- the divergence bug #743's review found between
-            // suggest() and suggestReadOnly() is exactly what that guarantee is protecting against.
-            t.setCounterpartyType(CounterpartyClassifier.classify(row.description()));
-            String counterpartyKey = CounterpartyIdentity.keyOf(row.description());
-            t.setCounterpartyKey(counterpartyKey.isBlank() ? null : counterpartyKey);
+            // The same single derivation TransactionService.create and the backfill sweep use --
+            // see CounterpartyTyping for why it is shared rather than spelled out three times. A row
+            // cannot be typed one way at import, another when created by hand, and a third when
+            // backfilled; the divergence #743's review found between suggest() and
+            // suggestReadOnly() is exactly what that structure is protecting against.
+            t.applyCounterpartyTyping(row.description());
             // Collected, not applied. Applying merchant learning here is what Bug 02 was: one
             // confirmation per row, inside this transaction, where a single lost race against
             // UNIQUE(user_id, merchant_id, category_id) rolled back every transaction in a
