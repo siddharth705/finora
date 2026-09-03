@@ -379,7 +379,7 @@ describe('Dashboard — Recent Transactions icon/color', () => {
           date: '2026-08-20', description: 'Vet visit', merchant: 'Local Vet Clinic',
           paymentMethod: 'UPI', amount: 1200, type: 'EXPENSE', tags: [], notes: null,
           reconciliationStatus: 'OK', recurring: false, needsCategoryReview: false,
-          categoryManuallySet: false,
+          categoryManuallySet: false, counterpartyType: 'UNKNOWN',
         },
       ],
       page: 0, size: 4, totalElements: 1, totalPages: 1,
