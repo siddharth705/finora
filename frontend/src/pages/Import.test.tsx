@@ -45,7 +45,7 @@ import Import from './Import';
 import { AuthProvider } from '../context/AuthContext';
 import { importApi, importJobsApi, statementImportsApi, categoriesApi, accountsApi, type ImportJobProgress } from '../api/endpoints';
 import type { Account, StagedAccountSection } from '../types';
-import { PDF_PASSWORD_REQUIRED, PDF_PASSWORD_INVALID, NO_HEADER_DETECTED, NO_TRANSACTIONS_FOUND, SCANNED_OCR_REQUIRED, CORRUPT_PDF, IMPORT_SESSION_ALREADY_CONFIRMED } from '../api/errorCodes';
+import { PDF_PASSWORD_REQUIRED, PDF_PASSWORD_INVALID, NO_HEADER_DETECTED, NO_TRANSACTIONS_FOUND, NO_ACTIVITY_IN_PERIOD, SCANNED_OCR_REQUIRED, CORRUPT_PDF, IMPORT_SESSION_ALREADY_CONFIRMED } from '../api/errorCodes';
 import { IMPORT_FAILURE_MESSAGES } from '../api/importFailureMessages';
 import type { DetectedAccountInfo } from '../types';
 
@@ -540,6 +540,7 @@ describe('Import — failure UX contract', () => {
   it.each([
     ['no transaction table found', NO_HEADER_DETECTED],
     ['a table was found but nothing staged', NO_TRANSACTIONS_FOUND],
+    ['the statement itself states zero activity', NO_ACTIVITY_IN_PERIOD],
     ['a scanned/image-only PDF', SCANNED_OCR_REQUIRED],
     ['a corrupt/truncated PDF', CORRUPT_PDF],
   ])('shows the contract message, not the server message, for %s', async (_label, code) => {
@@ -570,6 +571,25 @@ describe('Import — failure UX contract', () => {
     )).closest('p');
     expect(actionRequiredBanner?.className).toContain('text-warning');
     expect(actionRequiredBanner?.className).not.toContain('text-danger');
+  });
+
+  /**
+   * The whole point of NO_ACTIVITY_IN_PERIOD: the backend sends userActionRequired=true for it
+   * specifically so this reads as calm/informational, not a red failure -- see ErrorCode.java's
+   * own comment on that choice. A regression here would silently undo the one observable effect
+   * this code change was built to have.
+   */
+  it('colors the banner warning, not danger, for NO_ACTIVITY_IN_PERIOD', async () => {
+    vi.mocked(importApi.stagePdf).mockReset().mockRejectedValue(rejectWithCode(NO_ACTIVITY_IN_PERIOD, true));
+    const user = userEvent.setup();
+    renderImport();
+    await pickAndUploadPdf(user);
+
+    const banner = (await screen.findByText(
+      IMPORT_FAILURE_MESSAGES[NO_ACTIVITY_IN_PERIOD]
+    )).closest('p');
+    expect(banner?.className).toContain('text-warning');
+    expect(banner?.className).not.toContain('text-danger');
   });
 
   it('colors the banner danger, not warning, for CORRUPT_PDF', async () => {

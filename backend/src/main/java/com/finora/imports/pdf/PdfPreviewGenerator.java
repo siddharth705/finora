@@ -13,6 +13,7 @@ import com.finora.imports.CsvParser;
 import com.finora.imports.pdf.StatementSummaryExtractor.PrintedSummary;
 import com.finora.imports.pdf.CreditCardSummaryExtractor.CreditCardSummaryEvidence;
 import com.finora.imports.DocumentContext;
+import com.finora.imports.ExplicitZeroActivityDetector;
 import com.finora.imports.RowKind;
 import com.finora.imports.TransactionNormalizer;
 import com.finora.imports.product.ProductAttributeExtractor;
@@ -439,6 +440,15 @@ public class PdfPreviewGenerator {
         // PreviewGenerator's identical hoist and MerchantIndex's own doc comment.
         MerchantIndex merchantIndex = transactionNormalizer.merchantIndexFor(userId);
         List<Map<String, String>> sectionRows = section.rows();
+        // Checked once, up front, against the RAW located rows -- before the loop below decides
+        // what any of them mean transactionally. A row can state the statement's own zero-activity
+        // claim and still fail every classification below (see ExplicitZeroActivityDetector's own
+        // doc comment for why it does, on the real evidencing document); this must not depend on
+        // that loop's outcome, since the loop staging zero rows is exactly the situation this
+        // exists to explain.
+        if (ExplicitZeroActivityDetector.anyRowDeclaresZeroTransactionCount(sectionRows)) {
+            ctx.recordExplicitZeroActivityDeclared();
+        }
         for (int i = 0; i < sectionRows.size(); i++) {
             Map<String, String> row = sectionRows.get(i);
             // 1-based, within this section -- same convention as PreviewGenerator's CSV path.
