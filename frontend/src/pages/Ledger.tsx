@@ -7,6 +7,7 @@ import { AskOnceCard } from '../components/AskOnceCard';
 import { CategoryCombobox } from '../components/CategoryCombobox';
 import { CategoryCreateEditPanel } from '../components/CategoryCreateEditPanel';
 import { MerchantGroupReviewCard } from '../components/MerchantGroupReviewCard';
+import { CounterpartyGroupReviewCard } from '../components/CounterpartyGroupReviewCard';
 import { MerchantLogo } from '../components/MerchantLogo';
 import type { Transaction } from '../types';
 import { counterpartyLabel } from '../lib/counterpartyLabel';
@@ -150,8 +151,12 @@ export default function Ledger() {
       {/* Moved here from the Dashboard: transaction category review belongs with the
           transactions themselves, not mixed into an at-a-glance financial overview — see
           AskOnceCard's own doc comment for what it does. Groups (bigger wins) before
-          individual items. */}
+          individual items. Merchant grouping first: a merchant match already implies a strong
+          category guess, a stronger signal than a counterparty grouping can offer -- and the two
+          cards partition the same backlog rather than overlap, see CounterpartyGroupReviewCard's
+          own doc for why. */}
       <MerchantGroupReviewCard />
+      <CounterpartyGroupReviewCard />
       <AskOnceCard />
 
       {error && <p className="text-danger text-sm">{error}</p>}

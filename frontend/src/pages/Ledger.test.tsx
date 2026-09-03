@@ -27,6 +27,12 @@ vi.mock('../components/MerchantGroupReviewCard', () => ({
   MerchantGroupReviewCard: () => <div data-testid="merchant-group-review-card" />,
 }));
 
+// Same reasoning as MerchantGroupReviewCard just above: the real component calls
+// transactionsApi.groupsNeedsReviewByCounterparty, undefined on the mock above.
+vi.mock('../components/CounterpartyGroupReviewCard', () => ({
+  CounterpartyGroupReviewCard: () => <div data-testid="counterparty-group-review-card" />,
+}));
+
 function txn(overrides: Partial<Transaction> = {}): Transaction {
   return {
     id: 'txn-1',
@@ -413,6 +419,11 @@ describe('Ledger — merchant group review card', () => {
   it('renders the merchant group review card above the transaction list', async () => {
     renderLedger();
     expect(await screen.findByTestId('merchant-group-review-card')).toBeInTheDocument();
+  });
+
+  it('renders the counterparty group review card too, after the merchant one', async () => {
+    renderLedger();
+    expect(await screen.findByTestId('counterparty-group-review-card')).toBeInTheDocument();
   });
 });
 
