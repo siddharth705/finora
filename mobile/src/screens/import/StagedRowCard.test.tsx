@@ -20,7 +20,7 @@ const match = (over: Partial<DuplicateMatch> = {}): DuplicateMatch => ({
   existingImportedAt: '2026-07-11T09:00:00Z',
   matchCount: 1,
   confidence: 'EXACT',
-  reason: 'Same date, amount and description as a transaction already in your ledger.',
+  reason: 'Same date and amount, and a matching description, as a transaction already in your ledger.',
   ...over,
 });
 

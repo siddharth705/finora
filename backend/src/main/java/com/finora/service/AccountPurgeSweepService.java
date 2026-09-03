@@ -8,6 +8,7 @@ import com.finora.goals.GoalRepository;
 import com.finora.imports.analysis.StatementAnalysisSessionRepository;
 import com.finora.integrations.google.GmailConnectionRepository;
 import com.finora.integrations.google.GmailConnectionService;
+import com.finora.notification.repository.NotificationRepository;
 import com.finora.repository.AccountReactivationTokenRepository;
 import com.finora.repository.EmailVerificationTokenRepository;
 import com.finora.repository.AccountRepository;
@@ -165,6 +166,7 @@ public class AccountPurgeSweepService {
     private final StatementImportRepository statementImportRepository;
     private final StatementImportService statementImportService;
     private final StatementAnalysisSessionRepository statementAnalysisSessionRepository;
+    private final NotificationRepository notificationRepository;
     private final AuditService auditService;
     private final PasswordEncoder passwordEncoder;
     private final TransactionTemplate transactionTemplate;
@@ -204,6 +206,7 @@ public class AccountPurgeSweepService {
                                      StatementImportRepository statementImportRepository,
                                      StatementImportService statementImportService,
                                      StatementAnalysisSessionRepository statementAnalysisSessionRepository,
+                                     NotificationRepository notificationRepository,
                                      AuditService auditService,
                                      PasswordEncoder passwordEncoder,
                                      TransactionTemplate transactionTemplate) {
@@ -242,6 +245,7 @@ public class AccountPurgeSweepService {
         this.statementImportRepository = statementImportRepository;
         this.statementImportService = statementImportService;
         this.statementAnalysisSessionRepository = statementAnalysisSessionRepository;
+        this.notificationRepository = notificationRepository;
         this.auditService = auditService;
         this.passwordEncoder = passwordEncoder;
         this.transactionTemplate = transactionTemplate;
@@ -385,6 +389,11 @@ public class AccountPurgeSweepService {
             emailVerificationTokenRepository.deleteByUserId(userId);
             refreshTokenRepository.deleteByUserId(userId);
             userSettingsRepository.deleteByUserId(userId);
+            // V125 is a new user-linked table this sweep didn't know about yet, same as D-28's
+            // subscriptions/payments/wallet_ledger before it -- V137 gives it its own ON DELETE
+            // CASCADE too, but that alone never fires: this method anonymizes users, it never
+            // issues a raw DELETE FROM users for the CASCADE to trigger off of.
+            notificationRepository.deleteByUserId(userId);
 
             // Evidence outlives the account (no FK, by design -- see this class's own doc on why),
             // but two of its columns aren't evidence, they're personal. See
