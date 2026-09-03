@@ -182,7 +182,7 @@ public class ImportJob implements com.finora.imports.storage.StoredStatement {
      * <p>Every one of these is calculated during staging and shown to the user today, then
      * discarded. Nothing gates on them and this does not change that -- the point is that "how
      * often would a trust rule have fired?" is currently unanswerable, so any threshold chosen for
-     * one would be a guess. See V138.
+     * one would be a guess. See V141.
      *
      * <p>All nullable with no default: NULL means "predates telemetry", which has to stay
      * distinguishable from a recorded clean result.
