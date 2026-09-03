@@ -49,7 +49,7 @@ export function SectionCard({ icon, title, subtitle, children }: { icon: ReactNo
       <div className="flex items-start gap-3 mb-5">
         <div className="w-9 h-9 rounded-lg bg-primary/10 text-primary flex items-center justify-center flex-shrink-0">{icon}</div>
         <div>
-          <h2 className="font-serif text-lg font-semibold text-ink">{title}</h2>
+          <h2 className="text-lg font-semibold text-ink">{title}</h2>
           <p className="text-sm text-muted">{subtitle}</p>
         </div>
       </div>
