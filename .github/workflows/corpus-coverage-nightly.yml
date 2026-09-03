@@ -1,0 +1,84 @@
+name: Backend corpus coverage (nightly)
+
+# CapabilityCorpusCoverageTest (@Tag("nightly")) moved here from every PR/merge, per
+# docs/architecture/infrastructure/ci-cd-deferred-work.md's RFC-CI-02 follow-up: it's a coverage
+# METRIC ("how many declared capabilities have at least one committed trace"), not a correctness or
+# security gate -- see the test's own doc comment for why it, specifically, was the one candidate
+# out of four slow corpus-driven tests that was safe to defer. The other three stayed on every
+# run because deferring them risks a real correctness or PII regression sitting on main for a day,
+# not just a stale metric.
+#
+# No Docker, no Testcontainers, no Postgres service: this test carries no @SpringBootTest and no
+# database dependency (confirmed before moving it) -- it runs the PDF locator directly against
+# committed trace fixtures in memory. Keeping this job that lightweight is deliberate, so a future
+# nightly-tagged test that DOES need the database doesn't get to assume this job already provides
+# it without re-checking.
+#
+# 45 3 * * *, offset from e2e-nightly.yml (03:00), maestro-nightly.yml (03:15) and
+# gitleaks-nightly.yml (03:30) for the same reason those three are offset from each other: keeping
+# schedules visibly distinct in the Actions history on GitHub-hosted runners with no shared-machine
+# contention to avoid.
+on:
+  schedule:
+    - cron: '45 3 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: corpus-coverage-nightly
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  corpus-coverage:
+    name: Corpus coverage (nightly)
+    runs-on: ubuntu-latest
+    # A hang detector, not a performance budget -- this test's own corpus is small and in-memory,
+    # so a run anywhere near this long means something is actually stuck, not just slow.
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-java@v5
+        with:
+          java-version: '25'
+          distribution: 'temurin'
+          cache: 'maven'
+
+      # -Pnightly-tests (backend/pom.xml) restricts surefire to ONLY @Tag("nightly") tests, rather
+      # than re-running the whole ~356-class unit suite here too. A -D command-line override was
+      # tried first and did not work reliably (verified empirically -- see the profile's own
+      # comment in pom.xml), which is why this is a profile instead.
+      - name: Run nightly-tagged tests
+        working-directory: backend
+        run: ./mvnw -B --no-transfer-progress -Pnightly-tests test
+
+      # Mirrors ci.yml's Test summary safeguard in spirit, scaled to this job: a nightly job that
+      # silently stops running its one test (a bad -Dgroups value, a tag typo after a rename) would
+      # report green forever with nothing to notice, the same shape of incident
+      # scripts/summarize-surefire.py exists to catch on the main suite.
+      - name: Confirm the nightly test actually ran
+        if: ${{ !cancelled() }}
+        run: |
+          report="backend/target/surefire-reports/TEST-com.finora.imports.CapabilityCorpusCoverageTest.xml"
+          if [ ! -f "$report" ]; then
+            echo "BLOCKED: $report does not exist -- CapabilityCorpusCoverageTest did not run."
+            echo "Check -Dgroups=nightly above still matches its @Tag(\"nightly\"), and that the"
+            echo "class name/package below still matches reality if either was ever renamed."
+            exit 1
+          fi
+          tests=$(grep -o 'tests="[0-9]*"' "$report" | head -1 | grep -o '[0-9]*')
+          if [ "${tests:-0}" -eq 0 ]; then
+            echo "BLOCKED: $report exists but ran 0 tests."
+            exit 1
+          fi
+          echo "CapabilityCorpusCoverageTest ran $tests test(s)."
+
+      - name: Upload surefire report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: corpus-coverage-surefire-report
+          path: backend/target/surefire-reports/
+          retention-days: 14
