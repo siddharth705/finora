@@ -597,4 +597,40 @@ class ImportJobTest {
         assertThatThrownBy(() -> job().resolveWithoutFix(Instant.now()))
                 .isInstanceOf(IllegalStateException.class);
     }
+
+    // ------------------------------------------------------------------ trust telemetry
+
+    /** Telemetry is evidence, not a decision -- it must not touch anything the worker branches on. */
+    @Test
+    void verificationTelemetry_doesNotChangeTheJobsOwnLifecycle() {
+        ImportJob job = job();
+        job.markClaimed("worker", Instant.now());
+
+        job.recordVerificationTelemetry(
+                com.finora.imports.ImportReliabilityStatus.NEEDS_ATTENTION, "OCR", true, 3, 1, 2, "sha");
+
+        assertThat(job.getStatus()).isEqualTo(ImportJob.Status.PARSING);
+        assertThat(job.wasHeldForReview()).isFalse();
+        assertThat(job.getFailureCode()).isNull();
+        assertThat(job.getReliabilityStatus())
+                .isEqualTo(com.finora.imports.ImportReliabilityStatus.NEEDS_ATTENTION);
+        assertThat(job.getParserVersion()).isEqualTo("sha");
+    }
+
+    /**
+     * Null means "predates telemetry" and must stay distinguishable from a recorded clean result --
+     * otherwise every historical row silently claims to have been verified.
+     */
+    @Test
+    void verificationTelemetry_keepsUnobservedDistinctFromClean() {
+        ImportJob job = job();
+
+        job.recordVerificationTelemetry(null, null, null, null, null, null, "sha");
+
+        assertThat(job.getReliabilityStatus()).isNull();
+        assertThat(job.getVerificationFindingsCount()).isNull();
+        assertThat(job.getParserVersion())
+                .as("the parser version is known even when nothing was verified")
+                .isEqualTo("sha");
+    }
 }
