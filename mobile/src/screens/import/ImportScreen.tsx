@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import {
   FlatList, Pressable, StyleSheet, Text, TextInput, View,
 } from 'react-native';
@@ -15,6 +15,8 @@ import { apiErrorCode, toUserMessage } from '../../lib/apiError';
 import { fmtCurrency } from '../../lib/format';
 import { hapticError, hapticSuccess } from '../../lib/haptics';
 import { invalidateFinancialData } from '../../lib/invalidateFinancialData';
+import { newIdempotencyKey } from '../../lib/idempotencyKey';
+import { useSingleFlight } from '../../lib/useSingleFlight';
 import { isPausedCold } from '../../lib/refreshingIndicator';
 import {
   buildNewAccountPayload, buildRowPayload, initialAccountForm, initialCategories,
@@ -45,6 +47,15 @@ export function ImportScreen() {
   const [error, setError] = useState<string | null>(null);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [confirming, setConfirming] = useState(false);
+  const singleFlight = useSingleFlight();
+  // The key for the CURRENT confirm attempt, minted once and deliberately reused across retries of
+  // that same attempt. That is what makes a retry safe rather than duplicating: if the first
+  // request never reached the server the key is unused and the retry proceeds; if it arrived and
+  // committed, the server refuses the replay instead of importing a second copy; and if it arrived
+  // and failed, its claim rolled back in the same transaction, so the retry proceeds too. Cleared
+  // after a successful import and by resetToUpload, so a genuinely new re-import gets a new key --
+  // re-importing the same statement again later is legitimate and must keep working.
+  const attemptKey = useRef<string | null>(null);
 
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [fileFormat, setFileFormat] = useState<StatementFormat | null>(null);
@@ -167,6 +178,8 @@ export function ImportScreen() {
   function resetToUpload() {
     setStep('upload');
     setError(null);
+    // A new import is a new attempt, never a retry of the last one.
+    attemptKey.current = null;
     setUploadProgress(null);
     setSessionId(null);
     setFileFormat(null);
@@ -287,8 +300,20 @@ export function ImportScreen() {
 
   async function confirmImport() {
     if (!reimport && !sessionId) return;
+    // useSingleFlight, not just the `confirming` flag: that flag is STATE, so two presses
+    // dispatched in the same frame both read `confirming === false` and both fire. A ref closes
+    // that window synchronously. It is the client half of the fix -- the server half
+    // (V133/claimReimportAttempt) is what covers the paths no client-side guard can reach: a
+    // retried request whose response was lost, or a second device.
+    await singleFlight(async () => {
+      await runConfirm();
+    });
+  }
+
+  async function runConfirm() {
     setConfirming(true);
     setError(null);
+    if (attemptKey.current === null) attemptKey.current = newIdempotencyKey();
     try {
       // A re-import goes to its own endpoint and is pinned to the account the statement already
       // belongs to -- re-importing into a DIFFERENT account would defeat the point of replaying
@@ -300,6 +325,7 @@ export function ImportScreen() {
             statementOpeningBalance: detected?.openingBalance ?? null,
             statementClosingBalance: detected?.closingBalance ?? null,
             password: reimport.password,
+            idempotencyKey: attemptKey.current ?? undefined,
           })
         : await importApi.confirm({
             sessionId: sessionId!,
@@ -311,6 +337,9 @@ export function ImportScreen() {
           });
       setSummary(result);
       setStep('summary');
+      // Only on success: a failed attempt keeps its key so a retry is recognised as the SAME
+      // attempt rather than becoming a second one the server would happily import.
+      attemptKey.current = null;
       invalidateFinancialData(queryClient);
       // The moment the import actually lands, not when the button is pressed -- firing before
       // the request resolves would celebrate a network failure too.

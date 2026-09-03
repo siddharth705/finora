@@ -8,7 +8,14 @@ import com.finora.imports.storage.StatementContentService;
 import com.finora.imports.storage.StatementIntegrityException;
 import com.finora.imports.storage.StatementStorageException;
 import com.finora.observability.AlertSeverity;
+import com.finora.dto.ImportDto;
 import com.finora.observability.WorkerObservability;
+import com.finora.notification.api.NotificationRequest;
+import com.finora.notification.api.NotificationService;
+import com.finora.notification.domain.NotificationCategory;
+import com.finora.notification.domain.NotificationChannel;
+import com.finora.notification.domain.NotificationPriority;
+import com.finora.notification.domain.NotificationType;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -24,6 +31,8 @@ import java.util.function.Consumer;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
@@ -44,6 +53,7 @@ class ImportJobWorkerTest {
     private ImportService importService;
     private StatementContentService statementContentService;
     private ImportStageRecorder stageRecorder;
+    private NotificationService notificationService;
     private ImportJobWorker worker;
 
     private ImportJob job;
@@ -59,8 +69,10 @@ class ImportJobWorkerTest {
         stageRecorder = mock(ImportStageRecorder.class);
         WorkerObservability observability = new WorkerObservability(new SimpleMeterRegistry());
 
+        notificationService = mock(NotificationService.class);
+
         worker = new ImportJobWorker(jobStore, importService, statementContentService, observability,
-                stageRecorder, new ExceptionClassifier());
+                stageRecorder, new ExceptionClassifier(), notificationService);
 
         job = new ImportJob(UUID.randomUUID(), "statement.csv", "hash", "objects/key", "CSV");
         job.markClaimed("worker", Instant.now());
@@ -146,7 +158,9 @@ class ImportJobWorkerTest {
 
         assertThat(job.getStatus())
                 .as("second occurrence must dead-letter -- not the 5-attempt RETRY budget a plain "
-                        + "StatementStorageException gets")
+                        + "StatementStorageException gets. FAILED, not HELD_FOR_REVIEW: an "
+                        + "integrity mismatch is a storage fault, and the triage queue's only "
+                        + "action re-reads the same wrong bytes")
                 .isEqualTo(ImportJob.Status.FAILED);
         assertThat(job.getAttemptCount()).isEqualTo(2);
         assertThat(job.getFailureCode()).isEqualTo("StatementIntegrityException");
@@ -174,8 +188,9 @@ class ImportJobWorkerTest {
         worker.drainOnce();
 
         assertThat(job.getStatus())
-                .as("second occurrence must dead-letter -- not the 5-attempt RETRY budget")
-                .isEqualTo(ImportJob.Status.FAILED);
+                .as("second occurrence must dead-letter -- not the 5-attempt RETRY budget -- and "
+                        + "an unclassified dead-letter is exactly the case that is held for triage")
+                .isEqualTo(ImportJob.Status.HELD_FOR_REVIEW);
         assertThat(job.getAttemptCount()).isEqualTo(2);
         assertThat(job.getFailureCode())
                 .as("no ErrorCode -- falls back to the exception's simple class name")
@@ -232,5 +247,251 @@ class ImportJobWorkerTest {
         assertThat(job.getLastError())
                 .as("ALREADY_FINISHED must leave lastError untouched, regardless of policy")
                 .isNull();
+    }
+
+    // ------------------------------------------------------- held-for-review routing (Phase B)
+
+    /** A staging result the worker can complete on, with the parser's detected bank name. */
+    private static ImportDto.StagingSessionResponse staged(String bankName) {
+        // Shape copied from ImportSessionServiceTest.sampleDetected() -- only suggestedName
+        // matters here, and every other component is deliberately null.
+        ImportDto.DetectedAccountInfo detected = bankName == null ? null
+                : new ImportDto.DetectedAccountInfo(bankName, "SAVINGS", null, null, null, null,
+                        null, null, null, null, null, null, null, null, "SAVINGS", 0.0, false,
+                        List.of(), null, null, null, null, null, null, null, null);
+        return new ImportDto.StagingSessionResponse(
+                UUID.randomUUID(),
+                new ImportDto.StagingResponse(List.of(), 10, 0, detected, List.of()));
+    }
+
+    private static ImportDto.StagingSessionResponse staged() {
+        return staged("HDFC Bank");
+    }
+
+    /** Re-claims the job and runs another pass, exactly as the worker's own poll loop would. */
+    private void runAnotherPass() {
+        job.markClaimed("worker", Instant.now());
+        worker.drainOnce();
+    }
+
+    /**
+     * A known ErrorCode failure stays exactly where it is today.
+     *
+     * <p>The user can fix a wrong password or an unsupported file themselves, and the message
+     * already tells them how. Routing it to an admin queue would bury genuine parser gaps under
+     * work no admin can do anything about.
+     */
+    @Test
+    void aKnownErrorCodeFailureIsNotHeld() throws IOException {
+        when(importService.parseAndStageWithSession(any(), any(), any()))
+                .thenThrow(new ApiException(ErrorCode.IMPORT_NO_HEADER_DETECTED));
+
+        worker.drainOnce();
+
+        assertThat(job.getStatus()).isEqualTo(ImportJob.Status.FAILED);
+        assertThat(job.wasHeldForReview()).isFalse();
+    }
+
+    /**
+     * Exhausted transient-infrastructure retries stay in FAILED too.
+     *
+     * <p>Storage being down is not a parser gap, and five attempts against it prove nothing an
+     * admin could act on. Holding these would fill the triage queue with the one failure class
+     * that fixes itself.
+     */
+    @Test
+    void anExhaustedInfrastructureRetryIsNotHeld() throws IOException {
+        when(importService.parseAndStageWithSession(any(), any(), any()))
+                .thenThrow(new StatementStorageException("R2 unavailable"));
+
+        worker.drainOnce();
+        while (job.getStatus() == ImportJob.Status.QUEUED) {
+            runAnotherPass();
+        }
+
+        assertThat(job.getStatus()).isEqualTo(ImportJob.Status.FAILED);
+        assertThat(job.getAttemptCount()).isEqualTo(ImportJob.MAX_ATTEMPTS);
+        assertThat(job.wasHeldForReview()).isFalse();
+    }
+
+    /** One retry still happens before the hold -- a genuine transient blip is not a parser gap. */
+    @Test
+    void anUnclassifiedFailureWithAttemptsRemainingIsNotYetHeld() throws IOException {
+        when(importService.parseAndStageWithSession(any(), any(), any()))
+                .thenThrow(new IllegalStateException("no header row found"));
+
+        worker.drainOnce();
+
+        assertThat(job.getStatus()).isEqualTo(ImportJob.Status.QUEUED);
+        assertThat(job.wasHeldForReview()).isFalse();
+    }
+
+    /** The held job carries the curated code the admin queue triages on. */
+    @Test
+    void aHeldJobKeepsTheFailureCodeThatCausedTheHold() throws IOException {
+        when(importService.parseAndStageWithSession(any(), any(), any()))
+                .thenThrow(new IllegalStateException("no header row found"));
+
+        worker.drainOnce();
+        runAnotherPass();
+
+        assertThat(job.getStatus()).isEqualTo(ImportJob.Status.HELD_FOR_REVIEW);
+        assertThat(job.getFailureCode()).isEqualTo("IllegalStateException");
+        assertThat(job.wasHeldForReview()).isTrue();
+    }
+
+    /**
+     * A corrupt stored object is a storage incident, not a parser gap.
+     *
+     * <p>It satisfies the hold rule -- unclassified policy, budget spent -- and is deliberately
+     * excluded anyway. Reprocess would re-read the same key and get the same wrong bytes, the
+     * holding message would promise a fix that may never come, and a bulk corruption would fill a
+     * parser-remediation queue with one storage incident. The ERROR alert fires either way, so
+     * nothing is hidden by keeping it in FAILED.
+     */
+    @Test
+    void nonRemediableFailuresAreNotHeldForReview() throws IOException {
+        when(statementContentService.read(any()))
+                .thenThrow(new StatementIntegrityException("hash mismatch for " + job.getContentHash()));
+
+        worker.drainOnce();
+        runAnotherPass();
+
+        assertThat(job.getStatus()).isEqualTo(ImportJob.Status.FAILED);
+        assertThat(job.wasHeldForReview())
+                .as("no holding message, and nothing for an admin to reprocess")
+                .isFalse();
+    }
+
+    /**
+     * The exclusion has to survive wrapping, because wrapping is idiomatic here.
+     *
+     * <p>GzipCompression, FilesystemStatementStorage and R2StatementStorage all rethrow as
+     * StatementStorageException -- StatementIntegrityException's own parent -- so a future catch on
+     * the read path is a realistic edit, not a hypothetical one. A top-level instanceof would fail
+     * open there: integrity failures would quietly rejoin the triage queue and nothing would say
+     * so. This is the test that notices.
+     */
+    @Test
+    void aWrappedIntegrityFailureIsStillNotHeld() throws IOException {
+        when(statementContentService.read(any()))
+                .thenThrow(new IllegalStateException("while reading statement",
+                        new StatementIntegrityException("hash mismatch for " + job.getContentHash())));
+
+        worker.drainOnce();
+        runAnotherPass();
+
+        assertThat(job.getStatus()).isEqualTo(ImportJob.Status.FAILED);
+        assertThat(job.wasHeldForReview())
+                .as("a cause-chain walk, not a top-level type test")
+                .isFalse();
+    }
+
+    /** The rule is "operator-remediable failures are held", so the ordinary parser gap still is. */
+    @Test
+    void remediableFailuresAreStillHeldForReview() throws IOException {
+        when(importService.parseAndStageWithSession(any(), any(), any()))
+                .thenThrow(new IllegalStateException("no header row found"));
+
+        worker.drainOnce();
+        runAnotherPass();
+
+        assertThat(job.getStatus()).isEqualTo(ImportJob.Status.HELD_FOR_REVIEW);
+    }
+
+    // ------------------------------------------------------- completion notification (Phase B)
+
+    /**
+     * The user who was told "we're running additional checks" is the one who gets told it worked.
+     *
+     * <p>Asserted on the request rather than on a delivery, because {@code NotificationService} is
+     * a transactional outbox: the worker's job is to write the row inside the transaction that
+     * completes the import, and the dispatcher's job is to send it.
+     */
+    @Test
+    void aPreviouslyHeldJobThatCompletesNotifiesTheUserOnPushAndEmail() throws IOException {
+        when(importService.parseAndStageWithSession(any(), any(), any()))
+                .thenThrow(new IllegalStateException("no header row found"))
+                .thenThrow(new IllegalStateException("no header row found"))
+                .thenReturn(staged());
+
+        worker.drainOnce();
+        runAnotherPass();
+        assertThat(job.getStatus()).isEqualTo(ImportJob.Status.HELD_FOR_REVIEW);
+
+        // The parser gap is fixed and an admin reprocesses the job.
+        job.returnToQueueForReprocess(Instant.now());
+        runAnotherPass();
+
+        assertThat(job.getStatus()).isEqualTo(ImportJob.Status.COMPLETED);
+        org.mockito.ArgumentCaptor<NotificationRequest> captor =
+                org.mockito.ArgumentCaptor.forClass(NotificationRequest.class);
+        verify(notificationService).request(captor.capture());
+        NotificationRequest sent = captor.getValue();
+        assertThat(sent.type()).isEqualTo(NotificationType.IMPORT_STATEMENT_READY);
+        assertThat(sent.channels())
+                .containsExactlyInAnyOrder(NotificationChannel.PUSH, NotificationChannel.EMAIL);
+        assertThat(sent.category()).isEqualTo(NotificationCategory.FINANCIAL);
+        assertThat(sent.priority())
+                .as("CRITICAL and HIGH are reserved for security events")
+                .isEqualTo(NotificationPriority.NORMAL);
+        assertThat(sent.userId()).isEqualTo(job.getUserId());
+        assertThat(sent.notificationKey())
+                .as("derived from the job, so a redelivery collides on the outbox key rather than "
+                        + "sending twice")
+                .contains(job.getId().toString());
+        assertThat(sent.params())
+                .as("the parser's own detected bank name, not a placeholder -- the template reads "
+                        + "\"Your {{bank}} statement is ready\"")
+                .containsEntry("bank", "HDFC Bank");
+    }
+
+    /**
+     * A statement whose bank the parser could not name still sends a readable notification.
+     *
+     * <p>The template interpolates {{bank}} unconditionally, so a null here would either render
+     * the literal braces to the customer or drop the word entirely. "bank" gives "Your bank
+     * statement is ready", which is plain but true.
+     */
+    @Test
+    void anUnidentifiedBankFallsBackToWordingThatStillReads() throws IOException {
+        when(importService.parseAndStageWithSession(any(), any(), any()))
+                .thenThrow(new IllegalStateException("no header row found"))
+                .thenThrow(new IllegalStateException("no header row found"))
+                .thenReturn(staged(null));
+
+        worker.drainOnce();
+        runAnotherPass();
+        job.returnToQueueForReprocess(Instant.now());
+        runAnotherPass();
+
+        org.mockito.ArgumentCaptor<NotificationRequest> captor =
+                org.mockito.ArgumentCaptor.forClass(NotificationRequest.class);
+        verify(notificationService).request(captor.capture());
+        assertThat(captor.getValue().params()).containsEntry("bank", "bank");
+    }
+
+    /** An ordinary first-time success notifies nobody -- we never asked that user to wait. */
+    @Test
+    void anOrdinaryImportThatSucceedsFirstTimeNotifiesNobody() throws IOException {
+        when(importService.parseAndStageWithSession(any(), any(), any())).thenReturn(staged());
+
+        worker.drainOnce();
+
+        assertThat(job.getStatus()).isEqualTo(ImportJob.Status.COMPLETED);
+        verify(notificationService, never()).request(any());
+    }
+
+    /** A held job that has not been reprocessed yet has nothing to announce. */
+    @Test
+    void aHeldJobNotifiesNobodyUntilItActuallyCompletes() throws IOException {
+        when(importService.parseAndStageWithSession(any(), any(), any()))
+                .thenThrow(new IllegalStateException("no header row found"));
+
+        worker.drainOnce();
+        runAnotherPass();
+
+        assertThat(job.getStatus()).isEqualTo(ImportJob.Status.HELD_FOR_REVIEW);
+        verify(notificationService, never()).request(any());
     }
 }

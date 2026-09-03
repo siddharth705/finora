@@ -199,3 +199,66 @@ describe('ImportProgress — poll schedule', () => {
     expect(api.progress).toHaveBeenCalledTimes(2);
   });
 });
+
+/**
+ * The held state, rendered.
+ *
+ * The lifecycle rules behind it are asserted in `importJob.test.ts`; what these cover is the thing
+ * a user actually sees, which is where the feature either keeps its promise or does not. A held
+ * import must read as work in progress on our side: no error styling, nothing to press, and no
+ * spinner implying something is running right now.
+ */
+describe('ImportProgress — held for review', () => {
+  const heldJob = () => job({ status: 'HELD_FOR_REVIEW', userStatus: 'HELD_FOR_REVIEW' });
+
+  it('shows the holding message instead of a failure', async () => {
+    api.progress.mockResolvedValue(heldJob());
+    render(<ImportProgress jobId="job-1" onReady={vi.fn()} onGaveUp={vi.fn()} />);
+
+    await advance(POLL_SCHEDULE_MS[0] + 1);
+
+    expect(screen.getByText('Running additional checks')).toBeInTheDocument();
+    expect(screen.getByText(/additional checks on this statement/i)).toBeInTheDocument();
+    expect(screen.getByText(/no action needed from you right now/i)).toBeInTheDocument();
+  });
+
+  it('offers nothing to press — there is nothing the user can do', async () => {
+    api.progress.mockResolvedValue(heldJob());
+    render(<ImportProgress jobId="job-1" onReady={vi.fn()} onGaveUp={vi.fn()} />);
+
+    await advance(POLL_SCHEDULE_MS[0] + 1);
+
+    expect(screen.queryByRole('button', { name: /cancel/i })).not.toBeInTheDocument();
+  });
+
+  it('stops polling, rather than spinning for however long triage takes', async () => {
+    api.progress.mockResolvedValue(heldJob());
+    render(<ImportProgress jobId="job-1" onReady={vi.fn()} onGaveUp={vi.fn()} />);
+
+    await advance(POLL_SCHEDULE_MS[0] + 1);
+    expect(api.progress).toHaveBeenCalledTimes(1);
+
+    // A held job waits on a person. The update arrives by push and email, not by this poll.
+    await advance(60_000);
+    expect(api.progress).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows no progress bar — nothing is running', async () => {
+    api.progress.mockResolvedValue(heldJob());
+    render(<ImportProgress jobId="job-1" onReady={vi.fn()} onGaveUp={vi.fn()} />);
+
+    await advance(POLL_SCHEDULE_MS[0] + 1);
+
+    expect(screen.queryByRole('progressbar')).not.toBeInTheDocument();
+  });
+
+  it('never tells a held user their import is done', async () => {
+    const onReady = vi.fn();
+    api.progress.mockResolvedValue(heldJob());
+    render(<ImportProgress jobId="job-1" onReady={onReady} onGaveUp={vi.fn()} />);
+
+    await advance(POLL_SCHEDULE_MS[0] + 1);
+
+    expect(onReady).not.toHaveBeenCalled();
+  });
+});

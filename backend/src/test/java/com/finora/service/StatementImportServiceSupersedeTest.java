@@ -69,7 +69,8 @@ class StatementImportServiceSupersedeTest {
                 transactionRepository, reconciliationService, recurringService,
                 mock(ImportService.class), auditService, mock(BankManagementService.class),
                 new com.finora.imports.storage.StatementContentService(java.util.Optional.empty(),
-                        mock(com.finora.security.crypto.EncryptionService.class), "", ""));
+                        mock(com.finora.security.crypto.EncryptionService.class), "", ""),
+                mock(com.finora.repository.ReimportConfirmationClaimRepository.class));
     }
 
     private StatementImport statement(UUID id, StatementImport.BalanceApplicationMode mode) {

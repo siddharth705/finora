@@ -479,17 +479,14 @@ describe('Settings', () => {
     it('redirects the browser to the authorization URL returned by connect()', async () => {
       const user = userEvent.setup();
       vi.mocked(gmailApi.connect).mockResolvedValue({ authorizationUrl: 'https://accounts.google.com/o/oauth2/auth?x=1' });
-      const originalHref = window.location.href;
-      // jsdom throws "Not implemented: navigation" on a real assignment -- redefine the property
-      // rather than actually navigating, the same reason clearSessionAndRedirect's own tests do.
-      delete (window as any).location;
-      (window as any).location = { href: '' };
-
+      // src/test/setup.ts stands in for jsdom's missing navigation and records the attempted URL
+      // on window.location.href, so the redirect is asserted directly. This used to hand-roll its
+      // own `delete window.location` replacement, which was never restored -- every test after it
+      // in this file inherited a bare `{ href }` object in place of the real Location.
       renderSettings();
       await user.click(await screen.findByRole('button', { name: /connect gmail/i }));
 
       await waitFor(() => expect(window.location.href).toBe('https://accounts.google.com/o/oauth2/auth?x=1'));
-      (window as any).location = { href: originalHref };
     });
 
     it('shows the connected state with account, sync stats, and actions', async () => {
@@ -634,8 +631,6 @@ describe('Settings', () => {
       const user = userEvent.setup();
       vi.mocked(gmailApi.status).mockResolvedValue(gmailStatus({ connected: false, status: 'REAUTH_REQUIRED', needsReconnect: true }));
       vi.mocked(gmailApi.connect).mockResolvedValue({ authorizationUrl: 'https://accounts.google.com/o/oauth2/auth?x=1' });
-      delete (window as any).location;
-      (window as any).location = { href: '' };
 
       renderSettings();
       await user.click(await screen.findByRole('button', { name: /reconnect gmail/i }));
