@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState } from 'react';
 import {
-  FlatList, Pressable, StyleSheet, Text, TextInput, View,
+  ActivityIndicator, Alert, FlatList, Pressable, ScrollView, StyleSheet, Text, TextInput, View,
 } from 'react-native';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRoute, type RouteProp } from '@react-navigation/native';
@@ -9,13 +9,14 @@ import { Button } from '../../components/Button';
 import { Card, SectionHeading } from '../../components/Card';
 import { OptionPickerModal } from '../../components/OptionPickerModal';
 import { StagedRowCard } from './StagedRowCard';
-import { accountsApi, categoriesApi, importApi, statementImportsApi, type RNFile } from '../../api/endpoints';
+import { accountsApi, categoriesApi, importApi, statementImportsApi, type RNFile, type StagingResult } from '../../api/endpoints';
 import { PDF_PASSWORD_INVALID, PDF_PASSWORD_REQUIRED } from '../../api/errorCodes';
 import { apiErrorCode, toUserMessage } from '../../lib/apiError';
 import { fmtCurrency } from '../../lib/format';
 import { hapticError, hapticSuccess } from '../../lib/haptics';
 import { invalidateFinancialData } from '../../lib/invalidateFinancialData';
 import { newIdempotencyKey } from '../../lib/idempotencyKey';
+import { expiresInLabel, hasExpired } from '../../lib/importSessionExpiry';
 import { useSingleFlight } from '../../lib/useSingleFlight';
 import { isPausedCold } from '../../lib/refreshingIndicator';
 import {
@@ -48,6 +49,24 @@ export function ImportScreen() {
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [confirming, setConfirming] = useState(false);
   const singleFlight = useSingleFlight();
+  const [resumingId, setResumingId] = useState<string | null>(null);
+  const [discardingId, setDiscardingId] = useState<string | null>(null);
+
+  // The unfinished-import list. The server has persisted every staged session since ADR-0002 --
+  // rows, detected account and the original bytes -- and already exposes list/get/discard. Mobile
+  // had all three wired in its API layer with no caller, so an interrupted review looked like total
+  // loss when the work was actually sitting on the server the whole time.
+  // `retry: false`: this is an optional recovery affordance, and a user with nothing unfinished
+  // sees the same empty state either way -- it must never hold up the screen it sits on.
+  const unfinishedQ = useQuery({
+    queryKey: ['import-sessions'],
+    queryFn: () => importApi.listSessions(),
+    retry: false,
+  });
+  // Expired sessions are filtered client-side too, not just server-side: this list is fetched once,
+  // so leaving the screen open is enough for a row to go stale, and offering a resume the server
+  // would refuse is worse than not offering it.
+  const unfinished = (unfinishedQ.data ?? []).filter((sess) => !hasExpired(sess.expiresAt));
   // The key for the CURRENT confirm attempt, minted once and deliberately reused across retries of
   // that same attempt. That is what makes a retry safe rather than duplicating: if the first
   // request never reached the server the key is unused and the retry proceeds; if it arrived and
@@ -231,6 +250,83 @@ export function ImportScreen() {
     await upload(picked.file, false, undefined);
   }
 
+  /**
+   * Everything a staged document contributes to the review step, in one place.
+   *
+   * Extracted because resume needs byte-for-byte the same hydration a fresh upload does -- the
+   * server returns the identical `staging` shape from GET /import/sessions/{id} as it does from
+   * stage. Two copies of this would drift, and the half that drifts is the one nobody tests: a
+   * resumed import quietly losing its detected account, or defaulting to a different one, files
+   * someone's transactions against the wrong balance.
+   */
+  function hydrateReviewFrom(staging: StagingResult) {
+    setRows(staging.rows);
+    setReview(beginReview(staging.rows));
+    setChosenCategory(initialCategories(staging.rows));
+    setUnparseableRows(staging.unparseableRows);
+    setDetected(staging.detectedAccount);
+    setAccountForm(initialAccountForm(staging.detectedAccount));
+
+    // Default to filing into the existing account this statement's own signals actually point
+    // at -- same bank, same account number -- rather than blindly picking the first account in
+    // the list. See matchExistingAccount's own comment for the bug this replaced and why
+    // anything short of a real match deliberately falls back to "create a new account" (a
+    // visible, deletable mistake) rather than guessing at an existing one (a silent, wrong
+    // balance).
+    //
+    // selectedAccountId is cleared, not left alone, when there is no match. Before this change
+    // the 'new' branch was only reachable with zero existing accounts, so a stale id could
+    // never coexist with a populated account list; now it can, and leaving it set would render
+    // the previous import's account as the highlighted, apparently-considered choice the moment
+    // the user tapped "An existing account".
+    const matched = matchExistingAccount(staging.detectedAccount, existingAccounts);
+    setAccountChoice(matched ? 'existing' : 'new');
+    setSelectedAccountId(matched ? matched.id : '');
+  }
+
+  /** Reopen an unfinished import at the review step, exactly where it was staged. */
+  async function resumeSession(id: string) {
+    setError(null);
+    setResumingId(id);
+    try {
+      const res = await importApi.getSession(id);
+      setSessionId(res.sessionId);
+      hydrateReviewFrom(res.staging);
+      setStep('review');
+    } catch (e) {
+      // The most likely failure is that it expired or was confirmed elsewhere between the list
+      // being fetched and this tap, so refresh the list rather than leaving a row that cannot work.
+      setError(toUserMessage(e, "Couldn't reopen that import — it may have expired."));
+      void unfinishedQ.refetch();
+    } finally {
+      setResumingId(null);
+    }
+  }
+
+  function confirmDiscardSession(sess: { id: string; fileName: string }) {
+    Alert.alert(
+      'Discard this import?',
+      `"${sess.fileName}" and everything reviewed so far will be removed. The statement itself isn't affected.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Discard', style: 'destructive', onPress: () => void discardUnfinished(sess.id) },
+      ]
+    );
+  }
+
+  async function discardUnfinished(id: string) {
+    setError(null);
+    setDiscardingId(id);
+    try {
+      await importApi.discardSession(id);
+      await unfinishedQ.refetch();
+    } catch (e) {
+      setError(toUserMessage(e, 'Could not discard that import.'));
+    } finally {
+      setDiscardingId(null);
+    }
+  }
+
   async function upload(file: RNFile, isPdf: boolean, password: string | undefined) {
     setError(null);
     setUploadProgress(0);
@@ -259,29 +355,7 @@ export function ImportScreen() {
       }
 
       const staging = (res as { staging: NonNullable<typeof res.staging> }).staging;
-      setRows(staging.rows);
-      setReview(beginReview(staging.rows));
-      setChosenCategory(initialCategories(staging.rows));
-      setUnparseableRows(staging.unparseableRows);
-      setDetected(staging.detectedAccount);
-      setAccountForm(initialAccountForm(staging.detectedAccount));
-
-      // Default to filing into the existing account this statement's own signals actually point
-      // at -- same bank, same account number -- rather than blindly picking the first account in
-      // the list. See matchExistingAccount's own comment for the bug this replaced and why
-      // anything short of a real match deliberately falls back to "create a new account" (a
-      // visible, deletable mistake) rather than guessing at an existing one (a silent, wrong
-      // balance).
-      //
-      // selectedAccountId is cleared, not left alone, when there is no match. Before this change
-      // the 'new' branch was only reachable with zero existing accounts, so a stale id could
-      // never coexist with a populated account list; now it can, and leaving it set would render
-      // the previous import's account as the highlighted, apparently-considered choice the moment
-      // the user tapped "An existing account".
-      const matched = matchExistingAccount(staging.detectedAccount, existingAccounts);
-      setAccountChoice(matched ? 'existing' : 'new');
-      setSelectedAccountId(matched ? matched.id : '');
-
+      hydrateReviewFrom(staging);
       setStep('review');
     } catch (e) {
       const code = apiErrorCode(e);
@@ -368,7 +442,10 @@ export function ImportScreen() {
     const uploading = uploadProgress !== null;
     return (
       <View style={[styles.flex, { backgroundColor: c.bg, paddingTop: insets.top + spacing.md }]}>
-        <View style={styles.padded}>
+        {/* ScrollView, not the plain View this used to be: the unfinished-import list below is
+            variable-length, and on a small screen a couple of entries pushed "Choose a file" off
+            the bottom with no way to reach it. */}
+        <ScrollView contentContainerStyle={styles.padded} keyboardShouldPersistTaps="handled">
           {header}
           <Card>
             <SectionHeading title="Import a statement" />
@@ -439,7 +516,62 @@ export function ImportScreen() {
               <Button label="Choose a file" onPress={handlePick} />
             )}
           </Card>
-        </View>
+
+          {/* Only when there is something to resume. An empty state here would be a permanent
+              reminder of a feature that has nothing to offer, on the screen a first-time user
+              sees before they have ever imported anything. */}
+          {unfinished.length > 0 ? (
+            <Card style={styles.unfinishedCard}>
+              <SectionHeading title="Continue a previous import" />
+              <Text style={[styles.body, { color: c.muted }]}>
+                These statements were uploaded and read, but never finished. Picking one up puts you
+                back on the review step — nothing is re-uploaded.
+              </Text>
+              {unfinished.map((sess) => (
+                <View
+                  key={sess.id}
+                  style={[styles.unfinishedRow, { borderBottomColor: c.border }]}
+                >
+                  <View style={styles.unfinishedMain}>
+                    <Text style={[styles.unfinishedName, { color: c.ink }]} numberOfLines={1}>
+                      {sess.fileName}
+                    </Text>
+                    <Text style={[styles.unfinishedMeta, { color: c.mutedInk }]} numberOfLines={1}>
+                      {sess.rowCount} {sess.rowCount === 1 ? 'transaction' : 'transactions'} ·{' '}
+                      {expiresInLabel(sess.expiresAt)}
+                    </Text>
+                  </View>
+                  {resumingId === sess.id ? (
+                    <ActivityIndicator size="small" color={c.muted} />
+                  ) : (
+                    <View style={styles.unfinishedActions}>
+                      <Pressable
+                        onPress={() => void resumeSession(sess.id)}
+                        disabled={discardingId === sess.id}
+                        hitSlop={8}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Resume import of ${sess.fileName}`}
+                      >
+                        <Text style={[styles.unfinishedAction, { color: c.primary }]}>Resume</Text>
+                      </Pressable>
+                      <Pressable
+                        onPress={() => confirmDiscardSession(sess)}
+                        disabled={discardingId === sess.id}
+                        hitSlop={8}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Discard import of ${sess.fileName}`}
+                      >
+                        <Text style={[styles.unfinishedAction, { color: c.danger }]}>
+                          {discardingId === sess.id ? 'Discarding…' : 'Discard'}
+                        </Text>
+                      </Pressable>
+                    </View>
+                  )}
+                </View>
+              ))}
+            </Card>
+          ) : null}
+        </ScrollView>
       </View>
     );
   }
@@ -725,6 +857,19 @@ function Stat({ label, value }: { label: string; value: string }) {
 }
 
 const styles = StyleSheet.create({
+  unfinishedCard: { marginTop: spacing.md },
+  unfinishedRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  unfinishedMain: { flex: 1, marginRight: spacing.sm },
+  unfinishedName: { fontSize: 14, fontWeight: '600' },
+  unfinishedMeta: { fontSize: 12, marginTop: 2 },
+  unfinishedActions: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+  unfinishedAction: { fontSize: 13, fontWeight: '600' },
   flex: { flex: 1 },
   padded: { paddingHorizontal: spacing.md },
   listContent: { paddingHorizontal: spacing.md, paddingBottom: spacing.xl },
