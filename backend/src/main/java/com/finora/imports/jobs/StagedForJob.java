@@ -2,6 +2,7 @@ package com.finora.imports.jobs;
 
 import com.finora.dto.ImportDto.PdfStagingSessionResponse;
 import com.finora.dto.ImportDto.StagingSessionResponse;
+import com.finora.dto.ImportDto;
 import com.finora.dto.ImportDto.DetectedAccountInfo;
 import com.finora.dto.ImportDto.StagedAccountSection;
 
@@ -28,7 +29,15 @@ import java.util.UUID;
  * {@code detected_account_json} back out. Null when the parser could not name one; the caller
  * decides what to say instead, because the fallback belongs next to the copy that needs it.
  */
-public record StagedForJob(UUID sessionId, int totalParsed, int stagedRows, String bankName) {
+public record StagedForJob(UUID sessionId, int totalParsed, int stagedRows, String bankName,
+                            List<ImportDto.VerificationReport> verificationReports) {
+
+    /** One report per account section; a single-section statement yields one, and a path that
+     *  produced none yields an empty list rather than null -- absent verification and verification
+     *  that found nothing are different facts, and only the caller can tell them apart. */
+    private static List<ImportDto.VerificationReport> reportsOf(ImportDto.VerificationReport one) {
+        return one == null ? List.of() : List.of(one);
+    }
 
     /** {@code DetectedAccountInfo.suggestedName} is documented as the official bank name or a
      *  clean generic fallback, never a raw filename -- so it is safe to put in front of a
@@ -43,7 +52,8 @@ public record StagedForJob(UUID sessionId, int totalParsed, int stagedRows, Stri
                 response.sessionId(),
                 staging.totalParsed(),
                 staging.rows() == null ? 0 : staging.rows().size(),
-                bankNameOf(staging.detectedAccount()));
+                bankNameOf(staging.detectedAccount()),
+                reportsOf(staging.verification()));
     }
 
     public static StagedForJob of(PdfStagingSessionResponse response) {
@@ -63,14 +73,19 @@ public record StagedForJob(UUID sessionId, int totalParsed, int stagedRows, Stri
                     .findFirst()
                     .orElse(null);
             return new StagedForJob(response.sessionId(),
-                    sections.stream().mapToInt(StagedAccountSection::totalParsed).sum(), staged, bank);
+                    sections.stream().mapToInt(StagedAccountSection::totalParsed).sum(), staged, bank,
+                    sections.stream()
+                            .map(StagedAccountSection::verification)
+                            .filter(java.util.Objects::nonNull)
+                            .toList());
         }
         var staging = response.staging();
-        if (staging == null) return new StagedForJob(response.sessionId(), 0, 0, null);
+        if (staging == null) return new StagedForJob(response.sessionId(), 0, 0, null, List.of());
         return new StagedForJob(
                 response.sessionId(),
                 staging.totalParsed(),
                 staging.rows() == null ? 0 : staging.rows().size(),
-                bankNameOf(staging.detectedAccount()));
+                bankNameOf(staging.detectedAccount()),
+                reportsOf(staging.verification()));
     }
 }
