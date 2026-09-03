@@ -2,7 +2,7 @@
 
 **Baselined:** 2026-09-01 · **Re-baselined:** 2026-09-03 (**Track A complete** — A4 shipped across PRs [#761](https://github.com/siddharth705/finora/pull/761), [#765](https://github.com/siddharth705/finora/pull/765), [#779](https://github.com/siddharth705/finora/pull/779))
 **Owner:** Siddharth Tiwari · **Maintained by:** the PM role
-**Status:** In progress — **30% overall**, Track A **100%** (A1–A4 all merged). Tracks B, C, D not started.
+**Status:** In progress — **35% overall**, Track A **100%** (A1–A4 all merged). Track B started (B1 merged, B3 in review). **All 17 remaining items re-validated 2026-09-03** — see *What re-validation changed* below before picking any of them up.
 **Scope:** Mobile app hardening and trust-surface work, post-launch. This is **not** part of the
 `project-plan-v1.0.md` GA gate — it is what comes after, informed by a two-pass mobile audit. See
 that file for GA status; do not merge this plan's tracks into its weighted table without a deliberate
@@ -56,10 +56,10 @@ Weighted by risk-adjusted priority, not task count — proposed by the PM role, 
 | Track | Weight | Done | Contribution | Why this weight |
 |---|---|---|---|---|
 | A — Financial Correctness | 30% | **100%** ✅ | 30 | Silent wrong numbers are the single worst failure mode for a finance app; nothing here crashes or errors, so nothing catches it without a fix. **Complete** — A1/A2/A3 in PR #736, A4 across #761/#765/#779 |
-| B — Import Hardening | 25% | 0% | 0 | The app's crown-jewel flow concentrates the highest-severity findings in either audit — duplicate-import race, no idempotency, no recovery after app kill |
+| B — Import Hardening | 25% | **20%** ▲ | 5 | The app's crown-jewel flow concentrates the highest-severity findings in either audit — duplicate-import race, no idempotency, no recovery after app kill |
 | C — Trust Layer | 25% | 0% | 0 | Highest strategic ROI identified across both audits: the backend/web already compute this, mobile just doesn't render it — cheap relative to its differentiation value |
 | D — Security Cleanup | 20% | 0% | 0 | Real, traceable gaps (fail-open lock, indefinite unencrypted statement retention) but narrower blast radius than A/B, and mobile-only so it parallelizes cleanly |
-| **Total** | **100%** | | **30%** | Track A closed 2026-09-03. **B is the recommended next track** — it holds the highest-severity findings from either audit, and its B2+B3 pair is sequenced together for a reason (see that track's own note) |
+| **Total** | **100%** | | **35%** | Track A closed 2026-09-03. **B is the recommended next track** — it holds the highest-severity findings from either audit, and its B2+B3 pair is sequenced together for a reason (see that track's own note) |
 
 **Sequencing note:** Tracks A and B both land in `ImportService.java` / `ImportScreen.tsx` and share the
 import confirm/duplicate/supersede subsystem — sequence them one at a time within a single track owner,
@@ -168,15 +168,68 @@ file list — cost ~405k tokens and found just as much. Prefer that shape.
 
 ---
 
+## What re-validation changed (2026-09-03)
+
+Three items in a row — A4, B1, B3 — turned out to have premises that were wrong or stale in the
+same few ways, each discovered only while implementing. So every remaining item was re-checked
+against what the code actually does now, before any more of them get built.
+
+**Nine of seventeen were wrong as written.** None were already done, but eight are narrower than
+described and one is purely a UI port. The recurring shapes:
+
+| Shape | Items | What it means |
+|---|---|---|
+| **Capability exists, only the UI is missing** | C1 | The API already returns it and the mobile types already carry it, with a comment saying "web only so far". Zero consumers. |
+| **Narrower than written** | B2, B4, B5, C3, C4, C7, C8, D6 | The gap is real but part of it is already solved, deliberate, or structurally impossible. |
+| **Still valid as written** | C2, C5, C6, D1, D2, D3, D4, D5 | Re-checked, unchanged. D2 is if anything *broader*. |
+
+**Corrections that change what gets built:**
+
+- **B4's "no timeout" half is wrong and should not be fixed.** `timeout: 0` on statement upload is
+  deliberate and documented: an upload on a slow mobile connection can legitimately exceed 30s, and
+  unlike an ordinary JSON call it already gives the user live proof of progress via
+  `onUploadProgress`. Adding a timeout would regress exactly the case it exists for. What remains
+  is only the missing *cancel* affordance — which needs the same `AbortController` plumbing as B2,
+  so **B2 and B4 are now one item.**
+- **B5 loses ReportsScreen entirely.** Its CSV/PDF export builds the file locally from
+  already-fetched data — there is no server request in that path at all, so it cannot be "the same
+  race as B1", and it is already guarded by state *and* `disabled`. Only StatementHistory's
+  re-import remains, and its severity drops: a double-tap there creates a duplicate *staging
+  session*, not duplicate ledger rows, because the confirm downstream is now claimed server-side by
+  PR [#789](https://github.com/siddharth705/finora/pull/789).
+- **B2 loses its idempotency half.** Done for re-import (V133), and structurally unnecessary for
+  first-time confirm, which the server already claims atomically. The original framing — "a
+  mid-confirm app kill leaves the outcome unknowable" — is now false for both paths. What is left
+  is request-lifecycle hygiene, not import correctness.
+- **D6 loses its security framing.** `findByIdAndUserId` already prevents the deep link replaying
+  against a different account. The real remaining bug is a stale `pendingRef` across an identity
+  change — a correctness issue, not an account-takeover one.
+- **C8 is much smaller than assumed, because a claim repeated in this codebase's comments is
+  stale.** Several files assert "this repo has no background job infrastructure"; `@Scheduled`
+  is in fact used in at least five services (`ImportJobWorker`, `StatementStorageSweepService`,
+  `ImportSessionService`, `RateLimiter`). C8 is one per-user daily sweep over an already-idempotent
+  save, whose only real design question is per-user timezone.
+- **C6 now depends on C4.** Without a param-accepting Transactions route, "View in Ledger" can only
+  land on an unfiltered ledger, which is not the promise. Sequence C4 first or the win is hollow.
+- **C7 is an admin→user re-scope, not a build.** The derivation, joins and DTOs already exist; the
+  work is a user-scoped, ownership-checked read endpoint plus a mobile screen. The existing UI is in
+  the **admin portal**, so "port the web app" does not apply here the way it did for A3/A4.
+
+**One thing re-validation did NOT find:** any item already shipped. The plan's *contents* have held
+up; its *sizing and framing* have not. Re-check an item against the code before scheduling it, not
+after committing to it.
+
+---
+
 ## Track B — Import Hardening
 
 | # | Item | Severity | Files | Status |
 |---|---|---|---|---|
-| B1 | Double-tapping Import during a re-import creates duplicate transactions — no `useSingleFlight` guard, backend confirm overload skips the atomic session-claim | High | `mobile/src/screens/import/ImportScreen.tsx:252-288` | Not started |
-| B2 | Import confirm has no idempotency key and no request cancellation — a mid-confirm app kill or logout leaves the outcome unknowable, seeding a real duplicate-import path | High | `mobile/src/api/client.ts`, `endpoints.ts` (zero `AbortController` usage anywhere) | Not started |
-| B3 | Import review state has zero persistence — an OS kill at any stage during review is a silent total loss with no resume prompt | High | `mobile/src/screens/import/ImportScreen.tsx` (all review state is plain `useState`), `api/queryPersistence.ts:9-17` | Not started |
-| B4 | Statement upload has no timeout and no cancel control | Medium | `mobile/src/api/endpoints.ts:268-283` (`timeout: 0`) | Not started |
-| B5 | StatementHistory's Re-import/Share and Report CSV export have the same state-only double-tap race as B1 | Medium | `mobile/src/screens/StatementHistoryScreen.tsx:84-152`, `ReportsScreen.tsx:74-85` | Not started |
+| B1 | Double-tapping Import during a re-import creates duplicate transactions — no `useSingleFlight` guard, backend confirm overload skips the atomic session-claim | High | `mobile/src/screens/import/ImportScreen.tsx:252-288` | ✅ **Merged** — PR [#789](https://github.com/siddharth705/finora/pull/789) |
+| B2 | Import confirm has no idempotency key and no request cancellation — a mid-confirm app kill or logout leaves the outcome unknowable, seeding a real duplicate-import path | High | `mobile/src/api/client.ts`, `endpoints.ts` (zero `AbortController` usage anywhere) | **Re-scoped 09-03** — idempotency half done (#789); merge with B4 as one *cancellable requests* item |
+| B3 | Import review state has zero persistence — an OS kill at any stage during review is a silent total loss with no resume prompt | High | `mobile/src/screens/import/ImportScreen.tsx` (all review state is plain `useState`), `api/queryPersistence.ts:9-17` | 🔄 **In review** — PR [#870](https://github.com/siddharth705/finora/pull/870). Was mis-scoped: server already persisted sessions, mobile API had list/get/discard with zero callers |
+| B4 | Statement upload has no timeout and no cancel control | Medium | `mobile/src/api/endpoints.ts:268-283` (`timeout: 0`) | **Re-scoped 09-03** — "no timeout" is deliberate, do NOT add one; only the cancel affordance remains. Merge with B2 |
+| B5 | StatementHistory's Re-import/Share and Report CSV export have the same state-only double-tap race as B1 | Medium | `mobile/src/screens/StatementHistoryScreen.tsx:84-152`, `ReportsScreen.tsx:74-85` | **Re-scoped 09-03** — ReportsScreen dropped (no server call, already guarded). StatementHistory re-import only; duplicate *staging session*, not duplicate rows |
 
 **Fix order within the track:** B3 (persistence) and B2 (idempotency/cancellation) are the foundation —
 fixing B1's `useSingleFlight` gap without also fixing B2's missing idempotency key only closes the
@@ -193,14 +246,14 @@ all. This track is mostly **new UI reading data that already exists**, not new d
 
 | # | Item | Files it builds on | Status |
 |---|---|---|---|
-| C1 | Port "Show Your Work": health-score breakdown, Detected Duplicates card, Categorization Confidence card to mobile Dashboard | `backend/.../service/DashboardService.java`, reference impl at `frontend/src/pages/Dashboard.tsx` | Not started |
-| C2 | Promote the statement coverage-gap warning from a buried Insights sentence to a proactive Dashboard banner with a CTA into Import | `backend/.../imports/StatementCoverageAnalyzer.java`, `InsightsService.CoverageCaveat` | Not started |
-| C3 | Surface `categorySource`/`ruleId` on import review rows the same way `duplicateMatch` is already surfaced (learned / user rule / global rule / file / default) | `mobile/src/types/index.ts:212-219`, `screens/import/StagedRowCard.tsx:102-104` | Not started |
-| C4 | Universal drill-through: category/date filters on Ledger, wired from every donut legend row, budget card, insight/mover row, and report category row into a filtered Ledger view | `mobile/src/api/endpoints.ts:97-110` (`TransactionFilters` already supports this), `LedgerScreen.tsx`, `DonutChart.tsx`, `BudgetsScreen.tsx`, `InsightsScreen.tsx`, `ReportsScreen.tsx` | Not started |
-| C5 | "As of" staleness signal on Total Balance, matching the pattern already built for the Income/Expense/Net Savings KPIs | `mobile/src/screens/DashboardScreen.tsx:163-187` | Not started |
-| C6 | "View in Ledger" button on the import summary screen | `mobile/src/screens/import/ImportScreen.tsx:383-415` | Not started |
-| C7 | *(Stretch, admin→user re-scope)* Simplified, user-facing "explain this number" provenance trail | `backend/.../imports/evidence/*`, `.../imports/trace/*` — currently admin-only | Not started |
-| C8 | *(Stretch)* Automatic daily net-worth snapshot job, removing the manual "Save snapshot" step | `backend/.../service/NetWorthService.java` (computation already correct) | Not started |
+| C1 | Port "Show Your Work": health-score breakdown, Detected Duplicates card, Categorization Confidence card to mobile Dashboard | `backend/.../service/DashboardService.java`, reference impl at `frontend/src/pages/Dashboard.tsx` | **UI only 09-03** — API returns it, mobile types already carry it ("web only so far"), zero consumers. Port `frontend/src/pages/Dashboard.tsx` L374-450 / L457-480 / L514-562 |
+| C2 | Promote the statement coverage-gap warning from a buried Insights sentence to a proactive Dashboard banner with a CTA into Import | `backend/.../imports/StatementCoverageAnalyzer.java`, `InsightsService.CoverageCaveat` | Not started — **re-validated, still valid**. Bigger than a UI port: endpoint is per-account and admin-gated, no mobile method, no aggregate field |
+| C3 | Surface `categorySource`/`ruleId` on import review rows the same way `duplicateMatch` is already surfaced (learned / user rule / global rule / file / default) | `mobile/src/types/index.ts:212-219`, `screens/import/StagedRowCard.tsx:102-104` | **Re-scoped 09-03** — data + low-confidence badge already shipped (#743). Only confident-source provenance remains |
+| C4 | Universal drill-through: category/date filters on Ledger, wired from every donut legend row, budget card, insight/mover row, and report category row into a filtered Ledger view | `mobile/src/api/endpoints.ts:97-110` (`TransactionFilters` already supports this), `LedgerScreen.tsx`, `DonutChart.tsx`, `BudgetsScreen.tsx`, `InsightsScreen.tsx`, `ReportsScreen.tsx` | **Re-scoped 09-03** — no API work needed; widen `AppTabParamList.Transactions` to take optional filters + wire callers. No web precedent to port |
+| C5 | "As of" staleness signal on Total Balance, matching the pattern already built for the Income/Expense/Net Savings KPIs | `mobile/src/screens/DashboardScreen.tsx:163-187` | Not started — **re-validated, still valid**. Small: fill the empty `kpiDelta` slot + the matching accessibilityLabel branch |
+| C6 | "View in Ledger" button on the import summary screen | `mobile/src/screens/import/ImportScreen.tsx:383-415` | Not started — **re-validated, still valid**, but now **depends on C4** (without a param-accepting route it lands on an unfiltered ledger) |
+| C7 | *(Stretch, admin→user re-scope)* Simplified, user-facing "explain this number" provenance trail | `backend/.../imports/evidence/*`, `.../imports/trace/*` — currently admin-only | **Re-scoped 09-03** — derivation/joins/DTOs exist; work is a user-scoped ownership-checked endpoint + screen. Existing UI is admin-portal, not web |
+| C8 | *(Stretch)* Automatic daily net-worth snapshot job, removing the manual "Save snapshot" step | `backend/.../service/NetWorthService.java` (computation already correct) | **Re-scoped 09-03** — scheduling infra DOES exist (`@Scheduled` in 5+ services); "no background jobs" comments are stale. One per-user daily sweep; timezone is the design point |
 
 **C4 is the single highest-ROI item in this entire plan** per both audits — it improves trust,
 explainability, debugging, and engagement simultaneously, off data the API already supports.
@@ -230,12 +283,12 @@ differentiating action.
 
 | # | Item | Severity | Files | Status |
 |---|---|---|---|---|
-| D1 | App-lock fails **open**, not closed, on any SecureStore read error — no lock screen, no warning | High | `mobile/src/lib/appLock.ts:64-66`, `lib/safeStorage.ts:14-20` | Not started |
-| D2 | Bank statements and reports persist forever, unencrypted, in the app's cache directory — no TTL, no cleanup, worse than the already-known 24h aggregate cache | High | `mobile/src/lib/statementFile.ts:28-36`, `api/endpoints.ts:376-391`, `lib/reportExport.ts:108-121` | Not started |
-| D3 | Screen-capture protection covers 3 of 9 sensitive screens (Ledger, Budgets, Goals, Insights, Investments, Reports missing) | High (first pass) | `usePreventScreenCapture` call sites | Not started |
-| D4 | Financial data (balances/transactions/budgets/reports) persisted to disk in plaintext for up to 24h | Medium (first pass) | `mobile/src/api/queryPersistence.ts:19-28` | Not started |
-| D5 | Foreground-relock race lets an in-flight share sheet survive the lock screen | Medium-High | `mobile/src/components/AppLockGate.tsx:113-136` | Not started |
-| D6 | Email-change deep link replays against a different account after sign-out, no confirmation | High (first pass) | `mobile/src/navigation/useEmailChangeDeepLink.ts:60-91` | Not started |
+| D1 | App-lock fails **open**, not closed, on any SecureStore read error — no lock screen, no warning | High | `mobile/src/lib/appLock.ts:64-66`, `lib/safeStorage.ts:14-20` | Not started — **re-validated, still valid**. Scope is the enabled-flag read only; `authenticate()` already fails closed |
+| D2 | Bank statements and reports persist forever, unencrypted, in the app's cache directory — no TTL, no cleanup, worse than the already-known 24h aggregate cache | High | `mobile/src/lib/statementFile.ts:28-36`, `api/endpoints.ts:376-391`, `lib/reportExport.ts:108-121` | Not started — **re-validated, BROADER**: four cache sites, not three (adds `pickStatement`'s DocumentPicker copy) |
+| D3 | Screen-capture protection covers 3 of 9 sensitive screens (Ledger, Budgets, Goals, Insights, Investments, Reports missing) | High (first pass) | `usePreventScreenCapture` call sites | Not started — **re-validated, still valid**. Decide per-screen hook vs one navigator-level guard |
+| D4 | Financial data (balances/transactions/budgets/reports) persisted to disk in plaintext for up to 24h | Medium (first pass) | `mobile/src/api/queryPersistence.ts:19-28` | Not started — **re-validated, still valid**. Blast radius already bounded to 8 allowlisted prefixes; logout wipe race already closed |
+| D5 | Foreground-relock race lets an in-flight share sheet survive the lock screen | Medium-High | `mobile/src/components/AppLockGate.tsx:113-136` | Not started — **re-validated, still valid**. Two `Sharing.shareAsync` call sites + share-aware suppression in `AppLockGate` |
+| D6 | Email-change deep link replays against a different account after sign-out, no confirmation | High (first pass) | `mobile/src/navigation/useEmailChangeDeepLink.ts:60-91` | **Re-scoped 09-03** — cross-account replay already prevented server-side (`findByIdAndUserId`). Remaining: stale `pendingRef` across an identity change |
 
 **D1 fix:** distinguish "key absent" (open) from "read threw" (fail closed / show a retry-locked
 state) in `appLock.isEnabled()` — do not let it reuse `safeStorage`'s generic null-on-error contract.
