@@ -940,6 +940,9 @@ public class PdfTableLocator {
         // Whether the anchor row currently open began its OWN narration on its own physical line.
         // See alignsWithTheBlocksNarration's caller for why the left-edge test is unsafe without it.
         boolean anchorCarriedItsOwnNarration = false;
+        // Whether every row buffered into pendingLeading so far was placed ABOVE by the document's
+        // own spacing. See the leading branch's buffer-split for what this is for.
+        boolean pendingLeadingAllBelongAbove = true;
         // The row physically above the one being processed, whatever it turned out to be -- a
         // header, a skipped page footer, a continuation. Tracked separately from lastRow* (which
         // follows only rows ATTACHED to a transaction) because blockSeparation has to be
@@ -1535,6 +1538,7 @@ public class PdfTableLocator {
                         }
                         pendingLeading = null;
                         pendingLeadingFromProximity = false;
+                        pendingLeadingAllBelongAbove = true;
                         leadingCount = 0;
                     }
                     currentRows.add(bucketed);
@@ -1754,11 +1758,57 @@ public class PdfTableLocator {
                             trailingCountSinceLastAnchor < MAX_TRAILING_CONTINUATION_ROWS
                                     && isNarrationOnly(bucketed)
                                     && !belongsToTheRowAbove(gapFromPreviousRow, gapToNextRow);
+
+                    // BUFFER SPLIT. One buffer can otherwise hold two different transactions' text:
+                    // a previous transaction's narration that ran past the trailing cap, followed by
+                    // the NEXT transaction's leading narration. Both are dateless, both sit in the
+                    // description column, and the whole buffer is then prepended to the next
+                    // anchor -- so the earlier transaction's tail is silently moved onto the later
+                    // one. Measured on a real ICICI savings export: every transaction's remarks
+                    // began with the previous transaction's reference tail, and every transaction's
+                    // own remark was truncated. No row was lost and no amount was wrong, which is
+                    // exactly why it needed looking for.
+                    //
+                    // The split point is the first row the document places DECISIVELY below rather
+                    // than above -- belongsToTheRowAbove is false, meaning this row is visibly
+                    // nearer the transaction under it than the one over it. Everything buffered
+                    // before that point was placed above, so it belongs to the transaction above,
+                    // and is merged there instead of travelling forward.
+                    //
+                    // Deliberately gated on a DECISIVE reading. Where a document spaces every line
+                    // identically the comparison is a tie, belongsToTheRowAbove reports true for
+                    // every row, this never fires, and the count cap continues to decide exactly as
+                    // before -- which is the conservative behaviour a uniform layout has to keep,
+                    // because there the two cases are genuinely indistinguishable by geometry.
+                    boolean decisivelyBelongsBelow = isNarrationOnly(bucketed)
+                            && !belongsToTheRowAbove(gapFromPreviousRow, gapToNextRow);
+                    if (decisivelyBelongsBelow && pendingLeading != null
+                            && pendingLeadingAllBelongAbove && !currentRows.isEmpty()) {
+                        appendNarrationTo(currentRows.get(currentRows.size() - 1), pendingLeading,
+                                headerNames);
+                        if (ctx != null) ctx.record("LEADING_BUFFER_SPLIT_AT_ITS_OWN_BOUNDARY");
+                        pendingLeading = null;
+                        pendingLeadingFromProximity = false;
+                        pendingLeadingAllBelongAbove = true;
+                    }
+
                     if (pendingLeading == null) {
                         pendingLeading = new LinkedHashMap<>();
                         pendingLeadingFromProximity = nearerToTheTransactionBelow;
-                    } else if (!nearerToTheTransactionBelow) {
-                        pendingLeadingFromProximity = false;
+                        // isNarrationOnly as well as proximity, and for the same reason that
+                        // predicate gates every other proximity decision in this file: the split
+                        // below MERGES this buffer into the transaction above it, and a buffered row
+                        // that carries a figure is not narration -- moving it changes what that
+                        // transaction is worth. Measured without this conjunct, a real Standard
+                        // Chartered export lost fourteen genuine transactions whose rows were
+                        // buffered and then folded into their predecessor.
+                        pendingLeadingAllBelongAbove = isNarrationOnly(bucketed)
+                                && belongsToTheRowAbove(gapFromPreviousRow, gapToNextRow);
+                    } else {
+                        if (!nearerToTheTransactionBelow) pendingLeadingFromProximity = false;
+                        pendingLeadingAllBelongAbove = pendingLeadingAllBelongAbove
+                                && isNarrationOnly(bucketed)
+                                && belongsToTheRowAbove(gapFromPreviousRow, gapToNextRow);
                     }
                     mergeInto(pendingLeading, bucketed, headerNames);
                     leadingCount++;
@@ -1999,6 +2049,38 @@ public class PdfTableLocator {
         if (descriptionColumn == null) return false;
         String value = bucketed.get(descriptionColumn);
         return value != null && !value.isBlank();
+    }
+
+
+    /**
+     * Appends a narration-only buffer's text to {@code target}'s DESCRIPTION cell, and touches
+     * nothing else.
+     *
+     * <p>Deliberately not {@link #mergeInto}. A buffered continuation line is bucketed by geometry
+     * like any other row, so its text sits under whichever column its x happened to fall nearest --
+     * and on a real Standard Chartered export that is the value-date column, because the narration's
+     * left edge is nearer the date anchors than its own header's. Merging such a buffer column-wise
+     * writes that text into the target's value-date cell, which then fails to parse, and the whole
+     * transaction is lost at normalization: measured, fourteen genuine transactions on that one
+     * document, with no missing row anywhere to point at them.
+     *
+     * <p>The buffer is known narration-only at every call site, so joining its cells and appending
+     * them as description loses nothing: there is no figure in it to misplace.
+     */
+    private void appendNarrationTo(Map<String, String> target, Map<String, String> buffer,
+                                   List<String> headerNames) {
+        String descriptionColumn = descriptionColumnIn(target, headerNames);
+        if (descriptionColumn == null) return;
+        StringBuilder text = new StringBuilder();
+        for (String value : buffer.values()) {
+            if (value == null || value.isBlank()) continue;
+            if (text.length() > 0) text.append(' ');
+            text.append(value.trim());
+        }
+        if (text.length() == 0) return;
+        String existing = target.get(descriptionColumn);
+        target.put(descriptionColumn,
+                existing == null || existing.isBlank() ? text.toString() : existing + " " + text);
     }
 
     /** The x of this row's leftmost non-blank run, or null for a row with nothing in it. */

@@ -82,6 +82,27 @@ class WrappedNarrationBeyondCountCapPdfTableLocatorTest {
         runs.add(run(text, NARRATION_X, y));
     }
 
+
+    /**
+     * A header whose narration label sits over its OWN data, rather than offset to the right of it.
+     *
+     * <p>{@link #header()} models the HDFC savings shape, where the label is far right of its
+     * left-aligned data and a dateless continuation line therefore buckets into the DATE column.
+     * The real ICICI savings export the buffer-split tests model does not have that offset: its
+     * remarks column label sits over its values, so a dateless line buckets into the remarks column
+     * and can be prepended to a transaction. The distinction matters here because a line bucketed
+     * into the date column cannot be prepended at all -- mergeLeadingInto refuses, correctly, rather
+     * than destroy the target's date -- which is a different code path from the one under test.
+     */
+    private static List<PositionedText> alignedHeader() {
+        return List.of(
+                run("Date", 39.9f, HEADER_Y),
+                run("Narration", NARRATION_X, HEADER_Y),
+                run("Chq./Ref.No.", REF_X, HEADER_Y),
+                run("Withdrawal Amt.", AMOUNT_X, HEADER_Y),
+                run("Closing Balance", BALANCE_X, HEADER_Y));
+    }
+
     private static DocumentContext ctx() {
         return new DocumentContext("PDF", "test");
     }
@@ -116,6 +137,129 @@ class WrappedNarrationBeyondCountCapPdfTableLocatorTest {
                 .contains("CONTINUATION LINE DELTA");
         assertThat(ctx.capabilities().stream().map(c -> c.capability()))
                 .contains("WRAPPED_DESCRIPTION_BEYOND_COUNT_CAP");
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // LEADING_BUFFER_SPLIT_AT_ITS_OWN_BOUNDARY
+    //
+    // A layout that prints narration BEFORE its date row cannot use the alignment path above, so
+    // its over-cap narration is buffered forward instead -- into the same buffer that then collects
+    // the NEXT transaction's leading narration, and the whole buffer is prepended to the next
+    // anchor. Measured on a real ICICI savings export: every transaction's remarks began with the
+    // previous transaction's reference tail, and every transaction's own remark was truncated. Row
+    // counts, dates, amounts and balances were all correct, which is why it went unseen.
+    //
+    // Geometry from that document (points): a transaction's continuation lines sit 10.04pt apart,
+    // and the NEXT transaction's leading narration sits 9.86pt below the last continuation but only
+    // 5.06pt above the anchor it belongs to. That asymmetry is the split point.
+    // ---------------------------------------------------------------------------------------
+
+    /** ICICI's measured spacing: continuations evenly spaced, the next leading line much nearer the
+     *  anchor below it than the continuation above it. */
+    private static final float CONT_GAP = 10.04f;
+    private static final float LEADING_TO_ITS_ANCHOR = 5.06f;
+    private static final float LAST_CONT_TO_LEADING = 9.86f;
+
+    @Test
+    void anOverCapNarrationIsNotCarriedForwardOntoTheNextTransaction() {
+        // Anchor rows here carry NO narration of their own -- the layout prints it separately --
+        // so the left-edge path is (correctly) unavailable and this is the only mechanism that can
+        // place the over-cap lines.
+        List<PositionedText> runs = new ArrayList<>(alignedHeader());
+        float y = HEADER_Y + CONT_GAP;
+
+        runs.add(run("01/05/26", DATE_X, y));
+        runs.add(run("170.00", AMOUNT_X, y));
+        runs.add(run("9,830.00", BALANCE_X, y));
+        wrap(runs, "OWN NARRATION ALPHA", y += 5.0f);
+        wrap(runs, "OWN NARRATION BRAVO", y += CONT_GAP);
+        wrap(runs, "OWN NARRATION CHARLIE", y += CONT_GAP);   // past the cap
+        wrap(runs, "OWN NARRATION DELTA", y += CONT_GAP);     // past the cap
+
+        // The next transaction's leading narration: visibly nearer the anchor below it.
+        wrap(runs, "NEXT TRANSACTION HEAD", y += LAST_CONT_TO_LEADING);
+        y += LEADING_TO_ITS_ANCHOR;
+        runs.add(run("02/05/26", DATE_X, y));
+        runs.add(run("50.00", AMOUNT_X, y));
+        runs.add(run("9,780.00", BALANCE_X, y));
+
+        DocumentContext ctx = ctx();
+        var rows = rowsOf(runs, ctx);
+
+        assertThat(rows).hasSize(2);
+        assertThat(narrationOf(rows, 0))
+                .as("the first transaction keeps its own narration, all four lines of it")
+                .contains("OWN NARRATION CHARLIE")
+                .contains("OWN NARRATION DELTA");
+        assertThat(narrationOf(rows, 0))
+                .as("and does not reach forward into the next transaction")
+                .doesNotContain("NEXT TRANSACTION HEAD");
+        assertThat(narrationOf(rows, 1))
+                .as("the second transaction gets its own leading narration and only that")
+                .contains("NEXT TRANSACTION HEAD")
+                .doesNotContain("OWN NARRATION CHARLIE")
+                .doesNotContain("OWN NARRATION DELTA");
+        assertThat(ctx.capabilities().stream().map(c -> c.capability()))
+                .contains("LEADING_BUFFER_SPLIT_AT_ITS_OWN_BOUNDARY");
+    }
+
+    @Test
+    void aUniformlySpacedLayoutStillDefersToTheCountCap() {
+        // The guard on the split: where every line is equally spaced the comparison is a tie, the
+        // document expresses no opinion, and the count cap must keep deciding exactly as before.
+        // Splitting on a tie would move a transaction's leading narration onto its predecessor --
+        // right dates, right amounts, wrong merchant.
+        List<PositionedText> runs = new ArrayList<>(alignedHeader());
+        float y = HEADER_Y + PITCH;
+
+        runs.add(run("01/05/26", DATE_X, y));
+        runs.add(run("170.00", AMOUNT_X, y));
+        runs.add(run("9,830.00", BALANCE_X, y));
+        wrap(runs, "TRAILING ALPHA", y += PITCH);
+        wrap(runs, "TRAILING BRAVO", y += PITCH);
+        wrap(runs, "NEXT TRANSACTION HEAD", y += PITCH);   // a tie: nothing distinguishes it
+        y += PITCH;
+        runs.add(run("02/05/26", DATE_X, y));
+        runs.add(run("50.00", AMOUNT_X, y));
+        runs.add(run("9,780.00", BALANCE_X, y));
+
+        var rows = rowsOf(runs, ctx());
+
+        assertThat(rows).hasSize(2);
+        assertThat(narrationOf(rows, 1))
+                .as("the count cap still hands the third dateless row to the transaction below")
+                .contains("NEXT TRANSACTION HEAD");
+    }
+
+    @Test
+    void aBufferCarryingAFigureIsNeverFoldedIntoTheRowAbove() {
+        // The split MERGES its buffer upward, so the same rule that gates every other proximity
+        // decision in this file applies: a buffered row carrying a figure is not narration, and
+        // moving it changes what a transaction is worth. Measured without this guard, a real
+        // Standard Chartered export lost fourteen genuine transactions.
+        List<PositionedText> runs = new ArrayList<>(alignedHeader());
+        float y = HEADER_Y + CONT_GAP;
+
+        runs.add(run("01/05/26", DATE_X, y));
+        runs.add(run("170.00", AMOUNT_X, y));
+        runs.add(run("9,830.00", BALANCE_X, y));
+        wrap(runs, "OWN NARRATION ALPHA", y += 5.0f);
+        wrap(runs, "OWN NARRATION BRAVO", y += CONT_GAP);
+        // A dateless row past the cap that carries a figure.
+        runs.add(run("OWN NARRATION CHARLIE", NARRATION_X, y += CONT_GAP));
+        runs.add(run("1,234.00", AMOUNT_X, y));
+
+        wrap(runs, "NEXT TRANSACTION HEAD", y += LAST_CONT_TO_LEADING);
+        y += LEADING_TO_ITS_ANCHOR;
+        runs.add(run("02/05/26", DATE_X, y));
+        runs.add(run("50.00", AMOUNT_X, y));
+        runs.add(run("9,780.00", BALANCE_X, y));
+
+        var rows = rowsOf(runs, ctx());
+
+        assertThat(narrationOf(rows, 0))
+                .as("a figure-bearing row is not folded into the transaction above by the split")
+                .doesNotContain("OWN NARRATION CHARLIE");
     }
 
     @Test

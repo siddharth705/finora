@@ -302,6 +302,13 @@ public class CapabilityCoverageService {
             // narration line on roughly half their transactions. See
             // PdfTableLocator.belongsToTheRowAbove.
             "WRAPPED_DESCRIPTION_BEYOND_COUNT_CAP",
+            // One leading-narration buffer holding two transactions' text -- a previous
+            // transaction's narration that ran past the trailing cap, followed by the next
+            // transaction's leading narration -- split at the first row the document places
+            // decisively below rather than above. Found on a real ICICI savings export where
+            // every transaction's remarks began with the previous transaction's reference
+            // tail. See PdfTableLocator's leading branch.
+            "LEADING_BUFFER_SPLIT_AT_ITS_OWN_BOUNDARY",
             // A statement period stated as two separately colon-labeled fields on one row
             // ("From : <date>" / "To : <date>") rather than one combined "Period" label -- found
             // on real HDFC savings-account statements and a real Sanjay HDFC statement. See
