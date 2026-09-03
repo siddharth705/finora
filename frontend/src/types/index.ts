@@ -332,6 +332,25 @@ export interface MerchantGroup {
   transactions: MerchantGroupTransaction[];
 }
 
+// Mirrors TransactionGroupingService.CounterpartyGroup exactly -- see that record's own doc
+// comment for what each field means and why. Only ever PERSON or BUSINESS (the endpoint never
+// returns any other type), and always excludes rows groupsNeedsReview (the merchant grouping)
+// already covers -- the two partition the review backlog rather than double-surfacing a row.
+export interface CounterpartyGroup {
+  counterpartyKey: string;
+  counterpartyType: CounterpartyType;
+  // False for a name: key (a guessed fragment of the narration). MUST be read before implying
+  // this group is a confirmed identity rather than a probable one -- see CounterpartyIdentity's
+  // own doc on why a name: key must never be presented to a user as a resolved identity.
+  identityIsStrong: boolean;
+  // A representative narration, not an invented "resolved counterparty name" -- neither key shape
+  // (a UPI handle fragment, or a guessed name token) is fit to show as one.
+  label: string;
+  totalValue: number;
+  transactionIds: string[];
+  transactions: MerchantGroupTransaction[];
+}
+
 // Best-effort fields pulled from the statement itself. Every field is nullable and genuinely
 // IS null when the file didn't carry enough signal — none of these are guessed to fill gaps.
 // suggestedName is the detected bank's official name (or a clean generic fallback) -- never a
