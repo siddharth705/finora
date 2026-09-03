@@ -308,7 +308,7 @@ public class PdfPreviewGenerator {
             // the contradiction -- printed activity, nothing staged -- with nothing to state it.
             StagedAccountSection section = buildLedgerSection(userId, filename, emptySection, unknown, ctx,
                     printedSummary, printedCreditCardSummary, printedDateRange, gridPaymentDueDate,
-                    gridCreditLimit, gridAccountNumberMasked);
+                    gridCreditLimit, gridAccountNumberMasked, 1);
             return new PdfGenerationResult(List.of(surfaceUnrecognizedText(section, empty.preTableLines())), ctx,
                     printedCreditCardSummary);
         }
@@ -377,7 +377,7 @@ public class PdfPreviewGenerator {
         }
         return List.of(buildLedgerSection(userId, filename, section, product, ctx, printedSummary,
                 printedCreditCardSummary, printedDateRange, gridPaymentDueDate, gridCreditLimit,
-                gridAccountNumberMasked));
+                gridAccountNumberMasked, sectionCount));
     }
 
     /**
@@ -414,7 +414,7 @@ public class PdfPreviewGenerator {
                                                     CreditCardSummaryEvidence printedCreditCardSummary,
                                                     TransactionTableDateRangeExtractor.PrintedDateRange printedDateRange,
                                                     LocalDate gridPaymentDueDate, BigDecimal gridCreditLimit,
-                                                    String gridAccountNumberMasked) {
+                                                    String gridAccountNumberMasked, int sectionCount) {
         List<StagedRow> staged = new ArrayList<>();
         // "Never lose information" (see the engineering principles doc) -- a row that fails to
         // normalize is reported with WHY, not just silently absent from the row count. Real cost
@@ -446,7 +446,19 @@ public class PdfPreviewGenerator {
         // doc comment for why it does, on the real evidencing document); this must not depend on
         // that loop's outcome, since the loop staging zero rows is exactly the situation this
         // exists to explain.
-        if (ExplicitZeroActivityDetector.anyRowDeclaresZeroTransactionCount(sectionRows)) {
+        //
+        // Bug fix: same single-section caution as printedDateRange above, and for the identical
+        // reason -- this fact is derived from ONE section's own rows, but DocumentContext is
+        // shared and sticky across the WHOLE document (see its own doc comment), and
+        // ExtractionCheck reads the flag as a whole-document verdict. Left ungated, a composite
+        // statement where one section genuinely declares zero activity and a DIFFERENT section
+        // has an unrelated, genuine extraction failure would have BOTH staged rows sum to zero and
+        // the shared flag already true -- masking the real failure behind "nothing to import from
+        // this file." The real evidencing document (HSBC) locates exactly one section, so this
+        // costs it nothing; it only withholds the fact when a second section exists to be
+        // misattributed to.
+        if (ctx != null && sectionCount <= 1
+                && ExplicitZeroActivityDetector.anyRowDeclaresZeroTransactionCount(sectionRows)) {
             ctx.recordExplicitZeroActivityDeclared();
         }
         for (int i = 0; i < sectionRows.size(); i++) {

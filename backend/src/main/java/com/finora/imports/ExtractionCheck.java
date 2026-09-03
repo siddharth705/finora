@@ -111,12 +111,21 @@ final class ExtractionCheck {
         // false about the cause. See ExplicitZeroActivityDetector's own doc comment for the
         // evidence and IMPORT_NO_ACTIVITY_IN_PERIOD's for why this is a separate code rather than
         // a reworded IMPORT_007.
+        int recoveredLines = staged.unparseableRows() == null ? 0 : staged.unparseableRows().size();
         if (ctx != null && ctx.explicitZeroActivityDeclared()) {
-            throw new ApiException(ErrorCode.IMPORT_NO_ACTIVITY_IN_PERIOD);
+            // Same recovered-lines suffix the generic branch below appends, and for the same
+            // reason: a row declaring the statement's own zero activity does not mean every OTHER
+            // row in this section parsed cleanly. A boilerplate/disclaimer row can still land in
+            // unparseableRows() alongside it, and that diagnostic must not silently vanish just
+            // because this branch's cause is different from IMPORT_007's.
+            throw new ApiException(ErrorCode.IMPORT_NO_ACTIVITY_IN_PERIOD,
+                    ErrorCode.IMPORT_NO_ACTIVITY_IN_PERIOD.defaultMessage()
+                            + (recoveredLines > 0
+                            ? " " + recoveredLines + " line(s) of text were recovered and recorded for review."
+                            : ""));
         }
 
         boolean locatedATable = ctx != null && ctx.buildMetadata().tables() > 0;
-        int recoveredLines = staged.unparseableRows() == null ? 0 : staged.unparseableRows().size();
         throw new ApiException(
                 locatedATable ? ErrorCode.IMPORT_NO_TRANSACTIONS_FOUND : ErrorCode.IMPORT_NO_HEADER_DETECTED,
                 (locatedATable

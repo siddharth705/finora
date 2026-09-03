@@ -255,7 +255,7 @@ public enum ErrorCode {
     }
 
     /**
-     * The five {@code IMPORT_*} codes below pass {@code true} here -- Premium Import Reliability
+     * The {@code IMPORT_*} codes below pass {@code true} here -- Premium Import Reliability
      * v1, §1's {@code ACTION_REQUIRED} refinement of {@code FAILED}. Everything else defaults to
      * {@code false} through the shorter overloads, matching {@link RetryPolicy}'s own
      * safe-default reasoning above: a code this enum has no opinion about is presented as plain
