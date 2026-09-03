@@ -96,4 +96,37 @@ class CounterpartyIdentityTest {
                 .isEqualTo(CounterpartyIdentity.keyOf(narration))
                 .isNotEmpty();
     }
+
+    @Test
+    void recurringMandateBoilerplateDoesNotFragmentTheSamePayeeAcrossOccurrences() {
+        // Measured on the real 29-statement corpus: one AMC's SIP mandate debit produced THREE
+        // different keys across its own occurrences purely because the bank appends this
+        // boilerplate inconsistently row to row -- bare, "...DEBIT CMP MANDATE DEBIT", and
+        // "...Balance DEBIT CMP MANDATE DEBIT" all keyed differently before MANDATE/DEBIT/BALANCE/
+        // CMP joined NOISE. Reproduced synthetically here (not the real corpus narration -- see
+        // this repo's own "describe, don't quote, real evidence" practice).
+        String bare = "SAMPLE ASSET MANAGEMENT LTD";
+        String withDebitMandate = "SAMPLE ASSET MANAGEMENT LTD DEBIT CMP MANDATE DEBIT";
+        String withBalanceDebitMandate = "SAMPLE ASSET MANAGEMENT LTD Balance DEBIT CMP MANDATE DEBIT";
+
+        String key = CounterpartyIdentity.keyOf(bare);
+        assertThat(CounterpartyIdentity.keyOf(withDebitMandate)).isEqualTo(key);
+        assertThat(CounterpartyIdentity.keyOf(withBalanceDebitMandate)).isEqualTo(key);
+        assertThat(key).isEqualTo("name:sample asset management ltd");
+    }
+
+    @Test
+    void aRealLongPayeeNameIsNotTruncated() {
+        // The regression guard for the fix that was NOT made. A first-N-words cap was proposed,
+        // measured against the real corpus, and rejected: 96% of real name: keys are already under
+        // 30 characters, and the long tail is dominated by real long payee names -- truncating them
+        // would produce a WORSE, more collision-prone key than leaving them alone, the over-merge
+        // failure mode this class's own doc says is worse than the status quo. Synthetic shape
+        // (proprietor-plus-firm) rather than the real corpus narration -- see this class's own
+        // "describe, don't quote" note above.
+        String key = CounterpartyIdentity.keyOf(
+                "UPI/SAMPLE ENTERPRISES SURNAME FIRSTNAME MIDDLENAME/Q/UPI/");
+
+        assertThat(key).isEqualTo("name:sample enterprises surname firstname middlename");
+    }
 }

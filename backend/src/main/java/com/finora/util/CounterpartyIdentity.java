@@ -54,10 +54,30 @@ public final class CounterpartyIdentity {
      */
     private static final Pattern VPA = Pattern.compile("([A-Za-z0-9._]{2,})@([A-Za-z][A-Za-z0-9]{1,})");
 
-    /** Rail words, plumbing and reference noise -- present in nearly every narration, identifying in none. */
+    /**
+     * Rail words, plumbing and reference noise -- present in nearly every narration, identifying in
+     * none.
+     *
+     * <p>MANDATE/DEBIT/BALANCE/CMP were added after measuring the real 29-statement corpus: a
+     * recurring SIP mandate debit from the same AMC ("RELIANCE NIPPON LIFE ASSET MANA") produced
+     * THREE different keys across its own occurrences purely because the bank appends this
+     * boilerplate inconsistently row to row -- "...MANA", "...MANA DEBIT CMP MANDATE DEBIT", and
+     * "...MANA Balance DEBIT CMP MANDATE DEBIT" all keyed differently before this fix. These four
+     * words are bank-generated mechanism vocabulary, identical to the reasoning that already
+     * excludes CR/DR/ACH/NACH/ECS: present on the transaction, never on the payee.
+     *
+     * <p>Deliberately NOT a general "truncate long names" fix -- that was tried, measured against
+     * the same corpus, and rejected: 96% of real name: keys are already under 30 characters (median
+     * 15), and the long tail is dominated by REAL long payee names ("SARWESH ENTERPRISES LAWATE
+     * PRAVINKUMAR BALASAHEB", "ASIA INSTITUTE OF HAIR TRANSPLANT PVT LTD") that a word-count cap
+     * would truncate into a worse, MORE collision-prone key -- the over-merge failure mode this
+     * class's own doc says is worse than the status quo. A noise-word addition can only ever narrow
+     * a key, never truncate a real name mid-word, so it carries none of that risk.
+     */
     private static final Pattern NOISE = Pattern.compile(
             "(?i)^(UPI|NEFT|IMPS|RTGS|TRF|TRANSFER|PAYMENT|PAY|PAID|TO|FROM|BY|REF|RRN|TXN|MB|IB|NB"
-            + "|NET|MOB|ONLINE|SELF|OWN|COLLECT|INTENT|CR|DR|ACH|NACH|ECS)$");
+            + "|NET|MOB|ONLINE|SELF|OWN|COLLECT|INTENT|CR|DR|ACH|NACH|ECS"
+            + "|MANDATE|DEBIT|BALANCE|CMP)$");
 
     private static final Pattern SEGMENTS = Pattern.compile("[\\-/_|:]+");
     private static final Pattern NON_LETTERS = Pattern.compile("[^A-Za-z]+");
