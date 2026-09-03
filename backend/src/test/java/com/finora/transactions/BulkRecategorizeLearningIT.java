@@ -16,6 +16,7 @@ import com.finora.repository.TransactionRepository;
 import com.finora.repository.UserRepository;
 import com.finora.service.MerchantLearningEventWorker;
 import com.finora.service.MerchantLearningService;
+import com.finora.util.CounterpartyType;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
@@ -305,6 +306,89 @@ class BulkRecategorizeLearningIT extends AbstractIntegrationTest {
         // a global assertion fail for a reason unrelated to rollback.
         worker.drainOnce();
         assertThat(learningRowsFor(f)).isEmpty();
+    }
+
+    // --- 4. A PERSON counterparty is never taught as a merchant --------------------------------
+
+    /**
+     * The bug CounterpartyGroupReviewCard's "Apply to N transactions" would have shipped with,
+     * caught in review rather than in production data.
+     *
+     * <p>Every row that card targets was chosen BECAUSE it has no merchant match ({@code
+     * TransactionGroupingService.groupNeedsReviewByCounterparty} skips any row with one). Calling
+     * {@code queueLearning} unconditionally meant every such bulk-apply resolved a brand-new
+     * Merchant from the narration -- for a PERSON row, a person's name and UPI handle fragment,
+     * persisted as though it were a business, and matched by a later transaction from the same
+     * person sharing the same first-token alias. That is the exact who/what-for conflation the
+     * counterparty layer exists to keep apart.
+     *
+     * <p>No worker drain needed here: this asserts nothing was ever QUEUED, which is the
+     * synchronous part of {@code bulkRecategorize} itself, not the async apply step the rest of
+     * this file exercises.
+     */
+    @Test
+    void aPersonCounterpartyQueuesNoLearningAndCreatesNoMerchant() {
+        User user = seedUser();
+        Account account = seedAccount(user);
+        UUID txnId = seedTransaction(user, account, "UPI-SUNIL VERMA-sampleuser@ybl-REF61", CounterpartyType.PERSON);
+
+        transactionService.bulkRecategorize(user.getId(), List.of(txnId), TARGET_CATEGORY, user.getId());
+
+        assertThat(transactionRepository.findById(txnId)).isPresent()
+                .get().satisfies(t -> assertThat(t.getCategoryId())
+                        .isEqualTo(categoryRepository.findByUserIdAndName(user.getId(), TARGET_CATEGORY)
+                                .orElseThrow().getId()));
+        assertThat(eventRepository.findAll().stream().filter(e -> e.getUserId().equals(user.getId())).toList())
+                .isEmpty();
+        assertThat(merchantRepository.findByUserId(user.getId())).isEmpty();
+    }
+
+    /** The control case: a BUSINESS row with no merchant yet still gets one created and learning
+     *  queued normally -- this is legitimate onboarding (the same thing a first-time import of a
+     *  real, unrecognised business does), and the PERSON guard above must not have widened into
+     *  suppressing it. */
+    @Test
+    void aBusinessCounterpartyStillQueuesLearningNormally() {
+        User user = seedUser();
+        Account account = seedAccount(user);
+        UUID txnId = seedTransaction(user, account, "UPI-ACME RETAIL-acme@ybl-REF62", CounterpartyType.BUSINESS);
+
+        transactionService.bulkRecategorize(user.getId(), List.of(txnId), TARGET_CATEGORY, user.getId());
+
+        assertThat(eventRepository.findAll().stream().filter(e -> e.getUserId().equals(user.getId())).toList())
+                .hasSize(1).allSatisfy(e -> assertThat(e.getStatus()).isEqualTo(MerchantLearningEvent.Status.PENDING));
+        assertThat(merchantRepository.findByUserId(user.getId())).hasSize(1);
+    }
+
+    private User seedUser() {
+        User user = new User();
+        user.setEmail("bulk-recat-cp-it-" + UUID.randomUUID() + "@example.com");
+        user.setPasswordHash("irrelevant-for-this-test");
+        user.setFullName("Bulk Recategorize Counterparty IT User");
+        user.setPhoneVerified(true);
+        return userRepository.save(user);
+    }
+
+    private Account seedAccount(User user) {
+        Account account = new Account();
+        account.setUserId(user.getId());
+        account.setName("Bulk Recategorize Counterparty IT Account");
+        account.setAccountType(Account.Type.SAVINGS);
+        account.setBalance(BigDecimal.ZERO);
+        return accountRepository.save(account);
+    }
+
+    private UUID seedTransaction(User user, Account account, String description, CounterpartyType counterpartyType) {
+        Transaction t = new Transaction();
+        t.setUserId(user.getId());
+        t.setAccountId(account.getId());
+        t.setTxnDate(LocalDate.of(2026, 7, 10));
+        t.setDescription(description);
+        t.setAmount(new BigDecimal("486.00"));
+        t.setTxnType(Transaction.Type.EXPENSE);
+        t.setNeedsCategoryReview(true);
+        t.setCounterpartyType(counterpartyType);
+        return transactionRepository.save(t).getId();
     }
 
     // --- helpers ------------------------------------------------------------------------------
