@@ -220,6 +220,11 @@ public interface TransactionRepository extends JpaRepository<Transaction, UUID> 
      * actual collection bound to an IN parameter regardless of whether this branch of the OR
      * chain ends up mattering for a given row, and an empty list correctly evaluates that
      * sub-clause to false rather than matching everything.
+     *
+     * categoryIds is resolved the same way, one layer up, for the same reason: categoryId is a
+     * plain UUID column with no JPA association to Category (see TransactionGroupingService's own
+     * doc comment for the identical constraint on merchantId), so `t.categoryId IN :categoryIds`
+     * is as close as this query can get to matching on a category's NAME directly.
      */
     /**
      * Deleted-account leak (see {@link #findByUserIdAndAccountIdIn}'s own doc comment): when the
@@ -237,6 +242,7 @@ public interface TransactionRepository extends JpaRepository<Transaction, UUID> 
           AND (:accountId IS NOT NULL OR t.accountId IN :liveAccountIds)
           AND (:categoryId IS NULL OR t.categoryId = :categoryId)
           AND (:type IS NULL OR t.txnType = :type)
+          AND (:status IS NULL OR t.reconciliationStatus = :status)
           AND (:dateFrom IS NULL OR t.txnDate >= :dateFrom)
           AND (:dateTo IS NULL OR t.txnDate <= :dateTo)
           AND (:amountMin IS NULL OR t.amount >= :amountMin)
@@ -244,6 +250,7 @@ public interface TransactionRepository extends JpaRepository<Transaction, UUID> 
           AND (:keyword IS NULL
                OR LOWER(t.description) LIKE LOWER(CONCAT('%', CAST(:keyword AS string), '%')) ESCAPE '\\'
                OR LOWER(t.merchant) LIKE LOWER(CONCAT('%', CAST(:keyword AS string), '%')) ESCAPE '\\'
+               OR t.categoryId IN :categoryIds
                OR t.accountId IN (
                     SELECT a.id FROM Account a
                     WHERE a.userId = :userId
@@ -261,12 +268,14 @@ public interface TransactionRepository extends JpaRepository<Transaction, UUID> 
             @Param("accountId") UUID accountId,
             @Param("categoryId") UUID categoryId,
             @Param("type") Transaction.Type type,
+            @Param("status") Transaction.ReconciliationStatus status,
             @Param("dateFrom") LocalDate dateFrom,
             @Param("dateTo") LocalDate dateTo,
             @Param("amountMin") BigDecimal amountMin,
             @Param("amountMax") BigDecimal amountMax,
             @Param("keyword") String keyword,
             @Param("bankIds") List<String> bankIds,
+            @Param("categoryIds") List<UUID> categoryIds,
             @Param("liveAccountIds") List<UUID> liveAccountIds,
             Pageable pageable
     );

@@ -71,7 +71,11 @@ export interface Transaction {
   type: 'INCOME' | 'EXPENSE';
   tags: string[];
   notes: string | null;
-  reconciliationStatus: 'OK' | 'DUPLICATE' | 'TRANSFER' | 'REFUND';
+  // Mirrors Transaction.ReconciliationStatus (backend) exactly -- was missing REVERSAL,
+  // INVESTMENT_TRANSFER and SUPERSEDED, which meant those three fell through TypeScript's
+  // exhaustiveness checking on every switch/lookup keyed off this field, same class of gap
+  // TransactionReconciliationExplanation.status (api/endpoints.ts) had independently.
+  reconciliationStatus: 'OK' | 'DUPLICATE' | 'TRANSFER' | 'REFUND' | 'REVERSAL' | 'INVESTMENT_TRANSFER' | 'SUPERSEDED';
   recurring: boolean;
   needsCategoryReview: boolean;
   // False whenever the category came from the suggestion engine (rule match, learned merchant
@@ -307,10 +311,25 @@ export interface StagedRow {
   rowPosition: number | null;
 }
 
+// Just enough to preview one grouped transaction before committing to a bulk category --
+// mirrors TransactionGroupingService.TransactionSummary exactly (date/description/amount/type,
+// nothing else this preview needs).
+export interface MerchantGroupTransaction {
+  id: string;
+  date: string;
+  description: string;
+  amount: number;
+  type: 'INCOME' | 'EXPENSE';
+}
+
 export interface MerchantGroup {
   merchantId: string;
   merchantName: string;
   transactionIds: string[];
+  // Same rows as transactionIds, same order, carrying enough detail to render a preview list --
+  // see TransactionGroupingService.MerchantGroup's own doc comment for why both fields exist
+  // rather than deriving one from the other on this side.
+  transactions: MerchantGroupTransaction[];
 }
 
 // Best-effort fields pulled from the statement itself. Every field is nullable and genuinely

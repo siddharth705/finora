@@ -104,7 +104,7 @@ public record TransactionDto(
                                  @Size(max = 20, message = TAGS_COUNT_MESSAGE)
                                  List<@Size(max = 255, message = TAG_SIZE_MESSAGE) String> tags) {}
 
-    public record FilterRequest(UUID accountId, UUID categoryId, String type, LocalDate dateFrom,
+    public record FilterRequest(UUID accountId, UUID categoryId, String type, String status, LocalDate dateFrom,
                                  LocalDate dateTo, BigDecimal amountMin, BigDecimal amountMax,
                                  String keyword, int page, int size, String sortField, String sortDir) {}
 
