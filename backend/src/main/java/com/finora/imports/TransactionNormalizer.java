@@ -40,8 +40,26 @@ public class TransactionNormalizer {
     // PdfPreviewGenerator/PdfTableLocator) carry no debit or credit value at all -- only a Balance
     // column -- so without this fallback those two rows have a date but no recognizable amount and
     // get silently dropped, before PdfPreviewGenerator's own balancePoints logic ever sees them.
+    // "due date" last, and last on purpose. Verified against a real HDFC combined statement whose
+    // recurring-deposit schedule prints an installment table headed "Installment Number / Install.
+    // Due Date / Amount Paid / Installment Paid Due / Installment Paid Status". PdfTableLocator
+    // reconstructs that table correctly -- all six installments staged with their dates, amounts,
+    // dues, statuses and running balances intact -- and then every one of them was dropped here
+    // with "No column recognized as a date", because firstNonBlank matches a column name by EXACT
+    // equality and "due date" was in no list. Six real transactions lost with the extraction
+    // already perfect, on the one document in the corpus that fails its ground-truth gate.
+    //
+    // Ordered last so a table carrying BOTH a transaction date and a due date still resolves to the
+    // transaction date: firstNonBlank returns the first hint that matches any column, so every
+    // existing name keeps precedence and no document that parses today can change.
+    //
+    // Exact equality is also why this cannot catch a credit card's "Payment Due Date" metadata
+    // field, which normalizes to "payment due date" and is a different string. Checked across the
+    // 29-document real corpus: exactly one document has a column named "Due Date", and it is this
+    // one.
     private static final String[] DATE_HINTS =
-            {"date", "transaction_date", "txn date", "transaction date", "value date", "date & time"};
+            {"date", "transaction_date", "txn date", "transaction date", "value date", "date & time",
+             "due date"};
     // Bug fix: verified against a real Kotak Mahindra Bank statement -- its columns are literally
     // named "Deposit (Cr.)" / "Withdrawal (Dr.)", which CsvParser.normalizeHeaderCell reduces to
     // the SINGULAR "deposit"/"withdrawal" (the parenthesized "(Cr.)"/"(Dr.)" suffix strips the
@@ -66,10 +84,24 @@ public class TransactionNormalizer {
             "dr amount", "cr amount", "debit amount", "credit amount",
             "withdrawal amt", "withdrawal amount", "deposit amt", "deposit amount",
             "deposit", "withdrawal", "deposits", "withdrawals"};
+    // "amount paid" from the same real HDFC recurring-deposit schedule as DATE_HINTS' "due date"
+    // above. That table's amount column is headed "Amount Paid", which normalizes to "amount paid"
+    // and, under firstNonBlank's exact-equality match, equalled nothing -- so once the date was
+    // recognized the same six rows were dropped one step later with "No column recognized as an
+    // amount or balance". Placed after the transaction-amount names and before the balance
+    // fallbacks, so a table carrying a real debit/credit column still resolves to that column and
+    // only a table with no other amount name reaches this one.
+    //
+    // Deliberately NOT paired with a fix for that table's "Running balance**" column, whose
+    // trailing footnote asterisks normalizeHeaderCell does not strip (it strips [.,;:] only). That
+    // is a separate, wider change -- it would alter how every header ending in an asterisk is read
+    // across the corpus -- and this table does not need it: "amount paid" is its real transaction
+    // amount, and an installment schedule is not a running-balance ledger.
     private static final String[] AMOUNT_HINTS = {"amount", "debit", "credit",
             "dr amount", "cr amount", "debit amount", "credit amount",
             "withdrawal amt", "withdrawal amount", "deposit amt", "deposit amount",
             "deposit", "withdrawal", "deposits", "withdrawals",
+            "amount paid",
             "balance", "running balance", "closing balance"};
     private static final String[] CREDIT_HINTS =
             {"credit", "cr amount", "credit amount", "deposit amt", "deposit amount", "deposit", "deposits"};
