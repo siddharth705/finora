@@ -20,16 +20,16 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 
 /**
- * Same harness as the other migration ITs: migrate to V137, seed at that shape, run V139 forward.
+ * Same harness as the other migration ITs: migrate to V141, seed at that shape, run V142 forward.
  *
- * <p>V139 adds two columns to a table that already holds real user data, one of them NOT NULL. What
+ * <p>V142 adds two columns to a table that already holds real user data, one of them NOT NULL. What
  * is worth proving against real Postgres rather than by inspection is that an existing row survives
  * the NOT NULL addition (it takes the default rather than failing the migration), and that the
  * partial index is actually created -- the value-weighted review query this column exists to serve
  * groups on exactly that pair, and an index silently absent would only show up as a slow query much
  * later.
  */
-class V139TransactionCounterpartyMigrationIT {
+class V142TransactionCounterpartyMigrationIT {
 
     @SuppressWarnings("resource")
     private static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:16-alpine")
@@ -57,7 +57,7 @@ class V139TransactionCounterpartyMigrationIT {
             st.execute("DROP SCHEMA public CASCADE");
             st.execute("CREATE SCHEMA public");
         }
-        migrateTo("137");
+        migrateTo("141");
         connection = DriverManager.getConnection(
                 POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
     }
@@ -76,7 +76,7 @@ class V139TransactionCounterpartyMigrationIT {
         UUID user = seedUser();
         UUID txn = seedTransaction(user, seedAccount(user));
 
-        assertThatCode(() -> migrateTo("139")).doesNotThrowAnyException();
+        assertThatCode(() -> migrateTo("142")).doesNotThrowAnyException();
 
         // 'UNKNOWN' is a real answer in this vocabulary, not a placeholder -- the classifier returns
         // it for roughly a fifth of real rows -- so an un-backfilled row is honestly labelled rather
@@ -87,7 +87,7 @@ class V139TransactionCounterpartyMigrationIT {
 
     @Test
     void theReviewIndexExists_andIsPartialOnANonNullKey() throws SQLException {
-        migrateTo("139");
+        migrateTo("142");
 
         String def = string("SELECT indexdef FROM pg_indexes WHERE indexname = ?",
                 "idx_transactions_user_counterparty");
@@ -102,7 +102,7 @@ class V139TransactionCounterpartyMigrationIT {
     void theTypeColumnAcceptsAnyValue_soAnUnknownEnumDegradesRatherThanBlockingABoot() throws SQLException {
         UUID user = seedUser();
         UUID txn = seedTransaction(user, seedAccount(user));
-        migrateTo("139");
+        migrateTo("142");
 
         // Deliberately no CHECK constraint and no DB enum, following decision_source (V17). A value
         // written by a newer deploy must not stop an older one from starting.

@@ -73,7 +73,7 @@ class CounterpartyIdentityTest {
         String key = CounterpartyIdentity.keyOf(longNarration);
 
         assertThat(key).hasSizeLessThanOrEqualTo(CounterpartyIdentity.MAX_KEY_LENGTH);
-        assertThat(CounterpartyIdentity.MAX_KEY_LENGTH).isEqualTo(120); // == V139's VARCHAR(120)
+        assertThat(CounterpartyIdentity.MAX_KEY_LENGTH).isEqualTo(120); // == V142's VARCHAR(120)
     }
 
     @Test

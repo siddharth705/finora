@@ -64,7 +64,7 @@ public final class CounterpartyIdentity {
 
     /**
      * Hard cap on a returned key, matching {@code transactions.counterparty_key VARCHAR(120)} in
-     * V139. Not decoration -- without it this method is bounded by the DESCRIPTION, not by 120.
+     * V142. Not decoration -- without it this method is bounded by the DESCRIPTION, not by 120.
      *
      * <p>{@code meaningfulPart} concatenates every surviving word of a segment, and {@link
      * #SEGMENTS} only splits on {@code - / _ | :}, so a space-only narration is one segment and its
