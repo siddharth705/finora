@@ -8,6 +8,12 @@ import com.finora.imports.storage.StatementContentService;
 import com.finora.observability.AlertSeverity;
 import com.finora.observability.WorkerExecution;
 import com.finora.observability.WorkerObservability;
+import com.finora.notification.api.NotificationRequest;
+import com.finora.notification.api.NotificationService;
+import com.finora.notification.domain.NotificationCategory;
+import com.finora.notification.domain.NotificationChannel;
+import com.finora.notification.domain.NotificationPriority;
+import com.finora.notification.domain.NotificationType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -17,6 +23,8 @@ import org.springframework.stereotype.Component;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -118,6 +126,7 @@ public class ImportJobWorker {
     private final WorkerObservability observability;
     private final ImportStageRecorder stageRecorder;
     private final ExceptionClassifier exceptionClassifier;
+    private final NotificationService notificationService;
 
     @Value("${app.import.queue.enabled:false}")
     private boolean enabled;
@@ -127,13 +136,15 @@ public class ImportJobWorker {
                             StatementContentService statementContentService,
                             WorkerObservability observability,
                             ImportStageRecorder stageRecorder,
-                            ExceptionClassifier exceptionClassifier) {
+                            ExceptionClassifier exceptionClassifier,
+                            NotificationService notificationService) {
         this.jobStore = jobStore;
         this.importService = importService;
         this.statementContentService = statementContentService;
         this.observability = observability;
         this.stageRecorder = stageRecorder;
         this.exceptionClassifier = exceptionClassifier;
+        this.notificationService = notificationService;
 
         observability.publishQueueDepth(WORKER, JOB_KIND, jobStore::queueDepth);
         observability.publishOldestPendingAge(WORKER, JOB_KIND, jobStore::oldestQueuedAt);
@@ -264,6 +275,7 @@ public class ImportJobWorker {
                 // unparseable rows look like it had fewer rows than it did.
                 j.recordProgress(staged.totalParsed(), staged.stagedRows());
                 j.complete(staged.sessionId(), Instant.now());
+                notifyIfPreviouslyHeld(j);
             });
             // Only on the success path. A job that failed in PARSING did not skip IMPORTING, it
             // never reached it, and recording that as SKIPPED would turn an honest absence into a
@@ -350,6 +362,43 @@ public class ImportJobWorker {
         return statementContentService.read(job);
     }
 
+    /**
+     * Closes the loop with a user who was told we were running additional checks.
+     *
+     * <p>Only a job that was previously held notifies. An ordinary import that succeeds first time
+     * sends nothing -- we never asked that user to wait, so there is nothing to follow up on, and a
+     * notification per successful import would be noise on the one path that already shows its own
+     * result on screen.
+     *
+     * <p>Called inside {@code jobStore.update}'s transaction on purpose. {@code
+     * NotificationService.request} is a transactional-outbox write, so sharing the transaction that
+     * marks the job COMPLETED is what makes "the import landed" and "the user gets told" atomic:
+     * neither can happen without the other. The dispatcher sends it afterwards, off this thread.
+     *
+     * <p>The notification key is derived from the job id, so a redelivery -- a retried pass, a
+     * recovered worker -- collides on the outbox's idempotency key rather than sending twice.
+     *
+     * <p>NORMAL rather than HIGH or CRITICAL: those are reserved for security events per the
+     * notification platform's frozen design, and an import finishing is not one.
+     */
+    private void notifyIfPreviouslyHeld(ImportJob job) {
+        if (!job.wasHeldForReview()) {
+            return;
+        }
+        notificationService.request(NotificationRequest.of(
+                job.getUserId(),
+                NotificationType.IMPORT_STATEMENT_READY,
+                NotificationCategory.FINANCIAL,
+                NotificationPriority.NORMAL,
+                "IMPORT_READY_" + job.getId(),
+                Set.of(NotificationChannel.PUSH, NotificationChannel.EMAIL),
+                // The template reads "Your {{bank}} statement is ready". A job does not know its
+                // bank -- the account is chosen at confirm time, after this -- so "bank" is passed
+                // as the neutral filler, giving "Your bank statement is ready". A missing param
+                // would render "{{bank}}" literally to the customer.
+                Map.of("bank", "bank")));
+    }
+
     private void recordFailure(WorkerExecution execution, UUID jobId, Exception cause) {
         try {
             // Classified once, outside the update lambda: classification reads nothing from the
@@ -366,6 +415,21 @@ public class ImportJobWorker {
             jobStore.update(jobId, job -> {
                 outcome[0] = job.recordFailure(describe(cause), failureCode, policy, Instant.now());
                 attempts[0] = job.getAttemptCount();
+                // A dead-lettered unclassified failure is the one case that is plausibly a genuine
+                // parser gap rather than a user error or an infrastructure blip. Hold it for triage
+                // instead of handing the user a bare FAILED they can do nothing about.
+                //
+                // Inside the update lambda, deliberately: this is where the managed entity is, and
+                // the surrounding REQUIRES_NEW transaction is what persists it. Mutating the job
+                // after this block returns would change a detached object and write nothing.
+                //
+                // outcome[0] keeps its DEAD_LETTERED value, so the switch below still fires the
+                // alert. Holding for triage adds a destination; it does not replace engineering
+                // visibility.
+                if (outcome[0] == ImportJob.FailureOutcome.DEAD_LETTERED
+                        && policy == ErrorCode.RetryPolicy.RETRY_ONCE_THEN_ALERT) {
+                    job.holdForReview(failureCode, Instant.now());
+                }
             });
             switch (outcome[0]) {
                 case DEAD_LETTERED -> {

@@ -352,6 +352,13 @@ public class ImportJobService {
                 case COMPLETED -> "This import already finished. Discard the staged import instead "
                         + "if you don't want it.";
                 case FAILED -> "This import already failed, so there is nothing left to cancel.";
+                // Without its own case this fell to the default below, which tells the user their
+                // import "is already writing to your accounts" -- untrue of a held job, which never
+                // reached IMPORTING and wrote nothing. Same locked framing as everywhere else: no
+                // ETA, and no suggestion the statement itself is in question.
+                case HELD_FOR_REVIEW -> "We're still running some additional checks on this "
+                        + "statement. There's nothing to cancel yet -- we'll let you know once "
+                        + "it's ready.";
                 // IMPORTING and later: transactions exist, and removing them is the ledger's job,
                 // not the queue's.
                 default -> "This import is already writing to your accounts and can no longer be "
