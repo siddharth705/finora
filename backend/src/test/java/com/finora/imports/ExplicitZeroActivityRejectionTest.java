@@ -5,10 +5,6 @@ import com.finora.exception.ErrorCode;
 
 import org.junit.jupiter.api.Test;
 
-import java.math.BigDecimal;
-import java.time.LocalDate;
-import java.util.List;
-
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
@@ -72,30 +68,10 @@ class ExplicitZeroActivityRejectionTest {
     void aDocumentThatDidStageRowsIsNeverRejectedEvenWithTheFlagSet() {
         DocumentContext ctx = ctxWithTable(true);
 
-        ExtractionCheck.rejectIfNothingWasExtracted(TestStaging.withRows(), ctx);
-    }
-
-    private static final class TestStaging {
-        static com.finora.dto.ImportDto.StagingResponse empty() {
-            return new com.finora.dto.ImportDto.StagingResponse(
-                    List.of(), 0, 0, null, List.of(), null);
-        }
-
-        static com.finora.dto.ImportDto.StagingResponse withRows() {
-            return new com.finora.dto.ImportDto.StagingResponse(
-                    List.of(new com.finora.dto.ImportDto.StagedRow(
-                            LocalDate.of(2026, 6, 5), "SALARY CREDIT", new BigDecimal("55000.00"),
-                            "INCOME", "Other", "default", null, false, null, null)),
-                    1, 0, null, List.of(), null);
-        }
+        ExtractionCheck.rejectIfNothingWasExtracted(ExtractionCheckFixtures.withRows(), ctx);
     }
 
     private static ApiException catchApi(DocumentContext ctx) {
-        try {
-            ExtractionCheck.rejectIfNothingWasExtracted(TestStaging.empty(), ctx);
-        } catch (ApiException e) {
-            return e;
-        }
-        throw new AssertionError("expected a rejection, and nothing was thrown");
+        return ExtractionCheckFixtures.catchRejection(ctx);
     }
 }

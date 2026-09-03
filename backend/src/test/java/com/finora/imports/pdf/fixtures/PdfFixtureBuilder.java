@@ -1644,6 +1644,42 @@ public final class PdfFixtureBuilder {
         return render(List.of(page));
     }
 
+    /**
+     * The same explicit-zero savings ledger as {@link #buildExplicitZeroTransactionCountSample},
+     * bundled into a two-section composite statement alongside a SECOND, unrelated section whose
+     * one row fails to stage for a genuine, unrelated reason -- its amount column resolves but
+     * does not parse as a number, the shape {@code TransactionNormalizer.hasUnparseableRecognizedAmount}
+     * exists for.
+     *
+     * <p>Built specifically to prove the cross-section guard in {@code PdfPreviewGenerator}
+     * ({@code sectionCount <= 1}) actually does something: without it, this document's savings
+     * section legitimately declaring zero activity would make {@code ExtractionCheck} report the
+     * WHOLE document as "nothing to import" -- masking the credit-card section's real, unrelated
+     * extraction failure behind a message that says nothing is wrong with the file.
+     */
+    public static byte[] buildExplicitZeroTransactionCountInACompositeStatementSample() throws IOException {
+        float[] savingsCol = {LEFT_MARGIN, 150f, 320f, 400f, 480f};
+        float[] ccCol = {LEFT_MARGIN, 150f, 470f};
+
+        PageBuilder page = new PageBuilder();
+        page.line("Composite Statement")
+                .blankLine()
+                .line("SAVINGS ACCOUNT-RES  100-111111-002")
+                .row(savingsCol, "Date", "Transaction Details", "Deposits", "Withdrawals", "Balance")
+                .row(savingsCol, "01 Jul 2026", "BALANCE BROUGHT FORWARD", null, null, "500.00")
+                .row(savingsCol, "01 Jul 2026", "CLOSING BALANCE", null, null, "500.00")
+                .row(savingsCol, "01 Jul 2026", "Transaction Turnover", "0.00", "0.00", "500.00")
+                .row(savingsCol, "01 Jul 2026", "Transaction Count", "0", "0", "500.00")
+                .blankLine()
+                .line("CREDIT CARD ACCOUNT  4000 1111 2222 3333")
+                .row(ccCol, "DATE", "TRANSACTION DETAILS", "AMOUNT (Rs.)")
+                // A recognized amount column present and non-blank, but unparseable as a number --
+                // a genuine, unrelated extraction defect, nothing to do with a printed zero claim.
+                .row(ccCol, "15/07/2026", "UPI-Retailer One", "ERR");
+
+        return render(List.of(page));
+    }
+
     // ==================== Composability (multiple already-evidenced capabilities together) ====================
     // Refined test-corpus strategy (docs/engineering/financial-document-intelligence-principles.md):
     // every capability below is individually justified by its own real document elsewhere in this
