@@ -256,7 +256,7 @@ export interface ImportSessionSummary {
   expiresAt: string;
 }
 
-interface StagingResult {
+export interface StagingResult {
   rows: StagedRow[];
   totalParsed: number;
   flaggedDuplicates: number;
