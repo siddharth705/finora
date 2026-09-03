@@ -46,9 +46,9 @@ public final class CounterpartyClassifier {
     /**
      * Which revision of the rules above produced a stored answer.
      *
-     * <p>Persisted per row as {@code transactions.counterparty_classifier_version} (V140) so that
+     * <p>Persisted per row as {@code transactions.counterparty_classifier_version} (V143) so that
      * "the classifier has never run here" and "the classifier ran and found nothing" stay tellable
-     * apart -- V139's {@code NOT NULL DEFAULT 'UNKNOWN'} collapses them, and they are not the same
+     * apart -- V142's {@code NOT NULL DEFAULT 'UNKNOWN'} collapses them, and they are not the same
      * fact. {@code UNKNOWN} is a real answer for roughly a fifth of real rows, so a row that merely
      * predates the backfill must not be mistaken for one the classifier has already given up on.
      *

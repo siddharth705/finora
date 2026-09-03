@@ -101,7 +101,7 @@ public class Transaction extends BaseEntity {
 
     /**
      * Which revision of {@link com.finora.util.CounterpartyClassifier} produced the two fields
-     * above, or null when none has -- see V140 for why the third state has to be representable and
+     * above, or null when none has -- see V143 for why the third state has to be representable and
      * {@link com.finora.util.CounterpartyClassifier#VERSION} for what bumping it sets in motion.
      *
      * <p>Not to be confused with the {@code version} column this entity inherits from

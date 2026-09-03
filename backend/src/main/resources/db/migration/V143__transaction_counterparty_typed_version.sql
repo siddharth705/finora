@@ -1,7 +1,7 @@
 -- Makes "the classifier has never run on this row" distinguishable from "the classifier ran and
 -- found nothing identifiable".
 --
--- V139 gave counterparty_type NOT NULL DEFAULT 'UNKNOWN'. That is the honest default for a new
+-- V142 gave counterparty_type NOT NULL DEFAULT 'UNKNOWN'. That is the honest default for a new
 -- column, but it collapses two states that are not the same fact: UNKNOWN is a REAL answer in this
 -- vocabulary -- the classifier returns it for roughly a fifth of real rows -- so every historical
 -- row currently claims to have been examined and found unidentifiable, when in truth nothing has

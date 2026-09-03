@@ -70,7 +70,7 @@ class CounterpartyWiringTest {
 
     @org.junit.jupiter.api.Test
     void aTypedRowAlwaysCarriesAVersion_soItCanNeverBeMistakenForAnUntypedOne() {
-        // The whole point of V140. A row typed by a live write path must not look like a row the
+        // The whole point of V143. A row typed by a live write path must not look like a row the
         // backfill has never reached, or the sweep would re-discover every new transaction forever
         // and the review UX could not tell an exhausted row from an untouched one.
         Transaction t = new Transaction();

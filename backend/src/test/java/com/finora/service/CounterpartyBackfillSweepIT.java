@@ -29,7 +29,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * <ul>
  *   <li>the JPQL in {@code findRowsNeedingCounterpartyTyping} and {@code applyCounterpartyTyping}
  *       parses and binds at all -- a mock accepts a query that would never run;</li>
- *   <li>a row seeded the way a pre-V140 row exists (no classifier version) is actually discovered;</li>
+ *   <li>a row seeded the way a pre-V143 row exists (no classifier version) is actually discovered;</li>
  *   <li>the bulk update writes the enum, the key and the version to the columns it names;</li>
  *   <li>a stamped row leaves the candidate set, so the sweep terminates instead of spinning.</li>
  * </ul>
@@ -182,7 +182,7 @@ class CounterpartyBackfillSweepIT extends AbstractIntegrationTest {
         throw new AssertionError("Backfill did not drain in 20 passes -- the sweep is not making progress.");
     }
 
-    /** A row in the state every transaction was in before V140: typed by nothing. */
+    /** A row in the state every transaction was in before V143: typed by nothing. */
     private UUID seedUntyped(String description) {
         Transaction t = new Transaction();
         t.setUserId(userId);

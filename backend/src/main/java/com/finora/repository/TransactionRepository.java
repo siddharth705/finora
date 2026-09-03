@@ -79,7 +79,7 @@ public interface TransactionRepository extends JpaRepository<Transaction, UUID> 
     /**
      * One page of rows the counterparty classifier has not answered for at the current revision.
      *
-     * <p>NULL is the never-typed state (V140); {@code < :version} is the re-type-after-a-bump state
+     * <p>NULL is the never-typed state (V143); {@code < :version} is the re-type-after-a-bump state
      * described on {@link com.finora.util.CounterpartyClassifier#VERSION}. Both are served by
      * {@code idx_transactions_counterparty_classifier_version}, and in the drained steady state the
      * predicate matches nothing, so the scheduled sweep costs an empty index probe.

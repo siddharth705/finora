@@ -20,16 +20,16 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 
 /**
- * Same harness as {@link V139TransactionCounterpartyMigrationIT}: migrate to the previous version,
- * seed at that shape, run V140 forward.
+ * Same harness as {@link V142TransactionCounterpartyMigrationIT}: migrate to the previous version,
+ * seed at that shape, run V143 forward.
  *
- * <p>The thing worth proving against real Postgres is the one V140 exists for -- that an existing
+ * <p>The thing worth proving against real Postgres is the one V143 exists for -- that an existing
  * row lands in the NULL state rather than picking up a default. A DEFAULT slipped into that column
  * would be silent, would look harmless, and would destroy the entire distinction: every historical
  * row would claim to have been classified, the backfill's discovery query would match nothing, and
  * the backfill would appear to succeed by doing nothing at all.
  */
-class V140CounterpartyClassifierVersionMigrationIT {
+class V143CounterpartyClassifierVersionMigrationIT {
 
     @SuppressWarnings("resource")
     private static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:16-alpine")
@@ -57,7 +57,7 @@ class V140CounterpartyClassifierVersionMigrationIT {
             st.execute("DROP SCHEMA public CASCADE");
             st.execute("CREATE SCHEMA public");
         }
-        migrateTo("139");
+        migrateTo("142");
         connection = DriverManager.getConnection(
                 POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
     }
@@ -76,9 +76,9 @@ class V140CounterpartyClassifierVersionMigrationIT {
         UUID user = seedUser();
         UUID txn = seedTransaction(user, seedAccount(user));
 
-        assertThatCode(() -> migrateTo("140")).doesNotThrowAnyException();
+        assertThatCode(() -> migrateTo("143")).doesNotThrowAnyException();
 
-        // NULL means "no classifier has ever looked at this row". V139 already gave the row
+        // NULL means "no classifier has ever looked at this row". V142 already gave the row
         // counterparty_type = 'UNKNOWN', which is a REAL answer in this vocabulary -- so without a
         // NULL here the row is indistinguishable from one the classifier examined and gave up on.
         assertThat(object("SELECT counterparty_classifier_version FROM transactions WHERE id = ?", txn))
@@ -89,7 +89,7 @@ class V140CounterpartyClassifierVersionMigrationIT {
 
     @Test
     void theColumnHasNoDefault_soANewRowIsUntypedUntilSomethingTypesIt() throws SQLException {
-        migrateTo("140");
+        migrateTo("143");
 
         // Asserted at the catalog rather than by inserting a row, because this is exactly the
         // property a later "tidy up the schema" edit would add a default to without noticing.
@@ -105,13 +105,13 @@ class V140CounterpartyClassifierVersionMigrationIT {
 
     @Test
     void theDiscoveryIndexExists() throws SQLException {
-        migrateTo("140");
+        migrateTo("143");
 
         String def = string("SELECT indexdef FROM pg_indexes WHERE indexname = ?",
                 "idx_transactions_counterparty_classifier_version");
         assertThat(def).isNotNull();
         assertThat(def).contains("counterparty_classifier_version");
-        // NOT partial, deliberately -- see V140's own comment. A partial index on IS NULL would go
+        // NOT partial, deliberately -- see V143's own comment. A partial index on IS NULL would go
         // blind exactly when CounterpartyClassifier.VERSION is bumped and the backfill has the most
         // work to do.
         assertThat(def).doesNotContain("WHERE");
