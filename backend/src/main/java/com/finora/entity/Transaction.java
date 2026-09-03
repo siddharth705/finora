@@ -99,6 +99,19 @@ public class Transaction extends BaseEntity {
     @Column(name = "counterparty_key")
     private String counterpartyKey;
 
+    /**
+     * Which revision of {@link com.finora.util.CounterpartyClassifier} produced the two fields
+     * above, or null when none has -- see V143 for why the third state has to be representable and
+     * {@link com.finora.util.CounterpartyClassifier#VERSION} for what bumping it sets in motion.
+     *
+     * <p>Not to be confused with the {@code version} column this entity inherits from
+     * {@link BaseEntity}, which is the optimistic-locking counter and appears in this class's own
+     * {@code @SQLDelete}. This one never participates in locking, and the backfill deliberately
+     * writes it with a bulk update that leaves the locking counter untouched.
+     */
+    @Column(name = "counterparty_classifier_version")
+    private Short counterpartyClassifierVersion;
+
     @Column(name = "payment_method")
     private String paymentMethod;
 
@@ -266,6 +279,25 @@ public class Transaction extends BaseEntity {
 
     public String getCounterpartyKey() { return counterpartyKey; }
     public void setCounterpartyKey(String counterpartyKey) { this.counterpartyKey = counterpartyKey; }
+
+    public Short getCounterpartyClassifierVersion() { return counterpartyClassifierVersion; }
+    public void setCounterpartyClassifierVersion(Short v) { this.counterpartyClassifierVersion = v; }
+
+    /**
+     * Sets all three counterparty columns from a narration, and is the ONLY way any live write path
+     * should set them.
+     *
+     * <p>Delegates to {@link com.finora.util.CounterpartyTyping#of} -- the same derivation the
+     * backfill sweep uses -- so a row cannot be typed one way at import, another way when created by
+     * hand, and a third way when backfilled. See that class for why the shared piece is a value
+     * object rather than this method.
+     */
+    public void applyCounterpartyTyping(String description) {
+        com.finora.util.CounterpartyTyping typing = com.finora.util.CounterpartyTyping.of(description);
+        this.counterpartyType = typing.type();
+        this.counterpartyKey = typing.key();
+        this.counterpartyClassifierVersion = typing.version();
+    }
 
     public UUID getMerchantId() { return merchantId; }
     public void setMerchantId(UUID merchantId) { this.merchantId = merchantId; }

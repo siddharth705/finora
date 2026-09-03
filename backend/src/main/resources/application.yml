@@ -315,6 +315,26 @@ app:
       # user-facing deadline.
       interval-ms: ${ACCOUNT_PURGE_SWEEP_INTERVAL_MS:21600000}
       initial-delay-ms: ${ACCOUNT_PURGE_SWEEP_INITIAL_DELAY_MS:300000}
+  counterparty-backfill:
+    sweep:
+      # CounterpartyBackfillSweepService. Types the counterparty on rows that predate the
+      # counterparty layer (V142/V143), and thereafter on any row left behind by a bump of
+      # CounterpartyClassifier.VERSION. Off under test for the same reason every other sweep here
+      # is -- a background thread rewriting transaction rows mid-test is the cross-test pollution
+      # BH-058 was about. Tests call CounterpartyBackfillSweepService.sweep() directly, which does
+      # not consult this flag.
+      enabled: ${COUNTERPARTY_BACKFILL_SWEEP_ENABLED:true}
+      # Larger than account-purge's 200: the per-row work is one regex pass and one single-row
+      # UPDATE, not a cascade across thirty tables.
+      batch-size: ${COUNTERPARTY_BACKFILL_SWEEP_BATCH_SIZE:500}
+      # Five minutes. Frequent on purpose while there is a backlog -- this is the only thing
+      # standing between an existing user and a counterparty column that reads UNKNOWN for their
+      # whole history. Once drained the predicate matches nothing and a pass is an empty index
+      # probe (see V143), so the frequency costs essentially nothing in the steady state.
+      interval-ms: ${COUNTERPARTY_BACKFILL_SWEEP_INTERVAL_MS:300000}
+      # Two minutes, so a deploy's first pass lands after boot and any migration have settled
+      # rather than competing with them.
+      initial-delay-ms: ${COUNTERPARTY_BACKFILL_SWEEP_INITIAL_DELAY_MS:120000}
   security:
     # RateLimitFilter's own doc comment already flagged this: request.getRemoteAddr() only
     # returns the real client IP when nothing sits between the client and this app. Railway (like
