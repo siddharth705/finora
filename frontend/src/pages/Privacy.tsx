@@ -35,8 +35,18 @@ export default function Privacy() {
       <PublicSection title="Uploaded Statements">
         <p>
           When you import a bank or credit card statement, the original file is stored securely and linked to
-          your account so you can re-download it or re-process it later from Statement History. Only you can
-          access your uploaded statements.
+          your account so you can re-download it or re-process it later from Statement History.
+        </p>
+        <p>
+          Most imports are processed entirely automatically. If one fails for a reason our systems do not
+          recognise — most often a statement layout we have not seen before — we hold it so an engineer can
+          find out why. That review can involve reading the contents of your statement, and we may use AI
+          tooling to help diagnose the problem. We do it only to make the import work; the statement is not
+          used for any other purpose, and we notify you once it is ready. Every time a member of our team
+          opens a held statement, that access is recorded against them individually.
+        </p>
+        <p>
+          Aside from that review, only you can access your uploaded statements.
         </p>
       </PublicSection>
 
