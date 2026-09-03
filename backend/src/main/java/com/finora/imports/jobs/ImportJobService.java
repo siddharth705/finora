@@ -357,7 +357,7 @@ public class ImportJobService {
                 // reached IMPORTING and wrote nothing. Same locked framing as everywhere else: no
                 // ETA, and no suggestion the statement itself is in question.
                 case HELD_FOR_REVIEW -> "We're still running some additional checks on this "
-                        + "statement. There's nothing to cancel yet -- we'll let you know once "
+                        + "statement. There's nothing to cancel yet; we'll let you know once "
                         + "it's ready.";
                 // IMPORTING and later: transactions exist, and removing them is the ledger's job,
                 // not the queue's.
