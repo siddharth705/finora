@@ -52,6 +52,11 @@ public final class CounterpartyClassifier {
             // "int" as a bare token is included because that is how statements actually write
             // interest ("SB INT CREDIT", "INT CR"); the longer spellings alone matched none of it.
             "(?i)\\b(int|intcr|interest|intt|sbint|nach|ach[cd]r|ecs|mandate|atm|wdl|withdrawal"
+            // Cashback and reward credits: the counterparty is the card issuer or the bank running
+            // the programme, never a merchant and never a person. 18 of the 40 inbound rows in the
+            // rail-less residue are these, so they were the largest single group there by count --
+            // though near-zero by value, which is why they never surfaced in a value-weighted view.
+            + "|cashback|rewards?|reward\\s*points?"
             + "|chrg|chrgs|charges|servicetax|folio|redemption|dividend)\\b");
 
     /** Institution-shaped payee names. Checked after the mechanism words above. */
