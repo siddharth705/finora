@@ -41,7 +41,31 @@ public class TransactionGroupingService {
         this.accountRepository = accountRepository;
     }
 
-    public record MerchantGroup(UUID merchantId, String merchantName, List<UUID> transactionIds) {}
+    /**
+     * Just enough of each grouped transaction to preview it before committing to a bulk category --
+     * date/description/amount/type, the same fields the Ledger's own table row already shows.
+     * Deliberately not the full {@code TransactionDto}: this list can run to dozens of rows inside
+     * one card, and everything else on that DTO (tags, notes, reconciliation status, ...) has no
+     * use here -- the only decision this card makes is "does this category apply to all of these",
+     * which these four fields are already enough to judge.
+     */
+    public record TransactionSummary(UUID id, java.time.LocalDate date, String description,
+                                       java.math.BigDecimal amount, String type) {
+        static TransactionSummary from(Transaction t) {
+            return new TransactionSummary(t.getId(), t.getTxnDate(), t.getDescription(), t.getAmount(),
+                    t.getTxnType().name());
+        }
+    }
+
+    /**
+     * {@code transactionIds} stays the flat id list {@code apply}'s bulk-recategorize call has
+     * always taken -- {@code transactions} is purely additive, for the "preview before applying"
+     * expansion (Ledger's MerchantGroupReviewCard). The two are never allowed to disagree: both are
+     * derived from the same {@code List<Transaction>} per merchant in one pass below, not built
+     * from two separate queries that could drift apart.
+     */
+    public record MerchantGroup(UUID merchantId, String merchantName, List<UUID> transactionIds,
+                                 List<TransactionSummary> transactions) {}
 
     public List<MerchantGroup> groupNeedsReviewByMerchant(UUID userId) {
         // Deleted-account leak (see DashboardService.summarize for the original fix): a deleted
@@ -55,14 +79,14 @@ public class TransactionGroupingService {
                 : transactionRepository.findByUserIdAndNeedsCategoryReviewTrueAndAccountIdInOrderByTxnDateDesc(
                         userId, liveAccountIds);
 
-        Map<UUID, List<UUID>> idsByMerchant = new LinkedHashMap<>();
+        Map<UUID, List<Transaction>> transactionsByMerchant = new LinkedHashMap<>();
         for (Transaction t : candidates) {
             if (t.getMerchantId() == null) continue;
             // A transaction already flagged as a duplicate shouldn't inflate the group's count or be
             // bulk-categorized alongside its canonical counterpart -- it's resolved separately via
             // the duplicate-review flow, not this one.
             if (t.getReconciliationStatus() == Transaction.ReconciliationStatus.DUPLICATE) continue;
-            idsByMerchant.computeIfAbsent(t.getMerchantId(), k -> new ArrayList<>()).add(t.getId());
+            transactionsByMerchant.computeIfAbsent(t.getMerchantId(), k -> new ArrayList<>()).add(t);
         }
 
         // One query for every merchant name this user could possibly need here, rather than one
@@ -76,11 +100,14 @@ public class TransactionGroupingService {
         }
 
         List<MerchantGroup> groups = new ArrayList<>();
-        for (var entry : idsByMerchant.entrySet()) {
-            if (entry.getValue().size() < MIN_GROUP_SIZE) continue;
+        for (var entry : transactionsByMerchant.entrySet()) {
+            List<Transaction> txns = entry.getValue();
+            if (txns.size() < MIN_GROUP_SIZE) continue;
             String merchantName = nameById.get(entry.getKey());
             if (merchantName == null) continue;
-            groups.add(new MerchantGroup(entry.getKey(), merchantName, entry.getValue()));
+            groups.add(new MerchantGroup(entry.getKey(), merchantName,
+                    txns.stream().map(Transaction::getId).toList(),
+                    txns.stream().map(TransactionSummary::from).toList()));
         }
 
         groups.sort((a, b) -> b.transactionIds().size() - a.transactionIds().size());

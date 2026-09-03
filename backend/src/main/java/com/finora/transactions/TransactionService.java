@@ -84,6 +84,12 @@ public class TransactionService {
     // sidestepping any JPA-provider-specific edge cases around empty IN(...) lists entirely.
     private static final String NO_BANK_MATCH_SENTINEL = "__NO_BANK_MATCH__";
 
+    // Same reasoning as NO_BANK_MATCH_SENTINEL just above, for the category-name half of the same
+    // search: a nil UUID a real Category row can never carry (categoryRepository.save relies on
+    // the entity's @GeneratedValue, never this all-zero literal), so `t.categoryId IN :categoryIds`
+    // always binds a real, non-empty collection.
+    private static final UUID NO_CATEGORY_MATCH_SENTINEL = UUID.fromString("00000000-0000-0000-0000-000000000000");
+
     @Transactional(readOnly = true)
     // Bug fix: the repository call below already returns a Spring Data Page<Transaction>, which
     // computes totalElements/totalPages as part of the same query -- this used to throw that
@@ -114,6 +120,24 @@ public class TransactionService {
                 ? bankManagementService.search(f.keyword()).stream().map(com.finora.accounts.AccountDto.BankDto::id).toList()
                 : List.of();
         List<String> bankIdsParam = matchingBankIds.isEmpty() ? List.of(NO_BANK_MATCH_SENTINEL) : matchingBankIds;
+        // Same "Improve Search" gap, the category half: a keyword like "Groceries" is how someone
+        // actually thinks of a transaction they're looking for, and this search bar sits directly
+        // above a table with a Category column -- but category, like bank, has no column on
+        // Transaction itself (categoryId is a plain UUID reference, not a JPQL-joinable path from
+        // this query the way description/merchant already are), so it needs the identical
+        // resolve-ids-first treatment. categoryRepository.findByUserId is already an in-memory
+        // list this small (a user's own category set, not the whole table) -- same cost class as
+        // BankRegistry's own linear scan above.
+        List<UUID> matchingCategoryIds = f.keyword() != null && !f.keyword().isBlank()
+                ? categoryRepository.findByUserId(userId).stream()
+                        .filter(c -> c.getName() != null
+                                && c.getName().toLowerCase(java.util.Locale.ROOT)
+                                        .contains(f.keyword().trim().toLowerCase(java.util.Locale.ROOT)))
+                        .map(Category::getId)
+                        .toList()
+                : List.of();
+        List<UUID> categoryIdsParam = matchingCategoryIds.isEmpty()
+                ? List.of(NO_CATEGORY_MATCH_SENTINEL) : matchingCategoryIds;
         // Bug fix: an unclamped negative page or oversized size reached PageRequest.of directly,
         // which throws IllegalArgumentException -- unhandled in GlobalExceptionHandler, so the
         // Ledger's own search endpoint 500'd on a malformed page param instead of just clamping it
@@ -130,12 +154,13 @@ public class TransactionService {
         var page = transactionRepository.search(
                 userId, f.accountId(), f.categoryId(),
                 com.finora.util.EnumParsing.parseIfPresent(Transaction.Type.class, f.type(), "type"),
+                com.finora.util.EnumParsing.parseIfPresent(Transaction.ReconciliationStatus.class, f.status(), "status"),
                 f.dateFrom(), f.dateTo(), f.amountMin(), f.amountMax(),
                 // Escaped for LIKE (see LikePatterns) -- transaction descriptions are full of
                 // literal percent signs ("2.5% CASHBACK"), and an unescaped one turned an exact
                 // search into a prefix search silently. Only the repository term is escaped:
                 // bankManagementService.search() above matches in memory with contains().
-                com.finora.util.LikePatterns.escape(f.keyword()), bankIdsParam, liveAccountIds,
+                com.finora.util.LikePatterns.escape(f.keyword()), bankIdsParam, categoryIdsParam, liveAccountIds,
                 PageRequest.of(safePage, safeSize, sort)
         );
         Map<UUID, String> namesById = categoryNamesById(userId);

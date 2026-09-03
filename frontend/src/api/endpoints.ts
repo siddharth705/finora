@@ -159,6 +159,10 @@ export interface TransactionFilters {
   accountId?: string;
   categoryId?: string;
   type?: string;
+  // One of Transaction['reconciliationStatus'] (types/index.ts) -- kept as a plain string here,
+  // like `type` above, since this interface is a thin mirror of the backend's query params, not
+  // a place that re-derives the DTO's own typed unions.
+  status?: string;
   dateFrom?: string;
   dateTo?: string;
   amountMin?: number;
@@ -227,7 +231,10 @@ export interface TransactionExplanation {
 }
 
 export interface TransactionReconciliationExplanation {
-  status: 'DUPLICATE' | 'TRANSFER' | 'REFUND' | 'REVERSAL';
+  // Mirrors TransactionExplanationService.reconciliationExplanationFor's switch exactly -- was
+  // missing INVESTMENT_TRANSFER and SUPERSEDED, both real statuses that DTO can return (see that
+  // method's own case for each).
+  status: 'DUPLICATE' | 'TRANSFER' | 'REFUND' | 'REVERSAL' | 'INVESTMENT_TRANSFER' | 'SUPERSEDED';
   matchedTransactionId: string | null;
   summary: string;
   evidence: string[];
