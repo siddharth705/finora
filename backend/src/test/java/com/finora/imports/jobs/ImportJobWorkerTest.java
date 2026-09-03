@@ -350,8 +350,7 @@ class ImportJobWorkerTest {
      * nothing is hidden by keeping it in FAILED.
      */
     @Test
-    void aStorageIntegrityFailureIsNotHeld_becauseReprocessingWouldReadTheSameWrongBytes()
-            throws IOException {
+    void nonRemediableFailuresAreNotHeldForReview() throws IOException {
         when(statementContentService.read(any()))
                 .thenThrow(new StatementIntegrityException("hash mismatch for " + job.getContentHash()));
 
@@ -362,6 +361,42 @@ class ImportJobWorkerTest {
         assertThat(job.wasHeldForReview())
                 .as("no holding message, and nothing for an admin to reprocess")
                 .isFalse();
+    }
+
+    /**
+     * The exclusion has to survive wrapping, because wrapping is idiomatic here.
+     *
+     * <p>GzipCompression, FilesystemStatementStorage and R2StatementStorage all rethrow as
+     * StatementStorageException -- StatementIntegrityException's own parent -- so a future catch on
+     * the read path is a realistic edit, not a hypothetical one. A top-level instanceof would fail
+     * open there: integrity failures would quietly rejoin the triage queue and nothing would say
+     * so. This is the test that notices.
+     */
+    @Test
+    void aWrappedIntegrityFailureIsStillNotHeld() throws IOException {
+        when(statementContentService.read(any()))
+                .thenThrow(new IllegalStateException("while reading statement",
+                        new StatementIntegrityException("hash mismatch for " + job.getContentHash())));
+
+        worker.drainOnce();
+        runAnotherPass();
+
+        assertThat(job.getStatus()).isEqualTo(ImportJob.Status.FAILED);
+        assertThat(job.wasHeldForReview())
+                .as("a cause-chain walk, not a top-level type test")
+                .isFalse();
+    }
+
+    /** The rule is "operator-remediable failures are held", so the ordinary parser gap still is. */
+    @Test
+    void remediableFailuresAreStillHeldForReview() throws IOException {
+        when(importService.parseAndStageWithSession(any(), any(), any()))
+                .thenThrow(new IllegalStateException("no header row found"));
+
+        worker.drainOnce();
+        runAnotherPass();
+
+        assertThat(job.getStatus()).isEqualTo(ImportJob.Status.HELD_FOR_REVIEW);
     }
 
     // ------------------------------------------------------- completion notification (Phase B)
