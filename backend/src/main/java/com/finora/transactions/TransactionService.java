@@ -23,6 +23,8 @@ import com.finora.service.SmsProvider;
 import com.finora.service.SmsResult;
 import com.finora.service.TransactionGroupingService;
 import com.finora.util.CategoryRules;
+import com.finora.util.CounterpartyClassifier;
+import com.finora.util.CounterpartyIdentity;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
@@ -234,6 +236,12 @@ public class TransactionService {
         t.setTxnDate(req.date());
         t.setDescription(req.description());
         t.setMerchant(CategoryRules.extractMerchant(req.description()));
+        // Who was on the other side -- a separate question from what the money was for, and one
+        // the narration answers far more often (79.2% of the real corpus, against ~47% for
+        // category). Pure function of the description, so this agrees with the import path by
+        // construction; CounterpartyWiringTest pins that rather than trusting it.
+        t.setCounterpartyType(CounterpartyClassifier.classify(req.description()));
+        t.setCounterpartyKey(blankToNull(CounterpartyIdentity.keyOf(req.description())));
         requireAmountWithinBounds(req.amount());
         t.setAmount(req.amount());
         t.setTxnType(com.finora.util.EnumParsing.parse(Transaction.Type.class, req.type(), "type"));
@@ -829,6 +837,12 @@ public class TransactionService {
     /** The same check AccountService applies -- both now route through {@link OwnershipGuard}
      *  rather than each keeping its own copy. This method survives only as a named shorthand for
      *  the label/getter pair; the security logic itself lives in exactly one place. */
+    /** CounterpartyIdentity returns "" for "nothing derivable"; the column stores that as NULL so
+     *  "no key" and "empty key" cannot become two different states in a GROUP BY. */
+    private static String blankToNull(String key) {
+        return key == null || key.isBlank() ? null : key;
+    }
+
     private Account getOwnedAccount(UUID userId, UUID accountId) {
         return OwnershipGuard.requireOwned(
                 accountRepository.findById(accountId), Account::getUserId, userId, "Account");

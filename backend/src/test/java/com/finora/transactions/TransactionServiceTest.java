@@ -1392,4 +1392,53 @@ class TransactionServiceTest {
 
         assertThat(result).extracting(TransactionDto::id).containsExactly(genuine.getId());
     }
+
+    @Test
+    void create_typesTheCounterparty_evenWhenTheUserSuppliedTheCategoryThemselves() {
+        // The assertion that matters. Counterparty typing sits OUTSIDE the category decision,
+        // because it is derived from the narration alone and is equally true whether the category
+        // came from the engine or from the user typing one in. Setting it only in the engine branch
+        // would leave every manually-categorized row untyped for no reason a user could explain --
+        // and the manual branch is exactly the one a careful user exercises most.
+        when(categorizationService.resolveMerchantId(eq(userId), anyString())).thenReturn(UUID.randomUUID());
+        when(categorizationService.resolveOrCreateCategory(eq(userId), eq("Dining"))).thenReturn(dummyCategory);
+
+        var req = new TransactionDto.CreateRequest(UUID.randomUUID(), "Dining", LocalDate.now(),
+                "UPI-SUNIL VERMA-sampleuser@ybl-REF61", BigDecimal.valueOf(486), "EXPENSE", List.of());
+
+        transactionService.create(userId, req);
+
+        verify(transactionRepository).save(argThat(t ->
+                t.getCounterpartyType() == com.finora.util.CounterpartyType.PERSON
+                        && "vpa:sampleuser".equals(t.getCounterpartyKey())));
+    }
+
+    @Test
+    void create_storesNoKeyAsNull_ratherThanAnEmptyString() {
+        // CounterpartyIdentity returns "" for "nothing derivable". Persisting that verbatim would
+        // make "no key" and "empty key" two different groups in the value-weighted review query
+        // this column exists to serve.
+        when(categorizationService.resolveMerchantId(eq(userId), anyString())).thenReturn(UUID.randomUUID());
+        when(categorizationService.resolveOrCreateCategory(eq(userId), eq("Dining"))).thenReturn(dummyCategory);
+
+        var req = new TransactionDto.CreateRequest(UUID.randomUUID(), "Dining", LocalDate.now(),
+                "UPI/REF62/UPI", BigDecimal.valueOf(486), "EXPENSE", List.of());
+
+        transactionService.create(userId, req);
+
+        verify(transactionRepository).save(argThat(t -> t.getCounterpartyKey() == null));
+    }
+
+    @Test
+    void create_neverLeavesTheTypeNull_soTheNotNullColumnCannotBeViolated() {
+        when(categorizationService.resolveMerchantId(eq(userId), anyString())).thenReturn(UUID.randomUUID());
+        when(categorizationService.resolveOrCreateCategory(eq(userId), eq("Dining"))).thenReturn(dummyCategory);
+
+        var req = new TransactionDto.CreateRequest(UUID.randomUUID(), "Dining", LocalDate.now(),
+                "UPI/REF63/UPI", BigDecimal.valueOf(486), "EXPENSE", List.of());
+
+        transactionService.create(userId, req);
+
+        verify(transactionRepository).save(argThat(t -> t.getCounterpartyType() != null));
+    }
 }
