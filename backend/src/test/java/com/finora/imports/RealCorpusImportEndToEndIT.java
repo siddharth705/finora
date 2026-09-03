@@ -2,15 +2,19 @@ package com.finora.imports;
 
 import com.finora.AbstractIntegrationTest;
 import com.finora.dto.ImportDto.ConfirmRequest;
+import com.finora.dto.ImportDto.ConfirmResponse;
 import com.finora.dto.ImportDto.ConfirmedRow;
+import com.finora.dto.ImportDto.DetectedAccountInfo;
+import com.finora.dto.ImportDto.NewAccountRequest;
 import com.finora.dto.ImportDto.StagedRow;
 import com.finora.dto.ImportDto.StagingResponse;
 import com.finora.entity.Account;
 import com.finora.entity.ImportSession;
-import com.finora.entity.Transaction;
+import com.finora.entity.StatementImport;
 import com.finora.entity.User;
 import com.finora.repository.AccountRepository;
 import com.finora.repository.MerchantLearningEventRepository;
+import com.finora.repository.StatementImportRepository;
 import com.finora.repository.TransactionRepository;
 import com.finora.repository.UserRepository;
 import org.junit.jupiter.api.Test;
@@ -24,6 +28,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.UUID;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -53,6 +58,31 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
  * would let a document that imports garbage cleanly count as a success. This measures reachability
  * of the import path, and says so.
  *
+ * <h2>Metadata, and why it needed its own half</h2>
+ *
+ * Transactions are not the only thing an import produces. The statement period, opening and closing
+ * balances, the payment summary, the card number, the credit limit, the holder, branch and IFSC are
+ * all read at STAGING and then have to be echoed back through {@code ConfirmRequest} /
+ * {@code NewAccountRequest} to be stored -- {@code persistSection} stores what the request carries
+ * and deliberately never re-derives any of it from the confirmed rows. That echo is a wire contract
+ * with the review screen, and it is exactly the kind of seam that fails silently: a field extracted
+ * perfectly and dropped on the way to the database looks identical, from either side alone, to a
+ * field the document never printed.
+ *
+ * <p>So each imported statement is also reported field by field, in three states -- and the middle
+ * one is the point:
+ *
+ * <ul>
+ *   <li><b>in the database</b> -- extracted, echoed, stored, and read back equal.</li>
+ *   <li><b>LOST</b> -- the parser had the value and the database does not. A real defect, and the
+ *       only metadata state this test asserts on.</li>
+ *   <li><b>not printed</b> -- the parser found nothing. Reported, never asserted: statements
+ *       genuinely do not all carry a credit limit or an IFSC code, and whether a given absence is
+ *       correct is decided against per-document expectations the ground-truth runner holds and this
+ *       instrument does not. Demanding a value here would turn a document's own silence into a
+ *       pipeline defect.</li>
+ * </ul>
+ *
  * <p>Set {@code FINORA_CORPUS_DIR} to point at the corpus; the directory is read recursively, since
  * it is a human-maintained folder that has already been reorganised into per-product subfolders
  * once.
@@ -65,6 +95,7 @@ class RealCorpusImportEndToEndIT extends AbstractIntegrationTest {
     @Autowired private TransactionRepository transactionRepository;
     @Autowired private UserRepository userRepository;
     @Autowired private MerchantLearningEventRepository learningEventRepository;
+    @Autowired private StatementImportRepository statementImportRepository;
 
     private final List<UUID> createdUserIds = new ArrayList<>();
 
@@ -80,17 +111,44 @@ class RealCorpusImportEndToEndIT extends AbstractIntegrationTest {
      * nothing was staged, and refuses to guess which kind of nothing it was.
      */
     private record Outcome(String file, String verdict, int staged, int confirmed, int persisted,
-                            String reason) {
-        static Outcome imported(String f, int staged, int persisted) {
-            return new Outcome(f, "IMPORTED", staged, staged, persisted, "");
+                            List<Field> metadata, String reason) {
+        static Outcome imported(String f, int staged, int persisted, List<Field> metadata) {
+            return new Outcome(f, "IMPORTED", staged, staged, persisted, metadata, "");
         }
         static Outcome nothingToImport(String f) {
-            return new Outcome(f, "NO_TXNS", 0, 0, 0,
+            return new Outcome(f, "NO_TXNS", 0, 0, 0, List.of(),
                     "parsed cleanly, staged no transactions -- correct for a nil-activity "
                             + "statement, unproven otherwise; the ground-truth runner decides which");
         }
         static Outcome failed(String f, int staged, int confirmed, int persisted, String why) {
-            return new Outcome(f, "FAILED", staged, confirmed, persisted, why);
+            return new Outcome(f, "FAILED", staged, confirmed, persisted, List.of(), why);
+        }
+        List<Field> extracted() { return metadata.stream().filter(Field::wasExtracted).toList(); }
+        List<Field> lost() { return metadata.stream().filter(Field::wasLost).toList(); }
+    }
+
+    /**
+     * One metadata field's fate on one statement: what the parser read off the document, and what
+     * the database holds afterwards.
+     *
+     * <p>Three states, for the same reason {@link Outcome} has three verdicts. A field the parser
+     * never extracted is ABSENT, not a failure -- statements genuinely do not all print a credit
+     * limit, an IFSC code or a branch, and whether a particular absence is CORRECT is the
+     * ground-truth runner's question, decided against per-document expectations this instrument
+     * does not have. A field that was extracted and then did not arrive is LOST, and that is a real
+     * defect: the value existed, the pipeline had it, and the database does not.
+     */
+    private record Field(String name, Object extracted, Object persisted) {
+        boolean wasExtracted() { return extracted != null; }
+        boolean survived() { return wasExtracted() && sameValue(extracted, persisted); }
+        boolean wasLost() { return wasExtracted() && !survived(); }
+
+        /** BigDecimal.equals is scale-sensitive -- 100.0 and 100.00 are equal amounts and unequal
+         *  objects, and a column's scale legitimately changes between the parser and the database.
+         *  Comparing with equals here would report loss on a value that arrived perfectly. */
+        private static boolean sameValue(Object a, Object b) {
+            if (a instanceof BigDecimal x && b instanceof BigDecimal y) return x.compareTo(y) == 0;
+            return a.equals(b);
         }
     }
 
@@ -110,13 +168,80 @@ class RealCorpusImportEndToEndIT extends AbstractIntegrationTest {
         return saved;
     }
 
-    private Account account(User owner) {
-        Account account = new Account();
-        account.setUserId(owner.getId());
-        account.setName("Imported");
-        account.setAccountType(Account.Type.SAVINGS);
-        account.setBalance(BigDecimal.ZERO);
-        return accountRepository.save(account);
+    /**
+     * The account the review screen would create, prefilled from what the parser detected.
+     *
+     * <p>The earlier version of this test confirmed into a bare hand-made SAVINGS account instead,
+     * and that quietly made the whole metadata half unobservable: account-level fields (card
+     * number, credit limit, holder, branch, IFSC) are only ever written on the NEW-account branch
+     * of {@code resolveTargetAccount}, so reusing an existing account meant the pipeline was never
+     * asked to store them and nothing could notice that it had not.
+     */
+    private static NewAccountRequest reviewScreenAccount(DetectedAccountInfo d) {
+        String name = d.suggestedName() == null || d.suggestedName().isBlank()
+                ? "Bank Statement Import" : d.suggestedName();
+        return new NewAccountRequest(
+                name, d.suggestedAccountType(), d.openingBalance(), d.creditLimit(),
+                d.paymentDueDate(), d.accountHolderName(), d.accountNumberMasked(),
+                d.bank() == null ? null : d.bank().id(), d.branchName(), d.ifscCode(),
+                d.detectedProduct(), d.productIdentityHash(),
+                d.principalAmount(), d.interestRate(), d.maturityDate(), d.maturityAmount(),
+                d.installmentAmount(), d.installmentsPaid(), d.installmentsTotal());
+    }
+
+    /**
+     * Confirm the way a real client does -- echoing the staged values back.
+     *
+     * <p>This is not a convenience: {@code persistSection} stores the statement period, balances
+     * and payment summary from the REQUEST and deliberately never re-derives them from the
+     * confirmed rows (a period derived from row dates is only ever a lower bound -- see that
+     * method's own comment). Passing nulls here, as this test first did, therefore measured
+     * nothing about extraction; it measured the nulls this test itself supplied.
+     */
+    private static ConfirmRequest confirmRequestFor(UUID sessionId, List<ConfirmedRow> rows,
+                                                    DetectedAccountInfo d) {
+        return new ConfirmRequest(sessionId, rows, null, reviewScreenAccount(d),
+                d.openingBalance(), d.closingBalance(), null,
+                d.statementPeriodStart(), d.statementPeriodEnd(),
+                d.totalAmountDue(), d.paymentDueDate(), null, null);
+    }
+
+    /**
+     * Every metadata field this pipeline extracts, paired with what the database holds for it.
+     *
+     * <p>Only fields the pipeline ECHOES verbatim are listed. {@code detectedProduct} is
+     * deliberately absent: it is not echoed but re-resolved through ProductDiscovery, so a
+     * difference between what was staged and what was stored is a decision, not a loss, and this
+     * instrument cannot tell those apart.
+     */
+    private List<Field> metadataOf(User user, DetectedAccountInfo d, ConfirmResponse confirmed) {
+        List<StatementImport> imports = statementImportRepository.findAll().stream()
+                .filter(si -> user.getId().equals(si.getUserId())).toList();
+        if (imports.size() != 1) {
+            return List.of(new Field("statement_import row", "exactly 1", imports.size() + " rows"));
+        }
+        StatementImport si = imports.get(0);
+        Account account = confirmed.account() == null ? null
+                : accountRepository.findById(confirmed.account().id()).orElse(null);
+
+        List<Field> fields = new ArrayList<>(List.of(
+                new Field("statementPeriodStart", d.statementPeriodStart(), si.getStatementPeriodStart()),
+                new Field("statementPeriodEnd", d.statementPeriodEnd(), si.getStatementPeriodEnd()),
+                new Field("openingBalance", d.openingBalance(), si.getOpeningBalance()),
+                new Field("closingBalance", d.closingBalance(), si.getClosingBalance()),
+                new Field("totalAmountDue", d.totalAmountDue(), si.getTotalAmountDue()),
+                new Field("paymentDueDate", d.paymentDueDate(), si.getPaymentDueDate())));
+        fields.add(new Field("accountNumberMasked", d.accountNumberMasked(),
+                account == null ? null : account.getAccountNumberMasked()));
+        fields.add(new Field("creditLimit", d.creditLimit(),
+                account == null ? null : account.getCreditLimit()));
+        fields.add(new Field("accountHolderName", d.accountHolderName(),
+                account == null ? null : account.getAccountHolderName()));
+        fields.add(new Field("branchName", d.branchName(),
+                account == null ? null : account.getBranchName()));
+        fields.add(new Field("ifscCode", d.ifscCode(),
+                account == null ? null : account.getIfscCode()));
+        return fields;
     }
 
     /** Every statement in the corpus, matched case-insensitively and read recursively -- the same
@@ -137,7 +262,6 @@ class RealCorpusImportEndToEndIT extends AbstractIntegrationTest {
         try {
             byte[] content = Files.readAllBytes(statement);
             User user = user("Corpus " + name);
-            Account account = account(user);
 
             StagingResponse response = importService.parseAndStageAnyFormat(
                     user.getId(), "PDF", name, content, null);
@@ -145,6 +269,11 @@ class RealCorpusImportEndToEndIT extends AbstractIntegrationTest {
             staged = rows.size();
             if (staged == 0) {
                 return Outcome.nothingToImport(name);
+            }
+            DetectedAccountInfo detected = response.detectedAccount();
+            if (detected == null) {
+                return Outcome.failed(name, staged, 0, 0,
+                        "staged " + staged + " rows but detected no account info at all");
             }
 
             List<ConfirmedRow> toConfirm = rows.stream()
@@ -155,16 +284,16 @@ class RealCorpusImportEndToEndIT extends AbstractIntegrationTest {
             confirmed = toConfirm.size();
 
             ImportSession session = importSessionService.createSession(
-                    user.getId(), name, content, rows, response.detectedAccount());
-            importService.confirmSession(user.getId(), new ConfirmRequest(
-                    session.getId(), toConfirm, account.getId(), null, null, null, null));
+                    user.getId(), name, content, rows, detected);
+            ConfirmResponse result = importService.confirmSession(
+                    user.getId(), confirmRequestFor(session.getId(), toConfirm, detected));
 
             int persisted = transactionRepository.findByUserId(user.getId()).size();
             if (persisted != confirmed) {
                 return Outcome.failed(name, staged, confirmed, persisted,
                         "confirmed " + confirmed + " rows but only " + persisted + " reached the database");
             }
-            return Outcome.imported(name, staged, persisted);
+            return Outcome.imported(name, staged, persisted, metadataOf(user, detected, result));
         } catch (Exception e) {
             String why = e.getClass().getSimpleName()
                     + (e.getMessage() == null ? "" : ": " + e.getMessage().replaceAll("\\s+", " "));
@@ -194,29 +323,68 @@ class RealCorpusImportEndToEndIT extends AbstractIntegrationTest {
         List<Outcome> failures = outcomes.stream().filter(o -> "FAILED".equals(o.verdict())).toList();
         List<Outcome> empty = outcomes.stream().filter(o -> "NO_TXNS".equals(o.verdict())).toList();
         int imported = outcomes.size() - failures.size() - empty.size();
+        List<Outcome> withLostMetadata = outcomes.stream().filter(o -> !o.lost().isEmpty()).toList();
+        int fieldsExtracted = outcomes.stream().mapToInt(o -> o.extracted().size()).sum();
+        int fieldsLost = outcomes.stream().mapToInt(o -> o.lost().size()).sum();
 
         StringBuilder report = new StringBuilder("\n\nEND-TO-END IMPORT OF THE REAL CORPUS\n");
-        report.append("=".repeat(96)).append('\n');
-        report.append(String.format("%-42s %-10s %8s %10s   %s%n",
-                "statement", "verdict", "staged", "persisted", "reason"));
-        report.append("-".repeat(96)).append('\n');
+        report.append("=".repeat(104)).append('\n');
+        report.append(String.format("%-42s %-10s %8s %10s %9s   %s%n",
+                "statement", "verdict", "staged", "persisted", "metadata", "reason"));
+        report.append("-".repeat(104)).append('\n');
         for (Outcome o : outcomes) {
-            report.append(String.format("%-42s %-10s %8d %10d   %s%n",
+            // "6/8" reads: of the 8 metadata fields the parser found on this statement, 6 are in
+            // the database. Blank for a statement that staged nothing -- there is no import to
+            // carry metadata, and printing "0/0" would read like a finding.
+            String meta = "IMPORTED".equals(o.verdict())
+                    ? (o.extracted().size() - o.lost().size()) + "/" + o.extracted().size() : "";
+            report.append(String.format("%-42s %-10s %8d %10d %9s   %s%n",
                     o.file().length() > 41 ? o.file().substring(0, 41) : o.file(),
-                    o.verdict(), o.staged(), o.persisted(), o.reason()));
+                    o.verdict(), o.staged(), o.persisted(), meta, o.reason()));
         }
-        report.append("-".repeat(96)).append('\n');
+        report.append("-".repeat(104)).append('\n');
         report.append(String.format(
                 "%n  OUT OF %d STATEMENTS: %d IMPORTED, %d STAGED NOTHING, %d FAILED%n",
                 outcomes.size(), imported, empty.size(), failures.size()));
         report.append(String.format("  transactions persisted in total: %d%n",
                 outcomes.stream().mapToInt(Outcome::persisted).sum()));
-        report.append("  every confirmed row reached the database on every imported statement.%n"
-                .replace("%n", System.lineSeparator()));
+        // Conditional, because the report prints BEFORE the assertion below and a failing run would
+        // otherwise state this as fact while contradicting itself six lines later.
+        report.append(failures.isEmpty()
+                ? "  every confirmed row reached the database on every imported statement.\n"
+                : "  NOT every confirmed row reached the database -- see FAILURES below.\n");
+        report.append(String.format(
+                "  metadata fields extracted: %d, of which %d reached the database and %d were LOST%n",
+                fieldsExtracted, fieldsExtracted - fieldsLost, fieldsLost));
+
+        // What each imported statement actually yielded, field by field. This is the half a count
+        // cannot show: "6/8" is the same number whether the two missing fields were never printed
+        // on the document or were read and then dropped, and those are opposite situations.
+        report.append("\n  METADATA EXTRACTED, PER STATEMENT\n");
+        for (Outcome o : outcomes) {
+            if (!"IMPORTED".equals(o.verdict())) continue;
+            String present = o.extracted().stream().filter(Field::survived)
+                    .map(Field::name).collect(Collectors.joining(", "));
+            String missing = o.metadata().stream().filter(f -> !f.wasExtracted())
+                    .map(Field::name).collect(Collectors.joining(", "));
+            report.append("    ").append(o.file()).append('\n');
+            report.append("      in the database : ").append(present.isEmpty() ? "(none)" : present).append('\n');
+            report.append("      not printed     : ").append(missing.isEmpty() ? "(none)" : missing).append('\n');
+        }
+
         if (!empty.isEmpty()) {
             report.append("\n  STAGED NOTHING (not an import failure -- see Outcome's doc comment)\n");
             for (Outcome e : empty) {
                 report.append("    - ").append(e.file()).append('\n');
+            }
+        }
+        if (!withLostMetadata.isEmpty()) {
+            report.append("\n  METADATA LOST BETWEEN THE PARSER AND THE DATABASE\n");
+            for (Outcome o : withLostMetadata) {
+                for (Field f : o.lost()) {
+                    report.append("    - ").append(o.file()).append(": ").append(f.name())
+                            .append(" was extracted but the database has a different value\n");
+                }
             }
         }
         if (!failures.isEmpty()) {
@@ -235,6 +403,15 @@ class RealCorpusImportEndToEndIT extends AbstractIntegrationTest {
         // meaning less than it appears to.
         assertThat(failures)
                 .as("statements that could not be imported end to end:%n%s", report)
+                .isEmpty();
+
+        // The metadata half, and note what it does NOT assert: that a field was extracted at all.
+        // A statement that prints no IFSC code has nothing to lose, and demanding a value here
+        // would turn a document's own silence into a pipeline defect. What IS asserted is that
+        // nothing the parser read gets dropped on the way to the database -- the failure mode this
+        // whole seam exists to catch, and one no per-layer test can see.
+        assertThat(withLostMetadata)
+                .as("statements whose extracted metadata did not survive to the database:%n%s", report)
                 .isEmpty();
     }
 
