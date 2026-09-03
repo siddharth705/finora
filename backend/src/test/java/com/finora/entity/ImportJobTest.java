@@ -458,4 +458,143 @@ class ImportJobTest {
                 .as("terminal state must not change what the async path's read-back decodes by")
                 .isEqualTo(com.finora.imports.storage.CompressionType.NONE);
     }
+
+    // ------------------------------------------------------------------ held for review
+
+    /** Drives a job to the state Task 2's routing puts a held one in: dead-lettered, then held. */
+    private ImportJob deadLetteredUnclassifiedJob() {
+        ImportJob job = job();
+        job.markClaimed("worker", Instant.now());
+        job.markClaimed("worker", Instant.now());
+        ImportJob.FailureOutcome outcome = job.recordFailure(
+                "IllegalStateException: no header row found", "IllegalStateException",
+                ErrorCode.RetryPolicy.RETRY_ONCE_THEN_ALERT, Instant.now());
+        assertThat(outcome)
+                .as("fixture must actually reach the dead-letter branch, or these tests prove nothing")
+                .isEqualTo(ImportJob.FailureOutcome.DEAD_LETTERED);
+        job.holdForReview("IllegalStateException", Instant.now());
+        return job;
+    }
+
+    @Test
+    void holdForReview_isTerminalForTheWorkerButDistinctFromFailed() {
+        ImportJob job = deadLetteredUnclassifiedJob();
+
+        assertThat(job.getStatus()).isEqualTo(ImportJob.Status.HELD_FOR_REVIEW);
+        assertThat(job.getStatus()).isNotEqualTo(ImportJob.Status.FAILED);
+        assertThat(ImportJob.Status.TERMINAL).contains(ImportJob.Status.HELD_FOR_REVIEW);
+        assertThat(ImportJob.Status.IN_FLIGHT).doesNotContain(ImportJob.Status.HELD_FOR_REVIEW);
+    }
+
+    @Test
+    void holdForReview_recordsTheUnrecognizedFailureCode() {
+        assertThat(deadLetteredUnclassifiedJob().getFailureCode()).isEqualTo("IllegalStateException");
+    }
+
+    /**
+     * The hold has to survive a later stray failure, or it is not a hold.
+     *
+     * <p>{@code recordFailure} declines to move a terminal job -- being in TERMINAL is exactly what
+     * buys that. Without it, a double-fault on the way out of a pass would quietly downgrade a held
+     * job to FAILED and the user would see the dead end this feature exists to avoid.
+     */
+    @Test
+    void aHeldJobIsNotMovedByAFurtherFailure() {
+        ImportJob job = deadLetteredUnclassifiedJob();
+
+        ImportJob.FailureOutcome outcome = job.recordFailure(
+                "something else went wrong", "RuntimeException",
+                ErrorCode.RetryPolicy.FAIL_FAST, Instant.now());
+
+        assertThat(outcome).isEqualTo(ImportJob.FailureOutcome.ALREADY_FINISHED);
+        assertThat(job.getStatus()).isEqualTo(ImportJob.Status.HELD_FOR_REVIEW);
+    }
+
+    /** Only the explicit transition may enter the hold -- advanceTo refuses every terminal state. */
+    @Test
+    void advanceToCannotEnterTheHold() {
+        assertThatThrownBy(() -> job().advanceTo(ImportJob.Status.HELD_FOR_REVIEW))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void returnToQueueForReprocess_clearsAttemptsSoAFixedParserGetsAFullBudget() {
+        ImportJob job = deadLetteredUnclassifiedJob();
+
+        job.returnToQueueForReprocess(Instant.now());
+
+        assertThat(job.getStatus()).isEqualTo(ImportJob.Status.QUEUED);
+        assertThat(job.getAttemptCount()).isZero();
+        assertThat(job.getRecoveryCount()).isZero();
+        assertThat(job.getFinishedAt()).isNull();
+        assertThat(job.getStartedAt()).isNull();
+    }
+
+    /**
+     * A stale code from the attempt that failed against the OLD parser must not survive into the
+     * new run -- the same defect {@code returnToQueue} documents at length, where it reached the
+     * customer timeline describing a failure that did not happen.
+     */
+    @Test
+    void returnToQueueForReprocess_clearsTheFailureOfThePreviousParser() {
+        ImportJob job = deadLetteredUnclassifiedJob();
+
+        job.returnToQueueForReprocess(Instant.now());
+
+        assertThat(job.getFailureCode()).isNull();
+        assertThat(job.getLastError()).isNull();
+    }
+
+    /**
+     * The marker is what tells the success path this user was asked to wait. Clearing it on the
+     * reprocess -- the obvious "reset everything" simplification -- would silence the notification
+     * on exactly the jobs the whole feature exists to notify about.
+     */
+    @Test
+    void wasHeldForReview_survivesTheReprocessAndTheCompletionThatFollows() {
+        ImportJob job = deadLetteredUnclassifiedJob();
+        assertThat(job.wasHeldForReview()).isTrue();
+
+        job.returnToQueueForReprocess(Instant.now());
+        assertThat(job.wasHeldForReview()).isTrue();
+
+        job.markClaimed("worker", Instant.now());
+        job.advanceTo(ImportJob.Status.ANALYZING);
+        job.complete(UUID.randomUUID(), Instant.now());
+
+        assertThat(job.wasHeldForReview())
+                .as("the completed job still has to know it was held, or nobody is notified")
+                .isTrue();
+    }
+
+    @Test
+    void anOrdinaryJobWasNeverHeld() {
+        ImportJob job = job();
+        job.markClaimed("worker", Instant.now());
+        job.complete(UUID.randomUUID(), Instant.now());
+
+        assertThat(job.wasHeldForReview()).isFalse();
+    }
+
+    @Test
+    void returnToQueueForReprocess_isRejectedForAJobThatIsNotHeld() {
+        assertThatThrownBy(() -> job().returnToQueueForReprocess(Instant.now()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("QUEUED");
+    }
+
+    @Test
+    void resolveWithoutFix_landsTheJobWhereItWouldHaveLandedAnyway() {
+        ImportJob job = deadLetteredUnclassifiedJob();
+
+        job.resolveWithoutFix(Instant.now());
+
+        assertThat(job.getStatus()).isEqualTo(ImportJob.Status.FAILED);
+    }
+
+    @Test
+    void resolveWithoutFix_isRejectedForAJobThatIsNotHeld() {
+        assertThatThrownBy(() -> job().resolveWithoutFix(Instant.now()))
+                .isInstanceOf(IllegalStateException.class);
+    }
 }

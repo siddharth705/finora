@@ -59,14 +59,26 @@ public class ImportJob implements com.finora.imports.storage.StoredStatement {
      * nothing compares against them positionally.
      */
     public enum Status {
-        QUEUED, PARSING, ANALYZING, DEDUPING, IMPORTING, LEARNING, COMPLETED, FAILED, CANCELLED;
+        QUEUED, PARSING, ANALYZING, DEDUPING, IMPORTING, LEARNING, COMPLETED, FAILED,
+        HELD_FOR_REVIEW, CANCELLED;
 
         /** The states a worker holds a job in. A row sitting in one of these with no live worker is
          *  abandoned, and recovery returns it to the queue -- see the in-flight index in V66. */
         public static final Set<Status> IN_FLIGHT =
                 EnumSet.of(PARSING, ANALYZING, DEDUPING, IMPORTING, LEARNING);
 
-        public static final Set<Status> TERMINAL = EnumSet.of(COMPLETED, FAILED, CANCELLED);
+        /**
+         * States the worker will not act on again.
+         *
+         * <p>HELD_FOR_REVIEW is terminal in exactly this sense and no other: no automatic attempt
+         * follows it. It is emphatically not "finished" -- a held job is waiting on a human fixing
+         * a parser, after which {@link #returnToQueueForReprocess} puts it back to QUEUED. Being
+         * terminal here is what makes the hold stick: {@link #recordFailure} refuses to move a
+         * terminal job, so a later stray failure cannot silently downgrade a held job to FAILED,
+         * and {@link #advanceTo} refuses to enter it, so only the explicit transition can.
+         */
+        public static final Set<Status> TERMINAL =
+                EnumSet.of(COMPLETED, FAILED, HELD_FOR_REVIEW, CANCELLED);
 
         public boolean isTerminal() { return TERMINAL.contains(this); }
         public boolean isInFlight() { return IN_FLIGHT.contains(this); }
@@ -163,6 +175,19 @@ public class ImportJob implements com.finora.imports.storage.StoredStatement {
 
     @Column(name = "finished_at")
     private Instant finishedAt;
+
+    /**
+     * Whether this job was ever held for admin review.
+     *
+     * <p>Set by {@link #holdForReview} and never cleared -- deliberately, including by {@link
+     * #returnToQueueForReprocess}. {@link #status} cannot answer this question: by the time a
+     * reprocessed job completes, its status is COMPLETED and the hold it went through is gone. The
+     * completion notification depends on knowing it, because only a user who was told "we're
+     * running additional checks" is owed a follow-up. A first-time success notifies nobody -- we
+     * never asked them to wait.
+     */
+    @Column(name = "was_held_for_review", nullable = false)
+    private boolean wasHeldForReview;
 
     /**
      * Which parser this job runs. BH-029.
@@ -457,6 +482,83 @@ public class ImportJob implements com.finora.imports.storage.StoredStatement {
         return false;
     }
 
+    /**
+     * Holds a job whose failure nothing recognized, instead of dead-lettering it to FAILED.
+     *
+     * <p>Entered only for a {@code RETRY_ONCE_THEN_ALERT} classification that already exhausted its
+     * attempts -- that is, a genuinely unclassified exception, which in practice means a parser gap
+     * on a statement layout this codebase has not seen. A known {@code ErrorCode} failure (wrong
+     * password, unsupported file) still goes to FAILED with its own specific message; there is
+     * nothing for an admin to troubleshoot there, and the user can act on it themselves.
+     *
+     * <p>Called immediately after {@link #recordFailure} has already dead-lettered the job to
+     * FAILED, so this overwrites that status rather than racing it. The caller keeps the
+     * {@link FailureOutcome#DEAD_LETTERED} it was handed and still alerts on it: holding for triage
+     * adds a destination, it does not replace engineering visibility.
+     *
+     * <p>The stored statement object is retained for a held job exactly as it is for a FAILED one
+     * -- {@code StatementStorageSweepService.IMPORT_JOB_EXCLUDED_STATUSES} names the two statuses
+     * that do NOT protect an object, and this is not one of them -- which is what makes
+     * reprocess-without-reupload possible once the parser is fixed.
+     */
+    public void holdForReview(String failureCode, Instant now) {
+        this.status = Status.HELD_FOR_REVIEW;
+        this.failureCode = failureCode;
+        this.finishedAt = now;
+        this.wasHeldForReview = true;
+    }
+
+    /**
+     * Returns a held job to the queue after the parser bug behind it was fixed.
+     *
+     * <p>Resets {@code attemptCount} and {@code recoveryCount}: both were spent against a parser
+     * that could not have succeeded, so charging them against the fixed one would dead-letter the
+     * retry before it had a fair run. {@code recoveryCount} matters as much as {@code attemptCount}
+     * here -- a parser gap that killed its worker (an OOM on a large PDF) burns recoveries, and
+     * {@link #MAX_RECOVERIES} is only three.
+     *
+     * <p>Clears {@code lastError} and {@code failureCode} for the reason {@link #returnToQueue}
+     * gives at length: a stale code from the attempt that failed against the OLD parser would
+     * survive into this run and, if something unrelated goes wrong, describe the wrong failure
+     * entirely on the customer timeline. The original code is not lost -- it is recorded on the
+     * audit entry the admin action writes.
+     *
+     * <p>{@link #wasHeldForReview} is deliberately NOT cleared; it is what tells the success path
+     * this user is owed a notification.
+     */
+    public void returnToQueueForReprocess(Instant now) {
+        if (status != Status.HELD_FOR_REVIEW) {
+            throw new IllegalStateException(
+                    "Import job " + id + " is at " + status + "; only a HELD_FOR_REVIEW job can be "
+                            + "reprocessed.");
+        }
+        this.status = Status.QUEUED;
+        this.attemptCount = 0;
+        this.recoveryCount = 0;
+        this.nextAttemptAt = now;
+        this.startedAt = null;
+        this.finishedAt = null;
+        this.lastError = null;
+        this.failureCode = null;
+    }
+
+    /**
+     * Gives up on a held job without a parser fix, landing it where it would have landed today.
+     *
+     * <p>The reason is recorded on the admin's audit entry, not here: the entity records what the
+     * import did, and "an admin decided this bank's format is not supportable" is not something the
+     * import did. Same split the learning queue's own resolve already makes.
+     */
+    public void resolveWithoutFix(Instant now) {
+        if (status != Status.HELD_FOR_REVIEW) {
+            throw new IllegalStateException(
+                    "Import job " + id + " is at " + status + "; only a HELD_FOR_REVIEW job can be "
+                            + "resolved.");
+        }
+        this.status = Status.FAILED;
+        this.finishedAt = now;
+    }
+
     /** Cancellable only before user-visible data exists -- see the class comment. */
     public boolean isCancellable() {
         return status == Status.QUEUED || status.isBefore(Status.IMPORTING);
@@ -475,6 +577,7 @@ public class ImportJob implements com.finora.imports.storage.StoredStatement {
     // ------------------------------------------------------------------ accessors
 
     public UUID getId() { return id; }
+    public boolean wasHeldForReview() { return wasHeldForReview; }
     public UUID getUserId() { return userId; }
     public String getContentHash() { return contentHash; }
     public String getObjectKey() { return objectKey; }
