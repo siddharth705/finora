@@ -36,6 +36,11 @@ class TransactionRepositoryIT extends AbstractIntegrationTest {
     private UUID accountId;
     private UUID categoryId;
 
+    // A category id that provably belongs to no row this test class ever creates -- stands in for
+    // TransactionService's real category-name resolution (exercised in TransactionServiceTest),
+    // the same role List.of("NONE") already plays for bankIds a few lines below.
+    private static final UUID NO_MATCHING_CATEGORY = UUID.randomUUID();
+
     @BeforeEach
     void setUp() {
         User user = new User();
@@ -101,11 +106,32 @@ class TransactionRepositoryIT extends AbstractIntegrationTest {
         newTransaction(BigDecimal.valueOf(5000), LocalDate.of(2026, 7, 2), "Large expense");
 
         var filtered = transactionRepository.search(
-                userId, null, null, Transaction.Type.EXPENSE, null, null,
-                BigDecimal.valueOf(1000), null, null, List.of("NONE"), List.of(accountId), PageRequest.of(0, 20));
+                userId, null, null, Transaction.Type.EXPENSE, null, null, null,
+                BigDecimal.valueOf(1000), null, null, List.of("NONE"), List.of(NO_MATCHING_CATEGORY), List.of(accountId), PageRequest.of(0, 20));
 
         assertThat(filtered.getContent()).hasSize(1);
         assertThat(filtered.getContent().get(0).getDescription()).isEqualTo("Large expense");
+    }
+
+    /**
+     * Backs the Ledger's Status filter (frontend Ledger.tsx) -- the same reconciliationBadge
+     * values the column itself already renders, so filtering by "Duplicate" finds exactly what
+     * the badge on that row claims.
+     */
+    @Test
+    @Transactional
+    void search_filtersByReconciliationStatus() {
+        newTransaction(BigDecimal.valueOf(400), LocalDate.of(2026, 7, 5), "Ordinary transaction");
+
+        Transaction flagged = newTransaction(BigDecimal.valueOf(400), LocalDate.of(2026, 7, 5), "Repeat charge");
+        flagged.setReconciliationStatus(Transaction.ReconciliationStatus.DUPLICATE);
+        transactionRepository.save(flagged);
+
+        var filtered = transactionRepository.search(
+                userId, null, null, null, Transaction.ReconciliationStatus.DUPLICATE, null, null, null, null, null,
+                List.of("NONE"), List.of(NO_MATCHING_CATEGORY), List.of(accountId), PageRequest.of(0, 20));
+
+        assertThat(filtered.getContent()).extracting(Transaction::getDescription).containsExactly("Repeat charge");
     }
 
     @Test
@@ -115,7 +141,7 @@ class TransactionRepositoryIT extends AbstractIntegrationTest {
         newTransaction(BigDecimal.valueOf(320), LocalDate.of(2026, 7, 11), "Uber trip");
 
         var filtered = transactionRepository.search(
-                userId, null, null, null, null, null, null, null, "swiggy", List.of("NONE"), List.of(accountId), PageRequest.of(0, 20));
+                userId, null, null, null, null, null, null, null, null, "swiggy", List.of("NONE"), List.of(NO_MATCHING_CATEGORY), List.of(accountId), PageRequest.of(0, 20));
 
         assertThat(filtered.getContent()).hasSize(1);
         assertThat(filtered.getContent().get(0).getDescription()).contains("SWIGGY");
@@ -155,10 +181,48 @@ class TransactionRepositoryIT extends AbstractIntegrationTest {
         // transaction's description/merchant, so a match here can only be coming from the
         // bankIds branch of the query, not an accidental text hit.
         var filtered = transactionRepository.search(
-                userId, null, null, null, null, null, null, null, "zzz-no-text-match",
-                List.of("PNB"), List.of(accountId, pnbAccount.getId()), PageRequest.of(0, 20));
+                userId, null, null, null, null, null, null, null, null, "zzz-no-text-match",
+                List.of("PNB"), List.of(NO_MATCHING_CATEGORY), List.of(accountId, pnbAccount.getId()), PageRequest.of(0, 20));
 
         assertThat(filtered.getContent()).extracting(Transaction::getDescription).containsExactly("Grocery run");
+    }
+
+    /**
+     * The category half of the same "Improve Search" gap the bank test above locks in.
+     * categoryIds is what TransactionService would have resolved from matching the user's own
+     * categories by name -- passed here directly since this test exercises the repository query
+     * in isolation, the same way the bank test passes bankIds directly rather than a real keyword.
+     */
+    @Test
+    @Transactional
+    void search_matchesByCategoryId_evenWhenDescriptionDoesNotMentionTheCategoryName() {
+        Category groceries = new Category();
+        groceries.setUserId(userId);
+        groceries.setName("Groceries");
+        groceries = categoryRepository.save(groceries);
+
+        Transaction t = new Transaction();
+        t.setUserId(userId);
+        t.setAccountId(accountId);
+        t.setCategoryId(groceries.getId());
+        t.setTxnDate(LocalDate.of(2026, 7, 13));
+        t.setAmount(BigDecimal.valueOf(640));
+        t.setTxnType(Transaction.Type.EXPENSE);
+        t.setDescription("BLINKIT ORDER 91827"); // deliberately no mention of "Groceries"
+        t.setSource(Transaction.Source.MANUAL);
+        transactionRepository.save(t);
+
+        // Same account, different category (the fixture's own "Dining") and an unrelated
+        // description -- must NOT show up for a "Groceries" search.
+        newTransaction(BigDecimal.valueOf(300), LocalDate.of(2026, 7, 13), "Unrelated expense");
+
+        // The keyword itself deliberately matches nothing in either transaction's text, so a
+        // match here can only be coming from the categoryIds branch of the query.
+        var filtered = transactionRepository.search(
+                userId, null, null, null, null, null, null, null, null, "zzz-no-text-match",
+                List.of("NONE"), List.of(groceries.getId()), List.of(accountId), PageRequest.of(0, 20));
+
+        assertThat(filtered.getContent()).extracting(Transaction::getDescription).containsExactly("BLINKIT ORDER 91827");
     }
 
     /**
@@ -196,8 +260,8 @@ class TransactionRepositoryIT extends AbstractIntegrationTest {
         // `accountId` (not otherAccount's id) is passed as live, even though both transactions
         // physically exist and neither transaction itself is soft-deleted.
         var filtered = transactionRepository.search(
-                userId, null, null, null, null, null, null, null, null,
-                List.of("NONE"), List.of(accountId), PageRequest.of(0, 20));
+                userId, null, null, null, null, null, null, null, null, null,
+                List.of("NONE"), List.of(NO_MATCHING_CATEGORY), List.of(accountId), PageRequest.of(0, 20));
 
         assertThat(filtered.getContent()).extracting(Transaction::getDescription)
                 .containsExactly("On the live account");
@@ -214,8 +278,8 @@ class TransactionRepositoryIT extends AbstractIntegrationTest {
         newTransaction(BigDecimal.valueOf(100), LocalDate.of(2026, 7, 1), "On the explicitly requested account");
 
         var filtered = transactionRepository.search(
-                userId, accountId, null, null, null, null, null, null, null,
-                List.of("NONE"), List.of(), PageRequest.of(0, 20));
+                userId, accountId, null, null, null, null, null, null, null, null,
+                List.of("NONE"), List.of(NO_MATCHING_CATEGORY), List.of(), PageRequest.of(0, 20));
 
         assertThat(filtered.getContent()).extracting(Transaction::getDescription)
                 .containsExactly("On the explicitly requested account");
@@ -233,8 +297,8 @@ class TransactionRepositoryIT extends AbstractIntegrationTest {
         newTransaction(BigDecimal.valueOf(100), LocalDate.of(2026, 7, 1), "On the now-deleted account");
 
         var filtered = transactionRepository.search(
-                userId, null, null, null, null, null, null, null, null,
-                List.of("NONE"), List.of(), PageRequest.of(0, 20));
+                userId, null, null, null, null, null, null, null, null, null,
+                List.of("NONE"), List.of(NO_MATCHING_CATEGORY), List.of(), PageRequest.of(0, 20));
 
         assertThat(filtered.getContent()).isEmpty();
     }

@@ -31,6 +31,12 @@ class TransactionGroupingServiceTest {
         t.setMerchantId(merchantId);
         t.setTxnDate(LocalDate.of(2026, 1, 1));
         t.setAmount(BigDecimal.TEN);
+        // txn_type is NOT NULL in the schema (V1) -- every real Transaction has one, so
+        // TransactionSummary.from() (see MerchantGroup's own doc comment) reads it unguarded,
+        // the same trust-the-DB-constraint posture ReconciliationStatus's non-null default
+        // already gets away with on this same entity.
+        t.setTxnType(Transaction.Type.EXPENSE);
+        t.setDescription("Test transaction");
         return t;
     }
 
@@ -73,6 +79,44 @@ class TransactionGroupingServiceTest {
         assertThat(groups).hasSize(1);
         assertThat(groups.get(0).merchantName()).isEqualTo("SWIGGY");
         assertThat(groups.get(0).transactionIds()).hasSize(2);
+    }
+
+    /**
+     * Backs the Ledger's "preview before applying" expansion on this card: {@code transactions}
+     * must carry the SAME rows as {@code transactionIds}, in the same order, not a separately
+     * derived list that could drift out of sync with what "Apply to N transactions" actually acts
+     * on.
+     */
+    @Test
+    void groupTransactionsCarryTheSameIdsAndOrderAsTransactionIds() {
+        UUID swiggyId = UUID.randomUUID();
+        Transaction first = txnFor(swiggyId);
+        org.springframework.test.util.ReflectionTestUtils.setField(first, "id", UUID.randomUUID());
+        first.setDescription("SWIGGY*ORDER1");
+        first.setAmount(BigDecimal.valueOf(250));
+        Transaction second = txnFor(swiggyId);
+        org.springframework.test.util.ReflectionTestUtils.setField(second, "id", UUID.randomUUID());
+        second.setDescription("SWIGGY*ORDER2");
+        second.setAmount(BigDecimal.valueOf(480));
+
+        TransactionRepository transactionRepository = mock(TransactionRepository.class);
+        when(transactionRepository.findByUserIdAndNeedsCategoryReviewTrueAndAccountIdInOrderByTxnDateDesc(eq(userId), any()))
+                .thenReturn(List.of(first, second));
+
+        MerchantRepository merchantRepository = mock(MerchantRepository.class);
+        when(merchantRepository.findByUserId(userId)).thenReturn(List.of(merchantOf(swiggyId, "SWIGGY")));
+
+        TransactionGroupingService service = new TransactionGroupingService(transactionRepository, merchantRepository, accountRepositoryWithOneLiveAccount());
+        TransactionGroupingService.MerchantGroup group = service.groupNeedsReviewByMerchant(userId).get(0);
+
+        assertThat(group.transactions()).extracting(TransactionGroupingService.TransactionSummary::id)
+                .containsExactlyElementsOf(group.transactionIds());
+        assertThat(group.transactions()).extracting(TransactionGroupingService.TransactionSummary::description)
+                .containsExactly("SWIGGY*ORDER1", "SWIGGY*ORDER2");
+        assertThat(group.transactions()).extracting(TransactionGroupingService.TransactionSummary::amount)
+                .containsExactly(BigDecimal.valueOf(250), BigDecimal.valueOf(480));
+        assertThat(group.transactions()).extracting(TransactionGroupingService.TransactionSummary::type)
+                .containsExactly("EXPENSE", "EXPENSE");
     }
 
     /**
