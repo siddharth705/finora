@@ -106,6 +106,27 @@ public enum ErrorCode {
     IMPORT_PDF_TOO_LARGE("IMPORT_013", HttpStatus.UNPROCESSABLE_ENTITY,
             "This PDF has too many pages to process. Split it into smaller files (e.g. by date range) "
                     + "and import each one separately.", true),
+    // Deliberately separate from IMPORT_007 even though both are thrown from the exact same
+    // zero-staged-rows call site (ExtractionCheck.rejectIfNothingWasExtracted) -- they are not the
+    // same event. 007 means the table WAS found and every row inside it was rejected: a real
+    // extraction failure. This means ExplicitZeroActivityDetector found a row where the statement
+    // ITSELF states, in both directions at once, that nothing happened during the period it
+    // covers -- confirmed against a real HSBC composite statement in the corpus, whose savings
+    // ledger prints an explicit zero transaction count alongside an unchanged opening/closing
+    // balance. Folding this into 007 is the exact failure IMPORT_007's own comment already
+    // describes for IMPORT_001/007: a customer whose statement genuinely had no activity was being
+    // told Finora could not read their file, which is not what happened.
+    //
+    // userActionRequired=true here is a deliberate stretch of what the field literally means
+    // ("the user can reasonably correct the input") -- there is nothing to correct. It is chosen
+    // anyway because it is the only lever the existing contract exposes to keep this off the
+    // red/danger banner treatment IMPORT_FAILURE_MESSAGES otherwise gives every IMPORT_* code; see
+    // that file's own comment. Still UNPROCESSABLE_ENTITY, and still thrown rather than a 2xx
+    // success, because nothing was staged and no account or session is created here -- only the
+    // wording and the code change, not what happens next.
+    IMPORT_NO_ACTIVITY_IN_PERIOD("IMPORT_014", HttpStatus.UNPROCESSABLE_ENTITY,
+            "This statement's own printed summary shows no transactions for the period it covers "
+                    + "-- there is nothing to import from this file.", true),
 
     // Accounts
     ACCOUNT_NOT_FOUND("ACC_001", HttpStatus.NOT_FOUND, "Account not found"),

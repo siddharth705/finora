@@ -104,6 +104,17 @@ final class ExtractionCheck {
                             + "or app usually contain text and import correctly.");
         }
 
+        // Checked before the generic locatedATable branch below, and for the same reason
+        // hasNoExtractableText() is checked first: it is the most specific thing knowable. A
+        // statement that states its own zero activity did not defeat extraction -- there was
+        // nothing here to extract -- and IMPORT_007's "could not read any transactions" is simply
+        // false about the cause. See ExplicitZeroActivityDetector's own doc comment for the
+        // evidence and IMPORT_NO_ACTIVITY_IN_PERIOD's for why this is a separate code rather than
+        // a reworded IMPORT_007.
+        if (ctx != null && ctx.explicitZeroActivityDeclared()) {
+            throw new ApiException(ErrorCode.IMPORT_NO_ACTIVITY_IN_PERIOD);
+        }
+
         boolean locatedATable = ctx != null && ctx.buildMetadata().tables() > 0;
         int recoveredLines = staged.unparseableRows() == null ? 0 : staged.unparseableRows().size();
         throw new ApiException(

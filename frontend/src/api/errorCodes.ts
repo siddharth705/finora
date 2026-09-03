@@ -24,6 +24,11 @@ export const NO_HEADER_DETECTED = 'IMPORT_001';
 export const NO_TRANSACTIONS_FOUND = 'IMPORT_007';
 export const SCANNED_OCR_REQUIRED = 'IMPORT_010';
 export const CORRUPT_PDF = 'IMPORT_011';
+// Deliberately separate from NO_TRANSACTIONS_FOUND even though both arrive from the same
+// zero-staged-rows rejection: this one means the statement's OWN printed summary states zero
+// activity for its period, not that the pipeline failed to read a table it found. See
+// ExplicitZeroActivityDetector.java's own doc comment (backend) for the evidence.
+export const NO_ACTIVITY_IN_PERIOD = 'IMPORT_014';
 
 // The UI must tell this apart from a genuinely expired/missing session -- reaching a completed
 // job's "Review this import" action after the same session was already reviewed and confirmed

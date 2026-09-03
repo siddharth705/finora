@@ -195,6 +195,26 @@ public class DocumentContext {
         return java.util.Map.copyOf(unanchoredReasons);
     }
 
+    // Not a capability (nothing about EXTRACTION improved -- the row still never becomes a
+    // transaction) and not a diagnostic (nothing here is about parse QUALITY, good or bad). A
+    // third kind of fact this class did not yet have a place for: a positive claim the DOCUMENT
+    // ITSELF makes about its own content, independent of how well anything downstream reads it.
+    // See ExplicitZeroActivityDetector's own doc comment for the evidence and the reasoning.
+    private boolean explicitZeroActivityDeclared;
+
+    public void recordExplicitZeroActivityDeclared() {
+        this.explicitZeroActivityDeclared = true;
+    }
+
+    /** True when some located row stated, in the document's own words, that this statement's
+     *  transaction count for its own covered period is zero -- see
+     *  {@link ExplicitZeroActivityDetector}. Read by {@link ExtractionCheck} to tell "this
+     *  statement genuinely had nothing to report" apart from "the pipeline could not read a table
+     *  it found", which look identical from staged-row count alone. */
+    public boolean explicitZeroActivityDeclared() {
+        return explicitZeroActivityDeclared;
+    }
+
     public FinancialDocumentMetadata buildMetadata() {
         Set<String> recognized = TransactionNormalizer.recognizedColumnNames();
         List<String> unknownHeaders = new ArrayList<>();
