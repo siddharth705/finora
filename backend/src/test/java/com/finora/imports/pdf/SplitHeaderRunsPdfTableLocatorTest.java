@@ -279,7 +279,23 @@ class SplitHeaderRunsPdfTableLocatorTest {
         // onto its own narration ("...FROM PHONE Opening Balance Debits Closing Xxx"), which the fix
         // strips too, without changing which row it is. The single-page trace's own trailing
         // "STATEMENT SUMMARY :-" block is the identical shape from the same bank/export layout.
-        List<Integer> expected = List.of(331, 568, 8);
+        //
+        // hdfc-savings-ledger-validation's count moved 331 -> 266 when
+        // WRAPPED_DESCRIPTION_BEYOND_COUNT_CAP was added (see
+        // PdfTableLocator.BLOCK_NARRATION_LEFT_TOLERANCE). Every row it removes is a wrapped
+        // narration line that used to be staged as its own dateless row: this export sets every
+        // physical line on one uniform 17.20pt pitch, which switches continuesTheBlock's pitch
+        // check off, so a transaction's THIRD and later narration lines exceeded the count cap,
+        // were refused by the leading-narration branch, and became standalone rows that
+        // TransactionNormalizer then rejected as unparseable. They are now merged back into the
+        // transaction whose narration they are. No transaction was found or lost -- the
+        // normalized transaction count is unchanged; only fragments that never staged as
+        // transactions in the first place are gone, and the narrations above them are no longer
+        // truncated mid-word.
+        // 568 -> 397: same mechanism as hdfc-savings-ledger-validation above -- this
+        // export's third and later wrapped narration lines are merged back into their own
+        // transactions rather than left as standalone dateless rows.
+        List<Integer> expected = List.of(266, 397, 8);
         for (int i = 0; i < HDFC_SAVINGS_TRACES.size(); i++) {
             assertThat(locate(HDFC_SAVINGS_TRACES.get(i)).size())
                     .as("%s", HDFC_SAVINGS_TRACES.get(i)).isEqualTo(expected.get(i));

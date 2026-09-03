@@ -105,5 +105,44 @@ class CorpusDiscoveryIsCaseInsensitiveOnTheExtension(unittest.TestCase):
                          [p.name for p in cr.discover_pdfs(corpus)])
 
 
+class CorpusDiscoveryRecursesIntoSubdirectories(unittest.TestCase):
+    """The corpus is a human-maintained directory, and it has already been reorganised once into
+    per-product subdirectories. A flat listing sees nothing at all after such a move, so both tools
+    exit with "no .pdf files" and the correctness gate silently covers zero documents until someone
+    notices -- the same class of gap as the case-sensitive glob covered by the sibling test class
+    above. These use a temporary directory; never the real corpus.
+    """
+
+    def _tree(self, *relative_names):
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, True)
+        for n in relative_names:
+            target = tmp / n
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(b"%PDF-1.4\n")
+        return tmp
+
+    def test_pdfs_nested_one_level_deep_are_discovered(self):
+        corpus = self._tree("Credit cards/a.pdf", "Savings accounts/b.PDF")
+        self.assertEqual([p.name for p in rgt.discover_pdfs(corpus)], ["a.pdf", "b.PDF"])
+
+    def test_top_level_and_nested_pdfs_are_discovered_together(self):
+        corpus = self._tree("loose.pdf", "sub/nested.pdf")
+        self.assertEqual([p.name for p in rgt.discover_pdfs(corpus)], ["loose.pdf", "nested.pdf"])
+
+    def test_a_ground_truth_subdirectory_of_json_files_contributes_nothing(self):
+        # The ground-truth directory conventionally lives inside the corpus directory. Recursing
+        # must not start treating it as a source of documents.
+        corpus = self._tree("Credit cards/a.pdf")
+        (corpus / "ground-truth").mkdir()
+        (corpus / "ground-truth" / "a.json").write_text("{}")
+        self.assertEqual([p.name for p in rgt.discover_pdfs(corpus)], ["a.pdf"])
+
+    def test_the_measuring_tool_and_the_judging_tool_agree_on_a_nested_corpus(self):
+        corpus = self._tree("Credit cards/a.pdf", "Savings accounts/B.PDF", "loose.pdf")
+        self.assertEqual([str(p) for p in rgt.discover_pdfs(corpus)],
+                         [str(p) for p in cr.discover_pdfs(corpus)])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
