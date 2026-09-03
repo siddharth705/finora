@@ -1,6 +1,8 @@
 package com.finora.util;
 
 import java.util.LinkedHashMap;
+import java.util.Set;
+import java.util.stream.Collectors;
 import java.util.List;
 import java.util.Map;
 import java.util.regex.Pattern;
@@ -81,6 +83,21 @@ public final class CategoryRules {
         RULES.put("Subscriptions", List.of("google one", "icloud", "adobe", "microsoft 365", "linkedin premium"));
         RULES.put("Education", List.of("udemy", "coursera", "byjus", "tuition fee", "school fee", "college fee"));
         RULES.put("Gifts & Donations", List.of("donation", "charity", "ngo donation", "gift"));
+    }
+
+    /**
+     * Every keyword this table matches on, flattened and unordered.
+     *
+     * <p>Exposed for {@link MerchantIdentityLookup}, which needs the VOCABULARY without the
+     * category mapping: "Amazon is a known merchant" is an identity fact, while "Amazon means
+     * Shopping" is a categorization fact, and only the first one belongs to a counterparty
+     * decision. Handing out the terms rather than a second copy of them is deliberate -- the
+     * duplicated-marker-set problem is already documented on
+     * {@code PersonToPersonTransferDetector.hasMerchantAcquirerMarker}, and this table has grown
+     * three times in the last week alone.
+     */
+    public static Set<String> allKeywords() {
+        return RULES.values().stream().flatMap(List::stream).collect(Collectors.toUnmodifiableSet());
     }
 
     public static String normalize(String desc) {
