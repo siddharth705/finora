@@ -82,9 +82,37 @@ one new job plus four `if:` conditions.
 
 ## RFC-CI-02: PR vs. merge/nightly test strategy redesign
 
-**Status:** Future
+**Status:** Implemented 2026-09-02.
 
-**Problem:** `backend`'s `./mvnw test` runs unit tests (`*Test`, `*Tests`, `*TestCase`) and
+**Outcome:** Investigating why the backend job had grown to 7+ minutes (up from the ~2m20s–2m56s
+baseline below) found the ArchUnit fix below (11 classes independently re-scanning the same
+`com.finora` classpath, ~200s of it) — but measuring CI's actual timing after that fix landed
+showed it made no difference to wall-clock at all: `AbstractIntegrationTest` is `@Isolated`, so
+the ~140 `*IT` classes already run serially regardless of unit-test concurrency, and that serial
+IT sequence — not redundant unit-test CPU work — is what CI's more core-constrained `ubuntu-latest`
+runner was actually bottlenecked on. That pointed straight back at this RFC.
+
+Implemented as specified below: `backend/pom.xml` now has `maven-surefire-plugin` (unit only,
+`*IT.java` removed from its includes) and a new `maven-failsafe-plugin` (bound to
+`integration-test` + `verify`, `*IT.java` only, sharing surefire's reports directory so
+`scripts/summarize-surefire.py` doesn't need to know which plugin produced which report).
+`ci.yml`'s "Run tests" step branches on `github.event_name`: a `pull_request` runs `./mvnw test`
+(unit only); a push to `main` (or `workflow_dispatch`) runs `./mvnw verify` (the full suite,
+matching the "PR's checks + integration tests" design below). `summarize-surefire.py` gained a
+`--unit-only` flag — passed only on the PR path — so its "BLOCKED: no `*IT` classes ran" check
+still runs, by default, on every push-to-main, which is exactly the run where that check matters.
+`jacoco-maven-plugin` gained a second `report` execution bound to `verify`, so the push-to-main
+path's coverage report reflects `*IT`-exercised code (`com.finora.controller`, previously 0% before
+the original includes fix) instead of silently reverting to unit-only numbers.
+
+Verified locally before merging: `./mvnw test` runs 356 unit classes, 0 `*IT`, build green;
+`./mvnw verify` runs the same 356 plus 143 `*IT` classes (499 total, matching the pre-split
+combined count), build green, `com.finora.controller` coverage at 70%/52% (not 0%). Both
+`summarize-surefire.py` paths tested directly, including the negative case: running it *without*
+`--unit-only` against unit-only output correctly returns exit 1 with the BLOCKED message — the
+safeguard this whole RFC exists to preserve still fires exactly when it's supposed to.
+
+**Original problem, for context:** `backend`'s `./mvnw test` used to run unit tests (`*Test`, `*Tests`, `*TestCase`) and
 integration tests (`*IT`, Testcontainers-backed) together, in one Maven `test` phase invocation, on
 every single PR. There's no fast unit-only gate with integration tests deferred to merge or a
 scheduled run.
