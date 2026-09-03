@@ -143,7 +143,7 @@ export default function MerchantIntelligence() {
         <div className="space-y-10">
           <MerchantIntelligenceContent />
           <div>
-            <h2 className="font-serif text-lg font-semibold text-ink mb-1">Gmail receipt parsers</h2>
+            <h2 className="text-lg font-semibold text-ink mb-1">Gmail receipt parsers</h2>
             <GmailParserStatsContent />
           </div>
         </div>
