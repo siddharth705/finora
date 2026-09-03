@@ -66,6 +66,18 @@ class MultiColumnPaymentSummaryGridPdfPreviewGeneratorTest {
     }
 
     @Test
+    void generate_extractsStatementPeriod_fromTheGridHeaderRow_notOnlyFromALabelledLine() throws Exception {
+        DetectedAccountInfo detected = detect();
+
+        // The label sits mid-line in the grid header with no colon after it, and its range is on
+        // the row below. Both existing period patterns miss that shape -- one needs the label at
+        // the line's own start (or a colon), the other needs the range on the label's own line --
+        // so the grid lookahead they gate was unreachable on exactly the layout it names.
+        assertThat(detected.statementPeriodStart()).isEqualTo(LocalDate.of(2026, 6, 1));
+        assertThat(detected.statementPeriodEnd()).isEqualTo(LocalDate.of(2026, 6, 30));
+    }
+
+    @Test
     void generate_extractsCreditLimit_notAvailableCreditLimit_fromTheMultiColumnGrid() throws Exception {
         DetectedAccountInfo detected = detect();
 

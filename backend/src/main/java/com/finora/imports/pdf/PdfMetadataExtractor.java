@@ -377,6 +377,24 @@ public class PdfMetadataExtractor {
     private static final Pattern PERIOD_RANGE_VALUE = Pattern.compile(
             "(?i)(" + DATE_TOKEN_SRC + ")\\s*(?:to|[-\u2013])\\s*(" + DATE_TOKEN_SRC + ")");
 
+    // GRID_PERIOD_LABEL. Just the label, mid-line and with no colon after it -- the header row of a
+    // multi-column payment-summary grid, where the range lives on the row BELOW rather than on the
+    // label's own line ("Total Payment Due  Minimum Payment Due  Statement Period  Payment Due
+    // Date  ...", then all five values on the next row). Verified against the real Axis Bank
+    // credit-card statement in the corpus, whose printed period was being dropped entirely.
+    //
+    // Neither existing pattern can reach that shape, and the gap was that they GATE the grid
+    // lookahead: STATEMENT_PERIOD (via labelPattern) needs the label to start the line or be
+    // followed by a colon, and STATEMENT_PERIOD_ANYWHERE needs the range on the label's own line.
+    // So the "label sits on a header row and the range on a row below" fallback that
+    // PERIOD_RANGE_VALUE's own comment names for real Axis/IndusInd statements was unreachable on
+    // precisely those documents. This is the same "the label is somewhere in this line" vs "the
+    // label starts this line" distinction GRID_DUE_DATE_LABEL already draws for the due date, and
+    // it is deliberately a NEW pattern rather than a widening of either existing one -- both of
+    // those decide their own shapes correctly and are checked first.
+    private static final Pattern GRID_PERIOD_LABEL =
+            Pattern.compile("(?i)\\b(?:Statement|Billing)\\s*Period\\b");
+
     // The labelled form with unrelated text BEFORE the label -- a real SBI credit-card statement
     // renders it as "for Statement Period: <range>", and that leading "for " alone defeats
     // labelPattern's "^\s*" anchor. Kept as a separate, deliberately strict pattern rather than
@@ -797,6 +815,30 @@ public class PdfMetadataExtractor {
                         periodEnd = parsed[1];
                         if (ctx != null) ctx.record("GRID_METADATA_TRAILING_LABEL");
                         continue;
+                    }
+                }
+            }
+            // The label alone on a grid header row, its range on a row below -- see
+            // GRID_PERIOD_LABEL. Deliberately last of the three same-label forms: a line that
+            // states its own range is always decided by one of the two above, so this only ever
+            // sees a label with no range beside it. The lookahead is the same bounded one every
+            // other grid fallback here uses, and both halves must parse before anything is
+            // committed, so a header row followed by unrelated text still resolves to null.
+            if (periodStart == null && periodEnd == null && GRID_PERIOD_LABEL.matcher(line).find()) {
+                String gridRange = findGridValue(preTableLines, i, PERIOD_RANGE_VALUE, null);
+                if (gridRange != null) {
+                    LocalDate[] fromGrid = parsePeriod(gridRange);
+                    if (fromGrid[0] != null && fromGrid[1] != null) {
+                        periodStart = fromGrid[0];
+                        periodEnd = fromGrid[1];
+                        if (ctx != null) ctx.record("GRID_METADATA_FALLBACK");
+                        // Deliberately NO `continue`, unlike every period branch above it. Those
+                        // all match a line that STATES a period, and such a line is about the
+                        // period and nothing else. This one matches a multi-column grid HEADER,
+                        // whose whole point is that it carries several labels at once -- the same
+                        // row also holds Payment Due Date and, on real statements, Credit Limit.
+                        // Consuming the line here left those fields unextracted; caught by this
+                        // class's own existing due-date test on this fixture.
                     }
                 }
             }
