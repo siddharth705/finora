@@ -69,6 +69,13 @@ public class TransactionController {
         return ApiResponse.ok(transactionGroupingService.groupNeedsReviewByMerchant(currentUser.id()));
     }
 
+    /** Backs the Ledger's "N transactions with this person/business" review card -- the rows the
+     *  merchant grouping above cannot reach at all, see TransactionGroupingService's own doc. */
+    @GetMapping("/groups/needs-review/by-counterparty")
+    public ApiResponse<List<TransactionGroupingService.CounterpartyGroup>> needsReviewGroupsByCounterparty() {
+        return ApiResponse.ok(transactionGroupingService.groupNeedsReviewByCounterparty(currentUser.id()));
+    }
+
     /** "Why this category?" — fetched on demand, not on every row of the Ledger's list. */
     @GetMapping("/{id}/explanation")
     public ApiResponse<TransactionExplanationDto> explanation(@PathVariable UUID id) {

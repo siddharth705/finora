@@ -2,7 +2,7 @@ import { api, rawApi, type ApiEnvelope } from './client';
 import { downloadBlob } from '../lib/download';
 import type {
 
-  Account, AccountStatementGroup, BankInfo, Budget, DashboardSummary, DetectedAccountInfo, FinancialJourney, Goal,
+  Account, AccountStatementGroup, BankInfo, Budget, CounterpartyGroup, DashboardSummary, DetectedAccountInfo, FinancialJourney, Goal,
   ImportSummary, MerchantGroup, ReimportResult, StagedAccountSection, StagedRow, StatementSummary, SupersedeResult, Transaction,
   WorkspaceSettings, UnparseableRow, VerificationReport,
 } from '../types';
@@ -246,6 +246,8 @@ export const transactionsApi = {
   needsReview: () => api.get<Transaction[]>('/transactions/needs-review').then((r) => r.data),
   groupsNeedsReview: () =>
     api.get<MerchantGroup[]>('/transactions/groups/needs-review').then((r) => r.data),
+  groupsNeedsReviewByCounterparty: () =>
+    api.get<CounterpartyGroup[]>('/transactions/groups/needs-review/by-counterparty').then((r) => r.data),
   explanation: (id: string) =>
     api.get<TransactionExplanation>(`/transactions/${id}/explanation`).then((r) => r.data),
   create: (body: CreateTransactionPayload) => api.post<Transaction>('/transactions', body).then((r) => r.data),
