@@ -80,6 +80,36 @@ Read-only exploration — reading code, answering questions about the repo, revi
 doesn't need a worktree. Create one before the first *write*: an edit, file creation, a
 configuration change, a test change, a commit, a merge, or any implementation modification.
 
+## No guessing — every answer and every fix rests on real evidence
+
+> "You do not have to guess at any stage of this project, guessing is not allowed for you, give
+> answers based on real evidence."
+
+This is a standing instruction from the repository owner. It applies to every session on this
+repository, not to one task, and it outranks any impulse to move faster.
+
+What it forbids, concretely:
+
+- **Do not offer a mechanism you have not traced.** A hypothesis is not a finding. Before changing
+  code, confirm the mechanism with an instrument — a debug print, a dump, a probe, a query. Report
+  what the instrument returned. "The period probably is not parsing" is a guess;
+  `candidateYears=[2026]` printed from the running parser is evidence.
+- **When a change regresses something, read the rows and values that actually changed before
+  forming any theory about why.** Never let a second attempt be a reaction to an unexamined first
+  failure — that has cost this project two full build-and-measure cycles in a single session, and
+  the second attempt was worse than the first.
+- **Say "not established" out loud.** An admitted gap is cheap; a confident, plausible, wrong story
+  is expensive, because the next person builds on it.
+- **Never call something verified unless a command produced that result.** Distinguish what was
+  measured from what is expected. If a check was skipped, say it was skipped.
+- **A green test suite and an unchanged row count are not evidence of correctness here.** This
+  pipeline has repeatedly produced wrong values with counts unchanged and every test passing —
+  wrong dates, a wrong opening balance, a dropped account number, a truncated narration. Verify
+  parser changes at value level, over the real corpus, before and after.
+
+The cost of ignoring this is not a slower session; it is a silent data-correctness bug shipped into
+someone's financial records.
+
 ## Use the existing knowledge graph for coding questions
 
 `graphify-out/graph.json` is a pre-built knowledge graph of this codebase (entities,
