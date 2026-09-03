@@ -145,7 +145,11 @@ export function ImportProgress({
   const failed = job?.status === 'FAILED';
   // Settled, so the spinner stops and the progress bar and Cancel disappear -- but not a
   // failure and not a cancellation, so neither of those icons is honest. Waiting on us.
-  const held = job?.status === 'HELD_FOR_REVIEW';
+  //
+  // Both holds, because the fallback below is the cancelled icon: a settled job that is not FAILED
+  // and not recognised here renders a Ban glyph next to "Running additional checks", which tells
+  // the user their import was cancelled and that it is still being worked on, at the same time.
+  const held = job?.status === 'HELD_FOR_REVIEW' || job?.status === 'HELD_FOR_TRUST_REVIEW';
 
   return (
     <div className="bg-card rounded-xl2 shadow-card border border-border p-6" data-testid="import-progress">

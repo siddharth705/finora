@@ -155,6 +155,66 @@ describe('importJob — what the user is told', () => {
   });
 });
 
+/**
+ * The trust hold, which differs from the review hold in one way that matters here: it has a real
+ * `importSessionId` behind it. The parse succeeded and rows were staged; what is withheld is the
+ * user's confirm step, because the extraction's own evidence says the rows may be wrong.
+ *
+ * That makes the staged session the thing to be careful about. Every other held state got here by
+ * failing and has nothing to offer; this one has a complete, plausible-looking import sitting one
+ * click away, and the entire feature is the promise that the click is not available.
+ */
+describe('importJob — held for trust review', () => {
+  const trustHeld = () => job({
+    status: 'HELD_FOR_TRUST_REVIEW',
+    userStatus: 'HELD_FOR_REVIEW',
+    importSessionId: 'session-that-must-not-be-confirmable',
+  });
+
+  it('never offers the review step, even though a staged session exists', () => {
+    // The gate. isReviewable checks `status === 'COMPLETED'`, so this holds by construction --
+    // which is exactly why it is worth pinning: a later "held jobs are basically complete"
+    // convenience would hand the user the import this feature exists to withhold.
+    expect(trustHeld().importSessionId).not.toBeNull();
+    expect(isReviewable(trustHeld())).toBe(false);
+  });
+
+  it('stops polling, because it waits on a person and not on the worker', () => {
+    expect(isSettled(trustHeld())).toBe(true);
+  });
+
+  it('is not offered a Cancel button', () => {
+    expect(isCancellable(trustHeld())).toBe(false);
+  });
+
+  it('reads as work in progress rather than as a failure', () => {
+    expect(label(trustHeld())).toBe('Running additional checks');
+  });
+
+  it('reads exactly like the other hold, because the user is in the same situation', () => {
+    // The internal distinction is ours, not theirs: nothing is running, nothing is theirs to fix.
+    const otherHold = job({ status: 'HELD_FOR_REVIEW', userStatus: 'HELD_FOR_REVIEW' });
+    expect(label(trustHeld())).toBe(label(otherHold));
+    expect(detail(trustHeld())).toBe(detail(otherHold));
+  });
+
+  it('promises no deadline and never questions the statement itself', () => {
+    // Binding harder here than on the other hold: the doubt really is about the document's
+    // contents, so this is the message most at risk of leaking "we are checking your statement".
+    const text = detail(trustHeld()) ?? '';
+    for (const forbidden of ['hour', 'minute', 'day', 'soon', 'shortly', 'within']) {
+      expect(text.toLowerCase()).not.toContain(forbidden);
+    }
+    for (const forbidden of ['genuine', 'authentic', 'verify', 'legitimate', 'fraud', 'suspicious']) {
+      expect(text.toLowerCase()).not.toContain(forbidden);
+    }
+  });
+
+  it('tells the user there is nothing for them to do', () => {
+    expect(detail(trustHeld())?.toLowerCase()).toContain('no action needed');
+  });
+});
+
 describe('importJob — held for review', () => {
   const held = () => job({ status: 'HELD_FOR_REVIEW', userStatus: 'HELD_FOR_REVIEW' });
 

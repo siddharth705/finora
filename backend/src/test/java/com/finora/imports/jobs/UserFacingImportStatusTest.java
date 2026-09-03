@@ -106,6 +106,34 @@ class UserFacingImportStatusTest {
                 .isEqualTo(UserFacingImportStatus.HELD_FOR_REVIEW);
     }
 
+    /**
+     * Both holds collapse to the one user-facing state, deliberately.
+     *
+     * <p>The internal distinction is real and load-bearing -- one is a parser that fell over, the
+     * other a parse whose own evidence contradicts it -- but it is entirely ours. From the user's
+     * side the two are the same situation: nothing is running, nothing is theirs to fix, and a
+     * person here is looking at it. This enum's own doc calls collapsing internal grain the point
+     * of it existing.
+     *
+     * <p>It also settles what we must NOT say. The existing copy is bound by a rule that matters
+     * even more for a trust hold than for a parser gap: never imply the document's authenticity is
+     * in question. Here the doubt is about our own extraction, not their statement, and inventing
+     * separate copy would almost certainly leak that as "we're verifying your statement".
+     */
+    @Test
+    void heldForTrustReview_collapsesIntoTheSameUserFacingHold() {
+        assertThat(UserFacingImportStatus.of(ImportJob.Status.HELD_FOR_TRUST_REVIEW, null))
+                .isEqualTo(UserFacingImportStatus.HELD_FOR_REVIEW);
+    }
+
+    /** As with the other hold: not a dead end, and not something to act on. */
+    @Test
+    void heldForTrustReview_isPresentedNeitherAsAFailureNorAsSomethingToActOn() {
+        assertThat(UserFacingImportStatus.of(ImportJob.Status.HELD_FOR_TRUST_REVIEW, null))
+                .isNotIn(UserFacingImportStatus.FAILED, UserFacingImportStatus.ACTION_REQUIRED,
+                        UserFacingImportStatus.COMPLETED);
+    }
+
     /** Plain failures are untouched by this feature. */
     @Test
     void ordinaryFailuresAreUnchanged() {

@@ -60,7 +60,7 @@ public class ImportJob implements com.finora.imports.storage.StoredStatement {
      */
     public enum Status {
         QUEUED, PARSING, ANALYZING, DEDUPING, IMPORTING, LEARNING, COMPLETED, FAILED,
-        HELD_FOR_REVIEW, CANCELLED;
+        HELD_FOR_REVIEW, HELD_FOR_TRUST_REVIEW, CANCELLED;
 
         /** The states a worker holds a job in. A row sitting in one of these with no live worker is
          *  abandoned, and recovery returns it to the queue -- see the in-flight index in V66. */
@@ -76,9 +76,18 @@ public class ImportJob implements com.finora.imports.storage.StoredStatement {
          * terminal here is what makes the hold stick: {@link #recordFailure} refuses to move a
          * terminal job, so a later stray failure cannot silently downgrade a held job to FAILED,
          * and {@link #advanceTo} refuses to enter it, so only the explicit transition can.
+         *
+         * <p>HELD_FOR_TRUST_REVIEW is terminal for all the same reasons and one more. The other
+         * hold got here by failing; this one got here by succeeding -- the parse worked and rows
+         * are staged -- and is held because the extraction's own evidence contradicts it. That
+         * makes "terminal" the load-bearing word: the natural alternative was to COMPLETE the job
+         * and record the doubt beside it, and COMPLETED is one of the two statuses that stop
+         * protecting the stored object from
+         * {@code StatementStorageSweepService}. Completing a held job would make the reviewer's
+         * only copy of the statement eligible for reclaim while they were still reading it.
          */
         public static final Set<Status> TERMINAL =
-                EnumSet.of(COMPLETED, FAILED, HELD_FOR_REVIEW, CANCELLED);
+                EnumSet.of(COMPLETED, FAILED, HELD_FOR_REVIEW, HELD_FOR_TRUST_REVIEW, CANCELLED);
 
         public boolean isTerminal() { return TERMINAL.contains(this); }
         public boolean isInFlight() { return IN_FLIGHT.contains(this); }
@@ -166,6 +175,12 @@ public class ImportJob implements com.finora.imports.storage.StoredStatement {
 
     @Column(name = "import_session_id")
     private UUID importSessionId;
+
+    /** The {@code held_statements} row opened for this job, or null if it was never held for trust
+     *  review. Set once, by {@link #holdForTrustReview}, and never cleared -- the hold is part of
+     *  this import's history even after it is released. */
+    @Column(name = "held_statement_id")
+    private UUID heldStatementId;
 
     @Column(name = "created_at", nullable = false)
     private Instant createdAt = Instant.now();
@@ -548,6 +563,45 @@ public class ImportJob implements com.finora.imports.storage.StoredStatement {
     }
 
     /**
+     * Staging succeeded -- the rows are real and sitting in {@code importSessionId} -- but the
+     * extraction's own evidence says they may be wrong, so the import is withheld from the user's
+     * confirm step until a human decides.
+     *
+     * <p>The distinction from {@link #holdForReview} is the whole design. That one is a parser
+     * that fell over and produced nothing; this one produced a complete, plausible-looking import
+     * that we do not trust. Nothing here is a failure, so no {@code failureCode} and no {@code
+     * lastError} are recorded -- writing one would make this indistinguishable from a parse that
+     * broke, both to the user-facing status mapping and to anyone reading the row later.
+     *
+     * <p>Deliberately not {@link #complete}. COMPLETED is what
+     * {@code StatementStorageSweepService.IMPORT_JOB_EXCLUDED_STATUSES} reads as "this job no
+     * longer references its object", and the object is precisely what the reviewer needs to open.
+     * It would also make {@code isReviewable} true on the client and hand the user the confirm
+     * button this state exists to withhold.
+     *
+     * <p>The session is kept rather than discarded so the review can compare what we extracted
+     * against the document, and so releasing the hold is a decision rather than a re-parse under
+     * a build that may since have changed.
+     *
+     * @throws IllegalStateException if the job was cancelled -- same guard, and same reason, as
+     *                               {@link #complete}: holding a cancelled import would revive it
+     *                               as a queue item the user never asked for and cannot stop.
+     */
+    public void holdForTrustReview(UUID importSessionId, UUID heldStatementId, Instant now) {
+        if (this.status == Status.CANCELLED) {
+            throw new IllegalStateException(
+                    "Import job " + id + " was cancelled; holding it for trust review would revive "
+                            + "an import the user asked to stop.");
+        }
+        this.status = Status.HELD_FOR_TRUST_REVIEW;
+        this.importSessionId = importSessionId;
+        this.heldStatementId = heldStatementId;
+        this.finishedAt = now;
+        this.lastError = null;
+        this.failureCode = null;
+    }
+
+    /**
      * Returns a held job to the queue after the parser bug behind it was fixed.
      *
      * <p>Resets {@code attemptCount} and {@code recoveryCount}: both were spent against a parser
@@ -669,6 +723,7 @@ public class ImportJob implements com.finora.imports.storage.StoredStatement {
     public String getFailureCode() { return failureCode; }
     public String getCorrelationId() { return correlationId; }
     public UUID getImportSessionId() { return importSessionId; }
+    public UUID getHeldStatementId() { return heldStatementId; }
     public Instant getCreatedAt() { return createdAt; }
     public Instant getStartedAt() { return startedAt; }
     public Instant getFinishedAt() { return finishedAt; }
