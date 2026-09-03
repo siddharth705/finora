@@ -427,28 +427,16 @@ public class ImportJobWorker {
      * something the queue's Reprocess button does. Its own message says so: "investigate the
      * storage provider before retrying".
      *
-     * <p><b>Walks the cause chain rather than testing the top-level type.</b> Wrapping is idiomatic
-     * in this pipeline -- {@code GzipCompression}, {@code FilesystemStatementStorage} and
-     * {@code R2StatementStorage} all rethrow as {@link
-     * com.finora.imports.storage.StatementStorageException}, which is this exception's own PARENT.
-     * Nothing wraps an integrity failure today, so a top-level {@code instanceof} is correct right
-     * now; it would stop being correct the first time someone adds a {@code catch} to the read
-     * path, and it would fail open -- integrity failures silently rejoining the triage queue with
-     * no test noticing. Cheap to make robust now, invisible to get wrong later.
+     * <p><b>Asks {@link ExceptionClassifier#isIntegrityFailure} rather than testing the type
+     * here.</b> That method is the codebase's single definition of an integrity failure, cause
+     * chain and all; this one used to keep its own, and two independent answers to the same
+     * question agree only by luck. The failure that discipline prevents is not hypothetical --
+     * wrapping is idiomatic in this pipeline, and an integrity failure wrapped in its own parent
+     * type would otherwise read as a plain storage outage to the classifier while still reading as
+     * non-remediable here.
      */
     private static boolean isOperatorRemediable(Throwable cause) {
-        return causeOfType(cause, StatementIntegrityException.class) == null;
-    }
-
-    /** First occurrence of {@code type} in the cause chain, or null. Guards against a self-
-     *  referencing chain, which {@code Throwable.initCause} does not itself forbid. */
-    private static <T extends Throwable> T causeOfType(Throwable throwable, Class<T> type) {
-        for (Throwable t = throwable; t != null && t != t.getCause(); t = t.getCause()) {
-            if (type.isInstance(t)) {
-                return type.cast(t);
-            }
-        }
-        return null;
+        return !ExceptionClassifier.isIntegrityFailure(cause);
     }
 
     /**

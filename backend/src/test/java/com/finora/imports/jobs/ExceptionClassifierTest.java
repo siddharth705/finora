@@ -73,6 +73,58 @@ class ExceptionClassifierTest {
                 .isEqualTo(ErrorCode.RetryPolicy.RETRY_ONCE_THEN_ALERT);
     }
 
+    /**
+     * The damaging direction of a top-level type test, pinned.
+     *
+     * <p>GzipCompression, FilesystemStatementStorage and R2StatementStorage all rethrow as
+     * StatementStorageException -- StatementIntegrityException's own PARENT -- so a catch added to
+     * the read path would wrap an integrity failure in the one type that reads as an ordinary
+     * outage. Classified by the wrapper, it would get RETRY: five attempts and ~31 minutes
+     * re-reading bytes that cannot become right, and the ERROR alert delayed past the second
+     * attempt where it belongs. Detection walks the cause chain so the verdict follows the failure
+     * rather than its packaging.
+     */
+    @Test
+    void aWrappedIntegrityFailure_isStillClassifiedByTheIntegrityFailure_notByItsWrapper() {
+        StatementStorageException wrapped = new StatementStorageException(
+                "could not read statement", new StatementIntegrityException("hash mismatch"));
+
+        assertThat(classifier.classify(wrapped))
+                .as("the parent type must not shadow the integrity failure inside it")
+                .isEqualTo(ErrorCode.RetryPolicy.RETRY_ONCE_THEN_ALERT);
+    }
+
+    /** Detection is the single answer both the classifier and the worker's triage routing use. */
+    @Test
+    void integrityDetection_seesThroughWrappingAndStopsAtUnrelatedFailures() {
+        assertThat(ExceptionClassifier.isIntegrityFailure(
+                new StatementIntegrityException("hash mismatch"))).isTrue();
+        assertThat(ExceptionClassifier.isIntegrityFailure(new IllegalStateException("while reading",
+                new StatementIntegrityException("hash mismatch")))).isTrue();
+        assertThat(ExceptionClassifier.isIntegrityFailure(
+                new StatementStorageException("R2 unavailable"))).isFalse();
+        assertThat(ExceptionClassifier.isIntegrityFailure(new IllegalStateException("no header row")))
+                .isFalse();
+        assertThat(ExceptionClassifier.isIntegrityFailure(null)).isFalse();
+    }
+
+    /**
+     * A cyclic cause chain must not spin the worker thread forever.
+     *
+     * <p>Built as a two-element cycle deliberately: {@code initCause} rejects a throwable as its
+     * own cause, so the obvious {@code t != t.getCause()} guard looks sufficient and is not. Two
+     * throwables can each end up as the other's cause, and an unbounded walk over that never
+     * returns -- on the worker thread, that is a stuck import queue rather than a thrown error.
+     */
+    @Test
+    void integrityDetection_terminatesOnACyclicCauseChain() {
+        RuntimeException first = new RuntimeException("first");
+        RuntimeException second = new RuntimeException("second", first);
+        first.initCause(second);
+
+        assertThat(ExceptionClassifier.isIntegrityFailure(first)).isFalse();
+    }
+
     @Test
     void aDatabaseFailure_isRetried() {
         DataAccessException dbFailure = new DataAccessException("connection timed out") { };
