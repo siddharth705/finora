@@ -49,13 +49,12 @@ public final class ExplicitZeroActivityDetector {
     private static final Pattern TRANSACTION_COUNT_LABEL =
             Pattern.compile("(?i)\\btransaction\\s+count\\b");
 
-    // Deliberately independent of TransactionNormalizer's own (package-private) hint lists: this
-    // reads the row's TEXT to recognise the bank's own claim, not its transactional meaning, and
-    // the two questions should not have to agree on every future header wording TransactionNormalizer
-    // adds for unrelated reasons.
-    private static final String[] DESCRIPTION_HINTS =
-            {"description", "narration", "remarks", "particulars", "transaction remarks",
-                    "transaction description", "transaction details", "transaction id"};
+    // Shared with TransactionNormalizer, deliberately: this needs to recognise the same narration
+    // column that class does, and every bank-specific synonym added there over time (each with its
+    // own evidence comment -- see that field's own doc comment) is exactly the vocabulary this
+    // needs too. A duplicated copy would silently drift the first time either class gained a
+    // synonym the other didn't.
+    private static final String[] DESCRIPTION_HINTS = TransactionNormalizer.DESCRIPTION_HINTS;
     private static final String[] DEPOSIT_HINTS =
             {"deposit amt", "deposit amount", "deposit", "deposits"};
     private static final String[] WITHDRAWAL_HINTS =
