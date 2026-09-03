@@ -44,6 +44,33 @@ public final class CounterpartyClassifier {
     private CounterpartyClassifier() {}
 
     /**
+     * Which revision of the rules above produced a stored answer.
+     *
+     * <p>Persisted per row as {@code transactions.counterparty_classifier_version} (V140) so that
+     * "the classifier has never run here" and "the classifier ran and found nothing" stay tellable
+     * apart -- V139's {@code NOT NULL DEFAULT 'UNKNOWN'} collapses them, and they are not the same
+     * fact. {@code UNKNOWN} is a real answer for roughly a fifth of real rows, so a row that merely
+     * predates the backfill must not be mistaken for one the classifier has already given up on.
+     *
+     * <p><b>Bumping this schedules a re-type of every row below it.</b> That is the intended
+     * mechanism, not a side effect: these rules changed three times in the week they were written
+     * (#790, #794, #815), each time recognising counterparties the previous revision could not, and
+     * without a version there is no way to ask "which rows were typed by the old vocabulary".
+     * CounterpartyBackfillSweepService drains the resulting backlog in bounded batches.
+     *
+     * <p>Bump this when a change makes the classifier answer DIFFERENTLY for some input -- a new
+     * pattern, a reordered check, a widened vocabulary. Do not bump it for a comment, a rename or a
+     * refactor that provably cannot change an answer.
+     *
+     * <p>Safe to re-type today only because nothing but this classifier ever writes those columns.
+     * The first feature that lets a PERSON correct a counterparty must add its own exclusion to
+     * {@code TransactionRepository.findRowsNeedingCounterpartyTyping}, exactly as
+     * {@code category_manually_set} guards the category columns -- a version comparison alone will
+     * not protect a human's answer.
+     */
+    public static final short VERSION = 1;
+
+    /**
      * Bank-generated activity, where the counterparty is the institution itself. These words are
      * about the MECHANISM (interest posting, a mandate debit, an ATM withdrawal, a charge), which is
      * why they outrank a payee-name signal: there is no payee.

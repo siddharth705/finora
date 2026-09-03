@@ -68,6 +68,69 @@ public interface TransactionRepository extends JpaRepository<Transaction, UUID> 
     @Query("SELECT t.accountId AS accountId, COUNT(t) AS count FROM Transaction t WHERE t.userId = :userId GROUP BY t.accountId")
     List<AccountTransactionCount> countByAccountForUser(@Param("userId") UUID userId);
 
+    /** Projection backing the counterparty backfill: the narration is the classifier's ONLY input,
+     *  so a full entity would be loaded per row for two fields. Also keeps the sweep out of the
+     *  persistence context entirely -- see {@link #applyCounterpartyTyping} for why that matters. */
+    interface CounterpartyBackfillRow {
+        UUID getId();
+        String getDescription();
+    }
+
+    /**
+     * One page of rows the counterparty classifier has not answered for at the current revision.
+     *
+     * <p>NULL is the never-typed state (V140); {@code < :version} is the re-type-after-a-bump state
+     * described on {@link com.finora.util.CounterpartyClassifier#VERSION}. Both are served by
+     * {@code idx_transactions_counterparty_classifier_version}, and in the drained steady state the
+     * predicate matches nothing, so the scheduled sweep costs an empty index probe.
+     *
+     * <p>No ORDER BY, deliberately. Progress does not depend on ordering: every returned row either
+     * gets stamped (and leaves the candidate set) or fails and is retried, so a page is never the
+     * same page twice unless nothing in it could be typed at all. Paying for a sort of the whole
+     * candidate set on every pass would buy determinism nothing here needs.
+     *
+     * <p>Soft-deleted rows are excluded for free by {@code Transaction}'s {@code @SQLRestriction},
+     * and that is the behaviour wanted: typing a row the user cannot see is wasted work, and if one
+     * is ever restored it re-enters this query still carrying a NULL version.
+     *
+     * <p><b>When a user-facing correction for counterparty exists, it needs its own exclusion
+     * here</b> -- the same role {@code category_manually_set} plays for the category columns. A
+     * version comparison alone will happily overwrite a human's answer.
+     */
+    @Query("""
+            SELECT t.id AS id, t.description AS description
+            FROM Transaction t
+            WHERE t.counterpartyClassifierVersion IS NULL
+               OR t.counterpartyClassifierVersion < :version
+            """)
+    List<CounterpartyBackfillRow> findRowsNeedingCounterpartyTyping(@Param("version") short version,
+                                                                     Pageable pageable);
+
+    /**
+     * Writes one row's counterparty answer.
+     *
+     * <p>A bulk update rather than loading the entity and saving it, for a reason beyond speed: a
+     * JPQL update bypasses Hibernate's lifecycle callbacks, so it does NOT touch {@code updated_at}
+     * or bump the optimistic-lock {@code version}. Backfilling a derived column must not look like
+     * a user editing their transaction, and it must not lose a race against someone who genuinely
+     * is editing it.
+     *
+     * @return 1 when the row was updated, 0 when it no longer matches (deleted between the
+     *         discovery query and this write) -- the caller counts that as skipped, not failed
+     */
+    @Modifying
+    @Query("""
+            UPDATE Transaction t
+            SET t.counterpartyType = :type,
+                t.counterpartyKey = :key,
+                t.counterpartyClassifierVersion = :version
+            WHERE t.id = :id
+            """)
+    int applyCounterpartyTyping(@Param("id") UUID id,
+                                 @Param("type") com.finora.util.CounterpartyType type,
+                                 @Param("key") String key,
+                                 @Param("version") short version);
+
     List<Transaction> findByUserId(UUID userId);
 
     /** Like {@link #findByUserId}, but scoped to a specific set of accounts -- for a caller that
