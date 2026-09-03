@@ -81,7 +81,7 @@ export default function GmailReview() {
         >
           <ArrowLeft size={13} /> Settings
         </button>
-        <h1 className="font-serif text-2xl font-semibold text-ink">Gmail Transactions</h1>
+        <h1 className="text-2xl font-semibold text-ink">Gmail Transactions</h1>
         <p className="text-sm text-muted mt-1">
           Receipts Fynora found in your inbox. Nothing here is added to your ledger until you approve it.
         </p>

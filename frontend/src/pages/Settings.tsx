@@ -425,7 +425,7 @@ export default function Settings() {
   return (
     <div className="space-y-6 max-w-3xl">
       <div>
-        <h1 className="font-serif text-2xl font-semibold text-ink">Settings</h1>
+        <h1 className="text-2xl font-semibold text-ink">Settings</h1>
         <p className="text-sm text-muted mt-1">Manage your preferences, security, and account data.</p>
       </div>
 
