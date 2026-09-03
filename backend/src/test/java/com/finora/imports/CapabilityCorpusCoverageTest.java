@@ -3,6 +3,7 @@ package com.finora.imports;
 import com.finora.dto.ImportDto;
 import com.finora.imports.pdf.PdfTableLocator;
 import com.finora.imports.pdf.fixtures.PdfTrace;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
@@ -56,7 +57,17 @@ import static org.assertj.core.api.Assertions.assertThat;
  * that matters is that a <em>stale</em> entry fails too: the day a trace covers one of these, this
  * test goes red until the entry is deleted, so the ratchet tightens by itself instead of waiting for
  * someone to remember.
+ *
+ * <p><b>{@code @Tag("nightly")}.</b> This is a coverage metric, not a correctness gate — the doc
+ * above already says a drop here means "add a trace", not "something broke". Runs on the nightly
+ * schedule ({@code corpus-coverage-nightly.yml}) instead of every PR/merge (backend/pom.xml's
+ * {@code excludedGroups}), the one candidate out of four slow corpus-driven tests investigated for
+ * this that was actually safe to defer — the other three (trace PII scanning, a silent-data-loss
+ * regression sweep, a targeted real-document defect test) stay on every run because deferring any
+ * of them risks a real correctness or security regression sitting on main for a day, not just a
+ * stale metric.
  */
+@Tag("nightly")
 class CapabilityCorpusCoverageTest {
 
     /**
