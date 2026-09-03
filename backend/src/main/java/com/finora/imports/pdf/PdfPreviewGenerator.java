@@ -246,6 +246,20 @@ public class PdfPreviewGenerator {
                         titleDateRange.start(), titleDateRange.end());
             }
         }
+        // Fourth tier, same single-section caution and the same folding-into-printedDateRange as the
+        // third: a real Axis credit-card statement states its period inside the payment-summary grid
+        // whose label row reaches none of the three sources above. Measured, not assumed -- that
+        // section's auxiliaryText holds 127 lines and not one contains the word "period", so no
+        // line-based pattern could recover it, while the positioned geometry is unambiguous. See
+        // StatementPeriodGridExtractor's own doc comment.
+        if (printedDateRange.start() == null && doc.sections().size() <= 1) {
+            StatementPeriodGridExtractor.PrintedDateRange gridPeriod =
+                    StatementPeriodGridExtractor.extract(positioned, ctx);
+            if (gridPeriod.start() != null) {
+                printedDateRange = new TransactionTableDateRangeExtractor.PrintedDateRange(
+                        gridPeriod.start(), gridPeriod.end());
+            }
+        }
 
         // A credit-card statement's own "Payment Summary" grid (Axis, SBI evidence): read
         // document-wide, same reasoning as printedCreditCardSummary above ("a real credit-card

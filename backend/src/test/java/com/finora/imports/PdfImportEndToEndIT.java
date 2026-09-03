@@ -2,16 +2,21 @@ package com.finora.imports;
 
 import com.finora.AbstractIntegrationTest;
 import com.finora.dto.ImportDto.ConfirmRequest;
+import com.finora.dto.ImportDto.ConfirmResponse;
 import com.finora.dto.ImportDto.ConfirmedRow;
+import com.finora.dto.ImportDto.DetectedAccountInfo;
+import com.finora.dto.ImportDto.NewAccountRequest;
 import com.finora.dto.ImportDto.StagedRow;
 import com.finora.dto.ImportDto.StagingResponse;
 import com.finora.entity.Account;
 import com.finora.entity.ImportSession;
+import com.finora.entity.StatementImport;
 import com.finora.entity.Transaction;
 import com.finora.entity.User;
 import com.finora.imports.pdf.fixtures.PdfFixtureBuilder;
 import com.finora.repository.AccountRepository;
 import com.finora.repository.MerchantLearningEventRepository;
+import com.finora.repository.StatementImportRepository;
 import com.finora.repository.TransactionRepository;
 import com.finora.repository.UserRepository;
 import org.junit.jupiter.api.AfterEach;
@@ -20,6 +25,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 
 import java.math.BigDecimal;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
@@ -66,6 +73,7 @@ class PdfImportEndToEndIT extends AbstractIntegrationTest {
     @Autowired private TransactionRepository transactionRepository;
     @Autowired private UserRepository userRepository;
     @Autowired private MerchantLearningEventRepository learningEventRepository;
+    @Autowired private StatementImportRepository statementImportRepository;
 
     private final List<UUID> createdUserIds = new ArrayList<>();
 
@@ -217,5 +225,110 @@ class PdfImportEndToEndIT extends AbstractIntegrationTest {
         assertThat(persisted).hasSize(2);
         assertThat(persisted).extracting(Transaction::getDescription)
                 .noneMatch(d -> d.contains("SAMPLE PAYEE A"));
+    }
+
+    /** The account the review screen would create, prefilled from what the parser detected. Every
+     *  account-level metadata field (card number, credit limit, holder) is written only on this
+     *  NEW-account branch of {@code resolveTargetAccount} -- confirming into a hand-made account,
+     *  as the tests above do, never asks the pipeline to store any of them. */
+    private static NewAccountRequest reviewScreenAccount(DetectedAccountInfo d) {
+        String name = d.suggestedName() == null || d.suggestedName().isBlank()
+                ? "Bank Statement Import" : d.suggestedName();
+        return new NewAccountRequest(
+                name, d.suggestedAccountType(), d.openingBalance(), d.creditLimit(),
+                d.paymentDueDate(), d.accountHolderName(), d.accountNumberMasked(),
+                d.bank() == null ? null : d.bank().id(), d.branchName(), d.ifscCode(),
+                d.detectedProduct(), d.productIdentityHash(),
+                d.principalAmount(), d.interestRate(), d.maturityDate(), d.maturityAmount(),
+                d.installmentAmount(), d.installmentsPaid(), d.installmentsTotal());
+    }
+
+    /** The statement-level metadata row this import created -- exactly one, since every test here
+     *  uses a freshly created user. */
+    private StatementImport statementImportOf(User user) {
+        List<StatementImport> rows = statementImportRepository.findAll().stream()
+                .filter(si -> user.getId().equals(si.getUserId())).toList();
+        assertThat(rows).as("exactly one statement_import row for this import").hasSize(1);
+        return rows.get(0);
+    }
+
+    @Test
+    @DisplayName("a PDF's own printed METADATA survives parse, confirm and persist")
+    void aPdfsPrintedMetadataIsPersistedUnchanged() throws Exception {
+        // Transactions were only half the seam. Every metadata field is extracted at STAGING and
+        // has to be echoed back through ConfirmRequest/NewAccountRequest to be stored -- the
+        // pipeline deliberately never re-derives it at confirm time (see persistSection's own
+        // comment on statementPeriodStart). That echo is a wire contract with the review screen,
+        // and nothing was proving it end to end: a field could be extracted perfectly and dropped
+        // on the way to the database with every test still green.
+        byte[] pdf = PdfFixtureBuilder.buildMultiColumnPaymentSummaryGridSample();
+        User user = user();
+
+        StagingResponse staged = importService.parseAndStageAnyFormat(
+                user.getId(), "PDF", "card-statement.pdf", pdf, null);
+        DetectedAccountInfo detected = staged.detectedAccount();
+
+        // --- end 1: what the parser read, against what the fixture PRINTS -------------------
+        // Asserted against the printed document, not against whatever the parser returned, for the
+        // same reason the transaction test does it: comparing the database to the parser's own
+        // output would pass even if the parser misread the page.
+        assertThat(detected).isNotNull();
+        assertThat(detected.paymentDueDate()).isEqualTo(LocalDate.of(2026, 7, 20));
+        assertThat(detected.creditLimit()).isEqualByComparingTo("100000.00");
+        assertThat(detected.accountHolderName()).isEqualTo("SAMPLE SNDR");
+        // Not asserted: accountNumberMasked. The fixture prints a card number, but the parser does
+        // not claim one from this layout and no test has ever said it does -- asserting it here
+        // would be this test inventing an expectation. It reaches the database by the identical
+        // route as creditLimit and accountHolderName below (one NewAccountRequest -> one
+        // AccountDto.CreateRequest), which those two do gate, and the real-corpus run reports it
+        // per statement on the many documents that do print one.
+
+        // --- confirm the way the review screen does: echo the detected values back -----------
+        ImportSession session = importSessionService.createSession(
+                user.getId(), "card-statement.pdf", pdf, staged.rows(), detected);
+        ConfirmResponse response = importService.confirmSession(user.getId(), new ConfirmRequest(
+                session.getId(), confirmAll(staged.rows()), null, reviewScreenAccount(detected),
+                detected.openingBalance(), detected.closingBalance(), null,
+                detected.statementPeriodStart(), detected.statementPeriodEnd(),
+                detected.totalAmountDue(), detected.paymentDueDate(), null, null));
+
+        // --- end 2: what the database has, against the same printed values -------------------
+        StatementImport stored = statementImportOf(user);
+        assertThat(stored.getPaymentDueDate()).isEqualTo(LocalDate.of(2026, 7, 20));
+
+        Account created = accountRepository.findById(response.account().id()).orElseThrow();
+        assertThat(created.getCreditLimit()).isEqualByComparingTo("100000.00");
+        assertThat(created.getAccountHolderName()).isEqualTo("SAMPLE SNDR");
+    }
+
+    @Test
+    @DisplayName("a PDF's own printed statement PERIOD survives parse, confirm and persist")
+    void aPdfsPrintedStatementPeriodIsPersistedUnchanged() throws Exception {
+        // A separate fixture, because the payment-summary grid above prints no statement period and
+        // the parser does not claim one from it -- asserting a period there would have been this
+        // test inventing an expectation the pipeline never made. This synthetic sample does print
+        // its period on its own header line, and PdfPreviewGeneratorTest already proves the parser
+        // reads it; what is unproven, and what this covers, is that it then reaches the database.
+        byte[] pdf = Files.readAllBytes(
+                Path.of("src/test/resources/pdf/separate_debit_credit_balance_sample.pdf"));
+        User user = user();
+
+        StagingResponse staged = importService.parseAndStageAnyFormat(
+                user.getId(), "PDF", "savings-statement.pdf", pdf, null);
+        DetectedAccountInfo detected = staged.detectedAccount();
+        assertThat(detected.statementPeriodStart()).isEqualTo(LocalDate.of(2026, 7, 1));
+        assertThat(detected.statementPeriodEnd()).isEqualTo(LocalDate.of(2026, 7, 31));
+
+        ImportSession session = importSessionService.createSession(
+                user.getId(), "savings-statement.pdf", pdf, staged.rows(), detected);
+        importService.confirmSession(user.getId(), new ConfirmRequest(
+                session.getId(), confirmAll(staged.rows()), null, reviewScreenAccount(detected),
+                detected.openingBalance(), detected.closingBalance(), null,
+                detected.statementPeriodStart(), detected.statementPeriodEnd(),
+                detected.totalAmountDue(), detected.paymentDueDate(), null, null));
+
+        StatementImport stored = statementImportOf(user);
+        assertThat(stored.getStatementPeriodStart()).isEqualTo(LocalDate.of(2026, 7, 1));
+        assertThat(stored.getStatementPeriodEnd()).isEqualTo(LocalDate.of(2026, 7, 31));
     }
 }
