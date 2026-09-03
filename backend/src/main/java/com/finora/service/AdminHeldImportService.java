@@ -73,7 +73,7 @@ public class AdminHeldImportService {
         return PagedResponse.of(result.map(HeldImportDto::from));
     }
 
-    /** Counts for the queue's header and the sidebar badge. Two indexed counts, not a report. */
+    /** The two counts the queue header shows. Two indexed counts, not a reporting subsystem. */
     @Transactional(readOnly = true)
     public HeldImportDto.Summary summary() {
         return new HeldImportDto.Summary(

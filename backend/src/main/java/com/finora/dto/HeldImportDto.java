@@ -63,7 +63,8 @@ public record HeldImportDto(
     /**
      * The queue's counts.
      *
-     * <p>{@code held} drives the sidebar badge and the "is there anything to do" question.
+     * <p>{@code held} answers "is there anything to do", and gates whether the queue offers
+     * Reprocess All at all.
      * {@code reprocessing} counts jobs an admin has already sent back to the queue that have not
      * finished yet, so a second admin does not reprocess the same thing again; it is deliberately
      * a count of QUEUED jobs that were once held, not of all QUEUED jobs.
