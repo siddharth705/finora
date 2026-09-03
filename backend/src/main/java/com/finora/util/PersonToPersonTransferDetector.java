@@ -237,6 +237,36 @@ public final class PersonToPersonTransferDetector {
             + "|razorpay|\\brzp\\b"
             + "|cashfree");
 
+    /**
+     * Whether this narration settled over a merchant-acquiring rail or a payment gateway.
+     *
+     * <p>Exposed so {@link CounterpartyClassifier} can reuse the exact same pattern this class
+     * vetoes on, rather than keeping a second copy of it. Two copies of a regex this specific WILL
+     * drift -- the marker set has already grown twice (the Q-VPA/Paytm/IFSC wave, then PAYTMQR/PayU/
+     * Razorpay/Cashfree), and a classifier that missed the second wave would type 232 corpus rows as
+     * UNKNOWN while this class correctly treated them as businesses.
+     */
+    public static boolean hasMerchantAcquirerMarker(String description) {
+        return description != null && MERCHANT_ACQUIRER_MARKER.matcher(description).find();
+    }
+
+    /**
+     * Whether any business-suffix or trade token appears anywhere in the narration.
+     *
+     * <p>Deliberately simpler than {@link #containsBusinessSignal}: that one discounts the statement
+     * issuer's own name before the rail marker, because a veto that fires on "HDFC BANK" in the
+     * issuer prefix would suppress every genuine transfer on an HDFC statement. Here the caller is
+     * TYPING rather than vetoing, and an issuer name is itself a financial-institution signal, so
+     * the discount would throw away the very evidence being looked for.
+     */
+    public static boolean hasBusinessToken(String description) {
+        if (description == null || description.isBlank()) return false;
+        for (String token : NON_LETTERS.split(description.toUpperCase())) {
+            if (BUSINESS_SUFFIX_TOKENS.contains(token)) return true;
+        }
+        return false;
+    }
+
     private static final Pattern SEGMENT_DELIMITERS = Pattern.compile("[\\-/_]+");
 
     private static final Pattern NAME_TOKEN = Pattern.compile("[A-Za-z]{2,15}");
