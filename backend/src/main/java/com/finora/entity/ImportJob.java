@@ -642,6 +642,54 @@ public class ImportJob implements com.finora.imports.storage.StoredStatement {
      * import did, and "an admin decided this bank's format is not supportable" is not something the
      * import did. Same split the learning queue's own resolve already makes.
      */
+    /**
+     * A reviewer approved the held extraction: the staged rows may reach the user's confirm step.
+     *
+     * <p>Its own transition rather than a call to {@link #complete}, which guards only CANCELLED
+     * and would therefore complete a job in any other state -- including one a worker is still
+     * holding. Naming the source status means the only way out of a trust hold is a decision about
+     * that hold. Same shape as {@link #resolveWithoutFix} for the other kind of hold.
+     *
+     * <p>{@code importSessionId} is deliberately left alone: it already points at the rows the
+     * reviewer just approved, and those are exactly the rows the user should get.
+     */
+    public void releaseAfterTrustReview(Instant now) {
+        if (status != Status.HELD_FOR_TRUST_REVIEW) {
+            throw new IllegalStateException(
+                    "Import job " + id + " is at " + status + "; only a HELD_FOR_TRUST_REVIEW job "
+                            + "can be released.");
+        }
+        this.status = Status.COMPLETED;
+        this.finishedAt = now;
+    }
+
+    /**
+     * A reviewer rejected the held extraction: these rows never reach the ledger.
+     *
+     * <p>Must be its own transition, because {@link #recordFailure} returns
+     * {@link FailureOutcome#ALREADY_FINISHED} without touching a terminal job and
+     * HELD_FOR_TRUST_REVIEW is terminal. Failing a rejected hold that way would silently do
+     * nothing -- the job would stay held forever while the review said REJECTED and the user's
+     * progress screen said "running additional checks" indefinitely.
+     *
+     * <p>Takes a failure code, unlike {@link #resolveWithoutFix}, because
+     * {@link #holdForTrustReview} cleared the job's code on the way in -- a trust hold is not a
+     * failure and must not carry one. Without a code here the user would be shown a bare failure
+     * with no reason after having been told we were checking something. The operator's own
+     * reason goes on the audit entry, not on the entity: what an admin decided is not something
+     * the import did.
+     */
+    public void rejectAfterTrustReview(String failureCode, Instant now) {
+        if (status != Status.HELD_FOR_TRUST_REVIEW) {
+            throw new IllegalStateException(
+                    "Import job " + id + " is at " + status + "; only a HELD_FOR_TRUST_REVIEW job "
+                            + "can be rejected.");
+        }
+        this.status = Status.FAILED;
+        this.failureCode = failureCode;
+        this.finishedAt = now;
+    }
+
     public void resolveWithoutFix(Instant now) {
         if (status != Status.HELD_FOR_REVIEW) {
             throw new IllegalStateException(
