@@ -77,6 +77,28 @@ public class Transaction extends BaseEntity {
     @Column(name = "merchant_id")
     private UUID merchantId;
 
+    /**
+     * Who was on the other side, independent of what the money was for. Derived purely from the
+     * narration by {@link com.finora.util.CounterpartyClassifier}; see
+     * {@link com.finora.util.CounterpartyType} for why this is not a category and why it carries no
+     * direction -- that is already {@link #txnType}, and encoding it twice is the mistake V123 made.
+     *
+     * <p>Stored as a string like {@code decision_source} rather than a DB enum, so an unrecognised
+     * value degrades instead of failing the backend's boot.
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "counterparty_type", nullable = false)
+    private com.finora.util.CounterpartyType counterpartyType = com.finora.util.CounterpartyType.UNKNOWN;
+
+    /**
+     * Stable identity key for that counterparty -- {@code vpa:<local-part>} when the narration
+     * carries one, otherwise a weaker {@code name:<token>}, otherwise null. See
+     * {@link com.finora.util.CounterpartyIdentity}: this is deliberately NOT entity resolution, and
+     * a {@code name:} key is a guess that must never be presented to a user as an identity.
+     */
+    @Column(name = "counterparty_key")
+    private String counterpartyKey;
+
     @Column(name = "payment_method")
     private String paymentMethod;
 
@@ -237,6 +259,14 @@ public class Transaction extends BaseEntity {
     public void setDescription(String description) { this.description = description; }
     public String getMerchant() { return merchant; }
     public void setMerchant(String merchant) { this.merchant = merchant; }
+    public com.finora.util.CounterpartyType getCounterpartyType() { return counterpartyType; }
+    public void setCounterpartyType(com.finora.util.CounterpartyType counterpartyType) {
+        this.counterpartyType = counterpartyType;
+    }
+
+    public String getCounterpartyKey() { return counterpartyKey; }
+    public void setCounterpartyKey(String counterpartyKey) { this.counterpartyKey = counterpartyKey; }
+
     public UUID getMerchantId() { return merchantId; }
     public void setMerchantId(UUID merchantId) { this.merchantId = merchantId; }
     public String getPaymentMethod() { return paymentMethod; }
