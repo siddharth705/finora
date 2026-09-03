@@ -26,13 +26,35 @@ public record TransactionDto(
         String reconciliationStatus,
         boolean recurring,
         boolean needsCategoryReview,
-        boolean categoryManuallySet
+        boolean categoryManuallySet,
+        /**
+         * WHO was on the other side, as a separate question from WHAT the money was for -- see
+         * {@link com.finora.util.CounterpartyType}. One of PERSON, BUSINESS, FINANCIAL_INSTITUTION,
+         * GOVERNMENT, UNKNOWN.
+         *
+         * <p>Carries NO direction. "Sent to" versus "received from" is {@link #type}, and a client
+         * composes the two at render time; encoding direction here would be the mistake V123's
+         * "Paid a Person" category made, where 99 of 434 rows so labelled were money RECEIVED.
+         *
+         * <p>UNKNOWN is a real answer for roughly a fifth of rows, and it is also what a row reads
+         * before the backfill sweep reaches it. Both render as "nothing known about the
+         * counterparty", which is why the classifier version behind it is deliberately not exposed:
+         * the distinction is operational, and to a user "we could not tell" and "we have not looked
+         * yet" are the same absence of information.
+         */
+        String counterpartyType
 ) {
     public static TransactionDto from(Transaction t, String categoryName) {
         return new TransactionDto(t.getId(), t.getAccountId(), t.getCategoryId(), categoryName, t.getTxnDate(),
                 t.getDescription(), t.getMerchant(), t.getPaymentMethod(), t.getAmount(),
                 t.getTxnType().name(), t.getTags(), t.getNotes(), t.getReconciliationStatus().name(), t.isRecurring(),
-                t.isNeedsCategoryReview(), t.isCategoryManuallySet());
+                t.isNeedsCategoryReview(), t.isCategoryManuallySet(),
+                // Never null: the column is NOT NULL with an UNKNOWN default (V142) and the entity
+                // field is initialised to match, so a client never has to handle an absent value.
+                // counterpartyKey is deliberately NOT exposed -- a "name:" key is a guess derived
+                // from narration text, and putting it on the wire invites a client to render it as
+                // a resolved identity. Grouping by it stays a server-side concern.
+                t.getCounterpartyType().name());
     }
 
     // Bug fix: neither request record had any Bean Validation at all, and TransactionController's

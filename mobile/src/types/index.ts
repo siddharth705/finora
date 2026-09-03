@@ -89,7 +89,24 @@ export interface Transaction {
   // match, or a low-confidence "Other" default) or a CSV import; true the moment a user
   // explicitly sets/corrects it — see Ledger.tsx's "Auto"/"Manual" badge.
   categoryManuallySet: boolean;
+  // WHO was on the other side — a separate question from WHAT the money was for, which is
+  // `categoryName`. Deliberately carries NO direction: "sent to" vs "received from" is `type`, and
+  // the two are composed at render time by lib/counterpartyLabel.ts. Never null — the column is
+  // NOT NULL with an UNKNOWN default.
+  //
+  // UNKNOWN is a real answer for roughly a fifth of rows, and is also what a row reads before the
+  // server's backfill has reached it. Both mean "nothing known about the counterparty" and both
+  // render as nothing at all.
+  counterpartyType: CounterpartyType;
 }
+
+// Mirrors the backend's com.finora.util.CounterpartyType.
+export type CounterpartyType =
+  | 'PERSON'
+  | 'BUSINESS'
+  | 'FINANCIAL_INSTITUTION'
+  | 'GOVERNMENT'
+  | 'UNKNOWN';
 
 /**
  * Mirrors the backend's `TransactionGroupingService.MerchantGroup`: every needs-review transaction

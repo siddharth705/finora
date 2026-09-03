@@ -45,6 +45,9 @@ function txn(overrides: Partial<Transaction> = {}): Transaction {
     recurring: false,
     needsCategoryReview: false,
     categoryManuallySet: false,
+    // UNKNOWN by default so the counterparty badge renders nothing unless a test asks for it --
+    // every existing assertion in this file predates the badge and should stay unaffected by it.
+    counterpartyType: 'UNKNOWN',
     ...overrides,
   };
 }
@@ -322,6 +325,40 @@ describe('Ledger — Phase 2 table skeleton and IconButton migration', () => {
     const tbody = container.querySelector('tbody')!;
     expect(tbody).not.toHaveAttribute('role', 'status');
     expect(tbody.querySelectorAll('.animate-pulse').length).toBe(0);
+  });
+
+  it('labels a person-to-person row by direction, not by the stored type alone', async () => {
+    vi.mocked(transactionsApi.search).mockReset().mockResolvedValue({
+      content: [
+        txn({ id: 'txn-out', description: 'PAID SUNIL', type: 'EXPENSE', counterpartyType: 'PERSON' }),
+        txn({ id: 'txn-in', description: 'GOT FROM SUNIL', type: 'INCOME', counterpartyType: 'PERSON' }),
+      ],
+      page: 0, size: 10, totalElements: 2, totalPages: 1,
+    });
+    renderLedger();
+
+    await screen.findByText('PAID SUNIL');
+    // Same stored counterparty type on both rows; the readable meaning differs because direction is
+    // composed in at render time. This is the assertion that stops anyone "simplifying" the label
+    // back into a stored string, which is the V123 mistake.
+    expect(screen.getByTitle('Sent to a person')).toBeInTheDocument();
+    expect(screen.getByTitle('Received from a person')).toBeInTheDocument();
+    expect(screen.getAllByText('Person')).toHaveLength(2);
+  });
+
+  it('renders no counterparty badge at all when the counterparty is unknown', async () => {
+    // Roughly a fifth of real rows, plus everything the server backfill has not reached. A badge
+    // reading "unknown" on that many rows would be noise, so there must be no badge.
+    vi.mocked(transactionsApi.search).mockReset().mockResolvedValue({
+      content: [txn({ id: 'txn-1', description: 'AMAZON PAY', counterpartyType: 'UNKNOWN' })],
+      page: 0, size: 10, totalElements: 1, totalPages: 1,
+    });
+    renderLedger();
+
+    await screen.findByText('AMAZON PAY');
+    expect(screen.queryByText(/unknown/i)).not.toBeInTheDocument();
+    expect(screen.queryByText('Person')).not.toBeInTheDocument();
+    expect(screen.queryByText('Business')).not.toBeInTheDocument();
   });
 
   it('exposes the edit and delete row actions by their accessible names', async () => {
