@@ -401,15 +401,54 @@ public class ImportJobWorker {
      * never a different document under the same key. The one speculative retry this policy allows
      * has also already been spent by the time this is asked.
      *
-     * <p>Tested with {@code instanceof} on the cause, matching {@link ExceptionClassifier#classify}
-     * exactly. Both would miss a wrapped integrity exception; neither wraps one today, and keeping
-     * the two checks identical is what stops them disagreeing about the same exception.
+     * <p>The exclusion itself is expressed as {@link #isOperatorRemediable}, not as an inline
+     * {@code instanceof}: the rule is "only operator-remediable failures enter triage", and a
+     * negated type check states the exception rather than the rule. The next counterexample of
+     * this class then has an obvious home.
      */
     private static boolean holdsForTriage(ErrorCode.RetryPolicy policy,
                                           ImportJob.FailureOutcome outcome, Exception cause) {
         return outcome == ImportJob.FailureOutcome.DEAD_LETTERED
                 && policy == ErrorCode.RetryPolicy.RETRY_ONCE_THEN_ALERT
-                && !(cause instanceof StatementIntegrityException);
+                && isOperatorRemediable(cause);
+    }
+
+    /**
+     * Whether a human could plausibly fix the cause and have a reprocess succeed.
+     *
+     * <p>This is the invariant the triage queue actually depends on, stated once instead of being
+     * implied by a list of exclusions. Hold-for-review assumes an operator can take corrective
+     * action and then reprocess the import successfully. A parser gap satisfies that: fix the
+     * parser, reprocess, done.
+     *
+     * <p>{@link StatementIntegrityException} does not. It is a storage correctness incident --
+     * storage returned bytes that do not hash to what the row claims -- and reprocessing the same
+     * object cannot succeed until the underlying storage problem is corrected, which is not
+     * something the queue's Reprocess button does. Its own message says so: "investigate the
+     * storage provider before retrying".
+     *
+     * <p><b>Walks the cause chain rather than testing the top-level type.</b> Wrapping is idiomatic
+     * in this pipeline -- {@code GzipCompression}, {@code FilesystemStatementStorage} and
+     * {@code R2StatementStorage} all rethrow as {@link
+     * com.finora.imports.storage.StatementStorageException}, which is this exception's own PARENT.
+     * Nothing wraps an integrity failure today, so a top-level {@code instanceof} is correct right
+     * now; it would stop being correct the first time someone adds a {@code catch} to the read
+     * path, and it would fail open -- integrity failures silently rejoining the triage queue with
+     * no test noticing. Cheap to make robust now, invisible to get wrong later.
+     */
+    private static boolean isOperatorRemediable(Throwable cause) {
+        return causeOfType(cause, StatementIntegrityException.class) == null;
+    }
+
+    /** First occurrence of {@code type} in the cause chain, or null. Guards against a self-
+     *  referencing chain, which {@code Throwable.initCause} does not itself forbid. */
+    private static <T extends Throwable> T causeOfType(Throwable throwable, Class<T> type) {
+        for (Throwable t = throwable; t != null && t != t.getCause(); t = t.getCause()) {
+            if (type.isInstance(t)) {
+                return type.cast(t);
+            }
+        }
+        return null;
     }
 
     /**
