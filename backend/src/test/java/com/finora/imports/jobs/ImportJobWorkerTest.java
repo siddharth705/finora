@@ -251,11 +251,21 @@ class ImportJobWorkerTest {
 
     // ------------------------------------------------------- held-for-review routing (Phase B)
 
-    /** A staging result the worker can complete on. */
-    private static ImportDto.StagingSessionResponse staged() {
+    /** A staging result the worker can complete on, with the parser's detected bank name. */
+    private static ImportDto.StagingSessionResponse staged(String bankName) {
+        // Shape copied from ImportSessionServiceTest.sampleDetected() -- only suggestedName
+        // matters here, and every other component is deliberately null.
+        ImportDto.DetectedAccountInfo detected = bankName == null ? null
+                : new ImportDto.DetectedAccountInfo(bankName, "SAVINGS", null, null, null, null,
+                        null, null, null, null, null, null, null, null, "SAVINGS", 0.0, false,
+                        List.of(), null, null, null, null, null, null, null, null);
         return new ImportDto.StagingSessionResponse(
                 UUID.randomUUID(),
-                new ImportDto.StagingResponse(List.of(), 10, 0, null, List.of()));
+                new ImportDto.StagingResponse(List.of(), 10, 0, detected, List.of()));
+    }
+
+    private static ImportDto.StagingSessionResponse staged() {
+        return staged("HDFC Bank");
     }
 
     /** Re-claims the job and runs another pass, exactly as the worker's own poll loop would. */
@@ -372,8 +382,34 @@ class ImportJobWorkerTest {
                         + "sending twice")
                 .contains(job.getId().toString());
         assertThat(sent.params())
-                .as("a missing param renders {{bank}} literally to the customer")
-                .containsKey("bank");
+                .as("the parser's own detected bank name, not a placeholder -- the template reads "
+                        + "\"Your {{bank}} statement is ready\"")
+                .containsEntry("bank", "HDFC Bank");
+    }
+
+    /**
+     * A statement whose bank the parser could not name still sends a readable notification.
+     *
+     * <p>The template interpolates {{bank}} unconditionally, so a null here would either render
+     * the literal braces to the customer or drop the word entirely. "bank" gives "Your bank
+     * statement is ready", which is plain but true.
+     */
+    @Test
+    void anUnidentifiedBankFallsBackToWordingThatStillReads() throws IOException {
+        when(importService.parseAndStageWithSession(any(), any(), any()))
+                .thenThrow(new IllegalStateException("no header row found"))
+                .thenThrow(new IllegalStateException("no header row found"))
+                .thenReturn(staged(null));
+
+        worker.drainOnce();
+        runAnotherPass();
+        job.returnToQueueForReprocess(Instant.now());
+        runAnotherPass();
+
+        org.mockito.ArgumentCaptor<NotificationRequest> captor =
+                org.mockito.ArgumentCaptor.forClass(NotificationRequest.class);
+        verify(notificationService).request(captor.capture());
+        assertThat(captor.getValue().params()).containsEntry("bank", "bank");
     }
 
     /** An ordinary first-time success notifies nobody -- we never asked that user to wait. */

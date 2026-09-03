@@ -275,7 +275,7 @@ public class ImportJobWorker {
                 // unparseable rows look like it had fewer rows than it did.
                 j.recordProgress(staged.totalParsed(), staged.stagedRows());
                 j.complete(staged.sessionId(), Instant.now());
-                notifyIfPreviouslyHeld(j);
+                notifyIfPreviouslyHeld(j, staged.bankName());
             });
             // Only on the success path. A job that failed in PARSING did not skip IMPORTING, it
             // never reached it, and recording that as SKIPPED would turn an honest absence into a
@@ -381,7 +381,7 @@ public class ImportJobWorker {
      * <p>NORMAL rather than HIGH or CRITICAL: those are reserved for security events per the
      * notification platform's frozen design, and an import finishing is not one.
      */
-    private void notifyIfPreviouslyHeld(ImportJob job) {
+    private void notifyIfPreviouslyHeld(ImportJob job, String bankName) {
         if (!job.wasHeldForReview()) {
             return;
         }
@@ -392,11 +392,13 @@ public class ImportJobWorker {
                 NotificationPriority.NORMAL,
                 "IMPORT_READY_" + job.getId(),
                 Set.of(NotificationChannel.PUSH, NotificationChannel.EMAIL),
-                // The template reads "Your {{bank}} statement is ready". A job does not know its
-                // bank -- the account is chosen at confirm time, after this -- so "bank" is passed
-                // as the neutral filler, giving "Your bank statement is ready". A missing param
-                // would render "{{bank}}" literally to the customer.
-                Map.of("bank", "bank")));
+                // The template reads "Your {{bank}} statement is ready", so this is the parser's
+                // own detected bank name -- the only moment it is in hand, since the job itself
+                // never learns it. "bank" is the fallback when the parser could not name one,
+                // giving "Your bank statement is ready"; the fallback lives here rather than in
+                // StagedForJob because it is a property of this template, not of staging. A
+                // missing param would render "{{bank}}" literally to the customer.
+                Map.of("bank", bankName == null || bankName.isBlank() ? "bank" : bankName)));
     }
 
     private void recordFailure(WorkerExecution execution, UUID jobId, Exception cause) {
