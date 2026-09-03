@@ -18,6 +18,12 @@ import com.finora.imports.analysis.StatementAnalysisSession;
 import com.finora.imports.analysis.StatementAnalysisSessionRepository;
 import com.finora.integrations.google.GmailConnectionRepository;
 import com.finora.integrations.google.GmailConnectionService;
+import com.finora.notification.domain.Notification;
+import com.finora.notification.domain.NotificationCategory;
+import com.finora.notification.domain.NotificationChannel;
+import com.finora.notification.domain.NotificationPriority;
+import com.finora.notification.domain.NotificationType;
+import com.finora.notification.repository.NotificationRepository;
 import com.finora.repository.AccountReactivationTokenRepository;
 import com.finora.repository.EmailVerificationTokenRepository;
 import com.finora.repository.AccountRepository;
@@ -119,6 +125,7 @@ class AccountPurgeSweepServiceIT extends AbstractIntegrationTest {
     @Autowired private StatementImportRepository statementImportRepository;
     @Autowired private StatementImportService statementImportService;
     @Autowired private StatementAnalysisSessionRepository statementAnalysisSessionRepository;
+    @Autowired private NotificationRepository notificationRepository;
     @Autowired private AuditService auditService;
     @Autowired private PasswordEncoder passwordEncoder;
     @Autowired private TransactionTemplate transactionTemplate;
@@ -141,8 +148,8 @@ class AccountPurgeSweepServiceIT extends AbstractIntegrationTest {
                 passwordChangeSessionRepository, passwordResetTokenRepository, accountReactivationTokenRepository,
                 emailVerificationTokenRepository,
                 refreshTokenRepository, userSettingsRepository, accountRepository, statementImportRepository,
-                statementImportService, statementAnalysisSessionRepository, auditService, passwordEncoder,
-                transactionTemplate);
+                statementImportService, statementAnalysisSessionRepository, notificationRepository, auditService,
+                passwordEncoder, transactionTemplate);
         ReflectionTestUtils.setField(service, "sweepEnabled", true);
         ReflectionTestUtils.setField(service, "retentionHours", 48);
         ReflectionTestUtils.setField(service, "batchSize", 200);
@@ -212,7 +219,11 @@ class AccountPurgeSweepServiceIT extends AbstractIntegrationTest {
      * own, so unlike {@code subscription_events} it does NOT rely on any cascade off subscriptions.
      * {@link Referral} (D-28 PR4-C) proves BOTH directions of its own explicit calls -- the purged
      * user can appear as either {@code referrer_user_id} or {@code referred_user_id}, on two
-     * entirely different rows, and both must actually disappear.
+     * entirely different rows, and both must actually disappear. {@link Notification} (V125/V137)
+     * proves the same explicit-call pattern as Payment: it has its own {@code ON DELETE CASCADE}
+     * now too, but that alone would never fire here, since this method anonymizes {@code users}
+     * rather than deleting the row -- {@code NotificationRepository.deleteByUserId} is what
+     * actually has to do the work.
      */
     @Test
     @Transactional
@@ -284,6 +295,12 @@ class AccountPurgeSweepServiceIT extends AbstractIntegrationTest {
         walletEntry.setReason(WalletLedgerEntry.REASON_REFERRAL_REWARD);
         walletLedgerRepository.save(walletEntry);
 
+        Notification notification = Notification.create(userId, NotificationType.PASSWORD_CHANGED,
+                NotificationCategory.SECURITY, NotificationChannel.EMAIL, NotificationPriority.NORMAL,
+                "purge-test-" + UUID.randomUUID(), "Your password was changed",
+                "The password on your account was just changed.", Instant.now());
+        notificationRepository.save(notification);
+
         entityManager.flush();
 
         service.sweep();
@@ -328,6 +345,9 @@ class AccountPurgeSweepServiceIT extends AbstractIntegrationTest {
         Long walletLedgerCount = (Long) entityManager
                 .createNativeQuery("SELECT COUNT(*) FROM wallet_ledger WHERE user_id = :userId")
                 .setParameter("userId", userId).getSingleResult();
+        Long notificationCount = (Long) entityManager
+                .createNativeQuery("SELECT COUNT(*) FROM notifications WHERE user_id = :userId")
+                .setParameter("userId", userId).getSingleResult();
         assertThat(transactionCount).isZero();
         assertThat(budgetCount).isZero();
         assertThat(goalCount).isZero();
@@ -338,6 +358,7 @@ class AccountPurgeSweepServiceIT extends AbstractIntegrationTest {
         assertThat(referralsAsReferrerCount).isZero();
         assertThat(referralsAsReferredCount).isZero();
         assertThat(walletLedgerCount).isZero();
+        assertThat(notificationCount).isZero();
     }
 
     /**
