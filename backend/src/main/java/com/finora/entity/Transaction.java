@@ -77,6 +77,41 @@ public class Transaction extends BaseEntity {
     @Column(name = "merchant_id")
     private UUID merchantId;
 
+    /**
+     * Who was on the other side, independent of what the money was for. Derived purely from the
+     * narration by {@link com.finora.util.CounterpartyClassifier}; see
+     * {@link com.finora.util.CounterpartyType} for why this is not a category and why it carries no
+     * direction -- that is already {@link #txnType}, and encoding it twice is the mistake V123 made.
+     *
+     * <p>Stored as a string like {@code decision_source} rather than a DB enum, so an unrecognised
+     * value degrades instead of failing the backend's boot.
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "counterparty_type", nullable = false)
+    private com.finora.util.CounterpartyType counterpartyType = com.finora.util.CounterpartyType.UNKNOWN;
+
+    /**
+     * Stable identity key for that counterparty -- {@code vpa:<local-part>} when the narration
+     * carries one, otherwise a weaker {@code name:<token>}, otherwise null. See
+     * {@link com.finora.util.CounterpartyIdentity}: this is deliberately NOT entity resolution, and
+     * a {@code name:} key is a guess that must never be presented to a user as an identity.
+     */
+    @Column(name = "counterparty_key")
+    private String counterpartyKey;
+
+    /**
+     * Which revision of {@link com.finora.util.CounterpartyClassifier} produced the two fields
+     * above, or null when none has -- see V143 for why the third state has to be representable and
+     * {@link com.finora.util.CounterpartyClassifier#VERSION} for what bumping it sets in motion.
+     *
+     * <p>Not to be confused with the {@code version} column this entity inherits from
+     * {@link BaseEntity}, which is the optimistic-locking counter and appears in this class's own
+     * {@code @SQLDelete}. This one never participates in locking, and the backfill deliberately
+     * writes it with a bulk update that leaves the locking counter untouched.
+     */
+    @Column(name = "counterparty_classifier_version")
+    private Short counterpartyClassifierVersion;
+
     @Column(name = "payment_method")
     private String paymentMethod;
 
@@ -237,6 +272,33 @@ public class Transaction extends BaseEntity {
     public void setDescription(String description) { this.description = description; }
     public String getMerchant() { return merchant; }
     public void setMerchant(String merchant) { this.merchant = merchant; }
+    public com.finora.util.CounterpartyType getCounterpartyType() { return counterpartyType; }
+    public void setCounterpartyType(com.finora.util.CounterpartyType counterpartyType) {
+        this.counterpartyType = counterpartyType;
+    }
+
+    public String getCounterpartyKey() { return counterpartyKey; }
+    public void setCounterpartyKey(String counterpartyKey) { this.counterpartyKey = counterpartyKey; }
+
+    public Short getCounterpartyClassifierVersion() { return counterpartyClassifierVersion; }
+    public void setCounterpartyClassifierVersion(Short v) { this.counterpartyClassifierVersion = v; }
+
+    /**
+     * Sets all three counterparty columns from a narration, and is the ONLY way any live write path
+     * should set them.
+     *
+     * <p>Delegates to {@link com.finora.util.CounterpartyTyping#of} -- the same derivation the
+     * backfill sweep uses -- so a row cannot be typed one way at import, another way when created by
+     * hand, and a third way when backfilled. See that class for why the shared piece is a value
+     * object rather than this method.
+     */
+    public void applyCounterpartyTyping(String description) {
+        com.finora.util.CounterpartyTyping typing = com.finora.util.CounterpartyTyping.of(description);
+        this.counterpartyType = typing.type();
+        this.counterpartyKey = typing.key();
+        this.counterpartyClassifierVersion = typing.version();
+    }
+
     public UUID getMerchantId() { return merchantId; }
     public void setMerchantId(UUID merchantId) { this.merchantId = merchantId; }
     public String getPaymentMethod() { return paymentMethod; }

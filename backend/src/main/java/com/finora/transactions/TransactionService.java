@@ -234,6 +234,14 @@ public class TransactionService {
         t.setTxnDate(req.date());
         t.setDescription(req.description());
         t.setMerchant(CategoryRules.extractMerchant(req.description()));
+        // Who was on the other side -- a separate question from what the money was for, and one
+        // the narration answers far more often (79.2% of the real corpus, against ~47% for
+        // category). Deliberately ABOVE and outside the category decision further down: this is
+        // derived from the narration alone and is equally true whether the category came from the
+        // engine or from the user typing one in, and the manual branch is the one a careful user
+        // exercises most. Shares one derivation with the import path and the backfill sweep --
+        // see CounterpartyTyping; CounterpartyWiringTest pins that agreement rather than trusting it.
+        t.applyCounterpartyTyping(req.description());
         requireAmountWithinBounds(req.amount());
         t.setAmount(req.amount());
         t.setTxnType(com.finora.util.EnumParsing.parse(Transaction.Type.class, req.type(), "type"));
@@ -418,7 +426,16 @@ public class TransactionService {
         BigDecimal oldDelta = balanceOf(t);
 
         if (req.date() != null) t.setTxnDate(req.date());
-        if (req.description() != null) t.setDescription(req.description());
+        if (req.description() != null) {
+            t.setDescription(req.description());
+            // The counterparty is DERIVED from the narration, so editing the narration has to
+            // re-derive it. Without this the row keeps whoever the old description named, and --
+            // because it already carries the current classifier version -- the backfill sweep will
+            // never revisit it either, so the stale answer becomes permanent. Corrected here rather
+            // than left to the sweep, since a user who has just retyped a description is the person
+            // most likely to look at the result immediately.
+            t.applyCounterpartyTyping(req.description());
+        }
         if (req.merchant() != null) t.setMerchant(req.merchant());
         if (req.amount() != null) {
             requireAmountWithinBounds(req.amount());

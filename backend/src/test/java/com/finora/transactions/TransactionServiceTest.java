@@ -648,6 +648,43 @@ class TransactionServiceTest {
     }
 
     @Test
+    void update_editingTheDescription_reTypesTheCounterparty() {
+        // The counterparty is derived from the narration, so an edit to the narration has to
+        // re-derive it. This is not something the backfill sweep can clean up later: the row
+        // already carries the current classifier version, so the sweep will never look at it again
+        // and a stale counterparty would be permanent.
+        UUID txnId = UUID.randomUUID();
+        Transaction existing = ownedTransaction(txnId, userId);
+        existing.applyCounterpartyTyping("UPI-PAYTMQR281005-mer@paytm-REF91");
+        assertThat(existing.getCounterpartyType()).isEqualTo(com.finora.util.CounterpartyType.BUSINESS);
+        when(transactionRepository.findById(txnId)).thenReturn(Optional.of(existing));
+
+        var req = new TransactionDto.UpdateRequest(null, "UPI-SUNIL VERMA-sampleuser@ybl-REF92",
+                null, null, null, null, null, null);
+        transactionService.update(userId, txnId, req);
+
+        assertThat(existing.getCounterpartyType()).isEqualTo(com.finora.util.CounterpartyType.PERSON);
+        assertThat(existing.getCounterpartyKey()).isEqualTo("vpa:sampleuser");
+    }
+
+    @Test
+    void update_leavingTheDescriptionAlone_leavesTheCounterpartyAlone() {
+        // The other half: an edit to notes or tags says nothing about who was on the other side,
+        // and must not cause a re-derivation that could differ from what is stored.
+        UUID txnId = UUID.randomUUID();
+        Transaction existing = ownedTransaction(txnId, userId);
+        existing.applyCounterpartyTyping("UPI-PAYTMQR281005-mer@paytm-REF93");
+        when(transactionRepository.findById(txnId)).thenReturn(Optional.of(existing));
+
+        var req = new TransactionDto.UpdateRequest(null, null, null, null, null, null,
+                "Reimbursed by roommate", null);
+        transactionService.update(userId, txnId, req);
+
+        assertThat(existing.getCounterpartyType()).isEqualTo(com.finora.util.CounterpartyType.BUSINESS);
+        assertThat(existing.getCounterpartyKey()).isEqualTo("vpa:mer");
+    }
+
+    @Test
     void updateCategory_marksCategoryAsManuallySet() {
         UUID txnId = UUID.randomUUID();
         Transaction existing = ownedTransaction(txnId, userId);
@@ -1391,5 +1428,54 @@ class TransactionServiceTest {
         List<TransactionDto> result = transactionService.needsReview(userId);
 
         assertThat(result).extracting(TransactionDto::id).containsExactly(genuine.getId());
+    }
+
+    @Test
+    void create_typesTheCounterparty_evenWhenTheUserSuppliedTheCategoryThemselves() {
+        // The assertion that matters. Counterparty typing sits OUTSIDE the category decision,
+        // because it is derived from the narration alone and is equally true whether the category
+        // came from the engine or from the user typing one in. Setting it only in the engine branch
+        // would leave every manually-categorized row untyped for no reason a user could explain --
+        // and the manual branch is exactly the one a careful user exercises most.
+        when(categorizationService.resolveMerchantId(eq(userId), anyString())).thenReturn(UUID.randomUUID());
+        when(categorizationService.resolveOrCreateCategory(eq(userId), eq("Dining"))).thenReturn(dummyCategory);
+
+        var req = new TransactionDto.CreateRequest(UUID.randomUUID(), "Dining", LocalDate.now(),
+                "UPI-SUNIL VERMA-sampleuser@ybl-REF61", BigDecimal.valueOf(486), "EXPENSE", List.of());
+
+        transactionService.create(userId, req);
+
+        verify(transactionRepository).save(argThat(t ->
+                t.getCounterpartyType() == com.finora.util.CounterpartyType.PERSON
+                        && "vpa:sampleuser".equals(t.getCounterpartyKey())));
+    }
+
+    @Test
+    void create_storesNoKeyAsNull_ratherThanAnEmptyString() {
+        // CounterpartyIdentity returns "" for "nothing derivable". Persisting that verbatim would
+        // make "no key" and "empty key" two different groups in the value-weighted review query
+        // this column exists to serve.
+        when(categorizationService.resolveMerchantId(eq(userId), anyString())).thenReturn(UUID.randomUUID());
+        when(categorizationService.resolveOrCreateCategory(eq(userId), eq("Dining"))).thenReturn(dummyCategory);
+
+        var req = new TransactionDto.CreateRequest(UUID.randomUUID(), "Dining", LocalDate.now(),
+                "UPI/REF62/UPI", BigDecimal.valueOf(486), "EXPENSE", List.of());
+
+        transactionService.create(userId, req);
+
+        verify(transactionRepository).save(argThat(t -> t.getCounterpartyKey() == null));
+    }
+
+    @Test
+    void create_neverLeavesTheTypeNull_soTheNotNullColumnCannotBeViolated() {
+        when(categorizationService.resolveMerchantId(eq(userId), anyString())).thenReturn(UUID.randomUUID());
+        when(categorizationService.resolveOrCreateCategory(eq(userId), eq("Dining"))).thenReturn(dummyCategory);
+
+        var req = new TransactionDto.CreateRequest(UUID.randomUUID(), "Dining", LocalDate.now(),
+                "UPI/REF63/UPI", BigDecimal.valueOf(486), "EXPENSE", List.of());
+
+        transactionService.create(userId, req);
+
+        verify(transactionRepository).save(argThat(t -> t.getCounterpartyType() != null));
     }
 }
