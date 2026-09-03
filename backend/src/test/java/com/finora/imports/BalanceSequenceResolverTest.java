@@ -316,6 +316,47 @@ class BalanceSequenceResolverTest {
         assertThat(resolution.closingBalance()).isNull();
     }
 
+    // ================================================================
+    // A balance match that leads nowhere is not a tie
+    // ================================================================
+
+    /**
+     * The exact real-world shape confirmed on a PNB ONE savings statement (2026-09-03): a same-day
+     * cluster of three identical small debits plus a reversing credit/debit pair. Two transactions
+     * both imply the incoming anchor as their predecessor, so the old one-step walk saw a tie and
+     * gave up -- but only ONE of them can actually go the distance. Starting from the first debit
+     * places three transactions and then strands the reversing pair with nothing left to explain
+     * them; starting from the reversing debit places all five. That is not an ambiguity, it is a
+     * dead end wearing one's clothes, and refusing it cost the whole statement its opening and
+     * closing balance -- which is how a freshly imported account came to show a negative "Total
+     * Balance" instead of the figure printed on the statement's own last row.
+     *
+     * <p>Day 1 is a single transaction, so there is deliberately NO print-order evidence anywhere
+     * (see {@link #resolve_doesNotUsePrintOrderTiebreak_whenNoOtherDayInTheDocumentProvidesEvidence}):
+     * this must resolve from balance math alone, with no tiebreaker of any kind involved.
+     */
+    @Test
+    void resolve_aBalanceMatchWhoseBranchCannotPlaceEveryTransaction_isNotATie() {
+        Obs anchor = obs("2026-08-01", "0.00", "1000.00");
+
+        Obs reversingDebit = obs("2026-08-02", "-200.00", "800.00");  // true 1st: implies 1000
+        Obs reversingCredit = obs("2026-08-02", "200.00", "1000.00"); // true 2nd: back to 1000
+        Obs debit1 = obs("2026-08-02", "-40.00", "960.00");          // true 3rd: ALSO implies 1000
+        Obs debit2 = obs("2026-08-02", "-40.00", "920.00");
+        Obs debit3 = obs("2026-08-02", "-40.00", "880.00");          // true last
+
+        // Shuffled so the answer cannot come from list position.
+        var resolution = BalanceSequenceResolver.resolve(
+                List.of(anchor, debit2, debit1, reversingCredit, debit3, reversingDebit));
+
+        assertThat(resolution.ambiguityStatus()).isEqualTo(BalanceSequenceResolver.AmbiguityStatus.UNIQUE);
+        assertThat(resolution.openingBalance()).isEqualByComparingTo("1000.00");
+        assertThat(resolution.closingBalance()).isEqualByComparingTo("880.00");
+        assertThat(resolution.orderedTransactions())
+                .isEqualTo(List.of(anchor, reversingDebit, reversingCredit, debit1, debit2, debit3));
+        assertThat(resolution.evidence()).doesNotContain("Print order");
+    }
+
     /** No OTHER day in the document ever resolves independently (day 1 is a single transaction,
      *  which needs no resolution at all and so proves nothing about print order) -- there is no
      *  evidence anywhere to calibrate trust from, so the tie on day 2 must stay ambiguous exactly

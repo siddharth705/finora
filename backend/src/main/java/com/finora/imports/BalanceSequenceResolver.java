@@ -3,7 +3,6 @@ package com.finora.imports;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -231,6 +230,18 @@ public final class BalanceSequenceResolver {
      * no forced guess. Naturally handles a loop of any width (not just a single reversing pair),
      * since it never special-cases "closed loop" at all -- it only ever asks "who comes next."
      *
+     * <p><b>A match is only a candidate if it can go the distance.</b> This used to be a single
+     * forward pass that declared a tie the moment two transactions implied the same running
+     * balance. Confirmed wrong on a real PNB ONE statement: a day of three identical small debits
+     * plus a reversing credit/debit pair, where the reversing debit and the first small debit both
+     * implied the incoming anchor -- but placing the small debit first strands the reversing pair
+     * with nothing left that explains them, while placing the reversing debit first places all
+     * five. Nothing about the balance math is ambiguous there; only the one-step look-ahead was.
+     * The cost of the misreading was the entire statement's opening and closing balance (see
+     * {@link #resolve}'s "no forced guess"), and downstream of that a wrong account balance. So
+     * {@link #completeFrom} now asks, of each match, whether its own remainder can be fully placed
+     * before counting it -- a tie is two or more transactions that can EACH finish the chain.
+     *
      * @param startBalance the running balance to search from -- when {@code alreadyPlaced} is
      *                      given, this MUST be {@code alreadyPlaced.balanceAfter()} (the position
      *                      after it, not before it), since the walk searches for whoever comes
@@ -249,29 +260,62 @@ public final class BalanceSequenceResolver {
             List<T> group, BigDecimal startBalance, T alreadyPlaced, boolean printOrderTiebreak) {
         List<T> remaining = new ArrayList<>(group);
         List<T> result = new ArrayList<>();
-        BigDecimal running = startBalance;
         if (alreadyPlaced != null) {
             remaining.remove(alreadyPlaced);
             result.add(alreadyPlaced);
         }
-        while (!remaining.isEmpty()) {
-            List<T> matches = new ArrayList<>();
-            for (T candidate : remaining) {
-                BigDecimal impliedPre = candidate.balanceAfter().subtract(candidate.signedAmount());
-                if (impliedPre.compareTo(running) == 0) matches.add(candidate);
+        List<T> tail = completeFrom(remaining, startBalance, group, printOrderTiebreak);
+        if (tail == null) return null;
+        result.addAll(tail);
+        return result;
+    }
+
+    /**
+     * The one unique way to place every transaction in {@code remaining} into a chain that starts
+     * at {@code running}, or {@code null} when there is none or more than one. A transaction whose
+     * implied pre-balance matches {@code running} is tried, and counts only if its own remainder
+     * can also be fully placed (checked by recursing on it) -- so a match that leads to a dead end
+     * never masquerades as a tie. Two or more that can each finish are a genuine tie: broken by
+     * {@code printOrderGroup}'s own order when {@code printOrderTiebreak}, at every level where one
+     * arises, exactly as the old single pass broke it at each step; otherwise unresolved.
+     *
+     * <p>Exhaustive over a day's cluster, not the statement -- {@link #resolveDay} calls this per
+     * day, and same-day clusters in the real corpus are a handful of rows, so the recursion is
+     * shallow in practice.
+     */
+    private static <T extends DatedLink> List<T> completeFrom(
+            List<T> remaining, BigDecimal running, List<T> printOrderGroup, boolean printOrderTiebreak) {
+        if (remaining.isEmpty()) return new ArrayList<>();
+
+        List<T> viable = new ArrayList<>();
+        List<List<T>> viableTails = new ArrayList<>();
+        for (T candidate : remaining) {
+            BigDecimal impliedPre = candidate.balanceAfter().subtract(candidate.signedAmount());
+            if (impliedPre.compareTo(running) != 0) continue;
+            List<T> rest = new ArrayList<>(remaining);
+            rest.remove(candidate);
+            List<T> tail = completeFrom(rest, candidate.balanceAfter(), printOrderGroup, printOrderTiebreak);
+            if (tail != null) {
+                viable.add(candidate);
+                viableTails.add(tail);
             }
-            T next;
-            if (matches.size() == 1) {
-                next = matches.get(0);
-            } else if (matches.size() > 1 && printOrderTiebreak) {
-                next = matches.stream().min(Comparator.comparingInt(group::indexOf)).orElseThrow();
-            } else {
-                return null;
-            }
-            result.add(next);
-            remaining.remove(next);
-            running = next.balanceAfter();
         }
+
+        int chosen;
+        if (viable.size() == 1) {
+            chosen = 0;
+        } else if (viable.size() > 1 && printOrderTiebreak) {
+            chosen = 0;
+            for (int i = 1; i < viable.size(); i++) {
+                if (printOrderGroup.indexOf(viable.get(i)) < printOrderGroup.indexOf(viable.get(chosen))) chosen = i;
+            }
+        } else {
+            return null;
+        }
+
+        List<T> result = new ArrayList<>();
+        result.add(viable.get(chosen));
+        result.addAll(viableTails.get(chosen));
         return result;
     }
 
