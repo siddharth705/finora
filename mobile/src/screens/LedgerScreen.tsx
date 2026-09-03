@@ -298,14 +298,16 @@ export function LedgerScreen() {
               accessibilityLabel={`${t.description || t.merchant || 'Transaction'}, ${
                 t.type === 'INCOME' ? 'income' : 'expense'
               } ${fmtCurrency(Math.abs(t.amount))}, ${t.categoryName}, ${t.date}`}
-              accessibilityHint="Double tap to change category, or double tap and hold to delete"
-              accessibilityActions={[
-                { name: 'activate', label: 'Change category' },
-                { name: 'delete', label: 'Delete transaction' },
-              ]}
+              // Describes the OUTCOME, not the gesture: VoiceOver and TalkBack both append their
+              // own "double tap to activate" to a button, so spelling the gesture out here had the
+              // row announce the same instruction twice in conflicting words -- and the standard
+              // 'activate' action that used to sit in the list below advertised it a third time,
+              // as a rotor entry duplicating what a plain double-tap already does. Default
+              // activation maps to onPress, so only the non-default action needs declaring.
+              accessibilityHint="Changes this transaction's category"
+              accessibilityActions={[{ name: 'delete', label: 'Delete transaction' }]}
               onAccessibilityAction={(e) => {
                 if (e.nativeEvent.actionName === 'delete') confirmDelete(t);
-                if (e.nativeEvent.actionName === 'activate') setRecategorizing(t);
               }}
             >
               <View style={styles.rowMain}>
