@@ -10,6 +10,30 @@ import {
 } from '../api/endpoints';
 import type { DashboardSummary } from '../types';
 
+// jsdom implements no canvas, so HTMLCanvasElement.getContext() returns null and Chart.js's
+// constructor bails early -- but only AFTER assigning `this.canvas = null` and registering the
+// half-built instance. react-chartjs-2 keeps that instance in its ref, so the very next render
+// that changes `data.labels`/`data.datasets`/`options` runs its update effect and calls
+// chart.update() on it: _checkEventBindings -> bindEvents -> bindResponsiveEvents sees
+// isAttached(null) === false, calls detached() -> _resize(0, 0) -> getMaximumSize(null) ->
+// `null.ownerDocument`. That TypeError is thrown from a passive effect with no error boundary
+// above it, so React tears down the entire root -- the DOM goes to a bare <div /> mid-test and
+// whichever findBy* is pending then polls an empty body until asyncUtilTimeout (5s) and fails.
+//
+// It presents as an intermittent failure in an unrelated-looking test because the Line chart only
+// mounts once the independent reportsApi chain resolves: whether the crashing update() lands
+// inside a still-asserting test is a matter of load-dependent timing. It is not cross-file
+// pollution -- each test file runs in its own child process, so nothing can leak between them.
+// (The "Not implemented: navigation" noise that shows up next to these failures comes from a
+// different worker entirely and is printed unattributed; see src/test/setup.ts.)
+//
+// Mocking the chart components is what Investments.test.tsx already does, for the same reason:
+// the charts are not under test here, the page's loading and empty-state behaviour is.
+vi.mock('react-chartjs-2', () => ({
+  Line: () => <div data-testid="cash-flow-chart" />,
+  Doughnut: () => <div data-testid="spending-breakdown-chart" />,
+}));
+
 // Dashboard had no prior test file -- this covers only what each change added (the Financial
 // Health Score card, D-19 Step 1; the Subscriptions & Recurring Payments card, C6.5; the D-21
 // empty-state welcome screen), not the whole page. Every card renders data
@@ -214,9 +238,9 @@ describe('Dashboard — Financial Health Score', () => {
   });
 
   it('shows a "Why?" toggle next to a breakdown row that has a detail explanation, revealing it on click', async () => {
-    // Real chart data + a userEvent interaction together crash jsdom's Chart.js mock (a known,
-    // unrelated limitation -- see the category-movers/detected-duplicates describe blocks for the
-    // same workaround): nulling the chart data here avoids mounting a second live canvas.
+    // Kept from when real chart data here crashed the run: react-chartjs-2 is mocked at the top
+    // of this file now, so no canvas is ever mounted and this is only about keeping the Cash Flow
+    // card out of a test that is about the Health Score card.
     vi.mocked(reportsApi.availableMonths).mockResolvedValue([]);
     vi.mocked(dashboardApi.summary).mockResolvedValue(summary({
       healthBreakdownDetail: { 'Savings Rate': 'Your savings rate was 18.5%.' },
@@ -269,11 +293,10 @@ describe('Dashboard — Spending Breakdown category review warning', () => {
     vi.mocked(dashboardApi.summary).mockReset().mockResolvedValue(summary());
     vi.mocked(dashboardApi.journey).mockReset().mockResolvedValue({ milestones: [] });
     vi.mocked(accountsApi.list).mockReset().mockResolvedValue([]);
-    // totalElements: 0 (isEmpty) -- these tests don't care about Financial Health Score, and
-    // rendering it alongside a populated Doughnut chart mounts two Chart.js instances at once,
-    // which crashes in jsdom ("can't acquire context from the given item", no error boundary to
-    // catch it). The existing "0%, not NaN%" test below proves a populated Doughnut renders fine
-    // on its own with isEmpty -- matching that pattern rather than the Health Score block's.
+    // totalElements: 0 (isEmpty) -- these tests don't care about Financial Health Score. This
+    // originally also avoided mounting two live Chart.js instances at once; react-chartjs-2 is
+    // mocked at the top of this file now, so that hazard is gone and this is purely about scoping
+    // these tests to the Spending Breakdown card.
     vi.mocked(transactionsApi.search).mockReset().mockResolvedValue({
       content: [], page: 0, size: 4, totalElements: 0, totalPages: 0,
     });
@@ -291,12 +314,10 @@ describe('Dashboard — Spending Breakdown category review warning', () => {
     });
     vi.mocked(budgetsApi.list).mockReset().mockResolvedValue([]);
     // Empty (not a real month) -- CashFlowChart isn't gated by the page-level isEmpty at all;
-    // it's driven independently by these two APIs. Real data here mounts a SECOND live Chart.js
-    // canvas (a Line chart) alongside the Doughnut these tests actually care about, and jsdom
-    // can't survive two real chart.js instances mounting at once ("Failed to create chart:
-    // can't acquire context from the given item", uncaught, unmounts the whole tree). Matches
-    // the existing "0%, not NaN%" test's own pattern below, which proves a populated Doughnut
-    // alone renders fine.
+    // it's driven independently by these two APIs. This used to be load-bearing: real data here
+    // mounted a live Line chart whose first update() threw uncaught and unmounted the whole tree.
+    // react-chartjs-2 is mocked at the top of this file now, so it only keeps the Cash Flow card
+    // out of tests that are about Spending Breakdown.
     vi.mocked(reportsApi.availableMonths).mockReset().mockResolvedValue([]);
     vi.mocked(reportsApi.forMonth).mockReset();
     vi.mocked(recurringApi.list).mockReset().mockResolvedValue([]);

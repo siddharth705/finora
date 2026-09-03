@@ -84,6 +84,75 @@ if (!window.IntersectionObserver) {
   globalThis.IntersectionObserver = window.IntersectionObserver;
 }
 
+// jsdom implements no navigation. Assigning `window.location.href` (or calling assign() /
+// replace() / reload()) does not throw -- it emits a "jsdomError" on jsdom's virtual console,
+// which vitest forwards to console.error. Because it happens outside any test's own stack,
+// vitest cannot attribute it to a task, so it prints UNPREFIXED and, in a parallel run, lands
+// wherever the output streams happen to interleave -- typically next to some other file's
+// failure, in a different worker process entirely. That is actively misleading: it reads as one
+// test file bleeding into another, and it cost a real debugging session before this shim existed.
+// (Test files cannot pollute each other that way regardless -- vitest runs each one in its own
+// child process, verified by printing process.pid from two files.)
+//
+// Six of these were emitted per full-suite run, all from clearSessionAndRedirect (client.ts) --
+// reached from its own 401-refresh interceptor and from Settings.tsx's account-deactivation flow.
+// Nothing was wrong with any of them: `window.location.href = ...` is correct production
+// behaviour that jsdom simply cannot perform, exactly like matchMedia and IntersectionObserver
+// above.
+//
+// So: a stand-in that records the attempted navigation instead of performing it, which also makes
+// the redirect assertable (`expect(window.location.href).toBe(...)`) rather than a side effect
+// that dies in the virtual console. `href` reads back exactly what was assigned, NOT resolved
+// against the origin the way a browser would -- so a relative redirect asserts as '/auth', which
+// is what the assigning code actually wrote. Nothing in src/ parses window.location.href as an
+// absolute URL, so there is no caller for that difference to surprise. A plain object with delegating getters, NOT a Proxy over the
+// real Location: jsdom defines assign/replace/reload as read-only non-configurable DATA
+// properties, and a Proxy `get` trap returning anything but their actual value is an invariant
+// violation that throws. (`href` alone is an accessor, so only it could have been trapped.)
+//
+// Reads other than `href` keep delegating to the real Location, so `pathname` still tracks
+// history.pushState -- App.test.tsx's routing assertions depend on that. They deliberately do NOT
+// follow a recorded navigation: after a hard redirect a real browser has left the page, so
+// nothing else on the old document is meaningful. Only `href` and `hash` are settable (jsdom
+// performs hash-only navigation itself, so that one is passed straight through); assigning to any
+// other component throws a clear "only a getter" TypeError rather than silently doing nothing.
+const realLocation = window.location;
+let attemptedNavigation: string | null = null;
+
+function installLocationStub() {
+  const stub = {
+    get href() { return attemptedNavigation ?? realLocation.href; },
+    set href(url: string) { attemptedNavigation = String(url); },
+    assign(url: string) { attemptedNavigation = String(url); },
+    replace(url: string) { attemptedNavigation = String(url); },
+    reload() {},
+    get origin() { return realLocation.origin; },
+    get protocol() { return realLocation.protocol; },
+    get host() { return realLocation.host; },
+    get hostname() { return realLocation.hostname; },
+    get port() { return realLocation.port; },
+    get pathname() { return realLocation.pathname; },
+    get search() { return realLocation.search; },
+    get hash() { return realLocation.hash; },
+    set hash(value: string) { realLocation.hash = value; },
+    get ancestorOrigins() { return realLocation.ancestorOrigins; },
+    toString() { return this.href; },
+  };
+  // writable as well as configurable: a couple of tests swap in their own location object with a
+  // plain assignment (to spy on reload()), which would throw against a read-only data property.
+  Object.defineProperty(window, 'location', { configurable: true, writable: true, value: stub });
+}
+
+installLocationStub();
+
+// Reinstalled rather than merely reset, so a test that replaced window.location outright cannot
+// leak its replacement into the rest of its file -- which used to happen: Settings.test.tsx's
+// Gmail redirect test left a bare `{ href }` object behind for every test after it.
+afterEach(() => {
+  attemptedNavigation = null;
+  installLocationStub();
+});
+
 // Node 22+ ships its own experimental global `localStorage`, functional only when the process is
 // started with --localstorage-file. Without that flag the global still EXISTS, as an accessor that
 // returns undefined, and since vitest's jsdom environment aliases globalThis to the jsdom window
