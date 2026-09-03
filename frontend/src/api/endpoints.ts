@@ -519,8 +519,13 @@ export interface ImportJobProgress {
   // Premium Import Reliability v1, §3.2 -- the import detail page's only source for what was
   // uploaded; nothing else in this response names it.
   fileName: string;
+  // HELD_FOR_TRUST_REVIEW is the one status here that does NOT mean something went wrong: the
+  // statement parsed and rows were staged, but the extraction's own evidence contradicts them, so
+  // the import is withheld from the confirm step until a person decides. It collapses into the
+  // same `userStatus` as HELD_FOR_REVIEW below, because the user is in the same situation either
+  // way -- the difference is entirely ours.
   status: 'QUEUED' | 'PARSING' | 'ANALYZING' | 'DEDUPING' | 'IMPORTING' | 'LEARNING'
-    | 'COMPLETED' | 'FAILED' | 'HELD_FOR_REVIEW' | 'CANCELLED';
+    | 'COMPLETED' | 'FAILED' | 'HELD_FOR_REVIEW' | 'HELD_FOR_TRUST_REVIEW' | 'CANCELLED';
   // Sprint 4 item 20a's five-state mapping, additive alongside `status` (unchanged, still needed
   // for the timeline UI's per-stage granularity) -- for a caller that wants the collapsed
   // "processing / completed / action required / failed / cancelled" view without re-deriving it.

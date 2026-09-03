@@ -262,3 +262,75 @@ describe('ImportProgress — held for review', () => {
     expect(onReady).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * The trust hold, rendered.
+ *
+ * Same promise as the hold above, with one extra hazard that is specific to this state and caught
+ * a real bug here: a trust-held job carries a complete staged session, so every "is it finished?"
+ * shortcut in this component says yes. The icon selection is the one that got it wrong -- the job
+ * is settled, is not FAILED, and so fell through to the cancelled icon, showing a user a Ban glyph
+ * beside the words "Running additional checks".
+ */
+describe('ImportProgress — held for trust review', () => {
+  const trustHeldJob = () => job({
+    status: 'HELD_FOR_TRUST_REVIEW',
+    userStatus: 'HELD_FOR_REVIEW',
+    importSessionId: 'staged-but-not-confirmable',
+  });
+
+  it('reads as waiting on us, not as a cancellation', async () => {
+    api.progress.mockResolvedValue(trustHeldJob());
+    const { container } = render(
+      <ImportProgress jobId="job-1" onReady={vi.fn()} onGaveUp={vi.fn()} />);
+
+    await advance(POLL_SCHEDULE_MS[0] + 1);
+
+    // Ban is the cancelled glyph. Pairing it with "Running additional checks" tells the user two
+    // contradictory things at once, and the more alarming one wins.
+    expect(container.querySelector('.lucide-ban')).not.toBeInTheDocument();
+    expect(container.querySelector('.lucide-clock')).toBeInTheDocument();
+  });
+
+  it('shows the holding message instead of a failure', async () => {
+    api.progress.mockResolvedValue(trustHeldJob());
+    render(<ImportProgress jobId="job-1" onReady={vi.fn()} onGaveUp={vi.fn()} />);
+
+    await advance(POLL_SCHEDULE_MS[0] + 1);
+
+    expect(screen.getByText('Running additional checks')).toBeInTheDocument();
+    expect(screen.getByText(/no action needed from you right now/i)).toBeInTheDocument();
+  });
+
+  it('never hands over the staged session, which is the whole point of the hold', async () => {
+    const onReady = vi.fn();
+    api.progress.mockResolvedValue(trustHeldJob());
+    render(<ImportProgress jobId="job-1" onReady={onReady} onGaveUp={vi.fn()} />);
+
+    await advance(POLL_SCHEDULE_MS[0] + 1);
+
+    // The session exists and is one callback away from the user's confirm screen. It must not fire.
+    expect(onReady).not.toHaveBeenCalled();
+  });
+
+  it('offers nothing to press and no progress bar', async () => {
+    api.progress.mockResolvedValue(trustHeldJob());
+    render(<ImportProgress jobId="job-1" onReady={vi.fn()} onGaveUp={vi.fn()} />);
+
+    await advance(POLL_SCHEDULE_MS[0] + 1);
+
+    expect(screen.queryByRole('button', { name: /cancel/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('progressbar')).not.toBeInTheDocument();
+  });
+
+  it('stops polling, rather than spinning for however long the review takes', async () => {
+    api.progress.mockResolvedValue(trustHeldJob());
+    render(<ImportProgress jobId="job-1" onReady={vi.fn()} onGaveUp={vi.fn()} />);
+
+    await advance(POLL_SCHEDULE_MS[0] + 1);
+    expect(api.progress).toHaveBeenCalledTimes(1);
+
+    await advance(60_000);
+    expect(api.progress).toHaveBeenCalledTimes(1);
+  });
+});
