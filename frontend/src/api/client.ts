@@ -128,6 +128,28 @@ function pathMatchesAuthEndpoint(url: string | undefined, entry: string): boolea
   return !!path && (path === entry || path.endsWith(entry));
 }
 
+/**
+ * Which client and which build, for the backend's ClientIdentity to read.
+ *
+ * Support tickets and product feedback both record where they came from, and nothing else in the
+ * request carries that: parsing a user-agent guesses at the browser, not at whether this is the
+ * web app or one of the mobile apps. Sent on every request rather than only the two endpoints that
+ * store it, so the contract is one rule instead of a list that drifts.
+ *
+ * APP_VERSION is a SHORT commit SHA, not the full `__APP_RELEASE__` used as the Sentry release.
+ * The backend column is VARCHAR(32) and a full hash is 40 characters, so sending the whole thing
+ * would be silently discarded as implausible -- 12 characters still identifies the build.
+ *
+ * The `typeof` guard is load-bearing, not defensive style. `__APP_RELEASE__` is a Vite `define`,
+ * substituted at build time and simply absent anywhere Vite did not do the substituting -- under
+ * Vitest, a bare reference here threw at module load and took every test that imports this client
+ * down with it. monitoring.ts gets away with an unguarded read only because its reference sits
+ * inside a function nothing calls in tests.
+ */
+export const CLIENT_PLATFORM = 'WEB';
+export const APP_VERSION =
+  typeof __APP_RELEASE__ === 'string' ? __APP_RELEASE__.slice(0, 12) : '';
+
 api.interceptors.request.use((config) => {
   const isAuthEndpoint = AUTH_ENDPOINTS_NO_TOKEN.some((path) => pathMatchesAuthEndpoint(config.url, path));
   if (!isAuthEndpoint) {
@@ -135,6 +157,10 @@ api.interceptors.request.use((config) => {
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
+  }
+  config.headers['X-Client-Platform'] = CLIENT_PLATFORM;
+  if (APP_VERSION) {
+    config.headers['X-App-Version'] = APP_VERSION;
   }
   return config;
 });
