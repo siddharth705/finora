@@ -57,7 +57,13 @@ public enum UserFacingImportStatus {
             case QUEUED, PARSING, ANALYZING, DEDUPING, IMPORTING, LEARNING -> PROCESSING;
             case COMPLETED -> COMPLETED;
             case CANCELLED -> CANCELLED;
-            case HELD_FOR_REVIEW -> HELD_FOR_REVIEW;
+            // Both holds collapse here, deliberately. Internally they are opposites -- one is a
+            // parse that fell over, the other a parse that succeeded and is distrusted -- but from
+            // the user's side they are the same situation: nothing running, nothing theirs to fix,
+            // a person looking at it. Collapsing internal grain is what this enum is for, and
+            // separate copy for the trust hold would be hard to write without leaking "we are
+            // checking whether your statement is real", which the doc below forbids.
+            case HELD_FOR_REVIEW, HELD_FOR_TRUST_REVIEW -> HELD_FOR_REVIEW;
             case FAILED -> ErrorCode.userActionRequiredOrDefault(failureCode) ? ACTION_REQUIRED : FAILED;
         };
     }

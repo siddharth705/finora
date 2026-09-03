@@ -633,4 +633,99 @@ class ImportJobTest {
                 .as("the parser version is known even when nothing was verified")
                 .isEqualTo("sha");
     }
+
+    // -------------------------------------------------------------------------------------------
+    // HELD_FOR_TRUST_REVIEW -- the second kind of hold. HELD_FOR_REVIEW means "the parse failed in
+    // a way nothing recognised"; this means "the parse SUCCEEDED, and its own evidence says it may
+    // be wrong". The rows exist and are staged; what is withheld is the user's confirm step.
+    // -------------------------------------------------------------------------------------------
+
+    @Test
+    void holdForTrustReview_isTerminalAndKeepsTheStagedSession() {
+        ImportJob job = job();
+        job.markClaimed("worker", Instant.now());
+        UUID sessionId = UUID.randomUUID();
+        UUID heldId = UUID.randomUUID();
+
+        job.holdForTrustReview(sessionId, heldId, Instant.now());
+
+        assertThat(job.getStatus()).isEqualTo(ImportJob.Status.HELD_FOR_TRUST_REVIEW);
+        assertThat(job.getStatus().isTerminal()).isTrue();
+        assertThat(job.getImportSessionId())
+                .as("staging succeeded -- the rows are real and must stay reachable for review")
+                .isEqualTo(sessionId);
+        assertThat(job.getHeldStatementId()).isEqualTo(heldId);
+        assertThat(ImportJob.Status.IN_FLIGHT)
+                .doesNotContain(ImportJob.Status.HELD_FOR_TRUST_REVIEW);
+    }
+
+    /** A trust hold is not a failure, so it must not carry the wreckage of one. */
+    @Test
+    void holdForTrustReview_isNotAFailure() {
+        ImportJob job = job();
+        job.markClaimed("worker", Instant.now());
+
+        job.holdForTrustReview(UUID.randomUUID(), UUID.randomUUID(), Instant.now());
+
+        assertThat(job.getStatus()).isNotEqualTo(ImportJob.Status.FAILED);
+        assertThat(job.getFailureCode()).isNull();
+        assertThat(job.getLastError()).isNull();
+    }
+
+    /**
+     * The hold has to stick, for the same reason {@code holdForReview}'s does: a stray later
+     * failure must not quietly downgrade a held job to FAILED and hand the user a dead end for an
+     * import that actually staged fine.
+     */
+    @Test
+    void aTrustHeldJobIsNotMovedByAFurtherFailure() {
+        ImportJob job = job();
+        job.markClaimed("worker", Instant.now());
+        job.holdForTrustReview(UUID.randomUUID(), UUID.randomUUID(), Instant.now());
+
+        ImportJob.FailureOutcome outcome = job.recordFailure(
+                "something else went wrong", "RuntimeException",
+                ErrorCode.RetryPolicy.FAIL_FAST, Instant.now());
+
+        assertThat(outcome).isEqualTo(ImportJob.FailureOutcome.ALREADY_FINISHED);
+        assertThat(job.getStatus()).isEqualTo(ImportJob.Status.HELD_FOR_TRUST_REVIEW);
+    }
+
+    /** Only the explicit transition may enter the hold -- advanceTo refuses every terminal state. */
+    @Test
+    void advanceToCannotEnterTheTrustHold() {
+        assertThatThrownBy(() -> job().advanceTo(ImportJob.Status.HELD_FOR_TRUST_REVIEW))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    /**
+     * Mirrors {@link ImportJob#complete}'s own guard, for the identical reason: holding a cancelled
+     * job would resurrect an import the user asked to stop, as a review-queue item they never see
+     * and cannot cancel again.
+     */
+    @Test
+    void holdForTrustReview_refusesACancelledJob() {
+        ImportJob job = job();
+        job.cancel(Instant.now());
+
+        assertThatThrownBy(() ->
+                job.holdForTrustReview(UUID.randomUUID(), UUID.randomUUID(), Instant.now()))
+                .isInstanceOf(IllegalStateException.class);
+        assertThat(job.getStatus()).isEqualTo(ImportJob.Status.CANCELLED);
+    }
+
+    /**
+     * The enum's ordinal ordering is load-bearing -- {@code Status.isBefore} compares ordinals and
+     * {@link ImportJob#isCancellable} asks whether the job sits before IMPORTING. Inserting a
+     * constant shifts every later ordinal, so this pins the consequence rather than the position:
+     * a trust-held job has a staged session behind it and must not be cancellable.
+     */
+    @Test
+    void aTrustHeldJobIsNotCancellable() {
+        ImportJob job = job();
+        job.markClaimed("worker", Instant.now());
+        job.holdForTrustReview(UUID.randomUUID(), UUID.randomUUID(), Instant.now());
+
+        assertThat(job.isCancellable()).isFalse();
+    }
 }

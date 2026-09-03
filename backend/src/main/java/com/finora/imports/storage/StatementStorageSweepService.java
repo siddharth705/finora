@@ -122,7 +122,20 @@ public class StatementStorageSweepService {
 
     /** See this class's "Accepted trade-off" doc section, and
      *  {@link ImportJobRepository#existsByObjectKeyAndStatusNotIn}'s own doc, for why these two
-     *  statuses -- and only these two -- don't make an import_jobs row count as a live reference. */
+     *  statuses -- and only these two -- don't make an import_jobs row count as a live reference.
+     *
+     *  <p>Note what the shape of this set means for a NEW status: because it names the statuses
+     *  that stop protecting an object, anything added to {@link ImportJob.Status} is protected by
+     *  default. That is the safe direction, and it is also why the protection is easy to remove by
+     *  accident -- an edit that "tidied" this set by adding a hold to it would read as harmless.
+     *
+     *  <p>{@code HELD_FOR_TRUST_REVIEW} is absent and must stay absent. It is the status most
+     *  likely to be added here by mistake, because unlike every other hold its job staged
+     *  successfully and looks finished. Its object is the reviewer's only copy of the statement
+     *  they are being asked to judge, and a trust hold can outlast a failure by a wide margin --
+     *  it waits on a person reading a document, not on a retry timer.
+     *  {@code StatementStorageSweepServiceTest#heldForTrustReviewIsNotAnExcludedStatus_soTheReviewersCopySurvives}
+     *  fails if this set ever grows to include it. */
     static final Set<ImportJob.Status> IMPORT_JOB_EXCLUDED_STATUSES =
             EnumSet.of(ImportJob.Status.COMPLETED, ImportJob.Status.CANCELLED);
 

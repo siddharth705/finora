@@ -287,6 +287,25 @@ class StatementStorageSweepServiceTest {
                 .doesNotContain(ImportJob.Status.HELD_FOR_REVIEW);
     }
 
+    /**
+     * The same invariant for the trust hold, and the reason that status exists at all rather than
+     * reusing COMPLETED with a side table.
+     *
+     * <p>A trust-held job staged successfully, so completing it would have been the natural
+     * modelling choice -- and COMPLETED is one of the two statuses that stop protecting the object.
+     * The reviewer's entire job is to open that PDF and decide whether the extraction matches it,
+     * so reclaiming it is the one thing that makes the review impossible to perform. A trust hold
+     * can also outlast a failure by a wide margin: it waits on a human reading a document, not on a
+     * retry timer.
+     */
+    @Test
+    void heldForTrustReviewIsNotAnExcludedStatus_soTheReviewersCopySurvives() {
+        assertThat(StatementStorageSweepService.IMPORT_JOB_EXCLUDED_STATUSES)
+                .as("adding HELD_FOR_TRUST_REVIEW here would delete the statement the reviewer "
+                        + "is being asked to look at")
+                .doesNotContain(ImportJob.Status.HELD_FOR_TRUST_REVIEW);
+    }
+
     @Test
     void sweep_continuesTheBatch_whenOneDeleteFails() {
         when(statementImportRepository.findObjectsUnreferencedSince(any(), anyInt()))
