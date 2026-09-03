@@ -65,7 +65,8 @@ class StatementImportServiceReimportIntegrityTest {
                 mock(CategoryRepository.class), mock(TransactionRepository.class),
                 mock(ReconciliationService.class), mock(RecurringService.class),
                 importService, mock(AuditService.class), mock(BankManagementService.class),
-                new com.finora.imports.storage.StatementContentService(Optional.empty(), mock(com.finora.security.crypto.EncryptionService.class), "", ""));
+                new com.finora.imports.storage.StatementContentService(Optional.empty(), mock(com.finora.security.crypto.EncryptionService.class), "", ""),
+                mock(com.finora.repository.ReimportConfirmationClaimRepository.class));
 
         Account account = new Account();
         ReflectionTestUtils.setField(account, "id", accountId);
