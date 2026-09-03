@@ -88,6 +88,15 @@ public final class CounterpartyClassifier {
         // Reuses the detector's own marker pattern rather than a second copy -- see
         // PersonToPersonTransferDetector.hasMerchantAcquirerMarker for why that matters.
         if (PersonToPersonTransferDetector.hasMerchantAcquirerMarker(description)) return CounterpartyType.BUSINESS;
+
+        // A named merchant entity is business identity, full stop. Reached through
+        // MerchantIdentityLookup rather than CategoryRules so this layer never depends on the
+        // categorization engine: "Amazon is a known merchant" is the fact needed here, and "Amazon
+        // means Shopping" is emphatically not. 130 corpus rows were recognised as a brand by the
+        // category layer while this classifier still answered UNKNOWN -- an incoherent pair of
+        // answers about the same row.
+        if (MerchantIdentityLookup.namesKnownMerchant(description)) return CounterpartyType.BUSINESS;
+
         if (CORPORATE_SUFFIX.matcher(description).find()) return CounterpartyType.BUSINESS;
 
         if (PersonToPersonTransferDetector.isNamedIndividualTransfer(description)) return CounterpartyType.PERSON;
