@@ -40,11 +40,6 @@ public class FeedbackEntry extends BaseEntity {
         DASHBOARD, TRANSACTIONS, REPORTS, BUDGETS, GOALS, IMPORT_FLOW, ACCOUNTS, SETTINGS, HELP, OTHER
     }
 
-    /** Which client. Separate from {@link Context}, which is which feature. */
-    public enum Source {
-        WEB, MOBILE_ANDROID, MOBILE_IOS
-    }
-
     /**
      * Who submitted it. Authentication is required in v1, so in practice this is always set.
      *
@@ -65,7 +60,7 @@ public class FeedbackEntry extends BaseEntity {
 
     @Enumerated(EnumType.STRING)
     @Column(name = "source", nullable = false)
-    private Source source;
+    private ClientPlatform source;
 
     @Column(name = "message", nullable = false)
     private String message;
@@ -82,8 +77,8 @@ public class FeedbackEntry extends BaseEntity {
     public Context getContext() { return context; }
     public void setContext(Context context) { this.context = context; }
 
-    public Source getSource() { return source; }
-    public void setSource(Source source) { this.source = source; }
+    public ClientPlatform getSource() { return source; }
+    public void setSource(ClientPlatform source) { this.source = source; }
 
     public String getMessage() { return message; }
     public void setMessage(String message) { this.message = message; }
