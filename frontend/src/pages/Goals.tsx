@@ -134,7 +134,7 @@ export default function Goals() {
             return (
               <FinoraCard key={g.id} padding="sm">
                 <div className="flex justify-between items-baseline mb-2">
-                  <span className="font-serif text-lg font-semibold">{g.name}</span>
+                  <span className="text-lg font-semibold">{g.name}</span>
                   <span className="text-sm text-gray-500">{fmt(g.currentAmount)} / {fmt(g.targetAmount)}</span>
                 </div>
                 <div className="h-2 bg-black/10 rounded overflow-hidden mb-2">

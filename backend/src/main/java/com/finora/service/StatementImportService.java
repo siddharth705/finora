@@ -51,13 +51,15 @@ public class StatementImportService {
     private final AuditService auditService;
     private final BankManagementService bankManagementService;
     private final com.finora.imports.storage.StatementContentService statementContentService;
+    private final com.finora.repository.ReimportConfirmationClaimRepository reimportClaimRepository;
 
     public StatementImportService(StatementImportRepository statementImportRepository, AccountRepository accountRepository,
                                    CategoryRepository categoryRepository, TransactionRepository transactionRepository,
                                    ReconciliationService reconciliationService, RecurringService recurringService,
                                    ImportService importService, AuditService auditService,
                                    BankManagementService bankManagementService,
-                                   com.finora.imports.storage.StatementContentService statementContentService) {
+                                   com.finora.imports.storage.StatementContentService statementContentService,
+                                   com.finora.repository.ReimportConfirmationClaimRepository reimportClaimRepository) {
         this.statementImportRepository = statementImportRepository;
         this.accountRepository = accountRepository;
         this.categoryRepository = categoryRepository;
@@ -68,6 +70,7 @@ public class StatementImportService {
         this.auditService = auditService;
         this.bankManagementService = bankManagementService;
         this.statementContentService = statementContentService;
+        this.reimportClaimRepository = reimportClaimRepository;
     }
 
     // How long a deleted account's statement history stays visible in Statement History before
@@ -224,6 +227,62 @@ public class StatementImportService {
     }
 
     /**
+     * Track B/B1. Claims this re-import attempt before any importing happens, so a second copy of
+     * the same attempt cannot post the statement's transactions twice.
+     *
+     * <p><b>Why this path needed its own guard.</b> A first-time import is already safe:
+     * {@code ImportService.confirmSession} calls
+     * {@code ImportSessionService.claimForConfirmation} as its very first act, an atomic UPDATE
+     * that lets exactly one of two concurrent confirms proceed. A re-import has no
+     * {@code ImportSession} to claim -- it replays bytes already stored on this
+     * {@code StatementImport} -- so this method went from an ownership check straight to
+     * {@code importService.confirm}, which persists unconditionally. A double-tapped "Re-import",
+     * or any client retry of a confirm whose response never arrived, produced a second complete set
+     * of transactions and a second StatementImport row, with nothing to unwind it.
+     *
+     * <p><b>The unique index is the guarantee, not the lookup.</b> Two concurrent requests can both
+     * find no existing claim here; what serializes them is
+     * {@code idx_reimport_claims_user_idempotency_key}. The loser's INSERT blocks until the winner
+     * commits, then fails -- and because the claim shares this method's transaction with the import
+     * it guards, that failure rolls back an import which has written nothing observable. The lookup
+     * exists only to turn a race that has already been decided into a clear message rather than a
+     * constraint-violation 500.
+     *
+     * <p><b>A null key is not an error.</b> An older client simply gets the pre-existing unguarded
+     * behaviour rather than a hard failure: this closes a duplicate-data hole for clients that opt
+     * in, and must not turn a working re-import into a broken one for those not yet updated. Both
+     * clients in this repo send a key; the nullable contract is what makes shipping the server
+     * first safe.
+     */
+    private void claimReimportAttempt(UUID userId, UUID statementImportId, String idempotencyKey) {
+        // Blank treated as absent, matching TransactionService.create's handling of the same shape:
+        // a caller sending "" must not become one colliding identity every other such caller then
+        // conflicts with.
+        if (idempotencyKey == null || idempotencyKey.isBlank()) return;
+
+        reimportClaimRepository.findByUserIdAndIdempotencyKey(userId, idempotencyKey)
+                .ifPresent(existing -> {
+                    throw new ApiException(HttpStatus.CONFLICT, "This re-import has already been confirmed.");
+                });
+
+        var claim = new com.finora.entity.ReimportConfirmationClaim();
+        claim.setUserId(userId);
+        claim.setStatementImportId(statementImportId);
+        claim.setIdempotencyKey(idempotencyKey);
+        try {
+            // saveAndFlush, not save: the INSERT has to reach the database HERE, while there is
+            // still nothing else to undo. Deferred to the end of the transaction it would fire
+            // after the whole import had been written, so the loser of the race would roll back a
+            // completed import rather than an empty one -- same final state, far more work done and
+            // far more surface for something else to fail in between.
+            reimportClaimRepository.saveAndFlush(claim);
+        } catch (org.springframework.dao.DataIntegrityViolationException e) {
+            // Lost the race between the lookup above and this insert.
+            throw new ApiException(HttpStatus.CONFLICT, "This re-import has already been confirmed.");
+        }
+    }
+
+    /**
      * Confirms a re-import. Unlike the first-time confirm() (which needs a fresh multipart file
      * upload to capture the bytes for the new StatementImport row), this one already has the
      * file server-side from the original import — so it's plain JSON, and the account is forced
@@ -268,6 +327,7 @@ public class StatementImportService {
     public com.finora.dto.ImportDto.ConfirmResponse confirmReimport(
             UUID userId, UUID statementImportId, com.finora.dto.ImportDto.ConfirmRequest request) throws IOException {
         StatementImport original = getOwned(userId, statementImportId);
+        claimReimportAttempt(userId, statementImportId, request.idempotencyKey());
         byte[] content = statementContentService.read(original);
 
         var freshStaging = importService.parseAndStageAnyFormat(userId, original.getSourceFormat(),

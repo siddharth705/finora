@@ -1,8 +1,8 @@
 # Finora Mobile — Correctness & Trust Roadmap
 
-**Baselined:** 2026-09-01 · **Re-baselined:** 2026-09-02 (Track A's first three items shipped — PR [#736](https://github.com/siddharth705/finora/pull/736))
+**Baselined:** 2026-09-01 · **Re-baselined:** 2026-09-03 (**Track A complete** — A4 shipped across PRs [#761](https://github.com/siddharth705/finora/pull/761), [#765](https://github.com/siddharth705/finora/pull/765), [#779](https://github.com/siddharth705/finora/pull/779))
 **Owner:** Siddharth Tiwari · **Maintained by:** the PM role
-**Status:** In progress — **22% overall**, Track A 75% (A1/A2/A3 merged, A4 not started)
+**Status:** In progress — **30% overall**, Track A **100%** (A1–A4 all merged). Tracks B, C, D not started.
 **Scope:** Mobile app hardening and trust-surface work, post-launch. This is **not** part of the
 `project-plan-v1.0.md` GA gate — it is what comes after, informed by a two-pass mobile audit. See
 that file for GA status; do not merge this plan's tracks into its weighted table without a deliberate
@@ -42,7 +42,9 @@ drafted, three related branches were still open; **rechecked 2026-09-02, two hav
 |---|---|---|
 | `worktree-confirmnotduplicate-supersede-guard` | **Merged** — PR [#679](https://github.com/siddharth705/finora/pull/679), `d0295d58` on `main` | Fixed a related-but-distinct bug (`confirmNotDuplicate` refuses to un-duplicate a row whose statement was later superseded) in the same `TransactionService` neighborhood **A1/A2 will touch**. Confirmed present on `main` — no conflict, just be aware of this method's current shape before editing it. |
 | `worktree-mobile-ux-bugfix` | **Merged** — PR [#660](https://github.com/siddharth705/finora/pull/660), `7ad4efc5` on `main` | Fixed the chart-memoization findings from both audit passes (`buildArcs`/`cashFlowPoints` in `DonutChart`/`CashFlowChart`/`TrendChart`), confirmed present on `main`. **Track C's chart work starts from an already-memoized baseline** — don't re-diff this. Also shipped per-query refresh-spinner gating and a skeleton screen-reader announcement (unrelated to anything tracked here). |
-| `worktree-pm-status-report` | **Still open** — PR [#319](https://github.com/siddharth705/finora/pull/319), re-baselines the master GA plan to 87% | Not merged as of this update. Don't cite the 83% figure from `project-plan-v1.0.md` on `main` until this lands or is superseded — check #319 or `main` post-merge for the current number. |
+| `worktree-pm-status-report` | **Still open** — PR [#319](https://github.com/siddharth705/finora/pull/319), re-baselines the master GA plan to 87% | Still not merged as of 2026-09-03 (open since before this plan existed). Don't cite the 83% figure from `project-plan-v1.0.md` on `main` until this lands or is superseded — check #319 or `main` post-merge for the current number. |
+| *(new 2026-09-03)* Categorization work on `main` | **Merged** — PRs [#743](https://github.com/siddharth705/finora/pull/743), [#762](https://github.com/siddharth705/finora/pull/762), [#767](https://github.com/siddharth705/finora/pull/767), [#769](https://github.com/siddharth705/finora/pull/769) | A parallel track landed structural person-to-person detection, a "Paid a Person" category (`V123`) and merchant-rail detection while A4 was in flight. **It also produced a written design spec** — `docs/superpowers/specs/2026-09-01-transaction-categorization-design.md` — which constrains anything touching categorization UI. A4 was re-scoped against it mid-flight; read it before Track C's C3. |
+| *(new 2026-09-03)* Notification platform Phase A — PR [#781](https://github.com/siddharth705/finora/pull/781) | **Merged** | Added `@react-native-firebase/messaging` to `mobile/package.json`. Noted because it invalidates any locally-shared `node_modules`: a worktree symlinking another checkout's install will fail its whole suite until reinstalled. |
 | `worktree-android-prod-build`, `worktree-animation-phase3-settings`, `worktree-statement-period-patterns`, `dependabot/npm_and_yarn/mobile/*` | Unrelated to this plan's scope (Android release build, animation polish, statement-period parsing, dependency bumps) | No action needed, listed for completeness. |
 
 ---
@@ -53,11 +55,11 @@ Weighted by risk-adjusted priority, not task count — proposed by the PM role, 
 
 | Track | Weight | Done | Contribution | Why this weight |
 |---|---|---|---|---|
-| A — Financial Correctness | 30% | **75%** ▲ | 22.5 | Silent wrong numbers are the single worst failure mode for a finance app; nothing here crashes or errors, so nothing catches it without a fix. A1/A2/A3 merged in PR #736; only A4 (the categorization-correction loop, the largest single item) remains |
+| A — Financial Correctness | 30% | **100%** ✅ | 30 | Silent wrong numbers are the single worst failure mode for a finance app; nothing here crashes or errors, so nothing catches it without a fix. **Complete** — A1/A2/A3 in PR #736, A4 across #761/#765/#779 |
 | B — Import Hardening | 25% | 0% | 0 | The app's crown-jewel flow concentrates the highest-severity findings in either audit — duplicate-import race, no idempotency, no recovery after app kill |
 | C — Trust Layer | 25% | 0% | 0 | Highest strategic ROI identified across both audits: the backend/web already compute this, mobile just doesn't render it — cheap relative to its differentiation value |
 | D — Security Cleanup | 20% | 0% | 0 | Real, traceable gaps (fail-open lock, indefinite unencrypted statement retention) but narrower blast radius than A/B, and mobile-only so it parallelizes cleanly |
-| **Total** | **100%** | | **22.5%** | Track A's three well-scoped items shipped 2026-09-02. A4 is deliberately the remaining quarter of that track because it is not a defect fix but a missing feature — see its own row below |
+| **Total** | **100%** | | **30%** | Track A closed 2026-09-03. **B is the recommended next track** — it holds the highest-severity findings from either audit, and its B2+B3 pair is sequenced together for a reason (see that track's own note) |
 
 **Sequencing note:** Tracks A and B both land in `ImportService.java` / `ImportScreen.tsx` and share the
 import confirm/duplicate/supersede subsystem — sequence them one at a time within a single track owner,
@@ -76,7 +78,7 @@ already exists; D is mobile-only and touches different files than A/B).
 | A1 | ABSOLUTE-mode balance overwrite checks only other statements for recency, never live transactions dated after the statement period | High | `backend/.../imports/ImportService.java`, `repository/TransactionRepository.java` | ✅ **Merged** — PR [#736](https://github.com/siddharth705/finora/pull/736) |
 | A2 | Duplicate detection is exact-string match on description — no trim/case-fold, a real false-negative gap | Medium | `backend/.../repository/TransactionRepository.java`, `imports/DuplicateIndex.java`, `service/ReconciliationService.java`, new `util/DuplicateMatching.java` | ✅ **Merged** — PR [#736](https://github.com/siddharth705/finora/pull/736) |
 | A3 | Import silently defaults to `existingAccounts[0]` instead of matching the already-detected masked account number | High | `mobile/src/screens/import/ImportScreen.tsx`, new `lib/accountMatch.ts`, new `lib/importGate.ts` | ✅ **Merged** — PR [#736](https://github.com/siddharth705/finora/pull/736) |
-| A4 | Categorization correction loop doesn't exist on mobile — Settings promises a review queue that isn't there; a wrong category is permanently uncorrectable | Critical | `mobile/src/screens/SettingsScreen.tsx:291-355`, `api/endpoints.ts:134,138,144` (zero callers), vs. `frontend/src/components/AskOnceCard.tsx`/`MerchantGroupReviewCard.tsx` (shipped on web, never ported) | **Not started** — next up |
+| A4 | Categorization correction loop doesn't exist on mobile — Settings promises a review queue that isn't there; a wrong category is permanently uncorrectable | Critical | `mobile/src/screens/CategoryReviewScreen.tsx` (new), `lib/reviewQueue.ts` (new), `screens/LedgerScreen.tsx`, `DashboardScreen.tsx`, `SettingsScreen.tsx`, `components/OptionPickerModal.tsx`, `api/queryClient.ts` | ✅ **Merged** — PRs [#761](https://github.com/siddharth705/finora/pull/761) + [#765](https://github.com/siddharth705/finora/pull/765) + [#779](https://github.com/siddharth705/finora/pull/779) |
 
 ### What shipped in PR #736, and what it changed about the plan
 
@@ -103,12 +105,66 @@ suffix across inconsistent masking, and returns null on ambiguity. A hand-rolled
 one of those and would have matched two different banks' accounts sharing last-4. The two copies must
 stay in sync — any future fix belongs in both.
 
-**A4 remains, and is a different kind of work.** A1–A3 were defect fixes; A4 is a missing feature —
-port `AskOnceCard`/`MerchantGroupReviewCard` (or a mobile-appropriate needs-review list) into
-Ledger/Dashboard, and wire a change-category affordance onto the ledger row via the existing
-`OptionPickerModal`. Treat as its own sub-effort. Note the standing lesson from A3: **check what the
-web app already does before designing it fresh** — `AskOnceCard` is a working implementation, not just
-a reference.
+---
+
+### What shipped in A4 (PRs #761, #765, #779), and what it changed about the plan
+
+**The plan's framing of A4 was half right.** It said "port `AskOnceCard`/`MerchantGroupReviewCard`",
+and that covers the review queue. It missed the sharper half: that queue only ever holds transactions
+the engine *knew* it was unsure about (`needsCategoryReview`). A transaction categorized **confidently
+and wrongly** never enters it — so before this, the only route to correcting one was deleting the
+transaction and re-entering it by hand. **Ledger tap-to-edit is the fix users will actually hit**, and
+it was not in the plan at all.
+
+**What the read-first pass found before any code was written**, and which the plan did not know:
+
+- The backend already ships `GET /transactions/groups/needs-review` (`TransactionGroupingService`),
+  returning merchant groups **sorted by size descending**. Mobile's API layer simply never exposed it.
+  So "order by transaction-volume coverage" — which the categorization design spec calls for — came
+  free rather than needing to be built.
+- The two halves are **disjoint server-side**: `TransactionService.needsReview` filters out everything
+  already returned inside a group. Rendering one strands the other, and the total is a clean sum.
+- The design spec draws a hard line the plan didn't account for: **"Other" and "needs review" are
+  different concepts**, and the latter must never be a chart slice. That is why the Dashboard surface
+  is a count of work with somewhere to go, not a wedge in the spending donut.
+
+**Deliberately out of scope:** creating a *new* category from the picker. Mobile has no
+category-creation UI anywhere (`categoriesApi` exposes only `list`), so adding one here would have been
+a one-off inconsistent with Budgets and every other picker. A user whose correct category doesn't exist
+yet still has no on-device route to it — **worth its own item if it matters.**
+
+### The process lesson from A4, which cost two follow-up PRs
+
+**#761 shipped CI-green, self-reviewed, and still had five real defects.** Two were caught by an
+adversarial review that was cancelled partway (only 2 of 7 dimensions reported — both found merged
+bugs); three more by re-running the remaining five lenses afterwards. Concretely:
+
+- The queue lived in the TanStack cache while every successful save invalidated **those very keys**, so
+  resolving row A refetched a server that hadn't committed row B yet and **B reappeared as
+  uncategorized**. Fixed by hiding resolved rows in local state instead of mutating the cache — which
+  also made rollback positional for free. Note this race was *opened by* #761's own fix for a different
+  bug: dropping `useSingleFlight` is what allows two corrections in flight at once.
+- `failed` was `isError && isError` with no check that rows remained, so one failed background refetch
+  replaced a populated, still-actionable queue with an error card. `LedgerScreen` guards the identical
+  case correctly **in the same PR** — the pattern was applied in one file and not the other.
+- The Dashboard nudge stated a **confidently wrong count** whenever one of the two halves failed.
+- Retry policy on the shared review keys was decided by **navigation order**: a query in query-core v5
+  holds one options bag, `setOptions` replaces it wholesale, and a client-driven refetch reuses whatever
+  the last observer left. Now set once via `setQueryDefaults`, which writes into `#defaultOptions` and
+  survives that.
+- `OptionPickerModal` — **pre-existing, behind seven screens** — could not scroll past 70% of screen
+  height (Yoga defaults `flexShrink` to 0 where web CSS defaults it to 1), and its backdrop took initial
+  VoiceOver focus, so opening the sheet announced the dismiss control and one double-tap closed it.
+
+**Three of the tests written for these fixes passed against the broken code.** Asserting straight after
+an awaited refetch races React's flush; `toHaveBeenCalledTimes` was already satisfied before the release
+it followed; `toHaveTextContent` never saw the glyph it claimed to check. **Standing rule going into
+Track B: verify every regression test fails against the unfixed code before trusting it** — a green new
+test is not evidence until you've seen it red.
+
+**Cost note.** The cancelled fan-out review (7 dimensions × 3 adversarial verifiers) was expensive and
+was cut for that reason; the replacement — 5 focused reviewers, no verify stage, each scoped to a named
+file list — cost ~405k tokens and found just as much. Prefer that shape.
 
 ---
 
@@ -150,6 +206,23 @@ all. This track is mostly **new UI reading data that already exists**, not new d
 explainability, debugging, and engagement simultaneously, off data the API already supports.
 **C6 is the easiest win in the whole plan** — a few hours, closes the loop on the app's most
 differentiating action.
+
+**What Track A/A4 changed for this track — read before starting C3 or C4:**
+
+- **The Ledger row's tap gesture is now taken.** `onPress` opens the category picker and `onLongPress`
+  still deletes, with `delete` declared as the row's only custom accessibility action. C4's drill-through
+  is about navigating *into* a filtered Ledger, so it doesn't collide — but any future "tap a row to see
+  its detail" needs a different affordance, and the a11y hint/actions must be revised with it rather
+  than after.
+- **C3 has a written spec now.** `docs/superpowers/specs/2026-09-01-transaction-categorization-design.md`
+  (landed with PR #743) governs how categorization confidence may be surfaced. Two constraints bind C3
+  directly: **confidence is never shown as a percentage** (use a visual tier — a dot or an
+  "auto-detected" tag), and **"needs review" is a queue state, never a chart slice**. C1's
+  "Categorization Confidence card" is subject to the same rules. `StagedRowCard.tsx` also moved in #743
+  — re-read it rather than trusting the line numbers above.
+- **A shared review surface already exists.** `CategoryReviewScreen` renders the needs-review backlog
+  and the Dashboard carries a nudge into it. C1/C3 should extend those rather than introduce a second,
+  competing place where categorization quality is discussed.
 
 ---
 
@@ -193,4 +266,11 @@ and/or sweep the cache directory for these patterns on app start with an explici
 
 Update the "Done" column and this file's "Baselined" date whenever a checklist item ships (cite the
 PR). Re-weight only with a deliberate owner decision, not silently. If a coordination-check branch
-above merges, remove its row and note what it resolved.
+above merges, keep its row only while it still carries forward-looking guidance for an unstarted
+track (as the memoization and design-spec rows do); otherwise remove it and note what it resolved.
+
+**Standing rule, adopted after A4:** an item is only "Merged" once its regression tests have been
+seen to **fail against the unfixed code**. Three tests written during A4 passed against the very bugs
+they claimed to pin — a green new test proves nothing on its own. Cite the PR, and treat a passing
+suite as necessary, not sufficient (this is the same distinction as CLOSED–VERIFIED vs CLOSED–REVIEWED
+in the bug-hunt grading).

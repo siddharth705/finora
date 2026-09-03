@@ -154,3 +154,55 @@ describe('importJob — what the user is told', () => {
       .toBe('42 transactions found');
   });
 });
+
+describe('importJob — held for review', () => {
+  const held = () => job({ status: 'HELD_FOR_REVIEW', userStatus: 'HELD_FOR_REVIEW' });
+
+  it('stops polling, because a held job waits on a person and not on the worker', () => {
+    // Triage is manual and can take days. Polling through it would spin a browser tab indefinitely
+    // for an update that arrives by push and email instead.
+    expect(isSettled(held())).toBe(true);
+  });
+
+  it('is not offered a Cancel button', () => {
+    expect(isCancellable(held())).toBe(false);
+  });
+
+  it('is not reviewable — there is nothing staged to review', () => {
+    expect(isReviewable(held())).toBe(false);
+  });
+
+  it('reads as work in progress rather than as a failure', () => {
+    expect(label(held())).toBe('Running additional checks');
+  });
+
+  it('explains itself even though no rows were ever counted', () => {
+    // The rowsTotal guard below this branch would otherwise swallow the message entirely: a held
+    // job usually failed before counting a single row, so the user would get a bare label.
+    expect(held().rowsTotal).toBeNull();
+    expect(detail(held())).toContain('additional checks');
+  });
+
+  it('promises no deadline and never questions the statement itself', () => {
+    const text = detail(held()) ?? '';
+    // Both halves are product decisions, not phrasing preferences -- see the copy's own comment.
+    for (const forbidden of ['hour', 'minute', 'day', 'soon', 'shortly', 'within']) {
+      expect(text.toLowerCase()).not.toContain(forbidden);
+    }
+    for (const forbidden of ['genuine', 'authentic', 'verify', 'legitimate', 'fraud', 'suspicious']) {
+      expect(text.toLowerCase()).not.toContain(forbidden);
+    }
+  });
+
+  it('tells the user there is nothing for them to do', () => {
+    expect(detail(held())?.toLowerCase()).toContain('no action needed');
+  });
+
+  it('shows no progress percentage — nothing is running', () => {
+    expect(percent(held())).toBeNull();
+  });
+
+  it('does not keep a recent-imports list refetching', () => {
+    expect(recentImportsRefetchIntervalMs([held()])).toBe(false);
+  });
+});

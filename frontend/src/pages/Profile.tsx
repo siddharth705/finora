@@ -77,7 +77,7 @@ export default function Profile() {
   return (
     <div className="space-y-6 max-w-3xl">
       <div>
-        <h1 className="font-serif text-2xl font-semibold text-ink">Profile</h1>
+        <h1 className="text-2xl font-semibold text-ink">Profile</h1>
         <p className="text-sm text-muted mt-1">Your personal information and account identity.</p>
       </div>
 
@@ -88,7 +88,7 @@ export default function Profile() {
           {initials(savedFullName)}
         </div>
         <div className="min-w-0">
-          <p className="font-serif text-xl font-semibold text-ink truncate">{savedFullName || 'Your account'}</p>
+          <p className="text-xl font-semibold text-ink truncate">{savedFullName || 'Your account'}</p>
           <p className="text-sm text-muted truncate">{email}</p>
           <div className="flex items-center gap-3 mt-1.5 text-xs text-muted flex-wrap">
             {phoneVerified && (
