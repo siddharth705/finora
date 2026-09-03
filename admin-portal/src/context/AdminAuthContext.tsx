@@ -59,6 +59,11 @@ export const ADMIN_PORTAL_PERMISSIONS = [
   // holding only NOTIFICATION_MANAGE must still get past this check to reach the one section it
   // can use, same as the RELATIONSHIP_MANAGE bug this file's own doc comment records.
   'NOTIFICATION_MANAGE',
+  // The held-imports triage queue (V135). Its own permission rather than a reuse of
+  // PLATFORM_DIAGNOSTICS_VIEW -- see AdminHeldImportController's own doc comment. Listed here
+  // for the same reason NOTIFICATION_MANAGE is: a role holding only this must still get past
+  // the portal-entry check to reach the one section it can use.
+  'IMPORT_TRIAGE_MANAGE',
 ];
 
 export interface AdminAuthState {
