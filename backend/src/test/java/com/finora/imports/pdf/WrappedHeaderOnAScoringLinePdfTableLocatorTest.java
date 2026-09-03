@@ -209,10 +209,17 @@ class WrappedHeaderOnAScoringLinePdfTableLocatorTest {
         expected.put("hdfc-composite-deposit-schedules", new int[]{4, 102});
         // {2, 6} before looksLikePaymentSummaryPanel: same panel shape, 2 rows dropped.
         expected.put("hdfc-credit-card-ledger-validation", new int[]{1, 4});
-        expected.put("hdfc-savings-ledger-validation", new int[]{1, 331});
+        // 331 -> 266: WRAPPED_DESCRIPTION_BEYOND_COUNT_CAP merges this export's third and
+        // later wrapped narration lines back into their own transactions instead of leaving
+        // them as standalone dateless rows. Section count is unchanged, and so is the
+        // normalized transaction count -- see SplitHeaderRunsPdfTableLocatorTest
+        // .theRowsThemselvesAreUnchangedInNumber for the full justification.
+        expected.put("hdfc-savings-ledger-validation", new int[]{1, 266});
         // 569 -> 568: STATEMENT_SUMMARY_BLOCK_CLOSED removes a phantom trailing-summary row this
         // trace's own trace used to form -- see SplitHeaderRunsPdfTableLocatorTest's own comment.
-        expected.put("hdfc-savings-multi-page-ledger", new int[]{1, 568});
+        // 568 -> 397: WRAPPED_DESCRIPTION_BEYOND_COUNT_CAP, same mechanism and same
+        // justification as hdfc-savings-ledger-validation above.
+        expected.put("hdfc-savings-multi-page-ledger", new int[]{1, 397});
         // 9 -> 8: STATEMENT_SUMMARY_BLOCK_CLOSED removes a phantom trailing-summary row, same shape
         // as hdfc-savings-multi-page-ledger above.
         expected.put("hdfc-savings-single-page-ledger", new int[]{1, 8});

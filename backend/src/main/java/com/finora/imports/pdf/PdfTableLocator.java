@@ -596,6 +596,51 @@ public class PdfTableLocator {
     private static final int MAX_BLOCK_CONTINUATION_ROWS = 12;
 
     /**
+     * How far a wrapped narration line's left edge may sit from the left edge the same block's own
+     * earlier continuation lines established, in points.
+     *
+     * <p>Measured, not chosen. A cell that wraps re-starts every line at the same x, because it is
+     * one cell: across four real statements every continuation line of every transaction begins at
+     * a single x value -- 118.79 on a Standard Chartered savings export (all lines), 201.41 on a
+     * Bandhan export, 192.00 on an ICICI savings export. A real HDFC savings export is the only one
+     * with any spread at all, and it uses exactly three values 6.00pt apart end to end. This is set
+     * to that widest measured spread; nothing in the corpus needs more.
+     *
+     * <p>What it buys is the discrimination {@link #belongsToTheRowAbove} cannot provide on its own.
+     * Line spacing says a row is near the transaction above it; a document that sets every line on
+     * one uniform grid says that about its closing summary block too. Left-edge alignment says
+     * something different and much harder to counterfeit -- that this row is a continuation of the
+     * same CELL. On the same four documents the text that must NOT be absorbed (a statement-summary
+     * grid's label line, a legend block, a transaction's own date-bearing anchor row) begins at a
+     * visibly different x, because it belongs to a different cell or a different column.
+     */
+    private static final float BLOCK_NARRATION_LEFT_TOLERANCE = 6.0f;
+
+    /**
+     * Absolute ceiling on trailing narration rows admitted by LEFT-EDGE ALIGNMENT, however well
+     * they align.
+     *
+     * <p>Deliberately tighter than {@link #MAX_BLOCK_CONTINUATION_ROWS}, and the difference is the
+     * point. Alignment replaces an absolute bound (two rows, whatever the document prints) with a
+     * relative one, so the worst case it admits is no longer bounded by a constant but by how long
+     * a document keeps printing left-aligned text at the narration's own pitch. A trailing block
+     * that happened to be set that way would be absorbed to the ceiling, and the damage would be
+     * this class's least detectable shape: right dates, right amounts, wrong merchant, with no
+     * missing row anywhere to point at it.
+     *
+     * <p>Six because the corpus says four. Measured per-transaction wrap depth across the real
+     * statements this capability exists for: a real HDFC savings export's histogram runs
+     * {0:19, 1:51, 2:104, 3:68, 4:1}, a second HDFC export reaches four, a Standard Chartered
+     * export reaches four, an ICICI savings export needs four, a Bandhan export needs three. Four
+     * is the deepest wrap anywhere in the corpus; six leaves margin for a document not yet seen
+     * without leaving the failure above unbounded. Raise it only when a real document needs more,
+     * and name that document here.
+     */
+    private static final int MAX_ALIGNED_CONTINUATION_ROWS = 6;
+
+
+
+    /**
      * How many consecutive dateless rows may accumulate as LEADING narration before the extractor
      * concludes it is not reading narration at all.
      *
@@ -889,6 +934,12 @@ public class PdfTableLocator {
         Float lastRowY = null;
         Float blockPitch = null;
         Float blockSeparation = null;
+        // The x this block's own wrapped narration re-starts at, learned from its first
+        // continuation line exactly the way blockPitch is -- see BLOCK_NARRATION_LEFT_TOLERANCE.
+        Float blockNarrationLeftX = null;
+        // Whether the anchor row currently open began its OWN narration on its own physical line.
+        // See alignsWithTheBlocksNarration's caller for why the left-edge test is unsafe without it.
+        boolean anchorCarriedItsOwnNarration = false;
         // The row physically above the one being processed, whatever it turned out to be -- a
         // header, a skipped page footer, a continuation. Tracked separately from lastRow* (which
         // follows only rows ATTACHED to a transaction) because blockSeparation has to be
@@ -1077,6 +1128,7 @@ public class PdfTableLocator {
                 lastRowY = null;
                 blockPitch = null;
                 blockSeparation = null;
+                blockNarrationLeftX = null;
                 trailingCountSinceLastAnchor = 0;
                 pendingLeading = null;
                 pendingLeadingFromProximity = false;
@@ -1329,6 +1381,7 @@ public class PdfTableLocator {
                 lastRowY = null;
                 blockPitch = null;
                 blockSeparation = null;
+                blockNarrationLeftX = null;
                 trailingCountSinceLastAnchor = 0;
                 pendingLeading = null;
                 pendingLeadingFromProximity = false;
@@ -1465,6 +1518,10 @@ public class PdfTableLocator {
                 boolean samePage = lastRowPage != null && !row.isEmpty() && row.get(0).pageIndex() == lastRowPage;
 
                 if (hasDateValue(bucketed, yearsByPage.getOrDefault(rowPageIndex, PageDateEvidence.NONE))) {
+                    // Read BEFORE any leading narration is merged in: the question is whether this
+                    // transaction printed its own narration on its own date row, which merging a
+                    // buffered leading line would otherwise disguise.
+                    anchorCarriedItsOwnNarration = hasNarrationOfItsOwn(bucketed, headerNames);
                     // A new transaction anchor. Any leading narration buffered since the last
                     // anchor belongs to THIS one -- claim it first (prepended, so it reads in the
                     // order it actually appeared), then this row becomes the new anchor, open to
@@ -1494,6 +1551,7 @@ public class PdfTableLocator {
                     lastRowPage = row.get(0).pageIndex();
                     lastRowY = row.get(0).y();
                     blockPitch = null;
+                    blockNarrationLeftX = null;
                     trailingCountSinceLastAnchor = 0;
                 } else if (currentRows.isEmpty() && (!isNarrationOnly(bucketed)
                         // A row that populates MORE THAN ONE column, even carrying no date/number
@@ -1556,6 +1614,7 @@ public class PdfTableLocator {
                     lastRowY = row.isEmpty() ? lastRowY : row.get(0).y();
                     blockPitch = null;
                     blockSeparation = null;
+                    blockNarrationLeftX = null;
                     trailingCountSinceLastAnchor = MAX_TRAILING_CONTINUATION_ROWS;
                 } else if (!currentRows.isEmpty() && samePage
                         // Explicit currentRows.isEmpty() guard, found via a real corpus crash: with
@@ -1569,19 +1628,90 @@ public class PdfTableLocator {
                         && (continuesTheBlock(row, lastRowY, blockPitch, blockSeparation,
                                     trailingCountSinceLastAnchor)
                             || isChequeReferenceTrailer(rowLine)
-                            || (trailingCountSinceLastAnchor < MAX_TRAILING_CONTINUATION_ROWS
-                                && (!isNarrationOnly(bucketed)
-                                    || belongsToTheRowAbove(gapFromPreviousRow, gapToNextRow))))) {
+                            || (isNarrationOnly(bucketed)
+                                    // A narration-only row is placed by WHERE IT IS PRINTED, not
+                                    // by how many came before it. belongsToTheRowAbove was already
+                                    // computed and already wired in here, but it sat behind the
+                                    // count cap and so could never be reached on the documents
+                                    // that need it most: a layout whose lines are all set on one
+                                    // uniform pitch gives continuesTheBlock's separatesItsBlocks
+                                    // guard nothing to work with, which left the constant 2 as the
+                                    // only rule in force. Measured, a real HDFC savings statement
+                                    // sets EVERY line 17.20pt apart and wraps a third and fourth
+                                    // narration line on half its transactions; the over-cap lines
+                                    // were buffered forward, refused, and staged as their own
+                                    // dateless rows -- each one a narration truncated mid-word
+                                    // above it and an unparseable row below it.
+                                    //
+                                    // The count cap is kept for the OTHER sub-branch, and that is
+                                    // the important half of this condition: a dateless row that
+                                    // carries a figure is not narration, and proximity has no
+                                    // business moving it (see isNarrationOnly's own doc comment for
+                                    // the two real rows that changed value when it was allowed to).
+                                    // One real corpus statement prints every transaction with a
+                                    // second, genuinely dateless line carrying its reference,
+                                    // amounts and balance -- that row must keep the count cap.
+                                    //
+                                    // MAX_BLOCK_CONTINUATION_ROWS, not unbounded, for the reason
+                                    // its own doc comment already gives: a ceiling against
+                                    // pathology, not a model of narration.
+                                    ? (belongsToTheRowAbove(gapFromPreviousRow, gapToNextRow)
+                                        && (trailingCountSinceLastAnchor < MAX_TRAILING_CONTINUATION_ROWS
+                                            // Past the count cap, and ONLY past it, the row must also
+                                            // start where this block's own narration starts. Within
+                                            // the cap nothing changes -- the first continuation is
+                                            // what TEACHES the block its left edge, so requiring the
+                                            // edge before it is known would refuse every block's
+                                            // first line and the edge would never be learned at all.
+                                            // anchorCarriedItsOwnNarration is what makes the
+                                            // left-edge test safe. On a statement that prints a
+                                            // transaction's narration BEFORE its date row, the next
+                                            // transaction's leading narration is printed in the same
+                                            // column, at the same left edge, at the same pitch as
+                                            // this transaction's trailing narration -- the three
+                                            // signals are identical and no geometry separates them.
+                                            // The count cap is the only thing that ever did, and on
+                                            // such a document it stays in force. Where the anchor
+                                            // carries its own narration there is no leading-narration
+                                            // ambiguity to begin with: every dateless row after it
+                                            // continues the cell that started on the anchor row.
+                                            || (anchorCarriedItsOwnNarration
+                                                && alignsWithTheBlocksNarration(row, blockNarrationLeftX)
+                                                && trailingCountSinceLastAnchor < MAX_ALIGNED_CONTINUATION_ROWS)))
+                                    : trailingCountSinceLastAnchor < MAX_TRAILING_CONTINUATION_ROWS))) {
                     // The pitch this block prints its own wrapped lines at, learned from the first
                     // one and never revised -- so a later line that breaks the pitch cannot quietly
                     // redefine it and chain the whole page together (see BLOCK_PITCH_TOLERANCE).
                     if (trailingCountSinceLastAnchor == 0 && lastRowY != null) {
                         blockPitch = row.get(0).y() - lastRowY;
+                        blockNarrationLeftX = leftmostRunX(row);
                     }
                     mergeInto(currentRows.get(currentRows.size() - 1), bucketed, headerNames);
                     if (ctx != null) {
                         ctx.record("WRAPPED_DESCRIPTION");
                         if (isChequeReferenceTrailer(rowLine)) ctx.record("CHEQUE_REFERENCE_TRAILER_RECOVERED");
+                        // Recorded only when the LEFT-EDGE path is what admitted this row. A bare
+                        // "past the count cap" test would also fire for rows admitted by
+                        // continuesTheBlock or isChequeReferenceTrailer, which were already being
+                        // merged before this capability existed -- and a capability that reports
+                        // itself active on a document it changed nothing about is the kind of
+                        // misleading signal CapabilityCoverageService's own doc comment exists to
+                        // keep out of the coverage map.
+                        if (trailingCountSinceLastAnchor >= MAX_TRAILING_CONTINUATION_ROWS
+                                && isNarrationOnly(bucketed)
+                                && anchorCarriedItsOwnNarration
+                                && alignsWithTheBlocksNarration(row, blockNarrationLeftX)
+                                // ...and only when no OTHER disjunct would have admitted this row
+                                // anyway. Without these two negations the capability also fired on a
+                                // real Bank of Baroda export, whose rows past the cap are admitted
+                                // by continuesTheBlock exactly as they were before this capability
+                                // existed -- claiming credit for a merge that already happened, on
+                                // a document whose output this change does not alter at all.
+                                && !continuesTheBlock(row, lastRowY, blockPitch, blockSeparation,
+                                        trailingCountSinceLastAnchor)
+                                && !isChequeReferenceTrailer(rowLine)) {
+                            ctx.record("WRAPPED_DESCRIPTION_BEYOND_COUNT_CAP");
+                        }
                     }
                     trailingCountSinceLastAnchor++;
                     lastRowPage = row.get(0).pageIndex();
@@ -1641,6 +1771,7 @@ public class PdfTableLocator {
                     // already moved past -- text rejoining a transaction out of order, behind text
                     // that had been given to the next one.
                     blockPitch = null;
+                    blockNarrationLeftX = null;
                 }
             }
         }
@@ -1850,6 +1981,55 @@ public class PdfTableLocator {
      * @param blockSeparation gap between this transaction's date row and whatever preceded it, or
      *                        null when there was nothing before it on the same page to measure
      */
+
+
+    /**
+     * Whether this freshly-bucketed anchor row carries description text of its own.
+     *
+     * <p>Read at the anchor, before any buffered leading narration is merged into it -- merging
+     * would make every anchor look as though it had. The distinction it draws is between two
+     * layout families this class already handles separately: a statement whose transaction starts
+     * its narration on its own date row, and one that prints the narration above the date row. On
+     * the second family the next transaction's LEADING narration and this transaction's TRAILING
+     * narration occupy the same column, the same left edge and the same line pitch, so no geometric
+     * test can tell them apart -- only the count cap ever could.
+     */
+    private boolean hasNarrationOfItsOwn(Map<String, String> bucketed, List<String> headerNames) {
+        String descriptionColumn = descriptionColumnIn(bucketed, headerNames);
+        if (descriptionColumn == null) return false;
+        String value = bucketed.get(descriptionColumn);
+        return value != null && !value.isBlank();
+    }
+
+    /** The x of this row's leftmost non-blank run, or null for a row with nothing in it. */
+    private static Float leftmostRunX(List<PositionedText> row) {
+        Float leftmost = null;
+        for (PositionedText t : row) {
+            if (t.text().isBlank()) continue;
+            if (leftmost == null || t.x() < leftmost) leftmost = t.x();
+        }
+        return leftmost;
+    }
+
+    /**
+     * Whether this row starts where the block's own wrapped narration starts.
+     *
+     * <p>The signal {@link #belongsToTheRowAbove} cannot supply. Proximity is scale-free -- it
+     * compares two gaps and says nothing about how big either is -- so on a statement that sets
+     * every line on one uniform grid it answers "belongs above" for the closing summary block just
+     * as readily as for a genuine wrap, and admitted nine lines of one on a real Bandhan export.
+     * Alignment asks whether this row is a continuation of the same CELL, which boilerplate printed
+     * in a different column cannot satisfy by accident.
+     *
+     * <p>Returns false when the block never established a left edge, which is the conservative
+     * reading: with nothing to compare against, the count cap decides, exactly as before.
+     */
+    private boolean alignsWithTheBlocksNarration(List<PositionedText> row, Float blockNarrationLeftX) {
+        if (blockNarrationLeftX == null) return false;
+        Float left = leftmostRunX(row);
+        return left != null && Math.abs(left - blockNarrationLeftX) <= BLOCK_NARRATION_LEFT_TOLERANCE;
+    }
+
     private boolean continuesTheBlock(List<PositionedText> row, Float lastRowY, Float blockPitch,
                                        Float blockSeparation, int trailingCount) {
         if (blockPitch == null || lastRowY == null || row.isEmpty()) return false;
