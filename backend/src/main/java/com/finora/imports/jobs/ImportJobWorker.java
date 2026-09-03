@@ -23,7 +23,12 @@ import org.springframework.scheduling.annotation.Async;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
+import com.finora.imports.trust.HoldDecision;
+import com.finora.imports.trust.TrustPredicate;
+
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -130,6 +135,7 @@ public class ImportJobWorker {
     private final ExceptionClassifier exceptionClassifier;
     private final NotificationService notificationService;
     private final ImportVerificationRecorder verificationRecorder;
+    private final com.finora.service.HeldStatementService heldStatementService;
 
     /**
      * The deploy that parsed a statement, recorded on every job.
@@ -151,7 +157,8 @@ public class ImportJobWorker {
                             ImportStageRecorder stageRecorder,
                             ExceptionClassifier exceptionClassifier,
                             NotificationService notificationService,
-                            ImportVerificationRecorder verificationRecorder) {
+                            ImportVerificationRecorder verificationRecorder,
+                            com.finora.service.HeldStatementService heldStatementService) {
         this.jobStore = jobStore;
         this.importService = importService;
         this.statementContentService = statementContentService;
@@ -160,6 +167,7 @@ public class ImportJobWorker {
         this.exceptionClassifier = exceptionClassifier;
         this.notificationService = notificationService;
         this.verificationRecorder = verificationRecorder;
+        this.heldStatementService = heldStatementService;
 
         observability.publishQueueDepth(WORKER, JOB_KIND, jobStore::queueDepth);
         observability.publishOldestPendingAge(WORKER, JOB_KIND, jobStore::oldestQueuedAt);
@@ -284,16 +292,52 @@ public class ImportJobWorker {
             // would otherwise overwrite a cancel that arrived while the parse was running.
             abortIfCancelled(jobId);
 
+            VerificationTelemetry telemetry =
+                    VerificationTelemetry.from(staged.verificationReports());
+
+            // The trust gate. Everything above this line was about extraction failing; this is
+            // about extraction succeeding and being distrusted anyway, on evidence the pipeline
+            // already computed. UTC rather than the server's zone so the future-period rule cannot
+            // depend on where this runs.
+            HoldDecision decision = TrustPredicate.evaluate(
+                    staged.verificationReports(), staged.statementPeriods(),
+                    LocalDate.now(ZoneOffset.UTC));
+
+            // Created before the job transition so the job row can carry the hold's id.
+            //
+            // Failure here must not fail the import -- the same rule V62 states for merchant
+            // learning -- but it must fail CLOSED: a failed hold still holds, with no review
+            // record, rather than completing. The database being unavailable is not evidence the
+            // extraction was fine, and completing would silently release exactly the import this
+            // exists to stop. createHold is idempotent on the job id, so a retried pass reuses the
+            // review that already exists instead of colliding with it.
+            UUID heldStatementId = null;
+            if (decision.hold()) {
+                try {
+                    heldStatementId = heldStatementService
+                            .createHold(job, staged, decision, parserVersion).getId();
+                } catch (RuntimeException e) {
+                    log.error("Could not create the hold record for import job {}; holding the "
+                            + "import anyway, with no review record to work from", jobId, e);
+                }
+            }
+            final UUID heldId = heldStatementId;
+
             jobStore.update(jobId, j -> {
                 // totalParsed rather than the staged row count: the latter is what staged
                 // successfully, and reporting it as the total would make a statement with
                 // unparseable rows look like it had fewer rows than it did.
                 j.recordProgress(staged.totalParsed(), staged.stagedRows());
-                j.complete(staged.sessionId(), Instant.now());
-                // Evidence only. Sets no field the worker branches on and cannot change this
-                // import's outcome -- see the method's own doc for why that separation matters.
-                VerificationTelemetry telemetry =
-                        VerificationTelemetry.from(staged.verificationReports());
+                if (decision.hold()) {
+                    // Keeps the session: the rows are real, and comparing them against the
+                    // document is the entire review.
+                    j.holdForTrustReview(staged.sessionId(), heldId, Instant.now());
+                } else {
+                    j.complete(staged.sessionId(), Instant.now());
+                }
+                // Evidence only, and recorded either way -- it is what a reviewer works from, and
+                // the telemetry readout's denominator would otherwise quietly exclude exactly the
+                // imports worth looking at.
                 j.recordVerificationTelemetry(
                         telemetry.reliabilityStatus(), telemetry.textSource(),
                         telemetry.isEmpty() ? null : telemetry.headerReconstructionUncertain(),
@@ -301,7 +345,12 @@ public class ImportJobWorker {
                         telemetry.isEmpty() ? null : telemetry.failedCount(),
                         telemetry.isEmpty() ? null : telemetry.warningCount(),
                         parserVersion);
-                notifyIfPreviouslyHeld(j, staged.bankName());
+                if (!decision.hold()) {
+                    // A held import is not finished, so it announces nothing -- the same rule the
+                    // other hold follows. Telling someone their statement is ready and then
+                    // withholding it would be worse than saying nothing.
+                    notifyIfPreviouslyHeld(j, staged.bankName());
+                }
             });
             recordVerificationFindings(jobId, staged);
             // Only on the success path. A job that failed in PARSING did not skip IMPORTING, it
