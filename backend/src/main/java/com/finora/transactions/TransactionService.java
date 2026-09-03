@@ -23,6 +23,7 @@ import com.finora.service.SmsProvider;
 import com.finora.service.SmsResult;
 import com.finora.service.TransactionGroupingService;
 import com.finora.util.CategoryRules;
+import com.finora.util.CounterpartyType;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
@@ -833,7 +834,30 @@ public class TransactionService {
             t.setDecisionSource(Transaction.DecisionSource.MANUAL);
             t.setDecisionRuleId(null);
             t.setDecisionConfidence(null);
-            categorizationService.queueLearning(userId, t.getDescription(), category.getId());
+            // Bug fix: queueLearning -> MerchantNormalizationEngine.resolve() CREATES a merchant on
+            // a miss (see that method's own doc). Every row CounterpartyGroupReviewCard's "Apply to
+            // N transactions" targets was chosen BECAUSE it had no merchant match -- so calling this
+            // unconditionally meant every bulk-apply from that card silently created a new Merchant
+            // row for a PERSON. Verified concretely, not assumed: extractMerchant("UPI-SUNIL VERMA-
+            // sampleuser@ybl-REF61") normalizes to "upi sunil verma sampleuser", which
+            // resolve()/createMerchantAndAlias would persist as a real canonical_name -- a person's
+            // name and UPI handle fragment, stored and later surfaced as if it were a business.
+            // Nothing here sets t.setMerchantId(...), so the ghost merchant is never attached to
+            // THIS row -- but a LATER transaction from the same person, sharing the same first-token
+            // alias, would resolve to it and inherit a learned category "suggestion" from a
+            // "merchant" that is really just one person's name. That is the exact who/what-for
+            // conflation the counterparty layer (CounterpartyClassifier, CounterpartyIdentity) was
+            // built to keep apart -- see MerchantIdentityLookup's own doc on why that layer reads
+            // CategoryRules rather than the reverse.
+            //
+            // A BUSINESS counterparty is excluded from this guard on purpose: a business with no
+            // merchant record yet legitimately deserves one created here, the same onboarding this
+            // bulk action already provides for FINANCIAL_INSTITUTION/GOVERNMENT rows and for every
+            // other bulk-recategorize caller. Scoped to PERSON specifically because that is the only
+            // type this codebase's own counterparty layer can assert is never a merchant.
+            if (t.getCounterpartyType() != CounterpartyType.PERSON) {
+                categorizationService.queueLearning(userId, t.getDescription(), category.getId());
+            }
             transactionRepository.save(t);
         }
         auditService.record(userId, "TRANSACTION_BULK_RECATEGORIZED", "Transaction", null,
