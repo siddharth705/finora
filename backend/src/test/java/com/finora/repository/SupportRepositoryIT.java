@@ -1,6 +1,7 @@
 package com.finora.repository;
 
 import com.finora.AbstractIntegrationTest;
+import com.finora.entity.ClientPlatform;
 import com.finora.entity.FeedbackEntry;
 import com.finora.entity.SupportTicket;
 import com.finora.entity.SupportTicketAttachment;
@@ -55,7 +56,7 @@ class SupportRepositoryIT extends AbstractIntegrationTest {
         t.setTicketNumber(idGenerator.next());
         t.setUserId(userId);
         t.setCategory(SupportTicket.Category.STATEMENT_IMPORT);
-        t.setSource(SupportTicket.Source.WEB);
+        t.setSource(ClientPlatform.WEB);
         t.setSubject("Import stopped halfway");
         t.setDescription("The progress bar reached 60% and then nothing happened.");
         // BaseEntity's @Version means Spring Data calls merge(), not persist() -- the returned
@@ -117,7 +118,7 @@ class SupportRepositoryIT extends AbstractIntegrationTest {
         SupportTicket reloaded = tickets.findById(t.getId()).orElseThrow();
         assertThat(reloaded.getStatus()).isEqualTo(SupportTicket.Status.OPEN);
         assertThat(reloaded.getCategory()).isEqualTo(SupportTicket.Category.STATEMENT_IMPORT);
-        assertThat(reloaded.getSource()).isEqualTo(SupportTicket.Source.WEB);
+        assertThat(reloaded.getSource()).isEqualTo(ClientPlatform.WEB);
         // deleted_at exists because of BaseEntity and must stay null: there is no delete path.
         assertThat(reloaded.getDeletedAt()).isNull();
     }
@@ -237,7 +238,7 @@ class SupportRepositoryIT extends AbstractIntegrationTest {
         assertThat(rows).anySatisfy(r -> {
             assertThat(r.getType()).isEqualTo(FeedbackEntry.Type.BUG);
             assertThat(r.getContext()).isEqualTo(FeedbackEntry.Context.IMPORT_FLOW);
-            assertThat(r.getSource()).isEqualTo(FeedbackEntry.Source.WEB);
+            assertThat(r.getSource()).isEqualTo(ClientPlatform.WEB);
             assertThat(r.getTotal()).isGreaterThanOrEqualTo(1L);
         });
     }
@@ -266,7 +267,7 @@ class SupportRepositoryIT extends AbstractIntegrationTest {
         f.setUserId(userId);
         f.setType(FeedbackEntry.Type.BUG);
         f.setContext(FeedbackEntry.Context.IMPORT_FLOW);
-        f.setSource(FeedbackEntry.Source.WEB);
+        f.setSource(ClientPlatform.WEB);
         f.setMessage("The import bar sticks at 60%.");
         return f;
     }
