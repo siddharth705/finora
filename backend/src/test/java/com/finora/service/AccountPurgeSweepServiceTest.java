@@ -7,6 +7,7 @@ import com.finora.goals.GoalRepository;
 import com.finora.imports.analysis.StatementAnalysisSessionRepository;
 import com.finora.integrations.google.GmailConnectionRepository;
 import com.finora.integrations.google.GmailConnectionService;
+import com.finora.notification.repository.NotificationRepository;
 import com.finora.repository.AccountReactivationTokenRepository;
 import com.finora.repository.EmailVerificationTokenRepository;
 import com.finora.repository.AccountRepository;
@@ -138,6 +139,7 @@ class AccountPurgeSweepServiceTest {
                 mock(RefreshTokenRepository.class),
                 mock(UserSettingsRepository.class), accountRepository,
                 statementImportRepository, statementImportService, statementAnalysisSessionRepository,
+                mock(NotificationRepository.class),
                 auditService, passwordEncoder, transactionTemplate);
         ReflectionTestUtils.setField(service, "sweepEnabled", true);
         ReflectionTestUtils.setField(service, "retentionHours", 48);

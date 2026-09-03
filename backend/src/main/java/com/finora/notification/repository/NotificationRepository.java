@@ -19,6 +19,11 @@ public interface NotificationRepository extends JpaRepository<Notification, UUID
 
     Optional<Notification> findByNotificationKey(String notificationKey);
 
+    /** AccountPurgeSweepService.purgeOne's own cleanup -- notifications belong to the user they
+     *  were sent to, and never survive a purge on their own via ON DELETE CASCADE alone, since
+     *  purgeOne never issues a raw DELETE FROM users. See V137's own comment. */
+    void deleteByUserId(UUID userId);
+
     Page<Notification> findByStatus(NotificationStatus status, Pageable pageable);
 
     long countByStatus(NotificationStatus status);
