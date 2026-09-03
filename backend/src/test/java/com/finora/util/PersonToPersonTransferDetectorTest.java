@@ -277,4 +277,28 @@ class PersonToPersonTransferDetectorTest {
         assertThat(PersonToPersonTransferDetector.isNamedIndividualTransfer(
                 "UPI-SUNIL VERMA-sampleuser@ybl-REF18")).isTrue();
     }
+
+    @Test
+    void aFusedRailCodeStillCountsAsATransferRail() {
+        // Banks fuse the rail into a product code -- UPIINTENT, UPIAB, UPIAR, UPIRET, and IMPS
+        // inside SENTIMPS<digits>. A \\b after the rail word cannot match there because the next
+        // character is a word character, so these narrations were failing the rail gate on a
+        // formatting technicality rather than on any absence of rail information.
+        assertThat(PersonToPersonTransferDetector.isNamedIndividualTransfer(
+                "UPIINTENT-SUNIL VERMA-sampleuser@ybl-REF51")).isTrue();
+        assertThat(PersonToPersonTransferDetector.isNamedIndividualTransfer(
+                "UPIAR-SUNIL VERMA-sampleuser@ybl-REF52")).isTrue();
+        assertThat(PersonToPersonTransferDetector.isNamedIndividualTransfer(
+                "SENTIMPS99-SUNIL VERMA-REF53")).isTrue();  // synthetic-ok
+    }
+
+    @Test
+    void theFusedRailListIsExplicit_notAGeneralUpiPrefixRule() {
+        // Deliberately narrow: UPIINTEN(T) is corpus-confirmed (54 of 54 rows carry a VPA), while
+        // the others are circumstantial. A general \\bUPI[A-Z]+ rule would extrapolate from five
+        // observed codes to every bank's product vocabulary, which is the mistake the merchant
+        // marker set was built to avoid.
+        assertThat(PersonToPersonTransferDetector.isNamedIndividualTransfer(
+                "UPIZZZQQ-SUNIL VERMA-sampleuser@ybl-REF54")).isFalse();
+    }
 }

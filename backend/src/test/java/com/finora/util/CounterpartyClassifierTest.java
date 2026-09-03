@@ -80,4 +80,15 @@ class CounterpartyClassifierTest {
         assertThat(PersonToPersonTransferDetector.hasMerchantAcquirerMarker(secondWaveMarker)).isTrue();
         assertThat(CounterpartyClassifier.classify(secondWaveMarker)).isEqualTo(CounterpartyType.BUSINESS);
     }
+
+    @Test
+    void cashbackAndRewardCreditsAreTheInstitution_notAMerchantAndNotAPerson() {
+        // 18 of the 40 inbound rows in the rail-less residue were these -- the largest single group
+        // there by count, though near-zero by value, which is why a value-weighted view never
+        // surfaced them. The counterparty is the card issuer running the programme.
+        assertThat(CounterpartyClassifier.classify("CASHBACK EARNED JUL"))
+                .isEqualTo(CounterpartyType.FINANCIAL_INSTITUTION);
+        assertThat(CounterpartyClassifier.classify("REWARD POINTS CREDIT"))
+                .isEqualTo(CounterpartyType.FINANCIAL_INSTITUTION);
+    }
 }
