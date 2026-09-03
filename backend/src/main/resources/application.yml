@@ -446,6 +446,21 @@ app:
     mfa-verify:
       max: ${RATE_LIMIT_MFA_VERIFY_MAX:10}
       window-seconds: ${RATE_LIMIT_MFA_VERIFY_WINDOW_SECONDS:600}
+    # Fix wave, split into its own bucket in post-merge review -- see RateLimitFilter's own comment
+    # on deviceTokenRegisterLimiter for why. register() is called on every foreground transition
+    # (AuthContext.tsx, mobile) with no client-side dedupe, so this needs refresh's shape (called
+    # far more often per user than a one-shot flow, and several users behind one shared IP hitting
+    # it around the same time is ordinary use), not a rare-flow ceiling.
+    device-token-register:
+      max: ${RATE_LIMIT_DEVICE_TOKEN_REGISTER_MAX:15}
+      window-seconds: ${RATE_LIMIT_DEVICE_TOKEN_REGISTER_WINDOW_SECONDS:300}
+    # Split from device-token-register above so register's foreground-transition churn can never
+    # starve a logout's revoke call. Unchanged from the original shared ceiling -- revoke's own
+    # cost and call frequency (a rare, deliberate logout) never changed, only its bucket
+    # independence from register did.
+    device-token-revoke:
+      max: ${RATE_LIMIT_DEVICE_TOKEN_REVOKE_MAX:10}
+      window-seconds: ${RATE_LIMIT_DEVICE_TOKEN_REVOKE_WINDOW_SECONDS:600}
   import:
     # See ImportConcurrencyLimiter's own doc comment for the full reasoning. 6 is deliberately
     # conservative relative to DB_POOL_MAX_SIZE (10, see the datasource config above) -- leaves
@@ -645,6 +660,13 @@ app:
           enabled: ${GMAIL_PARSER_CRED_ENABLED:false}
         paytm:
           enabled: ${GMAIL_PARSER_PAYTM_ENABLED:false}
+
+  # NotificationDispatcher's poller/nudge -- same enabled-flag shape as learning/import above.
+  notification:
+    queue:
+      enabled: ${NOTIFICATION_QUEUE_ENABLED:true}
+      poll-interval-ms: 30000
+      initial-delay-ms: 15000
 
 # Reversible encryption at rest for third-party credentials Finora must read back -- OAuth refresh
 # tokens first (ADR-007). NOT for passwords or Finora's own session tokens, which are hashed via

@@ -34,11 +34,26 @@ async function enableAppLock() {
 }
 
 beforeEach(() => {
-  appStateListener = undefined;
+  appStateListeners = [];
   AppState.currentState = 'active';
   jest.spyOn(AppState, 'addEventListener').mockImplementation((event, listener) => {
-    if (event === 'change') appStateListener = listener as (status: AppStateStatus) => void;
-    return { remove: jest.fn() };
+    if (event !== 'change') return { remove: jest.fn() };
+    const entry = listener as (status: AppStateStatus) => void;
+    appStateListeners.push(entry);
+    // remove() has to actually deregister, not just be a no-op spy: both AppLockGate and
+    // AuthProvider re-register their 'change' listener whenever their own effect dependencies
+    // change (token, in both cases -- see each component's own effect), which happens more than
+    // once during a single test's bootstrap sequence. A no-op remove() left every torn-down
+    // closure in the array alongside its replacement, all sharing AppLockGate's single
+    // `appState` ref (a useRef is stable across those re-registrations) -- so the FIRST stale
+    // listener to see a background->active transition flipped the shared ref and starved every
+    // listener registered after it, including the current, live one. Actually removing the entry
+    // here is what keeps the array matching what's really still subscribed.
+    return {
+      remove: jest.fn(() => {
+        appStateListeners = appStateListeners.filter((l) => l !== entry);
+      }),
+    };
   });
   // appLock's isAuthenticating/justFinishedAuthenticating are module-level, not component state --
   // see appLock.ts's own comment on why -- which makes them a cross-test hazard without this: a
@@ -53,22 +68,29 @@ afterEach(() => {
 
 /** The real native AppState module never fires a 'change' event under the test runner (there's
  *  no bridge), so it's a safe no-op for every other test here -- but the two foreground tests
- *  below need to actually trigger the listener AppLockGate registers, so they capture it directly
- *  rather than trying to simulate a real native event.
+ *  below need to actually trigger the listeners AppLockGate and AuthProvider each register, so
+ *  they capture every 'change' listener directly rather than trying to simulate a real native
+ *  event.
  *
- *  Driving it through the SAME listener callback both times (not just mutating
- *  AppState.currentState directly) matters: the component's own "was I in the background" memory
- *  is a ref written INSIDE that callback (`appState.current = next`), not a read of the module's
- *  live value -- so a background transition has to go through the listener too, or the later
- *  foreground call has nothing to compare against and never detects a transition at all. */
-let appStateListener: ((status: AppStateStatus) => void) | undefined;
+ *  An array, not a single captured callback: AuthProvider registers its own 'change' listener too
+ *  (Task 14 -- re-registers the push token on foreground), and both this component tree's mount
+ *  order and real AppState's own fan-out (every listener is notified, not just the last one
+ *  registered) mean a single-slot capture would silently stop replaying events to AppLockGate's
+ *  listener the moment a second consumer registered one.
+ *
+ *  Driving it through the SAME listener callbacks both times (not just mutating
+ *  AppState.currentState directly) matters: AppLockGate's own "was I in the background" memory is
+ *  a ref written INSIDE its callback (`appState.current = next`), not a read of the module's live
+ *  value -- so a background transition has to go through the listener too, or the later foreground
+ *  call has nothing to compare against and never detects a transition at all. */
+let appStateListeners: ((status: AppStateStatus) => void)[] = [];
 
 function goToBackground() {
-  appStateListener?.('background');
+  appStateListeners.forEach((listener) => listener('background'));
 }
 
 function returnToForeground() {
-  appStateListener?.('active');
+  appStateListeners.forEach((listener) => listener('active'));
 }
 
 function renderGate(children = <Text>protected content</Text>) {

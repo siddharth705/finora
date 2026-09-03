@@ -566,3 +566,28 @@ export const devicesApi = {
   list: () => api.get<DeviceSession[]>('/users/me/devices').then((r) => r.data),
   revoke: (id: string) => api.delete<{ message: string }>(`/users/me/devices/${id}`).then((r) => r.data),
 };
+
+// --- Push notification device tokens (Task 14) ---
+// Mirrors backend DeviceTokenController exactly: POST /device-tokens registers this device's FCM
+// token, POST /device-tokens/revoke removes it. Revoke is a POST, not a DELETE-with-body -- the
+// backend has no precedent for a DELETE carrying a body (some proxies strip it), and the client
+// identifies the token to revoke by its own raw string, never a server-side row id it was never
+// given. `platform` must be exactly 'ANDROID' or 'IOS' (backend validates
+// @Pattern(regexp = "ANDROID|IOS")) -- but it is NOT what routes delivery: iOS devices register an
+// FCM token too (via @react-native-firebase/messaging), and FCM relays every send to Apple's APNs
+// on this project's behalf (see backend FcmPushProvider's class doc, Ruling O / Task 11). This
+// field is retained for diagnostics and per-platform delivery metrics only.
+export type DevicePlatform = 'ANDROID' | 'IOS';
+export interface RegisteredDeviceToken {
+  id: string;
+  platform: DevicePlatform;
+  registeredAt: string;
+}
+export const deviceTokensApi = {
+  register: (body: { token: string; platform: DevicePlatform }) =>
+    api.post<RegisteredDeviceToken>('/device-tokens', body).then((r) => r.data),
+  // Backend returns ApiResponse.ok(null, "Device token revoked") -- the response-envelope unwrap
+  // (see client.ts) yields the inner `data`, which is null, not a { message } object.
+  revoke: (body: { token: string }) =>
+    api.post<null>('/device-tokens/revoke', body).then((r) => r.data),
+};

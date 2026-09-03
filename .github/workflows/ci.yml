@@ -162,8 +162,12 @@ jobs:
     # smaller cost -- `concurrency` deliberately does not cancel runs on main, so every later push
     # queues behind the hung one and main stops reporting at all.
     #
-    # 20 is roughly 8x the current 2m37s, so it is a hang detector, not a performance budget: it
-    # should never fire because the suite got slower.
+    # 20 is a hang detector, not a performance budget: it should never fire because the suite got
+    # slower, only because something (most likely Testcontainers) is actually stuck. Left
+    # generous rather than re-tuned to whichever of the two paths below is currently faster --
+    # the PR path (unit-only) and the merge path (full suite, incl. Testcontainers) have
+    # different realistic runtimes, and a tight timeout sized to the fast one would false-positive
+    # on the slow one on every single push to main.
     timeout-minutes: 20
     steps:
       # fetch-depth: 0 because the PII check diffs a commit RANGE here rather than the index (see
@@ -327,14 +331,28 @@ jobs:
       # This claim used to be false. The 29 *IT classes never ran: surefire's default includes
       # don't match *IT.java (that's maven-failsafe's convention) and failsafe was never
       # configured, so the "Testcontainers tests" this comment promised had never executed once.
-      # backend/pom.xml now widens surefire's includes, and the suite really does run them --
-      # 1055 tests instead of 941, verified locally against a real daemon.
+      # backend/pom.xml widened surefire's includes to fix that, and for a while every push and PR
+      # ran unit and integration tests together in one `./mvnw test` -- see that fix's own comment
+      # for why doing it that way, rather than splitting into failsafe, was the deliberate choice
+      # at the time.
       #
-      # That claim is no longer trust-me: the Test summary step below publishes the unit/IT split
-      # to the run page and fails if the IT count is ever zero again.
-      - name: Run tests
+      # 2026-09-02: split back into two paths, once the backend job's own runtime made "every PR
+      # waits on the full Testcontainers suite" worth trading away. A PR runs `./mvnw test`
+      # (surefire, unit-only now -- backend/pom.xml's *IT include moved to failsafe); a push to
+      # main runs `./mvnw verify` (surefire + failsafe, the full suite, matching what merged code
+      # actually needs proven before it's live). Either way, the Test summary step below still
+      # fails if the *IT count is ever zero on a run that was supposed to include them -- see its
+      # own --unit-only handling, and backend/pom.xml's surefire-plugin comment for the full
+      # incident history this split is designed not to reopen.
+      - name: Run tests (PR - unit only, fast)
+        if: github.event_name == 'pull_request'
         working-directory: backend
         run: ./mvnw -B --no-transfer-progress test
+
+      - name: Run tests (merge to main - full suite, incl. integration tests)
+        if: github.event_name != 'pull_request'
+        working-directory: backend
+        run: ./mvnw -B --no-transfer-progress verify
 
       # The one thing in the whole corpus-regression suite that is genuinely CI-gated end to end
       # (probe -> match -> merge-blocking). The real 27-document corpus can never run here -- see
@@ -372,7 +390,7 @@ jobs:
       # case. See the Guardian step below for the incident that changed it.
       - name: Test summary
         if: ${{ !cancelled() }}
-        run: python3 scripts/summarize-surefire.py
+        run: python3 scripts/summarize-surefire.py ${{ github.event_name == 'pull_request' && '--unit-only' || '' }}
 
       # guardian-report.py was the last checker referenced only in documentation -- never in CI,
       # a hook, or a package script. That is precisely the anti-pattern the XML-comment step above

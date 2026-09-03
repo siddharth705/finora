@@ -29,11 +29,19 @@ WHAT MAKES IT FAIL
   it went unnoticed for months. If the ITs are ever intentionally removed, this assertion should
   be deleted in the same commit, which is the point: it forces the decision to be explicit.
 
-It does NOT fail on test failures themselves -- `./mvnw test` already did that, and this runs with
-`if: always()` so the summary still renders for a failing run, which is when the breakdown is most
-useful.
+  --unit-only waives ONLY this last check, for the one legitimate case where zero *IT classes is
+  correct rather than a regression: ci.yml's PR path runs `./mvnw test` (surefire, unit-only by
+  design -- see backend/pom.xml's 2026-09-02 comment on the surefire/failsafe split), where *IT
+  never runs at all. The push-to-main path runs `./mvnw verify` and calls this script WITHOUT the
+  flag, so the check still fires, by default, on the one run where *IT silently not executing
+  would actually be incident 2 again.
+
+It does NOT fail on test failures themselves -- the test step already did that, and this runs with
+`if: !cancelled()` so the summary still renders for a failing run, which is when the breakdown is
+most useful.
 """
 
+import argparse
 import os
 import sys
 import xml.etree.ElementTree as ET
@@ -106,6 +114,13 @@ def render(suites):
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--unit-only", action="store_true",
+        help="Waive the zero-*IT-classes check. Only correct for a run that never invokes "
+             "failsafe on purpose (ci.yml's PR path) -- see this module's docstring.")
+    args = parser.parse_args()
+
     if not REPORT_DIR.is_dir():
         print(f"BLOCKED: no surefire reports at {REPORT_DIR.relative_to(REPO_ROOT)}.")
         print("The test step produced no results, whatever exit code it returned.")
@@ -130,11 +145,12 @@ def main():
         print("BLOCKED: 0 tests ran. A suite that executes nothing is not a passing suite.")
         return 1
 
-    if ti["classes"] == 0:
+    if ti["classes"] == 0 and not args.unit_only:
         print(
-            "BLOCKED: no *IT classes ran. surefire's includes stopped matching **/*IT.java, which\n"
+            "BLOCKED: no *IT classes ran. Either failsafe's includes stopped matching **/*IT.java\n"
+            "(see backend/pom.xml), or this run should have passed --unit-only and did not. This\n"
             "previously hid 114 tests and left com.finora.controller at 0% coverage while the\n"
-            "suite still reported green. See backend/pom.xml's surefire <includes>."
+            "suite still reported green."
         )
         return 1
 
