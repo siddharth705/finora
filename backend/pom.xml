@@ -503,6 +503,20 @@
             <include>**/*Tests.java</include>
             <include>**/*TestCase.java</include>
           </includes>
+          <!-- 2026-09-02: CapabilityCorpusCoverageTest is the one @Tag("nightly") test today (see
+               its own doc comment for why it, specifically, was safe to defer out of every PR/merge
+               run — a coverage metric, not a correctness or security gate). Excluded here rather
+               than by includes or a class rename, so a future second nightly-tagged test needs no
+               pom.xml change to also be excluded, only the tag. The nightly-tests profile below
+               (activated by corpus-coverage-nightly.yml) overrides groups/excludedGroups for its
+               own run; it does not touch includes above, which stays the same list either way.
+
+               Deliberately a profile, not a command-line -D override on this element: tried first,
+               and neither an empty-string nor a real-value override actually took effect against
+               this literal (non-property-placeholder) value, in this Surefire version, verified
+               empirically. A profile's plugin configuration is merged over the main build's
+               deterministically instead, with no such flakiness. -->
+          <excludedGroups>nightly</excludedGroups>
           <systemPropertyVariables>
             <api.version>${docker.api.version}</api.version>
             <spring.profiles.active>test</spring.profiles.active>
@@ -620,4 +634,30 @@
       </plugin>
     </plugins>
   </build>
+
+  <profiles>
+    <!-- Activated by corpus-coverage-nightly.yml (-Pnightly-tests) to run ONLY @Tag("nightly")
+         tests instead of the whole unit suite. See the surefire plugin's own comment above for why
+         this is a profile rather than a -D command-line override. -->
+    <profile>
+      <id>nightly-tests</id>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-surefire-plugin</artifactId>
+            <configuration>
+              <groups>nightly</groups>
+              <!-- A tag no test ever carries, not empty: verified empirically that an empty
+                   excludedGroups here does NOT override the base config's "nightly" value during
+                   Maven's profile merge, it silently keeps the base's non-empty value, which would
+                   exclude the very tests the groups line above is trying to include. A real,
+                   deliberately-unused placeholder value sidesteps that merge behavior entirely. -->
+              <excludedGroups>none-excluded-by-the-nightly-profile</excludedGroups>
+            </configuration>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+  </profiles>
 </project>
