@@ -20,7 +20,7 @@ import java.util.UUID;
 /**
  * The held-imports triage queue's operator surface.
  *
- * <p>Gated on {@code IMPORT_TRIAGE_MANAGE} (V133), its own permission rather than a reuse. Every
+ * <p>Gated on {@code IMPORT_TRIAGE_MANAGE} (V135), its own permission rather than a reuse. Every
  * action here touches a real customer's bank statement -- the detail endpoint returns the raw
  * parser error, which routinely quotes the document that defeated it. {@code
  * PLATFORM_DIAGNOSTICS_VIEW} is explicitly the read-only, no-mutation visibility permission (V34)

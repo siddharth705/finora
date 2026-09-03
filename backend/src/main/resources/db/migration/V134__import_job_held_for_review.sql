@@ -44,7 +44,7 @@ CREATE UNIQUE INDEX idx_import_jobs_live_content
 COMMENT ON INDEX idx_import_jobs_live_content IS
     'One live job per user per document. Terminal rows are excluded so re-uploading a statement '
     'whose earlier import finished, failed, was cancelled, or is held for review stays possible. '
-    'This predicate must track ImportJob.Status.TERMINAL exactly -- see V132 for what breaks when '
+    'This predicate must track ImportJob.Status.TERMINAL exactly -- see V134 for what breaks when '
     'they drift.';
 
 -- Set by holdForReview() and never cleared, including by a reprocess. The status cannot answer

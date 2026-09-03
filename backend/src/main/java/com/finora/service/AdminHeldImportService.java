@@ -214,7 +214,7 @@ public class AdminHeldImportService {
     /**
      * Refuses a reprocess whose bytes are already live under a different job.
      *
-     * <p>A held job is excluded from {@code idx_import_jobs_live_content} (V132), precisely so the
+     * <p>A held job is excluded from {@code idx_import_jobs_live_content} (V134), precisely so the
      * user can re-upload the statement they were told to stop worrying about. That leaves one
      * window: if they did re-upload, moving the held job back to QUEUED makes two live jobs for the
      * same (user, document) and the unique index rejects it. Caught here so the operator gets a 409

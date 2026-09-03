@@ -87,7 +87,7 @@ public interface ImportJobRepository extends JpaRepository<ImportJob, UUID> {
     /** Queue depth for the {@code finora.worker.queue_depth} gauge. */
     long countByStatus(ImportJob.Status status);
 
-    /** One page of the admin triage queue. Backed by {@code idx_import_jobs_held} (V132). */
+    /** One page of the admin triage queue. Backed by {@code idx_import_jobs_held} (V134). */
     Page<ImportJob> findByStatus(ImportJob.Status status, Pageable pageable);
 
     /**
