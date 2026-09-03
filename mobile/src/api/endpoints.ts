@@ -229,6 +229,10 @@ export interface ConfirmPayload {
   // Only meaningful to confirmReimport, for a statement whose stored bytes are a password-protected
   // PDF -- see ConfirmRequest's own doc comment on the backend. Every other confirm path ignores it.
   password?: string;
+  // Also reimport-only (Track B/B1). Identifies one logical confirm ATTEMPT so the server can
+  // refuse a replay of it -- a first-time import needs no key, since its ImportSession is claimed
+  // atomically server-side and cannot be confirmed twice. See lib/idempotencyKey.ts.
+  idempotencyKey?: string;
 }
 
 interface SectionConfirmPayload {
