@@ -9,6 +9,7 @@ import java.time.DateTimeException;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -819,7 +820,7 @@ public class PdfTableLocator {
                 measurePhysicalRowFormation(positionedText.size(), rows);
         // Computed once, up front, for hasDateValue's yearless-date fallback (see that method's
         // own doc comment) -- every call site below reads this rather than recomputing it per row.
-        Map<Integer, Set<Integer>> yearsByPage = yearsByPage(rows);
+        Map<Integer, PageDateEvidence> yearsByPage = yearsByPage(rows);
 
         List<LocatedSection> sections = new ArrayList<>();
         // The row index of the header that opened the section currently accumulating into
@@ -1420,7 +1421,7 @@ public class PdfTableLocator {
                 recordIfTransactionShaped(row, "TRANSACTION_CATEGORY_HEADER_SUPPRESSED", pendingDroppedCandidates);
                 continue;
             } else {
-                Set<Integer> rowCandidateYears = yearsByPage.getOrDefault(rowPageIndex, Set.of());
+                PageDateEvidence rowCandidateYears = yearsByPage.getOrDefault(rowPageIndex, PageDateEvidence.NONE);
                 // Substituted before bucketRow for the identical reason inferHeaderlessSection's
                 // own call does (see substituteYearlessDates' own doc comment): without it, the
                 // RAW yearless text ("May 01") reaches bucketRow's stored value, and
@@ -1463,7 +1464,7 @@ public class PdfTableLocator {
                 // crossing a header/section boundary above.
                 boolean samePage = lastRowPage != null && !row.isEmpty() && row.get(0).pageIndex() == lastRowPage;
 
-                if (hasDateValue(bucketed, yearsByPage.getOrDefault(rowPageIndex, Set.of()))) {
+                if (hasDateValue(bucketed, yearsByPage.getOrDefault(rowPageIndex, PageDateEvidence.NONE))) {
                     // A new transaction anchor. Any leading narration buffered since the last
                     // anchor belongs to THIS one -- claim it first (prepended, so it reads in the
                     // order it actually appeared), then this row becomes the new anchor, open to
@@ -2054,7 +2055,7 @@ public class PdfTableLocator {
      * #yearsByPage}, scoped to the row's OWN page for the identical reason that scoping already
      * exists there.
      */
-    private boolean hasDateValue(Map<String, String> bucketed, Set<Integer> candidateYears) {
+    private boolean hasDateValue(Map<String, String> bucketed, PageDateEvidence candidateYears) {
         for (Map.Entry<String, String> e : bucketed.entrySet()) {
             if (e.getKey() == null || e.getValue() == null || e.getValue().isBlank()) continue;
             if (!isDateColumn(e.getKey())) continue;
@@ -3104,13 +3105,13 @@ public class PdfTableLocator {
      */
     private boolean anchorFollowsWithinSection(List<List<PositionedText>> rows, int fromIndex,
             List<String> headerNames, List<Float> headerAnchors, List<Float> headerEnds,
-            Map<Integer, Set<Integer>> yearsByPage) {
+            Map<Integer, PageDateEvidence> yearsByPage) {
         int scanLimit = Math.min(rows.size(), fromIndex + MAX_LEADING_CONTINUATION_ROWS);
         for (int i = Math.max(fromIndex, 0); i < scanLimit; i++) {
             List<PositionedText> row = rows.get(i);
             if (row.isEmpty()) continue;
             if (carriesStructuralMeaning(row)) return false;
-            Set<Integer> candidateYears = yearsByPage.getOrDefault(row.get(0).pageIndex(), Set.of());
+            PageDateEvidence candidateYears = yearsByPage.getOrDefault(row.get(0).pageIndex(), PageDateEvidence.NONE);
             if (hasDateValue(bucketRow(row, headerNames, headerAnchors, headerEnds, null, candidateYears),
                     candidateYears)) {
                 return true;
@@ -3132,7 +3133,7 @@ public class PdfTableLocator {
      */
     private boolean firstHopIsPitchConsistentOrDirect(List<List<PositionedText>> rows, int rowIndex,
             List<String> headerNames, List<Float> headerAnchors, List<Float> headerEnds,
-            Map<Integer, Set<Integer>> yearsByPage) {
+            Map<Integer, PageDateEvidence> yearsByPage) {
         List<PositionedText> current = rows.get(rowIndex);
         int nextIndex = rowIndex + 1;
         while (nextIndex < rows.size() && rows.get(nextIndex).isEmpty()) nextIndex++;
@@ -3144,7 +3145,7 @@ public class PdfTableLocator {
         // synthetic fixture, whose second real transaction sits at its own, unrelated pitch) must
         // never be used as a reference here -- only a genuine chain of narration awaiting the SAME
         // anchor gives a meaningful pitch to compare against.
-        Set<Integer> nextCandidateYears = yearsByPage.getOrDefault(next.get(0).pageIndex(), Set.of());
+        PageDateEvidence nextCandidateYears = yearsByPage.getOrDefault(next.get(0).pageIndex(), PageDateEvidence.NONE);
         if (hasDateValue(bucketRow(next, headerNames, headerAnchors, headerEnds, null, nextCandidateYears),
                 nextCandidateYears)) {
             return true;
@@ -3223,7 +3224,7 @@ public class PdfTableLocator {
         for (List<PositionedText> row : sample) {
             int rawCells = nonBlankCount(row);
             Map<String, String> bucketed = bucketRow(row, header.names(), header.anchors(), header.ends(), null,
-                    Set.of());
+                    PageDateEvidence.NONE);
             if (bucketed.size() < rawCells) continue; // collision -- two raw values shared one column
             String dateValue = bucketed.get(dateColumnName);
             if (dateValue == null || CsvParser.parseDate(dateValue.trim()) == null) continue;
@@ -4084,7 +4085,7 @@ public class PdfTableLocator {
     }
 
     private Map<String, String> bucketRow(List<PositionedText> row, List<String> headerNames, List<Float> headerAnchors,
-                                           List<Float> headerEnds, DocumentContext ctx, Set<Integer> candidateYears) {
+                                           List<Float> headerEnds, DocumentContext ctx, PageDateEvidence candidateYears) {
         Map<String, String> result = new LinkedHashMap<>();
         float tableRightEdge = rightEdgeOfTable(headerAnchors, headerEnds);
         for (PositionedText t : row) {
@@ -4612,7 +4613,7 @@ public class PdfTableLocator {
      *  BigDecimal but is not a currency amount. Without this guard, a metadata line naming both an
      *  account-opening date and an account number would misclassify as a transaction row. */
     private boolean isTransactionShapedRow(List<PositionedText> row) {
-        return isTransactionShapedRow(row, Set.of());
+        return isTransactionShapedRow(row, PageDateEvidence.NONE);
     }
 
     /** Same contract as {@link #isTransactionShapedRow(List)}, plus {@code candidateYears} -- see
@@ -4622,7 +4623,7 @@ public class PdfTableLocator {
      *  them), and only the INFERRED_HEADERLESS_LAYOUT call sites have year context worth passing.
      *  An empty candidate set makes {@link #resolveYearlessDate} always return null, so the plain
      *  overload's behaviour for every untouched call site is unchanged. */
-    private boolean isTransactionShapedRow(List<PositionedText> row, Set<Integer> candidateYears) {
+    private boolean isTransactionShapedRow(List<PositionedText> row, PageDateEvidence candidateYears) {
         boolean hasDate = false;
         boolean hasAmount = false;
         for (PositionedText cell : row) {
@@ -4634,9 +4635,10 @@ public class PdfTableLocator {
         return hasDate && hasAmount;
     }
 
-    /** Test-only accessor -- see {@link #isTransactionShapedRow(List, Set)}. */
+    /** Test-only accessor -- see {@link #isTransactionShapedRow(List, PageDateEvidence)}. A bare
+     *  year set is the no-interval case, so the span tie-break cannot fire. */
     boolean isTransactionShapedRowForTest(List<PositionedText> row, Set<Integer> candidateYears) {
-        return isTransactionShapedRow(row, candidateYears);
+        return isTransactionShapedRow(row, new PageDateEvidence(candidateYears, null, null));
     }
 
     // The only two structural facts isTransactionShapedRow's own gate can attest to -- fixed
@@ -4684,6 +4686,18 @@ public class PdfTableLocator {
     private static final Pattern WEAK_MONTH_DAY = Pattern.compile(
             "(?i)^(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)[\\s-]?(\\d{1,2})$");
 
+    // KNOWN HAZARD, measured and currently dormant. A corpus survey found two real shapes this
+    // pattern matches that are month+YEAR rather than month+day: a date split across two physical
+    // lines on one credit-card statement (day above, month and two-digit year below), and a
+    // loan-expiry column on another. Neither misresolves today, and the reason is worth stating
+    // because it is load-bearing: the pages carrying them supply NO candidate year at all, so
+    // resolveYearlessDate returns null before the shape matters. Anything that widens what counts
+    // as year evidence therefore has to re-check those two documents rather than assume them
+    // unaffected -- collectDates below does widen it, and was verified against the whole corpus
+    // for exactly this reason. Left as a documented hazard rather than a speculative narrowing:
+    // this file's discipline is to change a pattern when a real document forces it, and no real
+    // document does yet.
+
     // Small, explicit map rather than Month.valueOf(String) -- java.time's Month enum only parses
     // full English names ("JUNE"), not the three-letter abbreviations WEAK_DAY_MONTH matches
     // ("JUN"), and a TextStyle-based lookup pulls in a Locale-dependent parser this file has
@@ -4696,9 +4710,107 @@ public class PdfTableLocator {
             Map.entry("SEP", 9), Map.entry("OCT", 10), Map.entry("NOV", 11), Map.entry("DEC", 12));
 
     /**
-     * Page index to the set of calendar years appearing among that page's own full, year-bearing
-     * dates ({@link CsvParser#parseDate} already succeeds on these -- this does not introduce a
-     * new date shape, only collects the year off ones already recognized). Scoped per page, not
+     * The full, year-bearing dates ONE page prints: the calendar years they name, and the closed
+     * interval they span. Two facts rather than one because resolving a yearless date needs both
+     * -- the years say which resolutions are even possible, and the interval says which of them
+     * the document's own printed dates actually bracket. See {@link #resolveYearlessDate}.
+     *
+     * <p>{@code earliest} and {@code latest} are null when no interval is available -- either the
+     * page printed no full date at all ({@link #NONE}), or the caller supplied years without the
+     * dates they came from. {@link PageDateEvidence#spans} is false for every date in that case,
+     * which leaves {@link #resolveYearlessDate} on its pre-existing single-candidate rule. A page
+     * that prints exactly one full date has both bounds set to that date, and {@code spans} then
+     * admits only it.
+     */
+    record PageDateEvidence(Set<Integer> years, LocalDate earliest, LocalDate latest) {
+
+        /** A page whose own text supplies no full date at all -- no year is possible, so no
+         *  yearless date on it can be resolved. */
+        static final PageDateEvidence NONE = new PageDateEvidence(Set.of(), null, null);
+
+        static PageDateEvidence of(Collection<LocalDate> dates) {
+            if (dates.isEmpty()) return NONE;
+            Set<Integer> years = new HashSet<>();
+            LocalDate earliest = null;
+            LocalDate latest = null;
+            for (LocalDate date : dates) {
+                years.add(date.getYear());
+                if (earliest == null || date.isBefore(earliest)) earliest = date;
+                if (latest == null || date.isAfter(latest)) latest = date;
+            }
+            return new PageDateEvidence(Set.copyOf(years), earliest, latest);
+        }
+
+        /** Whether {@code date} falls inside the closed interval this page's own printed dates
+         *  span. False for a page with no dates at all -- there is nothing to bracket it with. */
+        boolean spans(LocalDate date) {
+            return earliest != null && !date.isBefore(earliest) && !date.isAfter(latest);
+        }
+    }
+
+    /**
+     * How many leading whitespace-separated tokens of one cell {@link #collectDates} will consider
+     * as the START of an embedded date, and how many consecutive tokens one such attempt may join.
+     *
+     * <p>Both are cost bounds, not correctness bounds. A date printed inside a longer run appears
+     * near the start of the fragment that carries it on every real document this was verified
+     * against; scanning an entire 40-token narration cell for a date would multiply this file's
+     * per-row parse cost across every page of every statement to find nothing. Three tokens is the
+     * widest any format in {@link CsvParser}'s own list occupies once split on whitespace ("dd MMM
+     * yyyy").
+     */
+    private static final int EMBEDDED_DATE_TOKEN_SCAN_LIMIT = 12;
+    private static final int EMBEDDED_DATE_MAX_TOKENS = 3;
+
+    /**
+     * Every full, year-bearing date {@code text} names -- the whole string first, and if that
+     * fails, short windows of consecutive tokens inside it.
+     *
+     * <p>The window scan exists because a real HSBC credit-card statement prints its billing
+     * period as one text run carrying the period's two dates alongside other tokens. Asking {@link
+     * CsvParser#parseDate} about the whole run fails, so the EARLIER of that period's two years
+     * never became available -- and a transaction whose own printed date is yearless then had
+     * exactly one candidate year, the later one, which {@link #resolveYearlessDate} correctly
+     * treated as unambiguous and wrongly resolved to a date a year in the future.
+     *
+     * <p>This introduces NO new date shape. Every candidate is still decided by {@code
+     * CsvParser.parseDate} exactly as before; only the substrings it is asked about changed. That
+     * distinction is the whole point -- see {@link #WEAK_DAY_MONTH}'s doc comment for why a
+     * yearless shape stays local to this capability rather than being added to {@code CsvParser},
+     * and note that this change does the opposite of loosening that parser.
+     *
+     * <p>A window is only attempted when its first token starts with a digit: every format in
+     * {@code CsvParser}'s list begins with a day or a year. That guard is what keeps this
+     * affordable to run over every cell of every row.
+     */
+    private static void collectDates(String text, Collection<LocalDate> into) {
+        LocalDate whole = CsvParser.parseDate(text);
+        if (whole != null) {
+            into.add(whole);
+            return;
+        }
+        String[] tokens = text.split("\\s+");
+        int scanned = Math.min(tokens.length, EMBEDDED_DATE_TOKEN_SCAN_LIMIT);
+        for (int start = 0; start < scanned; start++) {
+            if (tokens[start].isEmpty() || !Character.isDigit(tokens[start].charAt(0))) continue;
+            StringBuilder window = new StringBuilder(tokens[start]);
+            for (int joined = 1; joined <= EMBEDDED_DATE_MAX_TOKENS; joined++) {
+                LocalDate parsed = CsvParser.parseDate(window.toString());
+                if (parsed != null) {
+                    into.add(parsed);
+                    break;
+                }
+                int next = start + joined;
+                if (next >= tokens.length) break;
+                window.append(' ').append(tokens[next]);
+            }
+        }
+    }
+
+    /**
+     * Page index to the full, year-bearing dates that page prints ({@link CsvParser#parseDate}
+     * already succeeds on these -- this does not introduce a new date shape, only collects what is
+     * already recognized; see {@link #collectDates} for the one subtlety). Scoped per page, not
      * per document: a statement whose transaction table spans a year boundary must not let one
      * page's year silently leak onto another page's yearless dates.
      *
@@ -4707,16 +4819,16 @@ public class PdfTableLocator {
      * supply year context (a statement period, a payment due date) live in the surrounding
      * account-summary rows this capability's candidate filter deliberately excludes.
      */
-    private Map<Integer, Set<Integer>> yearsByPage(List<List<PositionedText>> rows) {
-        Map<Integer, Set<Integer>> result = new HashMap<>();
+    private Map<Integer, PageDateEvidence> yearsByPage(List<List<PositionedText>> rows) {
+        Map<Integer, List<LocalDate>> datesByPage = new HashMap<>();
         for (List<PositionedText> row : rows) {
             for (PositionedText cell : row) {
-                LocalDate parsed = CsvParser.parseDate(cell.text().trim());
-                if (parsed != null) {
-                    result.computeIfAbsent(cell.pageIndex(), k -> new HashSet<>()).add(parsed.getYear());
-                }
+                collectDates(cell.text().trim(),
+                        datesByPage.computeIfAbsent(cell.pageIndex(), k -> new ArrayList<>()));
             }
         }
+        Map<Integer, PageDateEvidence> result = new HashMap<>();
+        datesByPage.forEach((page, dates) -> result.put(page, PageDateEvidence.of(dates)));
         return result;
     }
 
@@ -4741,7 +4853,7 @@ public class PdfTableLocator {
      * evidence-gated capability rather than becoming a general date shape every caller of {@code
      * CsvParser} would then also accept.
      */
-    private LocalDate resolveYearlessDate(String text, Set<Integer> candidateYears) {
+    private LocalDate resolveYearlessDate(String text, PageDateEvidence candidateYears) {
         String trimmed = text.trim();
         int day;
         Integer month;
@@ -4758,23 +4870,42 @@ public class PdfTableLocator {
         if (month == null) return null;
 
         Set<LocalDate> resolved = new HashSet<>();
-        for (int year : candidateYears) {
+        for (int year : candidateYears.years()) {
             try {
                 resolved.add(LocalDate.of(year, month, day));
             } catch (DateTimeException notARealCalendarDate) {
                 // e.g. 29 Feb against a non-leap year -- excluded, not coerced.
             }
         }
-        return resolved.size() == 1 ? resolved.iterator().next() : null;
+        if (resolved.size() == 1) return resolved.iterator().next();
+        if (resolved.isEmpty()) return null;
+
+        // Two or more candidate years each name a real calendar date, so the year set alone cannot
+        // decide. Fall back to the other half of the same evidence: the interval the page's own
+        // printed dates span. A statement that crosses a year boundary prints both years, and a
+        // yearless "24DEC" on it is a real date in exactly one of them -- the one the billing
+        // period it appears in actually contains. Resolving only when EXACTLY ONE candidate is
+        // bracketed keeps the fail-safe posture this method's doc comment describes: a page whose
+        // own dates bracket both candidates (or neither) is still genuinely ambiguous, and still
+        // returns null rather than picking a favourite.
+        List<LocalDate> bracketed = resolved.stream().filter(candidateYears::spans).toList();
+        return bracketed.size() == 1 ? bracketed.get(0) : null;
+    }
+
+    /** Test-only accessor -- see {@link #resolveYearlessDate}. Takes a bare year set, which is the
+     *  no-interval case: the span tie-break cannot fire, so this exercises the year-set rule alone.
+     *  Pass a {@link PageDateEvidence} to the overload below to exercise the tie-break. */
+    LocalDate resolveYearlessDateForTest(String text, Set<Integer> candidateYears) {
+        return resolveYearlessDate(text, new PageDateEvidence(candidateYears, null, null));
     }
 
     /** Test-only accessor -- see {@link #resolveYearlessDate}. */
-    LocalDate resolveYearlessDateForTest(String text, Set<Integer> candidateYears) {
-        return resolveYearlessDate(text, candidateYears);
+    LocalDate resolveYearlessDateForTest(String text, PageDateEvidence evidence) {
+        return resolveYearlessDate(text, evidence);
     }
 
     /** Test-only accessor -- see {@link #yearsByPage}. */
-    Map<Integer, Set<Integer>> yearsByPageForTest(List<List<PositionedText>> rows) {
+    Map<Integer, PageDateEvidence> yearsByPageForTest(List<List<PositionedText>> rows) {
         return yearsByPage(rows);
     }
 
@@ -4999,7 +5130,7 @@ public class PdfTableLocator {
      *  all, even after {@link #isTransactionShapedRow}'s own admission gate already resolved the
      *  same cells via {@link #resolveYearlessDate}. */
     private List<ColumnStats> clusterIntoColumns(List<List<PositionedText>> transactionRows,
-            Map<Integer, Set<Integer>> yearsByPage) {
+            Map<Integer, PageDateEvidence> yearsByPage) {
         List<PositionedText> informative = new ArrayList<>();
         for (List<PositionedText> row : transactionRows) {
             for (PositionedText cell : row) {
@@ -5038,7 +5169,7 @@ public class PdfTableLocator {
                     repRight = Math.max(repRight, cell.endX());
                     if (text.contains(".")) amountLikeCount++;
                 }
-                Set<Integer> pageYears = yearsByPage.getOrDefault(cell.pageIndex(), Set.of());
+                PageDateEvidence pageYears = yearsByPage.getOrDefault(cell.pageIndex(), PageDateEvidence.NONE);
                 if (CsvParser.parseDate(text) != null || resolveYearlessDate(text, pageYears) != null) {
                     dateCount++;
                 }
@@ -5210,7 +5341,7 @@ public class PdfTableLocator {
      * CsvParser#parseDate} call and would reject it there instead -- moving the failure one layer
      * down rather than fixing it.
      */
-    private List<PositionedText> substituteYearlessDates(List<PositionedText> row, Set<Integer> pageYears) {
+    private List<PositionedText> substituteYearlessDates(List<PositionedText> row, PageDateEvidence pageYears) {
         List<PositionedText> result = null;
         for (int i = 0; i < row.size(); i++) {
             PositionedText cell = row.get(i);
@@ -5228,7 +5359,7 @@ public class PdfTableLocator {
 
     private HeaderlessBucketResult bucketHeaderlessRowsWithContinuation(List<List<PositionedText>> allRows,
             List<String> headerNames, List<Float> headerAnchors, List<Float> headerEnds, DocumentContext ctx,
-            Map<Integer, Set<Integer>> yearsByPage) {
+            Map<Integer, PageDateEvidence> yearsByPage) {
         List<Map<String, String>> result = new ArrayList<>();
         List<String> auxiliaryText = new ArrayList<>();
         List<DroppedCandidateRow> droppedTransactionCandidates = new ArrayList<>();
@@ -5258,8 +5389,8 @@ public class PdfTableLocator {
                 recordTrailingContentTrigger(ctx, trailingTrigger);
                 break;
             }
-            Set<Integer> rowYears = row.isEmpty() ? Set.of()
-                    : yearsByPage.getOrDefault(row.get(0).pageIndex(), Set.of());
+            PageDateEvidence rowYears = row.isEmpty() ? PageDateEvidence.NONE
+                    : yearsByPage.getOrDefault(row.get(0).pageIndex(), PageDateEvidence.NONE);
             // Substituted before bucketRow specifically -- see substituteYearlessDates's own doc
             // comment for why the ADMISSION check (isTransactionShapedRow) and the STORED value
             // both need to see the resolved date, not just the former: isTransactionShapedRow
@@ -5373,7 +5504,7 @@ public class PdfTableLocator {
      *  suppresses ({@link #looksLikePaymentSummaryPanel}) no longer truncates the region searched
      *  here. See that field's own doc comment. */
     private LocatedSection tryCorroboratedFallback(List<List<PositionedText>> rows, DocumentContext ctx) {
-        Map<Integer, Set<Integer>> yearsByPage = yearsByPage(rows);
+        Map<Integer, PageDateEvidence> yearsByPage = yearsByPage(rows);
         LabeledRow opening = findLabeledRow(rows, "opening balance");
         LabeledRow closing = findLabeledRow(rows, "net outstanding balance");
         boolean bracketed = opening != null && closing != null && closing.index() > opening.index();
@@ -5394,8 +5525,8 @@ public class PdfTableLocator {
                 if (!line.isBlank()) auxiliaryText.add(line);
                 continue;
             }
-            Set<Integer> rowYears = row.isEmpty() ? Set.of()
-                    : yearsByPage.getOrDefault(row.get(0).pageIndex(), Set.of());
+            PageDateEvidence rowYears = row.isEmpty() ? PageDateEvidence.NONE
+                    : yearsByPage.getOrDefault(row.get(0).pageIndex(), PageDateEvidence.NONE);
             List<PositionedText> resolved = substituteYearlessDates(row, rowYears);
             if (isTransactionShapedRow(resolved, rowYears) && signedTransactionAmount(resolved) != null) {
                 signedCandidates.add(resolved);
@@ -5659,11 +5790,11 @@ public class PdfTableLocator {
         // Computed once, from every physical row (not just the transaction-shaped candidates
         // below) -- see yearsByPage's own doc comment for why the full dates that supply year
         // context live in the surrounding account-summary rows this candidate filter excludes.
-        Map<Integer, Set<Integer>> yearsByPage = yearsByPage(rows);
+        Map<Integer, PageDateEvidence> yearsByPage = yearsByPage(rows);
         List<List<PositionedText>> candidates = new ArrayList<>();
         for (List<PositionedText> row : rows) {
-            Set<Integer> rowYears = row.isEmpty() ? Set.of()
-                    : yearsByPage.getOrDefault(row.get(0).pageIndex(), Set.of());
+            PageDateEvidence rowYears = row.isEmpty() ? PageDateEvidence.NONE
+                    : yearsByPage.getOrDefault(row.get(0).pageIndex(), PageDateEvidence.NONE);
             if (isTransactionShapedRow(row, rowYears)) candidates.add(row);
         }
         candidates = dedupeAdjacentIdenticalRows(candidates);

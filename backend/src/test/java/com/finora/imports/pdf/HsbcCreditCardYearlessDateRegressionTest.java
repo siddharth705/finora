@@ -47,9 +47,10 @@ class HsbcCreditCardYearlessDateRegressionTest {
         List<PositionedText> page0 = runs.stream().filter(t -> t.pageIndex() == 0).toList();
         assertThat(page0).isNotEmpty();
 
-        Map<Integer, Set<Integer>> byPage =
+        Map<Integer, PdfTableLocator.PageDateEvidence> byPage =
                 locator.yearsByPageForTest(page0.stream().map(List::of).toList());
-        Set<Integer> page0Years = byPage.getOrDefault(0, Set.of());
+        Set<Integer> page0Years =
+                byPage.getOrDefault(0, PdfTableLocator.PageDateEvidence.NONE).years();
         assertThat(page0Years)
                 .as("the real statement period's full dates are redacted into a shape "
                         + "(\"99 XXX 9999\") CsvParser.parseDate correctly rejects -- no year "

@@ -81,16 +81,176 @@ class YearlessDateResolutionTest {
         assertThat(locator.resolveYearlessDateForTest("30JUN", Set.of(2025, 2026))).isNull();
     }
 
+    // ---------------------------------------------------------------------------------------
+    // A billing period that crosses a year boundary.
+    //
+    // All fixtures below are SYNTHETIC (synthetic-ok): the shapes are taken from a real HSBC
+    // credit-card statement, but every value here is invented. That document printed a period
+    // running from late December of one year to late January of the next, and dated its
+    // transactions with a bare day+month. Two things went wrong together, and both are pinned
+    // here:
+    //
+    //   1. The period's two full dates were printed inside ONE composite text run alongside other
+    //      tokens, so asking CsvParser.parseDate about the whole cell failed and the EARLIER year
+    //      never entered the candidate set at all.
+    //   2. With only the later year as a candidate, a December transaction resolved -- perfectly
+    //      "unambiguously", by the old rule -- to a date a full year in the future.
+    //
+    // Fixing only (1) is not enough: it makes the December date genuinely ambiguous, which under
+    // the old rule means null, which drops a real row. The interval the page's own dates span is
+    // what breaks the tie.
+    // ---------------------------------------------------------------------------------------
+
+    @Test
+    void collectsAYearFromAFullDatePrintedInsideACompositeRun() {
+        // One cell carrying a whole period line, the way a redacted account number, both period
+        // dates and a balance can arrive glued into a single positioned run.
+        List<PositionedText> row = List.of(
+                new PositionedText("XXXXXXXXXXX 24 DEC 2025 To 23 JAN 2026 1,234.56", 10f, 10f, 0));
+
+        Map<Integer, PdfTableLocator.PageDateEvidence> byPage =
+                locator.yearsByPageForTest(List.of(row));
+
+        assertThat(byPage.get(0).years())
+                .as("both of the period's years are printed on the page; neither parses as a "
+                        + "whole cell, and before this both were invisible")
+                .containsExactlyInAnyOrder(2025, 2026);
+        assertThat(byPage.get(0).earliest()).isEqualTo(LocalDate.of(2025, 12, 24));
+        assertThat(byPage.get(0).latest()).isEqualTo(LocalDate.of(2026, 1, 23));
+    }
+
+    @Test
+    void embeddedDateScanStillIgnoresTextThatMerelyContainsDigits() {
+        // Invented values in the SHAPES real statements use (synthetic-ok): a long zero-padded
+        // reference number, a percentage-bearing tax label, and two amounts sharing one cell.
+        // None of these should look like a date to the window scan.
+        List<PositionedText> row = List.of(
+                new PositionedText("REF 0000111122223333 4", 10f, 10f, 0),
+                new PositionedText("SAMPLE TAX LABEL @07.50%", 40f, 10f, 0),
+                new PositionedText("11,111.00 2,222.00", 90f, 10f, 0));
+
+        Map<Integer, PdfTableLocator.PageDateEvidence> byPage =
+                locator.yearsByPageForTest(List.of(row));
+
+        assertThat(byPage.get(0).years()).isEmpty();
+    }
+
+    @Test
+    void resolvesADecemberDateIntoTheEarlierYearWhenThePagesOwnDatesBracketIt() {
+        // The page prints the period's start (late December, earlier year) and a payment due date
+        // (February, later year). A bare "24DEC" is a real date in both years; only one of them
+        // falls inside what this page's own dates span.
+        PdfTableLocator.PageDateEvidence evidence = PdfTableLocator.PageDateEvidence.of(List.of(
+                LocalDate.of(2025, 12, 24),
+                LocalDate.of(2026, 1, 23),
+                LocalDate.of(2026, 2, 10)));
+
+        assertThat(locator.resolveYearlessDateForTest("24DEC", evidence))
+                .isEqualTo(LocalDate.of(2025, 12, 24));
+    }
+
+    @Test
+    void resolvesAJanuaryDateIntoTheLaterYearFromTheSameEvidence() {
+        // The same evidence, the other side of the boundary -- this is what makes the rule a
+        // bracket test rather than a "prefer the earlier year" preference.
+        PdfTableLocator.PageDateEvidence evidence = PdfTableLocator.PageDateEvidence.of(List.of(
+                LocalDate.of(2025, 12, 24),
+                LocalDate.of(2026, 1, 23),
+                LocalDate.of(2026, 2, 10)));
+
+        assertThat(locator.resolveYearlessDateForTest("01JAN", evidence))
+                .isEqualTo(LocalDate.of(2026, 1, 1));
+        assertThat(locator.resolveYearlessDateForTest("23JAN", evidence))
+                .isEqualTo(LocalDate.of(2026, 1, 23));
+    }
+
+    @Test
+    void declinesWhenThePagesOwnDatesBracketBothCandidates() {
+        // A page spanning more than a year brackets both "05MAR"s. Genuinely ambiguous, so this
+        // still returns null rather than picking a favourite -- the fail-safe posture the method's
+        // own doc comment describes is unchanged by the tie-break.
+        PdfTableLocator.PageDateEvidence evidence = PdfTableLocator.PageDateEvidence.of(List.of(
+                LocalDate.of(2025, 1, 1),
+                LocalDate.of(2026, 12, 31)));
+
+        assertThat(locator.resolveYearlessDateForTest("05MAR", evidence)).isNull();
+    }
+
+    @Test
+    void declinesWhenThePagesOwnDatesBracketNeitherCandidate() {
+        // Both candidate years are present, so the year set alone cannot decide -- and the
+        // interval is positioned so that BOTH candidates fall just outside it, one before its
+        // start and one after its end. Getting here needs a page whose own dates straddle a year
+        // boundary narrowly; the arithmetic is easy to get wrong by eye, which is the point of
+        // pinning it. Interval: 15 Jan of the earlier year to 3 Jan of the later one.
+        // Candidates for "05JAN": the 5th of Jan in each year -- ten days too early for the
+        // interval's start, and two days too late for its end.
+        PdfTableLocator.PageDateEvidence evidence = PdfTableLocator.PageDateEvidence.of(List.of(
+                LocalDate.of(2025, 1, 15),
+                LocalDate.of(2026, 1, 3)));
+
+        assertThat(locator.resolveYearlessDateForTest("05JAN", evidence)).isNull();
+    }
+
+    @Test
+    void resolvesWhenOnlyOneCandidateEscapesANarrowYearBoundaryInterval() {
+        // The companion to the test above, and the reason it needs such a specific interval: move
+        // the interval's end out by a few days and the later candidate falls inside it again, so
+        // exactly one is bracketed and the tie-break resolves. Pinned so a future change to the
+        // interval comparison (inclusive vs exclusive bounds) fails loudly here.
+        PdfTableLocator.PageDateEvidence evidence = PdfTableLocator.PageDateEvidence.of(List.of(
+                LocalDate.of(2025, 1, 15),
+                LocalDate.of(2026, 1, 31)));
+
+        assertThat(locator.resolveYearlessDateForTest("05JAN", evidence))
+                .isEqualTo(LocalDate.of(2026, 1, 5));
+    }
+
+    @Test
+    void theIntervalBoundsAreInclusive() {
+        // A candidate landing exactly on the interval's first or last day counts as bracketed.
+        PdfTableLocator.PageDateEvidence evidence = PdfTableLocator.PageDateEvidence.of(List.of(
+                LocalDate.of(2025, 1, 5),
+                LocalDate.of(2026, 1, 3)));
+
+        assertThat(locator.resolveYearlessDateForTest("05JAN", evidence))
+                .isEqualTo(LocalDate.of(2025, 1, 5));
+    }
+
+    @Test
+    void aSingleCandidateYearStillResolvesWithoutConsultingTheInterval() {
+        // The pre-existing rule is untouched: one candidate year that yields a real calendar date
+        // resolves, whether or not the page's interval happens to contain it. Narrowing that would
+        // regress every document already relying on it.
+        PdfTableLocator.PageDateEvidence evidence =
+                PdfTableLocator.PageDateEvidence.of(List.of(LocalDate.of(2026, 6, 24)));
+
+        assertThat(locator.resolveYearlessDateForTest("30NOV", evidence))
+                .isEqualTo(LocalDate.of(2026, 11, 30));
+    }
+
+    @Test
+    void anImpossibleCalendarDateIsStillExcludedBeforeTheIntervalIsConsulted() {
+        // 29 Feb exists in exactly one of these two years, so there is nothing for the interval
+        // rule to decide -- the leap-year check already made it unambiguous.
+        PdfTableLocator.PageDateEvidence evidence = PdfTableLocator.PageDateEvidence.of(List.of(
+                LocalDate.of(2025, 1, 1),
+                LocalDate.of(2024, 3, 1)));
+
+        assertThat(locator.resolveYearlessDateForTest("29FEB", evidence))
+                .isEqualTo(LocalDate.of(2024, 2, 29));
+    }
+
     @Test
     void yearsByPageGroupsFullDatesByTheirOwnPageIndependently() {
         List<PositionedText> page0Row = List.of(
                 new PositionedText("24 JUN 2026", 10f, 10f, 0));
         List<PositionedText> page1Row = List.of(
                 new PositionedText("01 JAN 2025", 10f, 10f, 1));
-        Map<Integer, Set<Integer>> byPage =
+        Map<Integer, PdfTableLocator.PageDateEvidence> byPage =
                 locator.yearsByPageForTest(List.of(page0Row, page1Row));
-        assertThat(byPage.get(0)).containsExactly(2026);
-        assertThat(byPage.get(1)).containsExactly(2025);
+        assertThat(byPage.get(0).years()).containsExactly(2026);
+        assertThat(byPage.get(1).years()).containsExactly(2025);
     }
 
     @Test
@@ -99,8 +259,8 @@ class YearlessDateResolutionTest {
                 new PositionedText("30JUN", 10f, 10f, 0),
                 new PositionedText("BBPS PMT", 40f, 10f, 0),
                 new PositionedText("24 JUN 2026", 90f, 10f, 0));
-        Map<Integer, Set<Integer>> byPage = locator.yearsByPageForTest(List.of(row));
-        assertThat(byPage.get(0)).containsExactly(2026);
+        Map<Integer, PdfTableLocator.PageDateEvidence> byPage = locator.yearsByPageForTest(List.of(row));
+        assertThat(byPage.get(0).years()).containsExactly(2026);
     }
 
     @Test
