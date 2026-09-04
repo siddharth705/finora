@@ -346,6 +346,57 @@ class SupportTicketApiIT extends AbstractIntegrationTest {
         assertThat(found).isTrue();
     }
 
+    @Test
+    void plainUser_isForbiddenFromTheFeedbackBreakdown() {
+        User user = createUser("USER");
+
+        ResponseEntity<String> response = restTemplate.exchange("/api/v1/admin/feedback/breakdown",
+                HttpMethod.GET, new HttpEntity<>(bearerFor(user)), String.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+    }
+
+    /**
+     * This IT class shares Postgres tables with every other IT (see the class-level precedent in
+     * SupportRepositoryIT and elsewhere in this codebase) -- breakdown() is deliberately unfiltered
+     * across the WHOLE table, so a total asserted as exact would be polluted by whatever other
+     * tests' fixtures land before or after this one runs. GOALS/OTHER is picked because nothing
+     * else in this file uses that combination (submittedFeedback_isVisibleToAnAdmin uses
+     * BUG/IMPORT_FLOW), so "at least the row this test just created" is a real assertion, not one
+     * that would pass regardless of whether breakdown() worked at all.
+     */
+    @Test
+    void feedbackBreakdown_countsTheSubmissionByType_context_andSource() throws Exception {
+        User user = createUser("USER");
+        User admin = createUser("ADMIN");
+        String payload = """
+                {"type":"IMPROVEMENT","context":"GOALS","message":"A goals breakdown fixture"}""";
+
+        ResponseEntity<String> submit = restTemplate.exchange("/api/v1/feedback", HttpMethod.POST,
+                new HttpEntity<>(payload, jsonBearerFor(user)), String.class);
+        assertThat(submit.getStatusCode()).isEqualTo(HttpStatus.OK);
+
+        ResponseEntity<String> response = restTemplate.exchange("/api/v1/admin/feedback/breakdown",
+                HttpMethod.GET, new HttpEntity<>(bearerFor(admin)), String.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        JsonNode data = mapper.readTree(response.getBody()).get("data");
+        assertThat(data.get("total").asLong()).isGreaterThanOrEqualTo(1);
+        assertThat(findCount(data.get("byType"), "IMPROVEMENT")).isGreaterThanOrEqualTo(1);
+        assertThat(findCount(data.get("byContext"), "GOALS")).isGreaterThanOrEqualTo(1);
+        // WEB is what TestSessions/the plain restTemplate call sends no X-Client-Platform header
+        // for -- ClientIdentity's own default (see its class doc) -- so this is real evidence the
+        // grouping reached the actual source column, not just type/context.
+        assertThat(findCount(data.get("bySource"), "WEB")).isGreaterThanOrEqualTo(1);
+    }
+
+    private long findCount(JsonNode dimension, String label) {
+        for (JsonNode entry : dimension) {
+            if (entry.get("label").asText().equals(label)) return entry.get("total").asLong();
+        }
+        return 0;
+    }
+
     // --- audit (Phase 5): a real row lands, not just a mocked call ------------------------------
 
     private AuditLog onlyAuditRow(UUID ticketId, String action) {

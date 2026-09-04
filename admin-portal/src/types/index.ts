@@ -1345,3 +1345,108 @@ export interface LayoutEvidenceReport {
    *  often, "no evidence for reuse", which is a successful outcome rather than a gap. */
   verdict: string;
 }
+
+// Support, Help & Feedback v1, Phase 9 (admin portal). Mirrors the same
+// SupportTicket.Category/Status and FeedbackEntry.Type/Context unions the user-facing frontend and
+// mobile apps already carry their own copies of (com.finora.entity.SupportTicket,
+// com.finora.entity.FeedbackEntry) -- a value added on one side with nothing here to render it is
+// the failure mode a compile-time union exists to catch.
+export type SupportTicketCategory =
+  | 'STATEMENT_IMPORT' | 'CATEGORIZATION' | 'ACCOUNT_LINKING' | 'DATA_ACCURACY' | 'TECHNICAL_ISSUE' | 'OTHER';
+export type SupportTicketStatus = 'OPEN' | 'IN_PROGRESS' | 'RESOLVED' | 'CLOSED';
+export type ClientPlatform = 'WEB' | 'MOBILE_ANDROID' | 'MOBILE_IOS';
+
+/** One row of the ticket queue -- mirrors SupportTicketDto.Summary. */
+export interface SupportTicketRow {
+  id: string;
+  ticketNumber: string;
+  userId: string;
+  category: SupportTicketCategory;
+  subject: string;
+  status: SupportTicketStatus;
+  claimedByAdminId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Every filter is optional -- same shape as HeldStatementQuery. */
+export interface SupportTicketQuery {
+  page?: number;
+  size?: number;
+  status?: SupportTicketStatus;
+  category?: SupportTicketCategory;
+}
+
+export interface SupportTicketAttachment {
+  id: string;
+  filename: string;
+  contentType: string;
+  sizeBytes: number;
+}
+
+/** Mirrors SupportTicketDto.Detail -- the SAME shape the ticket's own owner sees, served by the
+ *  same non-admin-rooted endpoint (SupportTicketController.detail's own doc explains why there is
+ *  no separate admin detail route). Structurally excludes internal-note content -- there is no
+ *  such field here at all, matching the backend DTO, not merely an admin-portal choice to hide it. */
+export interface SupportTicketDetail {
+  id: string;
+  ticketNumber: string;
+  userId: string;
+  category: SupportTicketCategory;
+  subject: string;
+  description: string;
+  status: SupportTicketStatus;
+  source: ClientPlatform;
+  appVersion: string | null;
+  claimedByAdminId: string | null;
+  resolvedAt: string | null;
+  closedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  attachments: SupportTicketAttachment[];
+}
+
+/** Mirrors SupportTicketDto.NoteDto -- admin-only, never reachable from the user-facing endpoint. */
+export interface SupportTicketNote {
+  id: string;
+  adminId: string;
+  note: string;
+  createdAt: string;
+}
+
+export type FeedbackType = 'BUG' | 'FEATURE_REQUEST' | 'IMPROVEMENT' | 'GENERAL';
+export type FeedbackContext =
+  | 'DASHBOARD' | 'TRANSACTIONS' | 'REPORTS' | 'BUDGETS' | 'GOALS' | 'IMPORT_FLOW' | 'ACCOUNTS' | 'SETTINGS' | 'HELP' | 'OTHER';
+
+/** One row of the feedback list -- mirrors FeedbackDto.Summary. */
+export interface FeedbackRow {
+  id: string;
+  userId: string;
+  type: FeedbackType;
+  context: FeedbackContext;
+  source: ClientPlatform;
+  message: string;
+  createdAt: string;
+}
+
+export interface FeedbackQuery {
+  page?: number;
+  size?: number;
+  type?: FeedbackType;
+  context?: FeedbackContext;
+}
+
+/** Mirrors FeedbackDto.Breakdown -- always unfiltered across the whole table (see the backend
+ *  service method's own doc comment for why), independent of whatever FeedbackQuery filter the
+ *  list view has active. */
+export interface FeedbackBreakdownCount {
+  label: string;
+  total: number;
+}
+
+export interface FeedbackBreakdown {
+  total: number;
+  byType: FeedbackBreakdownCount[];
+  byContext: FeedbackBreakdownCount[];
+  bySource: FeedbackBreakdownCount[];
+}
