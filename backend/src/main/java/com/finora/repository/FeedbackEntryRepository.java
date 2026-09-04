@@ -1,5 +1,6 @@
 package com.finora.repository;
 
+import com.finora.entity.ClientPlatform;
 import com.finora.entity.FeedbackEntry;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
@@ -28,7 +29,7 @@ public interface FeedbackEntryRepository extends JpaRepository<FeedbackEntry, UU
     interface FeedbackBreakdown {
         FeedbackEntry.Type getType();
         FeedbackEntry.Context getContext();
-        FeedbackEntry.Source getSource();
+        ClientPlatform getSource();
         long getTotal();
     }
 
