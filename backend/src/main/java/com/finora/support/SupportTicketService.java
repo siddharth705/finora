@@ -200,10 +200,17 @@ public class SupportTicketService {
 
     @Transactional(readOnly = true)
     public PagedResponse<SupportTicketDto.Summary> adminList(SupportTicket.Status status, SupportTicket.Category category,
-                                                              int page, int size) {
+                                                              String q, int page, int size) {
         Pageable pageable = PageRequest.of(PageBounds.safePage(page), PageBounds.safeSize(size));
+        // Blank (not just null) reads as "no search" -- a caller sending q="" (an untouched
+        // search box submitted along with a real filter change, say) must not silently exclude
+        // every ticket whose number/subject fails to contain the empty string... which would
+        // actually match everything, harmlessly, but passing it through as literally empty is
+        // still the wrong contract to expose: "no search" should mean the WHERE clause is skipped
+        // entirely, not "matched trivially."
+        String query = (q == null || q.isBlank()) ? null : q.trim();
         return PagedResponse.of(
-                ticketRepository.findForAdmin(status, category, pageable).map(SupportTicketDto.Summary::from));
+                ticketRepository.findForAdmin(status, category, query, pageable).map(SupportTicketDto.Summary::from));
     }
 
     /** The single place a ticket's status changes. 409, naming both states, on any move {@link

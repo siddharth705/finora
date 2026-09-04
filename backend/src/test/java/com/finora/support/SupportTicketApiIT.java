@@ -120,6 +120,34 @@ class SupportTicketApiIT extends AbstractIntegrationTest {
         assertThat(inNonMatchingPage).isFalse();
     }
 
+    /**
+     * Same reasoning and same {@code ticketAppearsIn} helper as the status/category test
+     * immediately above -- proving the {@code q} LIKE binding actually discriminates, not merely
+     * that a request carrying it returns 200. Searches by ticket number (the identifier
+     * SupportTicketDto's own doc calls "the reference an operator quotes") and by a subject
+     * substring, both case-insensitively, and confirms an unrelated term excludes the ticket.
+     */
+    @Test
+    void adminTicketQueue_searchMatchesTicketNumberAndSubject_caseInsensitively() throws Exception {
+        User owner = createUser("USER");
+        User admin = createUser("ADMIN");
+        UUID ticketId = createTicket(owner, "Statement upload keeps timing out");
+        String ticketNumber = ticketNumberOf(admin, ticketId);
+
+        assertThat(ticketAppearsIn(admin, "q=" + ticketNumber.toLowerCase(), ticketId))
+                .as("exact ticket number, lowercased").isTrue();
+        assertThat(ticketAppearsIn(admin, "q=TIMING+OUT", ticketId))
+                .as("subject substring, uppercased").isTrue();
+        assertThat(ticketAppearsIn(admin, "q=nothing+to+do+with+this+ticket", ticketId))
+                .as("an unrelated term must exclude it, not match everything").isFalse();
+    }
+
+    private String ticketNumberOf(User admin, UUID ticketId) throws Exception {
+        ResponseEntity<String> response = restTemplate.exchange("/api/v1/support/tickets/" + ticketId,
+                HttpMethod.GET, new HttpEntity<>(bearerFor(admin)), String.class);
+        return mapper.readTree(response.getBody()).get("data").get("ticketNumber").asText();
+    }
+
     private boolean ticketAppearsIn(User admin, String query, UUID ticketId) throws Exception {
         ResponseEntity<String> response = restTemplate.exchange(
                 "/api/v1/admin/support/tickets?" + query + "&size=500", HttpMethod.GET,
@@ -344,6 +372,57 @@ class SupportTicketApiIT extends AbstractIntegrationTest {
             if (entry.get("message").asText().equals("Import silently drops rows")) found = true;
         }
         assertThat(found).isTrue();
+    }
+
+    @Test
+    void plainUser_isForbiddenFromTheFeedbackBreakdown() {
+        User user = createUser("USER");
+
+        ResponseEntity<String> response = restTemplate.exchange("/api/v1/admin/feedback/breakdown",
+                HttpMethod.GET, new HttpEntity<>(bearerFor(user)), String.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+    }
+
+    /**
+     * This IT class shares Postgres tables with every other IT (see the class-level precedent in
+     * SupportRepositoryIT and elsewhere in this codebase) -- breakdown() is deliberately unfiltered
+     * across the WHOLE table, so a total asserted as exact would be polluted by whatever other
+     * tests' fixtures land before or after this one runs. GOALS/OTHER is picked because nothing
+     * else in this file uses that combination (submittedFeedback_isVisibleToAnAdmin uses
+     * BUG/IMPORT_FLOW), so "at least the row this test just created" is a real assertion, not one
+     * that would pass regardless of whether breakdown() worked at all.
+     */
+    @Test
+    void feedbackBreakdown_countsTheSubmissionByType_context_andSource() throws Exception {
+        User user = createUser("USER");
+        User admin = createUser("ADMIN");
+        String payload = """
+                {"type":"IMPROVEMENT","context":"GOALS","message":"A goals breakdown fixture"}""";
+
+        ResponseEntity<String> submit = restTemplate.exchange("/api/v1/feedback", HttpMethod.POST,
+                new HttpEntity<>(payload, jsonBearerFor(user)), String.class);
+        assertThat(submit.getStatusCode()).isEqualTo(HttpStatus.OK);
+
+        ResponseEntity<String> response = restTemplate.exchange("/api/v1/admin/feedback/breakdown",
+                HttpMethod.GET, new HttpEntity<>(bearerFor(admin)), String.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        JsonNode data = mapper.readTree(response.getBody()).get("data");
+        assertThat(data.get("total").asLong()).isGreaterThanOrEqualTo(1);
+        assertThat(findCount(data.get("byType"), "IMPROVEMENT")).isGreaterThanOrEqualTo(1);
+        assertThat(findCount(data.get("byContext"), "GOALS")).isGreaterThanOrEqualTo(1);
+        // WEB is what TestSessions/the plain restTemplate call sends no X-Client-Platform header
+        // for -- ClientIdentity's own default (see its class doc) -- so this is real evidence the
+        // grouping reached the actual source column, not just type/context.
+        assertThat(findCount(data.get("bySource"), "WEB")).isGreaterThanOrEqualTo(1);
+    }
+
+    private long findCount(JsonNode dimension, String label) {
+        for (JsonNode entry : dimension) {
+            if (entry.get("label").asText().equals(label)) return entry.get("total").asLong();
+        }
+        return 0;
     }
 
     // --- audit (Phase 5): a real row lands, not just a mocked call ------------------------------

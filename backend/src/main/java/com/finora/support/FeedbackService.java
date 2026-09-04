@@ -47,4 +47,12 @@ public class FeedbackService {
         Pageable pageable = PageRequest.of(PageBounds.safePage(page), PageBounds.safeSize(size));
         return PagedResponse.of(repository.findForAdmin(type, context, pageable).map(FeedbackDto.Summary::from));
     }
+
+    /** Phase 9's counts panel — unfiltered by design, same as {@code countGrouped()}'s own doc
+     *  comment scopes it: a breakdown across everything, not a filtered slice matching whatever the
+     *  list view's type/context filter happens to be set to. */
+    @Transactional(readOnly = true)
+    public FeedbackDto.Breakdown breakdown() {
+        return FeedbackDto.Breakdown.from(repository.countGrouped());
+    }
 }
