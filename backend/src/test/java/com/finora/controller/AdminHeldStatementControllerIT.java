@@ -4,9 +4,12 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.finora.AbstractIntegrationTest;
 import com.finora.entity.HeldStatement;
+import com.finora.entity.HeldStatementEvent;
 import com.finora.entity.ImportJob;
 import com.finora.entity.User;
 import com.finora.exception.ErrorCode;
+import com.finora.imports.analysis.ImportVerificationFinding;
+import com.finora.imports.analysis.ImportVerificationFindingRepository;
 import com.finora.repository.HeldStatementEventRepository;
 import com.finora.repository.HeldStatementRepository;
 import com.finora.notification.repository.NotificationRepository;
@@ -46,6 +49,7 @@ class AdminHeldStatementControllerIT extends AbstractIntegrationTest {
     @Autowired private HeldStatementRepository heldStatementRepository;
     @Autowired private HeldStatementEventRepository eventRepository;
     @Autowired private ImportJobRepository importJobRepository;
+    @Autowired private ImportVerificationFindingRepository findingRepository;
     @Autowired private NotificationRepository notificationRepository;
     @Autowired private UserRepository userRepository;
     @Autowired private JwtService jwtService;
@@ -93,6 +97,11 @@ class AdminHeldStatementControllerIT extends AbstractIntegrationTest {
                 new HttpEntity<>(body, bearerFor(admin)), String.class);
     }
 
+    private ResponseEntity<String> get(String path, User admin) {
+        return restTemplate.exchange(path, HttpMethod.GET,
+                new HttpEntity<>(bearerFor(admin)), String.class);
+    }
+
     // ---------------------------------------------------------------------------- the gate
 
     @Test
@@ -138,6 +147,67 @@ class AdminHeldStatementControllerIT extends AbstractIntegrationTest {
         // carries none of the document it fired on.
         assertThat(content.findValuesAsText("triggerSummary").getFirst()).contains("count");
         assertThat(response.getBody()).doesNotContain("statementObjectKey");
+    }
+
+    // ------------------------------------------------------------------------------- detail view
+
+    /**
+     * The operator has to see the numbers, not our sentence about them: "the counts disagree" is
+     * not enough to judge whether the extraction is wrong. These are the same rows {@code
+     * ImportVerificationRecorder} already writes on every held import -- reused, not re-derived.
+     */
+    @Test
+    void detailCarriesTheFindingDetailsBehindTheTriggerSummary() throws Exception {
+        HeldStatement held = seedHold("HLD-2026-100009");
+        findingRepository.save(ImportVerificationFinding.forJob(held.getImportJobId(), 0,
+                "SUMMARY_TOTALS", "FAILED",
+                "{\"printedCreditCount\":80,\"parsedCreditCount\":79}"));
+        User admin = createUser("ADMIN");
+
+        ResponseEntity<String> response = get("/api/v1/admin/held-statements/HLD-2026-100009", admin);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        JsonNode finding = mapper.readTree(response.getBody()).path("data").path("findings").get(0);
+        assertThat(finding.path("rule").asText()).isEqualTo("SUMMARY_TOTALS");
+        assertThat(finding.path("outcome").asText()).isEqualTo("FAILED");
+        assertThat(finding.path("details").path("printedCreditCount").asInt()).isEqualTo(80);
+        assertThat(finding.path("details").path("parsedCreditCount").asInt()).isEqualTo(79);
+    }
+
+    /**
+     * The timeline is the audit history, oldest first -- it is read as a narrative.
+     *
+     * <p>{@code seedHold} in this file saves the row directly through the repository, not through
+     * {@code HeldStatementService.createHold}, so it writes no {@code HELD_CREATED} event of its
+     * own -- this test seeds both events itself rather than assume one that was never written.
+     */
+    @Test
+    void detailCarriesTheEventTimelineOldestFirst() throws Exception {
+        HeldStatement held = seedHold("HLD-2026-100010");
+        User admin = createUser("ADMIN");
+        eventRepository.save(new HeldStatementEvent(held.getId(), null, "HELD_CREATED",
+                null, "HELD", "counts disagree"));
+        eventRepository.save(new HeldStatementEvent(held.getId(), admin.getId(), "ASSIGNED",
+                "HELD", "ASSIGNED", null));
+
+        ResponseEntity<String> response = get("/api/v1/admin/held-statements/HLD-2026-100010", admin);
+
+        JsonNode timeline = mapper.readTree(response.getBody()).path("data").path("timeline");
+        assertThat(timeline.findValuesAsText("eventType"))
+                .containsExactly("HELD_CREATED", "ASSIGNED");
+    }
+
+    /** Still no statement content: the detail view explains a decision, it does not display the
+     *  document. That is what the download endpoint is for, and it is gated differently. */
+    @Test
+    void detailCarriesNoStatementContentOrObjectKey() throws Exception {
+        seedHold("HLD-2026-100011");
+        User admin = createUser("ADMIN");
+
+        ResponseEntity<String> response = get("/api/v1/admin/held-statements/HLD-2026-100011", admin);
+
+        assertThat(response.getBody()).doesNotContain("statementObjectKey");
+        assertThat(response.getBody()).doesNotContain("objects/key-");
     }
 
     // ------------------------------------------------------------------------ approve / reject

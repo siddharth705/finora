@@ -1,5 +1,10 @@
 package com.finora.service;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.finora.dto.HeldStatementDetailDto;
+import com.finora.dto.HeldStatementDetailDto.EventView;
+import com.finora.dto.HeldStatementDetailDto.FindingView;
 import com.finora.dto.HeldStatementDto;
 import com.finora.dto.PagedResponse;
 import com.finora.entity.HeldStatement;
@@ -8,6 +13,8 @@ import com.finora.entity.ImportJob;
 import com.finora.exception.ApiException;
 import com.finora.exception.ErrorCode;
 import com.finora.imports.ImportSessionService;
+import com.finora.imports.analysis.ImportVerificationFinding;
+import com.finora.imports.analysis.ImportVerificationFindingRepository;
 import com.finora.imports.jobs.StagedForJob;
 import com.finora.imports.jobs.VerificationTelemetry;
 import com.finora.imports.trust.HeldStatementIdGenerator;
@@ -22,6 +29,8 @@ import com.finora.repository.HeldStatementEventRepository;
 import com.finora.repository.HeldStatementRepository;
 import com.finora.repository.ImportJobRepository;
 import com.finora.util.PageBounds;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
@@ -50,6 +59,8 @@ import java.util.UUID;
 @Service
 public class HeldStatementService {
 
+    private static final Logger log = LoggerFactory.getLogger(HeldStatementService.class);
+
     /** The working queue: everything an operator can still act on. */
     private static final List<HeldStatement.Status> OPEN = List.of(
             HeldStatement.Status.HELD, HeldStatement.Status.ASSIGNED,
@@ -59,24 +70,30 @@ public class HeldStatementService {
     private final HeldStatementEventRepository eventRepository;
     private final HeldStatementIdGenerator idGenerator;
     private final ImportJobRepository importJobRepository;
+    private final ImportVerificationFindingRepository findingRepository;
     private final AuditService auditService;
     private final NotificationService notificationService;
     private final ImportSessionService importSessionService;
+    private final ObjectMapper objectMapper;
 
     public HeldStatementService(HeldStatementRepository repository,
                                 HeldStatementEventRepository eventRepository,
                                 HeldStatementIdGenerator idGenerator,
                                 ImportJobRepository importJobRepository,
+                                ImportVerificationFindingRepository findingRepository,
                                 AuditService auditService,
                                 NotificationService notificationService,
-                                ImportSessionService importSessionService) {
+                                ImportSessionService importSessionService,
+                                ObjectMapper objectMapper) {
         this.repository = repository;
         this.eventRepository = eventRepository;
         this.idGenerator = idGenerator;
         this.importJobRepository = importJobRepository;
+        this.findingRepository = findingRepository;
         this.auditService = auditService;
         this.notificationService = notificationService;
         this.importSessionService = importSessionService;
+        this.objectMapper = objectMapper;
     }
 
     /**
@@ -140,9 +157,53 @@ public class HeldStatementService {
         return PagedResponse.of(result.map(HeldStatementDto::from));
     }
 
+    /**
+     * The summary plus the evidence behind {@code triggerSummary} and the hold's own history.
+     *
+     * <p>Findings come from {@code import_verification_findings}, keyed by {@code import_job_id} --
+     * the same table and the same allowlisted, statement-content-free shape {@code
+     * ImportTraceService} already exposes to engineers diagnosing a parser failure. This is not a
+     * new signal: it is the printed-versus-parsed evidence the trust predicate itself read to
+     * decide to hold, surfaced as the numbers rather than as a sentence about them.
+     */
     @Transactional(readOnly = true)
-    public HeldStatementDto detail(String heldId) {
-        return HeldStatementDto.from(require(heldId));
+    public HeldStatementDetailDto detail(String heldId) {
+        HeldStatement held = require(heldId);
+        List<ImportVerificationFinding> rows =
+                findingRepository.findByImportJobIdOrderBySectionIndexAscRuleAsc(held.getImportJobId());
+        List<HeldStatementEvent> events =
+                eventRepository.findByHeldStatementIdOrderByCreatedAtAsc(held.getId());
+        return new HeldStatementDetailDto(HeldStatementDto.from(held), findings(rows), timeline(events));
+    }
+
+    private List<FindingView> findings(List<ImportVerificationFinding> rows) {
+        return rows.stream()
+                .map(row -> new FindingView(row.getSectionIndex(), row.getRule(), row.getOutcome(),
+                        readDetails(row), row.getCreatedAt()))
+                .toList();
+    }
+
+    /** Unreadable details degrade one field rather than failing the whole detail view -- same call
+     *  {@code ImportTraceService.readDetails} makes about a row a future version wrote in a shape
+     *  this one does not expect. */
+    private Map<String, Object> readDetails(ImportVerificationFinding row) {
+        String json = row.getDetailsJson();
+        if (json == null || json.isBlank()) return Map.of();
+        try {
+            Map<String, Object> parsed = objectMapper.readValue(json, new TypeReference<>() {});
+            return parsed == null ? Map.of() : parsed;
+        } catch (Exception e) {
+            log.warn("Held statement finding {} has unreadable details; reporting the rest of the "
+                    + "finding without them", row.getId(), e);
+            return Map.of();
+        }
+    }
+
+    private List<EventView> timeline(List<HeldStatementEvent> events) {
+        return events.stream()
+                .map(e -> new EventView(e.getEventType(), e.getFromStatus(), e.getToStatus(),
+                        e.getNotes(), e.getActorId(), e.getCreatedAt()))
+                .toList();
     }
 
     /**

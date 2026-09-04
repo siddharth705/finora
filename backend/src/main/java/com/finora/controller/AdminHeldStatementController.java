@@ -1,6 +1,7 @@
 package com.finora.controller;
 
 import com.finora.dto.ApiResponse;
+import com.finora.dto.HeldStatementDetailDto;
 import com.finora.dto.HeldStatementDto;
 import com.finora.dto.PagedResponse;
 import com.finora.entity.HeldStatement;
@@ -60,8 +61,11 @@ public class AdminHeldStatementController {
                 new HeldStatementFilter(status, bank, olderThanHours, engineerId)));
     }
 
+    /** The evidence behind the trigger, the extraction snapshot, and the audit timeline. Still no
+     *  statement content -- opening the document is {@code /document}, gated and audited
+     *  separately. */
     @GetMapping("/{heldId}")
-    public ApiResponse<HeldStatementDto> detail(@PathVariable String heldId) {
+    public ApiResponse<HeldStatementDetailDto> detail(@PathVariable String heldId) {
         return ApiResponse.ok(heldStatementService.detail(heldId));
     }
 
