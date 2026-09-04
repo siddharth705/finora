@@ -40,6 +40,8 @@ const summary: HeldStatementRow = {
   parserVersion: 'abc123',
   assignedEngineerId: null,
   engineerNotes: null,
+  rootCause: null,
+  fixReference: null,
   createdAt: '2026-09-01T08:00:00Z',
   assignedAt: null,
   readyAt: null,

@@ -1177,6 +1177,8 @@ export interface HeldStatementRow {
   parserVersion: string | null;
   assignedEngineerId: string | null;
   engineerNotes: string | null;
+  rootCause: string | null;
+  fixReference: string | null;
   createdAt: string;
   assignedAt: string | null;
   readyAt: string | null;
@@ -1220,6 +1222,16 @@ export interface HeldStatementDetail {
   summary: HeldStatementRow;
   findings: HeldStatementFinding[];
   timeline: HeldStatementEvent[];
+}
+
+/** What one parser re-run found -- mirrors the backend's `HeldStatementRerunResultDto` exactly. */
+export interface HeldStatementRerunResult {
+  previousParserVersion: string | null;
+  currentParserVersion: string | null;
+  parserVersionChanged: boolean;
+  stillHeld: boolean;
+  reasons: string[];
+  summary: HeldStatementRow;
 }
 
 /** NotificationAdminRow plus the message body and the provider attempt log, newest first. */
