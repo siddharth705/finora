@@ -137,7 +137,7 @@ public class GlobalExceptionHandler {
     }
 
     @ExceptionHandler(BadCredentialsException.class)
-    public ResponseEntity<ApiResponse<Void>> handleBadCredentials(BadCredentialsException ex) {
+    public ResponseEntity<ApiResponse<Void>> handleBadCredentials() {
         return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
                 .body(ApiResponse.error("Invalid credentials", "UNAUTHORIZED"));
     }
@@ -157,7 +157,7 @@ public class GlobalExceptionHandler {
      * admin controller in this codebase actually uses.
      */
     @ExceptionHandler(AccessDeniedException.class)
-    public ResponseEntity<ApiResponse<Void>> handleAccessDenied(AccessDeniedException ex) {
+    public ResponseEntity<ApiResponse<Void>> handleAccessDenied() {
         return ResponseEntity.status(HttpStatus.FORBIDDEN)
                 .body(ApiResponse.error(ErrorCode.AUTH_FORBIDDEN.defaultMessage(), ErrorCode.AUTH_FORBIDDEN.code()));
     }
@@ -176,7 +176,7 @@ public class GlobalExceptionHandler {
      * happens, so a UI can tell the user to refresh and retry instead of showing a generic error.
      */
     @ExceptionHandler(OptimisticLockingFailureException.class)
-    public ResponseEntity<ApiResponse<Void>> handleOptimisticLock(OptimisticLockingFailureException ex) {
+    public ResponseEntity<ApiResponse<Void>> handleOptimisticLock() {
         return ResponseEntity.status(HttpStatus.CONFLICT)
                 .body(ApiResponse.error("This record was just updated by another request — refresh and try again.", "CONFLICT"));
     }
@@ -233,7 +233,7 @@ public class GlobalExceptionHandler {
      * back raw request body content, which for this API may be customer financial data.
      */
     @ExceptionHandler(HttpMessageNotReadableException.class)
-    public ResponseEntity<ApiResponse<Void>> handleMalformedRequestBody(HttpMessageNotReadableException ex) {
+    public ResponseEntity<ApiResponse<Void>> handleMalformedRequestBody() {
         return ResponseEntity.badRequest()
                 .body(ApiResponse.error("The request body is missing or malformed.", "MALFORMED_REQUEST_BODY"));
     }
@@ -309,7 +309,7 @@ public class GlobalExceptionHandler {
     /** The {@code Content-Type} counterpart to {@link #handleMethodNotSupported} -- see that
      *  method's own doc comment for the shared fix (Bug 09). */
     @ExceptionHandler(HttpMediaTypeNotSupportedException.class)
-    public ResponseEntity<ApiResponse<Void>> handleMediaTypeNotSupported(HttpMediaTypeNotSupportedException ex) {
+    public ResponseEntity<ApiResponse<Void>> handleMediaTypeNotSupported() {
         return ResponseEntity.status(HttpStatus.UNSUPPORTED_MEDIA_TYPE)
                 .body(ApiResponse.error("That request's Content-Type is not supported for this endpoint.",
                         "UNSUPPORTED_MEDIA_TYPE"));

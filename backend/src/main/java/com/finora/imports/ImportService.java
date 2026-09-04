@@ -953,7 +953,7 @@ public class ImportService {
             // parser output.
             String rowCategory = (row.category() == null || row.category().isBlank()) ? "Other" : row.category();
             Category category = categorizationService.resolveOrCreateCategory(userId, rowCategory);
-            var decision = ruleLearningService.recordDecision(userId, row, category);
+            var decision = ruleLearningService.recordDecision(row);
             boolean isUnresolvedGuess = decision.unresolvedGuess();
 
             Transaction t = new Transaction();

@@ -138,7 +138,9 @@ export default function Reports() {
     );
   }
 
-  if (error) return <p className="text-muted">Couldn't load reports — please try again later.</p>;
+  if (error) {
+    return <p className="text-muted">Couldn't load reports — please try again later.</p>;
+  }
 
   if (months.length === 0) {
     return (
