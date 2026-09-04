@@ -362,3 +362,46 @@ describe('api response interceptor', () => {
     expect((caught as any).response.data.userActionRequired).toBeUndefined();
   });
 });
+
+/**
+ * The client-identity headers, which the backend's ClientIdentity reads to record where a support
+ * ticket or a piece of feedback came from.
+ *
+ * These ride on the request interceptor, so they go out on EVERY request rather than only the
+ * endpoints that store them -- one rule instead of a list that drifts. That also means both header
+ * names must be in CorsConfig's allowedHeaders allowlist or every cross-origin call in the product
+ * fails preflight; ClientIdentityCorsContractTest pins that side.
+ */
+describe('client identity headers', () => {
+  it('sends the platform on a normal request', () => {
+    const config: any = { url: '/support/tickets', headers: {} };
+
+    expect(requestFulfilledHandler()(config).headers['X-Client-Platform']).toBe('WEB');
+  });
+
+  /**
+   * Auth endpoints deliberately withhold the Bearer token, but they must still identify the
+   * client -- a ticket raised from a sign-in problem is exactly the case where knowing which app
+   * the person was using matters most.
+   */
+  it('sends the platform even on an auth endpoint that withholds the token', () => {
+    const config: any = { url: '/auth/login', headers: {} };
+    const result = requestFulfilledHandler()(config);
+
+    expect(result.headers['X-Client-Platform']).toBe('WEB');
+    expect(result.headers.Authorization).toBeUndefined();
+  });
+
+  /**
+   * app_version is VARCHAR(32) and the backend discards anything longer rather than truncating it,
+   * so sending the full 40-character `__APP_RELEASE__` hash would record nothing at all.
+   */
+  it('never sends a version longer than the backend will store', () => {
+    const config: any = { url: '/support/tickets', headers: {} };
+    const sent = requestFulfilledHandler()(config).headers['X-App-Version'];
+
+    if (sent !== undefined) {
+      expect(sent.length).toBeLessThanOrEqual(32);
+    }
+  });
+});

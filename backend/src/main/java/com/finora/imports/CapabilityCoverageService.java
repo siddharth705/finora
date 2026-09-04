@@ -60,7 +60,7 @@ public class CapabilityCoverageService {
             "RUNNING_BALANCE", "DR_CR_SUFFIX", "LEADING_PLUS_CREDIT", "DATE_TIME_COLUMN",
             "WRAPPED_DESCRIPTION", "REPEATED_HEADER", "REPEATED_ACCOUNT_BANNER",
             "PAGE_BOUNDARY_ISOLATION", "COMPOSITE_STATEMENT", "CREDIT_CARD_SUMMARY_SIGNAL",
-            "OFFSET_COLUMN_ANCHORS", "GRID_METADATA_FALLBACK", "GRID_METADATA_TRAILING_LABEL",
+            "OFFSET_COLUMN_ANCHORS", "COLUMN_SPAN_PLACEMENT", "GRID_METADATA_FALLBACK", "GRID_METADATA_TRAILING_LABEL",
             "LEADING_NAME_LINE", "LEADING_NARRATION_CONTINUATION",
             "FINANCIAL_PRODUCT_CLASSIFICATION",
             // Added once CapabilityCorpusCoverageTest found the engine recording them with the
@@ -295,6 +295,20 @@ public class CapabilityCoverageService {
             // MAX_TRAILING_CONTINUATION_ROWS's count cap, recovered as trailing content anyway by
             // content shape rather than count -- see PdfTableLocator.CHEQUE_REFERENCE_TRAILER.
             "CHEQUE_REFERENCE_TRAILER_RECOVERED",
+            // A wrapped narration line admitted past MAX_TRAILING_CONTINUATION_ROWS's count cap
+            // because the document's own line spacing places it with the transaction above. Real
+            // HDFC savings statements set every line on one uniform pitch, which leaves
+            // continuesTheBlock's pitch check with nothing to say, and wrap a third and fourth
+            // narration line on roughly half their transactions. See
+            // PdfTableLocator.belongsToTheRowAbove.
+            "WRAPPED_DESCRIPTION_BEYOND_COUNT_CAP",
+            // One leading-narration buffer holding two transactions' text -- a previous
+            // transaction's narration that ran past the trailing cap, followed by the next
+            // transaction's leading narration -- split at the first row the document places
+            // decisively below rather than above. Found on a real ICICI savings export where
+            // every transaction's remarks began with the previous transaction's reference
+            // tail. See PdfTableLocator's leading branch.
+            "LEADING_BUFFER_SPLIT_AT_ITS_OWN_BOUNDARY",
             // A statement period stated as two separately colon-labeled fields on one row
             // ("From : <date>" / "To : <date>") rather than one combined "Period" label -- found
             // on real HDFC savings-account statements and a real Sanjay HDFC statement. See

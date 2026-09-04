@@ -4,6 +4,7 @@ import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { CheckCircle2, UploadCloud, AlertTriangle, Clock, FileText, FileSpreadsheet, Trash2, RefreshCw } from 'lucide-react';
 import { importApi, importJobsApi, statementImportsApi, categoriesApi, accountsApi, type StagingResult } from '../api/endpoints';
+import { newIdempotencyKey } from '../lib/idempotencyKey';
 import { PDF_PASSWORD_REQUIRED, PDF_PASSWORD_INVALID, IMPORT_SESSION_ALREADY_CONFIRMED } from '../api/errorCodes';
 import { importFailureMessage } from '../api/importFailureMessages';
 import { BankLogo } from '../components/BankLogo';
@@ -205,6 +206,10 @@ export default function Import() {
   const [summary, setSummary] = useState<ImportSummary | null>(null);
   const [multiSummary, setMultiSummary] = useState<ImportSummary[] | null>(null);
   const [confirming, setConfirming] = useState(false);
+  // The key for the current re-import confirm attempt; see the call site below for why it is reused
+  // across retries. Cleared on success so a later, genuinely new re-import is not mistaken for a
+  // replay -- re-importing the same statement again after correcting something is legitimate.
+  const confirmAttemptKey = useRef<string | null>(null);
 
   // docs/proposals/account-ownership-intelligence-proposal.md §3.1. A client-side pre-check only
   // -- it decides whether to show the "Statement Check" dialog before confirming; the backend
@@ -667,6 +672,12 @@ export default function Import() {
             paymentDueDate: detectedAccount?.paymentDueDate ?? null,
             password: reimportState.password,
             userConfirmedContinue: ownershipAcknowledged ? true : undefined,
+            // Re-import only. Minted once per confirm attempt and reused across retries of that
+            // attempt, so a retry whose predecessor already committed is refused by the server
+            // (V133) instead of posting the whole statement's transactions a second time. The
+            // first-time branch below deliberately sends none: its ImportSession is claimed
+            // atomically server-side, so it cannot be confirmed twice.
+            idempotencyKey: (confirmAttemptKey.current ??= newIdempotencyKey()),
           })
         : await importApi.confirm({
             sessionId: sessionId!,
@@ -681,6 +692,9 @@ export default function Import() {
             paymentDueDate: detectedAccount?.paymentDueDate ?? null,
             userConfirmedContinue: ownershipAcknowledged ? true : undefined,
           });
+      // Only on success: a failed attempt keeps its key so a retry is recognised as the SAME
+      // attempt rather than becoming a second one the server would happily import.
+      confirmAttemptKey.current = null;
       setSummary(result);
       setStep('summary');
       invalidateImportRelatedQueries(queryClient);

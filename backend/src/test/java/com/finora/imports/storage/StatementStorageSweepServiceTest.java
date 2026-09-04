@@ -251,6 +251,61 @@ class StatementStorageSweepServiceTest {
                 .containsExactlyInAnyOrder(ImportJob.Status.COMPLETED, ImportJob.Status.CANCELLED);
     }
 
+    /**
+     * A held job's stored object must survive, exactly as a FAILED job's does.
+     *
+     * <p>No production change was needed for this -- {@code IMPORT_JOB_EXCLUDED_STATUSES} names the
+     * statuses that do NOT protect an object, so a new status is protected by default -- and that is
+     * precisely why the test exists. The protection is implicit, and an edit that "tidied" the set
+     * by adding HELD_FOR_REVIEW to it would read as harmless and would delete the very files the
+     * triage queue exists to reprocess. A held job is the worst possible thing to get wrong here: it
+     * waits on a human fixing a parser, so it can sit far longer than a failed one, and its object
+     * is the entire input to the reprocess.
+     */
+    @Test
+    void sweep_retainsTheObjectOfAHeldForReviewJob() {
+        String key = "statements/66/77/667788.bin";
+        when(statementImportRepository.findObjectsUnreferencedSince(any(), anyInt()))
+                .thenReturn(List.<Object[]>of(candidate("667788", key, Instant.now().minus(120, ChronoUnit.DAYS))));
+        when(statementImportRepository.existsByObjectKey(key)).thenReturn(false);
+        when(importSessionRepository.existsByObjectKey(key)).thenReturn(false);
+        // The real repository answers "yes, a job outside the excluded set references this" for a
+        // held job, because HELD_FOR_REVIEW is not one of the two excluded statuses.
+        when(importJobRepository.existsByObjectKeyAndStatusNotIn(eq(key), any())).thenReturn(true);
+
+        service.sweep();
+
+        verify(storage, never()).delete(key);
+    }
+
+    /** The set that decides the above, asserted directly: HELD_FOR_REVIEW must never join it. */
+    @Test
+    void heldForReviewIsNotAnExcludedStatus_soItsObjectIsRetained() {
+        assertThat(StatementStorageSweepService.IMPORT_JOB_EXCLUDED_STATUSES)
+                .as("adding HELD_FOR_REVIEW here would delete the statements this feature "
+                        + "reprocesses")
+                .doesNotContain(ImportJob.Status.HELD_FOR_REVIEW);
+    }
+
+    /**
+     * The same invariant for the trust hold, and the reason that status exists at all rather than
+     * reusing COMPLETED with a side table.
+     *
+     * <p>A trust-held job staged successfully, so completing it would have been the natural
+     * modelling choice -- and COMPLETED is one of the two statuses that stop protecting the object.
+     * The reviewer's entire job is to open that PDF and decide whether the extraction matches it,
+     * so reclaiming it is the one thing that makes the review impossible to perform. A trust hold
+     * can also outlast a failure by a wide margin: it waits on a human reading a document, not on a
+     * retry timer.
+     */
+    @Test
+    void heldForTrustReviewIsNotAnExcludedStatus_soTheReviewersCopySurvives() {
+        assertThat(StatementStorageSweepService.IMPORT_JOB_EXCLUDED_STATUSES)
+                .as("adding HELD_FOR_TRUST_REVIEW here would delete the statement the reviewer "
+                        + "is being asked to look at")
+                .doesNotContain(ImportJob.Status.HELD_FOR_TRUST_REVIEW);
+    }
+
     @Test
     void sweep_continuesTheBatch_whenOneDeleteFails() {
         when(statementImportRepository.findObjectsUnreferencedSince(any(), anyInt()))

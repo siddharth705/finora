@@ -156,9 +156,17 @@ def discover_pdfs(corpus: Path):
     scripts/corpus-run.py already carries this same fix and its own comment explaining it; this is
     that fix, ported, so the measuring tool and the judging tool can never disagree about which
     documents the corpus contains.
-    """
-    return sorted((p for p in corpus.iterdir() if p.is_file() and p.suffix.lower() == ".pdf"),
-                  key=lambda p: p.name)
+    
+    Recursive (rglob), not a flat listing. The corpus is a human-maintained directory that people
+    reorganise -- it has already been split into per-product subdirectories once -- and a flat
+    iterdir() sees nothing at all after such a move. That failure is loud (both tools exit with
+    "no .pdf files") rather than silent, but it still leaves the correctness gate covering zero
+    documents until someone notices, which is the same class of gap as the case-sensitive glob
+    this function replaced. Sorting by name first, then full path, keeps the report ordered the way
+    a reader expects regardless of which subdirectory a document happens to live in.
+"""
+    return sorted((p for p in corpus.rglob("*") if p.is_file() and p.suffix.lower() == ".pdf"),
+                  key=lambda p: (p.name, str(p)))
 
 
 def main() -> int:

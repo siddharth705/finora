@@ -1088,6 +1088,95 @@ export interface LearningQueueSummary {
   resolved: number;
 }
 
+/**
+ * One row of the admin notification dashboard (Task 12). Mirrors the backend's
+ * NotificationAdminDto.
+ *
+ * Deliberately has no email/phone field, unlike LearningQueueEvent's userEmail -- userId is a
+ * bare UUID with no join back to the user's contact details, matching
+ * AdminNotificationController's own no-PII-exposure requirement. There is also no `retryable` or
+ * any action flag: this dashboard is read-only, there is nothing here for the UI to offer.
+ */
+export interface NotificationAdminRow {
+  id: string;
+  userId: string;
+  type: string;
+  category: string;
+  channel: 'EMAIL' | 'SMS' | 'PUSH';
+  priority: string;
+  status: 'CREATED' | 'QUEUED' | 'PROCESSING' | 'SENT' | 'RETRYING' | 'DEAD_LETTER';
+  title: string;
+  attemptCount: number;
+  nextAttemptAt: string | null;
+  lastError: string | null;
+  sentAt: string | null;
+  createdAt: string;
+}
+
+/**
+ * One row of the held-imports triage queue.
+ *
+ * Carries no `lastError`, deliberately -- see HeldImportDto's own doc on the backend. That field is
+ * a raw parser message, and a parser message routinely quotes the statement content that defeated
+ * it. The list view is a page an operator leaves open; it gets the curated `failureCode` only.
+ * `userId` is a bare id for the same reason NotificationAdminRow's is: the controller never joins
+ * to a user's contact details, so no email or phone can reach this screen.
+ */
+export interface HeldImportRow {
+  id: string;
+  userId: string;
+  fileName: string;
+  sourceFormat: string | null;
+  failureCode: string | null;
+  attemptCount: number;
+  recoveryCount: number;
+  createdAt: string;
+  heldAt: string | null;
+}
+
+/** A held import plus the diagnostics an engineer needs. Every fetch of this is audited. */
+export interface HeldImportDetail {
+  job: HeldImportRow;
+  lastError: string | null;
+  correlationId: string | null;
+  objectKey: string | null;
+}
+
+/** `reprocessing` counts jobs already sent back to the queue, not every queued import. */
+export interface HeldImportSummary {
+  held: number;
+  reprocessing: number;
+}
+
+/** NotificationAdminRow plus the message body and the provider attempt log, newest first. */
+export interface NotificationAdminDetail extends NotificationAdminRow {
+  message: string;
+  attempts: NotificationAttempt[];
+}
+
+export interface NotificationAttempt {
+  id: string;
+  provider: string;
+  response: string | null;
+  success: boolean;
+  attempt: number;
+  timestamp: string;
+}
+
+export interface NotificationAdminChannelSummary {
+  channel: string;
+  sent: number;
+  failed: number;
+}
+
+/** The dashboard's stat tiles: sent/failed counts, overall and by channel. Deliberately just
+ *  counts -- no trend charts, no engagement scoring (proposal section 2.5/4). */
+export interface NotificationAdminSummary {
+  sent: number;
+  failed: number;
+  byChannel: NotificationAdminChannelSummary[];
+}
+
 
 /**
  * A merchant the normalization engine invented, awaiting a human decision (WI4).

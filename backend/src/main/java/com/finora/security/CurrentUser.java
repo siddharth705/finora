@@ -45,4 +45,24 @@ public class CurrentUser {
             throw new IllegalStateException("Authenticated principal is not a user id", e);
         }
     }
+
+    /**
+     * Whether the calling principal carries a given permission — for the small number of endpoints
+     * that serve two audiences at once (a ticket's owner, or any admin) rather than being gated
+     * entirely by a class-level {@code @PreAuthorize}. {@code SupportTicketService}'s attachment
+     * download and ticket detail are the first callers: the same route re-checks "is this yours" or
+     * "can you see any ticket" per request, exactly the posture
+     * {@code docs/proposals/support-help-feedback-proposal.md} §3.6 describes for attachments.
+     *
+     * <p>Returns {@code false} rather than throwing when there is no authentication in context —
+     * this answers "can they" for a caller already known to exist, not "who is calling".
+     */
+    public boolean hasAuthority(String authority) {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (authentication == null) {
+            return false;
+        }
+        return authentication.getAuthorities().stream()
+                .anyMatch(granted -> granted.getAuthority().equals(authority));
+    }
 }

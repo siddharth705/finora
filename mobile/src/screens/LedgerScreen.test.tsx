@@ -137,6 +137,42 @@ describe('the three outcomes stay distinguishable', () => {
   });
 });
 
+describe('counterparty label', () => {
+  it('reads the same stored type two different ways depending on direction', async () => {
+    transactions.search.mockResolvedValue(
+      page([
+        txn({ id: 't-out', description: 'PAID SUNIL', type: 'EXPENSE', counterpartyType: 'PERSON' }),
+        txn({ id: 't-in', description: 'GOT FROM SUNIL', type: 'INCOME', counterpartyType: 'PERSON' }),
+      ]) as never,
+    );
+
+    renderScreen();
+
+    // The counterparty type stored is identical on both rows; the accessibility announcement
+    // differs because direction is composed in at render time, never stored. This is the guard
+    // against the V123 mistake -- a category literally named "Paid a Person" that turned out to be
+    // money RECEIVED on 99 of 434 rows it was applied to.
+    await waitFor(() => {
+      expect(screen.getByLabelText(/Sent to a person/)).toBeTruthy();
+      expect(screen.getByLabelText(/Received from a person/)).toBeTruthy();
+    });
+  });
+
+  it('says nothing about the counterparty when it is unknown', async () => {
+    // Roughly a fifth of real rows, plus everything a server backfill has not reached yet. Padding
+    // every row in five with "unknown" would make the announcement slower to listen to for zero
+    // information gained.
+    transactions.search.mockResolvedValue(
+      page([txn({ id: 't-1', description: 'Grocery run', counterpartyType: 'UNKNOWN' })]) as never,
+    );
+
+    renderScreen();
+
+    await screen.findByText('Grocery run');
+    expect(screen.queryByText(/unknown/i)).toBeNull();
+  });
+});
+
 describe('retry', () => {
   it('issues a NEW request rather than re-rendering the error', async () => {
     transactions.search.mockRejectedValueOnce(new Error('Network Error'));

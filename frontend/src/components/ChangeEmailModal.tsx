@@ -86,7 +86,7 @@ export function ChangeEmailModal({ onClose, signInMethod }: {
         ) : (
           <>
             <div className="flex items-center justify-between mb-4">
-              <h2 className="font-serif text-lg font-semibold text-ink">Change Email</h2>
+              <h2 className="text-lg font-semibold text-ink">Change Email</h2>
               <button onClick={onClose} className="text-muted hover:text-ink" aria-label="Close">
                 <X size={18} />
               </button>

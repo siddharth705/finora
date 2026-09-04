@@ -4,11 +4,16 @@ import com.finora.AbstractIntegrationTest;
 import com.finora.entity.Account;
 import com.finora.entity.Budget;
 import com.finora.entity.Category;
+import com.finora.entity.ClientPlatform;
+import com.finora.entity.FeedbackEntry;
 import com.finora.entity.Role;
 import com.finora.entity.Payment;
 import com.finora.entity.Referral;
 import com.finora.entity.ReferralCode;
 import com.finora.entity.StatementImport;
+import com.finora.entity.SupportTicket;
+import com.finora.entity.SupportTicketAttachment;
+import com.finora.entity.SupportTicketInternalNote;
 import com.finora.entity.Transaction;
 import com.finora.entity.User;
 import com.finora.entity.WalletLedgerEntry;
@@ -18,12 +23,19 @@ import com.finora.imports.analysis.StatementAnalysisSession;
 import com.finora.imports.analysis.StatementAnalysisSessionRepository;
 import com.finora.integrations.google.GmailConnectionRepository;
 import com.finora.integrations.google.GmailConnectionService;
+import com.finora.notification.domain.Notification;
+import com.finora.notification.domain.NotificationCategory;
+import com.finora.notification.domain.NotificationChannel;
+import com.finora.notification.domain.NotificationPriority;
+import com.finora.notification.domain.NotificationType;
+import com.finora.notification.repository.NotificationRepository;
 import com.finora.repository.AccountReactivationTokenRepository;
 import com.finora.repository.EmailVerificationTokenRepository;
 import com.finora.repository.AccountRepository;
 import com.finora.repository.BudgetRepository;
 import com.finora.repository.CategoryRepository;
 import com.finora.repository.CategoryRuleRepository;
+import com.finora.repository.FeedbackEntryRepository;
 import com.finora.repository.ImportJobRepository;
 import com.finora.repository.ImportSessionRepository;
 import com.finora.repository.MerchantAliasRepository;
@@ -45,6 +57,9 @@ import com.finora.repository.RelationshipRepository;
 import com.finora.repository.RoleRepository;
 import com.finora.repository.StatementImportRepository;
 import com.finora.repository.SubscriptionRepository;
+import com.finora.repository.SupportTicketAttachmentRepository;
+import com.finora.repository.SupportTicketInternalNoteRepository;
+import com.finora.repository.SupportTicketRepository;
 import com.finora.repository.TransactionRepository;
 import com.finora.repository.UserRepository;
 import com.finora.repository.UserSettingsRepository;
@@ -119,6 +134,13 @@ class AccountPurgeSweepServiceIT extends AbstractIntegrationTest {
     @Autowired private StatementImportRepository statementImportRepository;
     @Autowired private StatementImportService statementImportService;
     @Autowired private StatementAnalysisSessionRepository statementAnalysisSessionRepository;
+    @Autowired private NotificationRepository notificationRepository;
+    @Autowired private SupportTicketRepository supportTicketRepository;
+    @Autowired private FeedbackEntryRepository feedbackEntryRepository;
+    // Not passed to the service constructor -- fixture setup and assertions only, the same role
+    // roleRepository already plays below.
+    @Autowired private SupportTicketAttachmentRepository supportTicketAttachmentRepository;
+    @Autowired private SupportTicketInternalNoteRepository supportTicketInternalNoteRepository;
     @Autowired private AuditService auditService;
     @Autowired private PasswordEncoder passwordEncoder;
     @Autowired private TransactionTemplate transactionTemplate;
@@ -141,8 +163,9 @@ class AccountPurgeSweepServiceIT extends AbstractIntegrationTest {
                 passwordChangeSessionRepository, passwordResetTokenRepository, accountReactivationTokenRepository,
                 emailVerificationTokenRepository,
                 refreshTokenRepository, userSettingsRepository, accountRepository, statementImportRepository,
-                statementImportService, statementAnalysisSessionRepository, auditService, passwordEncoder,
-                transactionTemplate);
+                statementImportService, statementAnalysisSessionRepository, notificationRepository,
+                supportTicketRepository, feedbackEntryRepository, auditService,
+                passwordEncoder, transactionTemplate);
         ReflectionTestUtils.setField(service, "sweepEnabled", true);
         ReflectionTestUtils.setField(service, "retentionHours", 48);
         ReflectionTestUtils.setField(service, "batchSize", 200);
@@ -212,7 +235,11 @@ class AccountPurgeSweepServiceIT extends AbstractIntegrationTest {
      * own, so unlike {@code subscription_events} it does NOT rely on any cascade off subscriptions.
      * {@link Referral} (D-28 PR4-C) proves BOTH directions of its own explicit calls -- the purged
      * user can appear as either {@code referrer_user_id} or {@code referred_user_id}, on two
-     * entirely different rows, and both must actually disappear.
+     * entirely different rows, and both must actually disappear. {@link Notification} (V125/V137)
+     * proves the same explicit-call pattern as Payment: it has its own {@code ON DELETE CASCADE}
+     * now too, but that alone would never fire here, since this method anonymizes {@code users}
+     * rather than deleting the row -- {@code NotificationRepository.deleteByUserId} is what
+     * actually has to do the work.
      */
     @Test
     @Transactional
@@ -284,6 +311,12 @@ class AccountPurgeSweepServiceIT extends AbstractIntegrationTest {
         walletEntry.setReason(WalletLedgerEntry.REASON_REFERRAL_REWARD);
         walletLedgerRepository.save(walletEntry);
 
+        Notification notification = Notification.create(userId, NotificationType.PASSWORD_CHANGED,
+                NotificationCategory.SECURITY, NotificationChannel.EMAIL, NotificationPriority.NORMAL,
+                "purge-test-" + UUID.randomUUID(), "Your password was changed",
+                "The password on your account was just changed.", Instant.now());
+        notificationRepository.save(notification);
+
         entityManager.flush();
 
         service.sweep();
@@ -328,6 +361,9 @@ class AccountPurgeSweepServiceIT extends AbstractIntegrationTest {
         Long walletLedgerCount = (Long) entityManager
                 .createNativeQuery("SELECT COUNT(*) FROM wallet_ledger WHERE user_id = :userId")
                 .setParameter("userId", userId).getSingleResult();
+        Long notificationCount = (Long) entityManager
+                .createNativeQuery("SELECT COUNT(*) FROM notifications WHERE user_id = :userId")
+                .setParameter("userId", userId).getSingleResult();
         assertThat(transactionCount).isZero();
         assertThat(budgetCount).isZero();
         assertThat(goalCount).isZero();
@@ -338,6 +374,7 @@ class AccountPurgeSweepServiceIT extends AbstractIntegrationTest {
         assertThat(referralsAsReferrerCount).isZero();
         assertThat(referralsAsReferredCount).isZero();
         assertThat(walletLedgerCount).isZero();
+        assertThat(notificationCount).isZero();
     }
 
     /**
@@ -464,5 +501,66 @@ class AccountPurgeSweepServiceIT extends AbstractIntegrationTest {
         assertThat(anonymized.getFailureCode()).isEqualTo("IMPORT_007");
         assertThat(anonymized.getOutcome()).isEqualTo(StatementAnalysisSession.Outcome.FAILED);
         assertThat(anonymized.getReference()).isEqualTo(session.getReference());
+    }
+
+    /**
+     * Phase 6: proves the wiring, not the delete -- {@code SupportRepositoryIT
+     * .purgingAUserByBulkDeleteAlsoRemovesAttachmentsAndNotes} already proves {@code
+     * deleteByUserId} itself cascades to attachments and notes when called directly. What only a
+     * real end-to-end purge run can prove is that {@code purgeOne} actually reaches those two
+     * calls at all, alongside every other table in the same pass -- a mock-only suite verifies the
+     * call happened, not that a real ticket, attachment, note and feedback row a real user filed
+     * are actually gone afterward.
+     */
+    @Test
+    @Transactional
+    void sweep_removesSupportTicketsAttachmentsNotesAndFeedback() {
+        SupportTicket ticket = new SupportTicket();
+        ticket.setTicketNumber("SUP-PURGE" + UUID.randomUUID().toString().substring(0, 6));
+        ticket.setUserId(userId);
+        ticket.setCategory(SupportTicket.Category.STATEMENT_IMPORT);
+        ticket.setSource(ClientPlatform.WEB);
+        ticket.setSubject("Purge IT fixture ticket");
+        ticket.setDescription("Exists only to prove the purge sweep reaches it.");
+        ticket = supportTicketRepository.save(ticket);
+        UUID ticketId = ticket.getId();
+
+        SupportTicketAttachment attachment = new SupportTicketAttachment();
+        attachment.setTicketId(ticketId);
+        attachment.setFilename("evidence.txt");
+        attachment.setContentType("text/plain");
+        attachment.setSizeBytes(2);
+        attachment.setSha256Hash("0".repeat(64));
+        attachment.setContent(new byte[] {1, 2});
+        UUID attachmentId = supportTicketAttachmentRepository.save(attachment).getId();
+
+        SupportTicketInternalNote note = new SupportTicketInternalNote();
+        note.setTicketId(ticketId);
+        note.setNote("Purge IT fixture note");
+        UUID noteId = supportTicketInternalNoteRepository.save(note).getId();
+
+        FeedbackEntry feedback = new FeedbackEntry();
+        feedback.setUserId(userId);
+        feedback.setType(FeedbackEntry.Type.BUG);
+        feedback.setContext(FeedbackEntry.Context.IMPORT_FLOW);
+        feedback.setSource(ClientPlatform.WEB);
+        feedback.setMessage("Purge IT fixture feedback");
+        UUID feedbackId = feedbackEntryRepository.save(feedback).getId();
+        entityManager.flush();
+
+        AccountPurgeSweepService.Result result = service.sweep();
+
+        assertThat(result.purged()).isEqualTo(1);
+        entityManager.flush();
+        entityManager.clear();
+
+        assertThat(supportTicketRepository.findById(ticketId)).isEmpty();
+        assertThat(supportTicketAttachmentRepository.findById(attachmentId)).isEmpty();
+        assertThat(supportTicketInternalNoteRepository.findByTicketIdOrderByCreatedAtAsc(ticketId)).isEmpty();
+        assertThat(feedbackEntryRepository.findById(feedbackId)).isEmpty();
+        // Sanity check that noteId was really persisted before the purge, not silently skipped --
+        // catches a fixture typo the emptiness assertion above alone couldn't distinguish from
+        // "never existed".
+        assertThat(noteId).isNotNull();
     }
 }

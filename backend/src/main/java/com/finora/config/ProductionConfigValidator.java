@@ -234,6 +234,17 @@ public class ProductionConfigValidator implements SmartInitializingSingleton {
                     .append("Admin SDK can't verify phone numbers, so registration, password reset, and ")
                     .append("password change can never complete their phone-verification step.\n");
         }
+        // NoOpPushProvider (see PushConfig) is selected on the exact same missing-FirebaseApp-bean
+        // condition as phoneVerificationProvider.isConfigured() above -- both derive from whether
+        // GOOGLE_APPLICATION_CREDENTIALS produced a usable FirebaseApp, so the hard failure two
+        // lines up already prevents this fallback from ever running silently in a deployment that
+        // passes that check. Logged explicitly anyway (SilentFallbackConfigValidationTest requires
+        // every NoOp*'s declared hint to actually be checked here) so a future refactor that gates
+        // push on different config from phone verification can't silently reopen this gap.
+        if (!phoneVerificationProvider.isConfigured()) {
+            log.warn("GOOGLE_APPLICATION_CREDENTIALS is also what selects NoOpPushProvider (see PushConfig) "
+                    + "-- push notifications will be logged only, never actually delivered, until this is set.");
+        }
 
         // ADR-009. Same class of failure as JWT_SECRET above -- a placeholder that is public, in
         // git, and identical for every developer. The consequence differs though: this key protects

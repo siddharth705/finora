@@ -8,6 +8,9 @@
 > production code calls the publisher") was correct at `5631bb9` and was closed by WI1 (`95d6961`).
 > Its own reproduction step, `grep -rn "\.enqueue(" backend/src/main/java`, now returns
 > `ImportService.java`. **Bug 37** (unbounded bulk id lists) was closed earlier, in `31d3f91`.
+> **Bug 49** (`CurrentUser` injects a `UserRepository` it never uses) was closed in `b4e5ca3c`
+> (PR #255) — the field and its constructor injection are gone; `CurrentUser.id()` resolves the
+> UUID straight from the JWT principal with no repository lookup.
 >
 > Acted on from this report: findings 13, 19, 20 and 21 — all defects in code from the same
 > session — were fixed in the commit that filed this document. Finding 18 (stuck-row recovery

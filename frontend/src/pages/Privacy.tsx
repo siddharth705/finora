@@ -35,8 +35,12 @@ export default function Privacy() {
       <PublicSection title="Uploaded Statements">
         <p>
           When you import a bank or credit card statement, the original file is stored securely and linked to
-          your account so you can re-download it or re-process it later from Statement History. Only you can
-          access your uploaded statements.
+          your account so you can re-download it or re-process it later from Statement History.
+        </p>
+        <p>
+          In most cases statements are processed entirely automatically. When an import cannot be processed
+          automatically, authorized staff may review statement information in order to diagnose and resolve
+          the problem, and we may use AI tooling to help with that diagnosis.
         </p>
       </PublicSection>
 
@@ -68,6 +72,13 @@ export default function Privacy() {
           Passwords are hashed with bcrypt and never stored or logged in plain text. Password reset tokens are
           hashed before storage, so a database compromise alone cannot be used to reset an account. All traffic
           between your browser and Fynora's servers is encrypted in transit (HTTPS).
+        </p>
+      </PublicSection>
+
+      <PublicSection title="Administrative Access">
+        <p>
+          Access to customer data by Fynora staff is restricted to authorized personnel, recorded and
+          audited, and permitted only where it is necessary to operate and support the service.
         </p>
       </PublicSection>
 

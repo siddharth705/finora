@@ -39,6 +39,9 @@ public class TransactionController {
             @RequestParam(required = false) UUID accountId,
             @RequestParam(required = false) UUID categoryId,
             @RequestParam(required = false) String type,
+            // Ledger's Status column (reconciliationBadge, frontend Ledger.tsx) surfaces exactly
+            // these values already -- see Transaction.ReconciliationStatus for the full set.
+            @RequestParam(required = false) String status,
             @RequestParam(required = false) @org.springframework.format.annotation.DateTimeFormat(iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE) LocalDate dateFrom,
             @RequestParam(required = false) @org.springframework.format.annotation.DateTimeFormat(iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE) LocalDate dateTo,
             @RequestParam(required = false) BigDecimal amountMin,
@@ -49,7 +52,7 @@ public class TransactionController {
             @RequestParam(defaultValue = "date") String sortField,
             @RequestParam(defaultValue = "desc") String sortDir
     ) {
-        var filter = new TransactionDto.FilterRequest(accountId, categoryId, type, dateFrom, dateTo,
+        var filter = new TransactionDto.FilterRequest(accountId, categoryId, type, status, dateFrom, dateTo,
                 amountMin, amountMax, keyword, page, size, sortField, sortDir);
         return ApiResponse.ok(transactionService.search(currentUser.id(), filter));
     }
@@ -64,6 +67,13 @@ public class TransactionController {
     @GetMapping("/groups/needs-review")
     public ApiResponse<List<TransactionGroupingService.MerchantGroup>> needsReviewGroups() {
         return ApiResponse.ok(transactionGroupingService.groupNeedsReviewByMerchant(currentUser.id()));
+    }
+
+    /** Backs the Ledger's "N transactions with this person/business" review card -- the rows the
+     *  merchant grouping above cannot reach at all, see TransactionGroupingService's own doc. */
+    @GetMapping("/groups/needs-review/by-counterparty")
+    public ApiResponse<List<TransactionGroupingService.CounterpartyGroup>> needsReviewGroupsByCounterparty() {
+        return ApiResponse.ok(transactionGroupingService.groupNeedsReviewByCounterparty(currentUser.id()));
     }
 
     /** "Why this category?" — fetched on demand, not on every row of the Ledger's list. */

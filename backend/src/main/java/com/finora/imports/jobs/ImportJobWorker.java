@@ -3,11 +3,19 @@ package com.finora.imports.jobs;
 import com.finora.entity.ImportJob;
 import com.finora.exception.ErrorCode;
 import com.finora.imports.ImportService;
+import com.finora.imports.analysis.ImportVerificationRecorder;
 import com.finora.imports.StatementUpload;
 import com.finora.imports.storage.StatementContentService;
+import com.finora.imports.storage.StatementIntegrityException;
 import com.finora.observability.AlertSeverity;
 import com.finora.observability.WorkerExecution;
 import com.finora.observability.WorkerObservability;
+import com.finora.notification.api.NotificationRequest;
+import com.finora.notification.api.NotificationService;
+import com.finora.notification.domain.NotificationCategory;
+import com.finora.notification.domain.NotificationChannel;
+import com.finora.notification.domain.NotificationPriority;
+import com.finora.notification.domain.NotificationType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -15,8 +23,15 @@ import org.springframework.scheduling.annotation.Async;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
+import com.finora.imports.trust.HoldDecision;
+import com.finora.imports.trust.TrustPredicate;
+
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -118,6 +133,19 @@ public class ImportJobWorker {
     private final WorkerObservability observability;
     private final ImportStageRecorder stageRecorder;
     private final ExceptionClassifier exceptionClassifier;
+    private final NotificationService notificationService;
+    private final ImportVerificationRecorder verificationRecorder;
+    private final com.finora.service.HeldStatementService heldStatementService;
+
+    /**
+     * The deploy that parsed a statement, recorded on every job.
+     *
+     * <p>Railway injects RAILWAY_GIT_COMMIT_SHA on every deploy, the same source
+     * {@code sentry.release} already uses, so this needs no dashboard configuration. Blank
+     * locally and in tests, which is honest -- there is no deploy to name.
+     */
+    @Value("${app.parser-version:${RAILWAY_GIT_COMMIT_SHA:}}")
+    private String parserVersion;
 
     @Value("${app.import.queue.enabled:false}")
     private boolean enabled;
@@ -127,13 +155,19 @@ public class ImportJobWorker {
                             StatementContentService statementContentService,
                             WorkerObservability observability,
                             ImportStageRecorder stageRecorder,
-                            ExceptionClassifier exceptionClassifier) {
+                            ExceptionClassifier exceptionClassifier,
+                            NotificationService notificationService,
+                            ImportVerificationRecorder verificationRecorder,
+                            com.finora.service.HeldStatementService heldStatementService) {
         this.jobStore = jobStore;
         this.importService = importService;
         this.statementContentService = statementContentService;
         this.observability = observability;
         this.stageRecorder = stageRecorder;
         this.exceptionClassifier = exceptionClassifier;
+        this.notificationService = notificationService;
+        this.verificationRecorder = verificationRecorder;
+        this.heldStatementService = heldStatementService;
 
         observability.publishQueueDepth(WORKER, JOB_KIND, jobStore::queueDepth);
         observability.publishOldestPendingAge(WORKER, JOB_KIND, jobStore::oldestQueuedAt);
@@ -258,13 +292,67 @@ public class ImportJobWorker {
             // would otherwise overwrite a cancel that arrived while the parse was running.
             abortIfCancelled(jobId);
 
+            VerificationTelemetry telemetry =
+                    VerificationTelemetry.from(staged.verificationReports());
+
+            // The trust gate. Everything above this line was about extraction failing; this is
+            // about extraction succeeding and being distrusted anyway, on evidence the pipeline
+            // already computed. UTC rather than the server's zone so the future-period rule cannot
+            // depend on where this runs.
+            HoldDecision decision = TrustPredicate.evaluate(
+                    staged.verificationReports(), staged.statementPeriods(),
+                    LocalDate.now(ZoneOffset.UTC));
+
+            // Created before the job transition so the job row can carry the hold's id.
+            //
+            // Failure here must not fail the import -- the same rule V62 states for merchant
+            // learning -- but it must fail CLOSED: a failed hold still holds, with no review
+            // record, rather than completing. The database being unavailable is not evidence the
+            // extraction was fine, and completing would silently release exactly the import this
+            // exists to stop. createHold is idempotent on the job id, so a retried pass reuses the
+            // review that already exists instead of colliding with it.
+            UUID heldStatementId = null;
+            if (decision.hold()) {
+                try {
+                    heldStatementId = heldStatementService
+                            .createHold(job, staged, decision, parserVersion).getId();
+                } catch (RuntimeException e) {
+                    log.error("Could not create the hold record for import job {}; holding the "
+                            + "import anyway, with no review record to work from", jobId, e);
+                }
+            }
+            final UUID heldId = heldStatementId;
+
             jobStore.update(jobId, j -> {
                 // totalParsed rather than the staged row count: the latter is what staged
                 // successfully, and reporting it as the total would make a statement with
                 // unparseable rows look like it had fewer rows than it did.
                 j.recordProgress(staged.totalParsed(), staged.stagedRows());
-                j.complete(staged.sessionId(), Instant.now());
+                if (decision.hold()) {
+                    // Keeps the session: the rows are real, and comparing them against the
+                    // document is the entire review.
+                    j.holdForTrustReview(staged.sessionId(), heldId, Instant.now());
+                } else {
+                    j.complete(staged.sessionId(), Instant.now());
+                }
+                // Evidence only, and recorded either way -- it is what a reviewer works from, and
+                // the telemetry readout's denominator would otherwise quietly exclude exactly the
+                // imports worth looking at.
+                j.recordVerificationTelemetry(
+                        telemetry.reliabilityStatus(), telemetry.textSource(),
+                        telemetry.isEmpty() ? null : telemetry.headerReconstructionUncertain(),
+                        telemetry.isEmpty() ? null : telemetry.findingsCount(),
+                        telemetry.isEmpty() ? null : telemetry.failedCount(),
+                        telemetry.isEmpty() ? null : telemetry.warningCount(),
+                        parserVersion);
+                if (!decision.hold()) {
+                    // A held import is not finished, so it announces nothing -- the same rule the
+                    // other hold follows. Telling someone their statement is ready and then
+                    // withholding it would be worse than saying nothing.
+                    notifyIfPreviouslyHeld(j, staged.bankName());
+                }
             });
+            recordVerificationFindings(jobId, staged);
             // Only on the success path. A job that failed in PARSING did not skip IMPORTING, it
             // never reached it, and recording that as SKIPPED would turn an honest absence into a
             // false claim.
@@ -350,6 +438,148 @@ public class ImportJobWorker {
         return statementContentService.read(job);
     }
 
+    /**
+     * Whether a dead-lettered failure belongs in the admin triage queue.
+     *
+     * <p>The queue exists for one thing: a parser gap on a statement layout this codebase has not
+     * seen. Fix the parser, reprocess, done. Two conditions establish that -- the classification
+     * was RETRY_ONCE_THEN_ALERT (nothing recognised the exception) and the attempt budget is spent.
+     *
+     * <p><b>StatementIntegrityException is excluded, despite satisfying both.</b> Those two
+     * conditions quietly encode a third one -- that a human can fix something and reprocess -- and
+     * this exception is the counterexample. It means storage returned bytes that do not hash to
+     * what the row claims: a wrong object for a key, bit-rot, a bad restore.
+     *
+     * <p>Every other part of the system already treats that as a storage correctness incident
+     * rather than remediable import work: the classifier refuses to give it the five-attempt RETRY
+     * budget a plain outage gets, the exception's own doc says to investigate the provider, and the
+     * alert fires at ERROR. This routing was the one place still treating it as parser triage.
+     *
+     * <ul>
+     *   <li><b>Its only action cannot work.</b> Reprocess re-reads the same key and gets the same
+     *       wrong bytes. The exception's own message says "investigate the storage provider before
+     *       retrying" -- the queue would render a button doing precisely that.</li>
+     *   <li><b>The user message would be a promise we cannot keep.</b> "We'll notify you once it's
+     *       ready" is true of a parser gap. Here the stored document may be gone for good, and the
+     *       honest outcome is the ordinary failure, which is what FAILED already gives them.</li>
+     *   <li><b>It is usually not one statement.</b> A bad migration corrupts objects in bulk. Five
+     *       thousand rows in a parser-remediation queue disguise one storage incident as a backlog
+     *       of unrelated tickets.</li>
+     *   <li><b>Excluding it costs no visibility.</b> The DEAD_LETTERED branch below still alerts at
+     *       {@link AlertSeverity#ERROR} either way -- that path does not depend on the hold.</li>
+     * </ul>
+     *
+     * <p>Nothing here can self-heal, which is what makes exclusion safe rather than merely tidier.
+     * Encryption is AES-256-GCM, so a wrong key throws rather than yielding wrong plaintext;
+     * async job objects are never compressed, so no decode step can corrupt them; and keys are
+     * content-addressed, so a stale or missing replica raises NoSuchKeyException (a plain RETRY),
+     * never a different document under the same key. The one speculative retry this policy allows
+     * has also already been spent by the time this is asked.
+     *
+     * <p>The exclusion itself is expressed as {@link #isOperatorRemediable}, not as an inline
+     * {@code instanceof}: the rule is "only operator-remediable failures enter triage", and a
+     * negated type check states the exception rather than the rule. The next counterexample of
+     * this class then has an obvious home.
+     */
+    private static boolean holdsForTriage(ErrorCode.RetryPolicy policy,
+                                          ImportJob.FailureOutcome outcome, Exception cause) {
+        return outcome == ImportJob.FailureOutcome.DEAD_LETTERED
+                && policy == ErrorCode.RetryPolicy.RETRY_ONCE_THEN_ALERT
+                && isOperatorRemediable(cause);
+    }
+
+    /**
+     * Whether a human could plausibly fix the cause and have a reprocess succeed.
+     *
+     * <p>This is the invariant the triage queue actually depends on, stated once instead of being
+     * implied by a list of exclusions. Hold-for-review assumes an operator can take corrective
+     * action and then reprocess the import successfully. A parser gap satisfies that: fix the
+     * parser, reprocess, done.
+     *
+     * <p>{@link StatementIntegrityException} does not. It is a storage correctness incident --
+     * storage returned bytes that do not hash to what the row claims -- and reprocessing the same
+     * object cannot succeed until the underlying storage problem is corrected, which is not
+     * something the queue's Reprocess button does. Its own message says so: "investigate the
+     * storage provider before retrying".
+     *
+     * <p><b>Asks {@link ExceptionClassifier#isIntegrityFailure} rather than testing the type
+     * here.</b> That method is the codebase's single definition of an integrity failure, cause
+     * chain and all; this one used to keep its own, and two independent answers to the same
+     * question agree only by luck. The failure that discipline prevents is not hypothetical --
+     * wrapping is idiomatic in this pipeline, and an integrity failure wrapped in its own parent
+     * type would otherwise read as a plain storage outage to the classifier while still reading as
+     * non-remediable here.
+     */
+    private static boolean isOperatorRemediable(Throwable cause) {
+        return !ExceptionClassifier.isIntegrityFailure(cause);
+    }
+
+    /**
+     * Persists the per-rule findings this import produced, so a trust rule can be measured before
+     * it is ever enforced.
+     *
+     * <p>{@code recordForJob} has existed unused since the observability work: only
+     * {@code recordForAnalysis} was ever wired, which keys on an analysis session, so the admin
+     * analysis path accumulated history and the real user import path accumulated none. That is why
+     * "how often would this gate fire?" is currently unanswerable.
+     *
+     * <p><b>Outside the job's own transaction, and swallowing its own failures.</b> Recording
+     * telemetry must never be able to fail an import -- the same rule V62 states for merchant
+     * learning, that "failure can never roll back an import". A statement that parsed correctly
+     * being rejected because a diagnostic write failed would be a strictly worse outcome than the
+     * blindness this fixes.
+     */
+    private void recordVerificationFindings(UUID jobId, StagedForJob staged) {
+        if (staged.verificationReports().isEmpty()) {
+            return;
+        }
+        try {
+            verificationRecorder.recordForJob(jobId, staged.verificationReports());
+        } catch (RuntimeException e) {
+            log.warn("Could not record verification findings for import job {}; the import itself "
+                    + "is unaffected", jobId, e);
+        }
+    }
+
+    /**
+     * Closes the loop with a user who was told we were running additional checks.
+     *
+     * <p>Only a job that was previously held notifies. An ordinary import that succeeds first time
+     * sends nothing -- we never asked that user to wait, so there is nothing to follow up on, and a
+     * notification per successful import would be noise on the one path that already shows its own
+     * result on screen.
+     *
+     * <p>Called inside {@code jobStore.update}'s transaction on purpose. {@code
+     * NotificationService.request} is a transactional-outbox write, so sharing the transaction that
+     * marks the job COMPLETED is what makes "the import landed" and "the user gets told" atomic:
+     * neither can happen without the other. The dispatcher sends it afterwards, off this thread.
+     *
+     * <p>The notification key is derived from the job id, so a redelivery -- a retried pass, a
+     * recovered worker -- collides on the outbox's idempotency key rather than sending twice.
+     *
+     * <p>NORMAL rather than HIGH or CRITICAL: those are reserved for security events per the
+     * notification platform's frozen design, and an import finishing is not one.
+     */
+    private void notifyIfPreviouslyHeld(ImportJob job, String bankName) {
+        if (!job.wasHeldForReview()) {
+            return;
+        }
+        notificationService.request(NotificationRequest.of(
+                job.getUserId(),
+                NotificationType.IMPORT_STATEMENT_READY,
+                NotificationCategory.FINANCIAL,
+                NotificationPriority.NORMAL,
+                "IMPORT_READY_" + job.getId(),
+                Set.of(NotificationChannel.PUSH, NotificationChannel.EMAIL),
+                // The template reads "Your {{bank}} statement is ready", so this is the parser's
+                // own detected bank name -- the only moment it is in hand, since the job itself
+                // never learns it. "bank" is the fallback when the parser could not name one,
+                // giving "Your bank statement is ready"; the fallback lives here rather than in
+                // StagedForJob because it is a property of this template, not of staging. A
+                // missing param would render "{{bank}}" literally to the customer.
+                Map.of("bank", bankName == null || bankName.isBlank() ? "bank" : bankName)));
+    }
+
     private void recordFailure(WorkerExecution execution, UUID jobId, Exception cause) {
         try {
             // Classified once, outside the update lambda: classification reads nothing from the
@@ -366,6 +596,20 @@ public class ImportJobWorker {
             jobStore.update(jobId, job -> {
                 outcome[0] = job.recordFailure(describe(cause), failureCode, policy, Instant.now());
                 attempts[0] = job.getAttemptCount();
+                // A dead-lettered unclassified failure is the one case that is plausibly a genuine
+                // parser gap rather than a user error or an infrastructure blip. Hold it for triage
+                // instead of handing the user a bare FAILED they can do nothing about.
+                //
+                // Inside the update lambda, deliberately: this is where the managed entity is, and
+                // the surrounding REQUIRES_NEW transaction is what persists it. Mutating the job
+                // after this block returns would change a detached object and write nothing.
+                //
+                // outcome[0] keeps its DEAD_LETTERED value, so the switch below still fires the
+                // alert. Holding for triage adds a destination; it does not replace engineering
+                // visibility.
+                if (holdsForTriage(policy, outcome[0], cause)) {
+                    job.holdForReview(failureCode, Instant.now());
+                }
             });
             switch (outcome[0]) {
                 case DEAD_LETTERED -> {

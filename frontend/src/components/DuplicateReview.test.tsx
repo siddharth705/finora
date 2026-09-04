@@ -24,7 +24,7 @@ const match: DuplicateMatch = {
   existingImportedAt: '2026-07-11T09:00:00Z',
   matchCount: 1,
   confidence: 'EXACT',
-  reason: 'Same date, amount and description as a transaction already in your ledger.',
+  reason: 'Same date and amount, and a matching description, as a transaction already in your ledger.',
 };
 
 function row(overrides: Partial<StagedRow> = {}): StagedRow {
@@ -65,7 +65,7 @@ describe('DuplicateReview', () => {
 
     expect(screen.getByText('In this statement')).toBeInTheDocument();
     expect(screen.getByText('Already in your ledger')).toBeInTheDocument();
-    expect(screen.getByText(/Same date, amount and description/)).toBeInTheDocument();
+    expect(screen.getByText(/Same date and amount, and a matching description/)).toBeInTheDocument();
     // When the existing one was imported: the strongest signal for "did I already load this
     // statement?", which is the question the user is actually trying to answer.
     expect(screen.getByText(/· imported/)).toBeInTheDocument();

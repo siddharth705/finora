@@ -190,6 +190,39 @@ public class RateLimitFilter extends OncePerRequestFilter {
     // stopper on the 6-digit code space, which the challenge's own 5-minute expiry already makes
     // infeasible to exhaust over the network regardless of any limiter.
     private final RateLimiter mfaVerifyLimiter;
+    // Fix wave (final review of the notification platform). POST /device-tokens (register) had a
+    // real, compounding per-call cost with no limiter at all: register() has a cross-user write
+    // side effect (revokeOtherUsersHoldingThisToken), AND ran an unindexed fingerprint-leading scan
+    // before idx_device_tokens_fingerprint was added (see V129), AND had no ceiling -- so any
+    // holder of a valid JWT could issue unbounded registrations, each a distinct token, each
+    // inserting a row into a table it simultaneously scanned.
+    //
+    // Bug fix (post-merge review): this used to share ONE bucket with /device-tokens/revoke, on the
+    // reasoning that a caller legitimately hits both together. That reasoning missed how often
+    // register actually fires: AuthContext.tsx (mobile) calls registerDeviceToken() on EVERY
+    // background -> active transition, with no client-side dedupe -- and on iOS, "inactive" is
+    // produced by Control Center, the app switcher, and system dialogs alike, so several such
+    // transitions in a 10-minute span is ordinary use, not abuse. A shared bucket meant that
+    // ordinary foreground churn could exhaust the SAME quota logout's revoke call draws from --
+    // starving the revoke, which fails closed on a 429 the client swallows (DeviceTokenController's
+    // caller treats revoke as best-effort), leaving the token active server-side and this backend
+    // pushing to a device the user just signed out of. Each now gets its own bucket: churn on one
+    // can never starve the other.
+    //
+    // register's own ceiling is raised from the old shared 10/10min to refreshLimiter's shape
+    // (15/5min) rather than a bucket sized for a rare, deliberate action -- see refreshLimiter's own
+    // comment: it is called far more often per user than a one-shot flow, and several Finora users
+    // behind one shared IP (a household, an office NAT) triggering it around the same time is
+    // ordinary use. Register's actual call pattern (unthrottled foreground transitions, no
+    // client-side dedupe) matches that shape more closely than it matches importStageLimiter/
+    // resetPasswordLimiter's 10/10min tuning for a rare, single-shot flow.
+    private final RateLimiter deviceTokenRegisterLimiter;
+    // Split from deviceTokenRegisterLimiter above -- see that field's comment for why. revoke()
+    // itself is still the cheap call it always was (one indexed lookup, no cross-user write) and is
+    // still a rare, deliberate action (logout), so it keeps the original shared ceiling rather than
+    // adopting register's more generous one: nothing about splitting the bucket changed revoke's own
+    // cost or call frequency, only got it out from under register's much noisier one.
+    private final RateLimiter deviceTokenRevokeLimiter;
     // Bug fix: this used to be `new ObjectMapper()` -- a second, freshly-constructed mapper with
     // none of the auto-configuration Spring Boot's own JacksonAutoConfiguration applies to its
     // managed ObjectMapper bean (in particular, no JavaTimeModule). ApiResponse.timestamp is a
@@ -268,6 +301,15 @@ public class RateLimitFilter extends OncePerRequestFilter {
     // probe (RateLimitFilterTest) -- every limiter this class defines needs a max under that
     // probe's iteration count for the shared "does this endpoint actually trip" test to work.
     static final int DEFAULT_REFRESH_MAX = 15, DEFAULT_REFRESH_WINDOW = 300;
+    // Bug fix (post-merge review): raised from the old shared 10/10min to refreshLimiter's own
+    // shape -- see deviceTokenRegisterLimiter's field comment for why register's actual call
+    // pattern (unthrottled foreground transitions) needs refreshLimiter's tuning, not a rare-flow
+    // ceiling sized for logout.
+    static final int DEFAULT_DEVICE_TOKEN_REGISTER_MAX = 15, DEFAULT_DEVICE_TOKEN_REGISTER_WINDOW = 300;
+    // Split from the register ceiling above -- see deviceTokenRevokeLimiter's own field comment.
+    // Unchanged from the original shared value: revoke's own cost and call frequency never changed,
+    // only its bucket independence from register did.
+    static final int DEFAULT_DEVICE_TOKEN_REVOKE_MAX = 10, DEFAULT_DEVICE_TOKEN_REVOKE_WINDOW = 600;
 
     /**
      * The shipped configuration, for tests.
@@ -293,7 +335,9 @@ public class RateLimitFilter extends OncePerRequestFilter {
                 DEFAULT_GOOGLE_MAX, DEFAULT_GOOGLE_WINDOW,
                 DEFAULT_APPLE_MAX, DEFAULT_APPLE_WINDOW,
                 DEFAULT_MFA_VERIFY_MAX, DEFAULT_MFA_VERIFY_WINDOW,
-                DEFAULT_REFRESH_MAX, DEFAULT_REFRESH_WINDOW);
+                DEFAULT_REFRESH_MAX, DEFAULT_REFRESH_WINDOW,
+                DEFAULT_DEVICE_TOKEN_REGISTER_MAX, DEFAULT_DEVICE_TOKEN_REGISTER_WINDOW,
+                DEFAULT_DEVICE_TOKEN_REVOKE_MAX, DEFAULT_DEVICE_TOKEN_REVOKE_WINDOW);
     }
 
     /**
@@ -341,7 +385,11 @@ public class RateLimitFilter extends OncePerRequestFilter {
             @Value("${app.rate-limit.mfa-verify.max:10}") int mfaVerifyMax,
             @Value("${app.rate-limit.mfa-verify.window-seconds:600}") int mfaVerifyWindow,
             @Value("${app.rate-limit.refresh.max:15}") int refreshMax,
-            @Value("${app.rate-limit.refresh.window-seconds:300}") int refreshWindow) {
+            @Value("${app.rate-limit.refresh.window-seconds:300}") int refreshWindow,
+            @Value("${app.rate-limit.device-token-register.max:15}") int deviceTokenRegisterMax,
+            @Value("${app.rate-limit.device-token-register.window-seconds:300}") int deviceTokenRegisterWindow,
+            @Value("${app.rate-limit.device-token-revoke.max:10}") int deviceTokenRevokeMax,
+            @Value("${app.rate-limit.device-token-revoke.window-seconds:600}") int deviceTokenRevokeWindow) {
         this.objectMapper = objectMapper;
         this.clientIpResolver = clientIpResolver;
         this.corsConfigurationSource = corsConfigurationSource;
@@ -360,6 +408,8 @@ public class RateLimitFilter extends OncePerRequestFilter {
         this.appleLimiter = new RateLimiter(appleMax, appleWindow);
         this.mfaVerifyLimiter = new RateLimiter(mfaVerifyMax, mfaVerifyWindow);
         this.refreshLimiter = new RateLimiter(refreshMax, refreshWindow);
+        this.deviceTokenRegisterLimiter = new RateLimiter(deviceTokenRegisterMax, deviceTokenRegisterWindow);
+        this.deviceTokenRevokeLimiter = new RateLimiter(deviceTokenRevokeMax, deviceTokenRevokeWindow);
         this.limitedEndpoints = List.of(
                 new LimitedEndpoint(PARSER.parse("/api/v1/auth/login"), loginLimiter),
                 new LimitedEndpoint(PARSER.parse("/api/v1/auth/refresh"), refreshLimiter),
@@ -426,7 +476,11 @@ public class RateLimitFilter extends OncePerRequestFilter {
                 new LimitedEndpoint(PARSER.parse("/api/v1/users/me/email-change/verify"), emailChangeLimiter),
                 new LimitedEndpoint(PARSER.parse("/api/v1/users/me/email-change/complete"), emailChangeLimiter),
                 new LimitedEndpoint(PARSER.parse("/api/v1/users/me/data-export"), dataExportLimiter),
-                new LimitedEndpoint(PARSER.parse("/api/v1/auth/mfa/verify"), mfaVerifyLimiter));
+                new LimitedEndpoint(PARSER.parse("/api/v1/auth/mfa/verify"), mfaVerifyLimiter),
+                // Fix wave, split into two independent buckets in post-merge review -- see
+                // deviceTokenRegisterLimiter/deviceTokenRevokeLimiter's own field comments.
+                new LimitedEndpoint(PARSER.parse("/api/v1/device-tokens"), deviceTokenRegisterLimiter),
+                new LimitedEndpoint(PARSER.parse("/api/v1/device-tokens/revoke"), deviceTokenRevokeLimiter));
     }
 
     @Override

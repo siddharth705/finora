@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import * as SecureStore from 'expo-secure-store';
 import { AuthProvider, useAuth } from './AuthContext';
 import { authApi } from '../api/endpoints';
+import { registerDeviceToken, revokeDeviceToken } from '../lib/pushRegistration';
 
 jest.mock('../api/endpoints', () => ({
   authApi: {
@@ -16,7 +17,22 @@ jest.mock('../api/endpoints', () => ({
   },
 }));
 
+// Task 14. Pins the wiring in AuthContext.tsx itself (which hooks/setPhoneVerified()/persist()/
+// logout()) call registerDeviceToken()/revokeDeviceToken(), and in what order relative to
+// storage -- without this, dropping the phoneVerified gate or moving the revoke call after the
+// stored token is cleared would both ship green: the former is a guaranteed 403
+// PHONE_VERIFICATION_REQUIRED on every app open (/api/v1/device-tokens is not exempt in the
+// backend's PhoneVerificationFilter), the latter a guaranteed 401 that silently leaves the token
+// registered server-side. See pushRegistration.test.ts for that module's own behavior in
+// isolation; this file only needs to know AuthContext calls it, and when.
+jest.mock('../lib/pushRegistration', () => ({
+  registerDeviceToken: jest.fn(),
+  revokeDeviceToken: jest.fn(),
+}));
+
 const mockedAuthApi = authApi as jest.Mocked<typeof authApi>;
+const mockedRegisterDeviceToken = registerDeviceToken as jest.MockedFunction<typeof registerDeviceToken>;
+const mockedRevokeDeviceToken = revokeDeviceToken as jest.MockedFunction<typeof revokeDeviceToken>;
 
 const SESSION = {
   token: 'access-token',
@@ -305,5 +321,76 @@ describe('AuthContext setPhoneVerified', () => {
     await waitFor(async () => {
       expect(await SecureStore.getItemAsync('finora_phone_verified')).toBe('true');
     });
+  });
+});
+
+describe('AuthContext push registration wiring (Task 14)', () => {
+  it('does not register a device token when login returns an unverified phone', async () => {
+    mockedAuthApi.login.mockResolvedValue({ data: { ...SESSION, phoneVerified: false } } as never);
+    const view = renderAuth();
+    await settle(view);
+
+    await act(async () => {
+      await auth.login('someone@example.com', 'pw');
+    });
+
+    // /api/v1/device-tokens is not exempt in PhoneVerificationFilter -- calling this before
+    // verification actually completes is a guaranteed 403. setPhoneVerified() below is where a
+    // brand-new session's very first registration attempt belongs instead.
+    expect(mockedRegisterDeviceToken).not.toHaveBeenCalled();
+  });
+
+  it('registers a device token once phone verification completes', async () => {
+    mockedAuthApi.login.mockResolvedValue({ data: { ...SESSION, phoneVerified: false } } as never);
+    const view = renderAuth();
+    await settle(view);
+    await act(async () => {
+      await auth.login('someone@example.com', 'pw');
+    });
+
+    await act(async () => {
+      auth.setPhoneVerified(true);
+    });
+
+    expect(mockedRegisterDeviceToken).toHaveBeenCalledTimes(1);
+  });
+
+  it('registers a device token for a returning, already-verified login', async () => {
+    mockedAuthApi.login.mockResolvedValue({ data: SESSION } as never); // SESSION.phoneVerified === true
+    const view = renderAuth();
+    await settle(view);
+
+    await act(async () => {
+      await auth.login('someone@example.com', 'pw');
+    });
+
+    expect(mockedRegisterDeviceToken).toHaveBeenCalledTimes(1);
+  });
+
+  it('revokes the device token before the stored auth token is cleared on logout', async () => {
+    mockedAuthApi.login.mockResolvedValue({ data: SESSION } as never);
+    // Records whether the bearer token was still readable from storage at the moment
+    // revokeDeviceToken() was actually invoked -- the real function's own POST needs it there to
+    // authenticate itself (see pushRegistration.ts), so this pins the ORDERING logout() depends
+    // on, not merely that both things eventually happened.
+    let tokenPresentAtRevokeTime: string | null = null;
+    mockedRevokeDeviceToken.mockImplementation(async () => {
+      tokenPresentAtRevokeTime = await SecureStore.getItemAsync('finora_token');
+    });
+    const view = renderAuth();
+    await settle(view);
+    await act(async () => {
+      await auth.login('someone@example.com', 'pw');
+    });
+
+    await act(async () => {
+      auth.logout();
+    });
+
+    await waitFor(async () => {
+      expect(await SecureStore.getItemAsync('finora_token')).toBeNull();
+    });
+    expect(mockedRevokeDeviceToken).toHaveBeenCalledTimes(1);
+    expect(tokenPresentAtRevokeTime).toBe('access-token');
   });
 });

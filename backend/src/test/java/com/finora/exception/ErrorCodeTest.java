@@ -59,6 +59,11 @@ class ErrorCodeTest {
      */
     @Test
     void theCodesTheReliabilityPlanAndItsSuccessorsNameRequireUserAction() {
+        // IMPORT_NO_ACTIVITY_IN_PERIOD (2026-09-03) is the one deliberate stretch of this field's
+        // literal meaning in the whole enum -- there is nothing for the user to correct, unlike
+        // every other member of this list. It opts in anyway because userActionRequired=true is
+        // the only lever the existing UI contract exposes to keep a code off the red/danger banner
+        // treatment; see that constant's own comment in ErrorCode.java.
         assertThat(Arrays.stream(ErrorCode.values()).filter(ErrorCode::userActionRequired).toList())
                 .containsExactlyInAnyOrder(
                         ErrorCode.IMPORT_PDF_PASSWORD_REQUIRED,
@@ -66,7 +71,14 @@ class ErrorCodeTest {
                         ErrorCode.IMPORT_SCANNED_OCR_REQUIRED,
                         ErrorCode.IMPORT_NO_HEADER_DETECTED,
                         ErrorCode.IMPORT_NO_TRANSACTIONS_FOUND,
-                        ErrorCode.IMPORT_PDF_TOO_LARGE);
+                        ErrorCode.IMPORT_PDF_TOO_LARGE,
+                        ErrorCode.IMPORT_NO_ACTIVITY_IN_PERIOD,
+                        // IMPORT_TRUST_REVIEW_REJECTED (2026-09-04) is the second such stretch, for
+                        // the identical reason: a reviewer decided our own extraction was not
+                        // accurate enough to import, which is nothing the user can correct and
+                        // re-uploading the same file would reach the same outcome. It opts in to
+                        // stay off the red/danger banner, exactly as the code above it does.
+                        ErrorCode.IMPORT_TRUST_REVIEW_REJECTED);
     }
 
     @Test

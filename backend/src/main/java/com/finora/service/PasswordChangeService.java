@@ -8,6 +8,7 @@ import com.finora.exception.ApiException;
 import com.finora.repository.PasswordChangeSessionRepository;
 import com.finora.repository.UserRepository;
 import com.finora.util.PhoneMasking;
+import com.finora.util.PhoneNumbers;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -36,6 +37,15 @@ public class PasswordChangeService {
     // in application.yml's own comment.
     @Value("${app.security.password-change-session-expiry-minutes:15}")
     private long sessionTtlMinutes;
+
+    // Task 13. Mirrors AuthService's login lockout (MAX_FAILED_LOGIN_ATTEMPTS, before that became
+    // admin-configurable via PlatformSettingsService -- see AuthService's own comment on that
+    // history). Deliberately NOT wired to PlatformSettingsService here: this cap bounds guesses
+    // against ONE already-TTL-bounded session, not standing account access the way login's cap
+    // does, so there's no equivalent case for an admin to retune it per deployment. Package-private
+    // visibility only so PasswordChangeServiceTest can reference the same constant the production
+    // check uses rather than re-deriving the number.
+    static final int MAX_OTP_ATTEMPTS = 5;
 
     private final UserRepository userRepository;
     private final PasswordChangeSessionRepository sessionRepository;
@@ -113,11 +123,33 @@ public class PasswordChangeService {
      *  client-side -- a wrong code never produces one to send here; the only failure modes left
      *  are an invalid/expired token or one that proves the WRONG phone number, both of which are
      *  real errors, not a "try again" state, so this throws rather than returning a soft
-     *  verified:false the way the OTP-based version used to. */
+     *  verified:false the way the OTP-based version used to.
+     *
+     *  <p>Task 13: each such failure IS still individually a hard error, but a caller (or a
+     *  session hijacker with the access token but not the phone) can throw MAX_OTP_ATTEMPTS of
+     *  them at ONE session before it dies for good -- see the cap check immediately below and
+     *  registerFailedOtpAttempt(). Previously bounded only by RateLimitFilter's shared per-IP
+     *  limit and the session's own 15-minute expiry, neither of which is specific to this one
+     *  session's own retry count. */
     @Transactional(noRollbackFor = ApiException.class)
     public VerifyOtpResponse verifyOtp(UUID userId, VerifyOtpRequest request) {
         PasswordChangeSession session = loadActiveSession(userId, request.sessionId(), PasswordChangeSession.Status.STARTED,
                 "This step has already been completed, or the session is no longer valid. Please start again.");
+
+        // Task 13, attempt cap -- mirrors AuthService's lockedUntil check at the top of login(),
+        // before authenticate() runs. Checked first, before even loading the user or touching
+        // PhoneVerificationProvider: once otpAttemptCount reaches MAX_OTP_ATTEMPTS this session is
+        // dead, and a subsequent request presenting the CORRECT token must not get the chance to
+        // prove it -- that's the entire point of a cap. Same status, same message as any other
+        // wrong-state session (loadActiveSession's own wrongStateMessage), deliberately: an
+        // attacker who has been guessing sees no difference between "exhausted" and "already used
+        // / expired", the same BH-014 reasoning AuthService applies to a locked account answering
+        // identically to a wrong password.
+        if (session.getOtpAttemptCount() >= MAX_OTP_ATTEMPTS) {
+            throw new ApiException(HttpStatus.BAD_REQUEST,
+                    "This step has already been completed, or the session is no longer valid. Please start again.");
+        }
+
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "User not found"));
         // Bug fix: only start() re-checked account status, so a session opened while ACTIVE could
@@ -128,8 +160,29 @@ public class PasswordChangeService {
         // hand keeps working for up to 15 minutes past the status change.
         requireActiveAccount(user);
 
-        String verifiedPhone = phoneVerificationProvider.verifyAndGetPhoneNumber(request.firebaseIdToken());
+        String verifiedPhone;
+        try {
+            verifiedPhone = phoneVerificationProvider.verifyAndGetPhoneNumber(request.firebaseIdToken());
+        } catch (ApiException e) {
+            // Counts toward the cap unless the provider was never configured on this server at all
+            // (local/dev only -- ProductionConfigValidator hard-fails boot in production if it
+            // isn't, so this is not a live path there). Gated on isConfigured(), the same predicate
+            // FirebasePhoneVerificationProvider itself uses to decide whether to even attempt a
+            // call, rather than on the exception's HTTP status: a real outage (Firebase down, or a
+            // failure fetching Google's signing keys) still throws a 401 here, same as a genuinely
+            // wrong token, and 401 is squarely an "this attempt failed" case. Deliberately NOT
+            // keyed on SERVICE_UNAVAILABLE -- that status is shared with whatever a future provider
+            // implementation might map an upstream 429/503 to, and that condition IS attacker-
+            // influenceable in a way "never configured" never is; keying the carve-out to a status
+            // code instead of this predicate would risk silently becoming an unlimited-attempts
+            // bypass the day that mapping is added.
+            if (phoneVerificationProvider.isConfigured()) {
+                registerFailedOtpAttempt(userId, session);
+            }
+            throw e;
+        }
         if (!phoneNumbersMatch(verifiedPhone, user.getPhoneNumber())) {
+            registerFailedOtpAttempt(userId, session);
             auditService.record(userId, "INVALID_OTP", "User", userId);
             throw new ApiException(HttpStatus.BAD_REQUEST, "The verified phone number doesn't match the one on this account.");
         }
@@ -138,20 +191,43 @@ public class PasswordChangeService {
         session.setStatus(PasswordChangeSession.Status.OTP_VERIFIED);
         session.setVerificationProvider(ProviderType.FIREBASE);
         session.setVerifiedPhoneNumber(verifiedPhone);
+        // Reset, not merely left alone: a correct verify must not carry a stale nonzero count
+        // anywhere reachable from this row, even though status leaving STARTED already makes the
+        // count moot for THIS session's own cap check going forward.
+        session.setOtpAttemptCount(0);
         sessionRepository.save(session);
 
         auditService.record(userId, "FIREBASE_PHONE_VERIFIED", "User", userId);
         return new VerifyOtpResponse("Verified.");
     }
 
-    /** Firebase's phone_number claim is always E.164 ("+919876543210"); User.phoneNumber may or
-     *  may not carry the leading "+" depending on how it was typed at registration -- compares
-     *  digits only so that difference alone never causes a false mismatch. Same helper as
-     *  AuthService's own phoneNumbersMatch(); not shared beyond copy-paste since both are small,
-     *  private, and each service already keeps its own dependency set narrow by design. */
+    /** Mirrors AuthService.registerFailedLogin's shape exactly: increment, conditionally audit
+     *  once at the moment the cap is actually reached (not on every subsequent rejected attempt --
+     *  loadActiveSession/the cap check above own that path), then persist regardless. Never logs
+     *  the token or the phone numbers involved -- the audit metadata carries only the resulting
+     *  count, same as ACCOUNT_LOCKED carries only failedAttempts. */
+    private void registerFailedOtpAttempt(UUID userId, PasswordChangeSession session) {
+        int attempts = session.getOtpAttemptCount() + 1;
+        session.setOtpAttemptCount(attempts);
+        if (attempts >= MAX_OTP_ATTEMPTS) {
+            auditService.record(userId, "OTP_ATTEMPTS_EXHAUSTED", "User", userId, Map.of("attempts", attempts));
+        }
+        sessionRepository.save(session);
+    }
+
+    /** Delegates to {@link PhoneNumbers#sameNumber} -- see that method's own doc for why digit
+     *  equality alone isn't enough: a legacy row holding a bare 10-digit Indian number (written
+     *  before AuthService.normalizePhoneNumber existed, or via the admin support-edit path that
+     *  predates PhoneNumbers.normalize) must still match Firebase's E.164 claim, or that account
+     *  can never verify again. Task 13 review catch: this used to be its own naive digit-only
+     *  comparison, independently reimplementing the exact bug PhoneNumbers.sameNumber's own doc
+     *  comment describes AuthService as having already been bitten by and fixed -- an affected user
+     *  hitting this branch would have deterministically failed every one of their MAX_OTP_ATTEMPTS
+     *  tries and landed on the generic "no longer valid" message instead of a fixable one. Same
+     *  helper AuthService.phoneNumbersMatch() itself now delegates to; not inlined directly at the
+     *  call site so both services keep the same short, obviously-named local wrapper. */
     private boolean phoneNumbersMatch(String a, String b) {
-        if (a == null || b == null) return false;
-        return a.replaceAll("[^0-9]", "").equals(b.replaceAll("[^0-9]", ""));
+        return PhoneNumbers.sameNumber(a, b);
     }
 
     /** Step 3: set the new password. Only reachable once the session itself shows OTP_VERIFIED --

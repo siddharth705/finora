@@ -27,6 +27,12 @@ vi.mock('../components/MerchantGroupReviewCard', () => ({
   MerchantGroupReviewCard: () => <div data-testid="merchant-group-review-card" />,
 }));
 
+// Same reasoning as MerchantGroupReviewCard just above: the real component calls
+// transactionsApi.groupsNeedsReviewByCounterparty, undefined on the mock above.
+vi.mock('../components/CounterpartyGroupReviewCard', () => ({
+  CounterpartyGroupReviewCard: () => <div data-testid="counterparty-group-review-card" />,
+}));
+
 function txn(overrides: Partial<Transaction> = {}): Transaction {
   return {
     id: 'txn-1',
@@ -45,6 +51,9 @@ function txn(overrides: Partial<Transaction> = {}): Transaction {
     recurring: false,
     needsCategoryReview: false,
     categoryManuallySet: false,
+    // UNKNOWN by default so the counterparty badge renders nothing unless a test asks for it --
+    // every existing assertion in this file predates the badge and should stay unaffected by it.
+    counterpartyType: 'UNKNOWN',
     ...overrides,
   };
 }
@@ -153,6 +162,140 @@ describe('Ledger — Why this category?', () => {
     await user.click(screen.getByRole('button', { name: 'Close' }));
 
     await waitFor(() => expect(screen.queryByText('Why this category?')).not.toBeInTheDocument());
+  });
+});
+
+/**
+ * `t.reconciliationStatus` used to render straight into the Status column unfiltered -- `OK`,
+ * the status of nearly every ordinary transaction, looked exactly as prominent as `DUPLICATE`
+ * and meant nothing to a person reading their ledger. Reported directly: "what is this OK
+ * status?". These lock in both halves of the fix: OK disappears, and every other status becomes
+ * a clickable, human-labelled badge that opens the SAME explanation panel the "Why this
+ * category?" icon already uses -- transactionsApi.explanation was already computing the full
+ * reconciliation reasoning server-side; it just had nowhere to go.
+ */
+describe('Ledger — Status column', () => {
+  beforeEach(() => {
+    vi.mocked(transactionsApi.needsReview).mockReset().mockResolvedValue([]);
+    vi.mocked(categoriesApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(transactionsApi.explanation).mockReset();
+  });
+
+  it('shows no badge at all for an ordinary (OK) transaction', async () => {
+    vi.mocked(transactionsApi.search).mockReset().mockResolvedValue({
+      content: [txn({ reconciliationStatus: 'OK' })], page: 0, size: 10, totalElements: 1, totalPages: 1,
+    });
+    renderLedger();
+
+    await screen.findByText('AMAZON PAY');
+
+    // Exhaustive, not a name-pattern guess: an OK row's only buttons are "Why this category?"
+    // (the category cell's icon), the two row actions, and pagination -- anything beyond that
+    // set IS a Status badge, whatever it happens to be labelled. A regex over the six known
+    // non-OK labels would pass even if OK itself grew a badge, since "OK"/"Ordinary" wouldn't
+    // match that pattern.
+    const buttonNames = screen.getAllByRole('button').map((b) => b.getAttribute('title') ?? b.getAttribute('aria-label'));
+    expect(buttonNames).toEqual(['Why this category?', 'Edit transaction', 'Delete transaction', 'Previous page', 'Next page']);
+  });
+
+  it('shows a human label, not the raw enum, for a flagged transaction', async () => {
+    vi.mocked(transactionsApi.search).mockReset().mockResolvedValue({
+      content: [txn({ reconciliationStatus: 'DUPLICATE' })], page: 0, size: 10, totalElements: 1, totalPages: 1,
+    });
+    renderLedger();
+
+    expect(await screen.findByRole('button', { name: 'Duplicate' })).toBeInTheDocument();
+    expect(screen.queryByText('DUPLICATE')).not.toBeInTheDocument();
+  });
+
+  it('opens the explanation panel and shows the reconciliation reasoning when the badge is clicked', async () => {
+    const user = userEvent.setup();
+    vi.mocked(transactionsApi.search).mockReset().mockResolvedValue({
+      content: [txn({ reconciliationStatus: 'DUPLICATE' })], page: 0, size: 10, totalElements: 1, totalPages: 1,
+    });
+    vi.mocked(transactionsApi.explanation).mockResolvedValue({
+      decisionSource: 'MERCHANT_DEFAULT',
+      summary: 'No rule, learned pattern, or keyword matched, so this defaulted to "Shopping".',
+      evidence: [],
+      reconciliation: {
+        status: 'DUPLICATE',
+        matchedTransactionId: 'txn-0',
+        summary: 'Matched as a duplicate of an existing transaction — same account, date, amount, and description.',
+        evidence: ['Same account', 'Same date', 'Same amount'],
+      },
+    });
+    renderLedger();
+
+    await user.click(await screen.findByRole('button', { name: 'Duplicate' }));
+
+    expect(await screen.findByText(/matched as a duplicate of an existing transaction/i)).toBeInTheDocument();
+    expect(screen.getByText('Same account')).toBeInTheDocument();
+    // The category section (the icon's own original purpose) still renders underneath it.
+    expect(screen.getByText(/defaulted to "shopping"/i)).toBeInTheDocument();
+    expect(transactionsApi.explanation).toHaveBeenCalledWith('txn-1');
+  });
+
+  it('does not render a reconciliation section for an ordinary transaction opened via the category icon', async () => {
+    const user = userEvent.setup();
+    vi.mocked(transactionsApi.search).mockReset().mockResolvedValue({
+      content: [txn({ reconciliationStatus: 'OK' })], page: 0, size: 10, totalElements: 1, totalPages: 1,
+    });
+    vi.mocked(transactionsApi.explanation).mockResolvedValue({
+      decisionSource: 'MANUAL', summary: 'You set this category yourself.', evidence: [],
+      // No `reconciliation` field, matching what the real endpoint returns for status OK
+      // (TransactionExplanationService.reconciliationExplanationFor returns null for it).
+    });
+    renderLedger();
+
+    await user.click(await screen.findByTitle('Why this category?'));
+
+    await screen.findByText('You set this category yourself.');
+    expect(screen.queryByText(/matched as a/i)).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * Reported directly: "in this search bar add to search category as well" -- the placeholder is
+ * the one visible promise about what the search box does, and it was missing category even
+ * though every other matched field (description, merchant, bank, account, branch, IFSC) was
+ * listed. The actual matching happens server-side (TransactionRepositoryIT); this only locks in
+ * that the UI's own promise mentions it.
+ */
+describe('Ledger — search bar', () => {
+  it('tells the user category is one of the things it searches', async () => {
+    vi.mocked(transactionsApi.search).mockReset().mockResolvedValue({
+      content: [], page: 0, size: 10, totalElements: 0, totalPages: 0,
+    });
+    vi.mocked(transactionsApi.needsReview).mockReset().mockResolvedValue([]);
+    vi.mocked(categoriesApi.list).mockReset().mockResolvedValue([]);
+    renderLedger();
+
+    expect(await screen.findByPlaceholderText(/category/i)).toBeInTheDocument();
+  });
+});
+
+/**
+ * Reported directly: "I need filter here" -- there was no way to find (or exclude) transactions
+ * by status at all, even though the Status column now names exactly this vocabulary on every row.
+ */
+describe('Ledger — Status filter', () => {
+  it('sends the chosen status to the search endpoint and resets to page 0', async () => {
+    const user = userEvent.setup();
+    vi.mocked(transactionsApi.search).mockReset().mockResolvedValue({
+      content: [], page: 0, size: 10, totalElements: 0, totalPages: 0,
+    });
+    vi.mocked(transactionsApi.needsReview).mockReset().mockResolvedValue([]);
+    vi.mocked(categoriesApi.list).mockReset().mockResolvedValue([]);
+    renderLedger();
+
+    await waitFor(() => expect(transactionsApi.search).toHaveBeenCalled());
+    vi.mocked(transactionsApi.search).mockClear();
+
+    await user.selectOptions(screen.getByDisplayValue('All Statuses'), 'DUPLICATE');
+
+    await waitFor(() =>
+      expect(transactionsApi.search).toHaveBeenCalledWith(expect.objectContaining({ status: 'DUPLICATE', page: 0 }))
+    );
   });
 });
 
@@ -277,6 +420,11 @@ describe('Ledger — merchant group review card', () => {
     renderLedger();
     expect(await screen.findByTestId('merchant-group-review-card')).toBeInTheDocument();
   });
+
+  it('renders the counterparty group review card too, after the merchant one', async () => {
+    renderLedger();
+    expect(await screen.findByTestId('counterparty-group-review-card')).toBeInTheDocument();
+  });
 });
 
 // Animation-polish roadmap Phase 2 (§3 priority 2): the table body's plain "Loading…" text row
@@ -322,6 +470,40 @@ describe('Ledger — Phase 2 table skeleton and IconButton migration', () => {
     const tbody = container.querySelector('tbody')!;
     expect(tbody).not.toHaveAttribute('role', 'status');
     expect(tbody.querySelectorAll('.animate-pulse').length).toBe(0);
+  });
+
+  it('labels a person-to-person row by direction, not by the stored type alone', async () => {
+    vi.mocked(transactionsApi.search).mockReset().mockResolvedValue({
+      content: [
+        txn({ id: 'txn-out', description: 'PAID SUNIL', type: 'EXPENSE', counterpartyType: 'PERSON' }),
+        txn({ id: 'txn-in', description: 'GOT FROM SUNIL', type: 'INCOME', counterpartyType: 'PERSON' }),
+      ],
+      page: 0, size: 10, totalElements: 2, totalPages: 1,
+    });
+    renderLedger();
+
+    await screen.findByText('PAID SUNIL');
+    // Same stored counterparty type on both rows; the readable meaning differs because direction is
+    // composed in at render time. This is the assertion that stops anyone "simplifying" the label
+    // back into a stored string, which is the V123 mistake.
+    expect(screen.getByTitle('Sent to a person')).toBeInTheDocument();
+    expect(screen.getByTitle('Received from a person')).toBeInTheDocument();
+    expect(screen.getAllByText('Person')).toHaveLength(2);
+  });
+
+  it('renders no counterparty badge at all when the counterparty is unknown', async () => {
+    // Roughly a fifth of real rows, plus everything the server backfill has not reached. A badge
+    // reading "unknown" on that many rows would be noise, so there must be no badge.
+    vi.mocked(transactionsApi.search).mockReset().mockResolvedValue({
+      content: [txn({ id: 'txn-1', description: 'AMAZON PAY', counterpartyType: 'UNKNOWN' })],
+      page: 0, size: 10, totalElements: 1, totalPages: 1,
+    });
+    renderLedger();
+
+    await screen.findByText('AMAZON PAY');
+    expect(screen.queryByText(/unknown/i)).not.toBeInTheDocument();
+    expect(screen.queryByText('Person')).not.toBeInTheDocument();
+    expect(screen.queryByText('Business')).not.toBeInTheDocument();
   });
 
   it('exposes the edit and delete row actions by their accessible names', async () => {

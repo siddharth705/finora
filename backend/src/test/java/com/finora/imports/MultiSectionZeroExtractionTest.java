@@ -280,8 +280,21 @@ class MultiSectionZeroExtractionTest {
         put("sbi-credit-card-statement", ErrorCode.IMPORT_NO_TRANSACTIONS_FOUND);
     }};
 
+    /**
+     * 2026-09-03. {@code hsbc-savings-ledger-validation} used to live in
+     * {@link #ALREADY_REJECTED_BEFORE_THIS_FIX} below, getting the same
+     * {@code IMPORT_NO_TRANSACTIONS_FOUND} every other entry there gets. It no longer does: this is
+     * the committed redacted capture of the real HSBC composite statement {@code
+     * ExplicitZeroActivityDetector} was built for -- its savings ledger prints a "Transaction
+     * Count" row reading zero on both the deposit and withdrawal side, alongside an unchanged
+     * opening/closing balance, and {@link ExtractionCheck} now recognises that as the document
+     * stating its own zero activity rather than as an unreadable table. Same document, same trace,
+     * a genuinely more accurate code -- not a change to what gets rejected, only to why.
+     */
+    private static final List<String> REJECTED_WITH_EXPLICIT_ZERO_ACTIVITY_CODE = List.of(
+            "hsbc-savings-ledger-validation");
+
     private static final List<String> ALREADY_REJECTED_BEFORE_THIS_FIX = List.of(
-            "hsbc-savings-ledger-validation",
             "kotak-savings-ledger-validation",
             // Captured later, for a different fix entirely (PdfTableLocator.resolveYearlessDate
             // -- see docs/superpowers/plans/2026-09-01-hsbc-yearless-date-resolution.md), and
@@ -334,16 +347,24 @@ class MultiSectionZeroExtractionTest {
                     .satisfies(e -> assertThat(((ApiException) e).getCode())
                             .isEqualTo(ErrorCode.IMPORT_NO_TRANSACTIONS_FOUND));
         }
+        for (String trace : REJECTED_WITH_EXPLICIT_ZERO_ACTIVITY_CODE) {
+            assertThatThrownBy(() -> stage(trace))
+                    .as("%s declares its own zero transaction count", trace)
+                    .isInstanceOf(ApiException.class)
+                    .satisfies(e -> assertThat(((ApiException) e).getCode())
+                            .isEqualTo(ErrorCode.IMPORT_NO_ACTIVITY_IN_PERIOD));
+        }
     }
 
-    /** The corpus is enumerated from disk, so a newly captured trace lands in neither list and says
-     *  so here rather than being silently uncovered. */
+    /** The corpus is enumerated from disk, so a newly captured trace lands in none of the lists
+     *  above and says so here rather than being silently uncovered. */
     @Test
-    void theThreeListsAboveCoverTheWholeCommittedCorpus() {
+    void theFourListsAboveCoverTheWholeCommittedCorpus() {
         assertThat(PdfTrace.committedTraceNames())
                 .containsExactlyInAnyOrderElementsOf(
                         java.util.stream.Stream.of(STAGES_TRANSACTIONS.keySet().stream(),
-                                        REJECTED_BY_FIX_1.keySet().stream(), ALREADY_REJECTED_BEFORE_THIS_FIX.stream())
+                                        REJECTED_BY_FIX_1.keySet().stream(), ALREADY_REJECTED_BEFORE_THIS_FIX.stream(),
+                                        REJECTED_WITH_EXPLICIT_ZERO_ACTIVITY_CODE.stream())
                                 .flatMap(s -> s).toList());
     }
 

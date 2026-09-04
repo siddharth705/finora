@@ -648,6 +648,43 @@ class TransactionServiceTest {
     }
 
     @Test
+    void update_editingTheDescription_reTypesTheCounterparty() {
+        // The counterparty is derived from the narration, so an edit to the narration has to
+        // re-derive it. This is not something the backfill sweep can clean up later: the row
+        // already carries the current classifier version, so the sweep will never look at it again
+        // and a stale counterparty would be permanent.
+        UUID txnId = UUID.randomUUID();
+        Transaction existing = ownedTransaction(txnId, userId);
+        existing.applyCounterpartyTyping("UPI-PAYTMQR281005-mer@paytm-REF91");
+        assertThat(existing.getCounterpartyType()).isEqualTo(com.finora.util.CounterpartyType.BUSINESS);
+        when(transactionRepository.findById(txnId)).thenReturn(Optional.of(existing));
+
+        var req = new TransactionDto.UpdateRequest(null, "UPI-SUNIL VERMA-sampleuser@ybl-REF92",
+                null, null, null, null, null, null);
+        transactionService.update(userId, txnId, req);
+
+        assertThat(existing.getCounterpartyType()).isEqualTo(com.finora.util.CounterpartyType.PERSON);
+        assertThat(existing.getCounterpartyKey()).isEqualTo("vpa:sampleuser");
+    }
+
+    @Test
+    void update_leavingTheDescriptionAlone_leavesTheCounterpartyAlone() {
+        // The other half: an edit to notes or tags says nothing about who was on the other side,
+        // and must not cause a re-derivation that could differ from what is stored.
+        UUID txnId = UUID.randomUUID();
+        Transaction existing = ownedTransaction(txnId, userId);
+        existing.applyCounterpartyTyping("UPI-PAYTMQR281005-mer@paytm-REF93");
+        when(transactionRepository.findById(txnId)).thenReturn(Optional.of(existing));
+
+        var req = new TransactionDto.UpdateRequest(null, null, null, null, null, null,
+                "Reimbursed by roommate", null);
+        transactionService.update(userId, txnId, req);
+
+        assertThat(existing.getCounterpartyType()).isEqualTo(com.finora.util.CounterpartyType.BUSINESS);
+        assertThat(existing.getCounterpartyKey()).isEqualTo("vpa:mer");
+    }
+
+    @Test
     void updateCategory_marksCategoryAsManuallySet() {
         UUID txnId = UUID.randomUUID();
         Transaction existing = ownedTransaction(txnId, userId);
@@ -1206,17 +1243,17 @@ class TransactionServiceTest {
     @Test
     void search_withAKeywordMatchingABankName_resolvesAndPassesThatBanksIdToTheRepository() {
         Page<Transaction> emptyPage = new PageImpl<>(List.of());
-        when(transactionRepository.search(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(Pageable.class)))
+        when(transactionRepository.search(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(Pageable.class)))
                 .thenReturn(emptyPage);
 
-        var filter = new TransactionDto.FilterRequest(null, null, null, null, null, null, null,
+        var filter = new TransactionDto.FilterRequest(null, null, null, null, null, null, null, null,
                 "Punjab National Bank", 0, 20, null, null);
         transactionService.search(userId, filter);
 
         @SuppressWarnings("unchecked")
         ArgumentCaptor<List<String>> bankIdsCaptor = ArgumentCaptor.forClass(List.class);
-        verify(transactionRepository).search(any(), any(), any(), any(), any(), any(), any(), any(), any(),
-                bankIdsCaptor.capture(), any(), any(Pageable.class));
+        verify(transactionRepository).search(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
+                bankIdsCaptor.capture(), any(), any(), any(Pageable.class));
 
         assertThat(bankIdsCaptor.getValue()).containsExactly("PNB");
     }
@@ -1227,20 +1264,80 @@ class TransactionServiceTest {
         // TransactionService always passes a non-empty placeholder instead (see its own
         // NO_BANK_MATCH_SENTINEL comment) so the repository never has to reason about that case.
         Page<Transaction> emptyPage = new PageImpl<>(List.of());
-        when(transactionRepository.search(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(Pageable.class)))
+        when(transactionRepository.search(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(Pageable.class)))
                 .thenReturn(emptyPage);
 
-        var filter = new TransactionDto.FilterRequest(null, null, null, null, null, null, null,
+        var filter = new TransactionDto.FilterRequest(null, null, null, null, null, null, null, null,
                 "swiggy", 0, 20, null, null);
         transactionService.search(userId, filter);
 
         @SuppressWarnings("unchecked")
         ArgumentCaptor<List<String>> bankIdsCaptor = ArgumentCaptor.forClass(List.class);
-        verify(transactionRepository).search(any(), any(), any(), any(), any(), any(), any(), any(), any(),
-                bankIdsCaptor.capture(), any(), any(Pageable.class));
+        verify(transactionRepository).search(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
+                bankIdsCaptor.capture(), any(), any(), any(Pageable.class));
 
         assertThat(bankIdsCaptor.getValue()).isNotEmpty();
         assertThat(bankIdsCaptor.getValue()).doesNotContain("PNB", "SBI", "HDFC");
+    }
+
+    /**
+     * The category half of the same "Improve Search" gap the bank tests above lock in: a keyword
+     * like "Groceries" is how someone actually thinks of a transaction they're looking for, and
+     * the Ledger's search bar sits directly above a table with a Category column -- but category,
+     * like bank, has no column on Transaction itself, so it needs the identical
+     * resolve-ids-first treatment (see TransactionRepository.search's own doc comment). Locks in
+     * that a keyword matching one of the user's own category names resolves to that category's id
+     * and gets passed down to the repository's `categoryIds` parameter. See
+     * TransactionRepositoryIT.search_matchesByCategoryId_evenWhenDescriptionDoesNotMentionTheCategoryName
+     * for the corresponding real-Postgres proof that the query itself works correctly.
+     */
+    @Test
+    void search_withAKeywordMatchingACategoryName_resolvesAndPassesThatCategorysIdToTheRepository() {
+        Category groceries = new Category();
+        ReflectionTestUtils.setField(groceries, "id", UUID.randomUUID());
+        groceries.setUserId(userId);
+        groceries.setName("Groceries");
+        when(categoryRepository.findByUserId(userId)).thenReturn(List.of(dummyCategory, groceries));
+
+        Page<Transaction> emptyPage = new PageImpl<>(List.of());
+        when(transactionRepository.search(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(Pageable.class)))
+                .thenReturn(emptyPage);
+
+        var filter = new TransactionDto.FilterRequest(null, null, null, null, null, null, null, null,
+                "groceries", 0, 20, null, null);
+        transactionService.search(userId, filter);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<UUID>> categoryIdsCaptor = ArgumentCaptor.forClass(List.class);
+        verify(transactionRepository).search(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
+                categoryIdsCaptor.capture(), any(), any(Pageable.class));
+
+        assertThat(categoryIdsCaptor.getValue()).containsExactly(groceries.getId());
+    }
+
+    @Test
+    void search_withAKeywordMatchingNoCategoryName_passesTheNoMatchSentinelRatherThanAnEmptyList() {
+        // Same reasoning as the bank sentinel test above: TransactionService always passes a
+        // non-empty placeholder rather than an empty list (see its own
+        // NO_CATEGORY_MATCH_SENTINEL comment), so the repository never has to reason about that
+        // case for either IN-clause branch.
+        when(categoryRepository.findByUserId(userId)).thenReturn(List.of(dummyCategory));
+
+        Page<Transaction> emptyPage = new PageImpl<>(List.of());
+        when(transactionRepository.search(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(Pageable.class)))
+                .thenReturn(emptyPage);
+
+        var filter = new TransactionDto.FilterRequest(null, null, null, null, null, null, null, null,
+                "swiggy", 0, 20, null, null);
+        transactionService.search(userId, filter);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<UUID>> categoryIdsCaptor = ArgumentCaptor.forClass(List.class);
+        verify(transactionRepository).search(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
+                categoryIdsCaptor.capture(), any(), any(Pageable.class));
+
+        assertThat(categoryIdsCaptor.getValue()).isNotEmpty();
+        assertThat(categoryIdsCaptor.getValue()).doesNotContain(dummyCategory.getId());
     }
 
     /**
@@ -1256,10 +1353,10 @@ class TransactionServiceTest {
         // 2 transactions on this page, but 45 total across the full result set at size 10 --
         // exactly the distinction a bare `.size()` on the returned list could never make.
         Page<Transaction> page = new PageImpl<>(pageContent, org.springframework.data.domain.PageRequest.of(0, 10), 45);
-        when(transactionRepository.search(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(Pageable.class)))
+        when(transactionRepository.search(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(Pageable.class)))
                 .thenReturn(page);
 
-        var filter = new TransactionDto.FilterRequest(null, null, null, null, null, null, null, null, 0, 10, null, null);
+        var filter = new TransactionDto.FilterRequest(null, null, null, null, null, null, null, null, null, 0, 10, null, null);
         var result = transactionService.search(userId, filter);
 
         assertThat(result.content()).hasSize(2);
@@ -1280,14 +1377,14 @@ class TransactionServiceTest {
      */
     @Test
     void search_withAnUnrecognisedSortDir_fallsBackToDescendingRatherThanThrowing() {
-        when(transactionRepository.search(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(Pageable.class)))
+        when(transactionRepository.search(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(Pageable.class)))
                 .thenReturn(new PageImpl<>(List.of()));
 
-        var filter = new TransactionDto.FilterRequest(null, null, null, null, null, null, null, null, 0, 20, null, "bogus");
+        var filter = new TransactionDto.FilterRequest(null, null, null, null, null, null, null, null, null, 0, 20, null, "bogus");
         transactionService.search(userId, filter);
 
         ArgumentCaptor<Pageable> pageableCaptor = ArgumentCaptor.forClass(Pageable.class);
-        verify(transactionRepository).search(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), pageableCaptor.capture());
+        verify(transactionRepository).search(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), pageableCaptor.capture());
         Sort.Order order = pageableCaptor.getValue().getSort().getOrderFor("txnDate");
         assertThat(order)
                 .as("an unrecognised sortDir must still produce a real sort, not fail the search")
@@ -1295,6 +1392,40 @@ class TransactionServiceTest {
         assertThat(order.getDirection())
                 .as("and the fallback must be the documented default, not an arbitrary one")
                 .isEqualTo(Sort.Direction.DESC);
+    }
+
+    /**
+     * Backs the Ledger's Status filter: `status` is a plain String query param (like `type`),
+     * resolved through the same EnumParsing.parseIfPresent path -- see
+     * TransactionRepositoryIT.search_filtersByReconciliationStatus for the corresponding
+     * real-Postgres proof that the query clause itself works.
+     */
+    @Test
+    void search_withAStatusFilter_resolvesItToTheEnumAndPassesItToTheRepository() {
+        when(transactionRepository.search(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of()));
+
+        var filter = new TransactionDto.FilterRequest(null, null, null, "DUPLICATE", null, null, null, null, null, 0, 20, null, null);
+        transactionService.search(userId, filter);
+
+        ArgumentCaptor<Transaction.ReconciliationStatus> statusCaptor = ArgumentCaptor.forClass(Transaction.ReconciliationStatus.class);
+        verify(transactionRepository).search(any(), any(), any(), any(), statusCaptor.capture(), any(), any(), any(), any(), any(), any(), any(), any(), any(Pageable.class));
+
+        assertThat(statusCaptor.getValue()).isEqualTo(Transaction.ReconciliationStatus.DUPLICATE);
+    }
+
+    @Test
+    void search_withNoStatusFilter_passesNullRatherThanRestrictingToOneStatus() {
+        when(transactionRepository.search(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of()));
+
+        var filter = new TransactionDto.FilterRequest(null, null, null, null, null, null, null, null, null, 0, 20, null, null);
+        transactionService.search(userId, filter);
+
+        ArgumentCaptor<Transaction.ReconciliationStatus> statusCaptor = ArgumentCaptor.forClass(Transaction.ReconciliationStatus.class);
+        verify(transactionRepository).search(any(), any(), any(), any(), statusCaptor.capture(), any(), any(), any(), any(), any(), any(), any(), any(), any(Pageable.class));
+
+        assertThat(statusCaptor.getValue()).isNull();
     }
 
     // --- Deleted-account leak (see DashboardService.summarize for the original fix): a deleted
@@ -1306,15 +1437,15 @@ class TransactionServiceTest {
     void search_passesTheUsersLiveAccountIds_tookTheRepository() {
         Account liveAccount = account(UUID.randomUUID(), Account.Type.SAVINGS, BigDecimal.ZERO);
         when(accountRepository.findByUserId(userId)).thenReturn(List.of(liveAccount));
-        when(transactionRepository.search(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(Pageable.class)))
+        when(transactionRepository.search(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(Pageable.class)))
                 .thenReturn(new PageImpl<>(List.of()));
 
-        var filter = new TransactionDto.FilterRequest(null, null, null, null, null, null, null, null, 0, 20, null, null);
+        var filter = new TransactionDto.FilterRequest(null, null, null, null, null, null, null, null, null, 0, 20, null, null);
         transactionService.search(userId, filter);
 
         @SuppressWarnings("unchecked")
         ArgumentCaptor<List<UUID>> liveAccountIdsCaptor = ArgumentCaptor.forClass(List.class);
-        verify(transactionRepository).search(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
+        verify(transactionRepository).search(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
                 liveAccountIdsCaptor.capture(), any(Pageable.class));
 
         assertThat(liveAccountIdsCaptor.getValue()).containsExactly(liveAccount.getId());
@@ -1367,7 +1498,7 @@ class TransactionServiceTest {
                 .thenReturn(List.of(grouped1, grouped2, singleton));
         when(transactionGroupingService.groupNeedsReviewByMerchant(userId)).thenReturn(List.of(
                 new TransactionGroupingService.MerchantGroup(groupedMerchantId, "Ach Indian Clearing Corp",
-                        List.of(grouped1.getId(), grouped2.getId()))));
+                        List.of(grouped1.getId(), grouped2.getId()), List.of())));
 
         List<TransactionDto> result = transactionService.needsReview(userId);
 
@@ -1391,5 +1522,54 @@ class TransactionServiceTest {
         List<TransactionDto> result = transactionService.needsReview(userId);
 
         assertThat(result).extracting(TransactionDto::id).containsExactly(genuine.getId());
+    }
+
+    @Test
+    void create_typesTheCounterparty_evenWhenTheUserSuppliedTheCategoryThemselves() {
+        // The assertion that matters. Counterparty typing sits OUTSIDE the category decision,
+        // because it is derived from the narration alone and is equally true whether the category
+        // came from the engine or from the user typing one in. Setting it only in the engine branch
+        // would leave every manually-categorized row untyped for no reason a user could explain --
+        // and the manual branch is exactly the one a careful user exercises most.
+        when(categorizationService.resolveMerchantId(eq(userId), anyString())).thenReturn(UUID.randomUUID());
+        when(categorizationService.resolveOrCreateCategory(eq(userId), eq("Dining"))).thenReturn(dummyCategory);
+
+        var req = new TransactionDto.CreateRequest(UUID.randomUUID(), "Dining", LocalDate.now(),
+                "UPI-SUNIL VERMA-sampleuser@ybl-REF61", BigDecimal.valueOf(486), "EXPENSE", List.of());
+
+        transactionService.create(userId, req);
+
+        verify(transactionRepository).save(argThat(t ->
+                t.getCounterpartyType() == com.finora.util.CounterpartyType.PERSON
+                        && "vpa:sampleuser".equals(t.getCounterpartyKey())));
+    }
+
+    @Test
+    void create_storesNoKeyAsNull_ratherThanAnEmptyString() {
+        // CounterpartyIdentity returns "" for "nothing derivable". Persisting that verbatim would
+        // make "no key" and "empty key" two different groups in the value-weighted review query
+        // this column exists to serve.
+        when(categorizationService.resolveMerchantId(eq(userId), anyString())).thenReturn(UUID.randomUUID());
+        when(categorizationService.resolveOrCreateCategory(eq(userId), eq("Dining"))).thenReturn(dummyCategory);
+
+        var req = new TransactionDto.CreateRequest(UUID.randomUUID(), "Dining", LocalDate.now(),
+                "UPI/REF62/UPI", BigDecimal.valueOf(486), "EXPENSE", List.of());
+
+        transactionService.create(userId, req);
+
+        verify(transactionRepository).save(argThat(t -> t.getCounterpartyKey() == null));
+    }
+
+    @Test
+    void create_neverLeavesTheTypeNull_soTheNotNullColumnCannotBeViolated() {
+        when(categorizationService.resolveMerchantId(eq(userId), anyString())).thenReturn(UUID.randomUUID());
+        when(categorizationService.resolveOrCreateCategory(eq(userId), eq("Dining"))).thenReturn(dummyCategory);
+
+        var req = new TransactionDto.CreateRequest(UUID.randomUUID(), "Dining", LocalDate.now(),
+                "UPI/REF63/UPI", BigDecimal.valueOf(486), "EXPENSE", List.of());
+
+        transactionService.create(userId, req);
+
+        verify(transactionRepository).save(argThat(t -> t.getCounterpartyType() != null));
     }
 }

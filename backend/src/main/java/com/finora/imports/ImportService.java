@@ -895,6 +895,13 @@ public class ImportService {
             t.setCategoryId(category.getId());
             UUID merchantId = categorizationService.resolveMerchantId(userId, row.description());
             t.setMerchantId(merchantId);
+            // Same two calls as TransactionService.create, on the same field. Both paths type from
+            // The same single derivation TransactionService.create and the backfill sweep use --
+            // see CounterpartyTyping for why it is shared rather than spelled out three times. A row
+            // cannot be typed one way at import, another when created by hand, and a third when
+            // backfilled; the divergence #743's review found between suggest() and
+            // suggestReadOnly() is exactly what that structure is protecting against.
+            t.applyCounterpartyTyping(row.description());
             // Collected, not applied. Applying merchant learning here is what Bug 02 was: one
             // confirmation per row, inside this transaction, where a single lost race against
             // UNIQUE(user_id, merchant_id, category_id) rolled back every transaction in a

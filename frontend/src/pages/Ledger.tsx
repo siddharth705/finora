@@ -7,8 +7,10 @@ import { AskOnceCard } from '../components/AskOnceCard';
 import { CategoryCombobox } from '../components/CategoryCombobox';
 import { CategoryCreateEditPanel } from '../components/CategoryCreateEditPanel';
 import { MerchantGroupReviewCard } from '../components/MerchantGroupReviewCard';
+import { CounterpartyGroupReviewCard } from '../components/CounterpartyGroupReviewCard';
 import { MerchantLogo } from '../components/MerchantLogo';
 import type { Transaction } from '../types';
+import { counterpartyLabel } from '../lib/counterpartyLabel';
 import { ConfirmDialog, Button, IconButton, Skeleton } from '../design-system';
 import { useDelayedLoading } from '../hooks/useDelayedLoading';
 
@@ -16,6 +18,39 @@ function fmt(n: number) {
   // Negative amounts (e.g. a month where spend exceeded income) must render as "-₹500",
   // not "₹-500" -- string concatenation put the currency symbol before the sign.
   return (n < 0 ? '-₹' : '₹') + Math.round(Math.abs(n)).toLocaleString('en-IN');
+}
+
+/**
+ * `t.reconciliationStatus` used to render straight into the Status column, unfiltered and
+ * unexplained -- `OK`, the status of the overwhelming majority of ordinary transactions, has no
+ * useful meaning to a person reading their ledger, but it looked exactly as prominent and
+ * exactly as alarming as `DUPLICATE`. Reported directly: "what is this OK status?".
+ *
+ * `null` for `OK` on purpose -- the badge disappears rather than saying something with no
+ * content, which is also what TransactionExplanationService.reconciliationExplanationFor already
+ * does for the same status one layer down (`return null` for OK). Every other status gets a
+ * short, human label and a tooltip that names it in one line; clicking it opens the same
+ * "Why this category?" panel already wired to `explaining`, which fetches the FULL reasoning
+ * (via transactionsApi.explanation -- see ExplanationModal's reconciliation section below) for
+ * whichever specific transaction was clicked, rather than duplicating that copy here.
+ */
+function reconciliationBadge(status: Transaction['reconciliationStatus']): { label: string; hint: string; className: string } | null {
+  switch (status) {
+    case 'OK':
+      return null;
+    case 'DUPLICATE':
+      return { label: 'Duplicate', hint: 'Matched as a repeat of another transaction', className: 'bg-danger-bg text-danger' };
+    case 'TRANSFER':
+      return { label: 'Transfer', hint: 'Matched as money moving between your own accounts', className: 'bg-primary/15 text-primary' };
+    case 'REFUND':
+      return { label: 'Refund', hint: 'Matched as a refund of an earlier purchase', className: 'bg-success-bg text-success' };
+    case 'REVERSAL':
+      return { label: 'Reversed', hint: 'Matched as a reversal of an earlier purchase', className: 'bg-warning-bg text-warning' };
+    case 'INVESTMENT_TRANSFER':
+      return { label: 'Investment', hint: 'Excluded from spend as an investment transfer', className: 'bg-primary/15 text-primary' };
+    case 'SUPERSEDED':
+      return { label: 'Superseded', hint: 'From a statement re-upload that replaced this period', className: 'bg-gray-200 text-gray-500' };
+  }
 }
 
 // Small debounce hook so typing in the search box doesn't fire a query per keystroke —
@@ -116,15 +151,19 @@ export default function Ledger() {
       {/* Moved here from the Dashboard: transaction category review belongs with the
           transactions themselves, not mixed into an at-a-glance financial overview — see
           AskOnceCard's own doc comment for what it does. Groups (bigger wins) before
-          individual items. */}
+          individual items. Merchant grouping first: a merchant match already implies a strong
+          category guess, a stronger signal than a counterparty grouping can offer -- and the two
+          cards partition the same backlog rather than overlap, see CounterpartyGroupReviewCard's
+          own doc for why. */}
       <MerchantGroupReviewCard />
+      <CounterpartyGroupReviewCard />
       <AskOnceCard />
 
       {error && <p className="text-danger text-sm">{error}</p>}
 
-      <div className="bg-card rounded p-4 shadow grid grid-cols-2 md:grid-cols-4 gap-2">
+      <div className="bg-card rounded p-4 shadow grid grid-cols-2 md:grid-cols-5 gap-2">
         <input
-          placeholder="Search description, merchant, bank, account, branch, IFSC…"
+          placeholder="Search description, merchant, category, bank, account, branch, IFSC…"
           value={keywordInput}
           onChange={(e) => setKeywordInput(e.target.value)}
           className="bg-card text-ink border rounded px-2 py-1.5 text-sm"
@@ -133,6 +172,19 @@ export default function Ledger() {
           <option value="">All Types</option>
           <option value="INCOME">Income</option>
           <option value="EXPENSE">Expense</option>
+        </select>
+        {/* Reported directly ("I need filter here") right alongside the confusion over the Status
+            column itself -- reconciliationBadge (below in this file) is what makes each of these
+            values mean something on the row; this is the same vocabulary, as a filter. */}
+        <select className="bg-card text-ink border rounded px-2 py-1.5 text-sm" onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value || undefined, page: 0 }))}>
+          <option value="">All Statuses</option>
+          <option value="OK">Ordinary</option>
+          <option value="DUPLICATE">Duplicate</option>
+          <option value="TRANSFER">Transfer</option>
+          <option value="REFUND">Refund</option>
+          <option value="REVERSAL">Reversed</option>
+          <option value="INVESTMENT_TRANSFER">Investment</option>
+          <option value="SUPERSEDED">Superseded</option>
         </select>
         <input type="date" className="bg-card text-ink border rounded px-2 py-1.5 text-sm" onChange={(e) => setFilters((f) => ({ ...f, dateFrom: e.target.value || undefined, page: 0 }))} />
         <input type="date" className="bg-card text-ink border rounded px-2 py-1.5 text-sm" onChange={(e) => setFilters((f) => ({ ...f, dateTo: e.target.value || undefined, page: 0 }))} />
@@ -193,6 +245,22 @@ export default function Ledger() {
                       <MerchantLogo merchant={t.merchant} size={22} />
                       <span className="truncate min-w-0 flex-1">
                         {t.description || t.merchant}
+                        {/* WHO, next to the narration it was derived from -- deliberately not in the
+                            category cell, because "who" and "what for" are different questions and
+                            putting the answer to one beside the answer to the other is how they get
+                            conflated. Muted, not accented: this is context, not a call to act.
+                            Nothing renders at all when the counterparty is unknown. */}
+                        {(() => {
+                          const cp = counterpartyLabel(t.counterpartyType, t.type);
+                          return cp ? (
+                            <span
+                              className="text-[10px] uppercase bg-gray-200 text-gray-500 px-1.5 py-0.5 rounded ml-1"
+                              title={cp.full}
+                            >
+                              {cp.short}
+                            </span>
+                          ) : null;
+                        })()}
                         {t.needsCategoryReview && <span className="text-[10px] uppercase bg-warning-bg text-warning px-1.5 py-0.5 rounded ml-1">needs review</span>}
                         {t.recurring && <span className="text-[10px] uppercase bg-primary/15 text-primary px-1.5 py-0.5 rounded ml-1">recurring</span>}
                       </span>
@@ -219,9 +287,20 @@ export default function Ledger() {
                     {t.type === 'INCOME' ? '+' : '-'}{fmt(t.amount)}
                   </td>
                   <td className="p-2">
-                    <span className="text-[10px] uppercase bg-primary/15 text-primary px-1.5 py-0.5 rounded">
-                      {t.reconciliationStatus}
-                    </span>
+                    {(() => {
+                      const badge = reconciliationBadge(t.reconciliationStatus);
+                      if (!badge) return null;
+                      return (
+                        <button
+                          type="button"
+                          title={badge.hint}
+                          onClick={() => setExplaining(t)}
+                          className={`text-[10px] uppercase px-1.5 py-0.5 rounded hover:opacity-80 ${badge.className}`}
+                        >
+                          {badge.label}
+                        </button>
+                      );
+                    })()}
                   </td>
                   <td className="p-2">
                     <div className="flex items-center gap-1 justify-end">
@@ -348,18 +427,48 @@ function ExplanationModal({ transaction, onClose }: { transaction: Transaction; 
           ) : !explanation ? (
             <p className="text-muted text-xs">Loading…</p>
           ) : (
-            <div className="space-y-2">
-              <p className="text-ink text-sm">{explanation.summary}</p>
-              {explanation.confidence != null && (
-                <p className="text-xs text-muted">{explanation.confidence}% confidence</p>
-              )}
-              {explanation.evidence.length > 0 && (
-                <ul className="list-disc list-inside space-y-1">
-                  {explanation.evidence.map((line, i) => (
-                    <li key={i} className="text-xs text-muted">{line}</li>
-                  ))}
-                </ul>
-              )}
+            <div className="space-y-4">
+              {/* This section is what makes the Status column's badge (reconciliationBadge, above
+                  in this file) clickable rather than a static label: transactionsApi.explanation
+                  already computes the full reconciliation reasoning server-side
+                  (TransactionExplanationService.reconciliationExplanationFor) -- it was simply
+                  never rendered anywhere, so the fetch ran and the answer was thrown away.
+                  `undefined` for an ordinary OK transaction (the common case, and the reason this
+                  whole section is conditional rather than always present). */}
+              {explanation.reconciliation && (() => {
+                const badge = reconciliationBadge(explanation.reconciliation.status);
+                return (
+                  <div className="space-y-2 pb-4 border-b border-border">
+                    {badge && (
+                      <span className={`inline-block text-[10px] uppercase px-1.5 py-0.5 rounded ${badge.className}`}>
+                        {badge.label}
+                      </span>
+                    )}
+                    <p className="text-ink text-sm">{explanation.reconciliation.summary}</p>
+                    {explanation.reconciliation.evidence.length > 0 && (
+                      <ul className="list-disc list-inside space-y-1">
+                        {explanation.reconciliation.evidence.map((line, i) => (
+                          <li key={i} className="text-xs text-muted">{line}</li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                );
+              })()}
+
+              <div className="space-y-2">
+                <p className="text-ink text-sm">{explanation.summary}</p>
+                {explanation.confidence != null && (
+                  <p className="text-xs text-muted">{explanation.confidence}% confidence</p>
+                )}
+                {explanation.evidence.length > 0 && (
+                  <ul className="list-disc list-inside space-y-1">
+                    {explanation.evidence.map((line, i) => (
+                      <li key={i} className="text-xs text-muted">{line}</li>
+                    ))}
+                  </ul>
+                )}
+              </div>
             </div>
           )}
         </div>

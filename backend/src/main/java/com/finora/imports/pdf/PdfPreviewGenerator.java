@@ -13,6 +13,7 @@ import com.finora.imports.CsvParser;
 import com.finora.imports.pdf.StatementSummaryExtractor.PrintedSummary;
 import com.finora.imports.pdf.CreditCardSummaryExtractor.CreditCardSummaryEvidence;
 import com.finora.imports.DocumentContext;
+import com.finora.imports.ExplicitZeroActivityDetector;
 import com.finora.imports.RowKind;
 import com.finora.imports.TransactionNormalizer;
 import com.finora.imports.product.ProductAttributeExtractor;
@@ -246,6 +247,20 @@ public class PdfPreviewGenerator {
                         titleDateRange.start(), titleDateRange.end());
             }
         }
+        // Fourth tier, same single-section caution and the same folding-into-printedDateRange as the
+        // third: a real Axis credit-card statement states its period inside the payment-summary grid
+        // whose label row reaches none of the three sources above. Measured, not assumed -- that
+        // section's auxiliaryText holds 127 lines and not one contains the word "period", so no
+        // line-based pattern could recover it, while the positioned geometry is unambiguous. See
+        // StatementPeriodGridExtractor's own doc comment.
+        if (printedDateRange.start() == null && doc.sections().size() <= 1) {
+            StatementPeriodGridExtractor.PrintedDateRange gridPeriod =
+                    StatementPeriodGridExtractor.extract(positioned, ctx);
+            if (gridPeriod.start() != null) {
+                printedDateRange = new TransactionTableDateRangeExtractor.PrintedDateRange(
+                        gridPeriod.start(), gridPeriod.end());
+            }
+        }
 
         // A credit-card statement's own "Payment Summary" grid (Axis, SBI evidence): read
         // document-wide, same reasoning as printedCreditCardSummary above ("a real credit-card
@@ -293,7 +308,7 @@ public class PdfPreviewGenerator {
             // the contradiction -- printed activity, nothing staged -- with nothing to state it.
             StagedAccountSection section = buildLedgerSection(userId, filename, emptySection, unknown, ctx,
                     printedSummary, printedCreditCardSummary, printedDateRange, gridPaymentDueDate,
-                    gridCreditLimit, gridAccountNumberMasked);
+                    gridCreditLimit, gridAccountNumberMasked, 1);
             return new PdfGenerationResult(List.of(surfaceUnrecognizedText(section, empty.preTableLines())), ctx,
                     printedCreditCardSummary);
         }
@@ -362,7 +377,7 @@ public class PdfPreviewGenerator {
         }
         return List.of(buildLedgerSection(userId, filename, section, product, ctx, printedSummary,
                 printedCreditCardSummary, printedDateRange, gridPaymentDueDate, gridCreditLimit,
-                gridAccountNumberMasked));
+                gridAccountNumberMasked, sectionCount));
     }
 
     /**
@@ -399,7 +414,7 @@ public class PdfPreviewGenerator {
                                                     CreditCardSummaryEvidence printedCreditCardSummary,
                                                     TransactionTableDateRangeExtractor.PrintedDateRange printedDateRange,
                                                     LocalDate gridPaymentDueDate, BigDecimal gridCreditLimit,
-                                                    String gridAccountNumberMasked) {
+                                                    String gridAccountNumberMasked, int sectionCount) {
         List<StagedRow> staged = new ArrayList<>();
         // "Never lose information" (see the engineering principles doc) -- a row that fails to
         // normalize is reported with WHY, not just silently absent from the row count. Real cost
@@ -425,6 +440,27 @@ public class PdfPreviewGenerator {
         // PreviewGenerator's identical hoist and MerchantIndex's own doc comment.
         MerchantIndex merchantIndex = transactionNormalizer.merchantIndexFor(userId);
         List<Map<String, String>> sectionRows = section.rows();
+        // Checked once, up front, against the RAW located rows -- before the loop below decides
+        // what any of them mean transactionally. A row can state the statement's own zero-activity
+        // claim and still fail every classification below (see ExplicitZeroActivityDetector's own
+        // doc comment for why it does, on the real evidencing document); this must not depend on
+        // that loop's outcome, since the loop staging zero rows is exactly the situation this
+        // exists to explain.
+        //
+        // Bug fix: same single-section caution as printedDateRange above, and for the identical
+        // reason -- this fact is derived from ONE section's own rows, but DocumentContext is
+        // shared and sticky across the WHOLE document (see its own doc comment), and
+        // ExtractionCheck reads the flag as a whole-document verdict. Left ungated, a composite
+        // statement where one section genuinely declares zero activity and a DIFFERENT section
+        // has an unrelated, genuine extraction failure would have BOTH staged rows sum to zero and
+        // the shared flag already true -- masking the real failure behind "nothing to import from
+        // this file." The real evidencing document (HSBC) locates exactly one section, so this
+        // costs it nothing; it only withholds the fact when a second section exists to be
+        // misattributed to.
+        if (ctx != null && sectionCount <= 1
+                && ExplicitZeroActivityDetector.anyRowDeclaresZeroTransactionCount(sectionRows)) {
+            ctx.recordExplicitZeroActivityDeclared();
+        }
         for (int i = 0; i < sectionRows.size(); i++) {
             Map<String, String> row = sectionRows.get(i);
             // 1-based, within this section -- same convention as PreviewGenerator's CSV path.

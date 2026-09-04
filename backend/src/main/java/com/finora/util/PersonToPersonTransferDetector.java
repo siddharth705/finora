@@ -80,8 +80,23 @@ public final class PersonToPersonTransferDetector {
     // silently mis-slicing, and throwing StringIndexOutOfBoundsException once the shift runs past
     // the end. It also sidesteps toUpperCase's locale sensitivity (a Turkish-locale JVM maps 'i'
     // to a dotted capital and stops matching lowercase rails entirely).
+    //
+    // The second alternation is FUSED rail codes. Banks render the rail as part of a product code
+    // -- UPIINTENT, UPIAB, UPIAR, UPIRET, and IMPS inside SENTIMPS<digits> -- and a \b after the
+    // rail word cannot match there, because the next character is a word character. Measured on the
+    // real corpus, rows carrying no \b-bounded rail token are only 82 of the 409 that reach
+    // "counterparty unknown" but 54.7% of that bucket's VALUE, and 75.7% of its inbound value: a
+    // word-boundary technicality was excluding the most valuable rows in the residue.
+    //
+    // Deliberately an explicit list rather than the general \bUPI[A-Z]+ it would be tempting to
+    // write. UPIINTEN(T) is confirmed -- 54 of 54 rows carry a VPA, and 10 of 17 for the longer
+    // spelling -- while UPIAB/UPIAR/UPIRET are circumstantial, so a general rule would be
+    // extrapolating from five observed codes to every bank's product vocabulary. Same discipline as
+    // MERCHANT_ACQUIRER_MARKER: add what the corpus shows, not what the shape suggests.
     private static final Pattern TRANSFER_MARKER =
-            Pattern.compile("\\b(UPI|NEFT|IMPS|RTGS)\\b", Pattern.CASE_INSENSITIVE);
+            Pattern.compile("\\b(UPI|NEFT|IMPS|RTGS)\\b"
+                    + "|\\bUPI(?:INTENT?|AB|AR|RET)\\b"
+                    + "|SENTIMPS", Pattern.CASE_INSENSITIVE);
 
     // Splits a narration into pure-letter tokens. NOT identical to \b-bounded whole-word matching:
     // it also breaks letters out of alphanumeric runs, so "123CO456" yields the token "CO" where
@@ -236,6 +251,36 @@ public final class PersonToPersonTransferDetector {
             + "|\\bpayu\\b"
             + "|razorpay|\\brzp\\b"
             + "|cashfree");
+
+    /**
+     * Whether this narration settled over a merchant-acquiring rail or a payment gateway.
+     *
+     * <p>Exposed so {@link CounterpartyClassifier} can reuse the exact same pattern this class
+     * vetoes on, rather than keeping a second copy of it. Two copies of a regex this specific WILL
+     * drift -- the marker set has already grown twice (the Q-VPA/Paytm/IFSC wave, then PAYTMQR/PayU/
+     * Razorpay/Cashfree), and a classifier that missed the second wave would type 232 corpus rows as
+     * UNKNOWN while this class correctly treated them as businesses.
+     */
+    public static boolean hasMerchantAcquirerMarker(String description) {
+        return description != null && MERCHANT_ACQUIRER_MARKER.matcher(description).find();
+    }
+
+    /**
+     * Whether any business-suffix or trade token appears anywhere in the narration.
+     *
+     * <p>Deliberately simpler than {@link #containsBusinessSignal}: that one discounts the statement
+     * issuer's own name before the rail marker, because a veto that fires on "HDFC BANK" in the
+     * issuer prefix would suppress every genuine transfer on an HDFC statement. Here the caller is
+     * TYPING rather than vetoing, and an issuer name is itself a financial-institution signal, so
+     * the discount would throw away the very evidence being looked for.
+     */
+    public static boolean hasBusinessToken(String description) {
+        if (description == null || description.isBlank()) return false;
+        for (String token : NON_LETTERS.split(description.toUpperCase())) {
+            if (BUSINESS_SUFFIX_TOKENS.contains(token)) return true;
+        }
+        return false;
+    }
 
     private static final Pattern SEGMENT_DELIMITERS = Pattern.compile("[\\-/_]+");
 

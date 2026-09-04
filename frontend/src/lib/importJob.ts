@@ -36,6 +36,11 @@ const LABELS: Record<ImportJobProgress['status'], string> = {
   LEARNING: 'Learning your merchants',
   COMPLETED: 'Ready to review',
   FAILED: "Couldn't finish",
+  HELD_FOR_REVIEW: 'Running additional checks',
+  // Identical wording to the hold above, on purpose. The two states differ in why we are looking,
+  // never in what the user is waiting for, and a distinct label would invite them to work out the
+  // difference -- which they cannot, and which is not theirs to worry about.
+  HELD_FOR_TRUST_REVIEW: 'Running additional checks',
   CANCELLED: 'Cancelled',
 };
 
@@ -60,7 +65,9 @@ export function stageLabel(stage: string): string {
  * instead of re-deriving its own terminal-state list.
  */
 export function isSettled(job: { status: ImportJobProgress['status'] }): boolean {
-  return job.status === 'COMPLETED' || job.status === 'FAILED' || job.status === 'CANCELLED';
+  return job.status === 'COMPLETED' || job.status === 'FAILED'
+    || job.status === 'HELD_FOR_REVIEW' || job.status === 'HELD_FOR_TRUST_REVIEW'
+    || job.status === 'CANCELLED';
 }
 
 /**
@@ -143,6 +150,23 @@ export function percent(job: ImportJobProgress): number | null {
  */
 export function detail(job: ImportJobProgress): string | null {
   if (job.status === 'FAILED') return null;
+  // Ahead of the rowsTotal guard below, because a held job usually never got far enough to
+  // count a row -- falling through would leave the user with a bare label and no
+  // explanation of why nothing is moving.
+  //
+  // The wording is deliberate on two counts. No ETA: triage is manual and volume-dependent,
+  // so a promised deadline would start breaking the moment volume grew. And no suggestion
+  // that the statement's authenticity is in question -- the cause is on our side (a parser
+  // gap for HELD_FOR_REVIEW, our own extraction contradicting itself for
+  // HELD_FOR_TRUST_REVIEW), and telling someone their own bank statement is being checked
+  // for genuineness is a worse trust hit than the delay it would excuse. That second rule
+  // binds harder for the trust hold, where the doubt really is about what the document says.
+  // It also has to stay true: additional checks genuinely are run, by a person, before the
+  // import proceeds.
+  if (job.status === 'HELD_FOR_REVIEW' || job.status === 'HELD_FOR_TRUST_REVIEW') {
+    return "We need to run some additional checks on this statement before we can complete "
+      + "the import. We'll notify you once it's ready \u2014 no action needed from you right now.";
+  }
   if (job.rowsTotal === null) return null;
   if (job.status === 'COMPLETED') {
     return `${job.rowsTotal} ${job.rowsTotal === 1 ? 'transaction' : 'transactions'} found`;

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { AlertTriangle, Ban, Loader2 } from 'lucide-react';
+import { AlertTriangle, Ban, Clock, Loader2 } from 'lucide-react';
 import { importJobsApi, type ImportJobProgress } from '../api/endpoints';
 import { detail, isCancellable, isSettled, label, percent } from '../lib/importJob';
 
@@ -143,12 +143,21 @@ export function ImportProgress({
 
   const pct = job ? percent(job) : null;
   const failed = job?.status === 'FAILED';
+  // Settled, so the spinner stops and the progress bar and Cancel disappear -- but not a
+  // failure and not a cancellation, so neither of those icons is honest. Waiting on us.
+  //
+  // Both holds, because the fallback below is the cancelled icon: a settled job that is not FAILED
+  // and not recognised here renders a Ban glyph next to "Running additional checks", which tells
+  // the user their import was cancelled and that it is still being worked on, at the same time.
+  const held = job?.status === 'HELD_FOR_REVIEW' || job?.status === 'HELD_FOR_TRUST_REVIEW';
 
   return (
     <div className="bg-card rounded-xl2 shadow-card border border-border p-6" data-testid="import-progress">
       <div className="flex items-center gap-3">
         {failed ? (
           <AlertTriangle size={18} className="text-warning flex-shrink-0" />
+        ) : held ? (
+          <Clock size={18} className="text-primary flex-shrink-0" />
         ) : job && isSettled(job) ? (
           <Ban size={18} className="text-muted flex-shrink-0" />
         ) : (
