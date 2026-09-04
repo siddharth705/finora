@@ -1,8 +1,14 @@
 /**
  * The support feature module: in-product help requests and product feedback.
  *
- * <p>Reference minting lives here ({@link com.finora.support.SupportTicketIdGenerator}); the HTTP
- * surface, orchestration and API contract land in this package as later phases add them.
+ * <p>Reference minting ({@link com.finora.support.SupportTicketIdGenerator}), the client-identity
+ * resolver ({@link com.finora.support.ClientIdentity}), and — as of Phase 3/4 — the full HTTP
+ * surface and orchestration: {@link com.finora.support.SupportTicketController} and
+ * {@link com.finora.support.AdminSupportTicketController} for tickets, {@link
+ * com.finora.support.FeedbackController} and {@link com.finora.support.AdminFeedbackController} for
+ * feedback, backed by {@link com.finora.support.SupportTicketService} and
+ * {@link com.finora.support.FeedbackService}. {@link com.finora.support.SupportAttachmentUpload} is
+ * the attachment-validation counterpart to {@code com.finora.imports.StatementUpload}.
  *
  * <p>{@code SupportTicket}, {@code SupportTicketAttachment}, {@code SupportTicketInternalNote} and
  * {@code FeedbackEntry} stay in {@code com.finora.entity}, and their repositories in

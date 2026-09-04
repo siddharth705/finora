@@ -29,6 +29,26 @@ public interface SupportTicketRepository extends JpaRepository<SupportTicket, UU
     Optional<SupportTicket> findByTicketNumber(String ticketNumber);
 
     /**
+     * The admin queue, optionally filtered by status and/or category, oldest first — matching
+     * {@code idx_support_tickets_open} and the same "longest-waiting user is the one to look at"
+     * ordering {@code AdminHeldImportService.list} and {@code AdminLearningQueueService} use.
+     *
+     * <p>{@code :status IS NULL} / {@code :category IS NULL} rather than two overloaded finder
+     * methods (or four, to cover both filters independently): one query serves "no filter", "status
+     * only", "category only" and "both", and Spring Data parameter binding treats a null argument
+     * as null in the generated JPQL, not as a literal to compare against.
+     */
+    @Query("""
+            SELECT t FROM SupportTicket t
+             WHERE (:status IS NULL OR t.status = :status)
+               AND (:category IS NULL OR t.category = :category)
+             ORDER BY t.createdAt ASC
+            """)
+    Page<SupportTicket> findForAdmin(@Param("status") SupportTicket.Status status,
+                                     @Param("category") SupportTicket.Category category,
+                                     Pageable pageable);
+
+    /**
      * The raw sequence value. Formatting is {@code SupportTicketIdGenerator}'s job.
      *
      * <p>{@code nextval} is transactional-but-not-rollback-safe by design: a rolled-back ticket
