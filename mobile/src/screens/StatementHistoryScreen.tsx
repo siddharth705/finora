@@ -15,6 +15,7 @@ import { Card, EmptyState, SectionHeading } from '../components/Card';
 import { apiErrorCode, toUserMessage } from '../lib/apiError';
 import { fmtCurrency, fmtDate } from '../lib/format';
 import { invalidateFinancialData } from '../lib/invalidateFinancialData';
+import { useKeyedSingleFlight } from '../lib/useSingleFlight';
 import { useLargeFontScale } from '../lib/useLargeFontScale';
 import { radius, spacing, useTheme } from '../theme';
 import type { AppTabParamList } from '../navigation/types';
@@ -49,6 +50,7 @@ export function StatementHistoryScreen() {
   const insets = useSafeAreaInsets();
   const queryClient = useQueryClient();
   const navigation = useNavigation();
+  const reimportGuard = useKeyedSingleFlight();
 
   const [openAccounts, setOpenAccounts] = useState<Set<string>>(new Set());
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -82,36 +84,44 @@ export function StatementHistoryScreen() {
    * them — keeps its single-tap re-import.
    */
   async function handleReimport(statement: StatementSummary, password?: string) {
-    setBusyId(statement.id);
-    setError(null);
-    try {
-      const result = await statementImportsApi.reimport(statement.id, password);
-      setPasswordPrompt(null);
-      // Hand the staged rows to the Import TAB rather than rebuilding the review UI here -- it is
-      // the same review and confirm the user already knows. Import lives in the tab navigator and
-      // this screen lives in the More stack, so the jump goes through the parent.
-      navigation.getParent<BottomTabNavigationProp<AppTabParamList>>()?.navigate('Import', {
-        reimport: {
-          statementImportId: statement.id,
-          accountId: result.accountId,
-          accountName: result.accountName,
-          staging: result.staging,
-          password,
-          nonce: Date.now(),
-        },
-      });
-    } catch (e) {
-      const code = apiErrorCode(e);
-      if (code === PDF_PASSWORD_REQUIRED || code === PDF_PASSWORD_INVALID) {
-        // Not a re-import failure and not shown as one -- the statement is intact, it just has not
-        // been unlocked. Keeping the prompt open on INVALID preserves what was typed.
-        setPasswordPrompt({ statement, wrong: code === PDF_PASSWORD_INVALID });
-      } else {
-        setError(toUserMessage(e, 'Could not re-import this statement.'));
+    // Keyed on the statement, not global: the `busyId` state below disables only THIS row, so a
+    // guard that blocked the whole screen would falsely drop a tap on a different statement. What
+    // it protects against is two rapid taps on the SAME row landing before the first setBusyId
+    // reaches a render -- each would otherwise stage its own server-side session for one re-import
+    // (see B5 in the mobile-correctness-trust-roadmap: the confirm side is already claimed
+    // atomically by V133, but nothing stopped a duplicate staging session from being created here).
+    await reimportGuard(statement.id, async () => {
+      setBusyId(statement.id);
+      setError(null);
+      try {
+        const result = await statementImportsApi.reimport(statement.id, password);
+        setPasswordPrompt(null);
+        // Hand the staged rows to the Import TAB rather than rebuilding the review UI here -- it is
+        // the same review and confirm the user already knows. Import lives in the tab navigator and
+        // this screen lives in the More stack, so the jump goes through the parent.
+        navigation.getParent<BottomTabNavigationProp<AppTabParamList>>()?.navigate('Import', {
+          reimport: {
+            statementImportId: statement.id,
+            accountId: result.accountId,
+            accountName: result.accountName,
+            staging: result.staging,
+            password,
+            nonce: Date.now(),
+          },
+        });
+      } catch (e) {
+        const code = apiErrorCode(e);
+        if (code === PDF_PASSWORD_REQUIRED || code === PDF_PASSWORD_INVALID) {
+          // Not a re-import failure and not shown as one -- the statement is intact, it just has not
+          // been unlocked. Keeping the prompt open on INVALID preserves what was typed.
+          setPasswordPrompt({ statement, wrong: code === PDF_PASSWORD_INVALID });
+        } else {
+          setError(toUserMessage(e, 'Could not re-import this statement.'));
+        }
+      } finally {
+        setBusyId(null);
       }
-    } finally {
-      setBusyId(null);
-    }
+    });
   }
 
   function confirmDelete(statement: StatementSummary) {
