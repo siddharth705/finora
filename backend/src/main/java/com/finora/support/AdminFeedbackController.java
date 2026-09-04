@@ -31,4 +31,11 @@ public class AdminFeedbackController {
             @RequestParam(defaultValue = "25") int size) {
         return ApiResponse.ok(feedbackService.adminList(type, context, page, size));
     }
+
+    /** Phase 9's counts panel (proposal §3.4: "Counts... by Type, Context, Source"). Always
+     *  unfiltered -- see {@code FeedbackService.breakdown}'s own doc comment for why. */
+    @GetMapping("/breakdown")
+    public ApiResponse<FeedbackDto.Breakdown> breakdown() {
+        return ApiResponse.ok(feedbackService.breakdown());
+    }
 }
