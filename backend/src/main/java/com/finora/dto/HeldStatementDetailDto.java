@@ -1,0 +1,35 @@
+package com.finora.dto;
+
+import java.time.Instant;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+
+/**
+ * {@link HeldStatementDto} plus the two things an operator actually needs to decide: the evidence
+ * behind {@code triggerSummary} and the history of what happened to this hold since.
+ *
+ * <p>Still carries no statement content and no object key -- exactly the same split
+ * {@code HeldStatementDto} already draws. This view explains a decision; it does not display the
+ * document. Opening the document is the download endpoint, gated and audited separately.
+ *
+ * @param findings the same structural evidence {@code ImportTraceDto.Finding} shows an engineer
+ *                 diagnosing a parser failure, reused here rather than re-derived, because the
+ *                 operator's whole job on this screen is to judge whether that evidence justified
+ *                 the hold -- a sentence about it is not enough to judge with.
+ * @param timeline every event this hold has recorded, oldest first, read as a narrative.
+ */
+public record HeldStatementDetailDto(
+        HeldStatementDto summary,
+        List<FindingView> findings,
+        List<EventView> timeline) {
+
+    /** One verification rule's outcome for one section -- the printed-versus-parsed numbers
+     *  behind the trigger, not a sentence summarising them. */
+    public record FindingView(int sectionIndex, String rule, String outcome,
+                              Map<String, Object> details, Instant createdAt) {}
+
+    /** One entry in the hold's audit history. {@code actorId} null means the system acted. */
+    public record EventView(String eventType, String fromStatus, String toStatus, String notes,
+                            UUID actorId, Instant createdAt) {}
+}
