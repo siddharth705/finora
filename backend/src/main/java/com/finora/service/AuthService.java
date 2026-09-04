@@ -235,7 +235,9 @@ public class AuthService {
         String registeredName = user.getFullName();
         AfterCommit.run("welcome email", () -> {
             EmailResult welcomeEmailResult = emailProvider.sendWelcomeEmail(registeredEmail, registeredName);
-            auditService.record(registeredUserId, "EMAIL_SENT", "User", registeredUserId, Map.of(
+            // recordEvenOnRollback, not record: this runs inside afterCommit(), on the thread that
+            // just committed register()'s own transaction -- see that method's own doc comment.
+            auditService.recordEvenOnRollback(registeredUserId, "EMAIL_SENT", "User", registeredUserId, Map.of(
                     "type", "welcome", "provider", welcomeEmailResult.provider().name(),
                     "success", welcomeEmailResult.success()));
         });
@@ -250,7 +252,8 @@ public class AuthService {
                 + mintEmailVerificationToken(registeredUserId);
         AfterCommit.run("email verification email", () -> {
             EmailResult verifyEmailResult = emailProvider.sendEmailVerificationEmail(registeredEmail, verifyLink);
-            auditService.record(registeredUserId, "EMAIL_SENT", "User", registeredUserId, Map.of(
+            // recordEvenOnRollback -- see the welcome-email block just above for why.
+            auditService.recordEvenOnRollback(registeredUserId, "EMAIL_SENT", "User", registeredUserId, Map.of(
                     "type", "email_verification", "provider", verifyEmailResult.provider().name(),
                     "success", verifyEmailResult.success()));
         });
@@ -848,7 +851,8 @@ public class AuthService {
                 String unverifiedEmail = user.getEmail();
                 AfterCommit.run("email verification email (" + provider.label + " sign-in conflict)", () -> {
                     EmailResult result = emailProvider.sendEmailVerificationEmail(unverifiedEmail, verifyLink);
-                    auditService.record(unverifiedUserId, "EMAIL_SENT", "User", unverifiedUserId, Map.of(
+                    // recordEvenOnRollback -- see register()'s welcome-email block for why.
+                    auditService.recordEvenOnRollback(unverifiedUserId, "EMAIL_SENT", "User", unverifiedUserId, Map.of(
                             "type", "email_verification", "provider", result.provider().name(),
                             "success", result.success()));
                 });
@@ -1111,7 +1115,8 @@ public class AuthService {
         String reactivatedEmail = user.getEmail();
         AfterCommit.run("account reactivated email", () -> {
             EmailResult result = emailProvider.sendAccountReactivatedEmail(reactivatedEmail);
-            auditService.record(reactivatedUserId, "EMAIL_SENT", "User", reactivatedUserId, Map.of(
+            // recordEvenOnRollback -- see register()'s welcome-email block for why.
+            auditService.recordEvenOnRollback(reactivatedUserId, "EMAIL_SENT", "User", reactivatedUserId, Map.of(
                     "type", "account_reactivated", "provider", result.provider().name(),
                     "success", result.success()));
         });
@@ -1292,7 +1297,10 @@ public class AuthService {
             String resetEmail = userOpt.get().getEmail();
             AfterCommit.run("password reset email", () -> authEmailExecutor.execute(() -> {
                 EmailResult resetEmailResult = emailProvider.sendPasswordResetEmail(resetEmail, resetLink);
-                auditService.record(resetUserId, "EMAIL_SENT", "User", resetUserId, Map.of(
+                // recordEvenOnRollback: authEmailExecutor normally hands this to a dedicated
+                // thread, but CallerRunsPolicy can run it right here, still inside afterCommit() on
+                // the request thread -- see register()'s welcome-email block for why that matters.
+                auditService.recordEvenOnRollback(resetUserId, "EMAIL_SENT", "User", resetUserId, Map.of(
                         "type", "password_reset", "provider", resetEmailResult.provider().name(),
                         "success", resetEmailResult.success()));
             }));
@@ -1440,7 +1448,8 @@ public class AuthService {
         String changedEmail = user.getEmail();
         AfterCommit.run("password changed email", () -> {
             EmailResult changedEmailResult = emailProvider.sendPasswordChangedEmail(changedEmail);
-            auditService.record(changedUserId, "EMAIL_SENT", "User", changedUserId, Map.of(
+            // recordEvenOnRollback -- see register()'s welcome-email block for why.
+            auditService.recordEvenOnRollback(changedUserId, "EMAIL_SENT", "User", changedUserId, Map.of(
                     "type", "password_changed", "provider", changedEmailResult.provider().name(),
                     "success", changedEmailResult.success()));
         });
