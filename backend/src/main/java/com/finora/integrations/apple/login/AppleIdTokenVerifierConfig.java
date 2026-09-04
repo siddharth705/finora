@@ -6,7 +6,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 import java.net.MalformedURLException;
-import java.net.URL;
+import java.net.URI;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -48,7 +48,7 @@ public class AppleIdTokenVerifierConfig {
     @Bean
     public JwkProvider appleJwkProvider() {
         try {
-            return new JwkProviderBuilder(new URL(APPLE_JWKS_URL))
+            return new JwkProviderBuilder(URI.create(APPLE_JWKS_URL).toURL())
                     .cached(10, 24, TimeUnit.HOURS)
                     .rateLimited(10, 1, TimeUnit.MINUTES)
                     .timeouts(CONNECT_TIMEOUT_MILLIS, READ_TIMEOUT_MILLIS)

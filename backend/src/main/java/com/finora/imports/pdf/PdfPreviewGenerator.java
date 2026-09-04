@@ -565,7 +565,7 @@ public class PdfPreviewGenerator {
         staged.sort(Comparator.comparing(StagedRow::date));
 
         int dupCount = (int) staged.stream().filter(StagedRow::likelyDuplicate).count();
-        DetectedAccountInfo detected = buildDetectedAccountInfo(filename, section, staged, balancePoints, product, ctx,
+        DetectedAccountInfo detected = buildDetectedAccountInfo(filename, section, balancePoints, product, ctx,
                 printedCreditCardSummary, printedDateRange, gridPaymentDueDate, gridCreditLimit,
                 gridAccountNumberMasked);
         // Per section rather than per file: a composite statement's sections have separate balance
@@ -722,7 +722,7 @@ public class PdfPreviewGenerator {
     }
 
     private DetectedAccountInfo buildDetectedAccountInfo(String filename, PdfTableLocator.LocatedSection section,
-                                                           List<StagedRow> staged, List<BalancePoint> balancePoints,
+                                                           List<BalancePoint> balancePoints,
                                                            ProductDiscovery.DiscoveredProduct product,
                                                            DocumentContext ctx,
                                                            CreditCardSummaryEvidence printedCreditCardSummary,
