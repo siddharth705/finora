@@ -37,8 +37,9 @@ jobs:
         with:
           fetch-depth: 0
 
+      # SHA-pinned -- see ci.yml's secret-scan job for why (this is the same action, same reasoning).
       - name: gitleaks
-        uses: gitleaks/gitleaks-action@v3
+        uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # No PR to comment on for a scheduled run; see ci.yml's secret-scan job for why comments
