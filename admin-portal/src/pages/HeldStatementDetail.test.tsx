@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
-import { MemoryRouter, Routes, Route } from 'react-router-dom';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { Link, MemoryRouter, Routes, Route } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import HeldStatementDetail from './HeldStatementDetail';
 import { useAdminAuth } from '../context/AdminAuthContext';
@@ -22,6 +22,8 @@ vi.mock('../api/endpoints', () => ({
     assign: vi.fn(),
     investigate: vi.fn(),
     notes: vi.fn(),
+    saveFindings: vi.fn(),
+    rerunParser: vi.fn(),
     download: vi.fn(),
   },
 }));
@@ -72,6 +74,30 @@ function renderPage(heldId = 'HLD-2026-100001') {
       <MemoryRouter initialEntries={[`/held-statements/${heldId}`]}>
         <Routes>
           <Route path="/held-statements/:heldId" element={<HeldStatementDetail />} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>
+  );
+}
+
+/** Same shape as {@link renderPage}, but keeps the router mounted across a client-side navigation
+ *  to a second held id -- the only way to genuinely exercise a `useParams()`-keyed effect, since a
+ *  fresh `render()` per id would remount the tree and prove nothing about the reset itself. */
+function renderPageWithNav() {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter initialEntries={['/held-statements/HLD-2026-100001']}>
+        <Routes>
+          <Route
+            path="/held-statements/:heldId"
+            element={(
+              <>
+                <Link to="/held-statements/HLD-2026-100002">Go to other hold</Link>
+                <HeldStatementDetail />
+              </>
+            )}
+          />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>
@@ -199,5 +225,80 @@ describe('HeldStatementDetail', () => {
     renderPage('HLD-2026-999999');
 
     expect(await screen.findByText(/no such held statement/i)).toBeInTheDocument();
+  });
+
+  it('runs a parser re-run and shows the comparison when it clears', async () => {
+    vi.mocked(adminHeldStatementApi.rerunParser).mockResolvedValue({
+      previousParserVersion: 'abc1234',
+      currentParserVersion: 'def5678',
+      parserVersionChanged: true,
+      stillHeld: false,
+      reasons: [],
+      summary: { ...summary, status: 'READY_FOR_IMPORT' },
+    });
+    mockAuth(['TRUST_REVIEW_MANAGE'], ['ADMIN']);
+    renderPage();
+    await screen.findByText(/count disagree/i);
+
+    fireEvent.click(screen.getByRole('button', { name: /re-run parser/i }));
+
+    expect(await screen.findByText(/clears under the current parser build/i)).toBeInTheDocument();
+    expect(screen.getByText(/abc1234/)).toBeInTheDocument();
+    expect(screen.getByText(/def5678/)).toBeInTheDocument();
+  });
+
+  it('shows the still-held reasons when a re-run does not clear it', async () => {
+    vi.mocked(adminHeldStatementApi.rerunParser).mockResolvedValue({
+      previousParserVersion: 'abc1234',
+      currentParserVersion: 'abc1234',
+      parserVersionChanged: false,
+      stillHeld: true,
+      reasons: ['Printed and parsed transaction count disagree (DIRECTION)'],
+      summary,
+    });
+    mockAuth(['TRUST_REVIEW_MANAGE'], ['ADMIN']);
+    renderPage();
+    await screen.findByText(/count disagree/i);
+
+    fireEvent.click(screen.getByRole('button', { name: /re-run parser/i }));
+
+    expect(await screen.findByText(/transaction count disagree \(DIRECTION\)/i)).toBeInTheDocument();
+  });
+
+  it('saves root cause and fix reference', async () => {
+    vi.mocked(adminHeldStatementApi.saveFindings).mockResolvedValue({
+      ...summary, rootCause: 'Header misdetected', fixReference: 'PR #950',
+    });
+    mockAuth(['TRUST_REVIEW_MANAGE'], ['ADMIN']);
+    renderPage();
+    await screen.findByText(/count disagree/i);
+
+    fireEvent.change(screen.getByLabelText(/root cause/i), { target: { value: 'Header misdetected' } });
+    fireEvent.change(screen.getByLabelText(/fix reference/i), { target: { value: 'PR #950' } });
+    fireEvent.click(screen.getByRole('button', { name: /save findings/i }));
+
+    await waitFor(() => expect(adminHeldStatementApi.saveFindings)
+      .toHaveBeenCalledWith('HLD-2026-100001', 'Header misdetected', 'PR #950'));
+  });
+
+  it('clears a previous rerun result once navigation moves to a different held statement', async () => {
+    vi.mocked(adminHeldStatementApi.get).mockImplementation((heldId: string) =>
+      Promise.resolve(heldId === 'HLD-2026-100002'
+        ? { ...detail, summary: { ...summary, heldId: 'HLD-2026-100002', triggerSummary: 'A different trigger' } }
+        : detail));
+    vi.mocked(adminHeldStatementApi.rerunParser).mockResolvedValue({
+      previousParserVersion: 'abc1234', currentParserVersion: 'abc1234', parserVersionChanged: false,
+      stillHeld: false, reasons: [], summary,
+    });
+    mockAuth(['TRUST_REVIEW_MANAGE'], ['ADMIN']);
+    renderPageWithNav();
+    await screen.findByText(/count disagree/i);
+    fireEvent.click(screen.getByRole('button', { name: /re-run parser/i }));
+    await screen.findByText(/clears under the current parser build/i);
+
+    fireEvent.click(screen.getByRole('link', { name: /go to other hold/i }));
+
+    await screen.findByText(/a different trigger/i);
+    expect(screen.queryByText(/clears under the current parser build/i)).not.toBeInTheDocument();
   });
 });

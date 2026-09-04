@@ -7,7 +7,7 @@ import { RequirePermission } from '../components/ProtectedRoute';
 import { useAdminAuth } from '../context/AdminAuthContext';
 import { adminHeldStatementApi } from '../api/endpoints';
 import { formatWhen } from '../lib/formatWhen';
-import type { HeldStatementFinding } from '../types';
+import type { HeldStatementFinding, HeldStatementRerunResult } from '../types';
 
 const RESOLVED_STATUSES = new Set(['IMPORTED', 'REJECTED']);
 
@@ -61,19 +61,34 @@ function HeldStatementDetailContent({ heldId }: { heldId: string }) {
   const [rejectReason, setRejectReason] = useState('');
   const [engineerIdInput, setEngineerIdInput] = useState('');
   const [notesDraft, setNotesDraft] = useState('');
+  const [rootCauseDraft, setRootCauseDraft] = useState('');
+  const [fixReferenceDraft, setFixReferenceDraft] = useState('');
+  const [rerunResult, setRerunResult] = useState<HeldStatementRerunResult | null>(null);
 
   const detail = useQuery({
     queryKey: ['held-statement-detail', heldId],
     queryFn: () => adminHeldStatementApi.get(heldId),
   });
 
-  // Pre-fills the notes editor with what is already on the row, once, when the row first loads --
-  // not on every refetch, or an operator's in-progress edit would be clobbered the moment their
-  // own save triggers this same query to refresh.
+  // Pre-fills the notes/findings editors with what is already on the row, once, when the row
+  // first loads -- not on every refetch, or an operator's in-progress edit would be clobbered the
+  // moment their own save triggers this same query to refresh.
   useEffect(() => {
-    if (detail.data) setNotesDraft(detail.data.summary.engineerNotes ?? '');
+    if (detail.data) {
+      setNotesDraft(detail.data.summary.engineerNotes ?? '');
+      setRootCauseDraft(detail.data.summary.rootCause ?? '');
+      setFixReferenceDraft(detail.data.summary.fixReference ?? '');
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [detail.data?.summary.id]);
+
+  // A previous held statement's rerun result must never linger on screen once navigation moves to
+  // a different one -- "clears under the current parser build" shown against the wrong row is
+  // actively misleading, not just stale. Keyed on the route param itself (not detail.data), so the
+  // reset happens the instant navigation occurs rather than waiting for the new query to resolve.
+  useEffect(() => {
+    setRerunResult(null);
+  }, [heldId]);
 
   function invalidate() {
     void queryClient.invalidateQueries({ queryKey: ['held-statement-detail', heldId] });
@@ -114,6 +129,17 @@ function HeldStatementDetailContent({ heldId }: { heldId: string }) {
     onSuccess: () => { setActionError(null); invalidate(); },
     onError,
   });
+  const saveFindings = useMutation({
+    mutationFn: () => adminHeldStatementApi.saveFindings(heldId, rootCauseDraft || undefined,
+      fixReferenceDraft || undefined),
+    onSuccess: () => { setActionError(null); invalidate(); },
+    onError,
+  });
+  const rerunParser = useMutation({
+    mutationFn: () => adminHeldStatementApi.rerunParser(heldId),
+    onSuccess: (result) => { setActionError(null); setRerunResult(result); invalidate(); },
+    onError,
+  });
   const download = useMutation({
     mutationFn: () => adminHeldStatementApi.download(heldId),
     onError,
@@ -129,7 +155,7 @@ function HeldStatementDetailContent({ heldId }: { heldId: string }) {
   const { summary, findings, timeline } = detail.data;
   const resolved = RESOLVED_STATUSES.has(summary.status);
   const busy = approve.isPending || reject.isPending || assignToMe.isPending
-    || assignToEngineer.isPending || investigate.isPending;
+    || assignToEngineer.isPending || investigate.isPending || rerunParser.isPending;
 
   return (
     <div className="space-y-6">
@@ -208,6 +234,37 @@ function HeldStatementDetailContent({ heldId }: { heldId: string }) {
         </dl>
       </section>
 
+      {/* Parser re-run */}
+      <section className="bg-card border border-border rounded-xl2 p-6 space-y-3">
+        <h3 className="text-sm font-semibold text-ink">Re-run parser</h3>
+        <p className="text-xs text-muted">
+          Re-parses this statement's original bytes with the parser build running right now, and
+          checks whether it would still be flagged. Writes nothing to the staged rows.
+        </p>
+        <button
+          type="button"
+          onClick={() => rerunParser.mutate()}
+          disabled={busy || resolved}
+          className="rounded-lg border border-border px-3 py-1.5 text-xs text-muted hover:text-ink disabled:opacity-50"
+        >
+          {rerunParser.isPending ? 'Re-running…' : 'Re-run parser'}
+        </button>
+        {rerunResult && (
+          <div className="rounded-lg border border-border bg-bg p-3 text-xs space-y-1">
+            <p className={rerunResult.stillHeld ? 'text-amber-400' : 'text-emerald-400'}>
+              {rerunResult.stillHeld
+                ? `Still held: ${rerunResult.reasons.join('; ')}`
+                : 'Clears under the current parser build.'}
+            </p>
+            {rerunResult.parserVersionChanged && (
+              <p className="text-muted font-mono">
+                {rerunResult.previousParserVersion || '—'} &rarr; {rerunResult.currentParserVersion || '—'}
+              </p>
+            )}
+          </div>
+        )}
+      </section>
+
       {/* Assignment */}
       <section className="bg-card border border-border rounded-xl2 p-6 space-y-4">
         <h3 className="text-sm font-semibold text-ink">Assignment</h3>
@@ -266,6 +323,33 @@ function HeldStatementDetailContent({ heldId }: { heldId: string }) {
             className="rounded-lg border border-border px-3 py-1.5 text-xs text-muted hover:text-ink disabled:opacity-50"
           >
             {saveNotes.isPending ? 'Saving…' : 'Save notes'}
+          </button>
+        </div>
+
+        <div className="space-y-2 border-t border-border pt-4">
+          <label className="text-xs text-muted" htmlFor="held-statement-root-cause">Root cause</label>
+          <textarea
+            id="held-statement-root-cause"
+            value={rootCauseDraft}
+            onChange={(e) => setRootCauseDraft(e.target.value)}
+            rows={2}
+            className="w-full rounded-lg border border-border bg-bg px-3 py-1.5 text-sm text-ink"
+          />
+          <label className="text-xs text-muted" htmlFor="held-statement-fix-reference">Fix reference</label>
+          <input
+            id="held-statement-fix-reference"
+            value={fixReferenceDraft}
+            onChange={(e) => setFixReferenceDraft(e.target.value)}
+            placeholder="PR number or URL…"
+            className="w-full rounded-lg border border-border bg-bg px-3 py-1.5 text-sm text-ink"
+          />
+          <button
+            type="button"
+            onClick={() => saveFindings.mutate()}
+            disabled={saveFindings.isPending}
+            className="rounded-lg border border-border px-3 py-1.5 text-xs text-muted hover:text-ink disabled:opacity-50"
+          >
+            {saveFindings.isPending ? 'Saving…' : 'Save findings'}
           </button>
         </div>
       </section>
