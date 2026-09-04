@@ -1,7 +1,7 @@
-import { test, expect, uploadStatement, signIn } from '../../fixtures/test';
+import { test, expect, uploadStatement } from '../../fixtures/test';
 import { csv, FIVE_ROW_STATEMENT } from '../../fixtures/statements';
 import { transactionsFor, count, query } from '../../fixtures/db';
-import { API_BASE, USER_APP } from '../../fixtures/config';
+import { API_BASE } from '../../fixtures/config';
 
 /**
  * Phase 12 — the things a real user does that a happy-path test never covers.

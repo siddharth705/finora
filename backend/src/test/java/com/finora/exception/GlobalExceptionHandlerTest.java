@@ -85,8 +85,7 @@ class GlobalExceptionHandlerTest {
         Environment environment = mock(Environment.class);
         GlobalExceptionHandler handler = new GlobalExceptionHandler(environment, mock(RefreshTokenCookie.class));
 
-        var response = handler.handleOptimisticLock(
-                new org.springframework.orm.ObjectOptimisticLockingFailureException("Account", "some-id"));
+        var response = handler.handleOptimisticLock();
 
         assertThat(response.getStatusCode().value()).isEqualTo(409);
         assertThat(response.getBody().errorCode()).isEqualTo("CONFLICT");
@@ -189,32 +188,10 @@ class GlobalExceptionHandlerTest {
         Environment environment = mock(Environment.class);
         GlobalExceptionHandler handler = new GlobalExceptionHandler(environment, mock(RefreshTokenCookie.class));
 
-        var response = handler.handleMalformedRequestBody(
-                new org.springframework.http.converter.HttpMessageNotReadableException(
-                        "JSON parse error", (org.springframework.http.HttpInputMessage) null));
+        var response = handler.handleMalformedRequestBody();
 
         assertThat(response.getStatusCode().value()).isEqualTo(400);
         assertThat(response.getBody().errorCode()).isEqualTo("MALFORMED_REQUEST_BODY");
-    }
-
-    /**
-     * Deliberately does not echo Jackson's own parse-error text back to the client -- that message
-     * can quote raw request body content, which for this API may be customer financial data.
-     */
-    @Test
-    void handleMalformedRequestBody_neverLeaksTheParsersOwnMessage() {
-        Environment environment = mock(Environment.class);
-        GlobalExceptionHandler handler = new GlobalExceptionHandler(environment, mock(RefreshTokenCookie.class));
-
-        // synthetic-ok: placeholder token standing in for "whatever sensitive text Jackson's own
-        // parse-error message might quote back" -- not a real account/card/phone number.
-        String sensitiveLookingToken = "ACCT-PLACEHOLDER-TOKEN";
-        var response = handler.handleMalformedRequestBody(
-                new org.springframework.http.converter.HttpMessageNotReadableException(
-                        "Cannot deserialize value: account number " + sensitiveLookingToken,
-                        (org.springframework.http.HttpInputMessage) null));
-
-        assertThat(response.getBody().message()).doesNotContain(sensitiveLookingToken);
     }
 
     // ---------------------------------------------------------------- userActionRequired (§1, Sprint 4 item 22)
@@ -332,9 +309,7 @@ class GlobalExceptionHandlerTest {
     void handleMediaTypeNotSupported_returns415_notTheGeneric500() {
         GlobalExceptionHandler handler = new GlobalExceptionHandler(mock(Environment.class), mock(RefreshTokenCookie.class));
 
-        var response = handler.handleMediaTypeNotSupported(
-                new org.springframework.web.HttpMediaTypeNotSupportedException(
-                        "text/plain", java.util.List.of(org.springframework.http.MediaType.APPLICATION_JSON)));
+        var response = handler.handleMediaTypeNotSupported();
 
         assertThat(response.getStatusCode().value()).isEqualTo(415);
         assertThat(response.getBody().errorCode()).isEqualTo("UNSUPPORTED_MEDIA_TYPE");

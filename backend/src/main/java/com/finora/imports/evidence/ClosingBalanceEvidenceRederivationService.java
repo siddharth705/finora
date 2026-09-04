@@ -151,8 +151,6 @@ public class ClosingBalanceEvidenceRederivationService {
 
         List<StagedRow> realRows = realTransactionRows(section.rows());
         BigDecimal openingBalance = section.detectedAccount().openingBalance();
-        BigDecimal totalCredits = sumByType(realRows, "INCOME");
-        BigDecimal totalDebits = sumByType(realRows, "EXPENSE");
 
         ImportDto.VerificationFinding statementTotals =
                 statementTotalsValidator.check(realRows, openingBalance, closingBalanceClaim);
@@ -211,10 +209,5 @@ public class ClosingBalanceEvidenceRederivationService {
         return allRows.stream()
                 .filter(r -> r.description() == null || !r.description().toUpperCase(Locale.ROOT).contains("BALANCE"))
                 .toList();
-    }
-
-    private static BigDecimal sumByType(List<StagedRow> rows, String type) {
-        return rows.stream().filter(r -> type.equals(r.type())).map(StagedRow::amount)
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
     }
 }
