@@ -199,6 +199,12 @@ export interface CreateTransactionPayload {
   amount: number;
   type: 'INCOME' | 'EXPENSE';
   tags?: string[];
+  // Identifies one logical create ATTEMPT so a double-click or a retried request cannot post the
+  // same transaction twice -- and, more importantly, cannot move the account balance twice, which
+  // TransactionService.create does on every call regardless of duplicate flagging. The server side
+  // of this shipped in V97 and has been inert ever since, because no client sent a key.
+  // See lib/idempotencyKey.ts.
+  idempotencyKey?: string;
 }
 
 // Full-edit payload for the Transactions page's Edit action. All fields optional/nullable —
@@ -364,6 +370,11 @@ export interface ConfirmPayload {
   // "Continue Import" after the client-side ownership warning fired -- see ConfirmRequest's own
   // doc comment on the backend. Omitted (not just false) when the warning never fired.
   userConfirmedContinue?: boolean;
+  // Also reimport-only: identifies one logical confirm ATTEMPT so the server can refuse a replay
+  // rather than posting the statement's transactions a second time (V133). A first-time import
+  // needs no key -- its ImportSession is claimed atomically server-side and cannot be confirmed
+  // twice. See lib/idempotencyKey.ts.
+  idempotencyKey?: string;
 }
 
 // One account's worth of reviewed rows within a MultiAccountConfirmPayload -- same shape as

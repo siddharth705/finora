@@ -728,4 +728,78 @@ class ImportJobTest {
 
         assertThat(job.isCancellable()).isFalse();
     }
+
+    // ---------------------------------------------------- leaving the hold, in both directions
+
+    private ImportJob trustHeldJob() {
+        ImportJob job = job();
+        job.markClaimed("worker", Instant.now());
+        job.holdForTrustReview(SESSION, UUID.randomUUID(), Instant.now());
+        return job;
+    }
+
+    private static final UUID SESSION = UUID.randomUUID();
+
+    /**
+     * The release, and why it is its own transition rather than a call to {@link
+     * ImportJob#complete}.
+     *
+     * <p>{@code complete} guards only CANCELLED, so it would happily complete a job in any other
+     * state -- including one still being worked on. Naming the source status here means the only
+     * way out of a trust hold is a decision about that hold, which is the same shape {@code
+     * resolveWithoutFix} uses for the other hold.
+     */
+    @Test
+    void releaseAfterTrustReview_completesAndKeepsTheSession() {
+        ImportJob job = trustHeldJob();
+
+        job.releaseAfterTrustReview(Instant.now());
+
+        assertThat(job.getStatus()).isEqualTo(ImportJob.Status.COMPLETED);
+        assertThat(job.getImportSessionId())
+                .as("the staged rows the reviewer approved are the ones the user gets")
+                .isEqualTo(SESSION);
+    }
+
+    /**
+     * The refusal, and the bug it prevents.
+     *
+     * <p>{@code recordFailure} returns ALREADY_FINISHED without touching a terminal job, and
+     * HELD_FOR_TRUST_REVIEW is terminal -- so failing a rejected hold that way would silently do
+     * nothing, leaving the job held forever while the review said REJECTED and the user's progress
+     * screen said "running additional checks" indefinitely.
+     */
+    @Test
+    void rejectAfterTrustReview_reachesFailedWhereRecordFailureCannot() {
+        ImportJob viaRecordFailure = trustHeldJob();
+        assertThat(viaRecordFailure.recordFailure("no", "X", ErrorCode.RetryPolicy.FAIL_FAST,
+                Instant.now()))
+                .isEqualTo(ImportJob.FailureOutcome.ALREADY_FINISHED);
+        assertThat(viaRecordFailure.getStatus())
+                .as("this is exactly why the explicit transition exists")
+                .isEqualTo(ImportJob.Status.HELD_FOR_TRUST_REVIEW);
+
+        ImportJob job = trustHeldJob();
+        job.rejectAfterTrustReview(ErrorCode.IMPORT_TRUST_REVIEW_REJECTED.name(), Instant.now());
+
+        assertThat(job.getStatus()).isEqualTo(ImportJob.Status.FAILED);
+        assertThat(job.getFailureCode())
+                .as("without a code the user sees a bare failure and no reason for it")
+                .isEqualTo(ErrorCode.IMPORT_TRUST_REVIEW_REJECTED.name());
+    }
+
+    /** Both transitions name their source status, so neither can be used on anything else. */
+    @Test
+    void neitherTransitionAppliesOutsideTheTrustHold() {
+        assertThatThrownBy(() -> job().releaseAfterTrustReview(Instant.now()))
+                .isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> job().rejectAfterTrustReview("X", Instant.now()))
+                .isInstanceOf(IllegalStateException.class);
+
+        ImportJob released = trustHeldJob();
+        released.releaseAfterTrustReview(Instant.now());
+        assertThatThrownBy(() -> released.rejectAfterTrustReview("X", Instant.now()))
+                .as("a released hold cannot then be rejected")
+                .isInstanceOf(IllegalStateException.class);
+    }
 }

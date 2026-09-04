@@ -72,7 +72,13 @@ class ErrorCodeTest {
                         ErrorCode.IMPORT_NO_HEADER_DETECTED,
                         ErrorCode.IMPORT_NO_TRANSACTIONS_FOUND,
                         ErrorCode.IMPORT_PDF_TOO_LARGE,
-                        ErrorCode.IMPORT_NO_ACTIVITY_IN_PERIOD);
+                        ErrorCode.IMPORT_NO_ACTIVITY_IN_PERIOD,
+                        // IMPORT_TRUST_REVIEW_REJECTED (2026-09-04) is the second such stretch, for
+                        // the identical reason: a reviewer decided our own extraction was not
+                        // accurate enough to import, which is nothing the user can correct and
+                        // re-uploading the same file would reach the same outcome. It opts in to
+                        // stay off the red/danger banner, exactly as the code above it does.
+                        ErrorCode.IMPORT_TRUST_REVIEW_REJECTED);
     }
 
     @Test

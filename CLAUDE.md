@@ -104,6 +104,45 @@ git worktree remove ../finora-<short-name>
 Or `ExitWorktree` with `action: "remove"` once the PR has merged (`action: "keep"` if the
 work isn't done yet and the session is just pausing).
 
+## Always check merge state before pushing, and again after a merge
+
+**Before every push, and again after any PR of yours is reported merged, check whether the work is
+actually on `origin/main` — by content, not by commit SHA.**
+
+```bash
+git fetch origin
+git log --oneline origin/main..HEAD          # what of mine is not on main
+git ls-tree -r --name-only origin/main | grep <a file this work adds>
+```
+
+`main` is **squash-merged**. A squash creates a brand-new commit, so your branch's commits never
+become ancestors of `main` no matter how completely they landed. Every SHA-based check therefore
+lies in both directions:
+
+- `git merge-base --is-ancestor <sha> origin/main` answers "no" for work that merged perfectly.
+- `git branch --merged` will never list your branch.
+
+So ask the question about **file content and diffs**, never about ancestry.
+
+After a merge, also confirm the merge actually included your latest push:
+
+```bash
+gh pr view <n> --json state,mergedAt,headRefOid
+git log --oneline -1                          # compare against headRefOid
+```
+
+If `headRefOid` is behind your branch tip, commits you pushed after the merge was queued did
+**not** land. This has now happened twice:
+
+- PR #712, where a follow-up commit was missed and needed its own PR (#714).
+- PR #861 (2026-09-04), merged at its Phase 1 commit while the Phase 2 commit sat unmerged on the
+  same branch. `main` was left holding migrations `V145`–`V149` with no entities mapping them —
+  harmless in that instance, but only by luck.
+
+**Never reuse a branch whose work was squash-merged.** Its commits still exist locally and will
+replay as duplicates against the squashed content on `main`. Start a fresh worktree from
+`origin/main` and cherry-pick anything that did not land.
+
 ## Exception
 
 Read-only exploration — reading code, answering questions about the repo, reviewing docs —

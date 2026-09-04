@@ -2,7 +2,7 @@ import { File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import { api, rawApi, type ApiEnvelope } from './client';
 import { encodeBase64 } from '../lib/base64';
-import { isOffline } from '../lib/apiError';
+import { isCanceled, isOffline } from '../lib/apiError';
 import type {
   Account, AccountStatementGroup, Budget, DashboardSummary, DetectedAccountInfo, Goal,
   ImportSummary, MerchantGroup, ReimportResult, StagedAccountSection, StagedRow, StatementSummary,
@@ -256,7 +256,7 @@ export interface ImportSessionSummary {
   expiresAt: string;
 }
 
-interface StagingResult {
+export interface StagingResult {
   rows: StagedRow[];
   totalParsed: number;
   flaggedDuplicates: number;
@@ -277,9 +277,14 @@ type ProgressCallback = (percent: number) => void;
 // connection can legitimately take longer than that, and unlike an ordinary JSON call, this one
 // already gives the user live proof it's still working via onUploadProgress. Applies whether or
 // not a progress callback was actually passed, since the upload itself is what can be slow.
-function toUploadProgressConfig(onProgress?: ProgressCallback) {
+function toUploadProgressConfig(onProgress?: ProgressCallback, signal?: AbortSignal) {
   return {
     timeout: 0,
+    // Why a signal matters MORE here than on an ordinary call: this is the one request with
+    // `timeout: 0`, so nothing else will ever end it. Without a way to abort, a stalled upload on a
+    // dead connection hangs until the OS tears the socket down, with the progress bar frozen and no
+    // way out of the screen.
+    ...(signal ? { signal } : {}),
     ...(onProgress
       ? {
           onUploadProgress: (e: { loaded: number; total?: number }) => {
@@ -318,6 +323,10 @@ async function stageWithRetry<T>(attempt: () => Promise<T>): Promise<T> {
   try {
     return await attempt();
   } catch (e) {
+    // Cancel is checked first and deliberately: a cancelled request has no response and so passes
+    // isOffline's test, which meant this retried the very upload the user just cancelled -- the
+    // file went up a second time and the cancel appeared to do nothing.
+    if (isCanceled(e)) throw e;
     if (!isOffline(e)) throw e;
     return attempt();
   }
@@ -330,12 +339,12 @@ export const importApi = {
   // hand -- turned out to be a red herring for the real bug below (see stageWithRetry's own doc
   // comment), but wrong regardless of that, since a manual header without a boundary can never be
   // valid multipart.
-  stageCsv: (file: RNFile, onProgress?: ProgressCallback) => {
+  stageCsv: (file: RNFile, onProgress?: ProgressCallback, signal?: AbortSignal) => {
     const form = new FormData();
     form.append('file', file as unknown as Blob);
     return stageWithRetry(() =>
       api
-        .post<{ sessionId: string; staging: StagingResult }>('/import/csv/stage', form, toUploadProgressConfig(onProgress))
+        .post<{ sessionId: string; staging: StagingResult }>('/import/csv/stage', form, toUploadProgressConfig(onProgress, signal))
         .then((r) => r.data)
     );
   },
@@ -343,13 +352,13 @@ export const importApi = {
   // the form body, never the query string, so it can't reach a server access log. Omitted when
   // blank, and harmless when the file turns out not to need one -- so the caller never has to
   // inspect the file to decide whether to send it.
-  stagePdf: (file: RNFile, onProgress?: ProgressCallback, password?: string) => {
+  stagePdf: (file: RNFile, onProgress?: ProgressCallback, password?: string, signal?: AbortSignal) => {
     const form = new FormData();
     form.append('file', file as unknown as Blob);
     if (password) form.append('password', password);
     return stageWithRetry(() =>
       api
-        .post<PdfStagingSessionResult>('/import/pdf/stage', form, toUploadProgressConfig(onProgress))
+        .post<PdfStagingSessionResult>('/import/pdf/stage', form, toUploadProgressConfig(onProgress, signal))
         .then((r) => r.data)
     );
   },
