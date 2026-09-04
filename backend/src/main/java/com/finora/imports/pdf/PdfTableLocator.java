@@ -914,6 +914,16 @@ public class PdfTableLocator {
         // numeric values -- see bucketRow's RIGHT_ALIGNED_AMOUNTS block for why a left edge alone
         // cannot separate two adjacent amount columns.
         List<Float> headerEnds = null;
+        // COLUMN_SPAN_PLACEMENT. Measured ONCE per header (see the recomputation right after
+        // ctx.recordHeaders below), from real sampled data rather than from the header LABELS
+        // headerAnchors/headerEnds hold -- see measureTextColumnSpans's own doc comment for why a
+        // label-position boundary is sometimes simply wrong and no amount of retuning it fixes
+        // that. Index-aligned with headerNames; a null entry means that column's span could not be
+        // measured with enough confidence to act on (see ColumnSpan's own doc comment on the
+        // minimum-sample guard). null (not an empty array) whenever no header is active, so
+        // bucketRow's containment branch can tell "not computed for this call site" (headerless
+        // path, a speculative header-quality probe) apart from "computed, nothing measured."
+        ColumnSpan[] textColumnSpans = null;
         Set<String> currentHeaderSignature = null;
         // Account number named by the SECTION_MARKER banner that opened the active section, so a
         // later banner naming the SAME account is recognized as a repeated page header rather than
@@ -1125,6 +1135,7 @@ public class PdfTableLocator {
                 headerNames = null;
                 headerAnchors = null;
                 headerEnds = null;
+                textColumnSpans = null;
                 currentHeaderSignature = null;
                 currentSectionAccountId = markerAccountId;
                 lastRowPage = null;
@@ -1376,6 +1387,13 @@ public class PdfTableLocator {
                 }
                 pendingAuxiliary.addAll(orphanedHeaderRowText);
                 if (ctx != null) ctx.recordHeaders(headerNames);
+                // COLUMN_SPAN_PLACEMENT. Measured once, right here, rather than per bucketRow call
+                // -- the header is now final for both branches above, and every bucketRow call for
+                // this header (the loop below) reuses the same measurement. Sampled forward from
+                // the row right after the header itself, the same way headerQualityWeak already
+                // samples forward from a candidate header to judge it.
+                textColumnSpans = measureTextColumnSpans(headerNames,
+                        sampleRealDataRows(rows, thisHeaderRowIndex + 1, COLUMN_SPAN_SAMPLE_SIZE), yearsByPage);
                 currentHeaderSignature = signature;
                 currentRows = new ArrayList<>();
                 // The one place currentRows is ever created, so the one place this pairing is made.
@@ -1487,7 +1505,7 @@ public class PdfTableLocator {
                 // stored in that anchor's own date cell.
                 List<PositionedText> resolvedRow = substituteYearlessDates(row, rowCandidateYears);
                 Map<String, String> bucketed = bucketRow(resolvedRow, headerNames, headerAnchors, headerEnds, ctx,
-                        rowCandidateYears);
+                        rowCandidateYears, textColumnSpans);
                 if (bucketed.isEmpty()) {
                     // Row-accounting evidence: the row survived every structural gate up to
                     // bucketing and still produced literally nothing -- the strongest "we don't
@@ -4346,8 +4364,236 @@ public class PdfTableLocator {
         return signature;
     }
 
+    /**
+     * A text column's measured horizontal extent, sampled from real data rows rather than derived
+     * from the header LABEL's own position -- see {@link #measureTextColumnSpans} for how it is
+     * built and {@code bucketRow}'s {@code COLUMN_SPAN_PLACEMENT} block for how it is used.
+     *
+     * <h2>The defect this exists to fix</h2>
+     *
+     * {@code nearestColumn} draws a column's boundary at the midpoint between two header LABELS'
+     * left edges. Real statements routinely centre a short label over a much wider data column, so
+     * that midpoint falls INSIDE the wide column rather than between the two columns' actual data --
+     * every token past it silently joins the neighbour. Verified against four real documents:
+     * on Sanjay HDFC / Mann HDFC / HDFC sav / HDFC 3 month, the narration label sits at x=144.18 and
+     * the reference label at x=283.53 (boundary 213.85), but narration data runs left-aligned from
+     * 72.03 to ~275 -- everything past 213.85 (~135 lines on Mann HDFC alone) was appended to the
+     * reference cell instead. Union Bank fails the OPPOSITE way: a centred "Remarks" label draws the
+     * boundary at 171.60, but remark values start at 157.20, so EVERY remark joined the transaction-id
+     * cell before it. Retuning the anchor doesn't fix this -- moving it to the data's own left edge
+     * only shifts Sanjay HDFC's boundary to 177.8, and the same tokens are still stolen -- because the
+     * bug is using a LABEL position to decide a DATA boundary at all. Containment in a measured span
+     * sidesteps the question rather than tuning it: a run either falls inside a column's own real
+     * data extent or it doesn't.
+     *
+     * <h2>Why this took three attempts</h2>
+     *
+     * Attempt 1 (containment as bucketRow's INITIAL placement) was clean against the real 29-document
+     * corpus but silently displaced a document-backed OFFSET_COLUMN_ANCHORS correction the committed
+     * trace suite depends on -- {@code TraceCorpusHealthTest} caught it, the corpus sweep didn't.
+     * Attempt 2 (containment LAST, composing with every existing redirect) fixed that, but still
+     * mis-placed on a real ICICI credit-card statement's small, three-row table. Both attempts
+     * establish the same rule: a clean real-corpus sweep is NOT sufficient evidence for a change to
+     * this method -- the committed traces exercise shapes the corpus does not, and both regressions
+     * showed only as improvements in the corpus diff. This attempt keeps attempt 2's ordering (guard
+     * 4 below) and adds a measurement algorithm anchored on each row's own DATE cell (found by
+     * content -- {@code CsvParser.parseDate}/{@code resolveYearlessDate} -- never by position), so a
+     * column's span is never built from a cell whose page position happens to coincide with an
+     * unrelated header's anchor, the way a lone off-table token can when spans are clustered without
+     * that anchor.
+     *
+     * <h2>The guards, each answering one measured failure</h2>
+     *
+     * <ol>
+     *   <li><b>Text columns only</b> -- a column is a measurement/placement candidate only when it is
+     *       neither {@link #isDateColumn} nor {@link #isAmountColumn}. An amount/balance column's own
+     *       right-alignment already has correct, dedicated handling (RIGHT_ALIGNED_AMOUNTS); without
+     *       this guard, containment competed with it and two real HDFC exports lost their opening AND
+     *       closing balance, failing BALANCE_CHAIN.</li>
+     *   <li><b>Anchored on the date column, never redirected INTO it</b> -- the row's own date cell
+     *       (found by content) is what lets this method find where the text region even begins;
+     *       without excluding the date column itself as a target, a serial-number column's measured
+     *       span swallowed the NEXT transaction's own date on a real ICICI credit-card statement,
+     *       folding two rows into one.</li>
+     *   <li><b>Positional, strictly increasing, never forced</b> -- a row missing one of the expected
+     *       text columns' data contributes only to however many it actually has, in left-to-right
+     *       order. A row with MORE cells than expected text columns (a narration PDFBox split into
+     *       several runs, the common real shape) has the FIRST text column absorb the overflow, with
+     *       every later column still getting exactly one cell, anchored from the right -- not "the
+     *       first N cells go to the first N columns," which sends narration's own trailing run into
+     *       the NEXT column instead and contaminates that column's measured span with narration's own
+     *       positions. Caught by a synthetic regression test before it ever reached a real document.
+     *       An earlier design required every column to have SOME data in the sample before measuring
+     *       any of them, and declined outright on exactly the small, ragged tables this exists for.</li>
+     *   <li><b>Last, and only for a run nothing else already redirected</b> -- {@code bucketRow}'s
+     *       existing OFFSET_COLUMN_ANCHORS redirects (a date cell already filled, an amount cell
+     *       overshooting into text, text overshooting into an amount) each rest on real document
+     *       evidence of their own; containment must never second-guess a redirect that already fired,
+     *       only step in when nothing else did.</li>
+     *   <li><b>A minimum sample before a span is trusted at all</b> -- see {@link
+     *       #COLUMN_SPAN_MIN_SAMPLE}'s own doc comment.</li>
+     * </ol>
+     */
+    private record ColumnSpan(float left, float right) {
+        boolean contains(float x) {
+            return x >= left && x <= right;
+        }
+    }
+
+    // How many of a header's own upcoming rows measureTextColumnSpans samples before giving up on
+    // finding enough real data -- same order of magnitude as HEADER_QUALITY_SAMPLE_SIZE, for the
+    // same reason: large enough that one unusual row can't define a column's whole span, small
+    // enough that this never scans meaningfully into the document.
+    private static final int COLUMN_SPAN_SAMPLE_SIZE = 12;
+
+    // Never trust a column's measured span from fewer than this many contributing rows. A span
+    // built from one or two data points is a coincidence, not a measured range -- the real document
+    // that forced this is a small, three-transaction ICICI credit-card table surrounded by summary
+    // panel prose, where too little real data was the whole problem, not too little filtering.
+    private static final int COLUMN_SPAN_MIN_SAMPLE = 3;
+
+    /**
+     * Measures each TEXT header column's real horizontal extent from {@code sample}, anchored on
+     * each row's own date cell -- see {@link ColumnSpan}'s own doc comment for the full design and
+     * the four guards this implements. Returns an array index-aligned with {@code headerNames};
+     * {@code null} at any index whose column could not be measured with enough confidence to act on
+     * (not a date/amount column to begin with, or fewer than {@link #COLUMN_SPAN_MIN_SAMPLE}
+     * contributing rows).
+     */
+    private ColumnSpan[] measureTextColumnSpans(List<String> headerNames, List<List<PositionedText>> sample,
+                                                 Map<Integer, PageDateEvidence> yearsByPage) {
+        int columnCount = headerNames.size();
+        ColumnSpan[] spans = new ColumnSpan[columnCount];
+        int dateHeaderIndex = -1;
+        for (int i = 0; i < columnCount; i++) {
+            if (isDateColumn(headerNames.get(i))) { dateHeaderIndex = i; break; }
+        }
+        if (dateHeaderIndex < 0) return spans; // no reliable anchor column at all -- nothing to measure against
+
+        List<Integer> textHeaderIndices = new ArrayList<>();
+        for (int i = dateHeaderIndex + 1; i < columnCount; i++) {
+            if (!isDateColumn(headerNames.get(i)) && !isAmountColumn(headerNames.get(i))) {
+                textHeaderIndices.add(i);
+            } else {
+                break; // the first amount column ends the text run this method ever measures
+            }
+        }
+        if (textHeaderIndices.isEmpty()) return spans;
+
+        float[] minLeft = new float[columnCount];
+        float[] maxRight = new float[columnCount];
+        int[] contributingRows = new int[columnCount];
+        Arrays.fill(minLeft, Float.MAX_VALUE);
+        Arrays.fill(maxRight, -Float.MAX_VALUE);
+
+        for (List<PositionedText> row : sample) {
+            if (row.isEmpty()) continue;
+            PageDateEvidence pageYears = yearsByPage.getOrDefault(row.get(0).pageIndex(), PageDateEvidence.NONE);
+            List<PositionedText> cells = row.stream()
+                    .filter(t -> !isBlankCell(t.text()))
+                    .sorted(Comparator.comparing(PositionedText::x))
+                    .toList();
+            if (cells.isEmpty()) continue;
+
+            int dateCellIndex = -1;
+            for (int i = 0; i < cells.size(); i++) {
+                String text = cells.get(i).text().trim();
+                if (CsvParser.parseDate(text) != null || resolveYearlessDate(text, pageYears) != null) {
+                    dateCellIndex = i;
+                    break;
+                }
+            }
+            if (dateCellIndex < 0) continue; // no reliable anchor on this row -- skip it, don't guess
+
+            int amountCellIndex = -1;
+            for (int i = dateCellIndex + 1; i < cells.size(); i++) {
+                String text = cells.get(i).text().trim();
+                // A decimal point, not just a parseable number, is what actually distinguishes an
+                // amount cell from a reference/cheque number here -- a real reference number is
+                // routinely PURE DIGITS (so parseNumeric alone accepts it too), and without this a
+                // reference cell gets mistaken for the row's own amount boundary, truncating the
+                // text region before the reference cell it should have anchored on -- the run this
+                // whole method exists to place correctly then gets folded into the FIRST text
+                // column's own span instead of measured on its own. Same "a decimal point is what a
+                // real amount always has, a bare digit run is more likely an identifier" reasoning
+                // bucketRow's own existing OFFSET_COLUMN_ANCHORS redirects already rely on.
+                if (text.contains(".") && CsvParser.parseNumeric(text) != null) {
+                    amountCellIndex = i;
+                    break;
+                }
+            }
+            int textRegionEnd = amountCellIndex >= 0 ? amountCellIndex : cells.size();
+            List<PositionedText> textCells = cells.subList(dateCellIndex + 1, textRegionEnd);
+            if (textCells.isEmpty()) continue;
+
+            // Guard 5 counts CONTRIBUTING ROWS, not contributing cells -- the overflow branch below
+            // can assign several of THIS ROW's own cells to the same (first) column, and counting
+            // each cell separately would let one row alone satisfy COLUMN_SPAN_MIN_SAMPLE for that
+            // column, defeating the guard's whole point. Tracked per row, applied once after.
+            boolean[] touchedThisRow = new boolean[columnCount];
+            if (textCells.size() <= textHeaderIndices.size()) {
+                // Guard 3: a row missing one of the expected text columns' data (a genuinely blank
+                // cell this row's product doesn't populate) contributes only to however many text
+                // columns it actually has, left to right -- never force-matched to the wrong one.
+                for (int i = 0; i < textCells.size(); i++) {
+                    int headerIndex = textHeaderIndices.get(i);
+                    accumulateColumnSpanSample(headerIndex, textCells.get(i), minLeft, maxRight);
+                    touchedThisRow[headerIndex] = true;
+                }
+            } else {
+                // MORE cells than expected text columns -- a cell PDFBox split into several runs (a
+                // long narration is the common real shape). The FIRST text column absorbs the
+                // overflow; every LATER column still gets exactly one cell, anchored from the
+                // RIGHT, so a multi-run narration can never be mistaken for a later column's own
+                // data. Getting this direction right matters: assigning the first N cells to the
+                // first N columns instead sends narration's own TRAILING run to the next column,
+                // contaminating that column's measured span with narration's own positions --
+                // caught by a synthetic regression test before it ever reached a real document.
+                int overflow = textCells.size() - textHeaderIndices.size();
+                int firstColumn = textHeaderIndices.get(0);
+                for (int i = 0; i <= overflow; i++) {
+                    accumulateColumnSpanSample(firstColumn, textCells.get(i), minLeft, maxRight);
+                }
+                touchedThisRow[firstColumn] = true;
+                for (int j = 1; j < textHeaderIndices.size(); j++) {
+                    int headerIndex = textHeaderIndices.get(j);
+                    accumulateColumnSpanSample(headerIndex, textCells.get(overflow + j), minLeft, maxRight);
+                    touchedThisRow[headerIndex] = true;
+                }
+            }
+            for (int headerIndex : textHeaderIndices) {
+                if (touchedThisRow[headerIndex]) contributingRows[headerIndex]++;
+            }
+        }
+
+        for (int headerIndex : textHeaderIndices) {
+            if (contributingRows[headerIndex] >= COLUMN_SPAN_MIN_SAMPLE) {
+                spans[headerIndex] = new ColumnSpan(minLeft[headerIndex], maxRight[headerIndex]);
+            }
+        }
+        return spans;
+    }
+
+    private void accumulateColumnSpanSample(int headerIndex, PositionedText cell, float[] minLeft,
+                                             float[] maxRight) {
+        minLeft[headerIndex] = Math.min(minLeft[headerIndex], cell.x());
+        maxRight[headerIndex] = Math.max(maxRight[headerIndex], cell.endX());
+    }
+
     private Map<String, String> bucketRow(List<PositionedText> row, List<String> headerNames, List<Float> headerAnchors,
                                            List<Float> headerEnds, DocumentContext ctx, PageDateEvidence candidateYears) {
+        return bucketRow(row, headerNames, headerAnchors, headerEnds, ctx, candidateYears, null);
+    }
+
+    /** Same as the six-argument overload, plus {@code textColumnSpans} -- see {@link ColumnSpan}'s
+     *  own doc comment. {@code null} for every call site except {@code locateAll}'s own real,
+     *  committed-header usage: a speculative header-quality probe must judge a candidate exactly as
+     *  plain nearestColumn would (measuring spans from an UNPROVEN header risks judging it by a
+     *  correction it would only need once accepted), and the headerless path already reaches the
+     *  correct column by construction (see {@link ColumnStats}), so it has no use for this at all. */
+    private Map<String, String> bucketRow(List<PositionedText> row, List<String> headerNames, List<Float> headerAnchors,
+                                           List<Float> headerEnds, DocumentContext ctx, PageDateEvidence candidateYears,
+                                           ColumnSpan[] textColumnSpans) {
         Map<String, String> result = new LinkedHashMap<>();
         float tableRightEdge = rightEdgeOfTable(headerAnchors, headerEnds);
         for (PositionedText t : row) {
@@ -4393,6 +4639,11 @@ public class PdfTableLocator {
                 continue;
             }
             int nearest = nearestColumn(t.x(), headerAnchors);
+            // COLUMN_SPAN_PLACEMENT guard 4: captured before any redirect below can touch `nearest`,
+            // so that block can tell "still exactly where plain nearestColumn put it" apart from
+            // "something else already moved it" -- see ColumnSpan's own doc comment for why
+            // containment must never second-guess a redirect that already fired.
+            final int originalNearest = nearest;
             // RIGHT_ALIGNED_AMOUNTS. Every rule below places a run by its LEFT edge, which is the
             // right question for left-aligned text and the wrong one for a number. Financial
             // documents right-align amount columns, so within one column the right edge is fixed
@@ -4558,6 +4809,34 @@ public class PdfTableLocator {
                     columnName = headerNames.get(nearest);
                     existing = result.get(columnName);
                     if (ctx != null) ctx.record("OFFSET_COLUMN_ANCHORS");
+                }
+            }
+            // COLUMN_SPAN_PLACEMENT. Guard 4: last, and only for a run nothing above already
+            // redirected -- see ColumnSpan's own doc comment for the full design, the defect this
+            // fixes, and why this specific ordering. Guards 1+2 are enforced structurally:
+            // measureTextColumnSpans never populates a span for a date or amount column, so neither
+            // can ever be a redirect target here.
+            if (textColumnSpans != null && nearest == originalNearest
+                    && !isDateColumn(columnName) && !isAmountColumn(columnName)) {
+                ColumnSpan ownSpan = textColumnSpans[nearest];
+                if (ownSpan == null || !ownSpan.contains(t.x())) {
+                    int redirect = -1;
+                    for (int i = 0; i < headerNames.size(); i++) {
+                        if (i == nearest) continue;
+                        ColumnSpan candidate = textColumnSpans[i];
+                        if (candidate != null && candidate.contains(t.x())) {
+                            // More than one measured span claims this position -- decline rather
+                            // than guess between them; nearestColumn's original placement stands.
+                            if (redirect >= 0) { redirect = -1; break; }
+                            redirect = i;
+                        }
+                    }
+                    if (redirect >= 0) {
+                        nearest = redirect;
+                        columnName = headerNames.get(redirect);
+                        existing = result.get(columnName);
+                        if (ctx != null) ctx.record("COLUMN_SPAN_PLACEMENT");
+                    }
                 }
             }
             // Two text runs landing in the same column on the same row (e.g. a multi-word
