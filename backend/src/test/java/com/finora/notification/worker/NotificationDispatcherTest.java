@@ -4,7 +4,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
-import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -29,17 +28,23 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.function.Consumer;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionStatus;
-import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * Mockito-based, matching this codebase's established worker-test pattern (ImportJobWorkerTest),
- * rather than a Spring-context IT. The TransactionTemplate is stubbed to run its callback inline.
+ * rather than a Spring-context IT.
+ *
+ * <p>{@link NotificationDispatcher} builds its own {@code TransactionTemplate} from an injected
+ * {@link PlatformTransactionManager} (see the class doc's "Own PROPAGATION_REQUIRES_NEW template"
+ * section) rather than accepting a shared template, so this test mocks the manager instead: {@code
+ * getTransaction(...)} returns a stub {@link TransactionStatus} and {@code commit}/{@code
+ * rollback} are unstubbed no-ops, letting the REAL {@code TransactionTemplate} run each callback
+ * inline exactly as it would in production, just against a fake transaction.
  *
  * <p>Task 4 wires {@code NotificationLog}/{@code NotificationLogRepository} into
  * {@link NotificationDispatcher}: a log row is written for every send attempt, success and
@@ -52,7 +57,7 @@ class NotificationDispatcherTest {
     private NotificationLogRepository logRepository;
     private NotificationChannelProvider emailProvider;
     private WorkerObservability observability;
-    private TransactionTemplate transactionTemplate;
+    private PlatformTransactionManager transactionManager;
     private NotificationDispatcher dispatcher;
 
     private Notification pending;
@@ -63,27 +68,14 @@ class NotificationDispatcherTest {
         logRepository = mock(NotificationLogRepository.class);
         emailProvider = mock(NotificationChannelProvider.class);
         observability = mock(WorkerObservability.class);
-        transactionTemplate = mock(TransactionTemplate.class);
+        transactionManager = mock(PlatformTransactionManager.class);
 
         when(observability.beginScheduled(any(), any())).thenReturn(mock(WorkerExecution.class));
         when(observability.begin(any(), any())).thenReturn(mock(WorkerExecution.class));
         when(emailProvider.channel()).thenReturn(NotificationChannel.EMAIL);
         when(emailProvider.isConfigured()).thenReturn(true);
 
-        // Run both TransactionTemplate forms inline so the worker's logic is what is under test.
-        // executeWithoutResult is a default method TransactionTemplate inherits rather than
-        // overrides, and a Mockito mock does not delegate an unstubbed method to its real
-        // implementation just because that implementation happens to be a default method -- see
-        // AccountPurgeSweepServiceTest / UserAccountLifecycleServiceTest for this codebase's
-        // established fix, applied identically here.
-        when(transactionTemplate.execute(any())).thenAnswer(
-                inv -> ((org.springframework.transaction.support.TransactionCallback<?>)
-                        inv.getArgument(0)).doInTransaction(null));
-        doAnswer(inv -> {
-            Consumer<TransactionStatus> action = inv.getArgument(0);
-            action.accept(mock(TransactionStatus.class));
-            return null;
-        }).when(transactionTemplate).executeWithoutResult(any());
+        when(transactionManager.getTransaction(any())).thenReturn(mock(TransactionStatus.class));
 
         pending = Notification.create(UUID.randomUUID(), NotificationType.IMPORT_STATEMENT_READY,
                 NotificationCategory.FINANCIAL, NotificationChannel.EMAIL,
@@ -94,7 +86,7 @@ class NotificationDispatcherTest {
         when(repository.findOldestPendingAt()).thenReturn(Optional.empty());
 
         dispatcher = new NotificationDispatcher(repository, logRepository, List.of(emailProvider),
-                observability, transactionTemplate);
+                observability, transactionManager);
     }
 
     @Test
