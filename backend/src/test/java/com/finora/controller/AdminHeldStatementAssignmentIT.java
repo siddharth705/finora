@@ -179,6 +179,23 @@ class AdminHeldStatementAssignmentIT extends AbstractIntegrationTest {
                 .isEqualTo(HeldStatement.Status.INVESTIGATING);
     }
 
+    /** The entity's own {@code startInvestigation} carries no source-status guard beyond
+     *  refuseIfResolved -- an operator can start investigating a HELD row directly, without a
+     *  separate assignment step first. Documented behaviour, not previously covered by a test at
+     *  either the entity or the HTTP layer. */
+    @Test
+    void investigateCanMoveAHeldRowDirectlyWithoutAssignmentFirst() {
+        seedHold("HLD-2026-300012");
+        User admin = createUser("ADMIN");
+
+        ResponseEntity<String> response =
+                post("/api/v1/admin/held-statements/HLD-2026-300012/investigate", admin, "{}");
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(heldStatementRepository.findByHeldId("HLD-2026-300012").orElseThrow().getStatus())
+                .isEqualTo(HeldStatement.Status.INVESTIGATING);
+    }
+
     @Test
     void investigatingAResolvedHoldIsAConflict() {
         seedHold("HLD-2026-300007");

@@ -111,6 +111,28 @@ describe('HeldStatementDetail', () => {
     expect(screen.getByText('79')).toBeInTheDocument();
   });
 
+  /** ROW_ACCOUNTING's droppedTransactionCandidateReasons detail is a nested reason-code-to-count
+   *  object, not a primitive -- String(value) on an object renders the literal, useless
+   *  "[object Object]". */
+  it('renders a nested object detail value legibly rather than [object Object]', async () => {
+    vi.mocked(adminHeldStatementApi.get).mockResolvedValue({
+      ...detail,
+      findings: [{
+        sectionIndex: 0,
+        rule: 'ROW_ACCOUNTING',
+        outcome: 'WARNING',
+        details: { droppedTransactionCandidateReasons: { PAGE_FOOTER_OR_CLOSING_MARKER: 3 } },
+        createdAt: '2026-09-01T07:59:00Z',
+      }],
+    });
+    mockAuth(['TRUST_REVIEW_MANAGE'], ['ADMIN']);
+    renderPage();
+
+    expect(await screen.findByText('droppedTransactionCandidateReasons')).toBeInTheDocument();
+    expect(screen.queryByText('[object Object]')).not.toBeInTheDocument();
+    expect(screen.getByText(/PAGE_FOOTER_OR_CLOSING_MARKER/)).toBeInTheDocument();
+  });
+
   it('renders the audit timeline oldest first', async () => {
     mockAuth(['TRUST_REVIEW_MANAGE'], ['ADMIN']);
     renderPage();

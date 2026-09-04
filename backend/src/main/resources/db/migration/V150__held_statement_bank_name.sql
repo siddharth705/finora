@@ -2,9 +2,9 @@
 --
 -- Not joined from import_sessions.detected_account_json, which is where the name actually lives:
 -- that row is deleted once its TTL elapses (see ImportSessionService.sweepExpiredSessions and the
--- held-session exemption added alongside it in V149's era), so a queue column sourced from it
--- would blank out on exactly the oldest holds. Same snapshot rule as parser_version and
--- reliability_status.
+-- held-session exemption on it -- an application-code fix, not a migration), so a queue column
+-- sourced from it would blank out on exactly the oldest holds. Same snapshot rule as
+-- parser_version and reliability_status.
 --
 -- Nullable: the parser cannot always name a bank, and a hold with no bank is still a valid hold.
 ALTER TABLE held_statements ADD COLUMN bank_name VARCHAR(120);

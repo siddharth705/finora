@@ -240,9 +240,16 @@ public class HeldStatementService {
         return HeldStatementDto.from(held);
     }
 
-    /** Moves an assigned hold into active investigation. Reaching this from HELD directly (never
-     *  assigned) is refused by the same {@code refuseIfResolved} guard every transition here
-     *  shares -- the entity's own state machine, not re-derived. */
+    /**
+     * Moves a hold into active investigation.
+     *
+     * <p>The entity's own {@code startInvestigation} carries no source-status guard beyond {@code
+     * refuseIfResolved} -- Plan 1's own test only exercises it after {@code assign}, but nothing
+     * stops calling this on a HELD row that was never assigned first, and this does not invent a
+     * restriction the entity's state machine does not have. An operator who can already see the
+     * extraction going straight to investigating it, without a separate assignment step, is a
+     * legitimate way to work the queue, not a gap.
+     */
     @Transactional
     public HeldStatementDto startInvestigation(UUID actingAdminId, String heldId) {
         HeldStatement held = require(heldId);

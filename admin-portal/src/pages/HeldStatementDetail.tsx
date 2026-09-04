@@ -16,6 +16,16 @@ function onActionErrorMessage(error: unknown): string {
   return response?.data?.message ?? 'That action could not be completed.';
 }
 
+/** A detail value is a count, a boolean, a string, or -- for one rule's histogram
+ *  (`droppedTransactionCandidateReasons`) -- a reason-code-to-count object; `mismatches` is a
+ *  string list. `String(value)` renders an object as the literal, useless "[object Object]", so
+ *  anything non-primitive is JSON-stringified instead -- not pretty, but legible, which is what a
+ *  diagnostic view over an intentionally-unshaped allowlisted map needs. */
+function formatDetailValue(value: unknown): string {
+  if (value === null || value === undefined) return '—';
+  return typeof value === 'object' ? JSON.stringify(value) : String(value);
+}
+
 /** One finding's evidence as key: value pairs -- the numbers behind the trigger, not a sentence
  *  summarising them. `details` is an arbitrary allowlisted map from the backend, so this renders
  *  whatever keys are actually present rather than assuming a fixed shape. */
@@ -32,7 +42,7 @@ function FindingCard({ finding }: { finding: HeldStatementFinding }) {
           {entries.map(([key, value]) => (
             <div key={key} className="flex justify-between gap-2">
               <dt className="text-muted">{key}</dt>
-              <dd className="text-ink font-mono">{String(value)}</dd>
+              <dd className="text-ink font-mono break-all">{formatDetailValue(value)}</dd>
             </div>
           ))}
         </dl>
