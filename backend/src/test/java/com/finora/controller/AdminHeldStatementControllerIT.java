@@ -10,6 +10,8 @@ import com.finora.entity.User;
 import com.finora.exception.ErrorCode;
 import com.finora.imports.analysis.ImportVerificationFinding;
 import com.finora.imports.analysis.ImportVerificationFindingRepository;
+import com.finora.imports.storage.ContentAddress;
+import com.finora.imports.storage.StatementStorage;
 import com.finora.repository.HeldStatementEventRepository;
 import com.finora.repository.HeldStatementRepository;
 import com.finora.notification.repository.NotificationRepository;
@@ -27,7 +29,9 @@ import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.test.context.TestPropertySource;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.UUID;
 
@@ -43,6 +47,10 @@ import static org.assertj.core.api.Assertions.assertThat;
  * really does reach FAILED -- which {@code recordFailure} cannot do to a terminal job, and which
  * is the bug this task existed to avoid.
  */
+@TestPropertySource(properties = {
+        "app.statement-storage.provider=filesystem",
+        "app.statement-storage.filesystem.root=${java.io.tmpdir}/finora-held-statement-controller-it"
+})
 class AdminHeldStatementControllerIT extends AbstractIntegrationTest {
 
     @Autowired private TestRestTemplate restTemplate;
@@ -54,7 +62,32 @@ class AdminHeldStatementControllerIT extends AbstractIntegrationTest {
     @Autowired private UserRepository userRepository;
     @Autowired private JwtService jwtService;
     @Autowired private RefreshTokenRepository refreshTokens;
+    @Autowired private StatementStorage storage;
     private final ObjectMapper mapper = new ObjectMapper();
+
+    private static final byte[] CLEAN_CSV = ("Date,Description,Amount,Balance\n"
+            + "01/01/2026,Opening balance,,1000.00\n"
+            + "05/01/2026,Coffee shop,-150.00,850.00\n").getBytes(StandardCharsets.UTF_8);
+
+    /** Same shape as {@link #seedHold}, but with real, storage-backed CSV bytes -- {@code
+     *  rerun-parser} actually re-parses them (BH-045: {@code ImportJob.getFileContent()} always
+     *  returns null), unlike every other endpoint this file otherwise tests. */
+    private HeldStatement seedHoldWithRealBytes(String heldId) {
+        User owner = createUser("USER");
+        ContentAddress address = storage.store(CLEAN_CSV);
+        ImportJob job = new ImportJob(owner.getId(), "statement.csv", address.hash(), address.key(), "CSV");
+        job.markClaimed("worker", Instant.now());
+        UUID sessionId = UUID.randomUUID();
+        job.holdForTrustReview(sessionId, null, Instant.now());
+        importJobRepository.save(job);
+
+        HeldStatement held = heldStatementRepository.save(new HeldStatement(
+                heldId, job.getId(), owner.getId(), job.getObjectKey(),
+                "Printed and parsed transaction count disagree (ROW_GROUPING)"));
+        job.holdForTrustReview(sessionId, held.getId(), Instant.now());
+        importJobRepository.save(job);
+        return held;
+    }
 
     private User createUser(String role) {
         User user = new User();
@@ -387,5 +420,60 @@ class AdminHeldStatementControllerIT extends AbstractIntegrationTest {
                 new HttpEntity<>(bearerFor(admin)), String.class);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+    }
+
+    // ---------------------------------------------------------------------------- Plan 3: rerun-parser / findings
+
+    @Test
+    void rerunParserRefusesAUserWithoutTheTrustReviewPermission() {
+        HeldStatement held = seedHoldWithRealBytes("HLD-2026-390001");
+        User ordinary = createUser("USER");
+
+        ResponseEntity<String> response = post(
+                "/api/v1/admin/held-statements/" + held.getHeldId() + "/rerun-parser", ordinary, "{}");
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+    }
+
+    @Test
+    void rerunParserReturnsTheComparison() throws Exception {
+        HeldStatement held = seedHoldWithRealBytes("HLD-2026-390002");
+        User admin = createUser("ADMIN");
+
+        ResponseEntity<String> response = post(
+                "/api/v1/admin/held-statements/" + held.getHeldId() + "/rerun-parser", admin, "{}");
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        JsonNode data = mapper.readTree(response.getBody()).get("data");
+        assertThat(data.get("stillHeld")).isNotNull();
+        assertThat(data.has("previousParserVersion")).isTrue();
+        assertThat(data.has("currentParserVersion")).isTrue();
+    }
+
+    @Test
+    void findingsEndpointSavesRootCauseAndFixReference() throws Exception {
+        HeldStatement held = seedHoldWithRealBytes("HLD-2026-390003");
+        User admin = createUser("ADMIN");
+
+        ResponseEntity<String> response = post(
+                "/api/v1/admin/held-statements/" + held.getHeldId() + "/findings", admin,
+                "{\"rootCause\":\"Header misdetected\",\"fixReference\":\"PR #950\"}");
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        JsonNode data = mapper.readTree(response.getBody()).get("data");
+        assertThat(data.get("rootCause").asText()).isEqualTo("Header misdetected");
+        assertThat(data.get("fixReference").asText()).isEqualTo("PR #950");
+    }
+
+    @Test
+    void findingsRefusesAUserWithoutTheTrustReviewPermission() {
+        HeldStatement held = seedHoldWithRealBytes("HLD-2026-390004");
+        User ordinary = createUser("USER");
+
+        ResponseEntity<String> response = post(
+                "/api/v1/admin/held-statements/" + held.getHeldId() + "/findings", ordinary,
+                "{\"rootCause\":\"x\"}");
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
     }
 }
