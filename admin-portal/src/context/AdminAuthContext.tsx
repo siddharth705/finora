@@ -71,6 +71,12 @@ export const ADMIN_PORTAL_PERMISSIONS = [
   // still get past the portal-entry check to reach the one section it can use, or this list's own
   // documented bug (RELATIONSHIP_MANAGE, above) repeats itself for a third permission.
   'TRUST_REVIEW_MANAGE',
+  // Support, Help & Feedback v1, Phase 9 (V149) -- gates the Support Tickets and Feedback pages
+  // (AdminSupportTicketController, AdminFeedbackController). V149's migration comment names this
+  // exact allowlist by file path as one of the four places a new admin permission must appear,
+  // precisely because of the RELATIONSHIP_MANAGE bug documented at the top of this list -- so it
+  // is listed here from the start, not discovered missing after the fact a third time.
+  'SUPPORT_MANAGE',
 ];
 
 export interface AdminAuthState {
