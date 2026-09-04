@@ -6,6 +6,7 @@ import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import jakarta.persistence.Version;
 
 import java.time.Instant;
 import java.util.EnumSet;
@@ -89,6 +90,20 @@ public class HeldStatement {
     @Column(name = "engineer_notes")
     private String engineerNotes;
 
+    @Column(name = "root_cause")
+    private String rootCause;
+
+    @Column(name = "fix_reference")
+    private String fixReference;
+
+    /** BH-001, same reasoning as {@code ImportJob.version}'s own doc: every other
+     *  concurrently-written entity here already carries one. This row is mutated by several
+     *  independent actors (assign, investigate, notes, findings, approve, reject, rerun-parser),
+     *  and until Plan 3 was the one exception -- see V151's own migration comment. */
+    @Version
+    @Column(nullable = false)
+    private Long version = 0L;
+
     @Column(name = "created_at", nullable = false)
     private Instant createdAt = Instant.now();
 
@@ -147,6 +162,16 @@ public class HeldStatement {
      *  of what it said before lives in {@code held_statement_events}. */
     public void addNotes(String notes) {
         this.engineerNotes = notes;
+    }
+
+    /** Records what an engineer found and where the fix landed. Replaces both fields wholesale,
+     *  same as {@link #addNotes} -- the history lives in {@code held_statement_events}, not a
+     *  second pair of columns. Deliberately not guarded by {@link #refuseIfResolved}, for the same
+     *  reason {@code addNotes} isn't: writing up a root cause after the hold is already resolved is
+     *  a legitimate thing to do, not a state-machine violation. */
+    public void recordEngineerFindings(String rootCause, String fixReference) {
+        this.rootCause = rootCause;
+        this.fixReference = fixReference;
     }
 
     public void markReadyForImport(Instant now) {
@@ -212,6 +237,9 @@ public class HeldStatement {
     public UUID getAssignedEngineerId() { return assignedEngineerId; }
     public String getTriggerSummary() { return triggerSummary; }
     public String getEngineerNotes() { return engineerNotes; }
+    public String getRootCause() { return rootCause; }
+    public String getFixReference() { return fixReference; }
+    public Long getVersion() { return version; }
     public Instant getCreatedAt() { return createdAt; }
     public Instant getAssignedAt() { return assignedAt; }
     public Instant getReadyAt() { return readyAt; }

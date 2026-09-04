@@ -12,14 +12,18 @@ import com.finora.entity.HeldStatementEvent;
 import com.finora.entity.ImportJob;
 import com.finora.exception.ApiException;
 import com.finora.exception.ErrorCode;
+import com.finora.imports.ImportService;
 import com.finora.imports.ImportSessionService;
 import com.finora.imports.analysis.ImportVerificationFinding;
 import com.finora.imports.analysis.ImportVerificationFindingRepository;
+import com.finora.imports.jobs.ParserVersionProvider;
 import com.finora.imports.jobs.StagedForJob;
 import com.finora.imports.jobs.VerificationTelemetry;
 import com.finora.imports.storage.StatementContentService;
 import com.finora.imports.trust.HeldStatementIdGenerator;
 import com.finora.imports.trust.HoldDecision;
+import com.finora.imports.trust.TrustPredicate;
+import com.finora.dto.HeldStatementRerunResultDto;
 import com.finora.notification.api.NotificationRequest;
 import com.finora.notification.api.NotificationService;
 import com.finora.notification.domain.NotificationCategory;
@@ -77,6 +81,8 @@ public class HeldStatementService {
     private final ImportSessionService importSessionService;
     private final ObjectMapper objectMapper;
     private final StatementContentService statementContentService;
+    private final ImportService importService;
+    private final ParserVersionProvider parserVersionProvider;
 
     public HeldStatementService(HeldStatementRepository repository,
                                 HeldStatementEventRepository eventRepository,
@@ -87,7 +93,9 @@ public class HeldStatementService {
                                 NotificationService notificationService,
                                 ImportSessionService importSessionService,
                                 ObjectMapper objectMapper,
-                                StatementContentService statementContentService) {
+                                StatementContentService statementContentService,
+                                ImportService importService,
+                                ParserVersionProvider parserVersionProvider) {
         this.repository = repository;
         this.eventRepository = eventRepository;
         this.idGenerator = idGenerator;
@@ -98,6 +106,8 @@ public class HeldStatementService {
         this.importSessionService = importSessionService;
         this.objectMapper = objectMapper;
         this.statementContentService = statementContentService;
+        this.importService = importService;
+        this.parserVersionProvider = parserVersionProvider;
     }
 
     /**
@@ -290,6 +300,121 @@ public class HeldStatementService {
                         "subjectUserId", held.getUserId().toString(),
                         "heldId", held.getHeldId()));
         return HeldStatementDto.from(held);
+    }
+
+    /** Records what an engineer found and where the fix landed. Same replace-wholesale semantics
+     *  as {@link #addNotes}, and deliberately not guarded by {@code refuseIfResolved} for the
+     *  identical reason. */
+    @Transactional
+    public HeldStatementDto recordFindings(UUID actingAdminId, String heldId, String rootCause,
+                                           String fixReference) {
+        HeldStatement held = require(heldId);
+        held.recordEngineerFindings(rootCause, fixReference);
+        repository.save(held);
+
+        eventRepository.save(new HeldStatementEvent(held.getId(), actingAdminId, "FINDINGS_UPDATED",
+                null, null, rootCause));
+        auditService.record(actingAdminId, "TRUST_REVIEW_FINDINGS_UPDATED", "HeldStatement", held.getId(),
+                Map.of("actorId", actingAdminId.toString(),
+                        "subjectUserId", held.getUserId().toString(),
+                        "heldId", held.getHeldId()));
+        return HeldStatementDto.from(held);
+    }
+
+    private static final String PARSER_RERUN_EVENT = "PARSER_RERUN";
+
+    /**
+     * Re-parses this hold's original bytes with the CURRENT parser build and reports whether the
+     * trust predicate would still flag it.
+     *
+     * <p>Reads through {@link ImportService#dryRunParse} exclusively -- see that method's own doc
+     * for why the live staging path is unsafe here: it would delete the {@code ImportSession} a
+     * later {@link #approve} still needs.
+     *
+     * <p>{@code today} is {@code held.getCreatedAt()}'s date, not the date this method runs on --
+     * using the current date would let a genuinely future-dated statement period stop being
+     * flagged for no reason but calendar drift, which would misreport a rerun as having fixed
+     * something no parser change touched.
+     *
+     * <p>Writes exactly one thing beyond the hold's own status: a {@code PARSER_RERUN} event. It
+     * never calls {@code ImportVerificationRecorder.recordForJob} -- {@code
+     * ImportVerificationFinding} rows are immutable and carry no attempt/version column, so a
+     * second write against the same {@code importJobId} would sit indistinguishably beside the
+     * original hold's evidence in {@link #detail}.
+     *
+     * <p>Clearing moves the hold to {@code READY_FOR_IMPORT}, never straight to {@code IMPORTED}
+     * -- a human still approves. Calling this again on an already-{@code READY_FOR_IMPORT} hold is
+     * legal and idempotent: {@code HeldStatement.markReadyForImport}'s only guard is {@code
+     * refuseIfResolved}, which does not single out a required starting status.
+     *
+     * <p>The clearing path is protected against a concurrent {@link #approve}/{@link #reject}/etc.
+     * on the same hold by {@code HeldStatement}'s {@code @Version} column (V151): a losing
+     * concurrent write there throws {@code ObjectOptimisticLockingFailureException}, mapped to a
+     * 409 by {@code GlobalExceptionHandler.handleOptimisticLock} -- never a silent overwrite of
+     * whichever admin action committed first. <b>The still-held path is not equally protected</b>:
+     * when {@code decision.hold()} stays true, {@code held} is never re-saved (nothing about it
+     * changed), so no version check fires. If a concurrent resolution wins a genuine race against
+     * this method's own stale-in-transaction read, the {@code PARSER_RERUN} event this branch
+     * writes can trail the resolution -- recording {@code from}/{@code to} as the hold's
+     * pre-resolution status even though the row is by then already resolved. This does not corrupt
+     * the hold's actual status (this branch never writes one), only its own event's historical
+     * accuracy; a narrow, low-severity gap left open rather than pulling in
+     * {@code EntityManager.lock(..., LockModeType.OPTIMISTIC_FORCE_INCREMENT)} for a race this
+     * narrow.
+     */
+    @Transactional
+    public HeldStatementRerunResultDto rerunParser(UUID actingAdminId, String heldId) {
+        HeldStatement held = require(heldId);
+        refuseIfResolved(held, "re-parsed");
+        ImportJob job = requireJob(held);
+
+        byte[] content = statementContentService.read(job);
+        ImportService.DryRunResult dryRun;
+        String extractionError = null;
+        try {
+            dryRun = importService.dryRunParse(job.getUserId(), job.getFileName(), content, job.getSourceFormat());
+        } catch (ApiException e) {
+            dryRun = new ImportService.DryRunResult(List.of(), List.of());
+            String code = e.getCode() != null ? e.getCode().name() : "UNKNOWN";
+            extractionError = code + ": " + e.getMessage();
+        } catch (java.io.IOException e) {
+            throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "Could not re-read this statement: " + e.getMessage());
+        }
+
+        java.time.LocalDate anchoredToday = held.getCreatedAt().atZone(java.time.ZoneOffset.UTC).toLocalDate();
+        HoldDecision decision = extractionError != null
+                ? new HoldDecision(true, List.of("Current parser build fails to extract this document ("
+                        + extractionError + ")"))
+                : TrustPredicate.evaluate(dryRun.verificationReports(), dryRun.statementPeriods(), anchoredToday);
+
+        String previousVersion = held.getParserVersion();
+        String currentVersion = parserVersionProvider.current();
+        boolean versionChanged = currentVersion != null && !currentVersion.equals(previousVersion);
+        HeldStatement.Status from = held.getStatus();
+        if (!decision.hold()) {
+            held.markReadyForImport(Instant.now());
+            repository.save(held);
+        }
+
+        String summaryNote = (decision.hold()
+                ? "Still held: " + String.join("; ", decision.reasons())
+                : "Clears under the current parser build.")
+                + " Parser version: " + previousVersion + " -> " + currentVersion
+                + " (" + (versionChanged ? "changed" : "unchanged") + ").";
+        eventRepository.save(new HeldStatementEvent(held.getId(), actingAdminId, PARSER_RERUN_EVENT,
+                from.name(), held.getStatus().name(), summaryNote));
+        auditService.record(actingAdminId, "TRUST_REVIEW_PARSER_RERUN", "HeldStatement", held.getId(),
+                Map.of("actorId", actingAdminId.toString(),
+                        "subjectUserId", held.getUserId().toString(),
+                        "heldId", held.getHeldId(),
+                        "stillHeld", decision.hold(),
+                        "previousParserVersion", String.valueOf(previousVersion),
+                        "currentParserVersion", String.valueOf(currentVersion),
+                        "parserVersionChanged", versionChanged));
+
+        return new HeldStatementRerunResultDto(previousVersion, currentVersion, versionChanged,
+                decision.hold(), decision.reasons(), HeldStatementDto.from(held));
     }
 
     /**
