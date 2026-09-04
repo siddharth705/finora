@@ -108,21 +108,32 @@ ACCEPTED_BY_GHSA = {a.ghsa: a for a in ACCEPTED}
 
 def audit(app, omit_dev):
     """npm audit --json. Exit code is non-zero whenever anything is found, so it is ignored; the
-    JSON body is the actual result."""
+    JSON body is the actual result.
+
+    Retries once on a timeout before giving up. A stalled registry response is exactly the kind of
+    transient blip a second attempt tends to clear -- confirmed live in CI (2026-09-04): the same
+    registry slowness that used to hang this call for ~12 minutes was, minutes later, back to its
+    normal ~2s. One retry turns that into "costs an extra AUDIT_TIMEOUT_SECONDS on a bad day"
+    instead of "fails the build outright on a bad day"."""
     cmd = ["npm", "audit", "--json"]
     if omit_dev:
         cmd.append("--omit=dev")
-    try:
-        proc = subprocess.run(
-            cmd, cwd=REPO_ROOT / app, capture_output=True, text=True,
-            shell=(sys.platform == "win32"), timeout=AUDIT_TIMEOUT_SECONDS,
-        )
-    except subprocess.TimeoutExpired:
-        raise RuntimeError(
-            f"npm audit for {app} did not finish within {AUDIT_TIMEOUT_SECONDS}s -- likely a stalled "
-            "registry response, not a real hang in npm itself. Re-run; if it keeps happening, check "
-            "the npm registry's status before assuming this script is at fault."
-        )
+    for attempt in (1, 2):
+        try:
+            proc = subprocess.run(
+                cmd, cwd=REPO_ROOT / app, capture_output=True, text=True,
+                shell=(sys.platform == "win32"), timeout=AUDIT_TIMEOUT_SECONDS,
+            )
+            break
+        except subprocess.TimeoutExpired:
+            if attempt == 2:
+                raise RuntimeError(
+                    f"npm audit for {app} did not finish within {AUDIT_TIMEOUT_SECONDS}s, twice in a "
+                    "row -- likely a genuinely stalled registry, not a one-off blip. Check the npm "
+                    "registry's status before assuming this script is at fault."
+                )
+            print(f"npm audit for {app} timed out after {AUDIT_TIMEOUT_SECONDS}s, retrying once...",
+                  file=sys.stderr)
     if not proc.stdout.strip():
         raise RuntimeError(f"npm audit produced no output for {app}: {proc.stderr[:300]}")
     return json.loads(proc.stdout)
