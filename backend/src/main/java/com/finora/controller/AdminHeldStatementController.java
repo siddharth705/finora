@@ -3,7 +3,9 @@ package com.finora.controller;
 import com.finora.dto.ApiResponse;
 import com.finora.dto.HeldStatementDto;
 import com.finora.dto.PagedResponse;
+import com.finora.entity.HeldStatement;
 import com.finora.security.CurrentUser;
+import com.finora.service.HeldStatementFilter;
 import com.finora.service.HeldStatementService;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -15,6 +17,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.Map;
+import java.util.UUID;
 
 /**
  * The trust-review queue's operator surface: the statements the pipeline held back, and the two
@@ -42,12 +45,19 @@ public class AdminHeldStatementController {
     }
 
     /** One page of open holds, oldest first -- the longest-waiting user is the one to look at.
-     *  Carries no statement content, which is why browsing is not audited. */
+     *  Carries no statement content, which is why browsing is not audited. Every filter is
+     *  optional; {@code status} narrows within the open queue and can never surface a resolved
+     *  hold -- see {@link HeldStatementFilter}'s own doc. */
     @GetMapping
     public ApiResponse<PagedResponse<HeldStatementDto>> list(
             @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "25") int size) {
-        return ApiResponse.ok(heldStatementService.list(page, size));
+            @RequestParam(defaultValue = "25") int size,
+            @RequestParam(required = false) HeldStatement.Status status,
+            @RequestParam(required = false) String bank,
+            @RequestParam(required = false) Integer olderThanHours,
+            @RequestParam(required = false) UUID engineerId) {
+        return ApiResponse.ok(heldStatementService.list(page, size,
+                new HeldStatementFilter(status, bank, olderThanHours, engineerId)));
     }
 
     @GetMapping("/{heldId}")

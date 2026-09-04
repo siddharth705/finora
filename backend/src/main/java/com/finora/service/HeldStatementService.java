@@ -30,6 +30,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -125,8 +126,15 @@ public class HeldStatementService {
     // --- operator resolution ---------------------------------------------------------------------
 
     @Transactional(readOnly = true)
-    public PagedResponse<HeldStatementDto> list(int page, int size) {
-        Page<HeldStatement> result = repository.findByStatusIn(OPEN,
+    public PagedResponse<HeldStatementDto> list(int page, int size, HeldStatementFilter filter) {
+        // Resolved here, not in the repository: JPQL arithmetic against CURRENT_TIMESTAMP is not
+        // something every JPA provider evaluates the same way, and a fixed Instant computed once
+        // per call is also what makes the query's own "older than" reasoning testable without a
+        // clock dependency inside the query itself.
+        Instant olderThan = filter.olderThanHours() == null
+                ? null : Instant.now().minus(Duration.ofHours(filter.olderThanHours()));
+        Page<HeldStatement> result = repository.findForAdmin(OPEN, filter.status(), filter.bankName(),
+                olderThan, filter.assignedEngineerId(),
                 PageRequest.of(PageBounds.safePage(page), PageBounds.safeSize(size > 0 ? size : 25),
                         Sort.by(Sort.Direction.ASC, "createdAt")));
         return PagedResponse.of(result.map(HeldStatementDto::from));
