@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Pencil, Plus, Trash2, ListFilter } from 'lucide-react';
 import { adminUserRulesApi } from '../../api/endpoints';
-import type { CreateRelationshipRequest, CreateRuleRequest, RuleDto, UpdateRuleRequest } from '../../types';
+import type { CreateRuleRequest, RuleDto, UpdateRuleRequest } from '../../types';
 import { errorMessage } from './errorMessage';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
 
@@ -281,14 +281,3 @@ export function RulesSection({ userId }: { userId: string }) {
   );
 }
 
-const RELATIONSHIP_TYPES = ['FAMILY', 'FRIEND', 'OWN_ACCOUNT', 'OTHER'];
-const IDENTIFIER_TYPES = ['UPI_ID', 'ACCOUNT_LAST4', 'NAME_PATTERN'];
-const BLANK_RELATIONSHIP_FORM: CreateRelationshipRequest = {
-  label: '', relationshipType: 'FAMILY', identifiers: [{ identifierType: 'UPI_ID', identifierValue: '' }],
-};
-
-/** Compact create/edit form for a single relationship, embedded inline in RelationshipsSection --
- *  same "no floating modal" convention as InlineRuleForm above. Only a single identifier row --
- *  the self-service page supported adding several, but a support-assisted edit rarely needs more
- *  than one and this keeps the form from ballooning; multi-identifier relationships created
- *  elsewhere still display and merge correctly here, editing just replaces down to one. */

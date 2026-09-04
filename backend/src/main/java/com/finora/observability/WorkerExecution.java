@@ -3,6 +3,7 @@ package com.finora.observability;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import io.sentry.Breadcrumb;
+import io.sentry.ISentryLifecycleToken;
 import io.sentry.Sentry;
 import io.sentry.SentryLevel;
 import org.slf4j.MDC;
@@ -56,6 +57,7 @@ public final class WorkerExecution implements AutoCloseable {
     private final String correlationId;
     private final String previousCorrelationId;
     private final Instant startedAt;
+    private final ISentryLifecycleToken scopeToken;
     private boolean closed;
 
     WorkerExecution(WorkerMeters meters, String worker, String jobKind, String correlationPrefix) {
@@ -68,7 +70,7 @@ public final class WorkerExecution implements AutoCloseable {
         this.correlationId = correlationPrefix + "-" + UUID.randomUUID();
         MDC.put(WorkerObservability.MDC_KEY, correlationId);
 
-        Sentry.pushScope();
+        this.scopeToken = Sentry.pushScope();
         Sentry.configureScope(scope -> {
             scope.setTag("worker", worker);
             scope.setTag("jobKind", jobKind);
@@ -197,7 +199,7 @@ public final class WorkerExecution implements AutoCloseable {
         if (closed) return;
         closed = true;
         meters.duration(worker, jobKind).record(Duration.between(startedAt, Instant.now()));
-        Sentry.popScope();
+        scopeToken.close();
         // Restored rather than cleared: an async nudge runs from a request thread that has its own
         // correlation id, and clearing would detach the rest of that request's logs.
         if (previousCorrelationId == null) {

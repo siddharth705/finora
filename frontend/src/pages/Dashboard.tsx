@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { motion, useReducedMotion } from 'framer-motion';
@@ -245,7 +245,9 @@ export default function Dashboard() {
   const upcomingRecurring = (recurringQ.data ?? []).slice(0, 5);
 
   if (blockingLoading) return showPageSkeleton ? <DashboardSkeleton /> : null;
-  if (hasError || !summary) return <p className="text-muted">Couldn't load your dashboard — please try again later.</p>;
+  if (hasError || !summary) {
+    return <p className="text-muted">Couldn't load your dashboard — please try again later.</p>;
+  }
 
   const firstName = fullName?.split(' ')[0] ?? 'there';
 

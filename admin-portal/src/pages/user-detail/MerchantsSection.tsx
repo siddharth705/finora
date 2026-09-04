@@ -4,7 +4,7 @@ import { Pencil, Store } from 'lucide-react';
 import { useAdminAuth } from '../../context/AdminAuthContext';
 import { useNotify } from '../../context/NotificationContext';
 import { adminUserMerchantsApi } from '../../api/endpoints';
-import type { CreateRuleRequest, MerchantDto } from '../../types';
+import type { MerchantDto } from '../../types';
 import { errorMessage } from './errorMessage';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
 
@@ -256,14 +256,3 @@ export function MerchantsSection({ userId }: { userId: string }) {
   );
 }
 
-const RULE_FIELDS = ['DESCRIPTION', 'AMOUNT', 'MERCHANT', 'ACCOUNT_TYPE'];
-const RULE_OPERATORS = ['CONTAINS', 'EQUALS', 'STARTS_WITH', 'GT', 'LT', 'BETWEEN'];
-const RULE_ACTION_TYPES = ['ASSIGN_CATEGORY', 'MARK_TRANSFER', 'MARK_INVESTMENT', 'MARK_SUBSCRIPTION', 'ADD_TAG'];
-const BLANK_RULE_FORM: CreateRuleRequest = {
-  field: 'DESCRIPTION', operator: 'CONTAINS', comparisonValue: '', actionType: 'ASSIGN_CATEGORY', actionValue: '', priority: 100,
-};
-
-/** Compact create/edit form for a single USER-scope rule, embedded inline in RulesSection --
- *  deliberately not a floating modal (see FormPanel's own comment on why this app avoids those).
- *  Kept smaller than GlobalRules.tsx's RuleForm (no test-match panel here) since this is a
- *  secondary admin-proxy surface, not the primary rule-authoring workflow. */

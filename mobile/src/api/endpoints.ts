@@ -2,6 +2,7 @@ import { File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import { api, rawApi, type ApiEnvelope } from './client';
 import { encodeBase64 } from '../lib/base64';
+import { decodeUtf8 } from '../lib/utf8';
 import { isCanceled, isOffline } from '../lib/apiError';
 import type {
   Account, AccountStatementGroup, Budget, DashboardSummary, DetectedAccountInfo, Goal,
@@ -15,6 +16,31 @@ import type {
 // statement file download (web's Blob+<a> click has no native equivalent) -- both marked below
 // and left for Phase 3 (Import Flow), which is where the real file-picker/upload/download work
 // happens. Keep this file in sync with the web version by hand for every other endpoint.
+
+/**
+ * Re-reads an ArrayBuffer-typed error response as the JSON envelope it actually is, so the
+ * message survives.
+ *
+ * Mobile's counterpart to the web app's `withBlobErrorMessage`: any request sent with
+ * responseType: 'arraybuffer' gets that response type applied to error responses too. The
+ * backend's error body is a normal ApiResponse envelope, but axios hands it over as a raw
+ * ArrayBuffer, so every consumer that looks for `.data.message` -- including client.ts's own
+ * interceptor -- finds nothing and the actionable text is discarded. Mutates the error in place
+ * so the shape callers already expect (`err.response.data.message`) is what they get.
+ */
+async function withArrayBufferErrorMessage(err: unknown): Promise<unknown> {
+  const response = (err as { response?: { data?: unknown } })?.response;
+  if (!(response?.data instanceof ArrayBuffer)) return err;
+  try {
+    const parsed = JSON.parse(decodeUtf8(response.data));
+    response.data = { message: parsed?.message, errorCode: parsed?.errorCode };
+  } catch {
+    // Not JSON (a proxy's HTML error page, a truncated body). Leave a usable message rather than
+    // an unreadable ArrayBuffer, which is what the caller had before this existed.
+    response.data = { message: 'The download failed and the server did not explain why.' };
+  }
+  return err;
+}
 
 export interface AuthResponseDto {
   token: string;
@@ -394,7 +420,19 @@ export const statementImportsApi = {
     if (!(await Sharing.isAvailableAsync())) {
       throw new Error('Sharing is not available on this device.');
     }
-    const res = await api.get<ArrayBuffer>(`/statement-imports/${id}/file`, { responseType: 'arraybuffer' });
+    let res;
+    try {
+      res = await api.get<ArrayBuffer>(`/statement-imports/${id}/file`, { responseType: 'arraybuffer' });
+    } catch (err) {
+      // responseType: 'arraybuffer' applies to ERROR responses too, so on a 4xx/5xx error.response.data
+      // is an ArrayBuffer rather than the parsed {message, errorCode} envelope. client.ts's interceptor
+      // tests error.response?.data?.message, an ArrayBuffer has no such property, the normalising
+      // branch is skipped, and the caller gets an error with no readable detail -- for a path whose
+      // backend failures are specific and actionable ("Statement ... is in object storage, but no
+      // storage provider is configured"). Decoding the buffer back to text restores the envelope the
+      // rest of the app expects.
+      throw await withArrayBufferErrorMessage(err);
+    }
     const file = new File(Paths.cache, fileName);
     // A previous share of the same statement leaves the file behind; write() will not overwrite.
     if (file.exists) file.delete();
@@ -668,7 +706,14 @@ export const supportApi = {
     if (!(await Sharing.isAvailableAsync())) {
       throw new Error('Sharing is not available on this device.');
     }
-    const res = await api.get<ArrayBuffer>(`/support/tickets/${ticketId}/attachments/${attachmentId}`, { responseType: 'arraybuffer' });
+    let res;
+    try {
+      res = await api.get<ArrayBuffer>(`/support/tickets/${ticketId}/attachments/${attachmentId}`, { responseType: 'arraybuffer' });
+    } catch (err) {
+      // Same fix as statementImportsApi.downloadFile -- see withArrayBufferErrorMessage's own doc
+      // comment above for why responseType: 'arraybuffer' loses the server's real error message.
+      throw await withArrayBufferErrorMessage(err);
+    }
     const file = new File(Paths.cache, filename);
     if (file.exists) file.delete();
     file.create();

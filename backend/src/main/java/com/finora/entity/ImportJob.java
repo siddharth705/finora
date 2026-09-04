@@ -756,8 +756,8 @@ public class ImportJob implements com.finora.imports.storage.StoredStatement {
     public Integer getVerificationFailedCount() { return verificationFailedCount; }
     public Integer getVerificationWarningCount() { return verificationWarningCount; }
     public UUID getUserId() { return userId; }
-    public String getContentHash() { return contentHash; }
-    public String getObjectKey() { return objectKey; }
+    @Override public String getContentHash() { return contentHash; }
+    @Override public String getObjectKey() { return objectKey; }
     @Override public String getEncryptionKeyId() { return encryptionKeyId; }
     public String getFileName() { return fileName; }
     public String getSourceFormat() { return sourceFormat; }

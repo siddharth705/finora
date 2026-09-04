@@ -1,11 +1,8 @@
 package com.finora.imports;
 
 import com.finora.dto.ImportDto.ConfirmedRow;
-import com.finora.entity.Category;
 import com.finora.service.CategorizationService;
 import org.springframework.stereotype.Component;
-
-import java.util.UUID;
 
 /**
  * Decides, for each confirmed row, whether the category assignment was a real decision worth
@@ -66,7 +63,7 @@ public class ImportRuleLearningService {
      *
      * <p>No longer applies the learning itself: see this class's doc comment.
      */
-    public Decision recordDecision(UUID userId, ConfirmedRow row, Category category) {
+    public Decision recordDecision(ConfirmedRow row) {
         boolean isUnresolvedGuess =
                 CategorizationService.isUnconfirmedGuess(row.categorySource(), row.category());
 
