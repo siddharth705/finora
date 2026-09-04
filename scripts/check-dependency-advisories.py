@@ -35,6 +35,14 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 APPS = ["frontend", "admin-portal", "mobile"]
 
+# `npm audit` hits the registry for advisory data; a stalled registry response otherwise hangs this
+# subprocess forever with nothing to kill it -- observed for real in CI (2026-09-04): this step
+# normally finishes in ~2s but sat for ~12 minutes before the run was cancelled, eating almost the
+# entire 15-minute job budget for a check that runs before Test/Build in every one of the three JS
+# jobs. 60s is generous against that ~2s baseline while still failing fast and loud instead of
+# silently consuming the whole timeout.
+AUDIT_TIMEOUT_SECONDS = 60
+
 
 class Accepted:
     """One advisory somebody has looked at and decided not to act on."""
@@ -104,9 +112,17 @@ def audit(app, omit_dev):
     cmd = ["npm", "audit", "--json"]
     if omit_dev:
         cmd.append("--omit=dev")
-    proc = subprocess.run(
-        cmd, cwd=REPO_ROOT / app, capture_output=True, text=True, shell=(sys.platform == "win32")
-    )
+    try:
+        proc = subprocess.run(
+            cmd, cwd=REPO_ROOT / app, capture_output=True, text=True,
+            shell=(sys.platform == "win32"), timeout=AUDIT_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(
+            f"npm audit for {app} did not finish within {AUDIT_TIMEOUT_SECONDS}s -- likely a stalled "
+            "registry response, not a real hang in npm itself. Re-run; if it keeps happening, check "
+            "the npm registry's status before assuming this script is at fault."
+        )
     if not proc.stdout.strip():
         raise RuntimeError(f"npm audit produced no output for {app}: {proc.stderr[:300]}")
     return json.loads(proc.stdout)
