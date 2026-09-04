@@ -21,9 +21,11 @@ import java.util.UUID;
  * {@code HELD_FOR_TRUST_REVIEW}, which keeps counting as a live reference.
  *
  * <p>The snapshot fields ({@code parserVersion}, {@code reliabilityStatus}, {@code textSource},
- * {@code headerReconstructionUncertain}) are captured at hold time on purpose: a later re-run
- * under a different build has to be comparable against what the original build actually saw, and
- * reading them live would silently answer a different question.
+ * {@code headerReconstructionUncertain}, {@code bankName}) are captured at hold time on purpose: a
+ * later re-run under a different build has to be comparable against what the original build
+ * actually saw, and reading them live would silently answer a different question. {@code
+ * bankName} specifically cannot be read live at all -- see the {@code bank_name} column comment
+ * in V150 for why {@code import_sessions}, the only other source, cannot be joined instead.
  */
 @Entity
 @Table(name = "held_statements")
@@ -70,6 +72,9 @@ public class HeldStatement {
 
     @Column(name = "header_reconstruction_uncertain")
     private Boolean headerReconstructionUncertain;
+
+    @Column(name = "bank_name")
+    private String bankName;
 
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false)
@@ -121,6 +126,10 @@ public class HeldStatement {
         this.textSource = textSource;
         this.headerReconstructionUncertain = headerReconstructionUncertain;
     }
+
+    /** Set once, when the hold is opened. See the {@code bank_name} column comment for why this is
+     *  a snapshot rather than a live read. Null when the parser could not name a bank. */
+    public void recordBank(String bankName) { this.bankName = bankName; }
 
     public void assign(UUID engineerId, Instant now) {
         refuseIfResolved("assigned");
@@ -198,6 +207,7 @@ public class HeldStatement {
     public String getReliabilityStatus() { return reliabilityStatus; }
     public String getTextSource() { return textSource; }
     public Boolean getHeaderReconstructionUncertain() { return headerReconstructionUncertain; }
+    public String getBankName() { return bankName; }
     public Status getStatus() { return status; }
     public UUID getAssignedEngineerId() { return assignedEngineerId; }
     public String getTriggerSummary() { return triggerSummary; }

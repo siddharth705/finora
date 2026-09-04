@@ -27,6 +27,7 @@ import com.finora.service.CategorizationService;
 import com.finora.service.RecurringService;
 import com.finora.service.ReconciliationService;
 import com.finora.util.CategoryRules;
+import com.finora.util.LogSanitizer;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -263,7 +264,7 @@ public class ImportService {
                     System.currentTimeMillis() - startedAtMs, diagnostics);
         } catch (RuntimeException recordingFailed) {
             log.error("Could not record the failed analysis for {} -- the parse failure itself is "
-                    + "being rethrown and is the one that matters.", fileName, recordingFailed);
+                    + "being rethrown and is the one that matters.", LogSanitizer.sanitize(fileName), recordingFailed);
         }
     }
 

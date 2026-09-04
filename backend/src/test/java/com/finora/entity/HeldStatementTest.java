@@ -172,4 +172,22 @@ class HeldStatementTest {
         assertThat(held.getTextSource()).isEqualTo("OCR");
         assertThat(held.getHeaderReconstructionUncertain()).isTrue();
     }
+
+    @Test
+    void theBankIsRecordedAsGiven() {
+        HeldStatement held = held();
+
+        held.recordBank("HDFC Bank");
+
+        assertThat(held.getBankName()).isEqualTo("HDFC Bank");
+    }
+
+    @Test
+    void aMissingBankStaysNull() {
+        HeldStatement held = held();
+
+        held.recordBank(null);
+
+        assertThat(held.getBankName()).isNull();
+    }
 }

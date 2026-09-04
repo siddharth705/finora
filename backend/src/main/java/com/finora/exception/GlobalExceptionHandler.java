@@ -2,6 +2,7 @@ package com.finora.exception;
 
 import com.finora.dto.ApiResponse;
 import com.finora.security.RefreshTokenCookie;
+import com.finora.util.LogSanitizer;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -95,10 +96,12 @@ public class GlobalExceptionHandler {
         // contract says must never be logged at all.
         if (ex.getStatus().is5xxServerError() && ex.getCode() != null && ex.getCode().intentionalRejection()) {
             log.warn("Deliberate rejection ApiException [{}] on {} {}: {}",
-                    errorCode, request.getMethod(), request.getRequestURI(), ex.getMessage());
+                    errorCode, LogSanitizer.sanitize(request.getMethod()),
+                    LogSanitizer.sanitize(request.getRequestURI()), ex.getMessage());
         } else if (ex.getStatus().is5xxServerError()) {
             log.error("Server-error ApiException [{}] on {} {}: {}",
-                    errorCode, request.getMethod(), request.getRequestURI(), ex.getMessage(), ex);
+                    errorCode, LogSanitizer.sanitize(request.getMethod()),
+                    LogSanitizer.sanitize(request.getRequestURI()), ex.getMessage(), ex);
         }
 
         ResponseEntity.BodyBuilder response = ResponseEntity.status(ex.getStatus());
@@ -201,7 +204,8 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(DataIntegrityViolationException.class)
     public ResponseEntity<ApiResponse<Void>> handleDataIntegrityViolation(DataIntegrityViolationException ex,
                                                                           HttpServletRequest request) {
-        log.warn("Data integrity violation on {} {}", request.getMethod(), request.getRequestURI(), ex);
+        log.warn("Data integrity violation on {} {}", LogSanitizer.sanitize(request.getMethod()),
+                LogSanitizer.sanitize(request.getRequestURI()), ex);
         return ResponseEntity.status(HttpStatus.CONFLICT)
                 .body(ApiResponse.error("That conflicts with a record that already exists — refresh and try again.", "CONFLICT"));
     }
@@ -371,7 +375,7 @@ public class GlobalExceptionHandler {
                                                                     HttpServletRequest request) {
         log.warn("Rejecting a request with an unusable argument on {} {}. If this is not a bad "
                         + "parameter from the caller, it is a bug in the handler for that route.",
-                request.getMethod(), request.getRequestURI(), ex);
+                LogSanitizer.sanitize(request.getMethod()), LogSanitizer.sanitize(request.getRequestURI()), ex);
         return ResponseEntity.badRequest()
                 .body(ApiResponse.error("One of the request's parameters is not valid.", "INVALID_PARAMETER"));
     }
@@ -392,7 +396,8 @@ public class GlobalExceptionHandler {
         // the log to correlate by timestamp to work out WHICH endpoint failed. Method + path costs
         // nothing and is the first thing you want. Deliberately no query string or body -- this is
         // a financial API and both carry customer data.
-        log.error("Unhandled exception on {} {}", request.getMethod(), request.getRequestURI(), ex);
+        log.error("Unhandled exception on {} {}", LogSanitizer.sanitize(request.getMethod()),
+                LogSanitizer.sanitize(request.getRequestURI()), ex);
         boolean isProd = Arrays.asList(environment.getActiveProfiles()).contains("prod");
         String message = isProd ? "Unexpected error" : "Unexpected error: " + ex.getMessage();
         return ResponseEntity.internalServerError().body(ApiResponse.error(message, "INTERNAL_ERROR"));

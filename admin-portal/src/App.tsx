@@ -30,6 +30,8 @@ const LearningEngine = lazy(() => import('./pages/LearningEngine'));
 const LearningQueue = lazy(() => import('./pages/LearningQueue'));
 const Notifications = lazy(() => import('./pages/Notifications'));
 const HeldImports = lazy(() => import('./pages/HeldImports'));
+const HeldStatements = lazy(() => import('./pages/HeldStatements'));
+const HeldStatementDetail = lazy(() => import('./pages/HeldStatementDetail'));
 const MerchantReview = lazy(() => import('./pages/MerchantReview'));
 const ReconciliationMonitor = lazy(() => import('./pages/ReconciliationMonitor'));
 const ReconciliationExplorer = lazy(() => import('./pages/ReconciliationExplorer'));
@@ -95,6 +97,8 @@ export default function App() {
               <Route path="/learning-queue" element={<ProtectedRoute><LearningQueue /></ProtectedRoute>} />
               <Route path="/notifications" element={<ProtectedRoute><Notifications /></ProtectedRoute>} />
               <Route path="/held-imports" element={<ProtectedRoute><HeldImports /></ProtectedRoute>} />
+              <Route path="/held-statements" element={<ProtectedRoute><HeldStatements /></ProtectedRoute>} />
+              <Route path="/held-statements/:heldId" element={<ProtectedRoute><HeldStatementDetail /></ProtectedRoute>} />
               <Route path="/reconciliation" element={<ProtectedRoute><ReconciliationMonitor /></ProtectedRoute>} />
               <Route path="/reconciliation-explorer" element={<ProtectedRoute><ReconciliationExplorer /></ProtectedRoute>} />
               <Route path="/insights-explorer" element={<ProtectedRoute><InsightsExplorer /></ProtectedRoute>} />

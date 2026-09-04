@@ -34,7 +34,10 @@ class AdminReconciliationStatsServiceTest {
                 new Object[]{Transaction.ReconciliationStatus.OK, 100L},
                 new Object[]{Transaction.ReconciliationStatus.DUPLICATE, 3L},
                 new Object[]{Transaction.ReconciliationStatus.TRANSFER, 8L},
-                new Object[]{Transaction.ReconciliationStatus.REFUND, 2L}
+                new Object[]{Transaction.ReconciliationStatus.REFUND, 2L},
+                new Object[]{Transaction.ReconciliationStatus.REVERSAL, 4L},
+                new Object[]{Transaction.ReconciliationStatus.INVESTMENT_TRANSFER, 6L},
+                new Object[]{Transaction.ReconciliationStatus.SUPERSEDED, 1L}
         ));
         when(transactionRepository.countPlatformRecurring()).thenReturn(15L);
 
@@ -44,8 +47,16 @@ class AdminReconciliationStatsServiceTest {
         assertThat(stats.duplicateCount()).isEqualTo(3L);
         assertThat(stats.transferCount()).isEqualTo(8L);
         assertThat(stats.refundCount()).isEqualTo(2L);
+        assertThat(stats.reversalCount()).isEqualTo(4L);
+        assertThat(stats.investmentTransferCount()).isEqualTo(6L);
+        assertThat(stats.supersededCount()).isEqualTo(1L);
         assertThat(stats.recurringCount()).isEqualTo(15L);
-        assertThat(stats.totalTransactions()).isEqualTo(113L);
+        // 100+3+8+2+4+6+1 -- CodeQL (java/missing-case-in-switch) caught this: this used to be
+        // just okCount+duplicateCount+transferCount+refundCount (113), silently dropping
+        // REVERSAL/INVESTMENT_TRANSFER/SUPERSEDED rows from the platform total entirely, with no
+        // error. Asserted against the full 124 specifically so a regression back to the partial
+        // sum fails this test, not just a future one.
+        assertThat(stats.totalTransactions()).isEqualTo(124L);
     }
 
     @Test

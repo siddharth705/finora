@@ -1632,8 +1632,21 @@ public class PdfTableLocator {
                     // (whose own samePage check is also false) into the leading-narration branch at
                     // the bottom, unchanged.
                     currentRows.add(bucketed);
-                    lastRowPage = row.isEmpty() ? lastRowPage : row.get(0).pageIndex();
-                    lastRowY = row.isEmpty() ? lastRowY : row.get(0).y();
+                    // CodeQL (java/dereferenced-value-may-be-null), 2026-09-04: pageIndex()/y()
+                    // return primitive int/float, so the old `row.isEmpty() ? lastRowPage : ...`
+                    // ternary forced JLS numeric-promotion unboxing on the lastRowPage/lastRowY
+                    // branch whenever it was the one selected -- and the comment two lines up
+                    // already documents that lastRowPage really can be null here ("still null,
+                    // reset when this section opened"). Whether row.isEmpty() can ALSO be true at
+                    // that exact moment wasn't fully traced against this method's full state
+                    // space; this if-form is behaviourally identical to the ternary for every case
+                    // that already works (plain assignment when non-empty, untouched otherwise)
+                    // and cannot unbox a null under any circumstance, so it closes the risk without
+                    // needing that proof.
+                    if (!row.isEmpty()) {
+                        lastRowPage = row.get(0).pageIndex();
+                        lastRowY = row.get(0).y();
+                    }
                     blockPitch = null;
                     blockSeparation = null;
                     blockNarrationLeftX = null;
@@ -1831,8 +1844,12 @@ public class PdfTableLocator {
                     mergeInto(pendingLeading, bucketed, headerNames);
                     leadingCount++;
                     if (ctx != null) ctx.record("LEADING_NARRATION_CONTINUATION");
-                    lastRowPage = row.isEmpty() ? lastRowPage : row.get(0).pageIndex();
-                    lastRowY = row.isEmpty() ? lastRowY : row.get(0).y();
+                    // CodeQL (java/dereferenced-value-may-be-null), 2026-09-04 -- same fix, same
+                    // reasoning as this method's other lastRowPage/lastRowY update above.
+                    if (!row.isEmpty()) {
+                        lastRowPage = row.get(0).pageIndex();
+                        lastRowY = row.get(0).y();
+                    }
                     // The block above is closed the moment a row is buffered forward instead of
                     // merged into it. Without this, a later row that happened to match the old
                     // pitch would be appended to a transaction whose narration this buffered row

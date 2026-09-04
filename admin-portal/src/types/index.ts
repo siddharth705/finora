@@ -694,6 +694,9 @@ export interface ReconciliationStatsDto {
   duplicateCount: number;
   transferCount: number;
   refundCount: number;
+  reversalCount: number;
+  investmentTransferCount: number;
+  supersededCount: number;
   recurringCount: number;
   totalTransactions: number;
 }
@@ -1146,6 +1149,77 @@ export interface HeldImportDetail {
 export interface HeldImportSummary {
   held: number;
   reprocessing: number;
+}
+
+/** The trust-review lifecycle, mirroring `HeldStatement.Status` on the backend. */
+export type HeldStatementStatus =
+  | 'HELD' | 'ASSIGNED' | 'INVESTIGATING' | 'READY_FOR_IMPORT' | 'IMPORTED' | 'REJECTED';
+
+/**
+ * One row of the held-statement (trust-review) queue.
+ *
+ * Carries no statement content and no object key -- opening the document is a separate, audited
+ * endpoint. `userId` is a bare id, same reason `HeldImportRow.userId` is: no email or phone can
+ * reach this screen even indirectly. `bankName` is a snapshot from hold time and can be null when
+ * the parser could not name a bank.
+ */
+export interface HeldStatementRow {
+  id: string;
+  heldId: string;
+  importJobId: string;
+  userId: string;
+  bankName: string | null;
+  status: HeldStatementStatus;
+  triggerSummary: string | null;
+  reliabilityStatus: string | null;
+  textSource: string | null;
+  headerReconstructionUncertain: boolean | null;
+  parserVersion: string | null;
+  assignedEngineerId: string | null;
+  engineerNotes: string | null;
+  createdAt: string;
+  assignedAt: string | null;
+  readyAt: string | null;
+  resolvedAt: string | null;
+}
+
+/** Every filter is optional; `status` narrows within the open queue and can never surface a
+ *  resolved hold -- see the backend's `HeldStatementFilter` for why. */
+export interface HeldStatementQuery {
+  page?: number;
+  size?: number;
+  status?: HeldStatementStatus;
+  bank?: string;
+  olderThanHours?: number;
+  engineerId?: string;
+}
+
+/** One verification rule's outcome for one section -- the printed-versus-parsed numbers behind
+ *  the trigger, not a sentence summarising them. */
+export interface HeldStatementFinding {
+  sectionIndex: number;
+  rule: string;
+  outcome: string;
+  details: Record<string, unknown>;
+  createdAt: string;
+}
+
+/** One entry in a hold's audit history. `actorId` null means the system acted. */
+export interface HeldStatementEvent {
+  eventType: string;
+  fromStatus: string | null;
+  toStatus: string | null;
+  notes: string | null;
+  actorId: string | null;
+  createdAt: string;
+}
+
+/** The summary plus the evidence behind `triggerSummary` and the hold's own history. Still no
+ *  statement content -- opening the document is `/document`, gated and audited separately. */
+export interface HeldStatementDetail {
+  summary: HeldStatementRow;
+  findings: HeldStatementFinding[];
+  timeline: HeldStatementEvent[];
 }
 
 /** NotificationAdminRow plus the message body and the provider attempt log, newest first. */
