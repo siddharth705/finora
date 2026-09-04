@@ -55,6 +55,27 @@ class FinancialProductClassifierTest {
     }
 
     @Test
+    void ordinaryProseContainingTheWordDetailsDoesNotDisqualifyAFixedDeposit() {
+        // Real HDFC statement, synthetic prose (Synthetic Fixture Policy -- structure is what
+        // matters, not the words). A routine TDS-apportionment disclaimer sentence -- "contact your
+        // branch for details of the exact recovery" -- used to match DESCRIPTION_COLUMN's own
+        // vocabulary (it included the bare word "details") purely because that word is ordinary
+        // English, not because this section has anything resembling a table Description column.
+        // FIXED_DEPOSIT forbids DESCRIPTION_COLUMN, and scoreOf's contradiction check disqualifies a
+        // hypothesis outright with no partial credit -- so one stray word zeroed out a section
+        // carrying every genuine FD structural signal (principal, dates, rate of interest).
+        var result = classifier.classify(Section.of(
+                List.of("Principal Amount", "Start Date", "Maturity Date", "Rate of Interest"),
+                List.of("Deposit Number",
+                        "TDS is deducted as per applicable rules -- contact your branch for details "
+                                + "of the exact recovery for specific deposits."),
+                3));
+
+        assertThat(result.type()).isEqualTo(FinancialProductType.FIXED_DEPOSIT);
+        assertThat(result.isConfident()).isTrue();
+    }
+
+    @Test
     void aRecurringDepositBeatsAFixedDepositOnTheMaturityDateTheyShare() {
         // The installment field is the only thing separating the two, which is why RD is declared
         // first in ProductHypothesis -- declaration order breaks the tie.

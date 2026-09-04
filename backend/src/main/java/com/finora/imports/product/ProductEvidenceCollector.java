@@ -43,8 +43,14 @@ public class ProductEvidenceCollector {
     private static final Map<ProductSignal, List<String>> VOCABULARY = new LinkedHashMap<>();
     static {
         VOCABULARY.put(ProductSignal.DATE_COLUMN, List.of("date", "dt"));
+        // "details" deliberately excluded: unlike the words below, it is ordinary English that
+        // shows up constantly in prose having nothing to do with a table column ("for details,
+        // contact your branch") -- found matching a routine TDS-apportionment disclaimer sentence
+        // in a real HDFC statement's section text, which alone disqualified FIXED_DEPOSIT and
+        // RECURRING_DEPOSIT outright (scoreOf's contradiction check has no partial credit) even
+        // though every genuine structural signal for both was present and strong.
         VOCABULARY.put(ProductSignal.DESCRIPTION_COLUMN, List.of(
-                "narration", "particulars", "description", "remarks", "details",
+                "narration", "particulars", "description", "remarks",
                 "transaction description"));
         VOCABULARY.put(ProductSignal.RUNNING_BALANCE_COLUMN, List.of(
                 "balance", "closing balance", "running balance", "available balance"));
