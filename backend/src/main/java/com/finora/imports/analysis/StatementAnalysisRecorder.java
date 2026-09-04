@@ -3,6 +3,7 @@ package com.finora.imports.analysis;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.finora.dto.ImportDto.ImportFailureSummaryDto;
 import com.finora.exception.ApiException;
+import com.finora.util.LogSanitizer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.PageRequest;
@@ -92,8 +93,10 @@ public class StatementAnalysisRecorder {
                     importSessionId, currentCorrelationId());
             return repository.save(session).getReference();
         } catch (RuntimeException e) {
+            // LogSanitizer: fileName is the upload's original, user-supplied filename -- see
+            // LogSanitizer's own doc comment for why (CodeQL java/log-injection, 2026-09-04).
             log.error("Could not record a parsed analysis session for {} -- layout evidence for "
-                    + "this upload is lost", fileName, e);
+                    + "this upload is lost", LogSanitizer.sanitize(fileName), e);
             return null;
         }
     }
@@ -112,7 +115,7 @@ public class StatementAnalysisRecorder {
             return repository.save(session).getReference();
         } catch (RuntimeException e) {
             log.error("Could not record a FAILED analysis session for {} ({}) -- the layout that "
-                    + "defeated the parser is now unrecorded", fileName, failureCode, e);
+                    + "defeated the parser is now unrecorded", LogSanitizer.sanitize(fileName), failureCode, e);
             return null;
         }
     }
@@ -223,7 +226,7 @@ public class StatementAnalysisRecorder {
             return objectMapper.writeValueAsString(diagnostics.unanchoredReasons());
         } catch (RuntimeException | com.fasterxml.jackson.core.JsonProcessingException e) {
             log.error("Could not serialise unanchored-row diagnostics for {} -- the rest of the "
-                    + "analysis row is still being written without them", fileName, e);
+                    + "analysis row is still being written without them", LogSanitizer.sanitize(fileName), e);
             return null;
         }
     }
