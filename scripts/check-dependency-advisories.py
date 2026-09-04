@@ -28,6 +28,7 @@ rather than leaving the next reader to work it out.
 """
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -110,24 +111,30 @@ def audit(app, omit_dev):
     """npm audit --json. Exit code is non-zero whenever anything is found, so it is ignored; the
     JSON body is the actual result.
 
-    Retries on a timeout before giving up, each attempt a fresh subprocess/connection rather than
-    a resumed one. Confirmed live in CI (2026-09-04) this needs more than one retry: a single
-    attempt normally takes ~2s, but during a genuinely degraded registry window, two consecutive
-    attempts each hung for the *entire* AUDIT_TIMEOUT_SECONDS with no partial progress -- a real
-    stall, not merely slow completion (a direct request to registry.npmjs.org during the same
-    window returned in ~6.6s, not instantly, but nowhere near 60s -- so the stall is specific to
-    npm audit's own connection, not the registry being universally unreachable). A longer
-    per-attempt timeout would just wait longer on a truly stuck connection; a fresh attempt is what
-    actually has a chance of landing on a working one. 3 attempts x AUDIT_TIMEOUT_SECONDS is still
-    well under the 15-minute job budget even in the worst case."""
+    Forces IPv4 DNS resolution (NODE_OPTIONS=--dns-result-order=ipv4first) rather than just
+    retrying blind. Confirmed live in CI (2026-09-04) that plain retries do not help here: three
+    separate CI runs, each doing 3 fresh-subprocess attempts, all 9 attempts hung for *exactly*
+    AUDIT_TIMEOUT_SECONDS with zero partial output -- not the profile of a slow-but-completing
+    request (a direct curl to registry.npmjs.org during the same window returned in ~6.6s, and npm
+    ci's plain package-tarball fetches in the same jobs succeeded fine), and not the profile of
+    real flakiness either, since a transient blip should have cleared on at least one of nine
+    attempts. A dead-uniform hang on every attempt of one specific call, while a different call to
+    the same host works, matches a known, well-documented class of issue: Node resolving the
+    registry to an AAAA (IPv6) record first, and the runner's IPv6 route being silently blackholed
+    (packets dropped, not refused) rather than actually unreachable -- the connection then hangs
+    until something else cuts it off, which here is this script's own timeout rather than npm's.
+    Forcing IPv4 resolution is the standard fix for exactly this symptom. Kept the retry loop too,
+    since a real transient blip is still possible and costs nothing extra to also cover."""
     cmd = ["npm", "audit", "--json"]
     if omit_dev:
         cmd.append("--omit=dev")
+    env = dict(os.environ, NODE_OPTIONS=(os.environ.get("NODE_OPTIONS", "")
+                                          + " --dns-result-order=ipv4first").strip())
     max_attempts = 3
     for attempt in range(1, max_attempts + 1):
         try:
             proc = subprocess.run(
-                cmd, cwd=REPO_ROOT / app, capture_output=True, text=True,
+                cmd, cwd=REPO_ROOT / app, capture_output=True, text=True, env=env,
                 shell=(sys.platform == "win32"), timeout=AUDIT_TIMEOUT_SECONDS,
             )
             break
