@@ -8,6 +8,7 @@ import com.finora.exception.ApiException;
 import com.finora.repository.SupportTicketAttachmentRepository;
 import com.finora.repository.SupportTicketInternalNoteRepository;
 import com.finora.repository.SupportTicketRepository;
+import com.finora.service.AuditService;
 import com.finora.util.PageBounds;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -17,7 +18,9 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.time.Instant;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -43,14 +46,34 @@ import java.util.UUID;
  * uses — rather than {@code findById} plus an {@code if}. Only the admin branch uses a bare
  * {@code findById}, and only because there is no single owner to scope it to.
  *
- * <h2>No audit calls here, on purpose</h2>
+ * <h2>Audit: owner as subject, actor in metadata</h2>
  *
- * <p>Audit integration is Phase 5, not this phase. {@link #updateStatus} centralises every status
- * transition in one method for exactly the reason the plan names — that is where an audit call (and
- * later a notification call) attaches — but does not make one yet. Wiring {@code AuditService} in
- * here without also deciding {@code SUPPORT_TICKET_STATUS_CHANGED}'s actor/owner convention (the
- * codebase is inconsistent between the two — see the plan's Phase 5 notes) is exactly the kind of
- * decision this phase should not make by accident.
+ * <p>Four events, all string literals passed to {@code AuditService.record} — there is no {@code
+ * AuditAction} catalog to extend, matching that service's own documented convention.
+ * {@code SUPPORT_TICKET_CREATED} is self-service (the ticket's own {@code userId} is the only
+ * actor, and this method is never admin-reachable). The other three are admin actions on a user's
+ * own ticket, and follow {@code AccountService.create}'s convention exactly: {@code record}'s first
+ * argument stays the ticket owner's {@code userId} (the subject whose data changed), and the acting
+ * admin goes into {@code metadata["actorId"]} — never the reverse. Every admin-facing method that
+ * writes one of these carries a parameter literally named {@code actingAdminId}, not merely a
+ * differently-named admin id: {@code AuditActorAttributionTest} walks the call graph from every
+ * {@code /api/v1/admin/**} controller and fails the build on an audited write it can reach without
+ * that exact parameter name — the same rule that already caught eight real instances of this bug
+ * elsewhere in the codebase (see that test's own doc).
+ *
+ * <p>{@code SUPPORT_TICKET_CLAIMED} covers claim, unclaim and a takeover as one event type,
+ * carrying {@code previousAdminId} and {@code newAdminId} — both keys always present, including
+ * when either is null, so all three shapes reconstruct from one action string. That is also why
+ * {@link #recordClaimChange} builds its metadata with a mutable map rather than {@code Map.of(...)}:
+ * {@code Map.of} throws on a null value, and a first claim or an unclaim is exactly a null value.
+ *
+ * <p>No {@code recordEvenOnRollback} anywhere here, on purpose. That variant exists for a write
+ * recorded immediately before a later throw in the same transaction rolls it back with everything
+ * else (see that method's own doc — a real bug once in {@code DataExportService}). Every audit call
+ * below runs only after its corresponding {@code save} has already succeeded, with nothing riskier
+ * after it in the same method, so the plain, transaction-joining {@code record} is the correct
+ * choice: if the transaction does roll back for some other reason, the audit entry should too,
+ * because then the action it describes did not actually happen.
  */
 @Service
 public class SupportTicketService {
@@ -62,17 +85,20 @@ public class SupportTicketService {
     private final SupportTicketInternalNoteRepository noteRepository;
     private final SupportTicketIdGenerator idGenerator;
     private final ClientIdentity clientIdentity;
+    private final AuditService auditService;
 
     public SupportTicketService(SupportTicketRepository ticketRepository,
                                  SupportTicketAttachmentRepository attachmentRepository,
                                  SupportTicketInternalNoteRepository noteRepository,
                                  SupportTicketIdGenerator idGenerator,
-                                 ClientIdentity clientIdentity) {
+                                 ClientIdentity clientIdentity,
+                                 AuditService auditService) {
         this.ticketRepository = ticketRepository;
         this.attachmentRepository = attachmentRepository;
         this.noteRepository = noteRepository;
         this.idGenerator = idGenerator;
         this.clientIdentity = clientIdentity;
+        this.auditService = auditService;
     }
 
     /**
@@ -113,6 +139,8 @@ public class SupportTicketService {
                     savedAttachment.getFilename(), savedAttachment.getContentType(), savedAttachment.getSizeBytes()));
         }
 
+        auditService.record(userId, "SUPPORT_TICKET_CREATED", "SupportTicket", saved.getId(),
+                Map.of("ticketNumber", saved.getTicketNumber(), "category", category.name()));
         return SupportTicketDto.Detail.from(saved, attachments);
     }
 
@@ -151,11 +179,12 @@ public class SupportTicketService {
      *  SupportTicket.Status#canTransitionTo} rejects — mirrors {@code AdminHeldImportController}'s
      *  own stated convention: an operator can tell "already moved" from "not a legal move". */
     @Transactional
-    public SupportTicketDto.Summary updateStatus(UUID ticketId, SupportTicket.Status newStatus) {
+    public SupportTicketDto.Summary updateStatus(UUID actingAdminId, UUID ticketId, SupportTicket.Status newStatus) {
         SupportTicket ticket = requireTicket(ticketId);
-        if (!ticket.getStatus().canTransitionTo(newStatus)) {
+        SupportTicket.Status previousStatus = ticket.getStatus();
+        if (!previousStatus.canTransitionTo(newStatus)) {
             throw new ApiException(HttpStatus.CONFLICT,
-                    "Cannot move a ticket from " + ticket.getStatus() + " to " + newStatus + ".");
+                    "Cannot move a ticket from " + previousStatus + " to " + newStatus + ".");
         }
         ticket.setStatus(newStatus);
         Instant now = Instant.now();
@@ -164,7 +193,11 @@ public class SupportTicketService {
         } else if (newStatus == SupportTicket.Status.CLOSED) {
             ticket.setClosedAt(now);
         }
-        return SupportTicketDto.Summary.from(ticketRepository.save(ticket));
+        SupportTicket saved = ticketRepository.save(ticket);
+        auditService.record(ticket.getUserId(), "SUPPORT_TICKET_STATUS_CHANGED", "SupportTicket", ticket.getId(),
+                Map.of("actorId", actingAdminId.toString(), "ticketNumber", ticket.getTicketNumber(),
+                        "previousStatus", previousStatus.name(), "newStatus", newStatus.name()));
+        return SupportTicketDto.Summary.from(saved);
     }
 
     @Transactional(readOnly = true)
@@ -174,32 +207,57 @@ public class SupportTicketService {
                 .map(SupportTicketDto.NoteDto::from).toList();
     }
 
+    /** The note body is deliberately not copied into the audit metadata — the note table is already
+     *  append-only and admin-scoped, so duplicating free text into a second store widens the surface
+     *  for no gain (V147's own reasoning for the note table itself). */
     @Transactional
-    public SupportTicketDto.NoteDto addNote(UUID adminId, UUID ticketId, String note) {
-        requireTicket(ticketId);
+    public SupportTicketDto.NoteDto addNote(UUID actingAdminId, UUID ticketId, String note) {
+        SupportTicket ticket = requireTicket(ticketId);
         SupportTicketInternalNote entity = new SupportTicketInternalNote();
         entity.setTicketId(ticketId);
-        entity.setAdminId(adminId);
+        entity.setAdminId(actingAdminId);
         entity.setNote(requireNonBlank(note, "Note"));
-        return SupportTicketDto.NoteDto.from(noteRepository.save(entity));
+        SupportTicketInternalNote saved = noteRepository.save(entity);
+        auditService.record(ticket.getUserId(), "SUPPORT_TICKET_NOTE_ADDED", "SupportTicket", ticketId,
+                Map.of("actorId", actingAdminId.toString(), "ticketNumber", ticket.getTicketNumber()));
+        return SupportTicketDto.NoteDto.from(saved);
     }
 
     /** Always succeeds, including on an already-claimed ticket — see {@link SupportTicket#getClaimedByAdminId()}'s
      *  own doc: a claim warns, it never blocks, so one admin's absence cannot freeze a customer's ticket. */
     @Transactional
-    public SupportTicketDto.Summary claim(UUID adminId, UUID ticketId) {
+    public SupportTicketDto.Summary claim(UUID actingAdminId, UUID ticketId) {
         SupportTicket ticket = requireTicket(ticketId);
-        ticket.setClaimedByAdminId(adminId);
-        return SupportTicketDto.Summary.from(ticketRepository.save(ticket));
+        UUID previousAdminId = ticket.getClaimedByAdminId();
+        ticket.setClaimedByAdminId(actingAdminId);
+        SupportTicket saved = ticketRepository.save(ticket);
+        recordClaimChange(actingAdminId, ticket, previousAdminId, actingAdminId);
+        return SupportTicketDto.Summary.from(saved);
     }
 
     /** Releases a claim back to unclaimed. Any admin may call this, not only the one who claimed
      *  it — so a ticket nobody is actively working can visibly go back to the queue. */
     @Transactional
-    public SupportTicketDto.Summary unclaim(UUID ticketId) {
+    public SupportTicketDto.Summary unclaim(UUID actingAdminId, UUID ticketId) {
         SupportTicket ticket = requireTicket(ticketId);
+        UUID previousAdminId = ticket.getClaimedByAdminId();
         ticket.setClaimedByAdminId(null);
-        return SupportTicketDto.Summary.from(ticketRepository.save(ticket));
+        SupportTicket saved = ticketRepository.save(ticket);
+        recordClaimChange(actingAdminId, ticket, previousAdminId, null);
+        return SupportTicketDto.Summary.from(saved);
+    }
+
+    /** The single write point for {@code SUPPORT_TICKET_CLAIMED} — claim, unclaim and a takeover
+     *  all pass through here so the three shapes stay reconstructable from one action string.
+     *  {@code actingAdminId} is who performed THIS action, which is not always {@code newAdminId}:
+     *  on an unclaim the actor releases the ticket, they don't become its new claimant. */
+    private void recordClaimChange(UUID actingAdminId, SupportTicket ticket, UUID previousAdminId, UUID newAdminId) {
+        Map<String, Object> metadata = new HashMap<>();
+        metadata.put("actorId", actingAdminId.toString());
+        metadata.put("ticketNumber", ticket.getTicketNumber());
+        metadata.put("previousAdminId", previousAdminId == null ? null : previousAdminId.toString());
+        metadata.put("newAdminId", newAdminId == null ? null : newAdminId.toString());
+        auditService.record(ticket.getUserId(), "SUPPORT_TICKET_CLAIMED", "SupportTicket", ticket.getId(), metadata);
     }
 
     /** Owner-scoped for a regular caller, unscoped for an admin — the one branch point both
