@@ -149,6 +149,29 @@ class AdminHeldStatementControllerIT extends AbstractIntegrationTest {
         assertThat(response.getBody()).doesNotContain("statementObjectKey");
     }
 
+    /** V150 / the admin-portal queue's Bank and User columns -- both fields have to actually reach
+     *  the wire, not just exist on the entity. Found by heldId rather than indexed, because this
+     *  class does not roll back between tests and the queue lists every open hold, not just this
+     *  one. */
+    @Test
+    void theQueueCarriesTheUserAndTheSnapshottedBankName() throws Exception {
+        HeldStatement held = seedHold("HLD-2026-100012");
+        held.recordBank("HDFC Bank");
+        heldStatementRepository.save(held);
+        User admin = createUser("ADMIN");
+
+        ResponseEntity<String> response = restTemplate.exchange(
+                "/api/v1/admin/held-statements?size=200", HttpMethod.GET,
+                new HttpEntity<>(bearerFor(admin)), String.class);
+
+        JsonNode content = mapper.readTree(response.getBody()).path("data").path("content");
+        JsonNode row = java.util.stream.StreamSupport.stream(content.spliterator(), false)
+                .filter(n -> "HLD-2026-100012".equals(n.path("heldId").asText()))
+                .findFirst().orElseThrow(() -> new AssertionError("HLD-2026-100012 not in the queue"));
+        assertThat(row.path("userId").asText()).isEqualTo(held.getUserId().toString());
+        assertThat(row.path("bankName").asText()).isEqualTo("HDFC Bank");
+    }
+
     // ------------------------------------------------------------------------------- detail view
 
     /**
