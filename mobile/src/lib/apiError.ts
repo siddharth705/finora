@@ -40,7 +40,24 @@ const FIREBASE_MESSAGES: Record<string, string> = {
 const OFFLINE_MESSAGE = "Can't reach Fynora. Check your connection and try again.";
 const TIMEOUT_MESSAGE = 'That took too long. Check your connection and try again.';
 
-/** True when the request never got a response -- offline, DNS failure, connection refused. */
+/**
+ * True when the caller deliberately aborted the request via an AbortController.
+ *
+ * Must be checked BEFORE isOffline, which cannot tell the two apart: a cancelled axios request has
+ * no `response` and a code of ERR_CANCELED, so it satisfies isOffline's "never got a response" test
+ * exactly the way a real network failure does. Anything that retries on isOffline -- as the import
+ * staging path does -- will therefore retry a request the user just cancelled unless this is
+ * consulted first, which defeats the cancel entirely and re-uploads the file.
+ */
+export function isCanceled(err: unknown): boolean {
+  if (axios.isCancel(err)) return true;
+  return axios.isAxiosError(err) && err.code === 'ERR_CANCELED';
+}
+
+/** True when the request never got a response -- offline, DNS failure, connection refused.
+ *  Deliberately still true for a cancel; see {@link isCanceled} for why callers must ask that
+ *  first rather than this being narrowed here (narrowing it would silently change the retry and
+ *  error-copy behaviour of every existing caller). */
 export function isOffline(err: unknown): boolean {
   if (!axios.isAxiosError(err)) return false;
   return !err.response && err.code !== 'ECONNABORTED';
