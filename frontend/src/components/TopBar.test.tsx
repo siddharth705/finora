@@ -15,6 +15,9 @@ vi.mock('../api/endpoints', () => ({
   accountsApi: { list: vi.fn() },
   categoriesApi: { list: vi.fn() },
   transactionsApi: { create: vi.fn() },
+  // Support, Help & Feedback v1, Phase 8: FeedbackModal (rendered from the Help menu below) calls
+  // this directly, so it needs a mock here too or mounting the modal throws.
+  feedbackApi: { submit: vi.fn() },
 }));
 
 function renderTopBar() {
@@ -130,5 +133,34 @@ describe('TopBar — Add Transaction', () => {
       expect(calls[0][0].idempotencyKey).toEqual(expect.any(String));
       expect(calls[1][0].idempotencyKey).toBe(calls[0][0].idempotencyKey);
     });
+  });
+});
+
+// Support, Help & Feedback v1, Phase 8: "Send feedback" used to be a mailto: link; it's now the
+// FeedbackModal, and the Help menu also gained a "My Tickets" entry -- both new, so covered here
+// rather than folded into the pre-existing Add Transaction suite above.
+describe('TopBar — Help menu', () => {
+  beforeEach(() => {
+    vi.mocked(dashboardApi.summary).mockReset().mockResolvedValue({ notifications: [] } as any);
+  });
+
+  it('links "My Tickets" to the authenticated support route', async () => {
+    const user = userEvent.setup();
+    renderTopBar();
+
+    await user.click(screen.getByTitle('Help'));
+    const link = screen.getByRole('link', { name: /my tickets/i });
+    expect(link).toHaveAttribute('href', '/app/support');
+  });
+
+  it('opens FeedbackModal from "Send feedback" instead of a mailto link', async () => {
+    const user = userEvent.setup();
+    renderTopBar();
+
+    await user.click(screen.getByTitle('Help'));
+    expect(screen.queryByRole('link', { name: /send feedback/i })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /send feedback/i }));
+    expect(screen.getByRole('heading', { name: /send feedback/i })).toBeInTheDocument();
   });
 });
