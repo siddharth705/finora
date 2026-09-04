@@ -9,6 +9,8 @@ import com.finora.repository.SupportTicketRepository;
 import com.finora.service.AuditService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
 
 import java.util.List;
 import java.util.Map;
@@ -19,6 +21,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -286,5 +289,30 @@ class SupportTicketServiceTest {
         assertThat(note.adminId()).isEqualTo(adminId);
         verify(auditService).record(eq(userId), eq("SUPPORT_TICKET_NOTE_ADDED"), eq("SupportTicket"), eq(ticketId),
                 eq(Map.of("actorId", adminId.toString(), "ticketNumber", "SUP-000042")));
+    }
+
+    // --- admin list / search -------------------------------------------------------------------
+
+    @Test
+    void adminList_passesTheSearchTermThrough_trimmed() {
+        Page<SupportTicket> page = new PageImpl<>(List.of());
+        when(ticketRepository.findForAdmin(any(), any(), any(), any())).thenReturn(page);
+
+        service.adminList(null, null, "  stuck import  ", 0, 25);
+
+        verify(ticketRepository).findForAdmin(isNull(), isNull(), eq("stuck import"), any());
+    }
+
+    @Test
+    void adminList_treatsABlankSearchTermAsNoSearch_notAnEmptyStringMatch() {
+        // "" would still technically work as a LIKE '%%' match-everything, but the contract this
+        // pins down is that an unfilled search box means the WHERE clause is skipped entirely --
+        // not that it happens to match everything through the LIKE itself.
+        Page<SupportTicket> page = new PageImpl<>(List.of());
+        when(ticketRepository.findForAdmin(any(), any(), isNull(), any())).thenReturn(page);
+
+        service.adminList(null, null, "   ", 0, 25);
+
+        verify(ticketRepository).findForAdmin(isNull(), isNull(), isNull(), any());
     }
 }
