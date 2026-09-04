@@ -2,6 +2,8 @@ package com.finora.repository;
 
 import com.finora.entity.ClientPlatform;
 import com.finora.entity.FeedbackEntry;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -11,6 +13,21 @@ import java.util.List;
 import java.util.UUID;
 
 public interface FeedbackEntryRepository extends JpaRepository<FeedbackEntry, UUID> {
+
+    /**
+     * The admin list, optionally filtered by type and/or context, newest first — matching
+     * {@code idx_feedback_entries_recent}. Same null-means-unfiltered shape as
+     * {@code SupportTicketRepository.findForAdmin}.
+     */
+    @Query("""
+            SELECT f FROM FeedbackEntry f
+             WHERE (:type IS NULL OR f.type = :type)
+               AND (:context IS NULL OR f.context = :context)
+             ORDER BY f.createdAt DESC
+            """)
+    Page<FeedbackEntry> findForAdmin(@Param("type") FeedbackEntry.Type type,
+                                     @Param("context") FeedbackEntry.Context context,
+                                     Pageable pageable);
 
     /**
      * Counts for the admin breakdown, computed in the database rather than by loading every row.
