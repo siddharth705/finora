@@ -1,5 +1,6 @@
 package com.finora.config;
 
+import com.finora.support.ClientIdentity;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.web.cors.CorsConfiguration;
@@ -49,10 +50,24 @@ class CorrelationIdCorsContractTest {
         CorsConfiguration config = configuration();
 
         assertThat(config.getAllowedHeaders())
-                .as("one header was added, not a wildcard -- '*' with allowCredentials is both "
-                        + "rejected by browsers and the wrong instinct here")
-                .doesNotContain("*")
-                .hasSize(3);
+                .as("headers are added one at a time, never a wildcard -- '*' with allowCredentials "
+                        + "is both rejected by browsers and the wrong instinct here")
+                .doesNotContain("*");
+        // Named rather than counted. This used to assert hasSize(3), which failed the moment the
+        // client-identity pair was added and said only that the number had changed -- it could not
+        // say whether something reasonable had been allowed or the policy had been thrown open.
+        // Listing the set means widening it requires writing the new header down here, which is the
+        // guard this test was actually for.
+        assertThat(config.getAllowedHeaders())
+                .as("every header the browser may send, enumerated")
+                .containsExactlyInAnyOrder(
+                        "Authorization",
+                        "Content-Type",
+                        CorrelationIdFilter.HEADER_NAME,
+                        // Advisory client metadata for support tickets and feedback; nothing
+                        // authorises on either. See ClientIdentity.
+                        ClientIdentity.PLATFORM_HEADER,
+                        ClientIdentity.VERSION_HEADER);
         assertThat(config.getAllowCredentials()).isTrue();
     }
 }
