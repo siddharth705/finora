@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { AdminLayout } from '../components/AdminLayout';
 import { RequirePermission } from '../components/ProtectedRoute';
@@ -59,8 +60,13 @@ function HeldStatementsContent() {
   const columns: DataTableColumn<HeldStatementRow>[] = [
     {
       header: 'Held ID',
-      // The reference an operator quotes -- never the raw UUID.
-      render: (row) => <span className="text-ink font-mono text-xs">{row.heldId}</span>,
+      // The reference an operator quotes -- never the raw UUID. Links straight into the detail
+      // page, same as the queue's whole purpose: this row is a worklist entry, not an end state.
+      render: (row) => (
+        <Link to={`/held-statements/${row.heldId}`} className="text-ink font-mono text-xs text-accent hover:underline">
+          {row.heldId}
+        </Link>
+      ),
     },
     {
       header: 'User',
