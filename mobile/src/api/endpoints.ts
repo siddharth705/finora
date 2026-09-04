@@ -604,3 +604,94 @@ export const deviceTokensApi = {
   revoke: (body: { token: string }) =>
     api.post<null>('/device-tokens/revoke', body).then((r) => r.data),
 };
+
+// Support, Help & Feedback v1 (Phase 8, mobile). Mirrors frontend/src/api/endpoints.ts's own
+// SupportTicketCategory/Status and FeedbackType/Context unions exactly -- see that file's comment
+// for why a value added on one side with nothing here to render it is worth guarding against at
+// compile time.
+export type SupportTicketCategory =
+  | 'STATEMENT_IMPORT' | 'CATEGORIZATION' | 'ACCOUNT_LINKING' | 'DATA_ACCURACY' | 'TECHNICAL_ISSUE' | 'OTHER';
+export type SupportTicketStatus = 'OPEN' | 'IN_PROGRESS' | 'RESOLVED' | 'CLOSED';
+export type ClientPlatform = 'WEB' | 'MOBILE_ANDROID' | 'MOBILE_IOS';
+
+export interface SupportTicketAttachmentSummary {
+  id: string;
+  filename: string;
+  contentType: string;
+  sizeBytes: number;
+}
+
+export interface SupportTicketSummary {
+  id: string;
+  ticketNumber: string;
+  userId: string;
+  category: SupportTicketCategory;
+  subject: string;
+  status: SupportTicketStatus;
+  claimedByAdminId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SupportTicketDetail extends SupportTicketSummary {
+  description: string;
+  source: ClientPlatform;
+  appVersion: string | null;
+  resolvedAt: string | null;
+  closedAt: string | null;
+  attachments: SupportTicketAttachmentSummary[];
+}
+
+export const supportApi = {
+  // No explicit Content-Type header, same reasoning as importApi.stageCsv/stagePdf above: a
+  // hand-set 'multipart/form-data' with no boundary is invalid HTTP, and axios only computes the
+  // correct boundary when nothing has already set Content-Type. Wrapped in stageWithRetry for the
+  // same reason those two are: this follows immediately after a DocumentPicker handoff when an
+  // attachment is attached, and is the exact timing gap that helper exists for.
+  create: (payload: { category: SupportTicketCategory; subject: string; description: string; file?: RNFile | null }) => {
+    const form = new FormData();
+    form.append('category', payload.category);
+    form.append('subject', payload.subject);
+    form.append('description', payload.description);
+    if (payload.file) form.append('file', payload.file as unknown as Blob);
+    return stageWithRetry(() =>
+      api.post<SupportTicketDetail>('/support/tickets', form).then((r) => r.data)
+    );
+  },
+  list: (page = 0, size = 25) =>
+    api.get<PagedResponse<SupportTicketSummary>>('/support/tickets', { params: { page, size } }).then((r) => r.data),
+  detail: (id: string) => api.get<SupportTicketDetail>(`/support/tickets/${id}`).then((r) => r.data),
+  /** Same pattern as statementImportsApi.downloadFile: write the bytes into the cache directory
+   *  and hand the URI to the native share sheet -- there is no in-sandbox "download" a user could
+   *  otherwise find. */
+  downloadAttachment: async (ticketId: string, attachmentId: string, filename: string, contentType: string) => {
+    if (!(await Sharing.isAvailableAsync())) {
+      throw new Error('Sharing is not available on this device.');
+    }
+    const res = await api.get<ArrayBuffer>(`/support/tickets/${ticketId}/attachments/${attachmentId}`, { responseType: 'arraybuffer' });
+    const file = new File(Paths.cache, filename);
+    if (file.exists) file.delete();
+    file.create();
+    file.write(encodeBase64(res.data), { encoding: 'base64' });
+    await Sharing.shareAsync(file.uri, { mimeType: contentType, dialogTitle: filename });
+  },
+};
+
+export type FeedbackType = 'BUG' | 'FEATURE_REQUEST' | 'IMPROVEMENT' | 'GENERAL';
+export type FeedbackContext =
+  | 'DASHBOARD' | 'TRANSACTIONS' | 'REPORTS' | 'BUDGETS' | 'GOALS' | 'IMPORT_FLOW' | 'ACCOUNTS' | 'SETTINGS' | 'HELP' | 'OTHER';
+
+export interface FeedbackSummary {
+  id: string;
+  userId: string;
+  type: FeedbackType;
+  context: FeedbackContext;
+  source: ClientPlatform;
+  message: string;
+  createdAt: string;
+}
+
+export const feedbackApi = {
+  submit: (payload: { type: FeedbackType; context: FeedbackContext; message: string }) =>
+    api.post<FeedbackSummary>('/feedback', payload).then((r) => r.data),
+};
