@@ -256,6 +256,14 @@ public class CapabilityCoverageService {
             // way, reusing PdfMetadataExtractor's card-number label/value vocabulary. See
             // AccountNumberGridExtractor's own doc comment.
             "PRINTED_ACCOUNT_NUMBER_GRID",
+            // The same real Axis Bank credit-card statement also drops its own printed statement
+            // period this way: "Statement Period" arrives glued to its left-hand neighbour into one
+            // run ("Minimum Payment Due Statement Period"), so no line-based pattern can ever match
+            // it, and direct inspection of the section's auxiliaryText found 127 lines with not one
+            // containing the word "period". Recovered by the same grid-reading mechanism, matched by
+            // x-overlap between the label row and the range row beneath it. See
+            // StatementPeriodGridExtractor's own doc comment.
+            "PRINTED_STATEMENT_PERIOD_GRID",
             // A real ICICI credit-card statement prints its own account number with no label at
             // all, in a row positioned directly under the transaction table's own "Date" column
             // header, before the first real transaction row -- recognized by that position and by

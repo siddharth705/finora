@@ -211,6 +211,14 @@ class CapabilityCorpusCoverageTest {
                         + "real coordinates from both of the document's own layouts (grid and same-row), "
                         + "and independently confirmed against the actual un-redacted PDF via "
                         + "scripts/corpus-run.py.");
+        DECLARED_WITHOUT_A_TRACE.put("PRINTED_STATEMENT_PERIOD_GRID",
+                "no trace -- same scoping gap as PRINTED_ACCOUNT_NUMBER_GRID above: this fires in "
+                        + "StatementPeriodGridExtractor, called from PdfPreviewGenerator, never from "
+                        + "PdfTableLocator.locateAll. The one real evidencing document's committed trace "
+                        + "(axis-credit-card-statement) keeps its statement-period dates unredacted -- see "
+                        + "StatementPeriodGridRegressionTest, which asserts against that same trace that "
+                        + "the capability fires and recovers the real range end to end, not just that the "
+                        + "label is present.");
         DECLARED_WITHOUT_A_TRACE.put("PRINTED_ACCOUNT_NUMBER_ABOVE_TRANSACTIONS",
                 "no trace -- same scoping gap as PRINTED_ACCOUNT_NUMBER_GRID above: this fires in "
                         + "AccountNumberTransactionHeaderExtractor, called from PdfPreviewGenerator, never "
