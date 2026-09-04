@@ -232,6 +232,53 @@ describe('StatementHistoryScreen — re-importing a password-protected statement
     expect(field.props.secureTextEntry).toBe(true);
   });
 
+  it('does not stage a second re-import for a double-tap on the same row', async () => {
+    renderScreen();
+    const button = await screen.findByLabelText('Re-import');
+
+    // Both presses inside ONE act() block, not two separate fireEvent.press calls. Each individual
+    // fireEvent.press is its own act(), which flushes the pending setBusyId and re-renders before
+    // returning -- by the second call Pressable's own `disabled` prop has already caught up and the
+    // press never reaches the handler at all, passing this assertion whether or not the guard being
+    // tested exists (confirmed: it does, with the guard removed). A real double-tap lands both
+    // touches in the same JS tick, before `disabled` reaches the native side; wrapping both calls in
+    // one act() reproduces that by deferring the re-render until after both have fired. Without the
+    // guard this stages a second server-side session for one re-import (B5 in
+    // mobile-correctness-trust-roadmap.md); the confirm side is already claimed atomically by V133,
+    // but nothing upstream of it was.
+    act(() => {
+      fireEvent.press(button);
+      fireEvent.press(button);
+    });
+    await settle();
+
+    expect(api.reimport).toHaveBeenCalledTimes(1);
+  });
+
+  it('allows re-importing a different statement while one is still in flight', async () => {
+    // The guard must be scoped per-row, not to the whole screen -- a global lock here would repeat
+    // the CategoryReviewScreen mistake of blocking an unrelated row's action just because another
+    // row's request hasn't settled yet.
+    api.listGroupedByAccount.mockReset().mockResolvedValue([{
+      ...groups[0],
+      statements: [
+        groups[0].statements[0],
+        { ...groups[0].statements[0], id: 'stmt-2', fileName: 'other-statement.pdf' },
+      ],
+    }]);
+    renderScreen();
+    const buttons = await screen.findAllByLabelText('Re-import');
+    expect(buttons).toHaveLength(2);
+
+    fireEvent.press(buttons[0]);
+    fireEvent.press(buttons[1]);
+    await settle();
+
+    expect(api.reimport).toHaveBeenCalledTimes(2);
+    expect(api.reimport).toHaveBeenCalledWith('stmt-1', undefined);
+    expect(api.reimport).toHaveBeenCalledWith('stmt-2', undefined);
+  });
+
   it('does not offer re-import for a statement whose account was deleted', async () => {
     api.listGroupedByAccount.mockReset().mockResolvedValue([
       { ...groups[0], deleted: true, deletedAt: '2026-08-01T00:00:00Z' },
