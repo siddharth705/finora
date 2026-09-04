@@ -6,6 +6,7 @@ import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import jakarta.persistence.Version;
 
 import java.time.Instant;
 import java.util.EnumSet;
@@ -21,9 +22,11 @@ import java.util.UUID;
  * {@code HELD_FOR_TRUST_REVIEW}, which keeps counting as a live reference.
  *
  * <p>The snapshot fields ({@code parserVersion}, {@code reliabilityStatus}, {@code textSource},
- * {@code headerReconstructionUncertain}) are captured at hold time on purpose: a later re-run
- * under a different build has to be comparable against what the original build actually saw, and
- * reading them live would silently answer a different question.
+ * {@code headerReconstructionUncertain}, {@code bankName}) are captured at hold time on purpose: a
+ * later re-run under a different build has to be comparable against what the original build
+ * actually saw, and reading them live would silently answer a different question. {@code
+ * bankName} specifically cannot be read live at all -- see the {@code bank_name} column comment
+ * in V150 for why {@code import_sessions}, the only other source, cannot be joined instead.
  */
 @Entity
 @Table(name = "held_statements")
@@ -71,6 +74,9 @@ public class HeldStatement {
     @Column(name = "header_reconstruction_uncertain")
     private Boolean headerReconstructionUncertain;
 
+    @Column(name = "bank_name")
+    private String bankName;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false)
     private Status status = Status.HELD;
@@ -83,6 +89,20 @@ public class HeldStatement {
 
     @Column(name = "engineer_notes")
     private String engineerNotes;
+
+    @Column(name = "root_cause")
+    private String rootCause;
+
+    @Column(name = "fix_reference")
+    private String fixReference;
+
+    /** BH-001, same reasoning as {@code ImportJob.version}'s own doc: every other
+     *  concurrently-written entity here already carries one. This row is mutated by several
+     *  independent actors (assign, investigate, notes, findings, approve, reject, rerun-parser),
+     *  and until Plan 3 was the one exception -- see V151's own migration comment. */
+    @Version
+    @Column(nullable = false)
+    private Long version = 0L;
 
     @Column(name = "created_at", nullable = false)
     private Instant createdAt = Instant.now();
@@ -122,6 +142,10 @@ public class HeldStatement {
         this.headerReconstructionUncertain = headerReconstructionUncertain;
     }
 
+    /** Set once, when the hold is opened. See the {@code bank_name} column comment for why this is
+     *  a snapshot rather than a live read. Null when the parser could not name a bank. */
+    public void recordBank(String bankName) { this.bankName = bankName; }
+
     public void assign(UUID engineerId, Instant now) {
         refuseIfResolved("assigned");
         this.assignedEngineerId = engineerId;
@@ -138,6 +162,16 @@ public class HeldStatement {
      *  of what it said before lives in {@code held_statement_events}. */
     public void addNotes(String notes) {
         this.engineerNotes = notes;
+    }
+
+    /** Records what an engineer found and where the fix landed. Replaces both fields wholesale,
+     *  same as {@link #addNotes} -- the history lives in {@code held_statement_events}, not a
+     *  second pair of columns. Deliberately not guarded by {@link #refuseIfResolved}, for the same
+     *  reason {@code addNotes} isn't: writing up a root cause after the hold is already resolved is
+     *  a legitimate thing to do, not a state-machine violation. */
+    public void recordEngineerFindings(String rootCause, String fixReference) {
+        this.rootCause = rootCause;
+        this.fixReference = fixReference;
     }
 
     public void markReadyForImport(Instant now) {
@@ -198,10 +232,14 @@ public class HeldStatement {
     public String getReliabilityStatus() { return reliabilityStatus; }
     public String getTextSource() { return textSource; }
     public Boolean getHeaderReconstructionUncertain() { return headerReconstructionUncertain; }
+    public String getBankName() { return bankName; }
     public Status getStatus() { return status; }
     public UUID getAssignedEngineerId() { return assignedEngineerId; }
     public String getTriggerSummary() { return triggerSummary; }
     public String getEngineerNotes() { return engineerNotes; }
+    public String getRootCause() { return rootCause; }
+    public String getFixReference() { return fixReference; }
+    public Long getVersion() { return version; }
     public Instant getCreatedAt() { return createdAt; }
     public Instant getAssignedAt() { return assignedAt; }
     public Instant getReadyAt() { return readyAt; }

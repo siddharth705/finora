@@ -79,7 +79,7 @@ class ImportJobWorkerTest {
 
         worker = new ImportJobWorker(jobStore, importService, statementContentService, observability,
                 stageRecorder, new ExceptionClassifier(), notificationService, verificationRecorder,
-                heldStatementService);
+                heldStatementService, new ParserVersionProvider());
 
         job = new ImportJob(UUID.randomUUID(), "statement.csv", "hash", "objects/key", "CSV");
         job.markClaimed("worker", Instant.now());

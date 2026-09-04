@@ -4,6 +4,8 @@ import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.common.PDRectangle;
 import org.apache.pdfbox.rendering.PDFRenderer;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
@@ -14,6 +16,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * Tesseract, as a candidate.
@@ -50,8 +53,36 @@ import java.util.List;
  */
 public final class TesseractEngine implements OcrEngine {
 
+    private static final Logger log = LoggerFactory.getLogger(TesseractEngine.class);
+
     /** Word level in Tesseract's TSV. Lower levels describe blocks and lines, not runs. */
     private static final int WORD_LEVEL = 5;
+
+    // CodeQL (java/relative-path-command), 2026-09-04: every ProcessBuilder call here used to pass
+    // the bare command name "tesseract", resolved against $PATH fresh by the OS on every single
+    // invocation (available() once, run() once per page). If something earlier in the process's
+    // PATH ever pointed at an attacker-controlled or otherwise wrong binary, each of those lookups
+    // could resolve somewhere different. Resolved once instead, explicitly, by this class's own
+    // trusted code -- scanning PATH's directories for an executable file literally named
+    // "tesseract" -- and cached, so every subsequent call uses the exact same verified absolute
+    // path rather than repeating an OS-level lookup that could vary between calls. A single
+    // hardcoded path (e.g. Alpine's /usr/bin/tesseract, confirmed via Dockerfile's `apk add
+    // tesseract-ocr`) was considered and rejected: TesseractRunAssemblyTest runs this against a
+    // real binary locally too (assumeTrue(available())), where it's typically a Homebrew install
+    // at a different path entirely -- hardcoding one location would silently break the other.
+    private static final Optional<String> RESOLVED_TESSERACT_PATH = resolveOnPath("tesseract");
+
+    private static Optional<String> resolveOnPath(String command) {
+        String path = System.getenv("PATH");
+        if (path == null) return Optional.empty();
+        for (String dir : path.split(File.pathSeparator)) {
+            File candidate = new File(dir, command);
+            if (candidate.isFile() && candidate.canExecute()) {
+                return Optional.of(candidate.getAbsolutePath());
+            }
+        }
+        return Optional.empty();
+    }
 
     public TesseractEngine() {}
 
@@ -62,8 +93,9 @@ public final class TesseractEngine implements OcrEngine {
 
     /** Whether the binary is on PATH, so a missing engine reports itself rather than failing oddly. */
     public static boolean available() {
+        if (RESOLVED_TESSERACT_PATH.isEmpty()) return false;
         try {
-            return new ProcessBuilder("tesseract", "--version").start().waitFor() == 0;
+            return new ProcessBuilder(RESOLVED_TESSERACT_PATH.get(), "--version").start().waitFor() == 0;
         } catch (IOException | InterruptedException e) {
             return false;
         }
@@ -97,7 +129,9 @@ public final class TesseractEngine implements OcrEngine {
 
     /** {@code tesseract <png> stdout tsv} -- one row per recognised element. */
     private String run(File png) throws IOException {
-        Process process = new ProcessBuilder("tesseract", png.getAbsolutePath(), "stdout", "tsv")
+        String tesseract = RESOLVED_TESSERACT_PATH.orElseThrow(
+                () -> new IOException("tesseract is not on PATH -- callers must check available() first"));
+        Process process = new ProcessBuilder(tesseract, png.getAbsolutePath(), "stdout", "tsv")
                 .redirectErrorStream(false)
                 .start();
         String out = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
@@ -128,21 +162,37 @@ public final class TesseractEngine implements OcrEngine {
         String[] lines = tsv.split("\n");
         for (int i = 1; i < lines.length; i++) {
             String[] c = lines[i].split("\t", -1);
-            if (c.length < 12 || Integer.parseInt(c[0].trim()) != WORD_LEVEL) continue;
+            if (c.length < 12) continue;
+            // CodeQL (java/uncaught-number-format-exception), 2026-09-04: every numeric column
+            // below used to be parsed with no guard at all, unlike this class's date-parsing
+            // siblings in PdfTableLocator (which check a regex match first) and
+            // StatementSummaryExtractor.count() (which checks \d{1,7} first) -- both provably safe
+            // by construction. This one had nothing: Tesseract's own TSV format is well-behaved in
+            // practice, but it is external tool output, not something this class controls, and one
+            // malformed row from an edge-case OCR run should not crash recognition for the entire
+            // page's worth of real, otherwise-good rows that already parsed. One try/catch around
+            // the row rather than one per column: any single NumberFormatException here means this
+            // whole row's shape cannot be trusted, not just the one field that happened to throw
+            // first.
+            try {
+                if (Integer.parseInt(c[0].trim()) != WORD_LEVEL) continue;
 
-            String text = c[11];
-            if (text == null || text.isBlank()) continue;
+                String text = c[11];
+                if (text == null || text.isBlank()) continue;
 
-            float conf = Float.parseFloat(c[10].trim());
-            float height = Integer.parseInt(c[9].trim()) * scale;
-            runs.add(new RecognisedText(text,
-                    Integer.parseInt(c[6].trim()) * scale,
-                    // top + height: the baseline, which is what PDFBox reports. See the class note.
-                    Integer.parseInt(c[7].trim()) * scale + height,
-                    Integer.parseInt(c[8].trim()) * scale,
-                    height,
-                    page,
-                    conf < 0 ? null : conf / 100f));
+                float conf = Float.parseFloat(c[10].trim());
+                float height = Integer.parseInt(c[9].trim()) * scale;
+                runs.add(new RecognisedText(text,
+                        Integer.parseInt(c[6].trim()) * scale,
+                        // top + height: the baseline, which is what PDFBox reports. See the class note.
+                        Integer.parseInt(c[7].trim()) * scale + height,
+                        Integer.parseInt(c[8].trim()) * scale,
+                        height,
+                        page,
+                        conf < 0 ? null : conf / 100f));
+            } catch (NumberFormatException e) {
+                log.warn("Skipping unparseable Tesseract TSV row on page {}: {}", page, lines[i]);
+            }
         }
         return runs;
     }

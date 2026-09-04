@@ -64,6 +64,19 @@ export const ADMIN_PORTAL_PERMISSIONS = [
   // for the same reason NOTIFICATION_MANAGE is: a role holding only this must still get past
   // the portal-entry check to reach the one section it can use.
   'IMPORT_TRIAGE_MANAGE',
+  // The trust-review queue (V144, Held Statement Review Plan 2). Its own permission rather than
+  // a reuse -- see AdminHeldStatementController's own doc comment for why resolving a hold is a
+  // different kind of access from PLATFORM_DIAGNOSTICS_VIEW's read-only visibility. Listed here
+  // for the same reason IMPORT_TRIAGE_MANAGE is, immediately above: a role holding only this must
+  // still get past the portal-entry check to reach the one section it can use, or this list's own
+  // documented bug (RELATIONSHIP_MANAGE, above) repeats itself for a third permission.
+  'TRUST_REVIEW_MANAGE',
+  // Support, Help & Feedback v1, Phase 9 (V149) -- gates the Support Tickets and Feedback pages
+  // (AdminSupportTicketController, AdminFeedbackController). V149's migration comment names this
+  // exact allowlist by file path as one of the four places a new admin permission must appear,
+  // precisely because of the RELATIONSHIP_MANAGE bug documented at the top of this list -- so it
+  // is listed here from the start, not discovered missing after the fact a third time.
+  'SUPPORT_MANAGE',
 ];
 
 export interface AdminAuthState {

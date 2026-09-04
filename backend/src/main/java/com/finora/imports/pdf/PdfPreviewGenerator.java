@@ -193,13 +193,18 @@ public class PdfPreviewGenerator {
         List<PositionedText> positioned = acquired.runs();
         // A count, never the text. Lets ExtractionCheck tell "the pages carry no text" from
         // "we read plenty and could not make a table of it" -- see DocumentContext.
-        if (ctx != null) {
-            ctx.recordExtractedRuns(positioned.size());
-            // Provenance, not a judgement -- see DocumentContext.recordTextSource's own doc
-            // comment. Recorded here because this is the one place the AcquiredDocument itself
-            // (not just its runs) is ever in scope.
-            ctx.recordTextSource(acquired.source());
-        }
+        //
+        // CodeQL (java/useless-null-check), 2026-09-04: this used to be guarded by `if (ctx !=
+        // null)`, which was always true -- ctx comes straight from `new DocumentContext(...)`
+        // above, with no reassignment in between. The guard's own presence is what misled a
+        // second CodeQL query (java/dereferenced-value-may-be-null) into flagging ctx.textSource()
+        // much further down this method as inconsistent with it. Removed rather than kept: every
+        // other ctx use in this method (locateAll, extract, ...) already assumes it's non-null.
+        ctx.recordExtractedRuns(positioned.size());
+        // Provenance, not a judgement -- see DocumentContext.recordTextSource's own doc comment.
+        // Recorded here because this is the one place the AcquiredDocument itself (not just its
+        // runs) is ever in scope.
+        ctx.recordTextSource(acquired.source());
         PdfTableLocator.LocatedDocument doc = tableLocator.locateAll(positioned, ctx);
         // Read from the positioned runs rather than from the located table: the summary grid has
         // its own column layout, so bucketing it against the TRANSACTION table's anchors shreds it
@@ -362,7 +367,18 @@ public class PdfPreviewGenerator {
         ProductDiscovery.DiscoveredProduct product = productDiscovery.discover(
                 new ProductEvidenceCollector.Section(columns, section.auxiliaryText(), null,
                         section.rows().size(), sectionIndex, sectionCount));
-        if (ctx != null) ctx.record("FINANCIAL_PRODUCT_CLASSIFICATION");
+        // CodeQL (java/dereferenced-value-may-be-null #73), 2026-09-04, round 2: this and the two
+        // other `ctx != null` checks in this file (originally at buildLedgerSection/
+        // attributePrintedSummary) were never actually reachable with a null ctx -- traced the
+        // full call graph: buildSections is only ever called from generateSectionsWithContext
+        // passing its own local ctx (from `new DocumentContext(...)`, never reassigned), and every
+        // method below it in the chain (buildProductSections, buildLedgerSection,
+        // buildDetectedAccountInfo, sharedFacts) only ever receives ctx from a caller one level up
+        // in this same chain -- never a literal null anywhere. These guards were what made CodeQL
+        // flag ctx.textSource() in buildLedgerSection as inconsistent with "somewhere this is
+        // checked for null," even after the one *directly* provable case (generateSectionsWithContext
+        // itself) was fixed first.
+        ctx.record("FINANCIAL_PRODUCT_CLASSIFICATION");
 
         // Skipping transaction parsing requires the product to be PROVEN a non-ledger, not merely
         // suspected of it. UNKNOWN's own hasTransactions() is false too (its domain needs user
@@ -457,7 +473,9 @@ public class PdfPreviewGenerator {
         // this file." The real evidencing document (HSBC) locates exactly one section, so this
         // costs it nothing; it only withholds the fact when a second section exists to be
         // misattributed to.
-        if (ctx != null && sectionCount <= 1
+        // ctx is never null here -- see the call-graph trace on the FINANCIAL_PRODUCT_CLASSIFICATION
+        // guard above, in buildSections.
+        if (sectionCount <= 1
                 && ExplicitZeroActivityDetector.anyRowDeclaresZeroTransactionCount(sectionRows)) {
             ctx.recordExplicitZeroActivityDeclared();
         }
@@ -547,7 +565,7 @@ public class PdfPreviewGenerator {
         staged.sort(Comparator.comparing(StagedRow::date));
 
         int dupCount = (int) staged.stream().filter(StagedRow::likelyDuplicate).count();
-        DetectedAccountInfo detected = buildDetectedAccountInfo(filename, section, staged, balancePoints, product, ctx,
+        DetectedAccountInfo detected = buildDetectedAccountInfo(filename, section, balancePoints, product, ctx,
                 printedCreditCardSummary, printedDateRange, gridPaymentDueDate, gridCreditLimit,
                 gridAccountNumberMasked);
         // Per section rather than per file: a composite statement's sections have separate balance
@@ -704,7 +722,7 @@ public class PdfPreviewGenerator {
     }
 
     private DetectedAccountInfo buildDetectedAccountInfo(String filename, PdfTableLocator.LocatedSection section,
-                                                           List<StagedRow> staged, List<BalancePoint> balancePoints,
+                                                           List<BalancePoint> balancePoints,
                                                            ProductDiscovery.DiscoveredProduct product,
                                                            DocumentContext ctx,
                                                            CreditCardSummaryEvidence printedCreditCardSummary,
@@ -835,7 +853,9 @@ public class PdfPreviewGenerator {
         boolean creditCardSignals = section.rows().stream().anyMatch(row ->
                 CsvParser.hasHeaderMatch(row, "card number", "minimum due", "minimum amount due"))
                 || countDistinctCreditCardSignals(section.auxiliaryText()) >= MIN_CREDIT_CARD_TEXT_SIGNALS;
-        if (ctx != null && creditCardSignals) ctx.record("CREDIT_CARD_SUMMARY_SIGNAL");
+        // ctx is never null here either -- same call-graph trace as the other two guards removed
+        // in this file (buildSections/buildLedgerSection).
+        if (creditCardSignals) ctx.record("CREDIT_CARD_SUMMARY_SIGNAL");
 
         return new SharedSectionFacts(metadata, bank, suggestedName, creditCardSignals);
     }

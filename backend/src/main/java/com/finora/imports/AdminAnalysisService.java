@@ -7,6 +7,7 @@ import com.finora.imports.analysis.ParseDiagnostics;
 import com.finora.imports.analysis.StatementAnalysisSession;
 import com.finora.imports.analysis.StatementAnalysisRecorder;
 import com.finora.imports.pdf.PdfPreviewGenerator;
+import com.finora.util.LogSanitizer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -156,7 +157,7 @@ public class AdminAnalysisService {
             // An engine crash is the most interesting finding of all and the easiest to lose:
             // without this, a NullPointerException deep in the parser would propagate as a 500
             // with nothing recorded, and the document that caused it would be untraceable.
-            log.error("Admin analysis of {} crashed the engine", fileName, e);
+            log.error("Admin analysis of {} crashed the engine", LogSanitizer.sanitize(fileName), e);
             return required(analysisRecorder.recordFailed(adminUserId,
                     StatementAnalysisSession.Source.ADMIN_ANALYSIS, fileName, format, content.length,
                     fingerprint, "ENGINE_CRASH", e.getClass().getSimpleName() + ": " + e.getMessage(),
@@ -175,7 +176,7 @@ public class AdminAnalysisService {
      */
     private static String required(String reference, String fileName) {
         if (reference != null) return reference;
-        log.error("Admin analysis of {} ran but could not be recorded", fileName);
+        log.error("Admin analysis of {} ran but could not be recorded", LogSanitizer.sanitize(fileName));
         throw new ApiException(ErrorCode.INTERNAL_ERROR,
                 "The document was analysed but the analysis could not be saved.");
     }

@@ -13,6 +13,12 @@ import java.util.UUID;
  * should not put customer financial detail on screen, so listing is cheap and unaudited while
  * anything that opens the document is audited separately.
  *
+ * @param userId a bare id, same reason {@link HeldImportDto#userId} is: this controller never joins
+ *               to a user's contact details, so no email or phone can reach this screen even
+ *               indirectly.
+ * @param bankName the snapshot from V150, not a live read -- see {@code HeldStatement}'s own doc for
+ *                 why {@code import_sessions}, the only other source, cannot be joined instead. Null
+ *                 when the parser could not name a bank.
  * @param triggerSummary every trust condition that fired, rendered by {@code TrustPredicate}. Not a
  *                       new signal -- a sentence about evidence the pipeline already computed.
  */
@@ -20,6 +26,8 @@ public record HeldStatementDto(
         UUID id,
         String heldId,
         UUID importJobId,
+        UUID userId,
+        String bankName,
         String status,
         String triggerSummary,
         String reliabilityStatus,
@@ -28,6 +36,8 @@ public record HeldStatementDto(
         String parserVersion,
         UUID assignedEngineerId,
         String engineerNotes,
+        String rootCause,
+        String fixReference,
         Instant createdAt,
         Instant assignedAt,
         Instant readyAt,
@@ -38,6 +48,8 @@ public record HeldStatementDto(
                 held.getId(),
                 held.getHeldId(),
                 held.getImportJobId(),
+                held.getUserId(),
+                held.getBankName(),
                 held.getStatus().name(),
                 held.getTriggerSummary(),
                 held.getReliabilityStatus(),
@@ -46,6 +58,8 @@ public record HeldStatementDto(
                 held.getParserVersion(),
                 held.getAssignedEngineerId(),
                 held.getEngineerNotes(),
+                held.getRootCause(),
+                held.getFixReference(),
                 held.getCreatedAt(),
                 held.getAssignedAt(),
                 held.getReadyAt(),

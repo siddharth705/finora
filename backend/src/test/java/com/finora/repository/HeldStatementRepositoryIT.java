@@ -165,6 +165,19 @@ class HeldStatementRepositoryIT extends AbstractIntegrationTest {
                 .isNull();
     }
 
+    /** V150: the bank name is a snapshot on the row itself, not something the repository has to
+     *  join for -- see the column's own comment for why a join to {@code import_sessions} would be
+     *  wrong. */
+    @Test
+    void theBankNameIsSnapshottedOnTheHold() {
+        HeldStatement held = seed("HLD-2026-000050");
+        held.recordBank("HDFC Bank");
+        repository.saveAndFlush(held);
+
+        assertThat(repository.findByHeldId("HLD-2026-000050").orElseThrow().getBankName())
+                .isEqualTo("HDFC Bank");
+    }
+
     /** The sequence is what makes Held IDs unique; two calls must never agree. */
     @Test
     void theHeldSequenceIssuesDistinctValues() {

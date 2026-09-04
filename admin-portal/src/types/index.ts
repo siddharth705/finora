@@ -694,6 +694,9 @@ export interface ReconciliationStatsDto {
   duplicateCount: number;
   transferCount: number;
   refundCount: number;
+  reversalCount: number;
+  investmentTransferCount: number;
+  supersededCount: number;
   recurringCount: number;
   totalTransactions: number;
 }
@@ -1148,6 +1151,89 @@ export interface HeldImportSummary {
   reprocessing: number;
 }
 
+/** The trust-review lifecycle, mirroring `HeldStatement.Status` on the backend. */
+export type HeldStatementStatus =
+  | 'HELD' | 'ASSIGNED' | 'INVESTIGATING' | 'READY_FOR_IMPORT' | 'IMPORTED' | 'REJECTED';
+
+/**
+ * One row of the held-statement (trust-review) queue.
+ *
+ * Carries no statement content and no object key -- opening the document is a separate, audited
+ * endpoint. `userId` is a bare id, same reason `HeldImportRow.userId` is: no email or phone can
+ * reach this screen even indirectly. `bankName` is a snapshot from hold time and can be null when
+ * the parser could not name a bank.
+ */
+export interface HeldStatementRow {
+  id: string;
+  heldId: string;
+  importJobId: string;
+  userId: string;
+  bankName: string | null;
+  status: HeldStatementStatus;
+  triggerSummary: string | null;
+  reliabilityStatus: string | null;
+  textSource: string | null;
+  headerReconstructionUncertain: boolean | null;
+  parserVersion: string | null;
+  assignedEngineerId: string | null;
+  engineerNotes: string | null;
+  rootCause: string | null;
+  fixReference: string | null;
+  createdAt: string;
+  assignedAt: string | null;
+  readyAt: string | null;
+  resolvedAt: string | null;
+}
+
+/** Every filter is optional; `status` narrows within the open queue and can never surface a
+ *  resolved hold -- see the backend's `HeldStatementFilter` for why. */
+export interface HeldStatementQuery {
+  page?: number;
+  size?: number;
+  status?: HeldStatementStatus;
+  bank?: string;
+  olderThanHours?: number;
+  engineerId?: string;
+}
+
+/** One verification rule's outcome for one section -- the printed-versus-parsed numbers behind
+ *  the trigger, not a sentence summarising them. */
+export interface HeldStatementFinding {
+  sectionIndex: number;
+  rule: string;
+  outcome: string;
+  details: Record<string, unknown>;
+  createdAt: string;
+}
+
+/** One entry in a hold's audit history. `actorId` null means the system acted. */
+export interface HeldStatementEvent {
+  eventType: string;
+  fromStatus: string | null;
+  toStatus: string | null;
+  notes: string | null;
+  actorId: string | null;
+  createdAt: string;
+}
+
+/** The summary plus the evidence behind `triggerSummary` and the hold's own history. Still no
+ *  statement content -- opening the document is `/document`, gated and audited separately. */
+export interface HeldStatementDetail {
+  summary: HeldStatementRow;
+  findings: HeldStatementFinding[];
+  timeline: HeldStatementEvent[];
+}
+
+/** What one parser re-run found -- mirrors the backend's `HeldStatementRerunResultDto` exactly. */
+export interface HeldStatementRerunResult {
+  previousParserVersion: string | null;
+  currentParserVersion: string | null;
+  parserVersionChanged: boolean;
+  stillHeld: boolean;
+  reasons: string[];
+  summary: HeldStatementRow;
+}
+
 /** NotificationAdminRow plus the message body and the provider attempt log, newest first. */
 export interface NotificationAdminDetail extends NotificationAdminRow {
   message: string;
@@ -1270,4 +1356,111 @@ export interface LayoutEvidenceReport {
   /** Plain-language statement of what the numbers do and do not support — including, and most
    *  often, "no evidence for reuse", which is a successful outcome rather than a gap. */
   verdict: string;
+}
+
+// Support, Help & Feedback v1, Phase 9 (admin portal). Mirrors the same
+// SupportTicket.Category/Status and FeedbackEntry.Type/Context unions the user-facing frontend and
+// mobile apps already carry their own copies of (com.finora.entity.SupportTicket,
+// com.finora.entity.FeedbackEntry) -- a value added on one side with nothing here to render it is
+// the failure mode a compile-time union exists to catch.
+export type SupportTicketCategory =
+  | 'STATEMENT_IMPORT' | 'CATEGORIZATION' | 'ACCOUNT_LINKING' | 'DATA_ACCURACY' | 'TECHNICAL_ISSUE' | 'OTHER';
+export type SupportTicketStatus = 'OPEN' | 'IN_PROGRESS' | 'RESOLVED' | 'CLOSED';
+export type ClientPlatform = 'WEB' | 'MOBILE_ANDROID' | 'MOBILE_IOS';
+
+/** One row of the ticket queue -- mirrors SupportTicketDto.Summary. */
+export interface SupportTicketRow {
+  id: string;
+  ticketNumber: string;
+  userId: string;
+  category: SupportTicketCategory;
+  subject: string;
+  status: SupportTicketStatus;
+  claimedByAdminId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Every filter is optional -- same shape as HeldStatementQuery. `q` searches ticket number and
+ *  subject -- see the backend's SupportTicketRepository.findForAdmin for exactly what it matches. */
+export interface SupportTicketQuery {
+  page?: number;
+  size?: number;
+  status?: SupportTicketStatus;
+  category?: SupportTicketCategory;
+  q?: string;
+}
+
+export interface SupportTicketAttachment {
+  id: string;
+  filename: string;
+  contentType: string;
+  sizeBytes: number;
+}
+
+/** Mirrors SupportTicketDto.Detail -- the SAME shape the ticket's own owner sees, served by the
+ *  same non-admin-rooted endpoint (SupportTicketController.detail's own doc explains why there is
+ *  no separate admin detail route). Structurally excludes internal-note content -- there is no
+ *  such field here at all, matching the backend DTO, not merely an admin-portal choice to hide it. */
+export interface SupportTicketDetail {
+  id: string;
+  ticketNumber: string;
+  userId: string;
+  category: SupportTicketCategory;
+  subject: string;
+  description: string;
+  status: SupportTicketStatus;
+  source: ClientPlatform;
+  appVersion: string | null;
+  claimedByAdminId: string | null;
+  resolvedAt: string | null;
+  closedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  attachments: SupportTicketAttachment[];
+}
+
+/** Mirrors SupportTicketDto.NoteDto -- admin-only, never reachable from the user-facing endpoint. */
+export interface SupportTicketNote {
+  id: string;
+  adminId: string;
+  note: string;
+  createdAt: string;
+}
+
+export type FeedbackType = 'BUG' | 'FEATURE_REQUEST' | 'IMPROVEMENT' | 'GENERAL';
+export type FeedbackContext =
+  | 'DASHBOARD' | 'TRANSACTIONS' | 'REPORTS' | 'BUDGETS' | 'GOALS' | 'IMPORT_FLOW' | 'ACCOUNTS' | 'SETTINGS' | 'HELP' | 'OTHER';
+
+/** One row of the feedback list -- mirrors FeedbackDto.Summary. */
+export interface FeedbackRow {
+  id: string;
+  userId: string;
+  type: FeedbackType;
+  context: FeedbackContext;
+  source: ClientPlatform;
+  message: string;
+  createdAt: string;
+}
+
+export interface FeedbackQuery {
+  page?: number;
+  size?: number;
+  type?: FeedbackType;
+  context?: FeedbackContext;
+}
+
+/** Mirrors FeedbackDto.Breakdown -- always unfiltered across the whole table (see the backend
+ *  service method's own doc comment for why), independent of whatever FeedbackQuery filter the
+ *  list view has active. */
+export interface FeedbackBreakdownCount {
+  label: string;
+  total: number;
+}
+
+export interface FeedbackBreakdown {
+  total: number;
+  byType: FeedbackBreakdownCount[];
+  byContext: FeedbackBreakdownCount[];
+  bySource: FeedbackBreakdownCount[];
 }

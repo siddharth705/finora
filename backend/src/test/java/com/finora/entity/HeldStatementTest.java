@@ -172,4 +172,40 @@ class HeldStatementTest {
         assertThat(held.getTextSource()).isEqualTo("OCR");
         assertThat(held.getHeaderReconstructionUncertain()).isTrue();
     }
+
+    @Test
+    void theBankIsRecordedAsGiven() {
+        HeldStatement held = held();
+
+        held.recordBank("HDFC Bank");
+
+        assertThat(held.getBankName()).isEqualTo("HDFC Bank");
+    }
+
+    @Test
+    void aMissingBankStaysNull() {
+        HeldStatement held = held();
+
+        held.recordBank(null);
+
+        assertThat(held.getBankName()).isNull();
+    }
+
+    @Test
+    void recordEngineerFindingsSetsBothFieldsAndCanBeCalledOnAResolvedHold() {
+        HeldStatement held = held();
+        held.markImported(UUID.randomUUID(), NOW);
+
+        held.recordEngineerFindings("Header row misdetected on a two-line HSBC header", "PR #950");
+
+        assertThat(held.getRootCause()).isEqualTo("Header row misdetected on a two-line HSBC header");
+        assertThat(held.getFixReference()).isEqualTo("PR #950");
+    }
+
+    @Test
+    void newHoldStartsAtVersionZero() {
+        HeldStatement held = held();
+
+        assertThat(held.getVersion()).isEqualTo(0L);
+    }
 }

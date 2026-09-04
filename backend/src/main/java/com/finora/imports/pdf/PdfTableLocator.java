@@ -1632,8 +1632,21 @@ public class PdfTableLocator {
                     // (whose own samePage check is also false) into the leading-narration branch at
                     // the bottom, unchanged.
                     currentRows.add(bucketed);
-                    lastRowPage = row.isEmpty() ? lastRowPage : row.get(0).pageIndex();
-                    lastRowY = row.isEmpty() ? lastRowY : row.get(0).y();
+                    // CodeQL (java/dereferenced-value-may-be-null), 2026-09-04: pageIndex()/y()
+                    // return primitive int/float, so the old `row.isEmpty() ? lastRowPage : ...`
+                    // ternary forced JLS numeric-promotion unboxing on the lastRowPage/lastRowY
+                    // branch whenever it was the one selected -- and the comment two lines up
+                    // already documents that lastRowPage really can be null here ("still null,
+                    // reset when this section opened"). Whether row.isEmpty() can ALSO be true at
+                    // that exact moment wasn't fully traced against this method's full state
+                    // space; this if-form is behaviourally identical to the ternary for every case
+                    // that already works (plain assignment when non-empty, untouched otherwise)
+                    // and cannot unbox a null under any circumstance, so it closes the risk without
+                    // needing that proof.
+                    if (!row.isEmpty()) {
+                        lastRowPage = row.get(0).pageIndex();
+                        lastRowY = row.get(0).y();
+                    }
                     blockPitch = null;
                     blockSeparation = null;
                     blockNarrationLeftX = null;
@@ -1831,8 +1844,12 @@ public class PdfTableLocator {
                     mergeInto(pendingLeading, bucketed, headerNames);
                     leadingCount++;
                     if (ctx != null) ctx.record("LEADING_NARRATION_CONTINUATION");
-                    lastRowPage = row.isEmpty() ? lastRowPage : row.get(0).pageIndex();
-                    lastRowY = row.isEmpty() ? lastRowY : row.get(0).y();
+                    // CodeQL (java/dereferenced-value-may-be-null), 2026-09-04 -- same fix, same
+                    // reasoning as this method's other lastRowPage/lastRowY update above.
+                    if (!row.isEmpty()) {
+                        lastRowPage = row.get(0).pageIndex();
+                        lastRowY = row.get(0).y();
+                    }
                     // The block above is closed the moment a row is buffered forward instead of
                     // merged into it. Without this, a later row that happened to match the old
                     // pitch would be appended to a transaction whose narration this buffered row
@@ -2026,32 +2043,6 @@ public class PdfTableLocator {
     }
 
     /**
-     * True when {@code row} sits at the same line pitch this transaction block already established
-     * -- i.e. it is one more visually continuous line of the narration above it, not the start of
-     * the next transaction's.
-     *
-     * <p>Only ever WIDENS what {@link #MAX_TRAILING_CONTINUATION_ROWS} admits, and only for a block
-     * that has already printed at least one continuation to measure a pitch from. A document with
-     * irregular spacing produces no match and keeps exactly the count-capped behaviour it had.
-     *
-     * <p>Two conditions, and the second is the one that makes this safe. The pitch must match, AND
-     * the document must have DEMONSTRATED that it separates transaction blocks by more than a line
-     * height -- evidenced by {@code blockSeparation}, the gap that preceded this very anchor. On a
-     * layout that sets every row at one uniform spacing, "same pitch as the line above" is true of
-     * the next transaction's leading narration exactly as it is of this one's trailing narration,
-     * so the measurement carries no information and extending on it would silently pull the next
-     * transaction's narration backwards. Requiring the document to show a wider gap somewhere is
-     * what distinguishes "the pitch says these lines belong together" from "everything here is at
-     * the same pitch." Where it cannot, the count cap decides, exactly as before.
-     *
-     * @param lastRowY        y of the row most recently merged into this transaction (null before any)
-     * @param blockPitch      gap between this transaction's date row and its first continuation
-     * @param blockSeparation gap between this transaction's date row and whatever preceded it, or
-     *                        null when there was nothing before it on the same page to measure
-     */
-
-
-    /**
      * Whether this freshly-bucketed anchor row carries description text of its own.
      *
      * <p>Read at the anchor, before any buffered leading narration is merged into it -- merging
@@ -2130,6 +2121,30 @@ public class PdfTableLocator {
         return left != null && Math.abs(left - blockNarrationLeftX) <= BLOCK_NARRATION_LEFT_TOLERANCE;
     }
 
+    /**
+     * True when {@code row} sits at the same line pitch this transaction block already established
+     * -- i.e. it is one more visually continuous line of the narration above it, not the start of
+     * the next transaction's.
+     *
+     * <p>Only ever WIDENS what {@link #MAX_TRAILING_CONTINUATION_ROWS} admits, and only for a block
+     * that has already printed at least one continuation to measure a pitch from. A document with
+     * irregular spacing produces no match and keeps exactly the count-capped behaviour it had.
+     *
+     * <p>Two conditions, and the second is the one that makes this safe. The pitch must match, AND
+     * the document must have DEMONSTRATED that it separates transaction blocks by more than a line
+     * height -- evidenced by {@code blockSeparation}, the gap that preceded this very anchor. On a
+     * layout that sets every row at one uniform spacing, "same pitch as the line above" is true of
+     * the next transaction's leading narration exactly as it is of this one's trailing narration,
+     * so the measurement carries no information and extending on it would silently pull the next
+     * transaction's narration backwards. Requiring the document to show a wider gap somewhere is
+     * what distinguishes "the pitch says these lines belong together" from "everything here is at
+     * the same pitch." Where it cannot, the count cap decides, exactly as before.
+     *
+     * @param lastRowY        y of the row most recently merged into this transaction (null before any)
+     * @param blockPitch      gap between this transaction's date row and its first continuation
+     * @param blockSeparation gap between this transaction's date row and whatever preceded it, or
+     *                        null when there was nothing before it on the same page to measure
+     */
     private boolean continuesTheBlock(List<PositionedText> row, Float lastRowY, Float blockPitch,
                                        Float blockSeparation, int trailingCount) {
         if (blockPitch == null || lastRowY == null || row.isEmpty()) return false;
