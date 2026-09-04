@@ -22,6 +22,8 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
@@ -61,6 +63,37 @@ import org.springframework.transaction.support.TransactionTemplate;
  * with one fewer log row than attempts made -- an acceptable gap in an audit trail, not in the
  * primary record. Each log write has its own try/catch for the same reason the status-write
  * methods do: it must never propagate out and abort the rest of {@link #drain}'s batch.
+ *
+ * <h2>Own {@code PROPAGATION_REQUIRES_NEW} template, not the shared {@code REQUIRED} one</h2>
+ *
+ * <p>This class is "shaped directly after {@code MerchantLearningEventWorker}", including a defect
+ * that worker carried until a real production incident (Sentry, 2026-09-03) exposed it: see that
+ * class's own doc comment for the full mechanism. In short, {@link #nudge} runs {@code @Async} on a
+ * two-thread pool with {@code CallerRunsPolicy}, triggered from an {@code afterCommit}
+ * synchronization on the very transaction that just requested the notification ({@code
+ * NotificationService.request} via {@code AfterCommit.run}). A large enough burst of {@code
+ * afterCommit}-registered nudges saturates that tiny pool, and {@code CallerRunsPolicy} then runs
+ * {@code nudge()} <em>synchronously on the committing thread</em> -- still inside {@code
+ * afterCommit()}, before Spring's {@code cleanupAfterCompletion()} has unbound that transaction's
+ * resources. A {@code REQUIRED} template sees those still-bound-but-already-committed resources and
+ * "joins" them instead of starting a real transaction, so {@code repository.save(...)} calls here
+ * would silently never flush -- the delivery outcome this worker just computed would vanish with no
+ * exception raised anywhere. {@code REQUIRES_NEW} closes that: it always suspends whatever is on the
+ * thread -- real or stale -- and opens a genuinely fresh transaction, so this worker is a clean
+ * transaction regardless of what thread or synchronization callback {@link #nudge} happens to run
+ * on.
+ *
+ * <p>Applied here defensively rather than in response to a reproduced incident of this worker's
+ * own: as of this fix, {@code NotificationService.request()} has exactly two call sites
+ * ({@code ImportJobWorker.notifyIfPreviouslyHeld}, {@code HeldStatementService.notifyStatementReady})
+ * and both register at most one {@code afterCommit} nudge per already-{@code REQUIRES_NEW}
+ * transaction -- neither loops, and nothing in this codebase bulk-enqueues notifications the way
+ * {@code AdminLearningQueueService.retryAll} bulk-requeues learning events. The pool cannot
+ * currently be saturated by a single transaction's own registrations the way the learning queue's
+ * was. The fix costs nothing on the normal path -- {@code REQUIRES_NEW} behaves identically to
+ * {@code REQUIRED} when there is no ambient transaction, which is what every dedicated {@code
+ * notification-queue-*} thread has -- and keeps this worker from silently reopening the identical
+ * defect the day a bulk notification path is added.
  */
 @Component
 public class NotificationDispatcher {
@@ -85,11 +118,12 @@ public class NotificationDispatcher {
 
     public NotificationDispatcher(NotificationRepository repository,
             NotificationLogRepository logRepository, List<NotificationChannelProvider> providerList,
-            WorkerObservability observability, TransactionTemplate transactionTemplate) {
+            WorkerObservability observability, PlatformTransactionManager transactionManager) {
         this.repository = repository;
         this.logRepository = logRepository;
         this.observability = observability;
-        this.transactionTemplate = transactionTemplate;
+        this.transactionTemplate = new TransactionTemplate(transactionManager);
+        this.transactionTemplate.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
         for (NotificationChannelProvider provider : providerList) {
             this.providers.put(provider.channel(), provider);
         }
