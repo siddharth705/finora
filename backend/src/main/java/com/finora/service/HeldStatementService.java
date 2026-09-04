@@ -210,6 +210,81 @@ public class HeldStatementService {
                 .toList();
     }
 
+    // --- assignment (brief Phase 6, pulled forward by the owner's decision, 2026-09-04) -----------
+
+    /**
+     * Assigns the hold to an engineer -- {@code engineerId} null means "Assign to Me", the common
+     * case, which must not require typing an id.
+     *
+     * <p>The entity's own {@link HeldStatement#assign} already allows reassigning an unresolved
+     * hold (that guard and its test predate this task); this is the service, endpoint and audit
+     * around it, not a new state-machine rule.
+     */
+    @Transactional
+    public HeldStatementDto assign(UUID actingAdminId, String heldId, UUID engineerId) {
+        HeldStatement held = require(heldId);
+        refuseIfResolved(held, "assigned");
+
+        HeldStatement.Status from = held.getStatus();
+        UUID assignee = engineerId != null ? engineerId : actingAdminId;
+        held.assign(assignee, Instant.now());
+        repository.save(held);
+
+        eventRepository.save(new HeldStatementEvent(held.getId(), actingAdminId, "ASSIGNED",
+                from.name(), held.getStatus().name(), null));
+        auditService.record(actingAdminId, "TRUST_REVIEW_ASSIGNED", "HeldStatement", held.getId(),
+                Map.of("actorId", actingAdminId.toString(),
+                        "subjectUserId", held.getUserId().toString(),
+                        "heldId", held.getHeldId(),
+                        "assignedTo", assignee.toString()));
+        return HeldStatementDto.from(held);
+    }
+
+    /** Moves an assigned hold into active investigation. Reaching this from HELD directly (never
+     *  assigned) is refused by the same {@code refuseIfResolved} guard every transition here
+     *  shares -- the entity's own state machine, not re-derived. */
+    @Transactional
+    public HeldStatementDto startInvestigation(UUID actingAdminId, String heldId) {
+        HeldStatement held = require(heldId);
+        refuseIfResolved(held, "moved back into investigation");
+
+        HeldStatement.Status from = held.getStatus();
+        held.startInvestigation();
+        repository.save(held);
+
+        eventRepository.save(new HeldStatementEvent(held.getId(), actingAdminId, "INVESTIGATING",
+                from.name(), held.getStatus().name(), null));
+        auditService.record(actingAdminId, "TRUST_REVIEW_INVESTIGATION_STARTED", "HeldStatement",
+                held.getId(), Map.of("actorId", actingAdminId.toString(),
+                        "subjectUserId", held.getUserId().toString(),
+                        "heldId", held.getHeldId()));
+        return HeldStatementDto.from(held);
+    }
+
+    /**
+     * Replaces the engineer's write-up wholesale, same as {@link HeldStatement#addNotes} itself
+     * documents -- the history of what it said before lives in the event this writes, not in a
+     * second notes column.
+     *
+     * <p>Deliberately not guarded by {@code refuseIfResolved}: the entity's own {@code addNotes}
+     * carries no such guard, and a closing note explaining the final reasoning after a decision is
+     * a legitimate thing to record, not a state-machine violation to prevent.
+     */
+    @Transactional
+    public HeldStatementDto addNotes(UUID actingAdminId, String heldId, String notes) {
+        HeldStatement held = require(heldId);
+        held.addNotes(notes);
+        repository.save(held);
+
+        eventRepository.save(new HeldStatementEvent(held.getId(), actingAdminId, "NOTES_UPDATED",
+                null, null, notes));
+        auditService.record(actingAdminId, "TRUST_REVIEW_NOTES_UPDATED", "HeldStatement", held.getId(),
+                Map.of("actorId", actingAdminId.toString(),
+                        "subjectUserId", held.getUserId().toString(),
+                        "heldId", held.getHeldId()));
+        return HeldStatementDto.from(held);
+    }
+
     /**
      * Releases the hold: the staged rows may now reach the user's confirm step.
      *

@@ -101,6 +101,35 @@ public class AdminHeldStatementController {
                 .body(file.content());
     }
 
+    /** "Assign to Me" is the common case and must not require typing an id: an absent or blank
+     *  {@code engineerId} defaults to the calling admin. Reassigning an unresolved hold is allowed;
+     *  a resolved one is a 409 naming the state. */
+    @PostMapping("/{heldId}/assign")
+    public ApiResponse<HeldStatementDto> assign(@PathVariable String heldId,
+                                                @RequestBody(required = false) Map<String, String> body) {
+        String engineerIdRaw = body == null ? null : body.get("engineerId");
+        UUID engineerId = engineerIdRaw == null || engineerIdRaw.isBlank()
+                ? null : UUID.fromString(engineerIdRaw);
+        return ApiResponse.ok(heldStatementService.assign(currentUser.id(), heldId, engineerId),
+                "Assigned");
+    }
+
+    @PostMapping("/{heldId}/investigate")
+    public ApiResponse<HeldStatementDto> investigate(@PathVariable String heldId) {
+        return ApiResponse.ok(heldStatementService.startInvestigation(currentUser.id(), heldId),
+                "Investigation started");
+    }
+
+    /** Replaces the engineer's write-up wholesale; the history of what it said before lives in the
+     *  event this writes, not in a second notes column. */
+    @PostMapping("/{heldId}/notes")
+    public ApiResponse<HeldStatementDto> notes(@PathVariable String heldId,
+                                               @RequestBody(required = false) Map<String, String> body) {
+        String notes = body == null ? null : body.get("notes");
+        return ApiResponse.ok(heldStatementService.addNotes(currentUser.id(), heldId, notes),
+                "Notes saved");
+    }
+
     /** Releases the hold: the staged rows reach the user's confirm step, and the user is told the
      *  statement is ready -- which is the promise the held-state copy already made them. 409 if
      *  the hold was already resolved, naming the state. */
