@@ -11,6 +11,8 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Duration;
@@ -49,6 +51,24 @@ import java.util.UUID;
  * because Spring does not proxy self-invocation — the annotations would be silently ignored and
  * everything would run in one transaction, which is precisely the bug. Explicit boundaries also
  * make the three-phase structure visible to the next reader instead of implied.
+ *
+ * <p><b>Own {@code PROPAGATION_REQUIRES_NEW} template, not the shared {@code REQUIRED} one from
+ * {@code BackgroundWorkConfig}.</b> Production incident, 2026-09-03: {@link #nudge} runs
+ * {@code @Async} on a two-thread pool with {@code CallerRunsPolicy}, and it is invoked from an
+ * {@code afterCommit} synchronization on the very transaction a confirmed import just ran in. A
+ * large enough burst of learning events (one {@code afterCommit} registration per event) saturates
+ * that tiny pool, and {@code CallerRunsPolicy} then runs {@code nudge()} <em>synchronously on the
+ * committing thread</em> — still inside {@code afterCommit()}, before Spring's
+ * {@code cleanupAfterCompletion()} has unbound that transaction's resources. A {@code REQUIRED}
+ * template sees those still-bound-but-already-committed resources and "joins" them instead of
+ * starting a real transaction: {@code repository.save(...)} calls silently never flush (nothing
+ * will ever commit that phantom participation again), and {@code ensurePairExists}'s native
+ * {@code @Modifying} query fails loudly with {@code TransactionRequiredException}. Silent no-op and
+ * loud exception are the same bug wearing two faces. {@code REQUIRES_NEW} closes both: it always
+ * suspends whatever is on the thread — real or stale — and opens a genuinely fresh transaction, so
+ * this worker is a clean transaction regardless of what thread or synchronization callback
+ * {@link #nudge} happens to run on. See {@code MerchantLearningNudgeIT
+ * #applyingInsideAfterCommitOnTheSameThreadStillSucceeds}, which reproduces the exact failure.
  */
 @Component
 public class MerchantLearningEventWorker {
@@ -97,11 +117,12 @@ public class MerchantLearningEventWorker {
 
     public MerchantLearningEventWorker(MerchantLearningEventRepository repository,
                                         MerchantLearningService learningService,
-                                        TransactionTemplate transactionTemplate,
+                                        PlatformTransactionManager transactionManager,
                                         WorkerObservability observability) {
         this.repository = repository;
         this.learningService = learningService;
-        this.transactionTemplate = transactionTemplate;
+        this.transactionTemplate = new TransactionTemplate(transactionManager);
+        this.transactionTemplate.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
         this.observability = observability;
 
         // Queue depth is a level, not an event, so it is a gauge polled by the registry rather

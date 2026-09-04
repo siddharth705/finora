@@ -12,6 +12,8 @@ import com.finora.repository.UserRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.test.context.TestPropertySource;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.ArrayList;
@@ -140,6 +142,53 @@ class MerchantLearningNudgeIT extends AbstractIntegrationTest {
         assertThat(everyLearningAppliedWithin(TIMEOUT, savedUser.getId(), backlog))
                 .as("one nudge should drain past the first batch of %d", MerchantLearningEventWorker.BATCH_SIZE)
                 .isTrue();
+    }
+
+    /**
+     * Reproduces a real production incident (Sentry, 2026-09-03): a burst of {@code afterCommit}
+     * nudges from one large import saturated {@code learningQueueExecutor}'s tiny pool+queue,
+     * tripping its {@code CallerRunsPolicy} — which ran {@code nudge()} <em>synchronously on the
+     * request thread</em>, still inside {@code afterCommit()}, before Spring's
+     * {@code cleanupAfterCompletion()} had unbound the just-committed transaction's resources from
+     * that thread. {@code ensurePairExists}'s native {@code @Modifying} query then executed against
+     * a session Hibernate no longer considered transactional, throwing
+     * {@code TransactionRequiredException: Executing an update/delete query} — the user's
+     * categorisation silently failed to apply.
+     *
+     * <p>Calling {@code drainOnce()} directly from an {@code afterCommit} callback registered on
+     * this test's own committing transaction reproduces that same-thread, resources-still-bound
+     * moment deterministically, without depending on actually saturating the executor.
+     */
+    @Test
+    void applyingInsideAfterCommitOnTheSameThreadStillSucceeds() {
+        User savedUser = userRepository.save(newUser());
+        Merchant savedMerchant = merchantRepository.save(newMerchant(savedUser));
+        Category savedCategory = categoryRepository.save(newCategory(savedUser));
+        eventRepository.save(com.finora.entity.MerchantLearningEvent.pending(
+                savedUser.getId(), savedMerchant.getId(), savedCategory.getId(), null, null));
+
+        transactionTemplate.executeWithoutResult(status ->
+                TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                    @Override
+                    public void afterCommit() {
+                        // Simulates the CallerRunsPolicy fallback: the async executor was
+                        // saturated, so Spring ran the nudge on THIS thread instead of a dedicated
+                        // learning-queue-* one.
+                        worker.drainOnce();
+                    }
+                }));
+
+        if (learningRepository.findByUserIdAndMerchantId(savedUser.getId(), savedMerchant.getId()).isEmpty()) {
+            eventRepository.findAll().stream()
+                    .filter(e -> e.getMerchantId().equals(savedMerchant.getId()))
+                    .findFirst()
+                    .ifPresent(e -> { throw new AssertionError("apply failed: status=" + e.getStatus()
+                            + " lastError=" + e.getLastError() + " attemptCount=" + e.getAttemptCount()); });
+        }
+        assertThat(learningRepository.findByUserIdAndMerchantId(savedUser.getId(), savedMerchant.getId()))
+                .as("apply must succeed even when it runs synchronously inside afterCommit -- the "
+                        + "CallerRunsPolicy fallback path a saturated executor takes in production")
+                .isNotEmpty();
     }
 
     /** True once the user has {@code expected} learning rows, or false if the budget runs out. */
