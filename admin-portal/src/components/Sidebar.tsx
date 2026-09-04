@@ -3,7 +3,7 @@ import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, Users, ShieldCheck, ScrollText, HeartPulse, LogOut, Landmark, Settings,
   ListFilter, Store, FileCode, Sparkles, GitMerge, BarChart3, Stethoscope, FileSearch, ListRestart , BadgeCheck, Fingerprint, Route,
-  CreditCard, Gift, Plug, Waypoints, Lightbulb, ListOrdered, ChevronDown, ChevronRight, Bell, Clock } from 'lucide-react';
+  CreditCard, Gift, Plug, Waypoints, Lightbulb, ListOrdered, ChevronDown, ChevronRight, Bell, Clock, ShieldAlert } from 'lucide-react';
 import { useAdminAuth } from '../context/AdminAuthContext';
 import { BrandMark } from './BrandMark';
 import { initials } from '../lib/initials';
@@ -64,6 +64,7 @@ const GROUPS = [
       { to: '/layout-intelligence', label: 'Layout Intelligence', icon: Fingerprint, end: false, permission: 'PLATFORM_DIAGNOSTICS_VIEW' },
       { to: '/layout-studio', label: 'Layout Studio', icon: FileSearch, end: false, permission: 'PLATFORM_DIAGNOSTICS_VIEW' },
       { to: '/held-imports', label: 'Held Imports', icon: Clock, end: false, permission: 'IMPORT_TRIAGE_MANAGE' },
+      { to: '/held-statements', label: 'Held Statements', icon: ShieldAlert, end: false, permission: 'TRUST_REVIEW_MANAGE' },
       { to: '/import-trace', label: 'Import Trace', icon: Route, end: false, permission: 'PLATFORM_DIAGNOSTICS_VIEW' },
       { to: '/import-row-trace', label: 'Import Row Trace', icon: ListOrdered, end: false, permission: 'PLATFORM_DIAGNOSTICS_VIEW' },
       { to: '/settings', label: 'Settings', icon: Settings, end: false, permission: 'SYSTEM_SETTINGS' },

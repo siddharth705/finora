@@ -1,9 +1,11 @@
 import { api, rawApi, type ApiEnvelope } from './client';
+import { downloadBlob } from '../lib/download';
 import type {
 
   AccountDto, ActivationFunnelDto, ActivityTrendPointDto, AdminReferralSummaryDto, AdminUpdateUserRequest, AuditLogDto, BankDto, CategoryConfidencePoint,
   CoverageDto,
   HeldImportRow, HeldImportDetail, HeldImportSummary,
+  HeldStatementRow, HeldStatementQuery, HeldStatementDetail,
   CreateAccountRequest, CreateBankRequest, CreateMerchantTemplateRequest, CreateRelationshipRequest,
   CreateRuleRequest, CreateUserRequest, FeatureFlagDto, GmailMerchantParserStatDto, LearningGrowthPoint, LearningPlatformStatsDto, LearningSummaryDto,
   LearningTimelineEntry,
@@ -39,6 +41,24 @@ import type {
 // account under one email and one mobile number, so login and password reset have to say which
 // one they mean. Not an authorization signal -- what an account may do is decided by its roles.
 const PORTAL_SCOPE = 'ADMIN';
+
+/**
+ * Re-reads a blob-typed error response as the JSON envelope it actually is, so the message
+ * survives. Ported from frontend/src/api/endpoints.ts's identical helper -- responseType: 'blob'
+ * applies to error responses too, so on a 4xx/5xx `error.response.data` is a Blob rather than the
+ * parsed envelope, and client.ts's own interceptor finds no `.message` on it to surface.
+ */
+async function withBlobErrorMessage(err: unknown): Promise<unknown> {
+  const response = (err as { response?: { data?: unknown } })?.response;
+  if (!(response?.data instanceof Blob)) return err;
+  try {
+    const parsed = JSON.parse(await response.data.text());
+    response.data = { message: parsed?.message, errorCode: parsed?.errorCode };
+  } catch {
+    response.data = { message: 'The download failed and the server did not explain why.' };
+  }
+  return err;
+}
 
 
 // Auth reuses the exact same /auth/* endpoints the user app calls -- there is only one backend,
@@ -361,6 +381,38 @@ export const adminHeldImportApi = {
     api.post<{ reprocessed: number }>('/admin/held-imports/reprocess-all').then((r) => r.data),
   resolve: (jobId: string, reason: string) =>
     api.post<HeldImportRow>(`/admin/held-imports/${jobId}/resolve`, { reason }).then((r) => r.data),
+};
+
+/** The trust-review queue -- statements the pipeline held back because the extraction's own
+ *  evidence contradicted it, not because parsing failed. Every filter is optional; the server
+ *  narrows within the open queue and never returns a resolved hold regardless of which filters
+ *  are passed. */
+export const adminHeldStatementApi = {
+  list: (params: HeldStatementQuery) =>
+    api.get<PagedResponse<HeldStatementRow>>('/admin/held-statements', { params }).then((r) => r.data),
+  get: (heldId: string) =>
+    api.get<HeldStatementDetail>(`/admin/held-statements/${heldId}`).then((r) => r.data),
+  approve: (heldId: string, note?: string) =>
+    api.post<HeldStatementRow>(`/admin/held-statements/${heldId}/approve`, { note }).then((r) => r.data),
+  reject: (heldId: string, reason?: string) =>
+    api.post<HeldStatementRow>(`/admin/held-statements/${heldId}/reject`, { reason }).then((r) => r.data),
+  assign: (heldId: string, engineerId?: string) =>
+    api.post<HeldStatementRow>(`/admin/held-statements/${heldId}/assign`, { engineerId }).then((r) => r.data),
+  investigate: (heldId: string) =>
+    api.post<HeldStatementRow>(`/admin/held-statements/${heldId}/investigate`).then((r) => r.data),
+  notes: (heldId: string, notes: string) =>
+    api.post<HeldStatementRow>(`/admin/held-statements/${heldId}/notes`, { notes }).then((r) => r.data),
+  // A plain <a href> can't carry the Bearer token, so this goes through the same authenticated
+  // axios instance as everything else and triggers the browser download client-side instead --
+  // same pattern as the user frontend's statementImportsApi.downloadFile.
+  download: async (heldId: string) => {
+    try {
+      const res = await api.get(`/admin/held-statements/${heldId}/document`, { responseType: 'blob' });
+      downloadBlob(res.data as Blob, `${heldId}.pdf`);
+    } catch (err) {
+      throw await withBlobErrorMessage(err);
+    }
+  },
 };
 
 /** The Merchant Review Center (WI4). Listing crosses users; every action is scoped to the owner,
