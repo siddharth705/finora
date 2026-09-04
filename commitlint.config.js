@@ -19,6 +19,11 @@ module.exports = {
       'backend', 'frontend', 'admin-portal', 'web', 'mobile', 'mobile-api', 'shared',
       'transactions', 'accounts', 'budgets', 'goals', 'imports', 'analytics',
       'reports', 'rules', 'settings', 'users', 'auth', 'security',
+      // In-product help requests and product feedback (com.finora.support, and the user-facing
+      // and admin screens over it). Its own scope rather than mapping onto 'backend'/'frontend'
+      // because the feature is deliberately split across both plus 'db' and 'admin-portal', so
+      // without it no single scope groups the work and `git log --grep` cannot find it.
+      'support',
       'db', 'infra', 'ci', 'docs', 'deps'
     ]],
     'body-max-line-length': [0],
