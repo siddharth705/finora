@@ -706,7 +706,14 @@ export const supportApi = {
     if (!(await Sharing.isAvailableAsync())) {
       throw new Error('Sharing is not available on this device.');
     }
-    const res = await api.get<ArrayBuffer>(`/support/tickets/${ticketId}/attachments/${attachmentId}`, { responseType: 'arraybuffer' });
+    let res;
+    try {
+      res = await api.get<ArrayBuffer>(`/support/tickets/${ticketId}/attachments/${attachmentId}`, { responseType: 'arraybuffer' });
+    } catch (err) {
+      // Same fix as statementImportsApi.downloadFile -- see withArrayBufferErrorMessage's own doc
+      // comment above for why responseType: 'arraybuffer' loses the server's real error message.
+      throw await withArrayBufferErrorMessage(err);
+    }
     const file = new File(Paths.cache, filename);
     if (file.exists) file.delete();
     file.create();
