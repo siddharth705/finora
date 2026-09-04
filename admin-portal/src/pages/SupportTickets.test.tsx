@@ -99,4 +99,21 @@ describe('SupportTickets', () => {
       expect.objectContaining({ status: 'RESOLVED', page: 0 })
     );
   });
+
+  it('searches only once Apply is pressed, not on every keystroke, and sends the trimmed term', async () => {
+    mockAuth(['SUPPORT_MANAGE']);
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText('SUP-000042');
+    const callsBeforeTyping = vi.mocked(adminSupportTicketApi.list).mock.calls.length;
+
+    await user.type(screen.getByPlaceholderText(/search ticket number or subject/i), '  stuck import  ');
+    expect(adminSupportTicketApi.list).toHaveBeenCalledTimes(callsBeforeTyping);
+
+    await user.click(screen.getByRole('button', { name: 'Search' }));
+
+    expect(adminSupportTicketApi.list).toHaveBeenLastCalledWith(
+      expect.objectContaining({ q: 'stuck import', page: 0 })
+    );
+  });
 });

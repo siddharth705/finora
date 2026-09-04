@@ -1369,12 +1369,14 @@ export interface SupportTicketRow {
   updatedAt: string;
 }
 
-/** Every filter is optional -- same shape as HeldStatementQuery. */
+/** Every filter is optional -- same shape as HeldStatementQuery. `q` searches ticket number and
+ *  subject -- see the backend's SupportTicketRepository.findForAdmin for exactly what it matches. */
 export interface SupportTicketQuery {
   page?: number;
   size?: number;
   status?: SupportTicketStatus;
   category?: SupportTicketCategory;
+  q?: string;
 }
 
 export interface SupportTicketAttachment {

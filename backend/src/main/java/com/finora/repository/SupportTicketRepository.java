@@ -29,23 +29,36 @@ public interface SupportTicketRepository extends JpaRepository<SupportTicket, UU
     Optional<SupportTicket> findByTicketNumber(String ticketNumber);
 
     /**
-     * The admin queue, optionally filtered by status and/or category, oldest first — matching
-     * {@code idx_support_tickets_open} and the same "longest-waiting user is the one to look at"
-     * ordering {@code AdminHeldImportService.list} and {@code AdminLearningQueueService} use.
+     * The admin queue, optionally filtered by status and/or category and/or a free-text search,
+     * oldest first — matching {@code idx_support_tickets_open} and the same "longest-waiting user
+     * is the one to look at" ordering {@code AdminHeldImportService.list} and
+     * {@code AdminLearningQueueService} use.
      *
-     * <p>{@code :status IS NULL} / {@code :category IS NULL} rather than two overloaded finder
-     * methods (or four, to cover both filters independently): one query serves "no filter", "status
-     * only", "category only" and "both", and Spring Data parameter binding treats a null argument
-     * as null in the generated JPQL, not as a literal to compare against.
+     * <p>{@code :status IS NULL} / {@code :category IS NULL} / {@code :q IS NULL} rather than
+     * separate overloaded finder methods for every combination: one query serves "no filter",
+     * any single filter, and any combination, and Spring Data parameter binding treats a null
+     * argument as null in the generated JPQL, not as a literal to compare against.
+     *
+     * <p>{@code q} searches {@code ticketNumber} and {@code subject} — the two things a support
+     * agent actually has in hand when a customer references a ticket ("what's SUP-000042 about"
+     * or "the one about the stuck import"), not the description body or any user PII. Same
+     * {@code LOWER(...) LIKE ... ESCAPE '\\'} shape as {@code UserRepository.search}, including
+     * the {@code CAST(:q AS string)} PGJDBC workaround that query's own doc comment explains, and
+     * the same reason for the {@code ESCAPE} clause: without it, a literal {@code %} or {@code _}
+     * typed into the search box would be read as a SQL wildcard instead of the character it is.
      */
     @Query("""
             SELECT t FROM SupportTicket t
              WHERE (:status IS NULL OR t.status = :status)
                AND (:category IS NULL OR t.category = :category)
+               AND (:q IS NULL
+                    OR LOWER(t.ticketNumber) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%')) ESCAPE '\\'
+                    OR LOWER(t.subject) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%')) ESCAPE '\\')
              ORDER BY t.createdAt ASC
             """)
     Page<SupportTicket> findForAdmin(@Param("status") SupportTicket.Status status,
                                      @Param("category") SupportTicket.Category category,
+                                     @Param("q") String q,
                                      Pageable pageable);
 
     /**

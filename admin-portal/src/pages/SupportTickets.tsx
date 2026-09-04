@@ -46,16 +46,27 @@ function SupportTicketsContent() {
   const [page, setPage] = useState(0);
   const [status, setStatus] = useState<SupportTicketStatus | ''>('');
   const [category, setCategory] = useState<SupportTicketCategory | ''>('');
+  // Staged then applied, same as HeldStatements.tsx's own search-type fields -- a keystroke
+  // should not fire a new query on every character, unlike the select filters above, which apply
+  // immediately.
+  const [q, setQ] = useState('');
+  const [qInput, setQInput] = useState('');
 
   const list = useQuery({
-    queryKey: ['support-tickets-list', page, status, category],
+    queryKey: ['support-tickets-list', page, status, category, q],
     queryFn: () => adminSupportTicketApi.list({
       page,
       size: PAGE_SIZE,
       status: status || undefined,
       category: category || undefined,
+      q: q || undefined,
     }),
   });
+
+  function applyFilters() {
+    setQ(qInput.trim());
+    setPage(0);
+  }
 
   const columns: DataTableColumn<SupportTicketRow>[] = [
     {
@@ -97,6 +108,10 @@ function SupportTicketsContent() {
       <FilterBar
         fields={[
           {
+            type: 'search', key: 'q', value: qInput, onChange: setQInput,
+            placeholder: 'Search ticket number or subject…',
+          },
+          {
             type: 'select', key: 'status', value: status,
             onChange: (v) => { setStatus(v as SupportTicketStatus | ''); setPage(0); },
             placeholder: 'All statuses',
@@ -111,6 +126,8 @@ function SupportTicketsContent() {
             options: CATEGORY_OPTIONS,
           },
         ]}
+        onApply={applyFilters}
+        applyLabel="Search"
       />
 
       <DataTable

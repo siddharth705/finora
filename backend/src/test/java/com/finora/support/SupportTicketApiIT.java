@@ -120,6 +120,34 @@ class SupportTicketApiIT extends AbstractIntegrationTest {
         assertThat(inNonMatchingPage).isFalse();
     }
 
+    /**
+     * Same reasoning and same {@code ticketAppearsIn} helper as the status/category test
+     * immediately above -- proving the {@code q} LIKE binding actually discriminates, not merely
+     * that a request carrying it returns 200. Searches by ticket number (the identifier
+     * SupportTicketDto's own doc calls "the reference an operator quotes") and by a subject
+     * substring, both case-insensitively, and confirms an unrelated term excludes the ticket.
+     */
+    @Test
+    void adminTicketQueue_searchMatchesTicketNumberAndSubject_caseInsensitively() throws Exception {
+        User owner = createUser("USER");
+        User admin = createUser("ADMIN");
+        UUID ticketId = createTicket(owner, "Statement upload keeps timing out");
+        String ticketNumber = ticketNumberOf(admin, ticketId);
+
+        assertThat(ticketAppearsIn(admin, "q=" + ticketNumber.toLowerCase(), ticketId))
+                .as("exact ticket number, lowercased").isTrue();
+        assertThat(ticketAppearsIn(admin, "q=TIMING+OUT", ticketId))
+                .as("subject substring, uppercased").isTrue();
+        assertThat(ticketAppearsIn(admin, "q=nothing+to+do+with+this+ticket", ticketId))
+                .as("an unrelated term must exclude it, not match everything").isFalse();
+    }
+
+    private String ticketNumberOf(User admin, UUID ticketId) throws Exception {
+        ResponseEntity<String> response = restTemplate.exchange("/api/v1/support/tickets/" + ticketId,
+                HttpMethod.GET, new HttpEntity<>(bearerFor(admin)), String.class);
+        return mapper.readTree(response.getBody()).get("data").get("ticketNumber").asText();
+    }
+
     private boolean ticketAppearsIn(User admin, String query, UUID ticketId) throws Exception {
         ResponseEntity<String> response = restTemplate.exchange(
                 "/api/v1/admin/support/tickets?" + query + "&size=500", HttpMethod.GET,
