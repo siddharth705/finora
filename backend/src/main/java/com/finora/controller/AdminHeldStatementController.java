@@ -3,6 +3,7 @@ package com.finora.controller;
 import com.finora.dto.ApiResponse;
 import com.finora.dto.HeldStatementDetailDto;
 import com.finora.dto.HeldStatementDto;
+import com.finora.dto.HeldStatementRerunResultDto;
 import com.finora.dto.PagedResponse;
 import com.finora.entity.HeldStatement;
 import com.finora.security.CurrentUser;
@@ -128,6 +129,25 @@ public class AdminHeldStatementController {
         String notes = body == null ? null : body.get("notes");
         return ApiResponse.ok(heldStatementService.addNotes(currentUser.id(), heldId, notes),
                 "Notes saved");
+    }
+
+    /** Records what an engineer found and where the fix landed. Replaces both fields wholesale. */
+    @PostMapping("/{heldId}/findings")
+    public ApiResponse<HeldStatementDto> findings(@PathVariable String heldId,
+                                                  @RequestBody(required = false) Map<String, String> body) {
+        String rootCause = body == null ? null : body.get("rootCause");
+        String fixReference = body == null ? null : body.get("fixReference");
+        return ApiResponse.ok(
+                heldStatementService.recordFindings(currentUser.id(), heldId, rootCause, fixReference),
+                "Findings saved");
+    }
+
+    /** Re-parses this hold's original bytes with the parser build running right now and reports
+     *  whether it would still be flagged. Writes nothing to the staged rows -- only an event, and
+     *  (when it now clears) the status transition to READY_FOR_IMPORT. */
+    @PostMapping("/{heldId}/rerun-parser")
+    public ApiResponse<HeldStatementRerunResultDto> rerunParser(@PathVariable String heldId) {
+        return ApiResponse.ok(heldStatementService.rerunParser(currentUser.id(), heldId));
     }
 
     /** Releases the hold: the staged rows reach the user's confirm step, and the user is told the
