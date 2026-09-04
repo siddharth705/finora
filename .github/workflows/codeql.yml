@@ -17,7 +17,16 @@ name: CodeQL
 #     (backend PR-path CI cut from ~7m to ~4m across #775/#777/#784/#786). Weekly-only for Java
 #     gets the same findings with none of that cost; PR-time Java scanning stays a deliberate
 #     later decision, made after seeing what the weekly scans actually surface -- not a default.
+#
+# `push: branches: [main]` matters independently of both of those trade-offs, for both languages:
+# without it, GitHub has no baseline scan of the default branch to diff a PR's results against,
+# and the Security tab has nothing to show for `main` at all -- flagged as a real warning
+# ("Please specify an on.push hook...") the first time this workflow actually ran. Unlike the PR
+# path, `push` to main only fires on merge, not on every PR update, so adding Java here doesn't
+# reopen the PR-time cost question above -- it's the same event frequency as a would-be deploy.
 on:
+  push:
+    branches: [main]
   pull_request:
     branches: [main]
   schedule:
@@ -67,8 +76,10 @@ jobs:
 
   java:
     name: CodeQL (Java)
-    # Weekly/on-demand only -- see the file-level comment on why Java stays off the PR path.
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    # Weekly, on-demand, or on merge to main -- never on the PR path itself. See the file-level
+    # comment on why PR-time Java scanning stays deliberately excluded, and why `push` is exempt
+    # from that reasoning (merge frequency, not PR-update frequency).
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
