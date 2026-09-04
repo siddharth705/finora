@@ -193,13 +193,18 @@ public class PdfPreviewGenerator {
         List<PositionedText> positioned = acquired.runs();
         // A count, never the text. Lets ExtractionCheck tell "the pages carry no text" from
         // "we read plenty and could not make a table of it" -- see DocumentContext.
-        if (ctx != null) {
-            ctx.recordExtractedRuns(positioned.size());
-            // Provenance, not a judgement -- see DocumentContext.recordTextSource's own doc
-            // comment. Recorded here because this is the one place the AcquiredDocument itself
-            // (not just its runs) is ever in scope.
-            ctx.recordTextSource(acquired.source());
-        }
+        //
+        // CodeQL (java/useless-null-check), 2026-09-04: this used to be guarded by `if (ctx !=
+        // null)`, which was always true -- ctx comes straight from `new DocumentContext(...)`
+        // above, with no reassignment in between. The guard's own presence is what misled a
+        // second CodeQL query (java/dereferenced-value-may-be-null) into flagging ctx.textSource()
+        // much further down this method as inconsistent with it. Removed rather than kept: every
+        // other ctx use in this method (locateAll, extract, ...) already assumes it's non-null.
+        ctx.recordExtractedRuns(positioned.size());
+        // Provenance, not a judgement -- see DocumentContext.recordTextSource's own doc comment.
+        // Recorded here because this is the one place the AcquiredDocument itself (not just its
+        // runs) is ever in scope.
+        ctx.recordTextSource(acquired.source());
         PdfTableLocator.LocatedDocument doc = tableLocator.locateAll(positioned, ctx);
         // Read from the positioned runs rather than from the located table: the summary grid has
         // its own column layout, so bucketing it against the TRANSACTION table's anchors shreds it
