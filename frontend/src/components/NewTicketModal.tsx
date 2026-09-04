@@ -117,14 +117,22 @@ export function NewTicketModal({ onClose, onCreated }: { onClose: () => void; on
               />
             </div>
             <div>
-              <label htmlFor="new-ticket-file" className="block text-[11px] uppercase text-muted mb-1">
+              {/* One <label htmlFor> for this input, not two -- a second <label for="new-ticket-file">
+                  here previously (the caption below doubling as one) left the input with two
+                  associated labels, which most screen readers only read the first of. The caption
+                  is a <p>; the dropzone below is the input's only real label. */}
+              <p className="text-[11px] uppercase text-muted mb-1">
                 Attachment <span className="normal-case text-muted">(optional — PDF, PNG, JPEG or text, up to 5 MB)</span>
-              </label>
+              </p>
               <label
                 htmlFor="new-ticket-file"
                 className="flex items-center gap-2 border border-dashed border-border rounded-lg px-3 py-2.5 text-xs text-muted cursor-pointer hover:border-primary/40 hover:text-ink"
               >
                 <Paperclip size={14} className="flex-shrink-0" />
+                {/* "Attachment: " is visually redundant with the caption above but keeps this the
+                    input's ONE label with an accessible name that still says what the field is,
+                    not just its current value. */}
+                <span className="sr-only">Attachment: </span>
                 {file ? file.name : 'Choose a file (e.g. a screenshot of the problem)'}
               </label>
               <input id="new-ticket-file" type="file" accept={ACCEPT} onChange={handleFileChange} className="hidden" />

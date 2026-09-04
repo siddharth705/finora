@@ -59,6 +59,20 @@ export default function SupportTickets() {
 
       {ticketsQuery.isLoading ? (
         <PageLoading />
+      ) : ticketsQuery.isError ? (
+        // Distinct from the empty state below on purpose: this is "the list didn't load," not
+        // "you have no tickets" -- collapsing the two would tell someone who DOES have an open
+        // ticket that they don't, on nothing more than a network blip.
+        <div className="bg-card rounded-xl2 shadow-card border border-border p-8 text-center">
+          <p className="text-sm text-danger">Couldn't load your tickets.</p>
+          <button
+            type="button"
+            onClick={() => void ticketsQuery.refetch()}
+            className="mt-2 text-xs font-medium text-primary hover:underline"
+          >
+            Try again
+          </button>
+        </div>
       ) : tickets.length === 0 ? (
         <div className="bg-card rounded-xl2 shadow-card border border-border p-8">
           <EmptyState

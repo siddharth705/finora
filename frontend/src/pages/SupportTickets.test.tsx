@@ -79,6 +79,14 @@ describe('SupportTickets', () => {
     expect(navigateSpy).toHaveBeenCalledWith('/app/support/ticket-1');
   });
 
+  it('shows a distinct error state (not the empty state) when the list fails to load', async () => {
+    vi.mocked(supportApi.list).mockRejectedValue(new Error('network down'));
+    renderPage();
+
+    expect(await screen.findByText(/couldn't load your tickets/i)).toBeInTheDocument();
+    expect(screen.queryByText(/no support tickets yet/i)).not.toBeInTheDocument();
+  });
+
   it('opens the New Ticket modal from the button', async () => {
     const user = userEvent.setup();
     vi.mocked(supportApi.list).mockResolvedValue({ content: [], page: 0, size: 25, totalElements: 0, totalPages: 0 });
