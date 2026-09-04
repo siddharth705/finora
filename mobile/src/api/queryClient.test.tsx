@@ -1,14 +1,12 @@
 import type { ReactNode } from 'react';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { QueryClient, QueryClientProvider, dehydrate, useQuery } from '@tanstack/react-query';
 import { renderHook, waitFor } from '@testing-library/react-native';
-import { PERSISTED_QUERY_KEY_PREFIXES } from './queryPersistence';
-import {
-  clearPersistedQueryCache,
-  pauseQueryPersistence,
-  queryClient,
-  startQueryPersistence,
-} from './queryClient';
+
+// Captured once via plain require (not a static `import`, to get the literal object identity
+// jest.doMock below hands back out, with no Babel ESM-interop rewrapping in between) -- pinned back
+// onto every test's freshly-reset module graph. See the beforeEach comment for why.
+const ReactModule = require('react');
+const ReactQueryModule = require('@tanstack/react-query');
+const { QueryClient, QueryClientProvider, dehydrate, useQuery } = ReactQueryModule;
 
 const PERSIST_KEY = 'finora_query_cache';
 // Mirrors queryClient.ts's own constant -- not exported from there, so asserted against a local
@@ -30,6 +28,47 @@ function seededDehydratedState(queryKey: unknown[], data: unknown) {
   seed.clear();
   return state;
 }
+
+// Required fresh per test rather than imported statically.
+//
+// queryClient.ts's persister wraps createAsyncStoragePersister's asyncThrottle in a closure built
+// once, at module load -- its nextExecutionTime cooldown is shared by every call the module ever
+// sees, module-load to module-load, not test to test. With a single shared import across this whole
+// file, one test's write left that throttle "cooling down" for up to 1000ms, which the next test's
+// own first write (several tests below assume this fires immediately) could land inside of -- and
+// waitFor's own default timeout is also exactly 1000ms, the same interval, so the two raced. Real
+// instrumentation (timestamped persistClient calls) confirmed it: under a full, loaded suite run,
+// flushes landed on a rigid ~1000ms cadence set by the PREVIOUS test's completion, not by when the
+// current test's own call fired -- deterministic in mechanism, flaky in outcome depending on how
+// close to that boundary a given run's scheduling happened to land.
+let AsyncStorage: typeof import('@react-native-async-storage/async-storage').default;
+let PERSISTED_QUERY_KEY_PREFIXES: typeof import('./queryPersistence').PERSISTED_QUERY_KEY_PREFIXES;
+let clearPersistedQueryCache: typeof import('./queryClient').clearPersistedQueryCache;
+let pauseQueryPersistence: typeof import('./queryClient').pauseQueryPersistence;
+let queryClient: typeof import('./queryClient').queryClient;
+let startQueryPersistence: typeof import('./queryClient').startQueryPersistence;
+
+beforeEach(() => {
+  jest.resetModules();
+  // 'react' and '@tanstack/react-query' are pinned back to the copies already captured above
+  // instead of being swept up in the reset too. @tanstack/react-query-persist-client's index
+  // eagerly re-exports PersistQueryClientProvider (a React component) even though queryClient.ts
+  // only ever uses its two non-React functions -- so a bare resetModules() drags a SECOND react
+  // and react-query instance in behind it. Confirmed the hard way: without this pin,
+  // QueryClientProvider's useEffect threw "Cannot read properties of null", because renderHook's
+  // react-test-renderer (bound to the ORIGINAL react) and the freshly-reloaded QueryClientProvider
+  // (bound to a new one) don't share React's hook dispatcher. jest.doMock forces every transitive
+  // require of these two, however deep, back onto the one already-loaded instance, while
+  // queryClient.ts itself and its own private dependencies -- AsyncStorage, the persister/throttle,
+  // queryPersistence -- still reload fresh.
+  jest.doMock('react', () => ReactModule);
+  jest.doMock('@tanstack/react-query', () => ReactQueryModule);
+
+  AsyncStorage = require('@react-native-async-storage/async-storage').default;
+  ({ PERSISTED_QUERY_KEY_PREFIXES } = require('./queryPersistence'));
+  ({ clearPersistedQueryCache, pauseQueryPersistence, queryClient, startQueryPersistence } =
+    require('./queryClient'));
+});
 
 afterEach(() => queryClient.clear());
 
@@ -200,13 +239,29 @@ describe('pauseQueryPersistence', () => {
     queryClient.clear();
     await clearPersistedQueryCache();
 
+    // setQueryData on a key with no existing entry fires TWO cache events synchronously, an
+    // "added" (the Query object created, no data yet) immediately followed by an "updated" (the
+    // data just set) -- the persister subscription reacts to both. The first's snapshot dehydrates
+    // to no queries (nothing has data yet) but is still a real persistClient call, and being the
+    // very first call on this test's fresh throttle it starts executing right away.
+    // createAsyncStoragePersister's own asyncThrottle then busy-waits a FULL 1000ms interval
+    // before it even rechecks whether that first call has finished when the second one (this
+    // write, carrying 42) arrives while it's still in flight -- regardless of how soon the first
+    // call actually completes (single-digit ms here). So this specific write is reliably delayed
+    // close to a full throttle interval, not the ~immediate flush every other write in this file
+    // gets; waitFor's own default timeout is exactly that same 1000ms, so the two collide. Traced
+    // with real timestamps (not assumed): call at +59ms, flush of the EMPTY snapshot at +64ms, but
+    // the 42 snapshot (called at +62ms) doesn't flush until +1065ms.
     queryClient.setQueryData(['dashboard-summary'], { currentBalance: 42 });
 
-    await waitFor(async () => {
-      const raw = await AsyncStorage.getItem(PERSIST_KEY);
-      expect(raw).not.toBeNull();
-      expect(raw).toContain('42');
-    });
+    await waitFor(
+      async () => {
+        const raw = await AsyncStorage.getItem(PERSIST_KEY);
+        expect(raw).not.toBeNull();
+        expect(raw).toContain('42');
+      },
+      { timeout: 3000 }
+    );
   });
 
   it('stops a subsequent queryClient.clear() from triggering a reactive disk write', async () => {
