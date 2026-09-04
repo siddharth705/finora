@@ -3,6 +3,7 @@ package com.finora.integrations.google;
 import com.finora.dto.ApiResponse;
 import com.finora.integrations.google.merchant.GmailReviewService;
 import com.finora.security.CurrentUser;
+import com.finora.util.LogSanitizer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -81,7 +82,7 @@ public class GoogleOAuthController {
         // The user pressed Cancel on Google's consent screen, or Google refused. Not an error
         // condition on Finora's side -- return them to where they started, with a note.
         if (error != null && !error.isBlank()) {
-            log.info("Gmail consent was not granted: {}", error);
+            log.info("Gmail consent was not granted: {}", LogSanitizer.sanitize(error));
             return redirectTo("gmail=declined");
         }
         if (code == null || code.isBlank() || state == null || state.isBlank()) {

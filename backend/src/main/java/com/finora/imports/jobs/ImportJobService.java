@@ -184,7 +184,18 @@ public class ImportJobService {
         }
         DigestInputStream digested = new DigestInputStream(file.getInputStream(), originalDigest);
         EncryptingStream encrypting = encryptionService.encryptStream(digested, file.getSize());
-        ContentAddress stored = active.store(encrypting.stream(), encrypting.length());
+        ContentAddress stored;
+        try {
+            stored = active.store(encrypting.stream(), encrypting.length());
+        } finally {
+            // CodeQL (java/input-resource-leak), 2026-09-04: encrypting.stream() is a
+            // SequenceInputStream wrapping a CipherInputStream wrapping digested wrapping
+            // file.getInputStream() -- closing the outermost stream cascades through every layer
+            // (FilterInputStream/SequenceInputStream both close() their delegates), so this one
+            // call releases the whole chain, on the success path and on whatever active.store()
+            // throws alike. Reading to EOF (which store() does) never implied closing it.
+            encrypting.stream().close();
+        }
         // Safe only once active.store() has returned: that method reads its input stream to EOF
         // (ContentAddress.copyAndAddress's transferTo), which is what guarantees every original
         // byte has already passed through digested by this point.

@@ -52,7 +52,8 @@ describe('ReconciliationMonitor', () => {
   it('shows an access-denied message when the account lacks RECONCILIATION_VIEW', () => {
     mockAuth([]);
     vi.mocked(adminReconciliationApi.platformStats).mockResolvedValue({
-      okCount: 0, duplicateCount: 0, transferCount: 0, refundCount: 0, recurringCount: 0, totalTransactions: 0,
+      okCount: 0, duplicateCount: 0, transferCount: 0, refundCount: 0, reversalCount: 0,
+      investmentTransferCount: 0, supersededCount: 0, recurringCount: 0, totalTransactions: 0,
     });
 
     renderPage();
@@ -62,17 +63,25 @@ describe('ReconciliationMonitor', () => {
 
   it('renders the platform reconciliation breakdown for an account with RECONCILIATION_VIEW', async () => {
     mockAuth(['RECONCILIATION_VIEW']);
+    // totalTransactions (985) is every status's own count summed, including the three the UI
+    // used to have no card for at all -- REVERSAL/INVESTMENT_TRANSFER/SUPERSEDED (CodeQL
+    // java/missing-case-in-switch, 2026-09-04). Deliberately not 954 (900+12+34+8): that was the
+    // exact silent-undercount this fixes.
     vi.mocked(adminReconciliationApi.platformStats).mockResolvedValue({
-      okCount: 900, duplicateCount: 12, transferCount: 34, refundCount: 8, recurringCount: 56, totalTransactions: 954,
+      okCount: 900, duplicateCount: 12, transferCount: 34, refundCount: 8, reversalCount: 5,
+      investmentTransferCount: 20, supersededCount: 6, recurringCount: 56, totalTransactions: 985,
     });
 
     renderPage();
 
-    await waitFor(() => expect(screen.getByText('954')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText('985')).toBeInTheDocument());
     expect(screen.getByText('900')).toBeInTheDocument();
     expect(screen.getByText('12')).toBeInTheDocument();
     expect(screen.getByText('34')).toBeInTheDocument();
     expect(screen.getByText('8')).toBeInTheDocument();
     expect(screen.getByText('56')).toBeInTheDocument();
+    expect(screen.getByText('5')).toBeInTheDocument();
+    expect(screen.getByText('20')).toBeInTheDocument();
+    expect(screen.getByText('6')).toBeInTheDocument();
   });
 });

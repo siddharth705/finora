@@ -142,8 +142,13 @@ public class RecurringService {
 
             if (gapRegular && amountConsistent && intervalIsRegular) {
                 group.forEach(t -> desiredRecurring.put(t.getId(), true));
-                String label = avgGap < 10 ? "Weekly" : avgGap < 20 ? "Biweekly" : avgGap < 40 ? "Monthly"
-                        : avgGap < 100 ? "Quarterly" : "Periodic";
+                // CodeQL (java/constant-comparison), 2026-09-04: intervalIsRegular already requires
+                // avgGap <= 95 to even reach this block, so `avgGap < 100` here was always true and
+                // "Periodic" could never actually be assigned -- dead code, not a label anyone ever
+                // saw. Collapsed to the 4 labels this method can actually produce; widening
+                // intervalIsRegular's own upper bound to make a 5th tier reachable is a product
+                // decision about what counts as "regular," not something this fix should invent.
+                String label = avgGap < 10 ? "Weekly" : avgGap < 20 ? "Biweekly" : avgGap < 40 ? "Monthly" : "Quarterly";
                 LocalDate lastDate = group.get(group.size() - 1).getTxnDate();
                 results.add(new RecurringDto(entry.getKey(), label, avgAmount, group.size(),
                         lastDate, lastDate.plusDays(Math.round(avgGap))));
