@@ -3,7 +3,9 @@ package com.finora.support;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.finora.AbstractIntegrationTest;
+import com.finora.entity.AuditLog;
 import com.finora.entity.User;
+import com.finora.repository.AuditLogRepository;
 import com.finora.repository.RefreshTokenRepository;
 import com.finora.security.JwtService;
 import com.finora.testsupport.TestSessions;
@@ -15,6 +17,7 @@ import org.springframework.http.*;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 
+import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -22,9 +25,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * Support tickets at the HTTP layer — what {@code SupportTicketServiceTest}'s mocks cannot prove:
  * that {@code SUPPORT_MANAGE} really gates the admin controllers through Spring Security method
- * security, and the cross-user attachment seam the plan's Phase 10 notes name explicitly — a
- * multipart upload, through persistence, to an authenticated download attempted by a *different*
- * user, expecting 404. Unit tests of each layer individually would pass while that seam leaks.
+ * security, the cross-user attachment seam the plan's Phase 10 notes name explicitly — a multipart
+ * upload, through persistence, to an authenticated download attempted by a *different* user,
+ * expecting 404 — and, since Phase 5, that each of the four audit events really lands a row through
+ * the real {@code AuditService}, not just that a mock was called with the right arguments. Unit
+ * tests of each layer individually would pass while any of these seams leaks.
  */
 class SupportTicketApiIT extends AbstractIntegrationTest {
 
@@ -32,6 +37,7 @@ class SupportTicketApiIT extends AbstractIntegrationTest {
     @Autowired private com.finora.repository.UserRepository userRepository;
     @Autowired private JwtService jwtService;
     @Autowired private RefreshTokenRepository refreshTokens;
+    @Autowired private AuditLogRepository auditLogRepository;
     private final ObjectMapper mapper = new ObjectMapper();
 
     private User createUser(String role) {
@@ -181,6 +187,33 @@ class SupportTicketApiIT extends AbstractIntegrationTest {
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
     }
 
+    @Test
+    void anAdminOpeningATicket_writesARealSupportTicketViewedRow() throws Exception {
+        User owner = createUser("USER");
+        User admin = createUser("ADMIN");
+        UUID ticketId = createTicket(owner, "Viewed by an admin");
+
+        restTemplate.exchange("/api/v1/support/tickets/" + ticketId, HttpMethod.GET,
+                new HttpEntity<>(bearerFor(admin)), String.class);
+
+        AuditLog row = onlyAuditRow(ticketId, "SUPPORT_TICKET_VIEWED");
+        assertThat(row.getUserId()).isEqualTo(owner.getId());
+        assertThat(row.getMetadata().get("actorId")).isEqualTo(admin.getId().toString());
+    }
+
+    @Test
+    void theOwnerOpeningTheirOwnTicket_writesNoViewedRow() throws Exception {
+        User owner = createUser("USER");
+        UUID ticketId = createTicket(owner, "Owner viewing their own ticket");
+
+        restTemplate.exchange("/api/v1/support/tickets/" + ticketId, HttpMethod.GET,
+                new HttpEntity<>(bearerFor(owner)), String.class);
+
+        List<AuditLog> viewedRows = auditLogRepository.findByEntityIdOrderByCreatedAtAsc(ticketId).stream()
+                .filter(row -> row.getAction().equals("SUPPORT_TICKET_VIEWED")).toList();
+        assertThat(viewedRows).isEmpty();
+    }
+
     // --- the attachment seam: upload, then a different user is refused ---------------------------
 
     private HttpEntity<MultiValueMap<String, Object>> ticketWithAttachmentRequest(User user) {
@@ -222,6 +255,31 @@ class SupportTicketApiIT extends AbstractIntegrationTest {
         ResponseEntity<byte[]> adminDownload = restTemplate.exchange(downloadPath, HttpMethod.GET,
                 new HttpEntity<>(bearerFor(createUser("ADMIN"))), byte[].class);
         assertThat(adminDownload.getStatusCode()).isEqualTo(HttpStatus.OK);
+    }
+
+    @Test
+    void anAdminDownloadingAnAttachment_writesARealAuditRow_theOwnerDownloadingItDoesNot() throws Exception {
+        User owner = createUser("USER");
+        User admin = createUser("ADMIN");
+
+        ResponseEntity<String> createResponse = restTemplate.exchange("/api/v1/support/tickets",
+                HttpMethod.POST, ticketWithAttachmentRequest(owner), String.class);
+        JsonNode data = mapper.readTree(createResponse.getBody()).get("data");
+        UUID ticketId = UUID.fromString(data.get("id").asText());
+        UUID attachmentId = UUID.fromString(data.get("attachments").get(0).get("id").asText());
+        String downloadPath = "/api/v1/support/tickets/" + ticketId + "/attachments/" + attachmentId;
+
+        restTemplate.exchange(downloadPath, HttpMethod.GET, new HttpEntity<>(bearerFor(owner)), byte[].class);
+        List<AuditLog> afterOwnerDownload = auditLogRepository.findByEntityIdOrderByCreatedAtAsc(ticketId).stream()
+                .filter(row -> row.getAction().equals("SUPPORT_TICKET_ATTACHMENT_DOWNLOADED")).toList();
+        assertThat(afterOwnerDownload).as("the owner downloading their own attachment is not audited").isEmpty();
+
+        restTemplate.exchange(downloadPath, HttpMethod.GET, new HttpEntity<>(bearerFor(admin)), byte[].class);
+        AuditLog row = onlyAuditRow(ticketId, "SUPPORT_TICKET_ATTACHMENT_DOWNLOADED");
+        assertThat(row.getUserId()).isEqualTo(owner.getId());
+        assertThat(row.getMetadata().get("actorId")).isEqualTo(admin.getId().toString());
+        assertThat(row.getMetadata().get("attachmentId")).isEqualTo(attachmentId.toString());
+        assertThat(row.getMetadata().get("filename")).isEqualTo("notes.txt");
     }
 
     // --- status transitions, over real HTTP -------------------------------------------------------
@@ -286,5 +344,125 @@ class SupportTicketApiIT extends AbstractIntegrationTest {
             if (entry.get("message").asText().equals("Import silently drops rows")) found = true;
         }
         assertThat(found).isTrue();
+    }
+
+    // --- audit (Phase 5): a real row lands, not just a mocked call ------------------------------
+
+    private AuditLog onlyAuditRow(UUID ticketId, String action) {
+        List<AuditLog> rows = auditLogRepository.findByEntityIdOrderByCreatedAtAsc(ticketId).stream()
+                .filter(row -> row.getAction().equals(action)).toList();
+        assertThat(rows).as("exactly one %s row for ticket %s", action, ticketId).hasSize(1);
+        return rows.get(0);
+    }
+
+    @Test
+    void creatingATicket_writesARealAuditRow_subjectIsTheUserThemselves() throws Exception {
+        User user = createUser("USER");
+        UUID ticketId = createTicket(user, "Audited on creation");
+
+        AuditLog row = onlyAuditRow(ticketId, "SUPPORT_TICKET_CREATED");
+        assertThat(row.getUserId()).isEqualTo(user.getId());
+        assertThat(row.getEntityType()).isEqualTo("SupportTicket");
+        assertThat(row.getMetadata().get("category")).isEqualTo("TECHNICAL_ISSUE");
+    }
+
+    @Test
+    void changingStatus_writesARealAuditRow_subjectIsTheOwner_actorIsTheAdmin() throws Exception {
+        User owner = createUser("USER");
+        User admin = createUser("ADMIN");
+        UUID ticketId = createTicket(owner, "Status audited");
+
+        restTemplate.exchange("/api/v1/admin/support/tickets/" + ticketId, HttpMethod.PATCH,
+                new HttpEntity<>("{\"status\":\"IN_PROGRESS\"}", jsonBearerFor(admin)), String.class);
+
+        AuditLog row = onlyAuditRow(ticketId, "SUPPORT_TICKET_STATUS_CHANGED");
+        assertThat(row.getUserId()).isEqualTo(owner.getId());
+        assertThat(row.getMetadata().get("actorId")).isEqualTo(admin.getId().toString());
+        assertThat(row.getMetadata().get("previousStatus")).isEqualTo("OPEN");
+        assertThat(row.getMetadata().get("newStatus")).isEqualTo("IN_PROGRESS");
+    }
+
+    @Test
+    void anIllegalStatusTransition_writesNoAuditRowAtAll() throws Exception {
+        User owner = createUser("USER");
+        User admin = createUser("ADMIN");
+        UUID ticketId = createTicket(owner, "Rejected transition, no audit");
+
+        restTemplate.exchange("/api/v1/admin/support/tickets/" + ticketId, HttpMethod.PATCH,
+                new HttpEntity<>("{\"status\":\"CLOSED\"}", jsonBearerFor(admin)), String.class);
+        restTemplate.exchange("/api/v1/admin/support/tickets/" + ticketId, HttpMethod.PATCH,
+                new HttpEntity<>("{\"status\":\"OPEN\"}", jsonBearerFor(admin)), String.class);
+
+        List<AuditLog> statusRows = auditLogRepository.findByEntityIdOrderByCreatedAtAsc(ticketId).stream()
+                .filter(row -> row.getAction().equals("SUPPORT_TICKET_STATUS_CHANGED")).toList();
+        // Exactly one: the legal OPEN -> CLOSED move. The rejected CLOSED -> OPEN attempt after it
+        // writes nothing, since the 409 is thrown before the transaction reaches the audit call.
+        assertThat(statusRows).hasSize(1);
+        assertThat(statusRows.get(0).getMetadata().get("newStatus")).isEqualTo("CLOSED");
+    }
+
+    @Test
+    void aTakeover_writesOneClaimedRow_withBothAdminIdsAndNoConflictRow() throws Exception {
+        User owner = createUser("USER");
+        User firstAdmin = createUser("ADMIN");
+        User secondAdmin = createUser("ADMIN");
+        UUID ticketId = createTicket(owner, "Takeover audited");
+
+        restTemplate.exchange("/api/v1/admin/support/tickets/" + ticketId + "/claim", HttpMethod.POST,
+                new HttpEntity<>(bearerFor(firstAdmin)), String.class);
+        restTemplate.exchange("/api/v1/admin/support/tickets/" + ticketId + "/claim", HttpMethod.POST,
+                new HttpEntity<>(bearerFor(secondAdmin)), String.class);
+
+        List<AuditLog> claimRows = auditLogRepository.findByEntityIdOrderByCreatedAtAsc(ticketId).stream()
+                .filter(row -> row.getAction().equals("SUPPORT_TICKET_CLAIMED")).toList();
+        assertThat(claimRows).hasSize(2);
+
+        AuditLog firstClaim = claimRows.get(0);
+        assertThat(firstClaim.getMetadata().get("previousAdminId")).isNull();
+        assertThat(firstClaim.getMetadata().get("newAdminId")).isEqualTo(firstAdmin.getId().toString());
+
+        AuditLog takeover = claimRows.get(1);
+        assertThat(takeover.getMetadata().get("actorId")).isEqualTo(secondAdmin.getId().toString());
+        assertThat(takeover.getMetadata().get("previousAdminId")).isEqualTo(firstAdmin.getId().toString());
+        assertThat(takeover.getMetadata().get("newAdminId")).isEqualTo(secondAdmin.getId().toString());
+    }
+
+    @Test
+    void unclaiming_writesAClaimedRow_withANullNewAdminId() throws Exception {
+        User owner = createUser("USER");
+        User admin = createUser("ADMIN");
+        UUID ticketId = createTicket(owner, "Unclaim audited");
+
+        restTemplate.exchange("/api/v1/admin/support/tickets/" + ticketId + "/claim", HttpMethod.POST,
+                new HttpEntity<>(bearerFor(admin)), String.class);
+        restTemplate.exchange("/api/v1/admin/support/tickets/" + ticketId + "/claim", HttpMethod.DELETE,
+                new HttpEntity<>(bearerFor(admin)), String.class);
+
+        List<AuditLog> claimRows = auditLogRepository.findByEntityIdOrderByCreatedAtAsc(ticketId).stream()
+                .filter(row -> row.getAction().equals("SUPPORT_TICKET_CLAIMED")).toList();
+        assertThat(claimRows).hasSize(2);
+        AuditLog unclaim = claimRows.get(1);
+        assertThat(unclaim.getMetadata().get("actorId")).isEqualTo(admin.getId().toString());
+        assertThat(unclaim.getMetadata().get("previousAdminId")).isEqualTo(admin.getId().toString());
+        assertThat(unclaim.getMetadata().get("newAdminId")).isNull();
+    }
+
+    @Test
+    void addingANote_writesARealAuditRow_withoutTheNoteBodyInTheMetadata() throws Exception {
+        User owner = createUser("USER");
+        User admin = createUser("ADMIN");
+        UUID ticketId = createTicket(owner, "Note audited");
+
+        restTemplate.exchange("/api/v1/admin/support/tickets/" + ticketId + "/notes", HttpMethod.POST,
+                new HttpEntity<>("{\"note\":\"Reproduced on Android 1.3.7, waiting on next deploy\"}",
+                        jsonBearerFor(admin)), String.class);
+
+        AuditLog row = onlyAuditRow(ticketId, "SUPPORT_TICKET_NOTE_ADDED");
+        assertThat(row.getUserId()).isEqualTo(owner.getId());
+        assertThat(row.getMetadata().get("actorId")).isEqualTo(admin.getId().toString());
+        assertThat(row.getMetadata()).doesNotContainKey("note");
+        assertThat(row.getMetadata().values())
+                .as("the note body must never appear anywhere in the audit metadata")
+                .noneMatch(value -> value != null && value.toString().contains("Android 1.3.7"));
     }
 }
