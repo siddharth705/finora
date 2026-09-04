@@ -1338,7 +1338,19 @@ public class PdfTableLocator {
                     // at the first non-identity-shaped line): an identity line buried earlier in the
                     // section's own aux text, with ordinary content after it, unambiguously belongs
                     // to THIS section, not the next one.
-                    List<String> carriedForwardIdentity = extractTrailingIdentityLines(pendingAuxiliary);
+                    //
+                    // currentSectionAccountId passed through so a RESTATEMENT of the SAME account
+                    // (the exact real shape AccountIdentityLinePdfTableLocatorTest pins: a deposit
+                    // schedule's own summary block restates its own "Account Number:" line as
+                    // trailing text before a genuinely different table) is never carried forward --
+                    // it identifies the section that is closing, not the one about to open. Found
+                    // by that test failing after this capability first shipped: it correctly stayed
+                    // with the closing section pre-TRAILING_IDENTITY_CARRIED_FORWARD (the ordinary
+                    // "sameAccountIdentityRepeated" branch above already handles a restatement
+                    // correctly on its own), and this capability's own shape-only check had no way
+                    // to tell that apart from a genuinely new identity.
+                    List<String> carriedForwardIdentity =
+                            extractTrailingIdentityLines(pendingAuxiliary, currentSectionAccountId);
                     // A different header shape, or a same-shaped header with a contradicting
                     // identity line since this section opened -- fallback signal for a new section
                     // in a document without a banner line.
@@ -2490,15 +2502,27 @@ public class PdfTableLocator {
      *  not just lines that individually match. Mutates {@code auxiliary} in place and returns the
      *  removed lines in their original order, ready to seed the NEXT section's own leading
      *  auxiliary text. Returns an empty list, unmodified, when no match is found within the
-     *  lookback window -- the common case, on every document with no such misattribution. */
-    private List<String> extractTrailingIdentityLines(List<String> auxiliary) {
+     *  lookback window -- the common case, on every document with no such misattribution.
+     *
+     *  <p>{@code closingSectionAccountId} (may be null) is the identity already established for the
+     *  section that is closing. A matched line whose OWN parsed identity ({@link #accountIdentityIn})
+     *  equals it is a RESTATEMENT of that same account, not evidence of a new one about to open --
+     *  see AccountIdentityLinePdfTableLocatorTest's own
+     *  trailingIdentityRestatement_keepsItsMetadata_doesNotStealTheNextSections for the real shape
+     *  this guards (a deposit schedule's own summary block restates its own "Account Number:" line
+     *  before a genuinely different table follows). Such a line is skipped,
+     *  not treated as the carry point -- the search continues further back for a genuinely
+     *  different identity, exactly as if this line were not identity-shaped at all. */
+    private List<String> extractTrailingIdentityLines(List<String> auxiliary, String closingSectionAccountId) {
         int searchFrom = Math.max(0, auxiliary.size() - TRAILING_IDENTITY_LOOKBACK);
         int lastIdentityIndex = -1;
         for (int i = auxiliary.size() - 1; i >= searchFrom; i--) {
-            if (looksLikeIdentityLine(auxiliary.get(i))) {
-                lastIdentityIndex = i;
-                break;
-            }
+            String line = auxiliary.get(i);
+            if (!looksLikeIdentityLine(line)) continue;
+            String parsedId = accountIdentityIn(line);
+            if (parsedId != null && parsedId.equals(closingSectionAccountId)) continue;
+            lastIdentityIndex = i;
+            break;
         }
         if (lastIdentityIndex < 0) return List.of();
         List<String> carried = new ArrayList<>(auxiliary.subList(lastIdentityIndex, auxiliary.size()));

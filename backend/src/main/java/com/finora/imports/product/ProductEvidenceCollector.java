@@ -43,14 +43,22 @@ public class ProductEvidenceCollector {
     private static final Map<ProductSignal, List<String>> VOCABULARY = new LinkedHashMap<>();
     static {
         VOCABULARY.put(ProductSignal.DATE_COLUMN, List.of("date", "dt"));
-        // "details" deliberately excluded: unlike the words below, it is ordinary English that
-        // shows up constantly in prose having nothing to do with a table column ("for details,
-        // contact your branch") -- found matching a routine TDS-apportionment disclaimer sentence
-        // in a real HDFC statement's section text, which alone disqualified FIXED_DEPOSIT and
-        // RECURRING_DEPOSIT outright (scoreOf's contradiction check has no partial credit) even
-        // though every genuine structural signal for both was present and strong.
+        // "details" kept, deliberately, even though it is ordinary English that shows up
+        // constantly in prose having nothing to do with a table column ("for details, contact
+        // your branch") -- removing it outright was tried and reverted: a real IndusInd
+        // credit-card statement's own "For details, ..." disclaimer sentence was one of several
+        // genuine corroborating CREDIT_CARD signals, and losing it dropped that document's real
+        // classification confidence below threshold (CREDIT_CARD -> UNKNOWN). The real fix for
+        // the false-positive this word caused elsewhere (a routine TDS-apportionment disclaimer
+        // wrongly disqualifying FIXED_DEPOSIT/RECURRING_DEPOSIT outright) belongs in
+        // FinancialProductClassifier.scoreOf's own contradiction check instead, which is source-
+        // aware: see its own comment on why a SECTION_TEXT-only DESCRIPTION_COLUMN match is
+        // exempted from disqualifying a hypothesis the same way a DOCUMENT_TEXT-only match
+        // already was. That fix keeps this word usable as POSITIVE evidence (Indusland) while no
+        // longer letting it alone DISQUALIFY a hypothesis (Shivani) -- the vocabulary was never
+        // the right place to solve an asymmetry between those two roles.
         VOCABULARY.put(ProductSignal.DESCRIPTION_COLUMN, List.of(
-                "narration", "particulars", "description", "remarks",
+                "narration", "particulars", "description", "remarks", "details",
                 "transaction description"));
         VOCABULARY.put(ProductSignal.RUNNING_BALANCE_COLUMN, List.of(
                 "balance", "closing balance", "running balance", "available balance"));

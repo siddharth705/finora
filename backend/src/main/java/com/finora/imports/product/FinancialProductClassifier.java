@@ -216,6 +216,21 @@ public class FinancialProductClassifier {
             // A contradiction seen only in document-level text is not this section's contradiction
             // -- the same scoping rule that stops a leaked product name from deciding anything.
             if (where == EvidenceSource.DOCUMENT_TEXT) continue;
+            // DESCRIPTION_COLUMN specifically, and only when SECTION_TEXT is the STRONGEST source
+            // (strongestSourceFor already returns the max, so this can never suppress a genuine
+            // COLUMN_HEADERS/ROW_DATA match): its own vocabulary includes "details", ordinary
+            // English that shows up in prose having nothing to do with a table column ("for
+            // details, contact your branch"). A real HDFC statement's routine TDS-apportionment
+            // disclaimer matched it this way and, with no partial credit on a contradiction,
+            // disqualified FIXED_DEPOSIT/RECURRING_DEPOSIT outright even with every genuine
+            // structural signal for both present and strong. A real column named "Description" is
+            // COLUMN_HEADERS-sourced and still disqualifies normally; only a bare prose mention is
+            // exempted. See ProductEvidenceCollector's own vocabulary comment for why "details"
+            // stays in the vocabulary rather than being removed there instead -- a real IndusInd
+            // credit-card statement's own "For details, ..." sentence is genuine, if weak,
+            // corroborating evidence FOR that section's real product, which removing the word
+            // entirely would have thrown away along with the false positive.
+            if (forbidden == ProductSignal.DESCRIPTION_COLUMN && where == EvidenceSource.SECTION_TEXT) continue;
             evidence.add(Evidence.contradictory(forbidden,
                     hypothesis.type() + " should not carry this, but it is present in "
                             + where.name().toLowerCase().replace('_', ' ')));
