@@ -188,13 +188,19 @@ public class ImportJobService {
         try {
             stored = active.store(encrypting.stream(), encrypting.length());
         } finally {
-            // CodeQL (java/input-resource-leak), 2026-09-04: encrypting.stream() is a
-            // SequenceInputStream wrapping a CipherInputStream wrapping digested wrapping
-            // file.getInputStream() -- closing the outermost stream cascades through every layer
-            // (FilterInputStream/SequenceInputStream both close() their delegates), so this one
-            // call releases the whole chain, on the success path and on whatever active.store()
-            // throws alike. Reading to EOF (which store() does) never implied closing it.
-            encrypting.stream().close();
+            // CodeQL (java/input-resource-leak), 2026-09-04, round 2: closing encrypting.stream()
+            // (the SequenceInputStream/CipherInputStream wrapping digested wrapping
+            // file.getInputStream()) does cascade all the way down via
+            // FilterInputStream/SequenceInputStream's own close() semantics -- verified true, and
+            // it's what actually released the real OS-level resource -- but CodeQL's
+            // input-resource-leak query specifically tracks the named `digested` variable's own
+            // close() call, not a transitive one reached through a different variable, so the
+            // first version of this fix (closing encrypting.stream()) kept getting re-flagged.
+            // Closing `digested` directly instead: DigestInputStream.close() (inherited from
+            // FilterInputStream) closes file.getInputStream() underneath it, which is the actual
+            // resource -- the CipherInputStream/SequenceInputStream layers above never open a
+            // second one of their own, so nothing is lost by not closing them by name too.
+            digested.close();
         }
         // Safe only once active.store() has returned: that method reads its input stream to EOF
         // (ContentAddress.copyAndAddress's transferTo), which is what guarantees every original
