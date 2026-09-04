@@ -35,14 +35,16 @@ public class FeedbackEntry extends BaseEntity {
      *
      * <p>A free-text key with a frontend-maintained list was considered and rejected: it trades
      * the migration for typo drift, which destroys the aggregation this column exists for.
+     *
+     * <p><b>These values are provisional.</b> They were chosen ahead of the decision about where
+     * the feedback widget actually gets mounted, so some may never be written to and a surface
+     * that matters may be missing. Revisit when Phase 8 settles the mount points, with the real
+     * screens in view. That revisit is deliberately cheap — no CHECK constraint means adding,
+     * removing or renaming a value is a one-constant change with no migration, which is the whole
+     * reason the constraint was left off.
      */
     public enum Context {
         DASHBOARD, TRANSACTIONS, REPORTS, BUDGETS, GOALS, IMPORT_FLOW, ACCOUNTS, SETTINGS, HELP, OTHER
-    }
-
-    /** Which client. Separate from {@link Context}, which is which feature. */
-    public enum Source {
-        WEB, MOBILE_ANDROID, MOBILE_IOS
     }
 
     /**
@@ -65,7 +67,7 @@ public class FeedbackEntry extends BaseEntity {
 
     @Enumerated(EnumType.STRING)
     @Column(name = "source", nullable = false)
-    private Source source;
+    private ClientPlatform source;
 
     @Column(name = "message", nullable = false)
     private String message;
@@ -82,8 +84,8 @@ public class FeedbackEntry extends BaseEntity {
     public Context getContext() { return context; }
     public void setContext(Context context) { this.context = context; }
 
-    public Source getSource() { return source; }
-    public void setSource(Source source) { this.source = source; }
+    public ClientPlatform getSource() { return source; }
+    public void setSource(ClientPlatform source) { this.source = source; }
 
     public String getMessage() { return message; }
     public void setMessage(String message) { this.message = message; }
