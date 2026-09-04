@@ -13,6 +13,7 @@ import { AppLockSection } from './settings/AppLockSection';
 import { ChangeEmailSheet } from './settings/ChangeEmailSheet';
 import { ChangePasswordSheet } from './settings/ChangePasswordSheet';
 import { DeviceSessionsSection } from './settings/DeviceSessionsSection';
+import { FeedbackSheet } from './support/FeedbackSheet';
 import { analyticsApi, userApi, workspaceApi } from '../api/endpoints';
 import { toUserMessage } from '../lib/apiError';
 import { fmtDate, fmtRelativeTime } from '../lib/format';
@@ -89,6 +90,7 @@ export function SettingsScreen() {
 
   const [changePasswordOpen, setChangePasswordOpen] = useState(false);
   const [changeEmailOpen, setChangeEmailOpen] = useState(false);
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
 
   const [userQ, workspaceQ, statsQ] = useQueries({
     queries: [
@@ -376,6 +378,31 @@ export function SettingsScreen() {
         )}
       </SectionCard>
 
+      <SectionCard title="Help & Support" subtitle="File a ticket, check on one, or tell us what's on your mind">
+        <Pressable
+          onPress={() => navigation.navigate('SupportTickets')}
+          style={[styles.row, { borderBottomColor: c.border }]}
+          accessibilityRole="button"
+        >
+          <View style={styles.rowMain}>
+            <Text style={[styles.rowTitle, { color: c.ink }]}>My Tickets</Text>
+            <Text style={[styles.rowMeta, { color: c.mutedInk }]}>File a new one, or check on an existing one</Text>
+          </View>
+          <Text style={[styles.chevron, { color: c.muted }]} accessibilityElementsHidden importantForAccessibility="no">›</Text>
+        </Pressable>
+        <Pressable
+          onPress={() => setFeedbackOpen(true)}
+          style={[styles.row, { borderBottomColor: c.border }]}
+          accessibilityRole="button"
+        >
+          <View style={styles.rowMain}>
+            <Text style={[styles.rowTitle, { color: c.ink }]}>Send Feedback</Text>
+            <Text style={[styles.rowMeta, { color: c.mutedInk }]}>A bug, an idea, or anything else on your mind</Text>
+          </View>
+          <Text style={[styles.chevron, { color: c.muted }]} accessibilityElementsHidden importantForAccessibility="no">›</Text>
+        </Pressable>
+      </SectionCard>
+
       <SectionCard title="Data" subtitle="Your imported statements and transaction history">
         <View style={styles.tiles}>
           <MetricTile
@@ -419,6 +446,8 @@ export function SettingsScreen() {
       ) : null}
 
       {changeEmailOpen ? <ChangeEmailSheet onClose={() => setChangeEmailOpen(false)} /> : null}
+
+      {feedbackOpen ? <FeedbackSheet onClose={() => setFeedbackOpen(false)} /> : null}
     </ScrollView>
   );
 }

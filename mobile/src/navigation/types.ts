@@ -47,6 +47,13 @@ export type MoreStackParamList = {
   // (finora://email-change-verify?sessionId=...&token=...), registered in RootNavigator's
   // `linking` config -- see VerifyEmailChangeScreen's own doc comment.
   VerifyEmailChange: { sessionId?: string; token?: string } | undefined;
+  // Support, Help & Feedback v1, Phase 8 (mobile). Reached from Settings' "Help & Support"
+  // section. SupportTicketDetail is this app's first push-to-a-detail-screen-with-params route --
+  // every other "list" screen (StatementHistoryScreen) shows its detail as an in-screen Modal
+  // instead, but a ticket's description can run to several paragraphs, which fits a full pushed
+  // screen (with its own native back) better than a sheet.
+  SupportTickets: undefined;
+  SupportTicketDetail: { ticketId: string };
 };
 
 /**
