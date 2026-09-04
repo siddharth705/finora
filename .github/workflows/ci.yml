@@ -101,8 +101,12 @@ jobs:
         with:
           fetch-depth: 0
 
+      # SHA-pinned, not tag-pinned like every actions/* step in this file: a tag can be force-moved
+      # by a compromised maintainer account, a commit SHA cannot. This is the one third-party
+      # (non-actions/*, non-github/*) action anywhere in this repo's workflows -- worth the extra
+      # scrutiny precisely because it's the exception, not the rule.
       - name: gitleaks
-        uses: gitleaks/gitleaks-action@v3
+        uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # PR comments need `pull-requests: write`, which this workflow deliberately doesn't
