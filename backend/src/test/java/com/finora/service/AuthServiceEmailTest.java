@@ -81,7 +81,7 @@ class AuthServiceEmailTest {
 
         verify(emailProvider).sendPasswordResetEmail(eq("test@example.com"), contains("/reset-password?token="));
         assertThat(response.devResetLink()).isNull();
-        verify(auditService).record(eq(userId), eq("EMAIL_SENT"), eq("User"), eq(userId),
+        verify(auditService).recordEvenOnRollback(eq(userId), eq("EMAIL_SENT"), eq("User"), eq(userId),
                 argThat(metadata -> "password_reset".equals(metadata.get("type")) && Boolean.TRUE.equals(metadata.get("success"))));
     }
 
