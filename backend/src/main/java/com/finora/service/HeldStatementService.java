@@ -1,5 +1,10 @@
 package com.finora.service;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.finora.dto.HeldStatementDetailDto;
+import com.finora.dto.HeldStatementDetailDto.EventView;
+import com.finora.dto.HeldStatementDetailDto.FindingView;
 import com.finora.dto.HeldStatementDto;
 import com.finora.dto.PagedResponse;
 import com.finora.entity.HeldStatement;
@@ -8,8 +13,11 @@ import com.finora.entity.ImportJob;
 import com.finora.exception.ApiException;
 import com.finora.exception.ErrorCode;
 import com.finora.imports.ImportSessionService;
+import com.finora.imports.analysis.ImportVerificationFinding;
+import com.finora.imports.analysis.ImportVerificationFindingRepository;
 import com.finora.imports.jobs.StagedForJob;
 import com.finora.imports.jobs.VerificationTelemetry;
+import com.finora.imports.storage.StatementContentService;
 import com.finora.imports.trust.HeldStatementIdGenerator;
 import com.finora.imports.trust.HoldDecision;
 import com.finora.notification.api.NotificationRequest;
@@ -22,6 +30,8 @@ import com.finora.repository.HeldStatementEventRepository;
 import com.finora.repository.HeldStatementRepository;
 import com.finora.repository.ImportJobRepository;
 import com.finora.util.PageBounds;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
@@ -30,6 +40,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -49,6 +60,8 @@ import java.util.UUID;
 @Service
 public class HeldStatementService {
 
+    private static final Logger log = LoggerFactory.getLogger(HeldStatementService.class);
+
     /** The working queue: everything an operator can still act on. */
     private static final List<HeldStatement.Status> OPEN = List.of(
             HeldStatement.Status.HELD, HeldStatement.Status.ASSIGNED,
@@ -58,24 +71,33 @@ public class HeldStatementService {
     private final HeldStatementEventRepository eventRepository;
     private final HeldStatementIdGenerator idGenerator;
     private final ImportJobRepository importJobRepository;
+    private final ImportVerificationFindingRepository findingRepository;
     private final AuditService auditService;
     private final NotificationService notificationService;
     private final ImportSessionService importSessionService;
+    private final ObjectMapper objectMapper;
+    private final StatementContentService statementContentService;
 
     public HeldStatementService(HeldStatementRepository repository,
                                 HeldStatementEventRepository eventRepository,
                                 HeldStatementIdGenerator idGenerator,
                                 ImportJobRepository importJobRepository,
+                                ImportVerificationFindingRepository findingRepository,
                                 AuditService auditService,
                                 NotificationService notificationService,
-                                ImportSessionService importSessionService) {
+                                ImportSessionService importSessionService,
+                                ObjectMapper objectMapper,
+                                StatementContentService statementContentService) {
         this.repository = repository;
         this.eventRepository = eventRepository;
         this.idGenerator = idGenerator;
         this.importJobRepository = importJobRepository;
+        this.findingRepository = findingRepository;
         this.auditService = auditService;
         this.notificationService = notificationService;
         this.importSessionService = importSessionService;
+        this.objectMapper = objectMapper;
+        this.statementContentService = statementContentService;
     }
 
     /**
@@ -109,6 +131,9 @@ public class HeldStatementService {
                 telemetry.reliabilityStatus() == null ? null : telemetry.reliabilityStatus().name(),
                 telemetry.textSource(),
                 telemetry.isEmpty() ? null : telemetry.headerReconstructionUncertain());
+        // staged.bankName() is already carried on StagedForJob for the completion notification --
+        // see that record's own doc for why ImportJob can never learn the bank live.
+        held.recordBank(staged.bankName());
         repository.save(held);
 
         // actorId null: the system opened this, not a person. The reasons are recorded here as
@@ -122,16 +147,149 @@ public class HeldStatementService {
     // --- operator resolution ---------------------------------------------------------------------
 
     @Transactional(readOnly = true)
-    public PagedResponse<HeldStatementDto> list(int page, int size) {
-        Page<HeldStatement> result = repository.findByStatusIn(OPEN,
+    public PagedResponse<HeldStatementDto> list(int page, int size, HeldStatementFilter filter) {
+        // Resolved here, not in the repository: JPQL arithmetic against CURRENT_TIMESTAMP is not
+        // something every JPA provider evaluates the same way, and a fixed Instant computed once
+        // per call is also what makes the query's own "older than" reasoning testable without a
+        // clock dependency inside the query itself.
+        Instant olderThan = filter.olderThanHours() == null
+                ? null : Instant.now().minus(Duration.ofHours(filter.olderThanHours()));
+        Page<HeldStatement> result = repository.findForAdmin(OPEN, filter.status(), filter.bankName(),
+                olderThan, filter.assignedEngineerId(),
                 PageRequest.of(PageBounds.safePage(page), PageBounds.safeSize(size > 0 ? size : 25),
                         Sort.by(Sort.Direction.ASC, "createdAt")));
         return PagedResponse.of(result.map(HeldStatementDto::from));
     }
 
+    /**
+     * The summary plus the evidence behind {@code triggerSummary} and the hold's own history.
+     *
+     * <p>Findings come from {@code import_verification_findings}, keyed by {@code import_job_id} --
+     * the same table and the same allowlisted, statement-content-free shape {@code
+     * ImportTraceService} already exposes to engineers diagnosing a parser failure. This is not a
+     * new signal: it is the printed-versus-parsed evidence the trust predicate itself read to
+     * decide to hold, surfaced as the numbers rather than as a sentence about them.
+     */
     @Transactional(readOnly = true)
-    public HeldStatementDto detail(String heldId) {
-        return HeldStatementDto.from(require(heldId));
+    public HeldStatementDetailDto detail(String heldId) {
+        HeldStatement held = require(heldId);
+        List<ImportVerificationFinding> rows =
+                findingRepository.findByImportJobIdOrderBySectionIndexAscRuleAsc(held.getImportJobId());
+        List<HeldStatementEvent> events =
+                eventRepository.findByHeldStatementIdOrderByCreatedAtAsc(held.getId());
+        return new HeldStatementDetailDto(HeldStatementDto.from(held), findings(rows), timeline(events));
+    }
+
+    private List<FindingView> findings(List<ImportVerificationFinding> rows) {
+        return rows.stream()
+                .map(row -> new FindingView(row.getSectionIndex(), row.getRule(), row.getOutcome(),
+                        readDetails(row), row.getCreatedAt()))
+                .toList();
+    }
+
+    /** Unreadable details degrade one field rather than failing the whole detail view -- same call
+     *  {@code ImportTraceService.readDetails} makes about a row a future version wrote in a shape
+     *  this one does not expect. */
+    private Map<String, Object> readDetails(ImportVerificationFinding row) {
+        String json = row.getDetailsJson();
+        if (json == null || json.isBlank()) return Map.of();
+        try {
+            Map<String, Object> parsed = objectMapper.readValue(json, new TypeReference<>() {});
+            return parsed == null ? Map.of() : parsed;
+        } catch (Exception e) {
+            log.warn("Held statement finding {} has unreadable details; reporting the rest of the "
+                    + "finding without them", row.getId(), e);
+            return Map.of();
+        }
+    }
+
+    private List<EventView> timeline(List<HeldStatementEvent> events) {
+        return events.stream()
+                .map(e -> new EventView(e.getEventType(), e.getFromStatus(), e.getToStatus(),
+                        e.getNotes(), e.getActorId(), e.getCreatedAt()))
+                .toList();
+    }
+
+    // --- assignment (brief Phase 6, pulled forward by the owner's decision, 2026-09-04) -----------
+
+    /**
+     * Assigns the hold to an engineer -- {@code engineerId} null means "Assign to Me", the common
+     * case, which must not require typing an id.
+     *
+     * <p>The entity's own {@link HeldStatement#assign} already allows reassigning an unresolved
+     * hold (that guard and its test predate this task); this is the service, endpoint and audit
+     * around it, not a new state-machine rule.
+     */
+    @Transactional
+    public HeldStatementDto assign(UUID actingAdminId, String heldId, UUID engineerId) {
+        HeldStatement held = require(heldId);
+        refuseIfResolved(held, "assigned");
+
+        HeldStatement.Status from = held.getStatus();
+        UUID assignee = engineerId != null ? engineerId : actingAdminId;
+        held.assign(assignee, Instant.now());
+        repository.save(held);
+
+        eventRepository.save(new HeldStatementEvent(held.getId(), actingAdminId, "ASSIGNED",
+                from.name(), held.getStatus().name(), null));
+        auditService.record(actingAdminId, "TRUST_REVIEW_ASSIGNED", "HeldStatement", held.getId(),
+                Map.of("actorId", actingAdminId.toString(),
+                        "subjectUserId", held.getUserId().toString(),
+                        "heldId", held.getHeldId(),
+                        "assignedTo", assignee.toString()));
+        return HeldStatementDto.from(held);
+    }
+
+    /**
+     * Moves a hold into active investigation.
+     *
+     * <p>The entity's own {@code startInvestigation} carries no source-status guard beyond {@code
+     * refuseIfResolved} -- Plan 1's own test only exercises it after {@code assign}, but nothing
+     * stops calling this on a HELD row that was never assigned first, and this does not invent a
+     * restriction the entity's state machine does not have. An operator who can already see the
+     * extraction going straight to investigating it, without a separate assignment step, is a
+     * legitimate way to work the queue, not a gap.
+     */
+    @Transactional
+    public HeldStatementDto startInvestigation(UUID actingAdminId, String heldId) {
+        HeldStatement held = require(heldId);
+        refuseIfResolved(held, "moved back into investigation");
+
+        HeldStatement.Status from = held.getStatus();
+        held.startInvestigation();
+        repository.save(held);
+
+        eventRepository.save(new HeldStatementEvent(held.getId(), actingAdminId, "INVESTIGATING",
+                from.name(), held.getStatus().name(), null));
+        auditService.record(actingAdminId, "TRUST_REVIEW_INVESTIGATION_STARTED", "HeldStatement",
+                held.getId(), Map.of("actorId", actingAdminId.toString(),
+                        "subjectUserId", held.getUserId().toString(),
+                        "heldId", held.getHeldId()));
+        return HeldStatementDto.from(held);
+    }
+
+    /**
+     * Replaces the engineer's write-up wholesale, same as {@link HeldStatement#addNotes} itself
+     * documents -- the history of what it said before lives in the event this writes, not in a
+     * second notes column.
+     *
+     * <p>Deliberately not guarded by {@code refuseIfResolved}: the entity's own {@code addNotes}
+     * carries no such guard, and a closing note explaining the final reasoning after a decision is
+     * a legitimate thing to record, not a state-machine violation to prevent.
+     */
+    @Transactional
+    public HeldStatementDto addNotes(UUID actingAdminId, String heldId, String notes) {
+        HeldStatement held = require(heldId);
+        held.addNotes(notes);
+        repository.save(held);
+
+        eventRepository.save(new HeldStatementEvent(held.getId(), actingAdminId, "NOTES_UPDATED",
+                null, null, notes));
+        auditService.record(actingAdminId, "TRUST_REVIEW_NOTES_UPDATED", "HeldStatement", held.getId(),
+                Map.of("actorId", actingAdminId.toString(),
+                        "subjectUserId", held.getUserId().toString(),
+                        "heldId", held.getHeldId()));
+        return HeldStatementDto.from(held);
     }
 
     /**
@@ -216,6 +374,55 @@ public class HeldStatementService {
                         "heldId", held.getHeldId(),
                         "reason", reason == null ? "" : reason));
         return HeldStatementDto.from(held);
+    }
+
+    /** What the download endpoint hands back -- everything the controller needs to set the
+     *  response headers, in one value. Same shape as {@code StatementImportService.FileDownload},
+     *  for the same reason. */
+    public record DownloadedStatement(String fileName, byte[] content, String contentType) {}
+
+    /**
+     * The one place in the product that hands a customer's bank statement to a member of staff.
+     *
+     * <p>Audited BEFORE the bytes are read, not after -- a failed transfer (a storage outage, a
+     * decrypt failure) must still leave a record that the attempt was made, since the attempt
+     * itself is the sensitive event, not only a successful one. The role gate that makes this safe
+     * to expose at all lives on the controller, one layer up: {@code TRUST_REVIEW_MANAGE} alone
+     * would let anyone who can work the queue reach this method, and that permission is grantable
+     * to a future support role that must never receive a customer's statement -- see the
+     * repository owner's decision, 2026-09-04, in the Plan 2 document.
+     *
+     * <p>Deliberately plain {@code @Transactional}, not {@code readOnly = true}, even though the
+     * method never mutates a row -- it writes one, the audit entry. {@code AdminNotificationService
+     * .detail}'s own doc already caught this exact bug once: a read-only transaction sets
+     * Hibernate's flush mode to {@code MANUAL}, so the audit row registered via {@code
+     * auditLogRepository.save()} is silently never flushed to the database -- no exception, the
+     * row just never existed. Caught here by {@code everyDownloadIsAudited} actually querying
+     * Postgres for the row rather than asserting a mock was called.
+     */
+    @Transactional
+    public DownloadedStatement download(UUID actingAdminId, String heldId) {
+        HeldStatement held = require(heldId);
+        ImportJob job = requireJob(held);
+
+        auditService.record(actingAdminId, "TRUST_REVIEW_DOCUMENT_DOWNLOADED", "HeldStatement",
+                held.getId(), Map.of("actorId", actingAdminId.toString(),
+                        "subjectUserId", held.getUserId().toString(),
+                        "heldId", held.getHeldId()));
+
+        byte[] content = statementContentService.read(job);
+        return new DownloadedStatement(job.getFileName(), content, contentTypeFor(job.getSourceFormat()));
+    }
+
+    /** Same switch {@code StatementImportService.contentTypeFor} makes, over the formats this
+     *  system actually stores -- not a filename-extension lookup, which is attacker-influenced. */
+    private static String contentTypeFor(String sourceFormat) {
+        if (sourceFormat == null) return "application/octet-stream";
+        return switch (sourceFormat.toUpperCase()) {
+            case "CSV" -> "text/csv";
+            case "PDF" -> "application/pdf";
+            default -> "application/octet-stream";
+        };
     }
 
     // --- internals -------------------------------------------------------------------------------
