@@ -15,6 +15,8 @@ import { InsightsScreen } from '../screens/InsightsScreen';
 import { InvestmentsScreen } from '../screens/InvestmentsScreen';
 import { ProfileScreen } from '../screens/ProfileScreen';
 import { SettingsScreen } from '../screens/SettingsScreen';
+import { SupportTicketDetailScreen } from '../screens/SupportTicketDetailScreen';
+import { SupportTicketsScreen } from '../screens/SupportTicketsScreen';
 import { VerifyEmailChangeScreen } from '../screens/settings/VerifyEmailChangeScreen';
 import { useTheme } from '../theme';
 import type { AppTabParamList, MoreStackParamList } from './types';
@@ -54,6 +56,14 @@ function MoreNavigator() {
           full-screen AuthScreenLayout card, and it's reached via a deep link rather than a normal
           in-app push, so there's no prior screen for a native back button to imply. */}
       <MoreStack.Screen name="VerifyEmailChange" component={VerifyEmailChangeScreen} options={{ headerShown: false }} />
+      {/* Support, Help & Feedback v1, Phase 8. Reached only from Settings' "Help & Support"
+          section (see SettingsScreen), not from this menu. SupportTickets renders its own title
+          (with the New Ticket button beside it) -- same headerShown:false pattern as
+          MoreHome/Accounts/Statements/CategoryReview above. SupportTicketDetail renders neither a
+          title nor a back affordance of its own, relying on the native header for both -- same
+          pattern as Budgets/Goals/Reports/Insights/Investments/Profile/Settings. */}
+      <MoreStack.Screen name="SupportTickets" component={SupportTicketsScreen} options={{ headerShown: false }} />
+      <MoreStack.Screen name="SupportTicketDetail" component={SupportTicketDetailScreen} options={{ title: 'Support Ticket' }} />
     </MoreStack.Navigator>
   );
 }
