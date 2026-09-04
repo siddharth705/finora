@@ -1408,5 +1408,15 @@ actual comparison, confirmed real, and fixed by anchoring to `held.getCreatedAt(
   mode reaches a client uncaught — but Task 1 should still run Plan 2's existing controller ITs for
   those methods after adding the column, to confirm none of them relies on a specific exception
   type this change doesn't affect, rather than assuming compatibility.
+- **Found in the post-implementation cross-task review, fixed as a doc correction rather than new
+  locking code:** `rerunParser`'s still-held branch never re-saves `held` (nothing about it
+  changed), so `@Version` provides no protection there specifically — only the clearing branch is
+  genuinely guarded. A genuine race (a concurrent `approve` winning against this method's own
+  stale-in-transaction read, on a statement that still fails) can leave a `PARSER_RERUN` event on
+  the timeline whose `from`/`to` reflect the hold's pre-resolution status rather than its actual
+  one at write time. The hold's real status is never corrupted by this — only that one event's own
+  historical accuracy — so this was left open rather than adding `EntityManager.lock(...,
+  LockModeType.OPTIMISTIC_FORCE_INCREMENT)` for a race this narrow. See
+  `HeldStatementService.rerunParser`'s own doc for the full explanation.
 
 **Next:** Plan 4 (Metrics & False-Positive Tracking, Brief Phase 10) is unwritten and unstarted.

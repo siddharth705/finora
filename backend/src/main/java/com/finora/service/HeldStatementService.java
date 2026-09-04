@@ -347,11 +347,20 @@ public class HeldStatementService {
      * legal and idempotent: {@code HeldStatement.markReadyForImport}'s only guard is {@code
      * refuseIfResolved}, which does not single out a required starting status.
      *
-     * <p>Protected against a concurrent {@link #approve}/{@link #reject}/etc. on the same hold by
-     * {@code HeldStatement}'s {@code @Version} column (V151): a losing concurrent write throws
-     * {@code ObjectOptimisticLockingFailureException}, mapped to a 409 by {@code
-     * GlobalExceptionHandler.handleOptimisticLock} -- never a silent overwrite of whichever admin
-     * action committed first.
+     * <p>The clearing path is protected against a concurrent {@link #approve}/{@link #reject}/etc.
+     * on the same hold by {@code HeldStatement}'s {@code @Version} column (V151): a losing
+     * concurrent write there throws {@code ObjectOptimisticLockingFailureException}, mapped to a
+     * 409 by {@code GlobalExceptionHandler.handleOptimisticLock} -- never a silent overwrite of
+     * whichever admin action committed first. <b>The still-held path is not equally protected</b>:
+     * when {@code decision.hold()} stays true, {@code held} is never re-saved (nothing about it
+     * changed), so no version check fires. If a concurrent resolution wins a genuine race against
+     * this method's own stale-in-transaction read, the {@code PARSER_RERUN} event this branch
+     * writes can trail the resolution -- recording {@code from}/{@code to} as the hold's
+     * pre-resolution status even though the row is by then already resolved. This does not corrupt
+     * the hold's actual status (this branch never writes one), only its own event's historical
+     * accuracy; a narrow, low-severity gap left open rather than pulling in
+     * {@code EntityManager.lock(..., LockModeType.OPTIMISTIC_FORCE_INCREMENT)} for a race this
+     * narrow.
      */
     @Transactional
     public HeldStatementRerunResultDto rerunParser(UUID actingAdminId, String heldId) {
