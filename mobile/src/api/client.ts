@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { safeStorage } from '../lib/safeStorage';
+import { APP_VERSION, PLATFORM_HEADER, VERSION_HEADER, clientPlatform } from '../lib/clientIdentity';
 
 // Same fixup as the web app's client.ts: whatever EXPO_PUBLIC_API_BASE_URL is set to always
 // resolves to exactly one /api/v1 suffix, whether or not the value already includes it.
@@ -66,6 +67,11 @@ api.interceptors.request.use(async (config) => {
       config.headers.Authorization = `Bearer ${token}`;
     }
   }
+  // Which app and which build, for support tickets and feedback to record. Sent on every request
+  // rather than only the endpoints that store it, so the contract is one rule instead of a list
+  // that drifts -- the same shape the web client uses. See lib/clientIdentity.ts.
+  config.headers[PLATFORM_HEADER] = clientPlatform();
+  config.headers[VERSION_HEADER] = APP_VERSION;
   return config;
 });
 
