@@ -18,6 +18,7 @@ import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * The parts of the support domain only a real PostgreSQL can prove: that the entities match
@@ -74,6 +75,41 @@ class SupportRepositoryIT extends AbstractIntegrationTest {
         assertThat(second).isNotEqualTo(first);
         assertThat(Long.parseLong(second.substring(4)))
                 .isGreaterThan(Long.parseLong(first.substring(4)));
+    }
+
+    /**
+     * The specific concurrency risk this feature actually has. Two admins claiming the same
+     * ticket at once is deliberately NOT a conflict -- {@code AdminSupportTicketController}'s own
+     * doc comment calls claim-over-claim a takeover, last write wins, and the admin-portal's
+     * confirm dialog exists to keep that takeover from being silent to the admin it displaces, not
+     * to prevent a database-level race. A concurrent STATUS change is the case {@code @Version}
+     * actually has to catch: two admins independently resolving/closing the same ticket at once,
+     * where silently letting the second write win would make one admin's decision vanish with no
+     * error at all.
+     *
+     * <p>Two independent fetches, not one entity mutated twice, and no `@Transactional` on this
+     * method (this whole class's default) -- each `findById`/`save()` runs in its own transaction,
+     * so `stale` stays a genuinely separate, unrefreshed managed instance after `fresh` is saved,
+     * the same way two admins' independent HTTP requests would never share a persistence context.
+     */
+    @Test
+    void concurrentStatusChangesOnTheSameTicket_theSecondStaleSaveIsRejected_notSilentlyOverwritten() {
+        SupportTicket t = ticket(user().getId());
+
+        SupportTicket fresh = tickets.findById(t.getId()).orElseThrow();
+        SupportTicket stale = tickets.findById(t.getId()).orElseThrow();
+
+        fresh.setStatus(SupportTicket.Status.IN_PROGRESS);
+        tickets.save(fresh);
+
+        stale.setStatus(SupportTicket.Status.CLOSED);
+        assertThatThrownBy(() -> tickets.save(stale))
+                .isInstanceOf(org.springframework.orm.ObjectOptimisticLockingFailureException.class);
+
+        // The winning write survived; the loser's never landed at all -- not a merge of the two,
+        // and not the second call silently winning because it ran later.
+        assertThat(tickets.findById(t.getId()).orElseThrow().getStatus())
+                .isEqualTo(SupportTicket.Status.IN_PROGRESS);
     }
 
     @Test

@@ -2,8 +2,8 @@ import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  ArrowLeft, ShieldBan, ShieldCheck, ShieldAlert, Wallet, ArrowLeftRight, Phone, Mail, Calendar,
-  Pencil, Trash2,
+  ArrowLeft, ShieldBan, ShieldCheck, Wallet, ArrowLeftRight, Phone, Mail, Calendar,
+  Pencil,
 } from 'lucide-react';
 import { AdminLayout } from '../components/AdminLayout';
 import { RequirePermission } from '../components/ProtectedRoute';

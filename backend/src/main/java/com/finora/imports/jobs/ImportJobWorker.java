@@ -136,16 +136,7 @@ public class ImportJobWorker {
     private final NotificationService notificationService;
     private final ImportVerificationRecorder verificationRecorder;
     private final com.finora.service.HeldStatementService heldStatementService;
-
-    /**
-     * The deploy that parsed a statement, recorded on every job.
-     *
-     * <p>Railway injects RAILWAY_GIT_COMMIT_SHA on every deploy, the same source
-     * {@code sentry.release} already uses, so this needs no dashboard configuration. Blank
-     * locally and in tests, which is honest -- there is no deploy to name.
-     */
-    @Value("${app.parser-version:${RAILWAY_GIT_COMMIT_SHA:}}")
-    private String parserVersion;
+    private final ParserVersionProvider parserVersionProvider;
 
     @Value("${app.import.queue.enabled:false}")
     private boolean enabled;
@@ -158,7 +149,8 @@ public class ImportJobWorker {
                             ExceptionClassifier exceptionClassifier,
                             NotificationService notificationService,
                             ImportVerificationRecorder verificationRecorder,
-                            com.finora.service.HeldStatementService heldStatementService) {
+                            com.finora.service.HeldStatementService heldStatementService,
+                            ParserVersionProvider parserVersionProvider) {
         this.jobStore = jobStore;
         this.importService = importService;
         this.statementContentService = statementContentService;
@@ -168,6 +160,7 @@ public class ImportJobWorker {
         this.notificationService = notificationService;
         this.verificationRecorder = verificationRecorder;
         this.heldStatementService = heldStatementService;
+        this.parserVersionProvider = parserVersionProvider;
 
         observability.publishQueueDepth(WORKER, JOB_KIND, jobStore::queueDepth);
         observability.publishOldestPendingAge(WORKER, JOB_KIND, jobStore::oldestQueuedAt);
@@ -315,7 +308,7 @@ public class ImportJobWorker {
             if (decision.hold()) {
                 try {
                     heldStatementId = heldStatementService
-                            .createHold(job, staged, decision, parserVersion).getId();
+                            .createHold(job, staged, decision, parserVersionProvider.current()).getId();
                 } catch (RuntimeException e) {
                     log.error("Could not create the hold record for import job {}; holding the "
                             + "import anyway, with no review record to work from", jobId, e);
@@ -344,7 +337,7 @@ public class ImportJobWorker {
                         telemetry.isEmpty() ? null : telemetry.findingsCount(),
                         telemetry.isEmpty() ? null : telemetry.failedCount(),
                         telemetry.isEmpty() ? null : telemetry.warningCount(),
-                        parserVersion);
+                        parserVersionProvider.current());
                 if (!decision.hold()) {
                     // A held import is not finished, so it announces nothing -- the same rule the
                     // other hold follows. Telling someone their statement is ready and then

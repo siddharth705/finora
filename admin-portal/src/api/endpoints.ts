@@ -5,7 +5,9 @@ import type {
   AccountDto, ActivationFunnelDto, ActivityTrendPointDto, AdminReferralSummaryDto, AdminUpdateUserRequest, AuditLogDto, BankDto, CategoryConfidencePoint,
   CoverageDto,
   HeldImportRow, HeldImportDetail, HeldImportSummary,
-  HeldStatementRow, HeldStatementQuery, HeldStatementDetail,
+  HeldStatementRow, HeldStatementQuery, HeldStatementDetail, HeldStatementRerunResult,
+  SupportTicketRow, SupportTicketQuery, SupportTicketDetail, SupportTicketNote,
+  FeedbackRow, FeedbackQuery, FeedbackBreakdown,
   CreateAccountRequest, CreateBankRequest, CreateMerchantTemplateRequest, CreateRelationshipRequest,
   CreateRuleRequest, CreateUserRequest, FeatureFlagDto, GmailMerchantParserStatDto, LearningGrowthPoint, LearningPlatformStatsDto, LearningSummaryDto,
   LearningTimelineEntry,
@@ -402,6 +404,11 @@ export const adminHeldStatementApi = {
     api.post<HeldStatementRow>(`/admin/held-statements/${heldId}/investigate`).then((r) => r.data),
   notes: (heldId: string, notes: string) =>
     api.post<HeldStatementRow>(`/admin/held-statements/${heldId}/notes`, { notes }).then((r) => r.data),
+  saveFindings: (heldId: string, rootCause?: string, fixReference?: string) =>
+    api.post<HeldStatementRow>(`/admin/held-statements/${heldId}/findings`, { rootCause, fixReference })
+      .then((r) => r.data),
+  rerunParser: (heldId: string) =>
+    api.post<HeldStatementRerunResult>(`/admin/held-statements/${heldId}/rerun-parser`).then((r) => r.data),
   // A plain <a href> can't carry the Bearer token, so this goes through the same authenticated
   // axios instance as everything else and triggers the browser download client-side instead --
   // same pattern as the user frontend's statementImportsApi.downloadFile.
@@ -698,4 +705,53 @@ export const adminLayoutsApi = {
    *  layout reuse is ever worth building — including when the answer is no. */
   evidence: () =>
     api.get<LayoutEvidenceReport>('/admin/imports/layouts/evidence').then((r) => r.data),
+};
+
+/**
+ * Support, Help & Feedback v1, Phase 9. Detail and attachment download go through the SAME
+ * non-admin-rooted routes (`/support/tickets/...`, not `/admin/support/tickets/...`) the ticket's
+ * own owner uses -- SupportTicketController.detail's own doc explains why there is one route with
+ * an internal admin check rather than a duplicate admin route. Every other action (list, status,
+ * notes, claim/unclaim) is genuinely admin-only and lives under `/admin/support/tickets`.
+ */
+export const adminSupportTicketApi = {
+  list: (params: SupportTicketQuery) =>
+    api.get<PagedResponse<SupportTicketRow>>('/admin/support/tickets', { params }).then((r) => r.data),
+  get: (id: string) =>
+    api.get<SupportTicketDetail>(`/support/tickets/${id}`).then((r) => r.data),
+  updateStatus: (id: string, status: SupportTicketRow['status']) =>
+    api.patch<SupportTicketRow>(`/admin/support/tickets/${id}`, { status }).then((r) => r.data),
+  notes: (id: string) =>
+    api.get<SupportTicketNote[]>(`/admin/support/tickets/${id}/notes`).then((r) => r.data),
+  addNote: (id: string, note: string) =>
+    api.post<SupportTicketNote>(`/admin/support/tickets/${id}/notes`, { note }).then((r) => r.data),
+  // Claiming an already-claimed ticket succeeds (a takeover), not a conflict -- see
+  // AdminSupportTicketController's own doc comment for why the confirm step this page shows
+  // before calling claim() is what keeps a takeover from being silent to the admin it displaces.
+  claim: (id: string) =>
+    api.post<SupportTicketRow>(`/admin/support/tickets/${id}/claim`).then((r) => r.data),
+  unclaim: (id: string) =>
+    api.delete<SupportTicketRow>(`/admin/support/tickets/${id}/claim`).then((r) => r.data),
+  // Same pattern as adminHeldStatementApi.download -- a plain <a href> can't carry the Bearer
+  // token, so this rides the authenticated axios instance and triggers the browser download
+  // client-side.
+  downloadAttachment: async (ticketId: string, attachmentId: string, filename: string) => {
+    try {
+      const res = await api.get(`/support/tickets/${ticketId}/attachments/${attachmentId}`, { responseType: 'blob' });
+      downloadBlob(res.data as Blob, filename);
+    } catch (err) {
+      throw await withBlobErrorMessage(err);
+    }
+  },
+};
+
+/** The feedback list and its counts panel (proposal §3.4 / Phase 9: "Counts... by Type, Context,
+ *  Source. No trend analysis. No AI clustering. No dashboards."). breakdown() takes no filter
+ *  params at all -- it is always a count across the whole table, independent of whatever
+ *  type/context filter the list view has active (see the backend's own doc comment). */
+export const adminFeedbackApi = {
+  list: (params: FeedbackQuery) =>
+    api.get<PagedResponse<FeedbackRow>>('/admin/feedback', { params }).then((r) => r.data),
+  breakdown: () =>
+    api.get<FeedbackBreakdown>('/admin/feedback/breakdown').then((r) => r.data),
 };

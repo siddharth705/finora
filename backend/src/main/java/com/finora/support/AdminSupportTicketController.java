@@ -36,15 +36,18 @@ public class AdminSupportTicketController {
         this.currentUser = currentUser;
     }
 
-    /** The queue, oldest first, optionally filtered by status and/or category. Carries no customer
-     *  free text — {@code description} is deliberately absent from {@link SupportTicketDto.Summary}. */
+    /** The queue, oldest first, optionally filtered by status and/or category and/or a free-text
+     *  search over ticket number and subject — see {@code SupportTicketRepository.findForAdmin}'s
+     *  own doc comment for exactly what {@code q} searches and why. Carries no customer free text
+     *  beyond that — {@code description} is deliberately absent from {@link SupportTicketDto.Summary}. */
     @GetMapping
     public ApiResponse<PagedResponse<SupportTicketDto.Summary>> list(
             @RequestParam(required = false) SupportTicket.Status status,
             @RequestParam(required = false) SupportTicket.Category category,
+            @RequestParam(required = false) String q,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "25") int size) {
-        return ApiResponse.ok(supportTicketService.adminList(status, category, page, size));
+        return ApiResponse.ok(supportTicketService.adminList(status, category, q, page, size));
     }
 
     /** 409 on an illegal transition, naming both states — see {@code SupportTicketService.updateStatus}. */

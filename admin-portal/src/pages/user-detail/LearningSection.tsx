@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { Sparkles } from 'lucide-react';
 import { adminUserLearningApi } from '../../api/endpoints';
-import type { LearningSummaryDto, LearningTimelineEntry, WorkspaceSummaryDto } from '../../types';
+import type { LearningSummaryDto, LearningTimelineEntry } from '../../types';
 
 export function LearningSection({ userId }: { userId: string }) {
   const { data: summary, isLoading: summaryLoading } = useQuery<LearningSummaryDto>({
@@ -61,15 +61,3 @@ export function LearningSection({ userId }: { userId: string }) {
     </div>
   );
 }
-
-const WORKSPACE_HEALTH_SIGNALS: { key: keyof WorkspaceSummaryDto['health']; label: string }[] = [
-  { key: 'rulesEnabled', label: 'Rules Enabled' },
-  { key: 'merchantLearningActive', label: 'Merchant Learning Active' },
-  { key: 'reconciliationHealthy', label: 'Reconciliation Healthy' },
-  { key: 'recurringDetectionHealthy', label: 'Recurring Detection Healthy' },
-  { key: 'auditLoggingHealthy', label: 'Audit Logging Healthy' },
-];
-
-const WORKSPACE_CONFIDENCE_TIER_COLOR: Record<string, string> = {
-  HIGH: '#16a34a', MEDIUM: '#f59e0b', LOW: '#ef4444', UNCONFIRMED: '#94a3b8',
-};

@@ -72,7 +72,9 @@ export default function Profile() {
 
   if (loading) return <p className="text-muted">Loading…</p>;
 
-  if (loadError) return <p className="text-muted">Couldn't load your profile — please try again later.</p>;
+  if (loadError) {
+    return <p className="text-muted">Couldn't load your profile — please try again later.</p>;
+  }
 
   return (
     <div className="space-y-6 max-w-3xl">
