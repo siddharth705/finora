@@ -82,11 +82,6 @@ public class SupportTicket extends BaseEntity {
         }
     }
 
-    /** Which client the request came from. */
-    public enum Source {
-        WEB, MOBILE_ANDROID, MOBILE_IOS
-    }
-
     @Column(name = "ticket_number", nullable = false, unique = true)
     private String ticketNumber;
 
@@ -103,7 +98,7 @@ public class SupportTicket extends BaseEntity {
 
     @Enumerated(EnumType.STRING)
     @Column(name = "source", nullable = false)
-    private Source source;
+    private ClientPlatform source;
 
     @Column(name = "subject", nullable = false)
     private String subject;
@@ -140,8 +135,8 @@ public class SupportTicket extends BaseEntity {
     public Status getStatus() { return status; }
     public void setStatus(Status status) { this.status = status; }
 
-    public Source getSource() { return source; }
-    public void setSource(Source source) { this.source = source; }
+    public ClientPlatform getSource() { return source; }
+    public void setSource(ClientPlatform source) { this.source = source; }
 
     public String getSubject() { return subject; }
     public void setSubject(String subject) { this.subject = subject; }
