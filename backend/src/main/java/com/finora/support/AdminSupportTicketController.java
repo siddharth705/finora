@@ -51,7 +51,7 @@ public class AdminSupportTicketController {
     @PatchMapping("/{id}")
     public ApiResponse<SupportTicketDto.Summary> updateStatus(@PathVariable UUID id,
                                                                @Valid @RequestBody SupportTicketDto.UpdateStatusRequest request) {
-        return ApiResponse.ok(supportTicketService.updateStatus(id, request.status()), "Status updated");
+        return ApiResponse.ok(supportTicketService.updateStatus(currentUser.id(), id, request.status()), "Status updated");
     }
 
     @GetMapping("/{id}/notes")
@@ -77,6 +77,6 @@ public class AdminSupportTicketController {
      *  the unclaimed queue without handing it to a named person. */
     @DeleteMapping("/{id}/claim")
     public ApiResponse<SupportTicketDto.Summary> unclaim(@PathVariable UUID id) {
-        return ApiResponse.ok(supportTicketService.unclaim(id), "Unclaimed");
+        return ApiResponse.ok(supportTicketService.unclaim(currentUser.id(), id), "Unclaimed");
     }
 }
