@@ -1048,3 +1048,86 @@ export const referralsApi = {
   myCode: () => api.get<{ code: string }>('/referrals/my-code').then((r) => r.data),
   mine: () => api.get<MyReferralsDto>('/referrals/mine').then((r) => r.data),
 };
+
+// Support, Help & Feedback v1 (Phase 8). Mirrors com.finora.entity.SupportTicket.Category/Status
+// and com.finora.entity.FeedbackEntry.Type/Context exactly -- a value added on one side with
+// nothing here to render it is the failure mode PICK ONE_OF-style unions exist to catch at
+// compile time rather than as a blank row in production.
+export type SupportTicketCategory =
+  | 'STATEMENT_IMPORT' | 'CATEGORIZATION' | 'ACCOUNT_LINKING' | 'DATA_ACCURACY' | 'TECHNICAL_ISSUE' | 'OTHER';
+export type SupportTicketStatus = 'OPEN' | 'IN_PROGRESS' | 'RESOLVED' | 'CLOSED';
+export type ClientPlatform = 'WEB' | 'MOBILE_ANDROID' | 'MOBILE_IOS';
+
+export interface SupportTicketAttachmentSummary {
+  id: string;
+  filename: string;
+  contentType: string;
+  sizeBytes: number;
+}
+
+export interface SupportTicketSummary {
+  id: string;
+  ticketNumber: string;
+  userId: string;
+  category: SupportTicketCategory;
+  subject: string;
+  status: SupportTicketStatus;
+  claimedByAdminId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SupportTicketDetail extends SupportTicketSummary {
+  description: string;
+  source: ClientPlatform;
+  appVersion: string | null;
+  resolvedAt: string | null;
+  closedAt: string | null;
+  attachments: SupportTicketAttachmentSummary[];
+}
+
+export const supportApi = {
+  create: (payload: { category: SupportTicketCategory; subject: string; description: string; file?: File | null }) => {
+    const form = new FormData();
+    form.append('category', payload.category);
+    form.append('subject', payload.subject);
+    form.append('description', payload.description);
+    if (payload.file) form.append('file', payload.file);
+    return api
+      .post<SupportTicketDetail>('/support/tickets', form, { headers: { 'Content-Type': 'multipart/form-data' } })
+      .then((r) => r.data);
+  },
+  list: (page = 0, size = 25) =>
+    api.get<PagedResponse<SupportTicketSummary>>('/support/tickets', { params: { page, size } }).then((r) => r.data),
+  detail: (id: string) => api.get<SupportTicketDetail>(`/support/tickets/${id}`).then((r) => r.data),
+  // Same pattern as statementImportsApi.downloadFile -- a plain <a href> can't carry the Bearer
+  // token, so this rides the authenticated axios instance and triggers the browser download
+  // client-side.
+  downloadAttachment: async (ticketId: string, attachmentId: string, filename: string) => {
+    try {
+      const res = await api.get(`/support/tickets/${ticketId}/attachments/${attachmentId}`, { responseType: 'blob' });
+      downloadBlob(res.data as Blob, filename);
+    } catch (err) {
+      throw await withBlobErrorMessage(err);
+    }
+  },
+};
+
+export type FeedbackType = 'BUG' | 'FEATURE_REQUEST' | 'IMPROVEMENT' | 'GENERAL';
+export type FeedbackContext =
+  | 'DASHBOARD' | 'TRANSACTIONS' | 'REPORTS' | 'BUDGETS' | 'GOALS' | 'IMPORT_FLOW' | 'ACCOUNTS' | 'SETTINGS' | 'HELP' | 'OTHER';
+
+export interface FeedbackSummary {
+  id: string;
+  userId: string;
+  type: FeedbackType;
+  context: FeedbackContext;
+  source: ClientPlatform;
+  message: string;
+  createdAt: string;
+}
+
+export const feedbackApi = {
+  submit: (payload: { type: FeedbackType; context: FeedbackContext; message: string }) =>
+    api.post<FeedbackSummary>('/feedback', payload).then((r) => r.data),
+};

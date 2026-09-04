@@ -45,6 +45,8 @@ const VerifyEmailChange = lazy(() => import('./pages/VerifyEmailChange'));
 const Settings = lazy(() => import('./pages/Settings'));
 const BillingHistory = lazy(() => import('./pages/BillingHistory'));
 const Referrals = lazy(() => import('./pages/Referrals'));
+const SupportTickets = lazy(() => import('./pages/SupportTickets'));
+const SupportTicketDetail = lazy(() => import('./pages/SupportTicketDetail'));
 const GmailReview = lazy(() => import('./pages/GmailReview'));
 const Setup = lazy(() => import('./pages/Setup'));
 
@@ -156,6 +158,11 @@ export default function App() {
           <Route path="/app/billing" element={<Protected><BillingHistory /></Protected>} />
           <Route path="/app/referrals" element={<Protected><Referrals /></Protected>} />
           <Route path="/app/settings/gmail/review" element={<Protected><GmailReview /></Protected>} />
+          {/* Support, Help & Feedback v1, Phase 8. Deliberately under /app, not on the public
+              /contact page -- see NewTicketModal's own doc for why ticket creation needs an
+              authenticated caller and can't live on an unauthenticated marketing route. */}
+          <Route path="/app/support" element={<Protected><SupportTickets /></Protected>} />
+          <Route path="/app/support/:ticketId" element={<Protected><SupportTicketDetail /></Protected>} />
 
           {/* Bug fix: there was no catch-all, and wrangler.json sets
               assets.not_found_handling = "single-page-application" -- so Cloudflare answers EVERY
