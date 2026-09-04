@@ -14,6 +14,10 @@ import java.util.UUID;
 
 public interface FeedbackEntryRepository extends JpaRepository<FeedbackEntry, UUID> {
 
+    /** A user's own feedback, newest first — {@code DataExportService}'s read; there is no
+     *  user-facing "my feedback" screen in v1, only the admin list below. */
+    List<FeedbackEntry> findByUserIdOrderByCreatedAtDesc(UUID userId);
+
     /**
      * The admin list, optionally filtered by type and/or context, newest first — matching
      * {@code idx_feedback_entries_recent}. Same null-means-unfiltered shape as

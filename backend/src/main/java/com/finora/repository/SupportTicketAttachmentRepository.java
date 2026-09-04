@@ -20,17 +20,30 @@ public interface SupportTicketAttachmentRepository extends JpaRepository<Support
      * bytecode enhancement.
      */
     @Query("""
-            SELECT a.id AS id, a.filename AS filename, a.contentType AS contentType,
-                   a.sizeBytes AS sizeBytes
+            SELECT a.id AS id, a.ticketId AS ticketId, a.filename AS filename,
+                   a.contentType AS contentType, a.sizeBytes AS sizeBytes
               FROM SupportTicketAttachment a
              WHERE a.ticketId = :ticketId
              ORDER BY a.createdAt
             """)
     List<AttachmentMetadata> findMetadataByTicketId(UUID ticketId);
 
+    /** The batched counterpart, for a caller building metadata across several tickets at once
+     *  (e.g. {@code DataExportService}) — one query instead of one per ticket. {@code ticketId} on
+     *  the projection is what makes grouping the flat result list back by ticket possible. */
+    @Query("""
+            SELECT a.id AS id, a.ticketId AS ticketId, a.filename AS filename,
+                   a.contentType AS contentType, a.sizeBytes AS sizeBytes
+              FROM SupportTicketAttachment a
+             WHERE a.ticketId IN :ticketIds
+             ORDER BY a.ticketId, a.createdAt
+            """)
+    List<AttachmentMetadata> findMetadataByTicketIdIn(List<UUID> ticketIds);
+
     /** A projection, deliberately without {@code content}. */
     interface AttachmentMetadata {
         UUID getId();
+        UUID getTicketId();
         String getFilename();
         String getContentType();
         long getSizeBytes();
