@@ -42,6 +42,23 @@ public class ImportSessionService {
     // comfortably cover "I'll finish this tomorrow," not as a carefully measured number.
     private static final Duration SESSION_TTL = Duration.ofHours(48);
 
+    /**
+     * Job statuses whose session the sweep must leave alone, however old it is.
+     *
+     * <p>A trust review is the one state where a human, not a timer, decides when the rows are
+     * finished with -- and 48 hours is not a generous window for that. The workflow this feature
+     * exists to enable is "an engineer fixes the parser, then re-runs it", which routinely takes
+     * longer. Sweeping mid-review deletes the rows the reviewer is judging AND the rows approving
+     * would hand to the user, after we told them their statement was ready.
+     *
+     * <p>Deliberately narrow. HELD_FOR_REVIEW (the parser-gap hold) is NOT here: that job failed
+     * and has no session to protect, so adding it would retain nothing and only widen an exemption
+     * against a retention rule that exists for a reason.
+     */
+    private static final java.util.Set<com.finora.entity.ImportJob.Status>
+            SESSIONS_PROTECTED_FROM_CLEANUP =
+            java.util.EnumSet.of(com.finora.entity.ImportJob.Status.HELD_FOR_TRUST_REVIEW);
+
     // Phase 1B superseded this as the PRIMARY freshness signal -- see findLiveSessionByContentHash
     // -- but kept it as the fallback for the one case a build-version comparison can't resolve: an
     // environment with no git metadata and no RAILWAY_GIT_COMMIT_SHA/GIT_COMMIT set (local dev
@@ -124,8 +141,9 @@ public class ImportSessionService {
      */
     @Transactional
     public int sweepExpiredSessions() {
-        List<ImportSession> expired = importSessionRepository.findByExpiresAtBeforeOrderByExpiresAtAsc(
-                Instant.now(), PageRequest.of(0, CLEANUP_BATCH_SIZE));
+        List<ImportSession> expired = importSessionRepository.findSweepableExpiredSessions(
+                Instant.now(), SESSIONS_PROTECTED_FROM_CLEANUP,
+                PageRequest.of(0, CLEANUP_BATCH_SIZE));
         if (expired.isEmpty()) return 0;
         importSessionRepository.deleteAll(expired);
         return expired.size();
@@ -149,6 +167,28 @@ public class ImportSessionService {
         if (removed > 0) {
             log.info("Removed {} expired import session(s) past their {} TTL.", removed, SESSION_TTL);
         }
+    }
+
+    /**
+     * Restarts a session's TTL, for rows whose clock should not have been running.
+     *
+     * <p>Needed by the trust-review release path. A held session is exempt from the sweep while the
+     * review is open, but its {@code expiresAt} is still whatever it was set to at staging time --
+     * so the moment the hold resolves the exemption lifts and an already-elapsed timestamp makes
+     * the row sweepable immediately. Approving would then tell the user their statement is ready
+     * and let the sweep delete it minutes later, which is the same broken promise the exemption was
+     * added to prevent, just moved.
+     *
+     * <p>The user has not seen these rows yet; the wait was ours. Giving them a full window from
+     * the moment they are told is the only honest reading of the TTL.
+     */
+    @Transactional
+    public void renewExpiry(UUID sessionId) {
+        if (sessionId == null) return;
+        importSessionRepository.findById(sessionId).ifPresent(session -> {
+            session.setExpiresAt(Instant.now().plus(SESSION_TTL));
+            importSessionRepository.save(session);
+        });
     }
 
     @Transactional

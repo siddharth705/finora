@@ -37,6 +37,11 @@ export const FINANCIAL_QUERY_KEYS = [
   // in both directions.
   'needs-review',
   'needs-review-groups',
+  // Unfinished (staged, not yet confirmed) imports. Confirming one consumes it, so the "continue a
+  // previous import" list on the Import screen is stale the moment an import lands -- and that list
+  // is on a DIFFERENT step than the confirm that empties it, which is exactly the case this
+  // module's comment warns about.
+  'import-sessions',
 ] as const;
 
 export function invalidateFinancialData(queryClient: QueryClient) {
