@@ -119,7 +119,7 @@ class AuthServiceResetPasswordTest {
         assertThat(prt.getUsedAt()).isNotNull();
         verify(resetTokenRepository).save(prt);
         verify(userRepository).save(user);
-        verify(auditService).record(eq(userId), eq("EMAIL_SENT"), eq("User"), eq(userId),
+        verify(auditService).recordEvenOnRollback(eq(userId), eq("EMAIL_SENT"), eq("User"), eq(userId),
                 argThat(metadata -> "password_changed".equals(metadata.get("type")) && Boolean.TRUE.equals(metadata.get("success"))));
     }
 

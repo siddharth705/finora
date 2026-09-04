@@ -192,7 +192,7 @@ class TransactionServiceTest {
         transactionService.create(userId, req);
 
         verify(smsProvider).sendTransactionAlert(eq("+919876543210"), eq("Swiggy order"), eq(BigDecimal.valueOf(486)), eq("EXPENSE"));
-        verify(auditService).record(eq(userId), eq("SMS_SENT"), eq("User"), eq(userId),
+        verify(auditService).recordEvenOnRollback(eq(userId), eq("SMS_SENT"), eq("User"), eq(userId),
                 argThat(metadata -> "transaction_alert".equals(metadata.get("type")) && Boolean.TRUE.equals(metadata.get("success"))));
     }
 

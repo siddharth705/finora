@@ -395,7 +395,11 @@ public class TransactionService {
         if (user == null || !user.isPhoneVerified() || user.getPhoneNumber() == null) return;
         SmsResult result = smsProvider.sendTransactionAlert(
                 user.getPhoneNumber(), t.getDescription(), t.getAmount(), t.getTxnType().name());
-        auditService.record(userId, "SMS_SENT", "User", userId, Map.of(
+        // recordEvenOnRollback, not record: this runs inside afterCommit(), on the thread that
+        // just committed create()'s transaction -- see AuthService.register()'s welcome-email
+        // block and AuditService#recordEvenOnRollback's own doc comment for why a plain record()
+        // silently loses the write there.
+        auditService.recordEvenOnRollback(userId, "SMS_SENT", "User", userId, Map.of(
                 "type", "transaction_alert", "provider", result.provider().name(), "success", result.success()));
     }
 
