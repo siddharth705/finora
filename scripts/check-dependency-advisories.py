@@ -110,15 +110,21 @@ def audit(app, omit_dev):
     """npm audit --json. Exit code is non-zero whenever anything is found, so it is ignored; the
     JSON body is the actual result.
 
-    Retries once on a timeout before giving up. A stalled registry response is exactly the kind of
-    transient blip a second attempt tends to clear -- confirmed live in CI (2026-09-04): the same
-    registry slowness that used to hang this call for ~12 minutes was, minutes later, back to its
-    normal ~2s. One retry turns that into "costs an extra AUDIT_TIMEOUT_SECONDS on a bad day"
-    instead of "fails the build outright on a bad day"."""
+    Retries on a timeout before giving up, each attempt a fresh subprocess/connection rather than
+    a resumed one. Confirmed live in CI (2026-09-04) this needs more than one retry: a single
+    attempt normally takes ~2s, but during a genuinely degraded registry window, two consecutive
+    attempts each hung for the *entire* AUDIT_TIMEOUT_SECONDS with no partial progress -- a real
+    stall, not merely slow completion (a direct request to registry.npmjs.org during the same
+    window returned in ~6.6s, not instantly, but nowhere near 60s -- so the stall is specific to
+    npm audit's own connection, not the registry being universally unreachable). A longer
+    per-attempt timeout would just wait longer on a truly stuck connection; a fresh attempt is what
+    actually has a chance of landing on a working one. 3 attempts x AUDIT_TIMEOUT_SECONDS is still
+    well under the 15-minute job budget even in the worst case."""
     cmd = ["npm", "audit", "--json"]
     if omit_dev:
         cmd.append("--omit=dev")
-    for attempt in (1, 2):
+    max_attempts = 3
+    for attempt in range(1, max_attempts + 1):
         try:
             proc = subprocess.run(
                 cmd, cwd=REPO_ROOT / app, capture_output=True, text=True,
@@ -126,14 +132,15 @@ def audit(app, omit_dev):
             )
             break
         except subprocess.TimeoutExpired:
-            if attempt == 2:
+            if attempt == max_attempts:
                 raise RuntimeError(
-                    f"npm audit for {app} did not finish within {AUDIT_TIMEOUT_SECONDS}s, twice in a "
-                    "row -- likely a genuinely stalled registry, not a one-off blip. Check the npm "
-                    "registry's status before assuming this script is at fault."
+                    f"npm audit for {app} did not finish within {AUDIT_TIMEOUT_SECONDS}s, "
+                    f"{max_attempts} times in a row -- likely a genuinely stalled registry, not a "
+                    "one-off blip. Check the npm registry's status before assuming this script is "
+                    "at fault."
                 )
-            print(f"npm audit for {app} timed out after {AUDIT_TIMEOUT_SECONDS}s, retrying once...",
-                  file=sys.stderr)
+            print(f"npm audit for {app} timed out after {AUDIT_TIMEOUT_SECONDS}s "
+                  f"(attempt {attempt}/{max_attempts}), retrying...", file=sys.stderr)
     if not proc.stdout.strip():
         raise RuntimeError(f"npm audit produced no output for {app}: {proc.stderr[:300]}")
     return json.loads(proc.stdout)
