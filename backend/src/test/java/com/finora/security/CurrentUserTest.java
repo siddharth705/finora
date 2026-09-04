@@ -72,4 +72,47 @@ class CurrentUserTest {
 
         assertThatThrownBy(currentUser::id).isInstanceOf(IllegalStateException.class);
     }
+
+    // --- hasAuthority(), added for SupportTicketService's dual-audience reads -----------------
+
+    @Test
+    void hasAuthority_true_whenTheGrantedAuthoritiesContainIt() {
+        var principal = org.springframework.security.core.userdetails.User
+                .withUsername(UUID.randomUUID().toString()).password("irrelevant")
+                .authorities("SUPPORT_MANAGE", "ROLE_USER").build();
+        SecurityContextHolder.getContext().setAuthentication(
+                new UsernamePasswordAuthenticationToken(principal, null, principal.getAuthorities()));
+
+        assertThat(currentUser.hasAuthority("SUPPORT_MANAGE")).isTrue();
+    }
+
+    @Test
+    void hasAuthority_false_whenThePrincipalHasOtherAuthoritiesButNotThisOne() {
+        var principal = org.springframework.security.core.userdetails.User
+                .withUsername(UUID.randomUUID().toString()).password("irrelevant")
+                .authorities("ROLE_USER").build();
+        SecurityContextHolder.getContext().setAuthentication(
+                new UsernamePasswordAuthenticationToken(principal, null, principal.getAuthorities()));
+
+        assertThat(currentUser.hasAuthority("SUPPORT_MANAGE")).isFalse();
+    }
+
+    @Test
+    void hasAuthority_false_ratherThanThrowing_whenThereIsNoAuthenticationAtAll() {
+        // Unlike id(), this answers "can they" for a caller that may not exist -- throwing here
+        // would turn a plain permission check into an outage for the exact anonymous/expired-token
+        // case SecurityConfig's own permitAll matchers can produce.
+        SecurityContextHolder.clearContext();
+
+        assertThat(currentUser.hasAuthority("SUPPORT_MANAGE")).isFalse();
+    }
+
+    @Test
+    void hasAuthority_false_forAnAnonymousPrincipal() {
+        SecurityContextHolder.getContext().setAuthentication(
+                new AnonymousAuthenticationToken("key", "anonymousUser",
+                        List.of(new SimpleGrantedAuthority("ROLE_ANONYMOUS"))));
+
+        assertThat(currentUser.hasAuthority("SUPPORT_MANAGE")).isFalse();
+    }
 }

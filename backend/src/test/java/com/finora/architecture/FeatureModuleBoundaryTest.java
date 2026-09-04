@@ -29,6 +29,7 @@ class FeatureModuleBoundaryTest {
             "com.finora.goals..",
             "com.finora.transactions..",
             "com.finora.rules..",
+            "com.finora.support..",
     };
 
     private JavaClasses productionClasses() {
