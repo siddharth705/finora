@@ -1,16 +1,16 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Search, Bell, HelpCircle, Sun, Moon, Monitor, Check,
-  Keyboard, Mail, X, BellOff, Plus,
+  Keyboard, MessageSquarePlus, LifeBuoy, X, BellOff, Plus,
 } from 'lucide-react';
 import { useTheme, type ThemeSetting } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
 import { dashboardApi } from '../api/endpoints';
 import { safeStorage } from '../lib/safeStorage';
-import { SUPPORT_MAILTO } from '../lib/contact';
 import { AddTransactionModal } from './AddTransactionModal';
+import { FeedbackModal } from './FeedbackModal';
 
 // Notifications are recomputed fresh from the DB on every /dashboard/summary call (see
 // DashboardService.buildNotifications) rather than being persisted rows with stable IDs, so
@@ -52,6 +52,7 @@ export function TopBar() {
   const [openMenu, setOpenMenu] = useState<OpenMenu>(null);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
+  const [showFeedback, setShowFeedback] = useState(false);
   const [readIds, setReadIds] = useState<Set<string>>(() => loadReadSet(email));
   const [searchValue, setSearchValue] = useState('');
   const searchRef = useRef<HTMLInputElement>(null);
@@ -242,19 +243,31 @@ export function TopBar() {
               >
                 <Keyboard size={15} className="text-muted" /> Keyboard shortcuts
               </button>
-              <a
-                href={`${SUPPORT_MAILTO}?subject=Fynora%20feedback`}
+              <Link
+                to="/app/support"
                 onClick={() => setOpenMenu(null)}
                 className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-sm text-ink hover:bg-bg"
               >
-                <Mail size={15} className="text-muted" /> Send feedback
-              </a>
+                <LifeBuoy size={15} className="text-muted" /> My Tickets
+              </Link>
+              <button
+                type="button"
+                onClick={() => {
+                  setOpenMenu(null);
+                  setShowFeedback(true);
+                }}
+                className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-sm text-ink hover:bg-bg"
+              >
+                <MessageSquarePlus size={15} className="text-muted" /> Send feedback
+              </button>
             </Dropdown>
           )}
         </div>
       </div>
 
       {shortcutsOpen && <ShortcutsModal onClose={() => setShortcutsOpen(false)} />}
+
+      {showFeedback && <FeedbackModal onClose={() => setShowFeedback(false)} />}
 
       {showAddModal && (
         <AddTransactionModal
