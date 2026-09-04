@@ -23,10 +23,12 @@ import com.finora.dto.UserSettingsDto;
 import com.finora.dto.WorkspaceSettingsDto;
 import com.finora.entity.Account;
 import com.finora.entity.Category;
+import com.finora.entity.FeedbackEntry;
 import com.finora.entity.ImportSession;
 import com.finora.entity.Plan;
 import com.finora.entity.PlanChange;
 import com.finora.entity.Subscription;
+import com.finora.entity.SupportTicket;
 import com.finora.entity.User;
 import com.finora.exception.ApiException;
 import com.finora.goals.Goal;
@@ -39,6 +41,7 @@ import com.finora.integrations.google.GmailConnectionRepository;
 import com.finora.repository.AccountRepository;
 import com.finora.repository.CategoryRepository;
 import com.finora.repository.CategoryRuleRepository;
+import com.finora.repository.FeedbackEntryRepository;
 import com.finora.repository.ImportJobRepository;
 import com.finora.repository.ImportSessionRepository;
 import com.finora.repository.MerchantRepository;
@@ -48,9 +51,14 @@ import com.finora.repository.PlanRepository;
 import com.finora.repository.StatementImportRepository;
 import com.finora.repository.StatementImportRepository.StatementMetadata;
 import com.finora.repository.SubscriptionRepository;
+import com.finora.repository.SupportTicketAttachmentRepository;
+import com.finora.repository.SupportTicketAttachmentRepository.AttachmentMetadata;
+import com.finora.repository.SupportTicketRepository;
 import com.finora.repository.TransactionRepository;
 import com.finora.repository.UserRepository;
 import com.finora.rules.RuleDto;
+import com.finora.support.FeedbackDto;
+import com.finora.support.SupportTicketDto;
 import com.finora.transactions.TransactionDto;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -88,6 +96,16 @@ import java.util.zip.ZipOutputStream;
  * internal lifecycle/analytics log, not data the user provided -- the subscription itself, and
  * its upgrade/downgrade history, are still read, into {@code subscriptions.json} and {@code
  * plan_changes.json} respectively.
+ *
+ * <p>Support module (Phase 7): {@code support_tickets.json} and {@code feedback.json} read
+ * {@code SupportTicketDto.Detail}/{@code FeedbackDto.Summary} directly rather than duplicating
+ * export-only DTOs -- the same shapes the ticket-detail and feedback-list endpoints already
+ * return. Two more exclusions join the set above, both with their own manifest entries: attachment
+ * *bytes* (filenames are still in {@code support_tickets.json}; the files themselves were never
+ * this class's job to route around {@code com.finora.imports.storage}, and never will be while
+ * they stay on {@code SupportTicketAttachment} rather than that storage layer) and {@code
+ * support_ticket_internal_notes} (Finora's own operational record on a ticket, not the user's
+ * data -- V147's own migration comment states the same exclusion for the same reason).
  *
  * <h2>Two phases, for one specific reason</h2>
  * {@link #buildBundle} runs entirely inside one {@code @Transactional(readOnly = true)} call,
@@ -137,6 +155,9 @@ public class DataExportService {
     private final SubscriptionRepository subscriptionRepository;
     private final PlanRepository planRepository;
     private final PlanChangeRepository planChangeRepository;
+    private final SupportTicketRepository supportTicketRepository;
+    private final SupportTicketAttachmentRepository supportTicketAttachmentRepository;
+    private final FeedbackEntryRepository feedbackEntryRepository;
     private final ObjectMapper objectMapper;
 
     public DataExportService(UserRepository userRepository, GoogleReauthVerifier googleReauthVerifier,
@@ -151,7 +172,11 @@ public class DataExportService {
                               UserSettingsService userSettingsService, WorkspaceSettingsService workspaceSettingsService,
                               BankManagementService bankManagementService, AuditService auditService,
                               SubscriptionRepository subscriptionRepository, PlanRepository planRepository,
-                              PlanChangeRepository planChangeRepository, ObjectMapper objectMapper) {
+                              PlanChangeRepository planChangeRepository,
+                              SupportTicketRepository supportTicketRepository,
+                              SupportTicketAttachmentRepository supportTicketAttachmentRepository,
+                              FeedbackEntryRepository feedbackEntryRepository,
+                              ObjectMapper objectMapper) {
         this.userRepository = userRepository;
         this.googleReauthVerifier = googleReauthVerifier;
         this.accountRepository = accountRepository;
@@ -177,6 +202,9 @@ public class DataExportService {
         this.subscriptionRepository = subscriptionRepository;
         this.planRepository = planRepository;
         this.planChangeRepository = planChangeRepository;
+        this.supportTicketRepository = supportTicketRepository;
+        this.supportTicketAttachmentRepository = supportTicketAttachmentRepository;
+        this.feedbackEntryRepository = feedbackEntryRepository;
         this.objectMapper = objectMapper;
     }
 
@@ -351,9 +379,29 @@ public class DataExportService {
                 .map(pc -> PlanChangeExportDto.from(pc, plansById.get(pc.getFromPlanId()), plansById.get(pc.getToPlanId())))
                 .toList();
 
+        // Support module (Phase 7): support_tickets.json/feedback.json. Attachment BYTES and
+        // internal notes are both excluded -- see buildManifest's own entries for why -- so this
+        // reads only what SupportTicketDto.Detail/FeedbackDto.Summary already expose, the same
+        // shapes the ticket-detail and feedback-list endpoints return, reused rather than
+        // duplicated into export-only DTOs.
+        List<SupportTicket> supportTickets = supportTicketRepository
+                .findByUserIdOrderByCreatedAtDesc(userId, Pageable.unpaged()).getContent();
+        Map<UUID, List<SupportTicketDto.AttachmentSummary>> attachmentsByTicket = supportTicketAttachmentRepository
+                .findMetadataByTicketIdIn(supportTickets.stream().map(SupportTicket::getId).toList()).stream()
+                .collect(Collectors.groupingBy(AttachmentMetadata::getTicketId,
+                        Collectors.mapping(SupportTicketDto.AttachmentSummary::from, Collectors.toList())));
+        List<SupportTicketDto.Detail> supportTicketExports = supportTickets.stream()
+                .map(t -> SupportTicketDto.Detail.from(t, attachmentsByTicket.getOrDefault(t.getId(), List.of())))
+                .toList();
+
+        List<FeedbackDto.Summary> feedbackExports = feedbackEntryRepository.findByUserIdOrderByCreatedAtDesc(userId).stream()
+                .map(FeedbackDto.Summary::from)
+                .toList();
+
         return new ExportBundle(userId, user.getEmail(), accounts, transactions, budgets, goals, goalContributions,
                 categories, categoryRules, relationships, netWorthSnapshots, merchants, importJobs, importSessions,
-                statementSummaries, gmailConnections, userSettings, workspaceSettings, subscriptionExports, planChangeExports);
+                statementSummaries, gmailConnections, userSettings, workspaceSettings, subscriptionExports, planChangeExports,
+                supportTicketExports, feedbackExports);
     }
 
     /**
@@ -390,6 +438,8 @@ public class DataExportService {
             writeJsonEntry(zos, "workspace_settings.json", bundle.workspaceSettings());
             writeJsonEntry(zos, "subscriptions.json", bundle.subscriptions());
             writeJsonEntry(zos, "plan_changes.json", bundle.planChanges());
+            writeJsonEntry(zos, "support_tickets.json", bundle.supportTickets());
+            writeJsonEntry(zos, "feedback.json", bundle.feedback());
 
             for (Summary statement : bundle.statementSummaries()) {
                 String entryName = "statements/" + statement.id() + "-" + sanitize(statement.fileName());
@@ -473,7 +523,9 @@ public class DataExportService {
                 new ManifestEntry("account_settings.json", "Your profile and account preferences.", null),
                 new ManifestEntry("workspace_settings.json", "Your categorization workspace preferences.", null),
                 new ManifestEntry("subscriptions.json", "Your plan and subscription history.", bundle.subscriptions().size()),
-                new ManifestEntry("plan_changes.json", "Your subscription upgrade/downgrade history.", bundle.planChanges().size())
+                new ManifestEntry("plan_changes.json", "Your subscription upgrade/downgrade history.", bundle.planChanges().size()),
+                new ManifestEntry("support_tickets.json", "Your support requests, including attachment filenames (not the files themselves).", bundle.supportTickets().size()),
+                new ManifestEntry("feedback.json", "Feedback you've submitted through the app.", bundle.feedback().size())
         );
         List<ManifestEntry> excluded = List.of(
                 new ManifestEntry("audit_logs", "Your own actions are logged for security, not collected as your data.", null),
@@ -482,7 +534,9 @@ public class DataExportService {
                 new ManifestEntry("refresh_tokens", "Login session bookkeeping (device/IP history), not your financial data.", null),
                 new ManifestEntry("password_history", "Used only to block password reuse; never held anything to show.", null),
                 new ManifestEntry("statement_analysis_sessions", "Internal parsing evidence Finora keeps to improve statement recognition, not part of your ledger.", null),
-                new ManifestEntry("subscription_events", "An internal lifecycle/analytics log of your subscription, not data you provided -- your plan history itself is in subscriptions.json and plan_changes.json.", null)
+                new ManifestEntry("subscription_events", "An internal lifecycle/analytics log of your subscription, not data you provided -- your plan history itself is in subscriptions.json and plan_changes.json.", null),
+                new ManifestEntry("support_ticket_attachments (bytes)", "The files themselves aren't included, only their filenames in support_tickets.json -- contact support if you need one back.", null),
+                new ManifestEntry("support_ticket_internal_notes", "Finora's own operational notes on your ticket (e.g. \"reproduced on Android 1.3.7\"), not data you provided.", null)
         );
         return new Manifest(Instant.now(), bundle.userId(), bundle.email(), included, excluded);
     }
@@ -539,6 +593,7 @@ public class DataExportService {
             List<ImportSessionSummaryDto> importSessions,
             List<Summary> statementSummaries, List<GmailConnectionExportDto> gmailConnections,
             UserSettingsDto userSettings, WorkspaceSettingsDto workspaceSettings,
-            List<SubscriptionExportDto> subscriptions, List<PlanChangeExportDto> planChanges
+            List<SubscriptionExportDto> subscriptions, List<PlanChangeExportDto> planChanges,
+            List<SupportTicketDto.Detail> supportTickets, List<FeedbackDto.Summary> feedback
     ) {}
 }
