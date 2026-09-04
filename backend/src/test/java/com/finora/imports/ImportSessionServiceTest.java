@@ -221,7 +221,9 @@ class ImportSessionServiceTest {
     void sweepExpiredSessions_deletesExpiredSessions_regardlessOfWhoOwnsThem() {
         ImportSession someoneElsesExpired =
                 sessionOwnedBy(otherUserId, Instant.now().minusSeconds(60), ImportSession.STATUS_STAGED);
-        when(importSessionRepository.findByExpiresAtBeforeOrderByExpiresAtAsc(any(), any()))
+        // Names the sweep's own query, which now also excludes sessions an open trust review
+        // still depends on -- see HeldSessionSurvivesCleanupIT for why that exemption exists.
+        when(importSessionRepository.findSweepableExpiredSessions(any(), any(), any()))
                 .thenReturn(List.of(someoneElsesExpired));
 
         // BH-047 moved WHERE this happens, not WHETHER it does. The assertion below is the one
@@ -232,7 +234,7 @@ class ImportSessionServiceTest {
         verify(importSessionRepository).deleteAll(List.of(someoneElsesExpired));
 
         ArgumentCaptor<Pageable> page = ArgumentCaptor.forClass(Pageable.class);
-        verify(importSessionRepository).findByExpiresAtBeforeOrderByExpiresAtAsc(any(), page.capture());
+        verify(importSessionRepository).findSweepableExpiredSessions(any(), any(), page.capture());
         assertThat(page.getValue().getPageSize()).isLessThanOrEqualTo(100);
     }
 

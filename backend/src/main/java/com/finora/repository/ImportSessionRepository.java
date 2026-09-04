@@ -1,5 +1,6 @@
 package com.finora.repository;
 
+import com.finora.entity.ImportJob;
 import com.finora.entity.ImportSession;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -8,6 +9,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.time.Instant;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -57,6 +59,36 @@ public interface ImportSessionRepository extends JpaRepository<ImportSession, UU
      * than in one unbounded delete.
      */
     List<ImportSession> findByExpiresAtBeforeOrderByExpiresAtAsc(Instant now, Pageable limit);
+
+    /**
+     * The same expired slice, minus any session an unresolved review still depends on.
+     *
+     * <p>Reference counting against {@code import_jobs}, the same shape
+     * {@code StatementStorageSweepService} already uses to decide whether a stored object is still
+     * live -- and for the same reason. That service was deliberately built so a held job's PDF
+     * survives; nothing gave the STAGED ROWS the same protection, so a hold outliving the 48-hour
+     * TTL lost the very rows the reviewer was judging. Approving it afterwards marked the job
+     * COMPLETED against a deleted session and told the user their statement was ready.
+     *
+     * <p>Expressed as NOT EXISTS over a status parameter rather than a hardcoded enum, so the
+     * protected set is decided by the caller and stays visible next to the reasoning for it.
+     *
+     * <p>The exemption is not a pin: it lasts exactly as long as the review does. Once the hold is
+     * released or rejected the job leaves that status, and the row becomes sweepable on the next
+     * pass like any other expired session.
+     */
+    @Query("""
+            SELECT s FROM ImportSession s
+             WHERE s.expiresAt < :now
+               AND NOT EXISTS (SELECT 1 FROM ImportJob j
+                                WHERE j.importSessionId = s.id
+                                  AND j.status IN :protectedStatuses)
+             ORDER BY s.expiresAt ASC
+            """)
+    List<ImportSession> findSweepableExpiredSessions(
+            @Param("now") Instant now,
+            @Param("protectedStatuses") Collection<ImportJob.Status> protectedStatuses,
+            Pageable limit);
 
     /**
      * Whether any row -- STAGED or CONFIRMED, expired or not -- still references this object key.
