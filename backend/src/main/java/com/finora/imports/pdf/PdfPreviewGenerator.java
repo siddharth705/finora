@@ -367,7 +367,18 @@ public class PdfPreviewGenerator {
         ProductDiscovery.DiscoveredProduct product = productDiscovery.discover(
                 new ProductEvidenceCollector.Section(columns, section.auxiliaryText(), null,
                         section.rows().size(), sectionIndex, sectionCount));
-        if (ctx != null) ctx.record("FINANCIAL_PRODUCT_CLASSIFICATION");
+        // CodeQL (java/dereferenced-value-may-be-null #73), 2026-09-04, round 2: this and the two
+        // other `ctx != null` checks in this file (originally at buildLedgerSection/
+        // attributePrintedSummary) were never actually reachable with a null ctx -- traced the
+        // full call graph: buildSections is only ever called from generateSectionsWithContext
+        // passing its own local ctx (from `new DocumentContext(...)`, never reassigned), and every
+        // method below it in the chain (buildProductSections, buildLedgerSection,
+        // buildDetectedAccountInfo, sharedFacts) only ever receives ctx from a caller one level up
+        // in this same chain -- never a literal null anywhere. These guards were what made CodeQL
+        // flag ctx.textSource() in buildLedgerSection as inconsistent with "somewhere this is
+        // checked for null," even after the one *directly* provable case (generateSectionsWithContext
+        // itself) was fixed first.
+        ctx.record("FINANCIAL_PRODUCT_CLASSIFICATION");
 
         // Skipping transaction parsing requires the product to be PROVEN a non-ledger, not merely
         // suspected of it. UNKNOWN's own hasTransactions() is false too (its domain needs user
@@ -462,7 +473,9 @@ public class PdfPreviewGenerator {
         // this file." The real evidencing document (HSBC) locates exactly one section, so this
         // costs it nothing; it only withholds the fact when a second section exists to be
         // misattributed to.
-        if (ctx != null && sectionCount <= 1
+        // ctx is never null here -- see the call-graph trace on the FINANCIAL_PRODUCT_CLASSIFICATION
+        // guard above, in buildSections.
+        if (sectionCount <= 1
                 && ExplicitZeroActivityDetector.anyRowDeclaresZeroTransactionCount(sectionRows)) {
             ctx.recordExplicitZeroActivityDeclared();
         }
@@ -840,7 +853,9 @@ public class PdfPreviewGenerator {
         boolean creditCardSignals = section.rows().stream().anyMatch(row ->
                 CsvParser.hasHeaderMatch(row, "card number", "minimum due", "minimum amount due"))
                 || countDistinctCreditCardSignals(section.auxiliaryText()) >= MIN_CREDIT_CARD_TEXT_SIGNALS;
-        if (ctx != null && creditCardSignals) ctx.record("CREDIT_CARD_SUMMARY_SIGNAL");
+        // ctx is never null here either -- same call-graph trace as the other two guards removed
+        // in this file (buildSections/buildLedgerSection).
+        if (creditCardSignals) ctx.record("CREDIT_CARD_SUMMARY_SIGNAL");
 
         return new SharedSectionFacts(metadata, bank, suggestedName, creditCardSignals);
     }

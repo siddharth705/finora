@@ -382,6 +382,72 @@ public class ImportService {
         }
     }
 
+    /**
+     * Re-runs the current parser build against a document's raw bytes and reports what it would
+     * find, without writing anything: no {@code ImportSession}, no evidence-table row, no
+     * duplicate-upload bookkeeping.
+     *
+     * <p>Built for Plan 3 of the Held Statement Review System. An engineer re-testing a held
+     * statement after a parser fix needs to know what the CURRENT build produces, and the live
+     * staging path ({@link #parseAndStageWithSession} / {@link #parseAndStagePdfWithSession})
+     * cannot safely answer that: both call {@link ImportSessionService#findLiveSessionByContentHash}
+     * first, which deletes a live {@code STAGED} session whenever its recorded parser version
+     * differs from the running build's -- exactly the condition a re-run exists to test. Running a
+     * held statement's own still-referenced session through that check would delete the very
+     * session {@code ImportJob.importSessionId} still points at.
+     *
+     * @throws ApiException the same rejection a live parse would throw (e.g. {@code
+     *         IMPORT_NO_ACTIVITY_IN_PERIOD}) if the current build extracts nothing at all from
+     *         these bytes -- a real, reportable re-run outcome, not a bug in this method. The
+     *         caller decides what that means for the hold.
+     */
+    public DryRunResult dryRunParse(UUID userId, String fileName, byte[] fileContent, String sourceFormat)
+            throws IOException {
+        if (StatementUpload.Format.PDF.name().equals(sourceFormat)) {
+            var result = pdfPreviewGenerator.generateSectionsWithContext(userId, fileName, fileContent, null);
+            List<StagedAccountSection> sections = onlySectionsThatAreActuallyAccounts(result.sections());
+            ExtractionCheck.rejectIfNothingWasExtracted(sections, result.documentContext());
+            if (sections.size() <= 1) {
+                StagingResponse staged = sections.isEmpty()
+                        ? new StagingResponse(List.of(), 0, 0, null, List.of())
+                        : toStagingResponse(sections.get(0));
+                return new DryRunResult(reportsOf(staged.verification()),
+                        List.<LocalDate[]>of(periodOf(staged.detectedAccount())));
+            }
+            return new DryRunResult(
+                    sections.stream().map(StagedAccountSection::verification)
+                            .filter(java.util.Objects::nonNull).toList(),
+                    sections.stream().map(s -> periodOf(s.detectedAccount())).toList());
+        }
+        var result = previewGenerator.generateWithContext(userId, fileName,
+                new java.io.ByteArrayInputStream(fileContent));
+        StagingResponse staged = result.response();
+        ExtractionCheck.rejectIfNothingWasExtracted(staged, result.documentContext());
+        return new DryRunResult(reportsOf(staged.verification()), List.<LocalDate[]>of(periodOf(staged.detectedAccount())));
+    }
+
+    /** One report per section for the caller ({@code TrustPredicate}), same convention {@code
+     *  StagedForJob} already uses -- absent verification and verification that found nothing are
+     *  different facts, so a null report yields an empty list, never a list holding null. */
+    private static List<VerificationReport> reportsOf(VerificationReport one) {
+        return one == null ? List.of() : List.of(one);
+    }
+
+    /** {@code {start, end}}, possibly holding nulls -- a missing period is never on its own a
+     *  reason to hold, so it is carried rather than dropped. Same helper {@code StagedForJob}
+     *  keeps privately for the live path; duplicated here rather than shared across packages for a
+     *  four-line method. */
+    private static LocalDate[] periodOf(DetectedAccountInfo detected) {
+        return detected == null
+                ? new LocalDate[]{null, null}
+                : new LocalDate[]{detected.statementPeriodStart(), detected.statementPeriodEnd()};
+    }
+
+    /** What one dry run found: enough for {@code TrustPredicate.evaluate} and nothing else -- no
+     *  session id, because nothing was staged. */
+    public record DryRunResult(List<VerificationReport> verificationReports,
+                                List<LocalDate[]> statementPeriods) {}
+
     /** Rebuilds the response an already-staged session would have produced, for the duplicate-
      *  upload short-circuit in both stage methods above -- same fields {@code ImportController
      *  .getSession()} reads back for an ordinary resume, just assembled here instead since this

@@ -85,6 +85,30 @@ class SupportTicketApiIT extends AbstractIntegrationTest {
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
     }
 
+    /**
+     * The "no token at all" case, distinct from the two tests above (an authenticated user with
+     * the wrong permission). {@code anyRequest().authenticated()} in SecurityConfig is what
+     * actually enforces this, identically for every controller in the app -- not per-feature
+     * logic -- but that global default is only as good as the fact nothing here carves out a
+     * {@code permitAll()} exception, which is exactly what a direct-URL-access attempt is testing
+     * for. A missing/invalid token can surface as either 401 or 403 depending on which filter in
+     * the chain rejects it first, so both are accepted, matching this codebase's existing
+     * convention for the same check elsewhere (e.g. ImportControllerSessionsIT).
+     */
+    @Test
+    void aRequestWithNoTokenAtAll_cannotReachTheTicketQueueOrAnyTicketDetail() throws Exception {
+        User owner = createUser("USER");
+        UUID ticketId = createTicket(owner, "Reachable only with a real token");
+
+        ResponseEntity<String> queue = restTemplate.exchange("/api/v1/admin/support/tickets",
+                HttpMethod.GET, HttpEntity.EMPTY, String.class);
+        assertThat(queue.getStatusCode()).isIn(HttpStatus.UNAUTHORIZED, HttpStatus.FORBIDDEN);
+
+        ResponseEntity<String> detail = restTemplate.exchange("/api/v1/support/tickets/" + ticketId,
+                HttpMethod.GET, HttpEntity.EMPTY, String.class);
+        assertThat(detail.getStatusCode()).isIn(HttpStatus.UNAUTHORIZED, HttpStatus.FORBIDDEN);
+    }
+
     /** V149 grants SUPPORT_MANAGE to ADMIN. Without that role_permissions row every admin 403s here. */
     @Test
     void adminWithTheGrantedPermission_canReadTheTicketQueue() {

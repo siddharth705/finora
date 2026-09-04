@@ -35,6 +35,12 @@ const NON_FINANCIAL_KEYS = new Set([
   'devices',
   // The auto-apply confidence threshold. A preference the user sets; no financial write moves it.
   'workspace-settings',
+  // Support, Help & Feedback v1, Phase 8. A support ticket's list/detail is data ABOUT the app,
+  // not financial data in it -- no transaction, account, or import write can change a ticket's
+  // subject, status, or attachments. SupportTicketsScreen refreshes 'support-tickets-mine' itself
+  // right after creating a new ticket.
+  'support-tickets-mine',
+  'support-ticket-detail',
 ]);
 
 function sourceFiles(dir: string): string[] {

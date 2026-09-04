@@ -111,7 +111,16 @@ public final class CategoryRules {
         String[] tokens = n.split(" ");
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < Math.min(4, tokens.length); i++) {
-            if (tokens[i].length() > 1) { if (sb.length() > 0) sb.append(' '); sb.append(tokens[i]); }
+            // CodeQL (java/misleading-indentation), 2026-09-04: braced explicitly -- the inner,
+            // brace-less `if (sb.length() > 0) sb.append(' ');` was always correctly scoped to
+            // just that one statement by Java's own grammar (sb.append(tokens[i]) always ran
+            // unconditionally), but reads as the classic dangling-if footgun on a quick skim.
+            if (tokens[i].length() > 1) {
+                if (sb.length() > 0) {
+                    sb.append(' ');
+                }
+                sb.append(tokens[i]);
+            }
         }
         return sb.length() > 0 ? sb.toString() : (n.isEmpty() ? "unknown" : n);
     }
