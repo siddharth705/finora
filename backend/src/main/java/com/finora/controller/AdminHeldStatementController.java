@@ -8,6 +8,11 @@ import com.finora.entity.HeldStatement;
 import com.finora.security.CurrentUser;
 import com.finora.service.HeldStatementFilter;
 import com.finora.service.HeldStatementService;
+import com.finora.service.HeldStatementService.DownloadedStatement;
+import org.springframework.http.ContentDisposition;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -67,6 +72,33 @@ public class AdminHeldStatementController {
     @GetMapping("/{heldId}")
     public ApiResponse<HeldStatementDetailDto> detail(@PathVariable String heldId) {
         return ApiResponse.ok(heldStatementService.detail(heldId));
+    }
+
+    /**
+     * The one endpoint in the product that hands a customer's bank statement to a member of staff.
+     *
+     * <p>Deliberately pinned to {@code ADMIN} and {@code SUPER_ADMIN} by role, on top of the class's
+     * {@code TRUST_REVIEW_MANAGE} permission gate rather than instead of it -- the repository
+     * owner's decision, 2026-09-04: that permission is grantable to a future support role who can
+     * work the queue, and such a role must still never be able to take the document itself.
+     *
+     * <p><b>Both conditions are restated in this one expression, not layered as class-level plus
+     * method-level.</b> {@code AdminStatementAnalysisController}'s own doc already establishes why
+     * that would be wrong here: a method-level {@code @PreAuthorize} REPLACES the class-level rule
+     * for Spring Security, it does not add to it. Two separate annotations would have silently
+     * dropped the {@code TRUST_REVIEW_MANAGE} check for this one endpoint -- exactly the "widening
+     * the permission later widens this too" failure the role pin exists to prevent, just moved to
+     * the other gate instead.
+     */
+    @PreAuthorize("hasAuthority('TRUST_REVIEW_MANAGE') and hasAnyRole('ADMIN', 'SUPER_ADMIN')")
+    @GetMapping("/{heldId}/document")
+    public ResponseEntity<byte[]> document(@PathVariable String heldId) {
+        DownloadedStatement file = heldStatementService.download(currentUser.id(), heldId);
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType(file.contentType()))
+                .header(HttpHeaders.CONTENT_DISPOSITION,
+                        ContentDisposition.attachment().filename(file.fileName()).build().toString())
+                .body(file.content());
     }
 
     /** Releases the hold: the staged rows reach the user's confirm step, and the user is told the

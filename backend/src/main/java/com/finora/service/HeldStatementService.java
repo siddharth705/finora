@@ -17,6 +17,7 @@ import com.finora.imports.analysis.ImportVerificationFinding;
 import com.finora.imports.analysis.ImportVerificationFindingRepository;
 import com.finora.imports.jobs.StagedForJob;
 import com.finora.imports.jobs.VerificationTelemetry;
+import com.finora.imports.storage.StatementContentService;
 import com.finora.imports.trust.HeldStatementIdGenerator;
 import com.finora.imports.trust.HoldDecision;
 import com.finora.notification.api.NotificationRequest;
@@ -75,6 +76,7 @@ public class HeldStatementService {
     private final NotificationService notificationService;
     private final ImportSessionService importSessionService;
     private final ObjectMapper objectMapper;
+    private final StatementContentService statementContentService;
 
     public HeldStatementService(HeldStatementRepository repository,
                                 HeldStatementEventRepository eventRepository,
@@ -84,7 +86,8 @@ public class HeldStatementService {
                                 AuditService auditService,
                                 NotificationService notificationService,
                                 ImportSessionService importSessionService,
-                                ObjectMapper objectMapper) {
+                                ObjectMapper objectMapper,
+                                StatementContentService statementContentService) {
         this.repository = repository;
         this.eventRepository = eventRepository;
         this.idGenerator = idGenerator;
@@ -94,6 +97,7 @@ public class HeldStatementService {
         this.notificationService = notificationService;
         this.importSessionService = importSessionService;
         this.objectMapper = objectMapper;
+        this.statementContentService = statementContentService;
     }
 
     /**
@@ -288,6 +292,55 @@ public class HeldStatementService {
                         "heldId", held.getHeldId(),
                         "reason", reason == null ? "" : reason));
         return HeldStatementDto.from(held);
+    }
+
+    /** What the download endpoint hands back -- everything the controller needs to set the
+     *  response headers, in one value. Same shape as {@code StatementImportService.FileDownload},
+     *  for the same reason. */
+    public record DownloadedStatement(String fileName, byte[] content, String contentType) {}
+
+    /**
+     * The one place in the product that hands a customer's bank statement to a member of staff.
+     *
+     * <p>Audited BEFORE the bytes are read, not after -- a failed transfer (a storage outage, a
+     * decrypt failure) must still leave a record that the attempt was made, since the attempt
+     * itself is the sensitive event, not only a successful one. The role gate that makes this safe
+     * to expose at all lives on the controller, one layer up: {@code TRUST_REVIEW_MANAGE} alone
+     * would let anyone who can work the queue reach this method, and that permission is grantable
+     * to a future support role that must never receive a customer's statement -- see the
+     * repository owner's decision, 2026-09-04, in the Plan 2 document.
+     *
+     * <p>Deliberately plain {@code @Transactional}, not {@code readOnly = true}, even though the
+     * method never mutates a row -- it writes one, the audit entry. {@code AdminNotificationService
+     * .detail}'s own doc already caught this exact bug once: a read-only transaction sets
+     * Hibernate's flush mode to {@code MANUAL}, so the audit row registered via {@code
+     * auditLogRepository.save()} is silently never flushed to the database -- no exception, the
+     * row just never existed. Caught here by {@code everyDownloadIsAudited} actually querying
+     * Postgres for the row rather than asserting a mock was called.
+     */
+    @Transactional
+    public DownloadedStatement download(UUID actingAdminId, String heldId) {
+        HeldStatement held = require(heldId);
+        ImportJob job = requireJob(held);
+
+        auditService.record(actingAdminId, "TRUST_REVIEW_DOCUMENT_DOWNLOADED", "HeldStatement",
+                held.getId(), Map.of("actorId", actingAdminId.toString(),
+                        "subjectUserId", held.getUserId().toString(),
+                        "heldId", held.getHeldId()));
+
+        byte[] content = statementContentService.read(job);
+        return new DownloadedStatement(job.getFileName(), content, contentTypeFor(job.getSourceFormat()));
+    }
+
+    /** Same switch {@code StatementImportService.contentTypeFor} makes, over the formats this
+     *  system actually stores -- not a filename-extension lookup, which is attacker-influenced. */
+    private static String contentTypeFor(String sourceFormat) {
+        if (sourceFormat == null) return "application/octet-stream";
+        return switch (sourceFormat.toUpperCase()) {
+            case "CSV" -> "text/csv";
+            case "PDF" -> "application/pdf";
+            default -> "application/octet-stream";
+        };
     }
 
     // --- internals -------------------------------------------------------------------------------
