@@ -111,25 +111,25 @@ def audit(app, omit_dev):
     """npm audit --json. Exit code is non-zero whenever anything is found, so it is ignored; the
     JSON body is the actual result.
 
-    Forces IPv4 DNS resolution (NODE_OPTIONS=--dns-result-order=ipv4first) rather than just
-    retrying blind. Confirmed live in CI (2026-09-04) that plain retries do not help here: three
-    separate CI runs, each doing 3 fresh-subprocess attempts, all 9 attempts hung for *exactly*
-    AUDIT_TIMEOUT_SECONDS with zero partial output -- not the profile of a slow-but-completing
-    request (a direct curl to registry.npmjs.org during the same window returned in ~6.6s, and npm
-    ci's plain package-tarball fetches in the same jobs succeeded fine), and not the profile of
-    real flakiness either, since a transient blip should have cleared on at least one of nine
-    attempts. A dead-uniform hang on every attempt of one specific call, while a different call to
-    the same host works, matches a known, well-documented class of issue: Node resolving the
-    registry to an AAAA (IPv6) record first, and the runner's IPv6 route being silently blackholed
-    (packets dropped, not refused) rather than actually unreachable -- the connection then hangs
-    until something else cuts it off, which here is this script's own timeout rather than npm's.
-    Forcing IPv4 resolution is the standard fix for exactly this symptom. Kept the retry loop too,
-    since a real transient blip is still possible and costs nothing extra to also cover."""
+    Forces IPv4 DNS resolution (NODE_OPTIONS=--dns-result-order=ipv4first), on the theory this was
+    an IPv6-blackhole hang -- confirmed live in CI (2026-09-04) that this theory was WRONG: with
+    the fix applied, mobile's audit call still hung for 3/3 attempts, identically. What the
+    tracebacks across every failure actually show, consistently, and which earlier analysis missed:
+    it is always the second call in main() -- audit(app, omit_dev=True) -- that hangs. The first
+    call, audit(app, omit_dev=False) a few lines earlier in main(), has never once appeared in a
+    failure traceback, meaning it reliably succeeds. So this isn't "the registry is unreachable
+    from this runner" (that would hang the first call too) -- it's specific to `--omit=dev`. Since
+    the real cause isn't established yet, this now also captures whatever npm did manage to log
+    before being killed (NPM_CONFIG_LOGLEVEL=verbose, plus TimeoutExpired's own partial
+    stdout/stderr, which subprocess.run does populate even on a killed process) and prints it, so
+    the NEXT hang -- if the IPv4 change doesn't fully fix it either -- leaves real evidence instead
+    of another guess."""
     cmd = ["npm", "audit", "--json"]
     if omit_dev:
         cmd.append("--omit=dev")
     env = dict(os.environ, NODE_OPTIONS=(os.environ.get("NODE_OPTIONS", "")
-                                          + " --dns-result-order=ipv4first").strip())
+                                          + " --dns-result-order=ipv4first").strip(),
+               NPM_CONFIG_LOGLEVEL="verbose")
     max_attempts = 3
     for attempt in range(1, max_attempts + 1):
         try:
@@ -138,13 +138,24 @@ def audit(app, omit_dev):
                 shell=(sys.platform == "win32"), timeout=AUDIT_TIMEOUT_SECONDS,
             )
             break
-        except subprocess.TimeoutExpired:
+        except subprocess.TimeoutExpired as e:
+            partial_err = (e.stderr or "")
+            partial_err = partial_err.decode(errors="replace") if isinstance(partial_err, bytes) else partial_err
+            if partial_err.strip():
+                print(f"--- partial npm stderr before the {AUDIT_TIMEOUT_SECONDS}s kill "
+                      f"(attempt {attempt}/{max_attempts}, {app}, omit_dev={omit_dev}) ---",
+                      file=sys.stderr)
+                print(partial_err[-4000:], file=sys.stderr)
+                print("--- end partial stderr ---", file=sys.stderr)
+            else:
+                print(f"npm produced no stderr at all before the {AUDIT_TIMEOUT_SECONDS}s kill "
+                      f"(attempt {attempt}/{max_attempts}, {app}, omit_dev={omit_dev}) -- verbose "
+                      "logging itself never got a chance to write anything.", file=sys.stderr)
             if attempt == max_attempts:
                 raise RuntimeError(
-                    f"npm audit for {app} did not finish within {AUDIT_TIMEOUT_SECONDS}s, "
-                    f"{max_attempts} times in a row -- likely a genuinely stalled registry, not a "
-                    "one-off blip. Check the npm registry's status before assuming this script is "
-                    "at fault."
+                    f"npm audit for {app} (omit_dev={omit_dev}) did not finish within "
+                    f"{AUDIT_TIMEOUT_SECONDS}s, {max_attempts} times in a row -- see the partial "
+                    "stderr captured above for where it actually got stuck."
                 )
             print(f"npm audit for {app} timed out after {AUDIT_TIMEOUT_SECONDS}s "
                   f"(attempt {attempt}/{max_attempts}), retrying...", file=sys.stderr)
