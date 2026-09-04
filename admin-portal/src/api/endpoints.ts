@@ -5,7 +5,7 @@ import type {
   AccountDto, ActivationFunnelDto, ActivityTrendPointDto, AdminReferralSummaryDto, AdminUpdateUserRequest, AuditLogDto, BankDto, CategoryConfidencePoint,
   CoverageDto,
   HeldImportRow, HeldImportDetail, HeldImportSummary,
-  HeldStatementRow, HeldStatementQuery, HeldStatementDetail,
+  HeldStatementRow, HeldStatementQuery, HeldStatementDetail, HeldStatementRerunResult,
   SupportTicketRow, SupportTicketQuery, SupportTicketDetail, SupportTicketNote,
   FeedbackRow, FeedbackQuery, FeedbackBreakdown,
   CreateAccountRequest, CreateBankRequest, CreateMerchantTemplateRequest, CreateRelationshipRequest,
@@ -404,6 +404,11 @@ export const adminHeldStatementApi = {
     api.post<HeldStatementRow>(`/admin/held-statements/${heldId}/investigate`).then((r) => r.data),
   notes: (heldId: string, notes: string) =>
     api.post<HeldStatementRow>(`/admin/held-statements/${heldId}/notes`, { notes }).then((r) => r.data),
+  saveFindings: (heldId: string, rootCause?: string, fixReference?: string) =>
+    api.post<HeldStatementRow>(`/admin/held-statements/${heldId}/findings`, { rootCause, fixReference })
+      .then((r) => r.data),
+  rerunParser: (heldId: string) =>
+    api.post<HeldStatementRerunResult>(`/admin/held-statements/${heldId}/rerun-parser`).then((r) => r.data),
   // A plain <a href> can't carry the Bearer token, so this goes through the same authenticated
   // axios instance as everything else and triggers the browser download client-side instead --
   // same pattern as the user frontend's statementImportsApi.downloadFile.
