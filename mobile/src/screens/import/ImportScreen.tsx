@@ -11,7 +11,7 @@ import { OptionPickerModal } from '../../components/OptionPickerModal';
 import { StagedRowCard } from './StagedRowCard';
 import { accountsApi, categoriesApi, importApi, statementImportsApi, type RNFile, type StagingResult } from '../../api/endpoints';
 import { PDF_PASSWORD_INVALID, PDF_PASSWORD_REQUIRED } from '../../api/errorCodes';
-import { apiErrorCode, toUserMessage } from '../../lib/apiError';
+import { apiErrorCode, isCanceled, toUserMessage } from '../../lib/apiError';
 import { fmtCurrency } from '../../lib/format';
 import { hapticError, hapticSuccess } from '../../lib/haptics';
 import { invalidateFinancialData } from '../../lib/invalidateFinancialData';
@@ -75,6 +75,10 @@ export function ImportScreen() {
   // after a successful import and by resetToUpload, so a genuinely new re-import gets a new key --
   // re-importing the same statement again later is legitimate and must keep working.
   const attemptKey = useRef<string | null>(null);
+  // Aborts the in-flight staging upload. Held in a ref, not state: the Cancel button must reach the
+  // CURRENT controller synchronously, and a re-render between press and abort would be enough to
+  // send the signal to a stale one.
+  const uploadAbort = useRef<AbortController | null>(null);
 
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [fileFormat, setFileFormat] = useState<StatementFormat | null>(null);
@@ -199,6 +203,7 @@ export function ImportScreen() {
     setError(null);
     // A new import is a new attempt, never a retry of the last one.
     attemptKey.current = null;
+    uploadAbort.current = null;
     setUploadProgress(null);
     setSessionId(null);
     setFileFormat(null);
@@ -330,10 +335,12 @@ export function ImportScreen() {
   async function upload(file: RNFile, isPdf: boolean, password: string | undefined) {
     setError(null);
     setUploadProgress(0);
+    const controller = new AbortController();
+    uploadAbort.current = controller;
     try {
       const res = isPdf
-        ? await importApi.stagePdf(file, setUploadProgress, password)
-        : await importApi.stageCsv(file, setUploadProgress);
+        ? await importApi.stagePdf(file, setUploadProgress, password, controller.signal)
+        : await importApi.stageCsv(file, setUploadProgress, controller.signal);
 
       setSessionId(res.sessionId);
       // The document opened, so the password has done its whole job -- drop it and the file.
@@ -358,6 +365,10 @@ export function ImportScreen() {
       hydrateReviewFrom(staging);
       setStep('review');
     } catch (e) {
+      // A cancel is the user getting what they asked for, not a failure -- no error banner. Checked
+      // before everything else because a cancelled request otherwise reads as a network error
+      // (no response, see isCanceled's own comment) and would print "Could not read that statement."
+      if (isCanceled(e)) return;
       const code = apiErrorCode(e);
       if (code === PDF_PASSWORD_REQUIRED || code === PDF_PASSWORD_INVALID) {
         // Not a read failure and not shown as one -- the file is fine, it just hasn't been opened
@@ -368,8 +379,14 @@ export function ImportScreen() {
         setError(toUserMessage(e, 'Could not read that statement.'));
       }
     } finally {
+      uploadAbort.current = null;
       setUploadProgress(null);
     }
+  }
+
+  /** Abort an in-flight staging upload. Safe to call when nothing is in flight. */
+  function cancelUpload() {
+    uploadAbort.current?.abort();
   }
 
   async function confirmImport() {
@@ -466,6 +483,11 @@ export function ImportScreen() {
                 <Text style={[styles.progressText, { color: c.muted }]}>
                   {uploadProgress === 100 ? 'Reading statement…' : `Uploading… ${uploadProgress}%`}
                 </Text>
+                {/* The only way out of this screen while an upload is in flight. It matters most
+                    on the request that can never time out on its own (see toUploadProgressConfig):
+                    on a dead connection the bar simply freezes, and without this the user is stuck
+                    watching it. */}
+                <Button label="Cancel upload" variant="link" onPress={cancelUpload} />
               </View>
             ) : pendingPdf ? (
               <View style={styles.passwordWrap} testID="pdf-password-panel">
