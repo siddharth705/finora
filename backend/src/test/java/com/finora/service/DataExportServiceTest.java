@@ -11,12 +11,16 @@ import com.finora.dto.WorkspaceSettingsDto;
 import com.finora.entity.Account;
 import com.finora.entity.Category;
 import com.finora.entity.CategoryRule;
+import com.finora.entity.ClientPlatform;
+import com.finora.entity.FeedbackEntry;
 import com.finora.entity.ImportSession;
 import com.finora.entity.Merchant;
 import com.finora.entity.NetWorthSnapshot;
 import com.finora.entity.Plan;
 import com.finora.entity.PlanChange;
 import com.finora.entity.Subscription;
+import com.finora.entity.SupportTicket;
+import com.finora.entity.SupportTicketAttachment;
 import com.finora.entity.Transaction;
 import com.finora.entity.User;
 import com.finora.exception.ApiException;
@@ -31,6 +35,7 @@ import com.finora.integrations.google.GmailConnectionRepository;
 import com.finora.repository.AccountRepository;
 import com.finora.repository.CategoryRepository;
 import com.finora.repository.CategoryRuleRepository;
+import com.finora.repository.FeedbackEntryRepository;
 import com.finora.repository.ImportJobRepository;
 import com.finora.repository.ImportSessionRepository;
 import com.finora.repository.MerchantRepository;
@@ -39,10 +44,16 @@ import com.finora.repository.PlanChangeRepository;
 import com.finora.repository.PlanRepository;
 import com.finora.repository.StatementImportRepository;
 import com.finora.repository.SubscriptionRepository;
+import com.finora.repository.SupportTicketAttachmentRepository;
+import com.finora.repository.SupportTicketRepository;
 import com.finora.repository.TransactionRepository;
 import com.finora.repository.UserRepository;
+import com.finora.support.FeedbackDto;
+import com.finora.support.SupportTicketDto;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -107,6 +118,9 @@ class DataExportServiceTest {
     private SubscriptionRepository subscriptionRepository;
     private PlanRepository planRepository;
     private PlanChangeRepository planChangeRepository;
+    private SupportTicketRepository supportTicketRepository;
+    private SupportTicketAttachmentRepository supportTicketAttachmentRepository;
+    private FeedbackEntryRepository feedbackEntryRepository;
     private DataExportService service;
     private final UUID userId = UUID.randomUUID();
 
@@ -139,6 +153,9 @@ class DataExportServiceTest {
         subscriptionRepository = mock(SubscriptionRepository.class);
         planRepository = mock(PlanRepository.class);
         planChangeRepository = mock(PlanChangeRepository.class);
+        supportTicketRepository = mock(SupportTicketRepository.class);
+        supportTicketAttachmentRepository = mock(SupportTicketAttachmentRepository.class);
+        feedbackEntryRepository = mock(FeedbackEntryRepository.class);
         ObjectMapper objectMapper = new ObjectMapper();
         objectMapper.registerModule(new JavaTimeModule());
 
@@ -167,6 +184,9 @@ class DataExportServiceTest {
         when(subscriptionRepository.findByUserIdIncludingDeletedOrderByCreatedAtDesc(any())).thenReturn(List.of());
         when(planRepository.findAllById(any())).thenReturn(List.of());
         when(planChangeRepository.findBySubscriptionIdInOrderByCreatedAtDesc(any())).thenReturn(List.of());
+        when(supportTicketRepository.findByUserIdOrderByCreatedAtDesc(any(), any())).thenReturn(Page.empty());
+        when(supportTicketAttachmentRepository.findMetadataByTicketIdIn(any())).thenReturn(List.of());
+        when(feedbackEntryRepository.findByUserIdOrderByCreatedAtDesc(any())).thenReturn(List.of());
 
         when(passwordEncoder.matches(any(), any())).thenReturn(true);
         when(userRepository.findById(userId)).thenReturn(Optional.of(user()));
@@ -177,7 +197,8 @@ class DataExportServiceTest {
                 netWorthSnapshotRepository, merchantRepository, importJobRepository, importSessionRepository,
                 importSessionService, statementImportRepository, statementImportService, gmailConnectionRepository,
                 userSettingsService, workspaceSettingsService, bankManagementService, auditService,
-                subscriptionRepository, planRepository, planChangeRepository, objectMapper);
+                subscriptionRepository, planRepository, planChangeRepository,
+                supportTicketRepository, supportTicketAttachmentRepository, feedbackEntryRepository, objectMapper);
     }
 
     private User user() {
@@ -207,7 +228,8 @@ class DataExportServiceTest {
                 categoryRuleRepository, relationshipService, netWorthSnapshotRepository, merchantRepository,
                 importJobRepository, importSessionRepository, importSessionService, statementImportRepository,
                 statementImportService, gmailConnectionRepository, userSettingsService, workspaceSettingsService,
-                bankManagementService, subscriptionRepository, planRepository, planChangeRepository);
+                bankManagementService, subscriptionRepository, planRepository, planChangeRepository,
+                supportTicketRepository, supportTicketAttachmentRepository, feedbackEntryRepository);
     }
 
     @Test
@@ -945,16 +967,100 @@ class DataExportServiceTest {
         assertThat(excludedNames).anySatisfy(n -> assertThat(n).contains("password_history"));
         assertThat(excludedNames).anySatisfy(n -> assertThat(n).contains("statement_analysis_sessions"));
         assertThat(excludedNames).anySatisfy(n -> assertThat(n).contains("subscription_events"));
+        assertThat(excludedNames).anySatisfy(n -> assertThat(n).contains("support_ticket_attachments"));
+        assertThat(excludedNames).anySatisfy(n -> assertThat(n).contains("support_ticket_internal_notes"));
         assertThat(excludedNames).noneSatisfy(n -> assertThat(n).contains("plan_changes"));
 
         List<String> includedNames = new ArrayList<>();
         manifest.get("included").forEach(n -> includedNames.add(n.get("name").asText()));
         assertThat(includedNames).contains("accounts.json", "transactions.json", "statements/", "goal_contributions.json",
-                "subscriptions.json", "plan_changes.json");
+                "subscriptions.json", "plan_changes.json", "support_tickets.json", "feedback.json");
         // manifest.json/README.txt describe the archive itself, not one more table in it.
         assertThat(includedNames).doesNotContain("manifest.json", "README.txt");
 
         assertThat(entries).containsKey("README.txt");
+    }
+
+    /** support_tickets.json/feedback.json (Phase 7): attachment metadata (filename, no bytes)
+     *  comes through via the batched findMetadataByTicketIdIn, grouped back to the right ticket --
+     *  and neither JSON entry ever carries an internal note, which is structurally impossible
+     *  anyway since SupportTicketDto.Detail has no such field, but this pins the real values
+     *  actually flow through rather than just compiling. */
+    @Test
+    void buildBundle_supportTicketsAndFeedback_includeAttachmentMetadataButNeverNoteContent() {
+        SupportTicket ticket = new SupportTicket();
+        UUID ticketId = UUID.randomUUID();
+        ReflectionTestUtils.setField(ticket, "id", ticketId);
+        ticket.setTicketNumber("SUP-000042");
+        ticket.setUserId(userId);
+        ticket.setCategory(SupportTicket.Category.STATEMENT_IMPORT);
+        ticket.setSource(ClientPlatform.WEB);
+        ticket.setSubject("Import stuck");
+        ticket.setDescription("Progress bar froze at 60%.");
+        when(supportTicketRepository.findByUserIdOrderByCreatedAtDesc(eq(userId), any()))
+                .thenReturn(new PageImpl<>(List.of(ticket)));
+
+        SupportTicketAttachment attachment = new SupportTicketAttachment();
+        UUID attachmentId = UUID.randomUUID();
+        ReflectionTestUtils.setField(attachment, "id", attachmentId);
+        attachment.setTicketId(ticketId);
+        attachment.setFilename("screenshot.png");
+        attachment.setContentType("image/png");
+        attachment.setSizeBytes(2048);
+        SupportTicketAttachmentRepository.AttachmentMetadata attachmentMetadata =
+                mock(SupportTicketAttachmentRepository.AttachmentMetadata.class);
+        when(attachmentMetadata.getId()).thenReturn(attachmentId);
+        when(attachmentMetadata.getTicketId()).thenReturn(ticketId);
+        when(attachmentMetadata.getFilename()).thenReturn("screenshot.png");
+        when(attachmentMetadata.getContentType()).thenReturn("image/png");
+        when(attachmentMetadata.getSizeBytes()).thenReturn(2048L);
+        when(supportTicketAttachmentRepository.findMetadataByTicketIdIn(List.of(ticketId)))
+                .thenReturn(List.of(attachmentMetadata));
+
+        FeedbackEntry feedback = new FeedbackEntry();
+        ReflectionTestUtils.setField(feedback, "id", UUID.randomUUID());
+        feedback.setUserId(userId);
+        feedback.setType(FeedbackEntry.Type.BUG);
+        feedback.setContext(FeedbackEntry.Context.IMPORT_FLOW);
+        feedback.setSource(ClientPlatform.WEB);
+        feedback.setMessage("The import bar sticks at 60%.");
+        when(feedbackEntryRepository.findByUserIdOrderByCreatedAtDesc(userId)).thenReturn(List.of(feedback));
+
+        DataExportService.ExportBundle bundle = service.buildBundle(userId, "correct-password", null, null);
+
+        assertThat(bundle.supportTickets()).hasSize(1);
+        SupportTicketDto.Detail ticketDto = bundle.supportTickets().get(0);
+        assertThat(ticketDto.ticketNumber()).isEqualTo("SUP-000042");
+        assertThat(ticketDto.attachments()).hasSize(1);
+        assertThat(ticketDto.attachments().get(0).filename()).isEqualTo("screenshot.png");
+        assertThat(ticketDto.attachments().get(0).sizeBytes()).isEqualTo(2048);
+
+        assertThat(bundle.feedback()).hasSize(1);
+        FeedbackDto.Summary feedbackDto = bundle.feedback().get(0);
+        assertThat(feedbackDto.message()).isEqualTo("The import bar sticks at 60%.");
+        assertThat(feedbackDto.type()).isEqualTo(FeedbackEntry.Type.BUG);
+    }
+
+    /** A ticket with no attachment must not throw looking itself up in the batched-and-grouped
+     *  map -- the missing-key case getOrDefault(..., List.of()) exists for. */
+    @Test
+    void buildBundle_supportTickets_ticketWithNoAttachmentGetsAnEmptyList() {
+        SupportTicket ticket = new SupportTicket();
+        UUID ticketId = UUID.randomUUID();
+        ReflectionTestUtils.setField(ticket, "id", ticketId);
+        ticket.setTicketNumber("SUP-000007");
+        ticket.setUserId(userId);
+        ticket.setCategory(SupportTicket.Category.OTHER);
+        ticket.setSource(ClientPlatform.WEB);
+        ticket.setSubject("No attachment");
+        ticket.setDescription("Text-only ticket.");
+        when(supportTicketRepository.findByUserIdOrderByCreatedAtDesc(eq(userId), any()))
+                .thenReturn(new PageImpl<>(List.of(ticket)));
+
+        DataExportService.ExportBundle bundle = service.buildBundle(userId, "correct-password", null, null);
+
+        assertThat(bundle.supportTickets()).hasSize(1);
+        assertThat(bundle.supportTickets().get(0).attachments()).isEmpty();
     }
 
     private Map<String, byte[]> writeZipAndReadEntries(DataExportService.ExportBundle bundle) throws IOException {
