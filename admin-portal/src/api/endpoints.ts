@@ -4,6 +4,7 @@ import type {
   AccountDto, ActivationFunnelDto, ActivityTrendPointDto, AdminReferralSummaryDto, AdminUpdateUserRequest, AuditLogDto, BankDto, CategoryConfidencePoint,
   CoverageDto,
   HeldImportRow, HeldImportDetail, HeldImportSummary,
+  HeldStatementRow, HeldStatementQuery,
   CreateAccountRequest, CreateBankRequest, CreateMerchantTemplateRequest, CreateRelationshipRequest,
   CreateRuleRequest, CreateUserRequest, FeatureFlagDto, GmailMerchantParserStatDto, LearningGrowthPoint, LearningPlatformStatsDto, LearningSummaryDto,
   LearningTimelineEntry,
@@ -361,6 +362,15 @@ export const adminHeldImportApi = {
     api.post<{ reprocessed: number }>('/admin/held-imports/reprocess-all').then((r) => r.data),
   resolve: (jobId: string, reason: string) =>
     api.post<HeldImportRow>(`/admin/held-imports/${jobId}/resolve`, { reason }).then((r) => r.data),
+};
+
+/** The trust-review queue -- statements the pipeline held back because the extraction's own
+ *  evidence contradicted it, not because parsing failed. Every filter is optional; the server
+ *  narrows within the open queue and never returns a resolved hold regardless of which filters
+ *  are passed. */
+export const adminHeldStatementApi = {
+  list: (params: HeldStatementQuery) =>
+    api.get<PagedResponse<HeldStatementRow>>('/admin/held-statements', { params }).then((r) => r.data),
 };
 
 /** The Merchant Review Center (WI4). Listing crosses users; every action is scoped to the owner,
