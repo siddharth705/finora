@@ -170,9 +170,10 @@ class SupportTicketServiceTest {
     // --- ownership: dual-audience reads -------------------------------------------------------
 
     @Test
-    void aRegularCallerReadsOnlyTheirOwnTicket_viaTheOwnerScopedQuery() {
+    void aRegularCallerReadsOnlyTheirOwnTicket_viaTheOwnerScopedQuery_andItIsNotAudited() {
         SupportTicket ticket = new SupportTicket();
         ticket.setUserId(userId);
+        ticket.setTicketNumber("SUP-000042");
         UUID ticketId = UUID.randomUUID();
         when(ticketRepository.findByIdAndUserId(ticketId, userId)).thenReturn(Optional.of(ticket));
         when(attachmentRepository.findMetadataByTicketId(any())).thenReturn(List.of());
@@ -180,6 +181,7 @@ class SupportTicketServiceTest {
         var detail = service.getDetail(userId, false, ticketId);
 
         assertThat(detail).isNotNull();
+        verifyNoInteractions(auditService);
     }
 
     @Test
@@ -195,9 +197,11 @@ class SupportTicketServiceTest {
     }
 
     @Test
-    void anAdminCaller_readsAnyTicket_viaTheUnscopedQuery() {
+    void anAdminCaller_readsAnyTicket_viaTheUnscopedQuery_andItIsAudited() {
+        UUID ownerId = UUID.randomUUID(); // owned by someone else entirely
         SupportTicket ticket = new SupportTicket();
-        ticket.setUserId(UUID.randomUUID()); // owned by someone else entirely
+        ticket.setUserId(ownerId);
+        ticket.setTicketNumber("SUP-000042");
         UUID ticketId = UUID.randomUUID();
         when(ticketRepository.findById(ticketId)).thenReturn(Optional.of(ticket));
         when(attachmentRepository.findMetadataByTicketId(any())).thenReturn(List.of());
@@ -205,6 +209,8 @@ class SupportTicketServiceTest {
         var detail = service.getDetail(adminId, true, ticketId);
 
         assertThat(detail).isNotNull();
+        verify(auditService).record(eq(ownerId), eq("SUPPORT_TICKET_VIEWED"), eq("SupportTicket"), any(),
+                eq(Map.of("actorId", adminId.toString(), "ticketNumber", "SUP-000042")));
     }
 
     // --- claim / unclaim ---------------------------------------------------------------------

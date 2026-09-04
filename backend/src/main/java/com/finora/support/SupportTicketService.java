@@ -48,18 +48,28 @@ import java.util.UUID;
  *
  * <h2>Audit: owner as subject, actor in metadata</h2>
  *
- * <p>Four events, all string literals passed to {@code AuditService.record} — there is no {@code
+ * <p>Six events, all string literals passed to {@code AuditService.record} — there is no {@code
  * AuditAction} catalog to extend, matching that service's own documented convention.
  * {@code SUPPORT_TICKET_CREATED} is self-service (the ticket's own {@code userId} is the only
- * actor, and this method is never admin-reachable). The other three are admin actions on a user's
+ * actor, and this method is never admin-reachable). The other five are admin actions on a user's
  * own ticket, and follow {@code AccountService.create}'s convention exactly: {@code record}'s first
  * argument stays the ticket owner's {@code userId} (the subject whose data changed), and the acting
- * admin goes into {@code metadata["actorId"]} — never the reverse. Every admin-facing method that
- * writes one of these carries a parameter literally named {@code actingAdminId}, not merely a
- * differently-named admin id: {@code AuditActorAttributionTest} walks the call graph from every
- * {@code /api/v1/admin/**} controller and fails the build on an audited write it can reach without
- * that exact parameter name — the same rule that already caught eight real instances of this bug
- * elsewhere in the codebase (see that test's own doc).
+ * admin goes into {@code metadata["actorId"]} — never the reverse. Every admin-only-reachable
+ * method that writes one of these carries a parameter literally named {@code actingAdminId}, not
+ * merely a differently-named admin id: {@code AuditActorAttributionTest} walks the call graph from
+ * every {@code /api/v1/admin/**} controller and fails the build on an audited write it can reach
+ * without that exact parameter name — the same rule that already caught eight real instances of
+ * this bug elsewhere in the codebase (see that test's own doc). {@link #getDetail} and {@link
+ * #downloadAttachment} are the exception to the parameter name, not to the underlying rule: both are
+ * reachable by an admin AND the ticket's own owner through the single shared route ({@code callerId}
+ * already carries whichever one actually called), and their controller is
+ * {@code SupportTicketController} under {@code /api/v1/support}, not an admin-rooted path — so
+ * {@code AuditActorAttributionTest}'s walk, which starts only from {@code /api/v1/admin/**}
+ * controllers, never reaches either at all. {@code SUPPORT_TICKET_VIEWED} and {@code
+ * SUPPORT_TICKET_ATTACHMENT_DOWNLOADED} fire only when {@code callerIsAdmin} is true, following the
+ * same reasoning {@code AdminHeldImportController.detail} states for auditing every open of a detail
+ * view that can surface a user's own free text — a downloaded attachment is raw file content and
+ * gets the identical posture.
  *
  * <p>{@code SUPPORT_TICKET_CLAIMED} covers claim, unclaim and a takeover as one event type,
  * carrying {@code previousAdminId} and {@code newAdminId} — both keys always present, including
@@ -151,19 +161,40 @@ public class SupportTicketService {
                 ticketRepository.findByUserIdOrderByCreatedAtDesc(userId, pageable).map(SupportTicketDto.Summary::from));
     }
 
-    @Transactional(readOnly = true)
+    /**
+     * Not {@code readOnly = true}, unlike {@link #listOwn}, {@link #adminList} and {@link
+     * #listNotes} — {@code AdminHeldImportService.detail} is the precedent: it drops the hint for
+     * exactly the same reason, because a read that also writes an audit row is not read-only, and
+     * {@code readOnly} is a hint the JDBC driver can act on (it maps to {@code
+     * Connection.setReadOnly(true)} in this app's Postgres configuration), not decoration — an
+     * INSERT inside a connection actually marked read-only fails at the database, it does not
+     * silently no-op. {@link #downloadAttachment} carries the identical exception and reasoning.
+     */
+    @Transactional
     public SupportTicketDto.Detail getDetail(UUID callerId, boolean callerIsAdmin, UUID ticketId) {
         SupportTicket ticket = fetchForCaller(callerId, callerIsAdmin, ticketId);
         List<SupportTicketDto.AttachmentSummary> attachments = attachmentRepository.findMetadataByTicketId(ticket.getId())
                 .stream().map(SupportTicketDto.AttachmentSummary::from).toList();
+        if (callerIsAdmin) {
+            auditService.record(ticket.getUserId(), "SUPPORT_TICKET_VIEWED", "SupportTicket", ticket.getId(),
+                    Map.of("actorId", callerId.toString(), "ticketNumber", ticket.getTicketNumber()));
+        }
         return SupportTicketDto.Detail.from(ticket, attachments);
     }
 
-    @Transactional(readOnly = true)
+    /** Not {@code readOnly = true} — see {@link #getDetail}'s own doc for why. A downloaded
+     *  attachment is raw file content (a screenshot can show as much financial detail as free text),
+     *  so an admin download gets the identical audit posture as opening the ticket itself. */
+    @Transactional
     public AttachmentDownload downloadAttachment(UUID callerId, boolean callerIsAdmin, UUID ticketId, UUID attachmentId) {
         SupportTicket ticket = fetchForCaller(callerId, callerIsAdmin, ticketId);
         SupportTicketAttachment attachment = attachmentRepository.findByIdAndTicketId(attachmentId, ticket.getId())
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Attachment not found"));
+        if (callerIsAdmin) {
+            auditService.record(ticket.getUserId(), "SUPPORT_TICKET_ATTACHMENT_DOWNLOADED", "SupportTicket", ticket.getId(),
+                    Map.of("actorId", callerId.toString(), "ticketNumber", ticket.getTicketNumber(),
+                            "attachmentId", attachment.getId().toString(), "filename", attachment.getFilename()));
+        }
         return new AttachmentDownload(attachment.getFilename(), attachment.getContentType(), attachment.getContent());
     }
 

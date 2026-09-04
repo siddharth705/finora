@@ -187,6 +187,33 @@ class SupportTicketApiIT extends AbstractIntegrationTest {
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
     }
 
+    @Test
+    void anAdminOpeningATicket_writesARealSupportTicketViewedRow() throws Exception {
+        User owner = createUser("USER");
+        User admin = createUser("ADMIN");
+        UUID ticketId = createTicket(owner, "Viewed by an admin");
+
+        restTemplate.exchange("/api/v1/support/tickets/" + ticketId, HttpMethod.GET,
+                new HttpEntity<>(bearerFor(admin)), String.class);
+
+        AuditLog row = onlyAuditRow(ticketId, "SUPPORT_TICKET_VIEWED");
+        assertThat(row.getUserId()).isEqualTo(owner.getId());
+        assertThat(row.getMetadata().get("actorId")).isEqualTo(admin.getId().toString());
+    }
+
+    @Test
+    void theOwnerOpeningTheirOwnTicket_writesNoViewedRow() throws Exception {
+        User owner = createUser("USER");
+        UUID ticketId = createTicket(owner, "Owner viewing their own ticket");
+
+        restTemplate.exchange("/api/v1/support/tickets/" + ticketId, HttpMethod.GET,
+                new HttpEntity<>(bearerFor(owner)), String.class);
+
+        List<AuditLog> viewedRows = auditLogRepository.findByEntityIdOrderByCreatedAtAsc(ticketId).stream()
+                .filter(row -> row.getAction().equals("SUPPORT_TICKET_VIEWED")).toList();
+        assertThat(viewedRows).isEmpty();
+    }
+
     // --- the attachment seam: upload, then a different user is refused ---------------------------
 
     private HttpEntity<MultiValueMap<String, Object>> ticketWithAttachmentRequest(User user) {
@@ -228,6 +255,31 @@ class SupportTicketApiIT extends AbstractIntegrationTest {
         ResponseEntity<byte[]> adminDownload = restTemplate.exchange(downloadPath, HttpMethod.GET,
                 new HttpEntity<>(bearerFor(createUser("ADMIN"))), byte[].class);
         assertThat(adminDownload.getStatusCode()).isEqualTo(HttpStatus.OK);
+    }
+
+    @Test
+    void anAdminDownloadingAnAttachment_writesARealAuditRow_theOwnerDownloadingItDoesNot() throws Exception {
+        User owner = createUser("USER");
+        User admin = createUser("ADMIN");
+
+        ResponseEntity<String> createResponse = restTemplate.exchange("/api/v1/support/tickets",
+                HttpMethod.POST, ticketWithAttachmentRequest(owner), String.class);
+        JsonNode data = mapper.readTree(createResponse.getBody()).get("data");
+        UUID ticketId = UUID.fromString(data.get("id").asText());
+        UUID attachmentId = UUID.fromString(data.get("attachments").get(0).get("id").asText());
+        String downloadPath = "/api/v1/support/tickets/" + ticketId + "/attachments/" + attachmentId;
+
+        restTemplate.exchange(downloadPath, HttpMethod.GET, new HttpEntity<>(bearerFor(owner)), byte[].class);
+        List<AuditLog> afterOwnerDownload = auditLogRepository.findByEntityIdOrderByCreatedAtAsc(ticketId).stream()
+                .filter(row -> row.getAction().equals("SUPPORT_TICKET_ATTACHMENT_DOWNLOADED")).toList();
+        assertThat(afterOwnerDownload).as("the owner downloading their own attachment is not audited").isEmpty();
+
+        restTemplate.exchange(downloadPath, HttpMethod.GET, new HttpEntity<>(bearerFor(admin)), byte[].class);
+        AuditLog row = onlyAuditRow(ticketId, "SUPPORT_TICKET_ATTACHMENT_DOWNLOADED");
+        assertThat(row.getUserId()).isEqualTo(owner.getId());
+        assertThat(row.getMetadata().get("actorId")).isEqualTo(admin.getId().toString());
+        assertThat(row.getMetadata().get("attachmentId")).isEqualTo(attachmentId.toString());
+        assertThat(row.getMetadata().get("filename")).isEqualTo("notes.txt");
     }
 
     // --- status transitions, over real HTTP -------------------------------------------------------
