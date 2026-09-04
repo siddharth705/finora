@@ -16,10 +16,13 @@ advisory is merely tolerated.
 
 WHAT IT CHECKS
 --------------
-`npm audit --omit=dev`, i.e. what actually ships, per app. Dev-only advisories are reported but do
-not fail: they are build and deploy tooling, not code a user runs. The most numerous ones today
-(five `undici` highs) reach the tree through @cloudflare/vite-plugin -> miniflare, which exists to
-emulate Cloudflare locally.
+What actually ships, per app -- i.e. what `npm audit --omit=dev` would report, computed from a
+single plain `npm audit --json` plus package-lock.json's own per-package `dev` flags rather than
+by actually calling `--omit=dev` (see audit()'s own doc comment for why: that exact flag
+combination hung 100% of the time in real CI, unrelated to registry health). Dev-only advisories
+are reported but do not fail: they are build and deploy tooling, not code a user runs. The most
+numerous ones today (five `undici` highs) reach the tree through @cloudflare/vite-plugin ->
+miniflare, which exists to emulate Cloudflare locally.
 
 Note `--omit=dev` is NOT the same as "does not run on a user's device" for the mobile app: the Expo
 CLI toolchain is a transitive dependency of the `expo` package itself, which is a production
@@ -34,6 +37,14 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 APPS = ["frontend", "admin-portal", "mobile"]
+
+# `npm audit` hits the registry for advisory data; a stalled registry response otherwise hangs this
+# subprocess forever with nothing to kill it -- observed for real in CI (2026-09-04): this step
+# normally finishes in ~2s but sat for ~12 minutes before the run was cancelled, eating almost the
+# entire 15-minute job budget for a check that runs before Test/Build in every one of the three JS
+# jobs. 60s is generous against that ~2s baseline while still failing fast and loud instead of
+# silently consuming the whole timeout.
+AUDIT_TIMEOUT_SECONDS = 60
 
 
 class Accepted:
@@ -98,25 +109,72 @@ ACCEPTED = [
 ACCEPTED_BY_GHSA = {a.ghsa: a for a in ACCEPTED}
 
 
-def audit(app, omit_dev):
-    """npm audit --json. Exit code is non-zero whenever anything is found, so it is ignored; the
-    JSON body is the actual result."""
+def audit(app):
+    """npm audit --json (no --omit=dev). Exit code is non-zero whenever anything is found, so it
+    is ignored; the JSON body is the actual result.
+
+    Used to also make a SECOND call with --omit=dev, asking npm to do the shipped-vs-dev split
+    itself. That call hung 100% of the time in CI (2026-09-04), across every app, on every one of
+    9 attempts across 3 separate runs -- while this exact call, right next to it in the same
+    script, always succeeded. NPM_CONFIG_LOGLEVEL=verbose (added while debugging that) proved it
+    wasn't a network stall: npm's own verbose log shows nothing at all after argv parsing, no
+    "npm http fetch" line ever appears -- so it never even reached the network. That means it was
+    stuck in npm's own internal tree computation for the omit-filtered view, specific to that flag
+    combination -- not something a timeout, a retry, or a DNS fix could ever have addressed, which
+    is exactly why two rounds of exactly that did nothing. See dev_only_nodes() for how the
+    shipped/dev split is now computed instead, without needing that call at all.
+
+    Retries up to 3 times on a timeout, in case *this* call (which has never once failed live) is
+    ever the one that stalls."""
     cmd = ["npm", "audit", "--json"]
-    if omit_dev:
-        cmd.append("--omit=dev")
-    proc = subprocess.run(
-        cmd, cwd=REPO_ROOT / app, capture_output=True, text=True, shell=(sys.platform == "win32")
-    )
+    max_attempts = 3
+    for attempt in range(1, max_attempts + 1):
+        try:
+            proc = subprocess.run(
+                cmd, cwd=REPO_ROOT / app, capture_output=True, text=True,
+                shell=(sys.platform == "win32"), timeout=AUDIT_TIMEOUT_SECONDS,
+            )
+            break
+        except subprocess.TimeoutExpired:
+            if attempt == max_attempts:
+                raise RuntimeError(
+                    f"npm audit for {app} did not finish within {AUDIT_TIMEOUT_SECONDS}s, "
+                    f"{max_attempts} times in a row -- this call has been reliable historically, "
+                    "so treat this as a real registry problem rather than the known --omit=dev bug."
+                )
+            print(f"npm audit for {app} timed out after {AUDIT_TIMEOUT_SECONDS}s "
+                  f"(attempt {attempt}/{max_attempts}), retrying...", file=sys.stderr)
     if not proc.stdout.strip():
         raise RuntimeError(f"npm audit produced no output for {app}: {proc.stderr[:300]}")
     return json.loads(proc.stdout)
 
 
-def advisories(report):
+def dev_only_nodes(app):
+    """The set of package-lock.json 'packages' keys (e.g. "node_modules/foo") that are reachable
+    ONLY through devDependencies -- npm's own Arborist marks these with a `dev: true` flag on the
+    lockfile entry itself (prod packages simply omit the key, confirmed against this repo's real
+    lockfiles rather than assumed), which is the exact same signal `npm audit --omit=dev` uses
+    internally to filter its tree before auditing. Reading it straight from the lockfile needs no
+    subprocess at all, let alone the one that hangs."""
+    lockfile = REPO_ROOT / app / "package-lock.json"
+    packages = json.loads(lockfile.read_text()).get("packages", {})
+    return {path for path, meta in packages.items() if isinstance(meta, dict) and meta.get("dev")}
+
+
+def advisories(report, dev_paths=None):
     """GHSA id -> (severity, title). npm nests the same advisory under every affected package, so
-    this collapses them; 14 reported 'vulnerabilities' in mobile are one advisory."""
+    this collapses them; 14 reported 'vulnerabilities' in mobile are one advisory.
+
+    When dev_paths is given, only keeps advisories where at least one of the vulnerable package's
+    `nodes` locations falls outside dev_paths -- i.e. it ships in production too, not only through
+    devDependencies. A node whose path isn't in dev_paths at all (rather than explicitly listed as
+    non-dev) is treated as shipped: unrecognized is not the same as known-safe."""
     found = {}
     for entry in (report.get("vulnerabilities") or {}).values():
+        if dev_paths is not None:
+            nodes = entry.get("nodes") or []
+            if nodes and all(node in dev_paths for node in nodes):
+                continue
         for via in entry.get("via") or []:
             if isinstance(via, dict) and via.get("url", "").startswith("https://github.com/advisories/"):
                 found[via["url"].rsplit("/", 1)[-1]] = (entry.get("severity"), via.get("title", ""))
@@ -133,8 +191,9 @@ def main():
             print(f"  {app}: no package.json, skipping")
             continue
 
-        shipped = advisories(audit(app, omit_dev=True))
-        dev_total = audit(app, omit_dev=False).get("metadata", {}).get("vulnerabilities", {}).get("total", 0)
+        report = audit(app)
+        dev_total = report.get("metadata", {}).get("vulnerabilities", {}).get("total", 0)
+        shipped = advisories(report, dev_only_nodes(app))
 
         print(f"\n{app}: {len(shipped)} distinct advisory(ies) in shipped code "
               f"({dev_total} total entries including dev tooling)")
