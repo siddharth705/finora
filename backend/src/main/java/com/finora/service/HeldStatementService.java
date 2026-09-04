@@ -109,6 +109,9 @@ public class HeldStatementService {
                 telemetry.reliabilityStatus() == null ? null : telemetry.reliabilityStatus().name(),
                 telemetry.textSource(),
                 telemetry.isEmpty() ? null : telemetry.headerReconstructionUncertain());
+        // staged.bankName() is already carried on StagedForJob for the completion notification --
+        // see that record's own doc for why ImportJob can never learn the bank live.
+        held.recordBank(staged.bankName());
         repository.save(held);
 
         // actorId null: the system opened this, not a person. The reasons are recorded here as
