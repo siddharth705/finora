@@ -694,6 +694,9 @@ export interface ReconciliationStatsDto {
   duplicateCount: number;
   transferCount: number;
   refundCount: number;
+  reversalCount: number;
+  investmentTransferCount: number;
+  supersededCount: number;
   recurringCount: number;
   totalTransactions: number;
 }
