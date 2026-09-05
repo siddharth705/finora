@@ -11,6 +11,22 @@
  * the env assignment below needs.
  */
 
+// Guard against running the suite as bare `npx jest`, skipping the "test" script's
+// NODE_OPTIONS=--experimental-vm-modules (see package.json's own "_test_comment"). Without it,
+// client.ts's dynamic `import('./endpoints')` throws ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING_FLAG
+// inside Jest's VM -- but only in the one branch that actually awaits a real refresh, so most
+// suites still pass while silently exercising the forced-sign-out path instead of the one they
+// claim to test. That surfaced as three failures in refreshRace.test.ts that looked like a genuine
+// auth-refresh regression and cost a full debugging session before the missing flag was found.
+// Failing here, immediately and for every suite, is cheaper than rediscovering that.
+if (!process.env.NODE_OPTIONS?.includes('--experimental-vm-modules')) {
+  throw new Error(
+    'Missing --experimental-vm-modules: this suite was invoked without it (bare `npx jest`?). ' +
+      'Run tests via `npm test`, which sets NODE_OPTIONS=--experimental-vm-modules -- ' +
+      'see mobile/package.json\'s "test" script and its "_test_comment" for why this is required.'
+  );
+}
+
 // src/api/client.ts throws at import time when this is missing -- intentional, since a native app
 // has no dev-server proxy to fall back on. Tests supply a value; nothing contacts it, because
 // everything that would touch the network mocks the endpoint layer.

@@ -150,7 +150,7 @@ export function LoginScreen({ navigation, route }: Props) {
           retained and nothing was lost.
         </Text>
 
-        <Button label="Reactivate my account" onPress={handleReactivate} loading={loading} />
+        <Button label="Reactivate my account" onPress={handleReactivate} loading={loading} pressScale />
         <View style={styles.cancelRow}>
           <Button
             label="Not you? Go back"
@@ -233,7 +233,7 @@ export function LoginScreen({ navigation, route }: Props) {
         />
       </View>
 
-      <Button label="Sign in" onPress={handleSubmit} loading={loading} testID="login-submit" />
+      <Button label="Sign in" onPress={handleSubmit} loading={loading} testID="login-submit" pressScale />
 
       <View style={[styles.notice, { backgroundColor: c.primaryLight }]}>
         <Text style={[styles.noticeText, { color: c.ink }]}>
