@@ -246,7 +246,7 @@ export default function Dashboard() {
 
   if (blockingLoading) return showPageSkeleton ? <DashboardSkeleton /> : null;
   if (hasError || !summary) {
-    return <p className="text-muted">Couldn't load your dashboard — please try again later.</p>;
+    return <p className="text-muted">Couldn’t load your dashboard — please try again later.</p>;
   }
 
   const firstName = fullName?.split(' ')[0] ?? 'there';
