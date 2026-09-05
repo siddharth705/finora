@@ -438,7 +438,11 @@ class SplitHeaderRunsPdfTableLocatorTest {
                 Map.entry("axis-credit-card-statement", List.of(1, 110)),
                 Map.entry("bob-repeated-account-banner", List.of(1, 58)),
                 Map.entry("bob-savings-ledger-validation", List.of(1, 58)),
-                Map.entry("canara-savings-ledger-validation", List.of(1, 60)),
+                // 61, not 60: SAME_DAY_CONTINUATION_TRANSACTION now recognizes this trace's dateless
+                // "Closing Balance" marker (it restates the last transaction's own balance, same
+                // shape as the "Opening Balance" row already at row 0) as its own row instead of
+                // being silently absorbed into the last real transaction's description text.
+                Map.entry("canara-savings-ledger-validation", List.of(1, 61)),
                 // 224 before P-001 Fix B, 223 after. Not a Fix A regression: Fix B merges this
                 // document's second header band into its header instead of letting it stand as the
                 // table's first data row, which is the one row that went. See
