@@ -89,7 +89,7 @@ class HeldStatementRepositoryIT extends AbstractIntegrationTest {
     void countsOnlyTheOpenQueue() {
         seed("HLD-2026-000010");
         HeldStatement resolved = seed("HLD-2026-000011");
-        resolved.markImported(staff(), Instant.now());
+        resolved.markImported(staff(), Instant.now(), null);
         repository.save(resolved);
 
         assertThat(repository.countByStatusIn(OPEN)).isEqualTo(1);

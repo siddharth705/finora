@@ -433,7 +433,7 @@ public class HeldStatementService {
      * round trip to improve one word.
      */
     @Transactional
-    public HeldStatementDto approve(UUID actingAdminId, String heldId, String note) {
+    public HeldStatementDto approve(UUID actingAdminId, String heldId, String note, Boolean falsePositive) {
         HeldStatement held = require(heldId);
         refuseIfResolved(held, "approved");
 
@@ -441,20 +441,24 @@ public class HeldStatementService {
         Instant now = Instant.now();
         HeldStatement.Status from = held.getStatus();
 
-        held.markImported(actingAdminId, now);
+        held.markImported(actingAdminId, now, falsePositive);
         job.releaseAfterTrustReview(now);
         repository.save(held);
         importJobRepository.save(job);
 
+        String eventNote = (falsePositive != null && falsePositive)
+                ? (note == null || note.isBlank() ? "Marked false positive." : note + " (marked false positive)")
+                : note;
         eventRepository.save(new HeldStatementEvent(held.getId(), actingAdminId, "APPROVED",
-                from.name(), held.getStatus().name(), note));
+                from.name(), held.getStatus().name(), eventNote));
         auditService.record(actingAdminId, "TRUST_REVIEW_APPROVED", "HeldStatement", held.getId(),
                 Map.of("actorId", actingAdminId.toString(),
                         "subjectUserId", held.getUserId().toString(),
                         "heldId", held.getHeldId(),
                         // Map.of rejects nulls, and an operator is not required to explain
                         // themselves -- the empty string keeps the entry writable either way.
-                        "note", note == null ? "" : note));
+                        "note", note == null ? "" : note,
+                        "falsePositive", falsePositive == null ? "unmarked" : falsePositive.toString()));
 
         // Before the notification, deliberately. The sweep's exemption lifts the moment this job
         // leaves HELD_FOR_TRUST_REVIEW, and the session's expiresAt is still whatever staging set

@@ -211,7 +211,7 @@ class HeldStatementServiceRerunIT extends AbstractIntegrationTest {
         // approve that landed first) must not silently proceed -- refuseIfResolved's own 409 is
         // what stops it, exactly the same guard approve/reject already rely on.
         HeldStatement held = seedHold(CLEAN_CSV);
-        heldStatementService.approve(admin(), held.getHeldId(), null);
+        heldStatementService.approve(admin(), held.getHeldId(), null, null);
 
         assertThatThrownBy(() -> heldStatementService.rerunParser(admin(), held.getHeldId()))
                 .isInstanceOf(ApiException.class)
@@ -219,6 +219,52 @@ class HeldStatementServiceRerunIT extends AbstractIntegrationTest {
 
         HeldStatement reloaded = heldStatementRepository.findByHeldId(held.getHeldId()).orElseThrow();
         assertThat(reloaded.getStatus()).isEqualTo(HeldStatement.Status.IMPORTED);
+    }
+
+    // --- approve: explicit false-positive marking -------------------------------------------------
+
+    @Test
+    void approveRecordsFalsePositiveOnTheHoldAndInTheEvent() {
+        HeldStatement held = seedHold(CLEAN_CSV);
+
+        heldStatementService.approve(admin(), held.getHeldId(), "looked fine after all", true);
+
+        HeldStatement reloaded = heldStatementRepository.findByHeldId(held.getHeldId()).orElseThrow();
+        assertThat(reloaded.getFalsePositive()).isTrue();
+        List<HeldStatementEvent> events = eventRepository.findByHeldStatementIdOrderByCreatedAtAsc(held.getId());
+        HeldStatementEvent approved = events.stream()
+                .filter(e -> "APPROVED".equals(e.getEventType())).findFirst().orElseThrow();
+        assertThat(approved.getNotes()).containsIgnoringCase("false positive");
+    }
+
+    @Test
+    void approveWithNoFalsePositiveArgumentLeavesItUnmarked() {
+        // The existing (pre-Plan-4) approve call sites all pass null here -- confirms the widened
+        // signature does not silently start marking every approval one way or another.
+        HeldStatement held = seedHold(CLEAN_CSV);
+
+        heldStatementService.approve(admin(), held.getHeldId(), "note only", null);
+
+        HeldStatement reloaded = heldStatementRepository.findByHeldId(held.getHeldId()).orElseThrow();
+        assertThat(reloaded.getFalsePositive()).isNull();
+    }
+
+    /**
+     * Documents the Decisions-table call: reject's signature is unchanged by this plan. This is a
+     * design-intent test, not a strong runtime guard -- mutation-tested directly (Task 2 Step 9):
+     * a reject(..., Boolean falsePositive) overload that silently ignores the new parameter still
+     * makes every assertion here pass, because this test never calls it. Catching a future edit
+     * that widens reject's signature and wires it up wrongly is better done by code review than by
+     * a runtime assertion; this test is the design-intent marker for that review, not a substitute.
+     */
+    @Test
+    void rejectHasNoFalsePositiveParameter() {
+        HeldStatement held = seedHold(CLEAN_CSV);
+
+        heldStatementService.reject(admin(), held.getHeldId(), "genuinely bad extraction");
+
+        HeldStatement reloaded = heldStatementRepository.findByHeldId(held.getHeldId()).orElseThrow();
+        assertThat(reloaded.getFalsePositive()).isNull();
     }
 
     // --- HeldStatement.version: genuine optimistic-locking coverage --------------------------------

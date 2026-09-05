@@ -35,6 +35,43 @@ class HeldStatementTest {
         assertThat(held.getTriggerSummary()).contains("count");
     }
 
+    /**
+     * Documents an invariant this plan relies on rather than enforces with a runtime check: the
+     * entity exposes no way to set {@code falsePositive} except atomically with the IMPORTED
+     * transition inside {@link HeldStatement#markImported} -- there is no {@code
+     * setFalsePositive(...)}, and no other mutator touches the field. An external review of Plan 4
+     * asked for either a guard clause or a test proving the relationship; a guard clause would be
+     * defending against a state the API surface already cannot produce, so this test documents that
+     * instead of adding a redundant runtime check. If a future change adds a second way to set this
+     * field, this test's own existence is the signal to ask whether that new path also needs the
+     * same "only alongside IMPORTED" rule.
+     */
+    @Test
+    void aFreshHoldCanNeverCarryAFalsePositiveMark() {
+        HeldStatement held = held();
+
+        assertThat(held.getStatus()).isEqualTo(HeldStatement.Status.HELD);
+        assertThat(held.getFalsePositive()).isNull();
+    }
+
+    @Test
+    void markImportedRecordsFalsePositiveWhenGiven() {
+        HeldStatement held = held();
+
+        held.markImported(UUID.randomUUID(), NOW, true);
+
+        assertThat(held.getFalsePositive()).isTrue();
+    }
+
+    @Test
+    void markImportedLeavesFalsePositiveNullWhenNotGiven() {
+        HeldStatement held = held();
+
+        held.markImported(UUID.randomUUID(), NOW, null);
+
+        assertThat(held.getFalsePositive()).isNull();
+    }
+
     @Test
     void recordSnapshotCarriesTheHoldReasonCategories() {
         HeldStatement held = held();
@@ -63,7 +100,7 @@ class HeldStatementTest {
         assertThat(held.getStatus()).isEqualTo(HeldStatement.Status.READY_FOR_IMPORT);
         assertThat(held.getReadyAt()).isEqualTo(NOW);
 
-        held.markImported(admin, NOW);
+        held.markImported(admin, NOW, null);
         assertThat(held.getStatus()).isEqualTo(HeldStatement.Status.IMPORTED);
         assertThat(held.getResolvedBy()).isEqualTo(admin);
         assertThat(held.getResolvedAt()).isEqualTo(NOW);
@@ -106,9 +143,9 @@ class HeldStatementTest {
     void anImportedHoldCannotBeResolvedAgain() {
         HeldStatement held = held();
         UUID firstAdmin = UUID.randomUUID();
-        held.markImported(firstAdmin, NOW);
+        held.markImported(firstAdmin, NOW, null);
 
-        assertThatThrownBy(() -> held.markImported(UUID.randomUUID(), NOW.plusSeconds(60)))
+        assertThatThrownBy(() -> held.markImported(UUID.randomUUID(), NOW.plusSeconds(60), null))
                 .isInstanceOf(IllegalStateException.class);
         assertThatThrownBy(() -> held.reject(UUID.randomUUID(), NOW.plusSeconds(60)))
                 .isInstanceOf(IllegalStateException.class);
@@ -122,7 +159,7 @@ class HeldStatementTest {
         HeldStatement held = held();
         held.reject(UUID.randomUUID(), NOW);
 
-        assertThatThrownBy(() -> held.markImported(UUID.randomUUID(), NOW.plusSeconds(60)))
+        assertThatThrownBy(() -> held.markImported(UUID.randomUUID(), NOW.plusSeconds(60), null))
                 .isInstanceOf(IllegalStateException.class);
         assertThat(held.getStatus()).isEqualTo(HeldStatement.Status.REJECTED);
     }
@@ -131,7 +168,7 @@ class HeldStatementTest {
     @Test
     void aResolvedHoldCannotBeReassignedOrReopened() {
         HeldStatement held = held();
-        held.markImported(UUID.randomUUID(), NOW);
+        held.markImported(UUID.randomUUID(), NOW, null);
 
         assertThatThrownBy(() -> held.assign(UUID.randomUUID(), NOW))
                 .isInstanceOf(IllegalStateException.class);
@@ -167,7 +204,7 @@ class HeldStatementTest {
     void aHoldCanBeResolvedWithoutEverBeingAssigned() {
         HeldStatement held = held();
 
-        held.markImported(UUID.randomUUID(), NOW);
+        held.markImported(UUID.randomUUID(), NOW, null);
 
         assertThat(held.getStatus()).isEqualTo(HeldStatement.Status.IMPORTED);
     }
@@ -205,7 +242,7 @@ class HeldStatementTest {
     @Test
     void recordEngineerFindingsSetsBothFieldsAndCanBeCalledOnAResolvedHold() {
         HeldStatement held = held();
-        held.markImported(UUID.randomUUID(), NOW);
+        held.markImported(UUID.randomUUID(), NOW, null);
 
         held.recordEngineerFindings("Header row misdetected on a two-line HSBC header", "PR #950");
 

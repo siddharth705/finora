@@ -100,6 +100,9 @@ public class HeldStatement {
     @Column(name = "hold_reason_categories")
     private List<String> holdReasonCategories;
 
+    @Column(name = "false_positive")
+    private Boolean falsePositive;
+
     /** BH-001, same reasoning as {@code ImportJob.version}'s own doc: every other
      *  concurrently-written entity here already carries one. This row is mutated by several
      *  independent actors (assign, investigate, notes, findings, approve, reject, rerun-parser),
@@ -207,11 +210,12 @@ public class HeldStatement {
      * engineer, and an operator who can see the extraction is fine should be able to release it.
      * The rule is one resolution, not one path.
      */
-    public void markImported(UUID adminId, Instant now) {
+    public void markImported(UUID adminId, Instant now, Boolean falsePositive) {
         refuseIfResolved("imported");
         this.status = Status.IMPORTED;
         this.resolvedBy = adminId;
         this.resolvedAt = now;
+        this.falsePositive = falsePositive;
     }
 
     /**
@@ -254,6 +258,7 @@ public class HeldStatement {
     public String getRootCause() { return rootCause; }
     public String getFixReference() { return fixReference; }
     public List<String> getHoldReasonCategories() { return holdReasonCategories; }
+    public Boolean getFalsePositive() { return falsePositive; }
     public Long getVersion() { return version; }
     public Instant getCreatedAt() { return createdAt; }
     public Instant getAssignedAt() { return assignedAt; }
