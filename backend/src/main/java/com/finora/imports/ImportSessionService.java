@@ -597,18 +597,31 @@ public class ImportSessionService {
      * said were not trustworthy enough to reach the ledger unreviewed. Confirmed as a real gap end-
      * to-end, not a hypothetical: the browser flow the resumable list itself offers reached here
      * and imported a held statement's rows before this check existed.
+     *
+     * <p>The read here is a fast-path convenience, not the enforcement -- {@link
+     * ImportSessionRepository#claimForConfirmation} re-checks the identical hold condition inside
+     * its own atomic UPDATE, so a hold that commits in the gap between this read and that UPDATE
+     * still blocks the confirm. What this read buys is the specific {@code
+     * IMPORT_SESSION_HELD_FOR_REVIEW} error for the overwhelmingly common case, without a second
+     * read on the failure path below for every ordinary held-session request.
      */
     @Transactional
     public ImportSession claimForConfirmation(UUID userId, UUID sessionId) {
         getOwnedSession(userId, sessionId); // ownership + expiry + not-already-confirmed, for a clear error message
-        boolean held = !sessionsBlockedByTrustReview(List.of(sessionId)).isEmpty();
-        if (held) {
+        if (!sessionsBlockedByTrustReview(List.of(sessionId)).isEmpty()) {
             throw new ApiException(ErrorCode.IMPORT_SESSION_HELD_FOR_REVIEW);
         }
         int updated = importSessionRepository.claimForConfirmation(sessionId);
         if (updated == 0) {
-            // Lost the race between the read above and this atomic update -- someone/something
-            // else (a concurrent duplicate request for the same session) claimed it first.
+            // The atomic UPDATE's own NOT EXISTS clause means a 0-row result has two possible
+            // causes, not one: a genuine double-submission (someone/something else claimed this
+            // session first), or a hold that committed in the race window between the read above
+            // and this UPDATE. Re-checking here is what tells them apart -- without it, a hold
+            // that landed in exactly that window would report "already confirmed", which is both
+            // wrong and useless to a user who did nothing of the sort.
+            if (!sessionsBlockedByTrustReview(List.of(sessionId)).isEmpty()) {
+                throw new ApiException(ErrorCode.IMPORT_SESSION_HELD_FOR_REVIEW);
+            }
             throw new ApiException(HttpStatus.CONFLICT, "This import has already been confirmed.");
         }
         return importSessionRepository.findById(sessionId)

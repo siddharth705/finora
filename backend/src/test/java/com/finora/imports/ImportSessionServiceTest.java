@@ -689,6 +689,37 @@ class ImportSessionServiceTest {
                 .hasMessageContaining("already been confirmed");
     }
 
+    /**
+     * The TOCTOU window {@code ImportSessionRepository.claimForConfirmation}'s own atomic UPDATE
+     * now closes: a hold that commits in the gap between the pre-check read above and the UPDATE
+     * itself must still be reported as a hold, not misreported as "already confirmed" the way a
+     * naive 0-rows-means-someone-else-confirmed-it read would. The atomic UPDATE's own {@code NOT
+     * EXISTS} clause is what actually prevents the confirm from succeeding in this scenario (not
+     * exercised by a mock, since it lives in real SQL) -- this test pins the service-layer half:
+     * that a 0-row result gets re-diagnosed rather than assumed to mean one specific thing.
+     */
+    @Test
+    void claimForConfirmation_reportsAHold_whenTheRaceWindowLostToOneInstead() {
+        UUID sessionId = UUID.randomUUID();
+        ImportSession staged = sessionOwnedBy(userId, Instant.now().plusSeconds(600), ImportSession.STATUS_STAGED);
+        when(importSessionRepository.findById(sessionId)).thenReturn(Optional.of(staged));
+        when(importSessionRepository.claimForConfirmation(sessionId)).thenReturn(0);
+        UUID heldStatementId = UUID.randomUUID();
+        com.finora.entity.ImportJob job = jobLinkedToHold(sessionId, heldStatementId);
+        // Simulates a hold that committed after the pre-check but before the atomic UPDATE: the
+        // pre-check (first call) sees nothing yet, the post-failure re-check (second call) sees it.
+        when(importJobRepository.findByImportSessionIdInAndHeldStatementIdIsNotNull(List.of(sessionId)))
+                .thenReturn(List.of())
+                .thenReturn(List.of(job));
+        when(heldStatementRepository.findByImportJobIdInAndStatusNot(
+                List.of(job.getId()), HeldStatement.Status.IMPORTED))
+                .thenReturn(List.of(heldStatementWithId(heldStatementId)));
+
+        assertThatThrownBy(() -> service.claimForConfirmation(userId, sessionId))
+                .isInstanceOf(ApiException.class)
+                .hasFieldOrPropertyWithValue("code", ErrorCode.IMPORT_SESSION_HELD_FOR_REVIEW);
+    }
+
     @Test
     void readStagedRows_roundTripsWhatCreateSessionWrote() {
         ImportSession session = new ImportSession();
