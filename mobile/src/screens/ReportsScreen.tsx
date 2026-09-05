@@ -9,7 +9,7 @@ import { OptionPickerModal } from '../components/OptionPickerModal';
 import { ProgressBar } from '../components/ProgressBar';
 import { reportsApi } from '../api/endpoints';
 import { toUserMessage } from '../lib/apiError';
-import { fmtCurrency, monthLabel } from '../lib/format';
+import { fmtCurrency, monthLabel, monthLabelLong } from '../lib/format';
 import { shareCsv, sharePdf } from '../lib/reportExport';
 import { radius, spacing, useTheme } from '../theme';
 
@@ -235,7 +235,7 @@ export function ReportsScreen() {
                     accessible
                     accessibilityLabel={`${cat.category}: ${fmtCurrency(cat.amount)}, ${pct.toFixed(
                       0
-                    )} percent of this month's spending`}
+                    )} percent of ${monthLabelLong(month as string)}'s spending`}
                   >
                     <View style={styles.categoryHeader}>
                       <Text style={[styles.categoryName, { color: c.ink }]} numberOfLines={1}>

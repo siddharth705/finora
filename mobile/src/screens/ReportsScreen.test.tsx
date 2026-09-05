@@ -80,6 +80,24 @@ describe('ReportsScreen', () => {
     expect(await screen.findByLabelText(/Month: May 26/)).toBeTruthy();
   });
 
+  // The category row's spoken label used to hardcode "this month's spending" regardless of which
+  // month was on screen -- so picking a past month like May still had VoiceOver announce May's
+  // figures as "this month's spending", flatly wrong once the picker is used for anything but the
+  // default.
+  it('names the picked month in the category row label instead of hardcoding "this month"', async () => {
+    renderScreen();
+    await screen.findByLabelText(/Month: Jul 26/);
+
+    fireEvent.press(screen.getByLabelText(/Month: Jul 26/));
+    await settle();
+    fireEvent.press(screen.getByText('2026-05'));
+    await settle();
+
+    expect(
+      await screen.findByLabelText(/Groceries: ₹12,000, 100 percent of May 2026's spending/)
+    ).toBeTruthy();
+  });
+
   // There is nothing to export until the report itself has arrived, so the button stays disabled
   // rather than producing an empty file.
   it('does not offer an export before the report has loaded', async () => {
@@ -197,10 +215,10 @@ describe('category shares', () => {
     // 3000 / 5000 and 2000 / 5000 -- shares of the breakdown they actually belong to, not of a
     // total one of them was excluded from (which gave 150% and 100%).
     expect(
-      await screen.findByLabelText(/Investments: ₹3,000, 60 percent of this month's spending/)
+      await screen.findByLabelText(/Investments: ₹3,000, 60 percent of July 2026's spending/)
     ).toBeTruthy();
     expect(
-      screen.getByLabelText(/Groceries: ₹2,000, 40 percent of this month's spending/)
+      screen.getByLabelText(/Groceries: ₹2,000, 40 percent of July 2026's spending/)
     ).toBeTruthy();
   });
 });
