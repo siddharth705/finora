@@ -21,6 +21,21 @@ public interface HeldStatementRepository extends JpaRepository<HeldStatement, UU
     /** One import is held at most once -- {@code import_job_id} is UNIQUE in V144. */
     Optional<HeldStatement> findByImportJobId(UUID importJobId);
 
+    /**
+     * Which of these jobs' holds are still blocking -- everything except {@code IMPORTED}. {@code
+     * HeldStatement.Status.RESOLVED} names {@code {IMPORTED, REJECTED}} as "decided, and not to be
+     * decided again," but only {@code IMPORTED} means an operator cleared the extraction to reach
+     * the ledger; {@code REJECTED} is a decision too, just the opposite one, and {@code
+     * ImportSessionService} needs it to keep blocking confirmation exactly like an open hold does.
+     * {@code !=} rather than an explicit {@code IN (HELD, ASSIGNED, INVESTIGATING,
+     * READY_FOR_IMPORT, REJECTED)} list so a future {@code Status} value is blocking by default --
+     * the safe direction for a check that exists to keep unreviewed or rejected rows off the
+     * ledger, matching {@code ErrorCode}'s own "don't retry an exception this enum has no opinion
+     * about" reasoning for the same kind of fail-closed default.
+     */
+    List<HeldStatement> findByImportJobIdInAndStatusNot(
+            java.util.Collection<UUID> importJobIds, HeldStatement.Status status);
+
     Page<HeldStatement> findByStatusIn(Collection<HeldStatement.Status> statuses, Pageable pageable);
 
     long countByStatusIn(Collection<HeldStatement.Status> statuses);
