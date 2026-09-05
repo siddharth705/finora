@@ -33,6 +33,7 @@ import com.finora.notification.domain.NotificationType;
 import com.finora.repository.HeldStatementEventRepository;
 import com.finora.repository.HeldStatementRepository;
 import com.finora.repository.ImportJobRepository;
+import com.finora.util.AfterCommit;
 import com.finora.util.PageBounds;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -83,6 +84,7 @@ public class HeldStatementService {
     private final StatementContentService statementContentService;
     private final ImportService importService;
     private final ParserVersionProvider parserVersionProvider;
+    private final HeldItemAdminAlertService heldItemAdminAlertService;
 
     public HeldStatementService(HeldStatementRepository repository,
                                 HeldStatementEventRepository eventRepository,
@@ -95,7 +97,8 @@ public class HeldStatementService {
                                 ObjectMapper objectMapper,
                                 StatementContentService statementContentService,
                                 ImportService importService,
-                                ParserVersionProvider parserVersionProvider) {
+                                ParserVersionProvider parserVersionProvider,
+                                HeldItemAdminAlertService heldItemAdminAlertService) {
         this.repository = repository;
         this.eventRepository = eventRepository;
         this.idGenerator = idGenerator;
@@ -108,6 +111,7 @@ public class HeldStatementService {
         this.statementContentService = statementContentService;
         this.importService = importService;
         this.parserVersionProvider = parserVersionProvider;
+        this.heldItemAdminAlertService = heldItemAdminAlertService;
     }
 
     /**
@@ -152,6 +156,12 @@ public class HeldStatementService {
         // the event is the immutable record of what the predicate actually said at hold time.
         eventRepository.save(new HeldStatementEvent(held.getId(), null, "HELD_CREATED",
                 null, HeldStatement.Status.HELD.name(), decision.summary()));
+        // Outside this method's own REQUIRES_NEW transaction by the time it actually runs, same
+        // reasoning as ImportJobWorker's parser-gap alert: a real network call must not hold a
+        // pooled DB connection, and must not fire for a hold that then rolled back. heldId (not
+        // the entity) is what HeldItemAdminAlertService.alertTrustReviewHeld re-reads by.
+        AfterCommit.run("held-item admin alert (trust review)",
+                () -> heldItemAdminAlertService.alertTrustReviewHeld(held.getHeldId()));
         return held;
     }
 
