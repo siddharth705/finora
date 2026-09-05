@@ -17,6 +17,7 @@ import com.finora.notification.domain.NotificationCategory;
 import com.finora.notification.domain.NotificationChannel;
 import com.finora.notification.domain.NotificationPriority;
 import com.finora.notification.domain.NotificationType;
+import com.finora.service.HeldItemAdminAlertService;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -33,6 +34,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -57,6 +59,7 @@ class ImportJobWorkerTest {
     private NotificationService notificationService;
     private ImportVerificationRecorder verificationRecorder;
     private com.finora.service.HeldStatementService heldStatementService;
+    private HeldItemAdminAlertService heldItemAdminAlertService;
     private ImportJobWorker worker;
 
     private ImportJob job;
@@ -76,10 +79,11 @@ class ImportJobWorkerTest {
         verificationRecorder = mock(ImportVerificationRecorder.class);
 
         heldStatementService = mock(com.finora.service.HeldStatementService.class);
+        heldItemAdminAlertService = mock(HeldItemAdminAlertService.class);
 
         worker = new ImportJobWorker(jobStore, importService, statementContentService, observability,
                 stageRecorder, new ExceptionClassifier(), notificationService, verificationRecorder,
-                heldStatementService, new ParserVersionProvider());
+                heldStatementService, new ParserVersionProvider(), heldItemAdminAlertService);
 
         job = new ImportJob(UUID.randomUUID(), "statement.csv", "hash", "objects/key", "CSV");
         job.markClaimed("worker", Instant.now());
@@ -403,6 +407,68 @@ class ImportJobWorkerTest {
         assertThat(job.getStatus()).isEqualTo(ImportJob.Status.HELD_FOR_REVIEW);
         assertThat(job.getFailureCode()).isEqualTo("IllegalStateException");
         assertThat(job.wasHeldForReview()).isTrue();
+    }
+
+    /** The email fires exactly on the same transition {@link
+     *  com.finora.entity.ImportJob#holdForReview} makes, mirroring
+     *  {@code aHeldJobKeepsTheFailureCodeThatCausedTheHold}'s own setup. */
+    @Test
+    void aHeldJobTriggersTheAdminAlert() throws IOException {
+        when(importService.parseAndStageWithSession(any(), any(), any()))
+                .thenThrow(new IllegalStateException("no header row found"));
+
+        worker.drainOnce();
+        runAnotherPass();
+
+        verify(heldItemAdminAlertService).alertParserGapHeld(job.getId());
+    }
+
+    /** The negative case {@code aKnownErrorCodeFailureIsNotHeld} already proves the job stays
+     *  FAILED; this proves the alert follows the same rule -- no hold, no alert. */
+    @Test
+    void aKnownErrorCodeFailureDoesNotTriggerTheAdminAlert() throws IOException {
+        when(importService.parseAndStageWithSession(any(), any(), any()))
+                .thenThrow(new ApiException(ErrorCode.IMPORT_NO_HEADER_DETECTED));
+
+        worker.drainOnce();
+
+        verify(heldItemAdminAlertService, never()).alertParserGapHeld(any());
+    }
+
+    /** A curated failure carrying recovered-lines evidence still enters HELD_FOR_REVIEW (see
+     *  {@code aKnownErrorCodeFailureWithRecoveredEvidenceIsHeldForReview}) and must still alert --
+     *  the alert trigger reads the job's final status, not which of the two paths produced it. */
+    @Test
+    void aKnownErrorCodeFailureWithRecoveredEvidenceTriggersTheAdminAlert() throws IOException {
+        when(importService.parseAndStageWithSession(any(), any(), any()))
+                .thenThrow(new ApiException(ErrorCode.IMPORT_NO_HEADER_DETECTED.defaultStatus(),
+                        ErrorCode.IMPORT_NO_HEADER_DETECTED,
+                        "Finora could not find a transaction table anywhere in this statement.",
+                        java.util.Map.of("recoveredLines", 4)));
+
+        worker.drainOnce();
+
+        verify(heldItemAdminAlertService).alertParserGapHeld(job.getId());
+    }
+
+    /** A reprocessed job that fails the same way again is a NEW hold occurrence and sends its own
+     *  alert -- "the fix didn't work" is exactly as actionable as the first failure. */
+    @Test
+    void aReprocessedJobHeldAgainTriggersASecondAdminAlert() throws IOException {
+        when(importService.parseAndStageWithSession(any(), any(), any()))
+                .thenThrow(new IllegalStateException("no header row found"));
+
+        worker.drainOnce();
+        runAnotherPass();
+        verify(heldItemAdminAlertService, times(1)).alertParserGapHeld(job.getId());
+
+        // Same mechanics AdminHeldImportController.reprocess uses: reset to QUEUED, attempt
+        // budget restored, then the same unrecognised failure happens again.
+        job.returnToQueueForReprocess(Instant.now());
+        runAnotherPass();
+        runAnotherPass();
+
+        verify(heldItemAdminAlertService, times(2)).alertParserGapHeld(job.getId());
     }
 
     /**

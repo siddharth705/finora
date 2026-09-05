@@ -17,6 +17,8 @@ import com.finora.notification.domain.NotificationCategory;
 import com.finora.notification.domain.NotificationChannel;
 import com.finora.notification.domain.NotificationPriority;
 import com.finora.notification.domain.NotificationType;
+import com.finora.service.HeldItemAdminAlertService;
+import com.finora.util.AfterCommit;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -138,6 +140,7 @@ public class ImportJobWorker {
     private final ImportVerificationRecorder verificationRecorder;
     private final com.finora.service.HeldStatementService heldStatementService;
     private final ParserVersionProvider parserVersionProvider;
+    private final HeldItemAdminAlertService heldItemAdminAlertService;
 
     @Value("${app.import.queue.enabled:false}")
     private boolean enabled;
@@ -151,7 +154,8 @@ public class ImportJobWorker {
                             NotificationService notificationService,
                             ImportVerificationRecorder verificationRecorder,
                             com.finora.service.HeldStatementService heldStatementService,
-                            ParserVersionProvider parserVersionProvider) {
+                            ParserVersionProvider parserVersionProvider,
+                            HeldItemAdminAlertService heldItemAdminAlertService) {
         this.jobStore = jobStore;
         this.importService = importService;
         this.statementContentService = statementContentService;
@@ -162,6 +166,7 @@ public class ImportJobWorker {
         this.verificationRecorder = verificationRecorder;
         this.heldStatementService = heldStatementService;
         this.parserVersionProvider = parserVersionProvider;
+        this.heldItemAdminAlertService = heldItemAdminAlertService;
 
         observability.publishQueueDepth(WORKER, JOB_KIND, jobStore::queueDepth);
         observability.publishOldestPendingAge(WORKER, JOB_KIND, jobStore::oldestQueuedAt);
@@ -624,6 +629,7 @@ public class ImportJobWorker {
             String failureCode = ErrorCode.failureCodeOf(cause);
             ImportJob.FailureOutcome[] outcome = {ImportJob.FailureOutcome.RETRY_SCHEDULED};
             int[] attempts = {0};
+            boolean[] enteredTriageReview = {false};
             jobStore.update(jobId, job -> {
                 outcome[0] = job.recordFailure(describe(cause), failureCode, policy, Instant.now());
                 attempts[0] = job.getAttemptCount();
@@ -640,8 +646,19 @@ public class ImportJobWorker {
                 // visibility.
                 if (holdsForTriage(policy, outcome[0], cause)) {
                     job.holdForReview(failureCode, Instant.now());
+                    enteredTriageReview[0] = true;
                 }
             });
+            // Outside jobStore.update's REQUIRES_NEW transaction, deliberately: this is a real
+            // network call (an email send), and AfterCommit is what keeps it from holding a
+            // pooled DB connection across that call, or from firing for a hold that then rolled
+            // back. Re-reads the job fresh (see HeldItemAdminAlertService.alertParserGapHeld's own
+            // doc comment) rather than passing the entity through -- the same reason
+            // notifyIfPreviouslyHeld's notification key is derived from the job id, not the object.
+            if (enteredTriageReview[0]) {
+                AfterCommit.run("held-item admin alert (parser gap)",
+                        () -> heldItemAdminAlertService.alertParserGapHeld(jobId));
+            }
             switch (outcome[0]) {
                 case DEAD_LETTERED -> {
                     log.error("Import job {} failed {} times and will not be retried automatically",
