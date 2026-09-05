@@ -220,4 +220,34 @@ class CategoryRulesTest {
         // keyword must not match inside a longer word.
         assertThat(CategoryRules.suggestCategory("GOKHANAPUR LAND TAX")).isEqualTo("Other");
     }
+
+    /**
+     * Real corpus finding (docs/superpowers/specs/2026-09-01-transaction-categorization-design.md
+     * §1): "Pureplay Skin Sciences" is a real D2C skincare/personal-care brand sold via
+     * e-commerce, missing from the vocabulary the same way "asspl" and "cinnabon" were.
+     */
+    @Test
+    void suggestCategory_matchesPureplay_skincareEcommerceBrand() {
+        assertThat(CategoryRules.suggestCategory("UPI-PUREPLAY SKIN SCIENCES-REF881234")).isEqualTo("Shopping");
+    }
+
+    /**
+     * Real corpus finding: "PMJJBY" is the Government of India's Pradhan Mantri Jeevan Jyoti
+     * Bima Yojana life-insurance scheme, appearing on real statements with a bank-specific
+     * "JNS-" narration prefix.
+     */
+    @Test
+    void suggestCategory_matchesPmjjby_governmentInsuranceScheme() {
+        assertThat(CategoryRules.suggestCategory("JNS-PMJJBY PREMIUM DEDUCTION")).isEqualTo("Insurance");
+    }
+
+    /**
+     * Real corpus finding: "NSE MF" is the National Stock Exchange's mutual-fund investment
+     * platform -- a real narration uses "MF" rather than the already-seeded "mutual fund"/
+     * "mutualfunds" spellings.
+     */
+    @Test
+    void suggestCategory_matchesNseMf_mutualFundPlatformAbbreviation() {
+        assertThat(CategoryRules.suggestCategory("NET PAYIN TO NSE MF A/C 9182736")).isEqualTo("Investments");
+    }
 }
