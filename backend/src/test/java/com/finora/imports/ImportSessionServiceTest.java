@@ -8,6 +8,7 @@ import com.finora.dto.ImportDto.StagedRow;
 import com.finora.entity.ImportSession;
 import com.finora.exception.ApiException;
 import com.finora.exception.ErrorCode;
+import com.finora.repository.ImportJobRepository;
 import com.finora.repository.ImportSessionRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -22,6 +23,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 import org.mockito.ArgumentCaptor;
@@ -37,6 +39,7 @@ import org.springframework.data.domain.Pageable;
 class ImportSessionServiceTest {
 
     private ImportSessionRepository importSessionRepository;
+    private ImportJobRepository importJobRepository;
     private BuildVersionResolver buildVersionResolver;
     private ImportSessionService service;
     private final UUID userId = UUID.randomUUID();
@@ -45,6 +48,7 @@ class ImportSessionServiceTest {
     @BeforeEach
     void setUp() {
         importSessionRepository = mock(ImportSessionRepository.class);
+        importJobRepository = mock(ImportJobRepository.class);
         ObjectMapper objectMapper = new ObjectMapper().registerModule(new JavaTimeModule());
         buildVersionResolver = mock(BuildVersionResolver.class);
         // Every EXISTING test in this class (including all the Phase 1A dedup-window tests) was
@@ -52,8 +56,12 @@ class ImportSessionServiceTest {
         // them exercise the fallback-window path Phase 1B preserves for that case, unchanged,
         // rather than silently starting to exercise the new version-comparison path instead.
         when(buildVersionResolver.currentCommit()).thenReturn(null);
-        service = new ImportSessionService(importSessionRepository, objectMapper, buildVersionResolver);
+        service = new ImportSessionService(importSessionRepository, importJobRepository, objectMapper, buildVersionResolver);
         when(importSessionRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        // No test in this class is about a trust hold unless it says so -- default to "nothing is
+        // held" so every existing claimForConfirmation/listResumableSessions test keeps exercising
+        // exactly what it did before this repository existed.
+        when(importJobRepository.findByImportSessionIdInAndStatus(any(), any())).thenReturn(List.of());
     }
 
     private StagedRow sampleRow() {
@@ -503,6 +511,55 @@ class ImportSessionServiceTest {
         List<ImportSession> resumable = service.listResumableSessions(userId);
 
         assertThat(resumable).isEmpty();
+    }
+
+    /**
+     * The bug this pins: a session backed by a HELD_FOR_TRUST_REVIEW job is technically STAGED
+     * and technically SINGLE_ACCOUNT, so nothing about the session row itself says it is any
+     * different from an ordinary unfinished import. Confirmed end-to-end before this test existed
+     * -- the real browser "Continue Import" -> "Confirm Import" flow reached claimForConfirmation
+     * and wrote the held rows to the ledger, exactly the outcome HoldDecision's own doc comment
+     * says a hold exists to prevent.
+     */
+    @Test
+    void listResumableSessions_excludesASessionUnderTrustReview() {
+        ImportSession held = sessionOwnedBy(userId, Instant.now().plusSeconds(600), ImportSession.STATUS_STAGED);
+        ImportSession ordinary = sessionOwnedBy(userId, Instant.now().plusSeconds(600), ImportSession.STATUS_STAGED);
+        when(importSessionRepository.findByUserIdAndStatusOrderByCreatedAtDesc(userId, ImportSession.STATUS_STAGED))
+                .thenReturn(List.of(held, ordinary));
+        when(importJobRepository.findByImportSessionIdInAndStatus(
+                argThat(ids -> ids.containsAll(List.of(held.getId(), ordinary.getId()))),
+                eq(com.finora.entity.ImportJob.Status.HELD_FOR_TRUST_REVIEW)))
+                .thenReturn(List.of(jobHeldFor(held.getId())));
+
+        List<ImportSession> resumable = service.listResumableSessions(userId);
+
+        assertThat(resumable).containsExactly(ordinary);
+    }
+
+    private com.finora.entity.ImportJob jobHeldFor(UUID sessionId) {
+        com.finora.entity.ImportJob job = new com.finora.entity.ImportJob(
+                userId, "statement.csv", "hash-" + sessionId, "objects/key-" + sessionId, "CSV");
+        job.markClaimed("worker", Instant.now());
+        job.holdForTrustReview(sessionId, null, Instant.now());
+        return job;
+    }
+
+    @Test
+    void claimForConfirmation_rejectsASessionUnderTrustReview() {
+        UUID sessionId = UUID.randomUUID();
+        ImportSession staged = sessionOwnedBy(userId, Instant.now().plusSeconds(600), ImportSession.STATUS_STAGED);
+        org.springframework.test.util.ReflectionTestUtils.setField(staged, "id", sessionId);
+        when(importSessionRepository.findById(sessionId)).thenReturn(Optional.of(staged));
+        when(importJobRepository.findByImportSessionIdInAndStatus(
+                List.of(sessionId), com.finora.entity.ImportJob.Status.HELD_FOR_TRUST_REVIEW))
+                .thenReturn(List.of(jobHeldFor(sessionId)));
+
+        assertThatThrownBy(() -> service.claimForConfirmation(userId, sessionId))
+                .isInstanceOf(ApiException.class)
+                .hasFieldOrPropertyWithValue("code", ErrorCode.IMPORT_SESSION_HELD_FOR_REVIEW);
+
+        verify(importSessionRepository, never()).claimForConfirmation(any());
     }
 
     @Test

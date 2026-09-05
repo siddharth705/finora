@@ -127,6 +127,18 @@ public interface ImportJobRepository extends JpaRepository<ImportJob, UUID> {
     List<ImportJob> findByImportSessionId(UUID importSessionId);
 
     /**
+     * Which of these sessions are currently under a trust hold -- {@link
+     * com.finora.imports.ImportSessionService#claimForConfirmation} and {@code
+     * listResumableSessions} both need this to keep a held statement out of the user's confirm
+     * step (see {@link com.finora.imports.trust.HoldDecision}'s own doc comment for why that step
+     * is exactly what a hold withholds). Batched rather than one {@link #findByImportSessionId}
+     * call per session -- the resumable-sessions list checks every active session a user has, and
+     * that is naturally a loop already.
+     */
+    List<ImportJob> findByImportSessionIdInAndStatus(
+            java.util.Collection<UUID> importSessionIds, ImportJob.Status status);
+
+    /**
      * Whether a job outside {@code excludedStatuses} still references this object key. Feeds
      * {@code StatementStorageSweepService}'s reference check alongside {@code
      * StatementImportRepository.existsByObjectKey} and {@code ImportSessionRepository.existsByObjectKey}

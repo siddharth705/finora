@@ -7,9 +7,11 @@ import com.finora.config.BuildVersionResolver;
 import com.finora.dto.ImportDto.DetectedAccountInfo;
 import com.finora.dto.ImportDto.StagedAccountSection;
 import com.finora.dto.ImportDto.StagedRow;
+import com.finora.entity.ImportJob;
 import com.finora.entity.ImportSession;
 import com.finora.exception.ApiException;
 import com.finora.exception.ErrorCode;
+import com.finora.repository.ImportJobRepository;
 import com.finora.repository.ImportSessionRepository;
 import com.finora.security.OwnershipGuard;
 import org.springframework.data.domain.PageRequest;
@@ -79,12 +81,15 @@ public class ImportSessionService {
     private boolean sessionCleanupEnabled;
 
     private final ImportSessionRepository importSessionRepository;
+    private final ImportJobRepository importJobRepository;
     private final ObjectMapper objectMapper;
     private final BuildVersionResolver buildVersionResolver;
 
-    public ImportSessionService(ImportSessionRepository importSessionRepository, ObjectMapper objectMapper,
+    public ImportSessionService(ImportSessionRepository importSessionRepository,
+                                 ImportJobRepository importJobRepository, ObjectMapper objectMapper,
                                  BuildVersionResolver buildVersionResolver) {
         this.importSessionRepository = importSessionRepository;
+        this.importJobRepository = importJobRepository;
         this.objectMapper = objectMapper;
         this.buildVersionResolver = buildVersionResolver;
     }
@@ -424,9 +429,26 @@ public class ImportSessionService {
      */
     @Transactional(readOnly = true)
     public List<ImportSession> listResumableSessions(UUID userId) {
-        return listActiveSessions(userId).stream()
+        List<ImportSession> active = listActiveSessions(userId).stream()
                 .filter(this::supportsResume)
                 .toList();
+        // A held session is technically STAGED and technically resumable in shape, but "resume"
+        // here means "pick up where you left off and confirm" -- exactly the step a trust hold
+        // exists to withhold (see HoldDecision's own doc comment). Offering it through this list
+        // walked a real user straight past the hold with no indication anything was different;
+        // confirmed end-to-end and closed by the same change that added the guard in
+        // claimForConfirmation below. The statement still has a visible status of its own on the
+        // Statement History "in progress" list (StatementHistory.tsx), which is read-only, so
+        // excluding it here does not make it disappear -- it just stops offering the one action
+        // that must wait for a reviewer.
+        java.util.Set<UUID> heldSessionIds = importJobRepository
+                .findByImportSessionIdInAndStatus(
+                        active.stream().map(ImportSession::getId).toList(),
+                        ImportJob.Status.HELD_FOR_TRUST_REVIEW)
+                .stream()
+                .map(ImportJob::getImportSessionId)
+                .collect(java.util.stream.Collectors.toSet());
+        return active.stream().filter(s -> !heldSessionIds.contains(s.getId())).toList();
     }
 
     /** Whether the resume UI can reopen a session of this kind. A {@code switch} rather than a
@@ -534,10 +556,26 @@ public class ImportSessionService {
      * two concurrent legitimate requests from both proceeding. Called as the very first thing
      * confirmSession() does, before any transaction-import work happens at all -- if this method
      * throws, nothing downstream has touched the transactions table yet.
+     *
+     * <p>Also the trust-hold gate, for the same "before any transaction-import work happens"
+     * reason. {@code listResumableSessions} already keeps a held session out of the "Continue
+     * previous import" list, but that is a UI convenience, not enforcement -- this session's id is
+     * still a valid, owned, unexpired, unconfirmed session, so nothing stopped a direct request
+     * (a stale tab, a replayed request, a future caller that doesn't go through that list) from
+     * reaching this method and importing the very rows {@link com.finora.imports.trust.HoldDecision}
+     * said were not trustworthy enough to reach the ledger unreviewed. Confirmed as a real gap end-
+     * to-end, not a hypothetical: the browser flow the resumable list itself offers reached here
+     * and imported a held statement's rows before this check existed.
      */
     @Transactional
     public ImportSession claimForConfirmation(UUID userId, UUID sessionId) {
         getOwnedSession(userId, sessionId); // ownership + expiry + not-already-confirmed, for a clear error message
+        boolean held = !importJobRepository
+                .findByImportSessionIdInAndStatus(List.of(sessionId), ImportJob.Status.HELD_FOR_TRUST_REVIEW)
+                .isEmpty();
+        if (held) {
+            throw new ApiException(ErrorCode.IMPORT_SESSION_HELD_FOR_REVIEW);
+        }
         int updated = importSessionRepository.claimForConfirmation(sessionId);
         if (updated == 0) {
             // Lost the race between the read above and this atomic update -- someone/something
