@@ -1,11 +1,13 @@
-import { act, render, screen, fireEvent } from '@testing-library/react-native';
+import { act, render, screen, fireEvent, waitFor } from '@testing-library/react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import * as DocumentPicker from 'expo-document-picker';
 import { ImportScreen } from './ImportScreen';
 import { accountsApi, categoriesApi, importApi, statementImportsApi } from '../../api/endpoints';
 import type { DetectedAccountInfo, StagedRow } from '../../types';
 
-// Only the re-import arrival path is exercised here, so every staging/upload call is a stub that
-// nothing in this file expects to be reached.
+// The re-import arrival path is exercised by most of this file, so every staging/upload call is a
+// stub those tests never expect to be reached -- stageCsv/stagePdf are configured per-test only by
+// the fresh-upload describe block below.
 jest.mock('../../api/endpoints', () => ({
   accountsApi: { list: jest.fn() },
   categoriesApi: { list: jest.fn() },
@@ -20,8 +22,9 @@ jest.mock('../../api/endpoints', () => ({
   statementImportsApi: { confirmReimport: jest.fn() },
 }));
 
-// This screen calls DocumentPicker only from handlePick, never reached below -- mocked purely so
-// importing statementFile.ts (a static import of ImportScreen.tsx) doesn't touch the native module.
+// Unconfigured by default -- most of this file's tests arrive via the reimport path, never
+// reaching handlePick, so DocumentPicker only needs to exist for statementFile.ts's static import
+// to resolve. The fresh-upload describe block below configures it per test.
 jest.mock('expo-document-picker', () => ({ getDocumentAsync: jest.fn() }));
 
 jest.mock('react-native-safe-area-context', () => ({
@@ -241,5 +244,45 @@ describe('ImportScreen — "View in Ledger" (Track C/C6)', () => {
         accountId: undefined, dateFrom: undefined, dateTo: undefined, label: 'This import',
       }),
     });
+  });
+});
+
+describe('ImportScreen — upload completion dwell', () => {
+  beforeEach(() => {
+    mockRouteParams = undefined;
+    mockNavigate.mockClear();
+    api.accounts.list.mockReset().mockResolvedValue([]);
+    api.categories.list.mockReset().mockResolvedValue([]);
+    api.import.listSessions.mockReset().mockResolvedValue([]);
+    api.import.stageCsv.mockReset().mockResolvedValue({
+      sessionId: 'session-1',
+      multiAccount: false,
+      sections: null,
+      staging: { rows: [], totalParsed: 0, flaggedDuplicates: 0, detectedAccount: detected, unparseableRows: [] },
+    } as never);
+    jest.mocked(DocumentPicker.getDocumentAsync).mockReset().mockResolvedValue({
+      canceled: false,
+      assets: [{ uri: 'file:///statement.csv', name: 'statement.csv' } as never],
+    } as never);
+  });
+
+  // The web app's Import.tsx has the identical UPLOAD_COMPLETE_DWELL_MS pause and the identical
+  // celebrateThenAdvance mechanism; this locks in that this screen's copy of it actually holds the
+  // step on 'upload' (rendering the Completed checkmark) rather than jumping the instant stageCsv
+  // resolves.
+  it('flashes a Completed checkmark before advancing to the review step', async () => {
+    render(tree());
+
+    fireEvent.press(await screen.findByText('Choose a file'));
+    await act(async () => {});
+
+    expect(await screen.findByTestId('upload-completed')).toBeTruthy();
+    expect(screen.queryByText('Choose a file')).toBeNull();
+
+    // ...and then it actually does move on to the review step, on its own, with no further
+    // interaction. A longer timeout than the default 1000ms: UPLOAD_COMPLETE_DWELL_MS alone is
+    // 900ms, real (not faked) timers here, same as every other test in this file.
+    await waitFor(() => expect(screen.queryByTestId('upload-completed')).toBeNull(), { timeout: 3000 });
+    expect(await screen.findByText(/^Import \d+ transaction/)).toBeTruthy();
   });
 });
