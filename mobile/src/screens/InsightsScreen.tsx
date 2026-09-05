@@ -4,6 +4,7 @@ import {
 import { useQueries, useQueryClient } from '@tanstack/react-query';
 import { useNavigation } from '@react-navigation/native';
 import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
+import { usePreventScreenCapture } from 'expo-screen-capture';
 import { Card, EmptyState, SectionHeading } from '../components/Card';
 import { SkeletonCard } from '../components/skeletons/Skeletons';
 import { insightsApi, recurringApi } from '../api/endpoints';
@@ -14,6 +15,10 @@ import type { AppTabParamList } from '../navigation/types';
 
 /** Port of frontend/src/pages/Insights.tsx. */
 export function InsightsScreen() {
+  // D3 (Track D security cleanup). Spend movers and observations name real merchants and amounts
+  // -- same screenshot/screen-recording exposure Dashboard/Accounts/Statement History already
+  // guard against.
+  usePreventScreenCapture();
   const c = useTheme();
   const queryClient = useQueryClient();
   // Lives inside the More stack, not on the tab bar itself -- see BudgetsScreen's identical

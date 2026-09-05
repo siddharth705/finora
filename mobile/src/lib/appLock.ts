@@ -1,4 +1,5 @@
 import * as LocalAuthentication from 'expo-local-authentication';
+import * as SecureStore from 'expo-secure-store';
 import { safeStorage } from './safeStorage';
 
 /**
@@ -42,6 +43,51 @@ export function justFinishedAuthenticating(windowMs: number): boolean {
   return Date.now() - lastResolvedAt < windowMs;
 }
 
+/**
+ * D5 (Track D security cleanup, docs/project-management/plans/mobile-correctness-trust-roadmap.md).
+ * Opening the OS share sheet (Sharing.shareAsync -- statementImportsApi.downloadFile,
+ * supportApi.downloadAttachment, reportExport.ts's shareCsv/sharePdf) backgrounds this app exactly
+ * the same way a biometric prompt does: AppState swings inactive/background then back to active
+ * as a side effect of native UI taking over the screen, not because the user actually left and
+ * came back. Before this existed, AppLockGate's foreground listener had no way to tell that blip
+ * apart from a genuine return, and re-locked the app in the middle of (or immediately after) the
+ * user's own share flow. Same isXInFlight/justFinishedX shape as isAuthenticating/
+ * justFinishedAuthenticating above, for the identical reason: two independent native notification
+ * paths that don't synchronize with each other, so an in-flight check alone isn't enough on its
+ * own -- see AppLockGate's own comment on the Face ID sheet for the on-device-confirmed version
+ * of this same race.
+ */
+let sharingCount = 0;
+let lastShareFinishedAt = 0;
+
+/** True for the entire duration of any withShareSuppression()-wrapped share in progress. */
+export function isSharing(): boolean {
+  return sharingCount > 0;
+}
+
+/** True if some withShareSuppression()-wrapped share resolved within the last `windowMs`. */
+export function justFinishedSharing(windowMs: number): boolean {
+  return Date.now() - lastShareFinishedAt < windowMs;
+}
+
+/** Wraps a Sharing.shareAsync call (or a whole write-then-share flow) so AppLockGate's foreground
+ *  listener can recognize the AppState blip it causes -- see this section's own doc comment. */
+export async function withShareSuppression<T>(fn: () => Promise<T>): Promise<T> {
+  sharingCount++;
+  try {
+    return await fn();
+  } finally {
+    sharingCount--;
+    lastShareFinishedAt = Date.now();
+  }
+}
+
+/** Test-only, same reasoning as __resetAuthenticatingStateForTests below. */
+export function __resetSharingStateForTests(): void {
+  sharingCount = 0;
+  lastShareFinishedAt = 0;
+}
+
 /** Test-only. This module-level state is meant to persist for the life of the app process, but
  *  that is exactly what makes it a cross-test hazard: `lastResolvedAt` is stamped with the REAL
  *  wall-clock time by every test that completes a real authenticate() call, and Jest runs tests
@@ -61,8 +107,24 @@ export async function isSupported(): Promise<boolean> {
   return hasHardware && isEnrolled;
 }
 
+/**
+ * D1 (docs/project-management/plans/mobile-correctness-trust-roadmap.md, Track D). Deliberately
+ * NOT routed through {@link safeStorage}: that module's contract collapses a genuinely-absent key
+ * and a THROWN read into the identical `null` -- fine for most call sites, wrong here, because the
+ * two facts mean opposite things for this specific flag. "Absent" means the user never turned the
+ * lock on (fine to open). "Threw" means SecureStore itself is unreadable (a keychain/keystore
+ * fault) and whether the lock is on cannot actually be determined -- collapsing that to "open"
+ * would silently skip the lock screen the one time it's most likely something is genuinely wrong.
+ * `authenticate()` above already fails closed on its own errors; this makes the enabled-check do
+ * the same, rather than reusing a contract designed for lower-stakes reads. `true` here is safe,
+ * not a lockout risk: AppLockGate's lock screen always keeps its own "Sign Out" escape hatch.
+ */
 export async function isEnabled(): Promise<boolean> {
-  return (await safeStorage.getItem(ENABLED_KEY)) === 'true';
+  try {
+    return (await SecureStore.getItemAsync(ENABLED_KEY)) === 'true';
+  } catch {
+    return true;
+  }
 }
 
 export async function setEnabled(enabled: boolean): Promise<void> {

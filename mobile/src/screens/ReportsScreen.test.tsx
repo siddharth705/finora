@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useNavigation } from '@react-navigation/native';
+import { usePreventScreenCapture } from 'expo-screen-capture';
 import { ReportsScreen } from './ReportsScreen';
 import { reportsApi, type ReportData } from '../api/endpoints';
 import { shareCsv, sharePdf } from '../lib/reportExport';
@@ -243,5 +244,15 @@ describe('drill-through into the ledger (Track C/C4)', () => {
         categoryName: 'Groceries', dateFrom: '2026-07-01', dateTo: '2026-07-31', label: 'Groceries · Jul 26',
       }),
     });
+  });
+});
+
+// D3 (Track D security cleanup). Category breakdowns/totals are as screenshot-attractive as
+// anything on the Dashboard or Accounts screen, which already guard against this.
+describe('screen capture protection (Track D/D3)', () => {
+  it('calls usePreventScreenCapture on mount', () => {
+    renderScreen();
+
+    expect(usePreventScreenCapture).toHaveBeenCalled();
   });
 });

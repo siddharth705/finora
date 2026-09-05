@@ -4,6 +4,7 @@ import {
   useWindowDimensions, View,
 } from 'react-native';
 import { useQueries, useQueryClient } from '@tanstack/react-query';
+import { usePreventScreenCapture } from 'expo-screen-capture';
 import { Button } from '../components/Button';
 import { Card, EmptyState, SectionHeading } from '../components/Card';
 import { DonutChart, type Slice } from '../components/charts/DonutChart';
@@ -43,6 +44,10 @@ function depositTerms(holding: Account): string | null {
 
 /** Port of frontend/src/pages/Investments.tsx. */
 export function InvestmentsScreen() {
+  // D3 (Track D security cleanup). Holdings and net worth are the single most sensitive figures
+  // in the app -- same screenshot/screen-recording exposure Dashboard/Accounts/Statement History
+  // already guard against.
+  usePreventScreenCapture();
   const c = useTheme();
   const { width } = useWindowDimensions();
   const queryClient = useQueryClient();

@@ -62,6 +62,10 @@ export function useEmailChangeDeepLink(
   // tryConsume itself can stay referentially stable (useCallback, empty deps) instead of being
   // redefined -- and its effects re-subscribed -- on every `ready` change.
   const readyRef = useRef(ready);
+  // D6 (Track D security cleanup). Tracks the PREVIOUS `ready` value so the effect below can tell
+  // a genuine sign-out (ready: true -> false) apart from still-bootstrapping (false, unchanged) --
+  // see that effect's own comment on why only the former should clear pendingRef.
+  const wasReadyRef = useRef(ready);
 
   const tryConsume = useCallback(() => {
     if (!readyRef.current) return;
@@ -87,6 +91,19 @@ export function useEmailChangeDeepLink(
 
   useEffect(() => {
     readyRef.current = ready;
+    // D6 (Track D security cleanup, docs/project-management/plans/mobile-correctness-trust-roadmap.md).
+    // A link that arrived before `ready` first turned true is legitimately still waiting to be
+    // consumed the moment it does -- that's the whole point of stashing it, and this must NOT
+    // clear it in that case. But once a session that WAS ready ends (a real sign-out), any link
+    // still sitting here belongs to whichever identity was signed in when it arrived, not to
+    // whoever signs in next on this device. The backend's own findByIdAndUserId scoping already
+    // makes replaying it against a new user a no-op (a generic "invalid or expired" error, never a
+    // cross-account action) -- this just stops a stale, another-identity's link from even
+    // reaching that far and confusingly flashing an error at someone who never tapped anything.
+    if (wasReadyRef.current && !ready) {
+      pendingRef.current = null;
+    }
+    wasReadyRef.current = ready;
     tryConsume();
   }, [ready, tryConsume]);
 

@@ -112,6 +112,53 @@ describe('useEmailChangeDeepLink', () => {
     expect(navigationRef.navigate).toHaveBeenCalledTimes(1);
   });
 
+  // D6 (Track D security cleanup). The scenario the roadmap names: user A taps the link before
+  // ready, then signs out (or abandons) before the navigator ever actually became ready to
+  // consume it -- the exact race onNavigationReady exists for, caught here mid-flight by a
+  // sign-out. Without clearing pendingRef on that transition, whoever signs in next on this
+  // device would have A's stale link replayed the moment THEIR session becomes ready.
+  it('clears a still-pending link on sign-out, so a later sign-in never replays a stale identity\'s link', async () => {
+    let readyNow = false; // navigationRef.isReady() itself, independent of the hook's `ready` prop
+    const navigationRef = fakeNavigationRef({ isReady: () => readyNow });
+    const { rerender } = renderHook(({ ready }: { ready: boolean }) => useEmailChangeDeepLink(navigationRef, ready), {
+      initialProps: { ready: false },
+    });
+    await Promise.resolve();
+    urlListener?.({ url: 'finora://email-change-verify?sessionId=s1&token=t1' });
+
+    // `ready` flips true, but the navigator itself isn't ready yet -- the link is still sitting
+    // in pendingRef, unconsumed.
+    rerender({ ready: true });
+    expect(navigationRef.navigate).not.toHaveBeenCalled();
+
+    // User A signs out before the navigator ever became ready.
+    rerender({ ready: false });
+
+    // A different user signs in on this device, and this time the navigator IS ready.
+    readyNow = true;
+    rerender({ ready: true });
+
+    expect(navigationRef.navigate).not.toHaveBeenCalled();
+  });
+
+  it('does NOT clear a pending link across the initial not-ready -> ready transition (the ordinary sign-in-after-tapping-the-link flow)', async () => {
+    const navigationRef = fakeNavigationRef();
+    const { rerender } = renderHook(({ ready }: { ready: boolean }) => useEmailChangeDeepLink(navigationRef, ready), {
+      initialProps: { ready: false },
+    });
+    await Promise.resolve();
+    urlListener?.({ url: 'finora://email-change-verify?sessionId=s1&token=t1' });
+
+    rerender({ ready: true });
+
+    // Confirms the sign-out guard is keyed on a TRUE -> false transition specifically, not on
+    // `!ready` ever having been observed -- otherwise this would regress the ordinary "tapped the
+    // link while signed out, then signed in" flow the earlier test in this file already covers.
+    expect(navigationRef.navigate).toHaveBeenCalledWith('More', {
+      screen: 'VerifyEmailChange', params: { sessionId: 's1', token: 't1' },
+    });
+  });
+
   it('picks up a cold-launch link from getInitialURL, not just the live "url" event', async () => {
     getInitialURLSpy.mockResolvedValue('finora://email-change-verify?sessionId=cold&token=launch');
     const navigationRef = fakeNavigationRef();

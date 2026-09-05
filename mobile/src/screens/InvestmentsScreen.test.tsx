@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import { QueryClient, QueryClientProvider, onlineManager } from '@tanstack/react-query';
+import { usePreventScreenCapture } from 'expo-screen-capture';
 import { InvestmentsScreen } from './InvestmentsScreen';
 import { accountsApi, networthApi } from '../api/endpoints';
 import { light } from '../theme/palette';
@@ -257,5 +258,16 @@ describe('offline, with nothing cached', () => {
     // Investments, Net Worth and Liabilities all decline to answer.
     await waitFor(() => expect(screen.getAllByText('—')).toHaveLength(3));
     expect(screen.queryByText('₹0')).toBeNull();
+  });
+});
+
+// D3 (Track D security cleanup). Holdings/net worth are the single most sensitive figures in the
+// app -- as screenshot-attractive as anything on the Dashboard or Accounts screen, which already
+// guard against this.
+describe('screen capture protection (Track D/D3)', () => {
+  it('calls usePreventScreenCapture on mount', () => {
+    renderScreen();
+
+    expect(usePreventScreenCapture).toHaveBeenCalled();
   });
 });

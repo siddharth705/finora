@@ -1,5 +1,14 @@
-import { toCsv, toPrintableHtml } from './reportExport';
+import { File, Paths } from 'expo-file-system';
+import * as Print from 'expo-print';
+import * as Sharing from 'expo-sharing';
+import { shareCsv, sharePdf, toCsv, toPrintableHtml } from './reportExport';
 import type { ReportData } from '../api/endpoints';
+
+jest.mock('expo-print', () => ({ printToFileAsync: jest.fn() }));
+jest.mock('expo-sharing', () => ({
+  isAvailableAsync: jest.fn().mockResolvedValue(true),
+  shareAsync: jest.fn().mockResolvedValue(undefined),
+}));
 
 const report: ReportData = {
   month: '2026-07',
@@ -105,5 +114,58 @@ describe('toPrintableHtml', () => {
   // blank trailing page.
   it('declares a doctype', () => {
     expect(toPrintableHtml(report).startsWith('<!DOCTYPE html>')).toBe(true);
+  });
+});
+
+/**
+ * D2 (Track D security cleanup). The exported file exists on disk only to hand the OS share
+ * sheet a real URI -- once shareAsync settles, it has to go, whichever of the two builders wrote
+ * it and whether the share itself succeeded or threw.
+ */
+describe('shareCsv / sharePdf clean up the cache file after sharing', () => {
+  const shareAsync = Sharing.shareAsync as jest.Mock;
+  const printToFileAsync = Print.printToFileAsync as jest.Mock;
+
+  beforeEach(() => {
+    shareAsync.mockReset().mockResolvedValue(undefined);
+  });
+
+  it('shareCsv deletes its own cache file after a successful share', async () => {
+    await shareCsv(report);
+
+    const file = new File(Paths.cache, `fynora-report-${report.month}.csv`);
+    expect(file.exists).toBe(false);
+  });
+
+  it('shareCsv still deletes its cache file when the share itself throws', async () => {
+    shareAsync.mockRejectedValue(new Error('share sheet dismissed with an error'));
+
+    await expect(shareCsv(report)).rejects.toThrow();
+
+    const file = new File(Paths.cache, `fynora-report-${report.month}.csv`);
+    expect(file.exists).toBe(false);
+  });
+
+  it('sharePdf deletes the file expo-print wrote after a successful share', async () => {
+    const printed = new File(Paths.cache, 'printed-report.pdf');
+    printed.create();
+    printed.write('%PDF-fake');
+    printToFileAsync.mockResolvedValue({ uri: printed.uri });
+
+    await sharePdf(report);
+
+    expect(printed.exists).toBe(false);
+  });
+
+  it('sharePdf still deletes the printed file when the share itself throws', async () => {
+    const printed = new File(Paths.cache, 'printed-report-2.pdf');
+    printed.create();
+    printed.write('%PDF-fake');
+    printToFileAsync.mockResolvedValue({ uri: printed.uri });
+    shareAsync.mockRejectedValue(new Error('share sheet dismissed with an error'));
+
+    await expect(sharePdf(report)).rejects.toThrow();
+
+    expect(printed.exists).toBe(false);
   });
 });

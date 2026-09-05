@@ -1,3 +1,5 @@
+import { File } from 'expo-file-system';
+import * as Sharing from 'expo-sharing';
 import { supportApi } from './endpoints';
 import { api } from './client';
 
@@ -23,6 +25,14 @@ jest.mock('expo-sharing', () => ({
 }));
 
 const get = api.get as jest.Mock;
+const MockedFile = File as unknown as jest.Mock;
+const shareAsync = Sharing.shareAsync as jest.Mock;
+
+/** See downloadFile.test.ts's identical helper for why this goes through mock.results rather
+ *  than a captured reference. */
+function lastFileInstance() {
+  return MockedFile.mock.results[MockedFile.mock.results.length - 1].value;
+}
 
 function arrayBufferError(status: number, body: unknown) {
   const json = JSON.stringify(body);
@@ -78,5 +88,31 @@ describe('supportApi.downloadAttachment — error message survives a failed down
         },
       },
     });
+  });
+});
+
+/** D2 (Track D security cleanup) -- same reasoning as downloadFile.test.ts's identical block. */
+describe('supportApi.downloadAttachment — cleans up the cache file after sharing', () => {
+  beforeEach(() => {
+    get.mockReset().mockResolvedValue({ data: new Uint8Array([1, 2, 3]).buffer });
+    shareAsync.mockReset();
+  });
+
+  it('deletes the cache file after a successful share', async () => {
+    shareAsync.mockResolvedValue(undefined);
+
+    await supportApi.downloadAttachment('ticket-1', 'attach-1', 'receipt.png', 'image/png');
+
+    expect(lastFileInstance().delete).toHaveBeenCalled();
+  });
+
+  it('still deletes the cache file when the share itself throws', async () => {
+    shareAsync.mockRejectedValue(new Error('share sheet dismissed with an error'));
+
+    await expect(
+      supportApi.downloadAttachment('ticket-1', 'attach-1', 'receipt.png', 'image/png')
+    ).rejects.toThrow();
+
+    expect(lastFileInstance().delete).toHaveBeenCalled();
   });
 });

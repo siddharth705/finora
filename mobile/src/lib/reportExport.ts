@@ -2,6 +2,7 @@ import { File, Paths } from 'expo-file-system';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 import type { ReportData } from '../api/endpoints';
+import { withShareSuppression } from './appLock';
 import { fmtCurrency } from './format';
 
 /**
@@ -102,7 +103,24 @@ async function share(uri: string, mimeType: string, utiType: string, dialogTitle
   if (!(await Sharing.isAvailableAsync())) {
     throw new Error('Sharing is not available on this device.');
   }
-  await Sharing.shareAsync(uri, { mimeType, UTI: utiType, dialogTitle });
+  try {
+    // D5 (Track D security cleanup). The share sheet backgrounds this app the same way a
+    // biometric prompt does -- without this, AppLockGate's foreground listener couldn't tell that
+    // apart from a genuine return and re-locked mid-share or right after.
+    await withShareSuppression(() => Sharing.shareAsync(uri, { mimeType, UTI: utiType, dialogTitle }));
+  } finally {
+    // D2 (Track D security cleanup, docs/project-management/plans/mobile-correctness-trust-roadmap.md).
+    // This file existed only to hand the OS share sheet a real URI -- shareAsync resolving
+    // (shared, dismissed, or thrown) is exactly when its job is done. Leaving it behind is the
+    // "persists forever, unencrypted" gap this closes. Best-effort: a failed cleanup must not
+    // turn a completed (or already-failed) share into a new user-facing error -- sweepFileCache's
+    // startup sweep is the backstop if this doesn't run.
+    try {
+      new File(uri).delete();
+    } catch {
+      // See comment above.
+    }
+  }
 }
 
 export async function shareCsv(report: ReportData): Promise<void> {

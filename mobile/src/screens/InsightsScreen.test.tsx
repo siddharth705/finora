@@ -1,6 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useNavigation } from '@react-navigation/native';
+import { usePreventScreenCapture } from 'expo-screen-capture';
 import { InsightsScreen } from './InsightsScreen';
 import { insightsApi, recurringApi } from '../api/endpoints';
 
@@ -149,5 +150,15 @@ describe('InsightsScreen', () => {
         filters: { categoryName: 'Dining', label: 'Dining', nonce: expect.any(Number) },
       });
     });
+  });
+});
+
+// D3 (Track D security cleanup). Spend movers name real merchants/amounts -- as screenshot-
+// attractive as anything on the Dashboard or Accounts screen, which already guard against this.
+describe('screen capture protection (Track D/D3)', () => {
+  it('calls usePreventScreenCapture on mount', () => {
+    renderScreen();
+
+    expect(usePreventScreenCapture).toHaveBeenCalled();
   });
 });

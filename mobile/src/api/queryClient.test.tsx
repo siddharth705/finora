@@ -13,6 +13,17 @@ const PERSIST_KEY = 'finora_query_cache';
 // copy rather than loosening that module's surface for a test.
 const PERSIST_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
+// D4 (Track D security cleanup) added AES encryption to queryClient.ts's storage adapter. This
+// file's own job is the epoch guard and restore/clear mechanics, already covered in exhaustive
+// detail below -- real cipher behavior is queryCacheCipher.test.ts's job. Identity functions here
+// keep every existing assertion in this file (seeding AsyncStorage with a plain JSON blob,
+// JSON.parse-ing what comes back out of it) working exactly as it did before encryption existed,
+// rather than needing every one of them rewritten to route through real (or fake) AES too.
+jest.mock('../lib/queryCacheCipher', () => ({
+  encryptForStorage: jest.fn(async (plaintext: string) => plaintext),
+  decryptFromStorage: jest.fn(async (ciphertext: string) => ciphertext),
+}));
+
 function blob(clientState: unknown, over: Partial<{ timestamp: number; buster: string }> = {}) {
   return JSON.stringify({ timestamp: Date.now(), buster: '1', clientState, ...over });
 }

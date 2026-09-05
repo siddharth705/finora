@@ -7,6 +7,7 @@ import {
   persistQueryClientSubscribe,
 } from '@tanstack/react-query-persist-client';
 import { PERSISTED_QUERY_KEY_PREFIXES, shouldPersistQuery } from './queryPersistence';
+import { decryptFromStorage, encryptForStorage } from '../lib/queryCacheCipher';
 
 /**
  * Mirrors the web app's QueryClient config (frontend/src/App.tsx). refetchOnWindowFocus is a
@@ -111,17 +112,37 @@ const PERSIST_MAX_AGE = 24 * 60 * 60 * 1000;
 let cacheEpoch = 0;
 let pendingWriteEpoch = 0;
 
-const basePersister = createAsyncStoragePersister({
-  storage: {
-    getItem: (key) => AsyncStorage.getItem(key),
-    removeItem: (key) => AsyncStorage.removeItem(key),
-    // The only guarded operation. Reads must still work (restore) and deletes must ALWAYS work --
-    // suppressing removeItem would defeat the wipe this guard exists to protect.
-    setItem: (key, value) =>
-      pendingWriteEpoch === cacheEpoch ? AsyncStorage.setItem(key, value) : Promise.resolve(),
+const storage = {
+  // D4 (Track D security cleanup) -- see queryCacheCipher.ts's own doc comment. A value that
+  // fails to decrypt (corrupted, wrong key, or written before encryption existed) comes back as
+  // null here, which persistQueryClientRestore already treats as an ordinary cold start with
+  // nothing cached -- not a new failure mode.
+  getItem: async (key: string) => {
+    const raw = await AsyncStorage.getItem(key);
+    return raw === null ? null : decryptFromStorage(raw);
   },
-  key: PERSIST_KEY,
-});
+  removeItem: (key: string) => AsyncStorage.removeItem(key),
+  // The only guarded operation. Reads must still work (restore) and deletes must ALWAYS work --
+  // suppressing removeItem would defeat the wipe this guard exists to protect. The epoch check
+  // stays first and synchronous, exactly as before encryption was added: a write already
+  // invalidated by a logout/session-expiry skips straight past, before spending any work
+  // encrypting a payload nobody wants written.
+  setItem: async (key: string, value: string) => {
+    if (pendingWriteEpoch !== cacheEpoch) return;
+    const encrypted = await encryptForStorage(value);
+    if (encrypted !== null) {
+      await AsyncStorage.setItem(key, encrypted);
+    }
+  },
+};
+
+/** Test-only: the raw storage adapter (epoch guard + D4 encryption), exposed so that wiring can
+ *  be verified directly against the real AsyncStorage mock without driving the whole
+ *  persistQueryClient/persistQueryClientRestore machinery to reach it -- same convention as
+ *  appLock.ts's own __resetAuthenticatingStateForTests. */
+export const __testStorage = storage;
+
+const basePersister = createAsyncStoragePersister({ storage, key: PERSIST_KEY });
 
 // TanStack's persistence contract: a query garbage-collected out of the in-memory cache is also
 // dropped from the next persisted write, so gcTime shorter than the persister's maxAge quietly
