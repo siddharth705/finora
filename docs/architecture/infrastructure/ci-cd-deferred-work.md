@@ -112,6 +112,21 @@ combined count), build green, `com.finora.controller` coverage at 70%/52% (not 0
 `--unit-only` against unit-only output correctly returns exit 1 with the BLOCKED message — the
 safeguard this whole RFC exists to preserve still fires exactly when it's supposed to.
 
+**2026-09-05 follow-up — the nightly-only cadence this RFC chose for `CapabilityCorpusCoverageTest`
+had a real gap.** PR #930 registered four new capabilities in `CapabilityCoverageService
+.KNOWN_CAPABILITIES` with no committed trace exercising any of them; because that test runs only on
+`corpus-coverage-nightly.yml`'s schedule, the gap sat on `main` undetected for a full day until the
+next nightly run failed (fixed in PR #957). This RFC's "safe to defer" judgment for this
+specific test is unchanged — it is still a coverage metric, not a correctness gate, and the other
+three slow corpus-driven tests correctly stayed on every run for exactly the reason given above.
+What was missing was enforcement at the one moment that actually introduces the gap: the PR that
+adds a capability. `corpus-coverage-nightly.yml` now also runs on any pull request touching
+`CapabilityCoverageService.java`, `CapabilityCorpusCoverageTest.java`, or the committed trace
+corpus (`backend/src/test/resources/traces/**`) — a `paths:` filter on the one file where
+`KNOWN_CAPABILITIES` is declared, so it only ever adds a run on top of the existing nightly
+schedule for the rare PR that can actually create this gap, never removing coverage the way a
+careless RFC-CI-01-style filter risks elsewhere in this file.
+
 **Original problem, for context:** `backend`'s `./mvnw test` used to run unit tests (`*Test`, `*Tests`, `*TestCase`) and
 integration tests (`*IT`, Testcontainers-backed) together, in one Maven `test` phase invocation, on
 every single PR. There's no fast unit-only gate with integration tests deferred to merge or a
