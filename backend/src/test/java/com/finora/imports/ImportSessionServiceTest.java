@@ -5,9 +5,11 @@ import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.finora.config.BuildVersionResolver;
 import com.finora.dto.ImportDto.DetectedAccountInfo;
 import com.finora.dto.ImportDto.StagedRow;
+import com.finora.entity.HeldStatement;
 import com.finora.entity.ImportSession;
 import com.finora.exception.ApiException;
 import com.finora.exception.ErrorCode;
+import com.finora.repository.HeldStatementRepository;
 import com.finora.repository.ImportJobRepository;
 import com.finora.repository.ImportSessionRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -40,6 +42,7 @@ class ImportSessionServiceTest {
 
     private ImportSessionRepository importSessionRepository;
     private ImportJobRepository importJobRepository;
+    private HeldStatementRepository heldStatementRepository;
     private BuildVersionResolver buildVersionResolver;
     private ImportSessionService service;
     private final UUID userId = UUID.randomUUID();
@@ -49,6 +52,7 @@ class ImportSessionServiceTest {
     void setUp() {
         importSessionRepository = mock(ImportSessionRepository.class);
         importJobRepository = mock(ImportJobRepository.class);
+        heldStatementRepository = mock(HeldStatementRepository.class);
         ObjectMapper objectMapper = new ObjectMapper().registerModule(new JavaTimeModule());
         buildVersionResolver = mock(BuildVersionResolver.class);
         // Every EXISTING test in this class (including all the Phase 1A dedup-window tests) was
@@ -56,12 +60,13 @@ class ImportSessionServiceTest {
         // them exercise the fallback-window path Phase 1B preserves for that case, unchanged,
         // rather than silently starting to exercise the new version-comparison path instead.
         when(buildVersionResolver.currentCommit()).thenReturn(null);
-        service = new ImportSessionService(importSessionRepository, importJobRepository, objectMapper, buildVersionResolver);
+        service = new ImportSessionService(importSessionRepository, importJobRepository,
+                heldStatementRepository, objectMapper, buildVersionResolver);
         when(importSessionRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
         // No test in this class is about a trust hold unless it says so -- default to "nothing is
         // held" so every existing claimForConfirmation/listResumableSessions test keeps exercising
         // exactly what it did before this repository existed.
-        when(importJobRepository.findByImportSessionIdInAndStatus(any(), any())).thenReturn(List.of());
+        when(importJobRepository.findByImportSessionIdInAndHeldStatementIdIsNotNull(any())).thenReturn(List.of());
     }
 
     private StagedRow sampleRow() {
@@ -527,22 +532,94 @@ class ImportSessionServiceTest {
         ImportSession ordinary = sessionOwnedBy(userId, Instant.now().plusSeconds(600), ImportSession.STATUS_STAGED);
         when(importSessionRepository.findByUserIdAndStatusOrderByCreatedAtDesc(userId, ImportSession.STATUS_STAGED))
                 .thenReturn(List.of(held, ordinary));
-        when(importJobRepository.findByImportSessionIdInAndStatus(
-                argThat(ids -> ids.containsAll(List.of(held.getId(), ordinary.getId()))),
-                eq(com.finora.entity.ImportJob.Status.HELD_FOR_TRUST_REVIEW)))
-                .thenReturn(List.of(jobHeldFor(held.getId())));
+        stubOpenHold(List.of(held.getId(), ordinary.getId()), held.getId());
 
         List<ImportSession> resumable = service.listResumableSessions(userId);
 
         assertThat(resumable).containsExactly(ordinary);
     }
 
-    private com.finora.entity.ImportJob jobHeldFor(UUID sessionId) {
+    /** {@link #listResumableSessions_excludesASessionUnderTrustReview}'s counterpart for the
+     *  bug {@code ImportJobRepository.findByImportSessionIdInAndHeldStatementIdIsNotNull}'s own
+     *  doc comment describes: a REJECTED hold moves the job to plain FAILED (indistinguishable
+     *  from any other failed import at the job-status level) without touching the session at all,
+     *  so a status-only check stopped blocking it the moment an admin rejected the extraction --
+     *  exactly the outcome trust review exists to prevent, reopened through the reject path. */
+    @Test
+    void listResumableSessions_excludesASessionWhoseTrustReviewWasRejected() {
+        ImportSession rejected = sessionOwnedBy(userId, Instant.now().plusSeconds(600), ImportSession.STATUS_STAGED);
+        ImportSession ordinary = sessionOwnedBy(userId, Instant.now().plusSeconds(600), ImportSession.STATUS_STAGED);
+        when(importSessionRepository.findByUserIdAndStatusOrderByCreatedAtDesc(userId, ImportSession.STATUS_STAGED))
+                .thenReturn(List.of(rejected, ordinary));
+        stubRejectedHold(List.of(rejected.getId(), ordinary.getId()), rejected.getId());
+
+        List<ImportSession> resumable = service.listResumableSessions(userId);
+
+        assertThat(resumable).containsExactly(ordinary);
+    }
+
+    /** An APPROVED hold is the one case a session should become confirmable again -- unlike
+     *  reject, this is the intended release (matches {@code HeldStatementService.approve}'s own
+     *  doc comment: "the staged rows may reach the user's confirm step"). */
+    @Test
+    void listResumableSessions_stillOffersASessionWhoseTrustReviewWasApproved() {
+        ImportSession approved = sessionOwnedBy(userId, Instant.now().plusSeconds(600), ImportSession.STATUS_STAGED);
+        when(importSessionRepository.findByUserIdAndStatusOrderByCreatedAtDesc(userId, ImportSession.STATUS_STAGED))
+                .thenReturn(List.of(approved));
+        UUID heldStatementId = UUID.randomUUID();
+        com.finora.entity.ImportJob job = jobLinkedToHold(approved.getId(), heldStatementId);
+        when(importJobRepository.findByImportSessionIdInAndHeldStatementIdIsNotNull(any()))
+                .thenReturn(List.of(job));
+        when(heldStatementRepository.findByImportJobIdInAndStatusNot(any(), eq(HeldStatement.Status.IMPORTED)))
+                .thenReturn(List.of()); // an approved hold IS status IMPORTED, so it never matches "not IMPORTED"
+
+        List<ImportSession> resumable = service.listResumableSessions(userId);
+
+        assertThat(resumable).containsExactly(approved);
+    }
+
+    private com.finora.entity.ImportJob jobLinkedToHold(UUID sessionId, UUID heldStatementId) {
         com.finora.entity.ImportJob job = new com.finora.entity.ImportJob(
                 userId, "statement.csv", "hash-" + sessionId, "objects/key-" + sessionId, "CSV");
         job.markClaimed("worker", Instant.now());
-        job.holdForTrustReview(sessionId, null, Instant.now());
+        job.holdForTrustReview(sessionId, heldStatementId, Instant.now());
         return job;
+    }
+
+    private HeldStatement heldStatementWithId(UUID id) {
+        HeldStatement held = new HeldStatement("HELD-TEST-" + id, UUID.randomUUID(), userId,
+                "objects/key", "test trigger summary");
+        org.springframework.test.util.ReflectionTestUtils.setField(held, "id", id);
+        return held; // defaults to Status.HELD -- still open, still blocking
+    }
+
+    /** Stubs both repository hops for a session still under an OPEN hold (default {@code HELD}
+     *  status) on {@code blockedSessionId}, among the full {@code sessionIds} the caller asks
+     *  about. */
+    private void stubOpenHold(List<UUID> sessionIds, UUID blockedSessionId) {
+        UUID heldStatementId = UUID.randomUUID();
+        com.finora.entity.ImportJob job = jobLinkedToHold(blockedSessionId, heldStatementId);
+        when(importJobRepository.findByImportSessionIdInAndHeldStatementIdIsNotNull(
+                argThat(ids -> ids.containsAll(sessionIds))))
+                .thenReturn(List.of(job));
+        when(heldStatementRepository.findByImportJobIdInAndStatusNot(
+                eq(List.of(job.getId())), eq(HeldStatement.Status.IMPORTED)))
+                .thenReturn(List.of(heldStatementWithId(heldStatementId)));
+    }
+
+    /** Same shape as {@link #stubOpenHold}, but the hold was REJECTED rather than left open --
+     *  the case {@code findByImportSessionIdInAndHeldStatementIdIsNotNull} was introduced for. */
+    private void stubRejectedHold(List<UUID> sessionIds, UUID blockedSessionId) {
+        UUID heldStatementId = UUID.randomUUID();
+        com.finora.entity.ImportJob job = jobLinkedToHold(blockedSessionId, heldStatementId);
+        when(importJobRepository.findByImportSessionIdInAndHeldStatementIdIsNotNull(
+                argThat(ids -> ids.containsAll(sessionIds))))
+                .thenReturn(List.of(job));
+        HeldStatement rejected = heldStatementWithId(heldStatementId);
+        rejected.reject(UUID.randomUUID(), Instant.now());
+        when(heldStatementRepository.findByImportJobIdInAndStatusNot(
+                eq(List.of(job.getId())), eq(HeldStatement.Status.IMPORTED)))
+                .thenReturn(List.of(rejected));
     }
 
     @Test
@@ -551,9 +628,28 @@ class ImportSessionServiceTest {
         ImportSession staged = sessionOwnedBy(userId, Instant.now().plusSeconds(600), ImportSession.STATUS_STAGED);
         org.springframework.test.util.ReflectionTestUtils.setField(staged, "id", sessionId);
         when(importSessionRepository.findById(sessionId)).thenReturn(Optional.of(staged));
-        when(importJobRepository.findByImportSessionIdInAndStatus(
-                List.of(sessionId), com.finora.entity.ImportJob.Status.HELD_FOR_TRUST_REVIEW))
-                .thenReturn(List.of(jobHeldFor(sessionId)));
+        stubOpenHold(List.of(sessionId), sessionId);
+
+        assertThatThrownBy(() -> service.claimForConfirmation(userId, sessionId))
+                .isInstanceOf(ApiException.class)
+                .hasFieldOrPropertyWithValue("code", ErrorCode.IMPORT_SESSION_HELD_FOR_REVIEW);
+
+        verify(importSessionRepository, never()).claimForConfirmation(any());
+    }
+
+    /** The bug this pins: before this fix, once {@code HeldStatementService.reject()} moved the
+     *  job to {@code FAILED}, this same request would have sailed through -- {@code
+     *  claimForConfirmation}'s old check only asked "is the job status HELD_FOR_TRUST_REVIEW right
+     *  now," and FAILED (for any reason, rejection included) always answered no. Confirmed as a
+     *  real, deterministic gap (not a race): {@code reject()} never touches the {@code
+     *  ImportSession} row, so it stays STAGED and unexpired for the rest of its ordinary 48h TTL. */
+    @Test
+    void claimForConfirmation_rejectsASessionWhoseTrustReviewWasRejected() {
+        UUID sessionId = UUID.randomUUID();
+        ImportSession staged = sessionOwnedBy(userId, Instant.now().plusSeconds(600), ImportSession.STATUS_STAGED);
+        org.springframework.test.util.ReflectionTestUtils.setField(staged, "id", sessionId);
+        when(importSessionRepository.findById(sessionId)).thenReturn(Optional.of(staged));
+        stubRejectedHold(List.of(sessionId), sessionId);
 
         assertThatThrownBy(() -> service.claimForConfirmation(userId, sessionId))
                 .isInstanceOf(ApiException.class)

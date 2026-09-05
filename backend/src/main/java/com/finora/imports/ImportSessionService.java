@@ -7,10 +7,12 @@ import com.finora.config.BuildVersionResolver;
 import com.finora.dto.ImportDto.DetectedAccountInfo;
 import com.finora.dto.ImportDto.StagedAccountSection;
 import com.finora.dto.ImportDto.StagedRow;
+import com.finora.entity.HeldStatement;
 import com.finora.entity.ImportJob;
 import com.finora.entity.ImportSession;
 import com.finora.exception.ApiException;
 import com.finora.exception.ErrorCode;
+import com.finora.repository.HeldStatementRepository;
 import com.finora.repository.ImportJobRepository;
 import com.finora.repository.ImportSessionRepository;
 import com.finora.security.OwnershipGuard;
@@ -82,14 +84,17 @@ public class ImportSessionService {
 
     private final ImportSessionRepository importSessionRepository;
     private final ImportJobRepository importJobRepository;
+    private final HeldStatementRepository heldStatementRepository;
     private final ObjectMapper objectMapper;
     private final BuildVersionResolver buildVersionResolver;
 
     public ImportSessionService(ImportSessionRepository importSessionRepository,
-                                 ImportJobRepository importJobRepository, ObjectMapper objectMapper,
+                                 ImportJobRepository importJobRepository,
+                                 HeldStatementRepository heldStatementRepository, ObjectMapper objectMapper,
                                  BuildVersionResolver buildVersionResolver) {
         this.importSessionRepository = importSessionRepository;
         this.importJobRepository = importJobRepository;
+        this.heldStatementRepository = heldStatementRepository;
         this.objectMapper = objectMapper;
         this.buildVersionResolver = buildVersionResolver;
     }
@@ -441,14 +446,40 @@ public class ImportSessionService {
         // Statement History "in progress" list (StatementHistory.tsx), which is read-only, so
         // excluding it here does not make it disappear -- it just stops offering the one action
         // that must wait for a reviewer.
-        java.util.Set<UUID> heldSessionIds = importJobRepository
-                .findByImportSessionIdInAndStatus(
-                        active.stream().map(ImportSession::getId).toList(),
-                        ImportJob.Status.HELD_FOR_TRUST_REVIEW)
+        java.util.Set<UUID> blockedSessionIds =
+                sessionsBlockedByTrustReview(active.stream().map(ImportSession::getId).toList());
+        return active.stream().filter(s -> !blockedSessionIds.contains(s.getId())).toList();
+    }
+
+    /**
+     * Which of these sessions must not reach the user's confirm step because a trust review is
+     * open OR was decided against the extraction -- shared by {@link #listResumableSessions} and
+     * {@link #claimForConfirmation} so "is this session held" has exactly one answer rather than
+     * two independently-maintained checks that could drift.
+     *
+     * <p>Keyed on {@link HeldStatement#getStatus()}, not {@link ImportJob.Status}, and that
+     * distinction is load-bearing: a rejected hold moves the job to plain {@code FAILED} --
+     * indistinguishable at the job-status level from any other failed import -- so the only place
+     * "still blocking" vs. "operator cleared it" is actually recorded is the {@code HeldStatement}
+     * row itself. See {@link com.finora.repository.ImportJobRepository
+     * #findByImportSessionIdInAndHeldStatementIdIsNotNull}'s own doc comment for the real bug this
+     * replaced.
+     */
+    private java.util.Set<UUID> sessionsBlockedByTrustReview(java.util.Collection<UUID> sessionIds) {
+        if (sessionIds.isEmpty()) return java.util.Set.of();
+        List<ImportJob> jobsWithAHold =
+                importJobRepository.findByImportSessionIdInAndHeldStatementIdIsNotNull(sessionIds);
+        if (jobsWithAHold.isEmpty()) return java.util.Set.of();
+        java.util.Map<UUID, UUID> heldStatementIdToSessionId = jobsWithAHold.stream()
+                .collect(java.util.stream.Collectors.toMap(
+                        ImportJob::getHeldStatementId, ImportJob::getImportSessionId));
+        return heldStatementRepository
+                .findByImportJobIdInAndStatusNot(
+                        jobsWithAHold.stream().map(ImportJob::getId).toList(),
+                        HeldStatement.Status.IMPORTED)
                 .stream()
-                .map(ImportJob::getImportSessionId)
+                .map(hs -> heldStatementIdToSessionId.get(hs.getId()))
                 .collect(java.util.stream.Collectors.toSet());
-        return active.stream().filter(s -> !heldSessionIds.contains(s.getId())).toList();
     }
 
     /** Whether the resume UI can reopen a session of this kind. A {@code switch} rather than a
@@ -570,9 +601,7 @@ public class ImportSessionService {
     @Transactional
     public ImportSession claimForConfirmation(UUID userId, UUID sessionId) {
         getOwnedSession(userId, sessionId); // ownership + expiry + not-already-confirmed, for a clear error message
-        boolean held = !importJobRepository
-                .findByImportSessionIdInAndStatus(List.of(sessionId), ImportJob.Status.HELD_FOR_TRUST_REVIEW)
-                .isEmpty();
+        boolean held = !sessionsBlockedByTrustReview(List.of(sessionId)).isEmpty();
         if (held) {
             throw new ApiException(ErrorCode.IMPORT_SESSION_HELD_FOR_REVIEW);
         }
