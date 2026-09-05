@@ -5,8 +5,10 @@ import {
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRoute, type RouteProp } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import Ionicons from '@expo/vector-icons/Ionicons';
 import { categoriesApi, transactionsApi, type PagedResponse, type TransactionFilters } from '../api/endpoints';
 import { OptionPickerModal } from '../components/OptionPickerModal';
+import { TransactionSourceModal } from '../components/TransactionSourceModal';
 import { SkeletonTransactionRow } from '../components/skeletons/Skeletons';
 import { invalidateFinancialData } from '../lib/invalidateFinancialData';
 import { toUserMessage } from '../lib/apiError';
@@ -54,6 +56,10 @@ export function LedgerScreen() {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [recategorizing, setRecategorizing] = useState<Transaction | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Track C/C7's "Where did this number come from?" panel -- the id of the row it's open for,
+  // null when closed. A plain id rather than the whole Transaction: the panel fetches its own
+  // data keyed by id, same lazy pattern as StatementHistoryScreen's StatementDetailModal.
+  const [viewingSourceId, setViewingSourceId] = useState<string | null>(null);
 
   // Track C/C4. The active drill-through, if any -- a donut legend row, a budget card, an
   // insight/mover row, or a report's category breakdown. Local state, not read from route.params
@@ -379,9 +385,20 @@ export function LedgerScreen() {
               // as a rotor entry duplicating what a plain double-tap already does. Default
               // activation maps to onPress, so only the non-default action needs declaring.
               accessibilityHint="Changes this transaction's category"
-              accessibilityActions={[{ name: 'delete', label: 'Delete transaction' }]}
+              // Track C/C7's info button below is a SIGHTED-only affordance, not a second
+              // accessibility stop: nesting an accessible Pressable inside one that's already
+              // accessible={true} (the default neither opts out of) doesn't create a separate
+              // screen-reader-reachable node on either platform -- VoiceOver/TalkBack treat the
+              // whole subtree as one atomic element, and activating it fires THIS Pressable's own
+              // onPress, not the nested one's. 'viewSource' is the same fix already applied to
+              // 'delete' above for the identical reason: a rotor action reaches it either way.
+              accessibilityActions={[
+                { name: 'delete', label: 'Delete transaction' },
+                { name: 'viewSource', label: 'Show where this came from' },
+              ]}
               onAccessibilityAction={(e) => {
                 if (e.nativeEvent.actionName === 'delete') confirmDelete(t);
+                if (e.nativeEvent.actionName === 'viewSource') setViewingSourceId(t.id);
               }}
             >
               <View style={styles.rowMain}>
@@ -408,11 +425,30 @@ export function LedgerScreen() {
                   {fmtCurrency(Math.abs(t.amount))}
                 </Text>
               )}
+              {/* Track C/C7. Nested inside the row's own Pressable -- RN gives the innermost
+                  touch target the tap, so this doesn't collide with onPress/onLongPress above,
+                  for a SIGHTED user. Deliberately `accessible={false}`: the outer row's own
+                  accessible={true} (default) already makes its whole subtree one atomic
+                  VoiceOver/TalkBack element, so this nested Pressable can never be an
+                  independently reachable second stop regardless of its own accessibilityLabel --
+                  the 'viewSource' accessibilityAction declared on the outer row above is the
+                  real, reachable path for a screen-reader user. */}
+              <Pressable
+                onPress={() => setViewingSourceId(t.id)}
+                hitSlop={10}
+                style={styles.sourceButton}
+                accessible={false}
+                testID={`source-button-${t.id}`}
+              >
+                <Ionicons name="information-circle-outline" size={18} color={c.muted} />
+              </Pressable>
             </Pressable>
             );
           }}
         />
       )}
+
+      <TransactionSourceModal transactionId={viewingSourceId} onClose={() => setViewingSourceId(null)} />
 
       {/* Seeded with the row's current category so the sheet opens showing what it is now, not a
           blank slate -- the user is correcting an answer, not supplying a missing one. */}
@@ -490,6 +526,7 @@ const styles = StyleSheet.create({
   desc: { fontSize: 14, fontWeight: '500' },
   meta: { fontSize: 11, marginTop: 2 },
   amount: { fontSize: 14, fontWeight: '700' },
+  sourceButton: { marginLeft: spacing.xs, padding: 2 },
   empty: { fontSize: 13, textAlign: 'center', paddingVertical: spacing.xl },
   footer: { paddingVertical: spacing.md, alignItems: 'center', gap: spacing.xs },
   errorText: { fontSize: 14 },

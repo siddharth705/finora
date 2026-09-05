@@ -316,7 +316,10 @@ export function InvestmentsScreen() {
             Could not load your net worth history.
           </Text>
         ) : history.length < 2 ? (
-          <EmptyState message="Save a snapshot periodically to build a trend — history starts from the first one you save." />
+          // Track C/C8: a snapshot is now taken automatically every day (NetWorthSnapshotSweepService),
+          // so this is no longer "the first one you save" -- it just hasn't been a day or two yet.
+          // "Save snapshot" above still exists as a same-day override, not the only way history starts.
+          <EmptyState message="Building your net worth trend — check back in a day or two, or save today's snapshot now to add a point right away." />
         ) : (
           <TrendChart
             points={history.map((h) => ({ date: h.date, value: h.netWorth }))}
