@@ -9,6 +9,7 @@ import com.finora.exception.ErrorCode;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 /**
  * The one rule that decides whether the engine got anything usable out of a document.
@@ -126,13 +127,20 @@ final class ExtractionCheck {
         }
 
         boolean locatedATable = ctx != null && ctx.buildMetadata().tables() > 0;
-        throw new ApiException(
-                locatedATable ? ErrorCode.IMPORT_NO_TRANSACTIONS_FOUND : ErrorCode.IMPORT_NO_HEADER_DETECTED,
+        ErrorCode code = locatedATable ? ErrorCode.IMPORT_NO_TRANSACTIONS_FOUND : ErrorCode.IMPORT_NO_HEADER_DETECTED;
+        throw new ApiException(code.defaultStatus(), code,
                 (locatedATable
                         ? "Finora found a transaction table in this statement but could not read any transactions from it."
                         : "Finora could not find a transaction table anywhere in this statement.")
                         + (recoveredLines > 0
                         ? " " + recoveredLines + " line(s) of text were recovered and recorded for review."
-                        : ""));
+                        : ""),
+                // ImportJobWorker.carriesRecoveredEvidence reads this to tell "genuinely nothing
+                // here" (a summary, a T&C page -- FAIL_FAST, no admin needed) apart from "the
+                // engine saw date/amount-shaped text it could not anchor into a table" (real
+                // evidence a statement exists, worth the same triage queue an unrecognised
+                // exception gets). See that method's own doc comment for why this distinction
+                // exists and the real document that exposed the gap.
+                Map.of("recoveredLines", recoveredLines));
     }
 }
