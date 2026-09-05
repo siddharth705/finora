@@ -3,6 +3,7 @@ package com.finora.service;
 import com.finora.dto.BillingDtos.CheckoutResponseDto;
 import com.finora.entity.BillingPrice;
 import com.finora.entity.Plan;
+import com.finora.entity.Subscription;
 import com.finora.exception.ApiException;
 import com.finora.integrations.razorpay.RazorpayProperties;
 import com.finora.integrations.razorpay.RazorpaySubscriptionDto;
@@ -17,6 +18,7 @@ import org.mockito.ArgumentCaptor;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.math.BigDecimal;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -51,6 +53,7 @@ class BillingCheckoutServiceTest {
         premium.setCode("PREMIUM");
         when(planRepository.findByCode("PREMIUM")).thenReturn(Optional.of(premium));
         when(gateway.isConfigured()).thenReturn(true);
+        when(subscriptionRepository.findByUserIdOrderByCreatedAtDesc(any())).thenReturn(List.of());
     }
 
     @Test
@@ -95,5 +98,36 @@ class BillingCheckoutServiceTest {
 
         assertThatThrownBy(() -> service.checkout(userId, "PREMIUM", "MONTHLY"))
                 .isInstanceOf(ApiException.class);
+    }
+
+    @Test
+    void refusesWhenTheUserAlreadyHasALiveRazorpaySubscription() {
+        Subscription existing = new Subscription();
+        existing.setRazorpaySubscriptionId("sub_already_paying");
+        when(subscriptionRepository.findByUserIdOrderByCreatedAtDesc(userId)).thenReturn(List.of(existing));
+
+        assertThatThrownBy(() -> service.checkout(userId, "PREMIUM", "MONTHLY"))
+                .isInstanceOf(ApiException.class);
+
+        verify(gateway, never()).createSubscription(any(), any(), anyMap());
+    }
+
+    @Test
+    void allowsCheckoutWhenTheExistingSubscriptionIsStillOnFree() {
+        Subscription free = new Subscription(); // razorpaySubscriptionId left null, matching FREE
+        when(subscriptionRepository.findByUserIdOrderByCreatedAtDesc(userId)).thenReturn(List.of(free));
+        BillingPrice price = new BillingPrice();
+        price.setPlanId(planId);
+        price.setBillingCycle(BillingPrice.CYCLE_MONTHLY);
+        price.setPrice(new BigDecimal("799.00"));
+        price.setRazorpayPlanId("plan_razorpay_123");
+        when(billingPriceRepository.findByPlanIdAndBillingCycleAndActiveTrue(eq(planId), eq("MONTHLY")))
+                .thenReturn(Optional.of(price));
+        when(gateway.createSubscription(eq("plan_razorpay_123"), eq("MONTHLY"), anyMap()))
+                .thenReturn(new RazorpaySubscriptionDto("sub_razorpay_123", "created"));
+
+        CheckoutResponseDto response = service.checkout(userId, "PREMIUM", "MONTHLY");
+
+        assertThat(response.razorpaySubscriptionId()).isEqualTo("sub_razorpay_123");
     }
 }

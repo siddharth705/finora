@@ -82,7 +82,17 @@ public class RazorpayWebhookDispatcher {
     /** spec §6.1 step 5 / §5. Completes checkout: marks the matching {@link SubscriptionOrder}
      *  COMPLETED and mutates the user's single {@link Subscription} row in place — the same
      *  mutate-in-place model {@code SubscriptionService.changePlan} already uses, never a second
-     *  row (see design spec §6.5's DB-constraint discussion). */
+     *  row (see design spec §6.5's DB-constraint discussion).
+     *
+     *  <p>Idempotent across repeated invocations for the same order, not just across repeated
+     *  deliveries of the same webhook event id: {@code subscription.authenticated} and
+     *  {@code subscription.activated} both fire, sequentially, for one real checkout (confirmed
+     *  against Razorpay's own docs — they are lifecycle stages, not mutually-exclusive
+     *  alternatives), each as its own event with its own event id, so the {@code webhook_events}
+     *  idempotency ledger does not collapse them. Without the early return below, the second
+     *  delivery would re-run this whole method and insert a second {@code SUBSCRIPTION_CREATED}
+     *  event for one signup — which matters beyond a duplicate audit row, since design spec §5/§6.7
+     *  names this exact event as what fires Plan 2's one-time referral trigger. */
     void handleActivated(Map<String, Object> payload) {
         Map<String, Object> entity = subscriptionEntity(payload);
         String razorpaySubscriptionId = (String) entity.get("id");
@@ -94,6 +104,9 @@ public class RazorpayWebhookDispatcher {
             return;
         }
         SubscriptionOrder order = maybeOrder.get();
+        if (SubscriptionOrder.STATUS_COMPLETED.equals(order.getStatus())) {
+            return;
+        }
         order.setStatus(SubscriptionOrder.STATUS_COMPLETED);
         order.setCompletedAt(Instant.now());
         subscriptionOrderRepository.save(order);
@@ -239,7 +252,17 @@ public class RazorpayWebhookDispatcher {
 
     /** spec §5, §6.3. Does not itself downgrade to Free — that happens at
      * {@code current_period_end}, via {@code SubscriptionReconciliationSweepService} (Task 12), not
-     * from this webhook alone (a missed webhook must not leave paid access active forever). */
+     * from this webhook alone (a missed webhook must not leave paid access active forever).
+     *
+     * <p>Always sets {@code autoRenew=false} here too, not only in {@code BillingCheckoutService
+     * .cancel()}: the sweep's own query ({@code findCancelledSubscriptionsPastPeriodEnd}) requires
+     * {@code autoRenew=false AND status='CANCELLED'} together. The spec's state-machine table notes
+     * "auto_renew already false from the cancel request", true for the only cancellation path V1
+     * has today — but this webhook is the one place that hears from Razorpay directly that a
+     * subscription is cancelled, regardless of what triggered it (a future admin/Razorpay-dashboard
+     * cancellation, or Plan 2's upgrade flow cancelling the old subscription). Without this, any
+     * cancellation that didn't go through our own {@code cancel()} first would leave {@code
+     * autoRenew=true} forever, and the sweep would never downgrade that user off the paid plan. */
     void handleCancelled(Map<String, Object> payload) {
         Map<String, Object> entity = subscriptionEntity(payload);
         String razorpaySubscriptionId = (String) entity.get("id");
@@ -247,6 +270,7 @@ public class RazorpayWebhookDispatcher {
 
         subscriptionRepository.findByRazorpaySubscriptionId(razorpaySubscriptionId).ifPresent(subscription -> {
             subscription.setStatus(Subscription.STATUS_CANCELLED);
+            subscription.setAutoRenew(false);
             subscriptionRepository.save(subscription);
 
             SubscriptionEvent event = new SubscriptionEvent();

@@ -53,6 +53,24 @@ public class BillingCheckoutService {
             throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "Billing is not available yet.");
         }
 
+        // Guard against a second live Razorpay subscription: this table holds exactly one row per
+        // user (see Subscription's class doc / idx_subscriptions_one_active_per_user), so any row
+        // already carrying a razorpaySubscriptionId means a Razorpay mandate already exists for this
+        // user, in some state (ACTIVE, PAST_DUE mid-retry, or CANCELLED-but-not-yet-swept). Checking
+        // out again here would create a SECOND Razorpay subscription that this application would
+        // never reference again the moment the next activation webhook overwrites this single row --
+        // an orphaned subscription still billing the user on Razorpay's side with nothing in Fynora
+        // pointing at it. Upgrading/downgrading an existing paid subscription is Plan 2's
+        // change-plan endpoint, which handles the cancel-old/activate-new sequencing safely; this
+        // endpoint is for a user's first paid subscription only. findActiveOrTrial() is deliberately
+        // NOT used here -- it would miss a PAST_DUE subscription, which still has a live mandate.
+        subscriptionRepository.findByUserIdOrderByCreatedAtDesc(userId).stream().findFirst()
+                .filter(s -> s.getRazorpaySubscriptionId() != null)
+                .ifPresent(s -> {
+                    throw new ApiException(HttpStatus.CONFLICT,
+                            "You already have a billing subscription. Cancel it before starting a new one.");
+                });
+
         Plan plan = planRepository.findByCode(planCode)
                 .orElseThrow(() -> new ApiException(HttpStatus.BAD_REQUEST, "Unknown plan code: " + planCode));
         BillingPrice price = billingPriceRepository.findByPlanIdAndBillingCycleAndActiveTrue(plan.getId(), billingCycle)

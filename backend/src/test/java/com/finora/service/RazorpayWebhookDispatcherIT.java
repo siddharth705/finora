@@ -220,7 +220,6 @@ class RazorpayWebhookDispatcherIT extends AbstractIntegrationTest {
         Subscription subscription = subscriptionRepository.findActiveOrTrial(user.getId()).orElseThrow();
         subscription.setRazorpaySubscriptionId(razorpaySubscriptionId);
         subscription.setPaymentProvider("RAZORPAY");
-        subscription.setAutoRenew(false);
         subscriptionRepository.save(subscription);
 
         Map<String, Object> payload = Map.of(
@@ -230,5 +229,80 @@ class RazorpayWebhookDispatcherIT extends AbstractIntegrationTest {
 
         Subscription reloaded = subscriptionRepository.findByRazorpaySubscriptionId(razorpaySubscriptionId).orElseThrow();
         assertThat(reloaded.getStatus()).isEqualTo(Subscription.STATUS_CANCELLED);
+    }
+
+    @Test
+    void cancelledSetsAutoRenewFalseEvenWhenNotAlreadySetByOurOwnCancelRequest() {
+        // Regression test: BillingCheckoutService.cancel() already sets autoRenew=false before
+        // calling Razorpay's cancel API, but this webhook is the one place that hears "this
+        // subscription is cancelled" directly from Razorpay, regardless of what triggered it (a
+        // future admin/Razorpay-dashboard cancellation, or Plan 2's upgrade flow). The
+        // reconciliation sweep's own query requires autoRenew=false AND status='CANCELLED' together
+        // -- if this handler didn't set autoRenew itself, a subscription cancelled through any path
+        // other than our own cancel() would stay on its paid plan forever.
+        User user = createUser();
+        subscriptionService.provisionFreeSubscription(user.getId());
+        String razorpaySubscriptionId = "sub_test_" + UUID.randomUUID();
+        Subscription subscription = subscriptionRepository.findActiveOrTrial(user.getId()).orElseThrow();
+        subscription.setRazorpaySubscriptionId(razorpaySubscriptionId);
+        subscription.setPaymentProvider("RAZORPAY");
+        subscription.setAutoRenew(true);
+        subscriptionRepository.save(subscription);
+
+        Map<String, Object> payload = Map.of(
+                "subscription", Map.of("entity", Map.of("id", razorpaySubscriptionId)));
+
+        dispatcher.dispatch("subscription.cancelled", payload);
+
+        Subscription reloaded = subscriptionRepository.findByRazorpaySubscriptionId(razorpaySubscriptionId).orElseThrow();
+        assertThat(reloaded.isAutoRenew()).isFalse();
+    }
+
+    @Test
+    void activatedIsIdempotentAcrossAuthenticatedAndActivatedBothFiringForTheSameOrder() {
+        // Regression test: Razorpay's own docs confirm subscription.authenticated and
+        // subscription.activated both fire, sequentially, for one real checkout -- they are
+        // lifecycle stages, not mutually exclusive alternatives, and each is its own webhook event
+        // with its own event id, so the webhook_events idempotency ledger does not collapse them.
+        // Without an idempotency guard inside handleActivated itself, the second delivery would
+        // insert a second SUBSCRIPTION_CREATED event for one signup -- which matters because the
+        // spec names this exact event as what fires Plan 2's one-time referral trigger.
+        User user = createUser();
+        subscriptionService.provisionFreeSubscription(user.getId());
+        Plan premium = planRepository.findByCode("PREMIUM").orElseThrow();
+        String razorpaySubscriptionId = "sub_test_" + UUID.randomUUID();
+
+        SubscriptionOrder order = new SubscriptionOrder();
+        order.setUserId(user.getId());
+        order.setPlanId(premium.getId());
+        order.setBillingCycle("MONTHLY");
+        order.setRazorpaySubscriptionId(razorpaySubscriptionId);
+        order.setStatus(SubscriptionOrder.STATUS_PENDING);
+        order.setAmount(new BigDecimal("799.00"));
+        subscriptionOrderRepository.save(order);
+
+        Map<String, Object> payload = Map.of(
+                "subscription", Map.of("entity", Map.of("id", razorpaySubscriptionId, "current_end", 1893456000L))); // synthetic-ok: fixture epoch second
+
+        // provisionFreeSubscription above already inserted one SUBSCRIPTION_CREATED event (for the
+        // FREE signup) against this same subscription id -- the mutate-in-place model means
+        // activation reuses that same row/id rather than creating a new one. The assertion below
+        // checks the two dispatch() calls together contribute exactly one MORE such event, not that
+        // the total is one.
+        long before = subscriptionEventRepository.findAll().stream()
+                .filter(e -> e.getSubscriptionId().equals(
+                        subscriptionRepository.findActiveOrTrial(user.getId()).orElseThrow().getId()))
+                .filter(e -> e.getEventType().equals(SubscriptionEvent.SUBSCRIPTION_CREATED))
+                .count();
+
+        dispatcher.dispatch("subscription.authenticated", payload);
+        dispatcher.dispatch("subscription.activated", payload);
+
+        Subscription subscription = subscriptionRepository.findActiveOrTrial(user.getId()).orElseThrow();
+        long after = subscriptionEventRepository.findAll().stream()
+                .filter(e -> e.getSubscriptionId().equals(subscription.getId()))
+                .filter(e -> e.getEventType().equals(SubscriptionEvent.SUBSCRIPTION_CREATED))
+                .count();
+        assertThat(after - before).isEqualTo(1);
     }
 }
