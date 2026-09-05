@@ -6,6 +6,7 @@ import type {
   CoverageDto,
   HeldImportRow, HeldImportDetail, HeldImportSummary,
   HeldStatementRow, HeldStatementQuery, HeldStatementDetail, HeldStatementRerunResult,
+  HeldStatementTelemetrySummary,
   SupportTicketRow, SupportTicketQuery, SupportTicketDetail, SupportTicketNote,
   FeedbackRow, FeedbackQuery, FeedbackBreakdown,
   CreateAccountRequest, CreateBankRequest, CreateMerchantTemplateRequest, CreateRelationshipRequest,
@@ -394,8 +395,9 @@ export const adminHeldStatementApi = {
     api.get<PagedResponse<HeldStatementRow>>('/admin/held-statements', { params }).then((r) => r.data),
   get: (heldId: string) =>
     api.get<HeldStatementDetail>(`/admin/held-statements/${heldId}`).then((r) => r.data),
-  approve: (heldId: string, note?: string) =>
-    api.post<HeldStatementRow>(`/admin/held-statements/${heldId}/approve`, { note }).then((r) => r.data),
+  approve: (heldId: string, note?: string, falsePositive?: boolean) =>
+    api.post<HeldStatementRow>(`/admin/held-statements/${heldId}/approve`, { note, falsePositive })
+      .then((r) => r.data),
   reject: (heldId: string, reason?: string) =>
     api.post<HeldStatementRow>(`/admin/held-statements/${heldId}/reject`, { reason }).then((r) => r.data),
   assign: (heldId: string, engineerId?: string) =>
@@ -409,6 +411,8 @@ export const adminHeldStatementApi = {
       .then((r) => r.data),
   rerunParser: (heldId: string) =>
     api.post<HeldStatementRerunResult>(`/admin/held-statements/${heldId}/rerun-parser`).then((r) => r.data),
+  telemetry: () =>
+    api.get<HeldStatementTelemetrySummary>('/admin/held-statements/telemetry').then((r) => r.data),
   // A plain <a href> can't carry the Bearer token, so this goes through the same authenticated
   // axios instance as everything else and triggers the browser download client-side instead --
   // same pattern as the user frontend's statementImportsApi.downloadFile.

@@ -39,6 +39,7 @@ const olderRow: HeldStatementRow = {
   engineerNotes: null,
   rootCause: null,
   fixReference: null,
+  falsePositive: null,
   createdAt: '2026-09-01T08:00:00Z',
   assignedAt: null,
   readyAt: null,
