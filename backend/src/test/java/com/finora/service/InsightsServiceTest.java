@@ -16,6 +16,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.YearMonth;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
@@ -98,6 +99,15 @@ class InsightsServiceTest {
 
     private void givenTransactions(List<Transaction> txns) {
         when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(txns);
+    }
+
+    private Transaction income(LocalDate date, BigDecimal amount) {
+        Transaction t = new Transaction();
+        t.setUserId(userId);
+        t.setTxnDate(date);
+        t.setAmount(amount);
+        t.setTxnType(Transaction.Type.INCOME);
+        return t;
     }
 
     // --- Existing, previously-untested behavior ---------------------------------------------
@@ -360,5 +370,41 @@ class InsightsServiceTest {
 
         assertThat(result.coverageCaveat()).isNull();
         assertThat(result.sentences()).noneMatch(s -> s.contains("may be missing"));
+    }
+
+    @Test
+    void incomeOnlyPeriod_stillPopulatesCoverageCaveatForTheCurrentCalendarMonth() {
+        // pipeline() returns Optional.empty() here -- its own gate is "at least one reportable
+        // EXPENSE transaction" (see build()'s early return), and this account's only activity is
+        // income. Before this fix, that early return hard-coded coverageCaveat to null
+        // unconditionally, regardless of whether a real gap existed -- but coverageGapsAcross reads
+        // statement periods, never transaction type, so an income-only account can be missing a
+        // statement exactly like any other. With no transaction-derived "current month" available
+        // here, the fix falls back to the user's own calendar month -- computed the same way the
+        // fix does (UserZone.DEFAULT, since the mocked UserRepository has no user to find).
+        YearMonth thisMonth = YearMonth.now(com.finora.util.UserZone.DEFAULT);
+        givenStatements(
+                statementMetadata(thisMonth.minusMonths(2).atDay(1), thisMonth.minusMonths(2).atEndOfMonth()),
+                statementMetadata(thisMonth.plusMonths(1).atDay(1), thisMonth.plusMonths(1).atEndOfMonth()));
+        givenTransactions(List.of(income(LocalDate.of(2026, 7, 15), BigDecimal.valueOf(50000))));
+
+        var result = insightsService.build(userId);
+
+        assertThat(result.coverageCaveat()).isNotNull();
+        assertThat(result.coverageCaveat().month()).isEqualTo(thisMonth.toString());
+        // The empty-pipeline branch's own fixed message, unchanged -- this fix only had to stop
+        // clobbering coverageCaveat, not invent a caveat sentence for a branch that never had one.
+        assertThat(result.sentences()).containsExactly("Upload or add transactions to see spending insights.");
+    }
+
+    @Test
+    void noTransactionsAtAll_coverageCaveatStaysNull_evenThoughAccountsExist() {
+        // Same empty-pipeline branch as above, but genuinely nothing on file to be missing --
+        // must not manufacture a caveat just because there is no transaction data.
+        givenTransactions(List.of());
+
+        var result = insightsService.build(userId);
+
+        assertThat(result.coverageCaveat()).isNull();
     }
 }
