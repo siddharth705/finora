@@ -248,8 +248,14 @@ function HeldImportDetailPanel({
     setDownloadError(null);
     try {
       await adminHeldImportApi.download(detail.job.id, detail.job.fileName);
-    } catch {
-      setDownloadError('Could not download this statement.');
+    } catch (err) {
+      // Same reasoning as onActionError above: adminHeldImportApi.download runs its failures
+      // through withBlobErrorMessage, which reshapes a blob error response into a plain
+      // {message, errorCode} object -- so a specific, actionable server message (e.g. this job
+      // was resolved out from under the admin) is available here too, not just a generic string.
+      // Found in review: this used to discard it unconditionally.
+      const response = (err as { response?: { data?: { message?: string } } })?.response;
+      setDownloadError(response?.data?.message ?? 'Could not download this statement.');
     } finally {
       setDownloading(false);
     }

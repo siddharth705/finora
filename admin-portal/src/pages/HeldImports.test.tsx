@@ -187,6 +187,27 @@ describe('HeldImports', () => {
       .toHaveBeenCalledWith(heldRow.id, heldRow.fileName));
   });
 
+  /**
+   * Found in review: this used to always show a fixed generic string, discarding whatever the
+   * server actually said -- unlike reprocess/resolve on this same page, which both surface the
+   * real message. A download can fail for a specific, actionable reason too (e.g. the job was
+   * resolved by someone else a moment ago), and that reason is what an operator needs to read.
+   */
+  it('surfaces the server\'s own download error rather than a generic failure', async () => {
+    vi.mocked(adminHeldImportApi.download).mockRejectedValue({
+      response: { data: { message: 'This job was already resolved by another admin.' } },
+    });
+    mockAuth(['IMPORT_TRIAGE_MANAGE'], ['ADMIN']);
+    renderPage();
+    await screen.findByText('hdfc-june.pdf');
+    await userEvent.click(screen.getByRole('button', { name: /details/i }));
+    await screen.findByText(/no header row found/);
+
+    await userEvent.click(screen.getByRole('button', { name: /download statement/i }));
+
+    expect(await screen.findByText(/already resolved by another admin/i)).toBeInTheDocument();
+  });
+
   /** Mirrors HeldStatementDetail's identical rule and identical reasoning: a role that can work
    *  the queue must not see a control for an action the backend would refuse anyway. */
   it('hides the download control from a non-admin role', async () => {
