@@ -1,11 +1,15 @@
 import { useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { PiggyBank, Wallet, CheckCircle2, CalendarClock } from 'lucide-react';
+import { Doughnut } from 'react-chartjs-2';
+import { Chart as ChartJS, ArcElement, Tooltip, Legend } from 'chart.js';
+import { PiggyBank, Wallet, CheckCircle2, CalendarClock, PieChart } from 'lucide-react';
 import { budgetsApi, categoriesApi, type CategoryOption } from '../api/endpoints';
 import type { Budget } from '../types';
-import { FinoraCard, EmptyState, Button, Skeleton, MetricCard, Badge } from '../design-system';
+import { FinoraCard, EmptyState, Button, Skeleton, MetricCard, Badge, SectionHeader, ChartContainer, baseChartOptions } from '../design-system';
 import { useDelayedLoading } from '../hooks/useDelayedLoading';
 import { ICON_COMPONENTS, COLOR_HEX } from '../lib/categoryIcons';
+
+ChartJS.register(ArcElement, Tooltip, Legend);
 
 function fmt(n: number) {
   // Negative amounts (e.g. a month where spend exceeded income) must render as "-₹500",
@@ -145,7 +149,8 @@ export default function Budgets() {
       </FinoraCard>
       {error && <p className="text-danger text-sm">{error}</p>}
 
-      <FinoraCard padding="sm" className="space-y-3">
+      <div className="grid lg:grid-cols-3 gap-4">
+      <FinoraCard padding="sm" className="lg:col-span-2 space-y-3">
         {loading ? (
           showSkeleton && (
             <Skeleton.Region label="Loading budgets">
@@ -197,6 +202,38 @@ export default function Budgets() {
           })
         )}
       </FinoraCard>
+
+        <FinoraCard>
+          <SectionHeader title="Spending Breakdown" size="sm" />
+          <ChartContainer
+            height={220}
+            loading={loading}
+            loadingLabel="Loading spending breakdown"
+            isEmpty={budgets.length === 0}
+            emptyState={
+              <EmptyState
+                icon={PieChart}
+                iconBg="bg-primary-light"
+                iconColor="text-primary"
+                title="No spending to break down yet"
+                desc="Set a budget above to see how your spending splits by category."
+              />
+            }
+          >
+            <Doughnut
+              data={{
+                labels: budgets.map((b) => b.categoryName),
+                datasets: [{
+                  data: budgets.map((b) => b.spentThisMonth),
+                  backgroundColor: budgets.map((b) => COLOR_HEX[categoriesById.get(b.categoryId)?.color ?? 'gray']),
+                  borderWidth: 0,
+                }],
+              }}
+              options={{ ...baseChartOptions }}
+            />
+          </ChartContainer>
+        </FinoraCard>
+      </div>
     </div>
   );
 }

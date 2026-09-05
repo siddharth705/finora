@@ -10,6 +10,12 @@ vi.mock('../api/endpoints', () => ({
   categoriesApi: { list: vi.fn() },
 }));
 
+// The chart itself is not under test here and chart.js needs a real canvas, which jsdom doesn't
+// provide -- same reasoning and pattern Investments.test.tsx already uses for its own Doughnut/Line.
+vi.mock('react-chartjs-2', () => ({
+  Doughnut: () => <div data-testid="spending-breakdown-chart" />,
+}));
+
 function budget(overrides: Partial<Budget> = {}): Budget {
   return {
     id: 'b1',
@@ -111,6 +117,20 @@ describe('Budgets', () => {
     const row = await screen.findByText('Dining');
     const iconEl = row.closest('[data-testid="budget-row"]')?.querySelector('svg');
     expect(iconEl).toBeTruthy();
+  });
+
+  it('shows an empty state for the spending breakdown chart when there are no budgets', async () => {
+    vi.mocked(budgetsApi.list).mockResolvedValue([]);
+    renderPage();
+
+    expect(await screen.findByText('No spending to break down yet')).toBeInTheDocument();
+  });
+
+  it('renders the Spending Breakdown section header once budgets exist', async () => {
+    vi.mocked(budgetsApi.list).mockResolvedValue([budget({ categoryName: 'Dining', spentThisMonth: 2000 })]);
+    renderPage();
+
+    expect(await screen.findByText('Spending Breakdown')).toBeInTheDocument();
   });
 
   // The actual bug this page had: `budgets` started `[]`, which the render logic couldn't tell
