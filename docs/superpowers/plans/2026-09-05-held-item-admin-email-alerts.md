@@ -49,7 +49,7 @@ Postgres, for the one repository-level test).
   accountScope)` → `List<User>` — every user in `accountScope` whose roles collectively grant the
   named permission, de-duplicated. Consumed by Task 2.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Add to `backend/src/test/java/com/finora/repository/UserRepositoryIT.java`, inside the
 `UserRepositoryIT` class (after the existing test methods, before the closing brace). Add these
@@ -138,12 +138,12 @@ Add this helper method and these two tests:
     }
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cd backend && ./mvnw -Dtest=UserRepositoryIT test`
 Expected: compile error — `findByPermissionNameAndAccountScope` does not exist on `UserRepository`.
 
-- [ ] **Step 3: Add the repository method**
+- [x] **Step 3: Add the repository method**
 
 In `backend/src/main/java/com/finora/repository/UserRepository.java`, add before the final closing
 brace (after `findByIdInAndStatus`):
@@ -167,12 +167,12 @@ brace (after `findByIdInAndStatus`):
                                                     @Param("accountScope") String accountScope);
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `cd backend && ./mvnw -Dtest=UserRepositoryIT test`
 Expected: PASS — all `UserRepositoryIT` tests green, including the three new ones.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add backend/src/main/java/com/finora/repository/UserRepository.java backend/src/test/java/com/finora/repository/UserRepositoryIT.java
@@ -199,7 +199,7 @@ git commit -m "feat(repository): resolve admins by permission for held-item aler
   HeldStatementRepository, EmailProvider, EmailProperties)` — consumed by Task 3 (same class, adds
   a method) and Task 4/5 (dependency injection).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `backend/src/test/java/com/finora/service/HeldItemAdminAlertServiceTest.java`:
 
@@ -349,12 +349,12 @@ class HeldItemAdminAlertServiceTest {
 }
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cd backend && ./mvnw -Dtest=HeldItemAdminAlertServiceTest test`
 Expected: compile error — `HeldItemAdminAlertService` does not exist.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 Create `backend/src/main/java/com/finora/service/HeldItemAdminAlertService.java`:
 
@@ -484,12 +484,12 @@ public class HeldItemAdminAlertService {
 Add the missing `Optional` import: `import java.util.Optional;` (alongside the other `java.util.*`
 imports at the top).
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `cd backend && ./mvnw -Dtest=HeldItemAdminAlertServiceTest test`
 Expected: PASS — all `HeldItemAdminAlertServiceTest` tests green.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add backend/src/main/java/com/finora/service/HeldItemAdminAlertService.java backend/src/test/java/com/finora/service/HeldItemAdminAlertServiceTest.java
@@ -511,7 +511,7 @@ git commit -m "feat(service): admin email alert for parser-gap held imports"
   (existing).
 - Produces: `HeldItemAdminAlertService.alertTrustReviewHeld(String heldId)` — consumed by Task 5.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Add to `backend/src/test/java/com/finora/service/HeldItemAdminAlertServiceTest.java`. Add these
 imports:
@@ -585,12 +585,12 @@ Add this helper and these tests, inside the class:
     }
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cd backend && ./mvnw -Dtest=HeldItemAdminAlertServiceTest test`
 Expected: compile error — `alertTrustReviewHeld` does not exist on `HeldItemAdminAlertService`.
 
-- [ ] **Step 3: Add the method**
+- [x] **Step 3: Add the method**
 
 In `backend/src/main/java/com/finora/service/HeldItemAdminAlertService.java`, add after
 `alertParserGapHeld`:
@@ -628,12 +628,12 @@ In `backend/src/main/java/com/finora/service/HeldItemAdminAlertService.java`, ad
     }
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `cd backend && ./mvnw -Dtest=HeldItemAdminAlertServiceTest test`
 Expected: PASS — all `HeldItemAdminAlertServiceTest` tests green, including the four new ones.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add backend/src/main/java/com/finora/service/HeldItemAdminAlertService.java backend/src/test/java/com/finora/service/HeldItemAdminAlertServiceTest.java
@@ -652,7 +652,7 @@ git commit -m "feat(service): admin email alert for trust-review held statements
 - Consumes: `HeldItemAdminAlertService.alertParserGapHeld(UUID)` (Task 2);
   `AfterCommit.run(String, Runnable)` (existing, `com.finora.util.AfterCommit`).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 In `backend/src/test/java/com/finora/imports/jobs/ImportJobWorkerTest.java`:
 
@@ -766,13 +766,13 @@ Add these tests, placed near `aHeldJobKeepsTheFailureCodeThatCausedTheHold` (aft
     }
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cd backend && ./mvnw -Dtest=ImportJobWorkerTest test`
 Expected: compile error — `ImportJobWorker`'s constructor does not accept an 11th argument, and
 `HeldItemAdminAlertService` is not yet a dependency of the class under test.
 
-- [ ] **Step 3: Wire the trigger point**
+- [x] **Step 3: Wire the trigger point**
 
 In `backend/src/main/java/com/finora/imports/jobs/ImportJobWorker.java`:
 
@@ -912,12 +912,12 @@ to:
             }
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `cd backend && ./mvnw -Dtest=ImportJobWorkerTest test`
 Expected: PASS — all `ImportJobWorkerTest` tests green, including the four new ones.
 
-- [ ] **Step 5: Check every other construction site of `ImportJobWorker` compiles**
+- [x] **Step 5: Check every other construction site of `ImportJobWorker` compiles**
 
 Run: `cd backend && ./mvnw -q -DskipTests compile`
 Expected: BUILD SUCCESS. `ImportJobWorker` is a `@Component` — Spring wires the new constructor
@@ -926,7 +926,7 @@ argument automatically at runtime since `HeldItemAdminAlertService` is itself a 
 the only direct `new ImportJobWorker(...)` call site in the codebase). If this step fails because
 another call site does exist, add the new argument there the same way.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add backend/src/main/java/com/finora/imports/jobs/ImportJobWorker.java backend/src/test/java/com/finora/imports/jobs/ImportJobWorkerTest.java
@@ -945,7 +945,7 @@ git commit -m "feat(imports): alert admins when a statement enters the parser-ga
 - Consumes: `HeldItemAdminAlertService.alertTrustReviewHeld(String)` (Task 3);
   `AfterCommit.run(String, Runnable)` (existing).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `backend/src/test/java/com/finora/service/HeldStatementServiceTest.java`. This is the first
 direct unit test of `HeldStatementService` — every dependency is mocked, matching
@@ -1056,12 +1056,12 @@ class HeldStatementServiceTest {
 }
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `cd backend && ./mvnw -Dtest=HeldStatementServiceTest test`
 Expected: compile error — `HeldStatementService`'s constructor does not accept a 13th argument.
 
-- [ ] **Step 3: Wire the trigger point**
+- [x] **Step 3: Wire the trigger point**
 
 In `backend/src/main/java/com/finora/service/HeldStatementService.java`:
 
@@ -1172,12 +1172,12 @@ to:
     }
 ```
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [x] **Step 4: Run the test to verify it passes**
 
 Run: `cd backend && ./mvnw -Dtest=HeldStatementServiceTest test`
 Expected: PASS — both `HeldStatementServiceTest` tests green.
 
-- [ ] **Step 5: Check the whole backend still compiles and every existing caller of
+- [x] **Step 5: Check the whole backend still compiles and every existing caller of
       `HeldStatementService` still works**
 
 Run: `cd backend && ./mvnw -q -DskipTests compile`
@@ -1187,7 +1187,7 @@ session: no unit test in the existing suite called `new HeldStatementService(...
 task). If this step fails because another direct construction site exists, add the new argument
 there the same way.
 
-- [ ] **Step 6: Run the full backend test suite**
+- [x] **Step 6: Run the full backend test suite**
 
 Run: `cd backend && ./mvnw test`
 Expected: BUILD SUCCESS, 0 failures. This is the final task — this run is the end-to-end check that
@@ -1195,7 +1195,7 @@ nothing elsewhere in the suite constructed `ImportJobWorker` or `HeldStatementSe
 was missed by the two compile-only checks above, and that no other test asserted an exhaustive
 constructor-argument count or similar that this change would violate.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add backend/src/main/java/com/finora/service/HeldStatementService.java backend/src/test/java/com/finora/service/HeldStatementServiceTest.java
