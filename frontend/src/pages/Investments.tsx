@@ -251,8 +251,8 @@ export default function Investments() {
                   icon={TrendingUp}
                   iconBg="bg-primary-light"
                   iconColor="text-primary"
-                  title="Start tracking your trend"
-                  desc="Save a snapshot periodically to build a net worth trend — history starts accumulating from when you begin saving snapshots."
+                  title="Building your net worth trend"
+                  desc="Check back in a day or two, or save today's snapshot now to add a point right away."
                 />
               )
             }
