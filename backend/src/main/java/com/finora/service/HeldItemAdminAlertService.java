@@ -11,7 +11,9 @@ import com.finora.util.EmailMasking;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.web.util.HtmlUtils;
 
+import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
@@ -79,7 +81,7 @@ public class HeldItemAdminAlertService {
                 + "<li><strong>File:</strong> " + escape(job.getFileName()) + "</li>"
                 + "<li><strong>Job ID:</strong> " + job.getId() + "</li>"
                 + "<li><strong>Reason:</strong> " + escape(job.getLastError()) + "</li>"
-                + "<li><strong>Held at:</strong> " + escape(TIMESTAMP_FORMAT.format(job.getFinishedAt())) + "</li>"
+                + "<li><strong>Held at:</strong> " + escape(formatTimestamp(job.getFinishedAt())) + "</li>"
                 + "</ul>"
                 + "<p><a href=\"" + adminBaseUrl() + "/held-imports\">Open the held-imports queue</a></p>";
         sendToRecipients(IMPORT_TRIAGE_MANAGE, subject, html);
@@ -108,16 +110,39 @@ public class HeldItemAdminAlertService {
                 + "<li><strong>Held ID:</strong> " + escape(held.getHeldId()) + "</li>"
                 + bankLine
                 + "<li><strong>Reason:</strong> " + escape(held.getTriggerSummary()) + "</li>"
-                + "<li><strong>Held at:</strong> " + escape(TIMESTAMP_FORMAT.format(held.getCreatedAt())) + "</li>"
+                + "<li><strong>Held at:</strong> " + escape(formatTimestamp(held.getCreatedAt())) + "</li>"
                 + "</ul>"
-                + "<p><a href=\"" + adminBaseUrl() + "/held-statements/" + held.getHeldId()
+                + "<p><a href=\"" + adminBaseUrl() + "/held-statements/" + escape(held.getHeldId())
                 + "\">Open this held statement</a></p>";
         sendToRecipients(TRUST_REVIEW_MANAGE, subject, html);
     }
 
+    /**
+     * Deliberately reads {@code getAdminAppBaseUrl()} directly rather than going through {@link
+     * EmailProperties#resolveBaseUrl}, even though that method already has a null-fallback: its
+     * fallback is the USER-facing frontend's URL, chosen for password-reset links where a request
+     * Origin makes which portal asked genuinely ambiguous. There is no such ambiguity here -- this
+     * link is always for an admin, so falling back to the user app would be a wrong-portal link,
+     * not a degraded-but-working one. Logs instead, so a missing {@code ADMIN_APP_BASE_URL} is a
+     * visible deployment gap rather than a silently broken relative link nobody notices until an
+     * admin clicks it.
+     */
     private String adminBaseUrl() {
         String base = emailProperties.getAdminAppBaseUrl();
-        return base == null ? "" : base;
+        if (base == null || base.isBlank()) {
+            log.warn("ADMIN_APP_BASE_URL is not configured -- held-item alert emails will link with "
+                    + "no domain until it is set");
+            return "";
+        }
+        return base;
+    }
+
+    /** {@code null} only when the entity it came from was built without going through the normal
+     *  transition that sets it -- not expected in practice, but a rendered "Held at: unknown" line
+     *  is a far better failure than an {@code NPE} inside {@code AfterCommit.run(...)} that quietly
+     *  kills the whole alert (the exact bug this guard fixes). */
+    private static String formatTimestamp(Instant instant) {
+        return instant == null ? "unknown" : TIMESTAMP_FORMAT.format(instant);
     }
 
     private void sendToRecipients(String permissionName, String subject, String html) {
@@ -140,13 +165,15 @@ public class HeldItemAdminAlertService {
         }
     }
 
-    /** Escapes the handful of characters that matter in an HTML email body. The strings placed
-     *  here are curated, already user-safe messages ({@code ExtractionCheck}'s own error text,
-     *  {@code HoldDecision.summary()}) -- not raw customer input -- but a filename IS attacker-
-     *  chosen (see {@code StatementUpload}'s own doc comment), so this costs nothing and removes
-     *  any doubt for every field, not just that one. */
+    /** Escapes every field placed in an HTML email body, via the same {@code HtmlUtils} Spring
+     *  Web already ships (on the classpath through {@code spring-boot-starter-web}) rather than a
+     *  hand-rolled subset -- the full HTML4 entity set, quotes included, not just the three
+     *  characters an attribute-breakout needs. The strings placed here are mostly curated,
+     *  already user-safe messages ({@code ExtractionCheck}'s own error text, {@code
+     *  HoldDecision.summary()}) -- not raw customer input -- but a filename IS attacker-chosen
+     *  (see {@code StatementUpload}'s own doc comment), so escaping every field uniformly costs
+     *  nothing and removes any doubt about which ones need it. */
     private static String escape(String value) {
-        if (value == null) return "";
-        return value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
+        return value == null ? "" : HtmlUtils.htmlEscape(value);
     }
 }

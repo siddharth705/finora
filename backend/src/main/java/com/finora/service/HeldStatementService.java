@@ -156,12 +156,20 @@ public class HeldStatementService {
         // the event is the immutable record of what the predicate actually said at hold time.
         eventRepository.save(new HeldStatementEvent(held.getId(), null, "HELD_CREATED",
                 null, HeldStatement.Status.HELD.name(), decision.summary()));
-        // Outside this method's own REQUIRES_NEW transaction by the time it actually runs, same
-        // reasoning as ImportJobWorker's parser-gap alert: a real network call must not hold a
-        // pooled DB connection, and must not fire for a hold that then rolled back. heldId (not
-        // the entity) is what HeldItemAdminAlertService.alertTrustReviewHeld re-reads by.
+        // Deferred until createHold's own REQUIRES_NEW transaction commits -- openHold is a plain
+        // internal call from within that same method, not a separately-proxied one, so the
+        // transaction is still active here and AfterCommit genuinely defers rather than running
+        // immediately (contrast ImportJobWorker's parser-gap alert, whose own comment explains why
+        // that call site is the other case). A real network call must not hold a pooled DB
+        // connection across that wait, and must not fire for a hold that then rolled back.
+        //
+        // heldId extracted into a local first, not read as held.getHeldId() inside the lambda: the
+        // lambda's captured state should be the bare id HeldItemAdminAlertService.alertTrustReviewHeld
+        // re-reads by, not a reference that keeps the whole managed entity reachable for as long as
+        // the registered TransactionSynchronization lives.
+        String heldId = held.getHeldId();
         AfterCommit.run("held-item admin alert (trust review)",
-                () -> heldItemAdminAlertService.alertTrustReviewHeld(held.getHeldId()));
+                () -> heldItemAdminAlertService.alertTrustReviewHeld(heldId));
         return held;
     }
 

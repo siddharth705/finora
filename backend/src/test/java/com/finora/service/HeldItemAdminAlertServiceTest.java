@@ -137,6 +137,30 @@ class HeldItemAdminAlertServiceTest {
         verify(emailProvider).send(argThatEmailTo("triage-admin@example.com"));
     }
 
+    /**
+     * The bug this pins: {@code ImportJob.returnToQueueForReprocess} (the exact call
+     * {@code AdminHeldImportController.reprocess} makes) sets {@code finishedAt = null} and moves
+     * the job out of {@code HELD_FOR_REVIEW}. Before this fix, formatting a null {@code Instant}
+     * threw an unguarded NPE that {@code AfterCommit.run(...)}'s catch-and-log swallows -- so the
+     * whole alert silently never sent, with only a generic log line as evidence. A re-read that
+     * lands on a job in this state must still produce an email, just with an honest "unknown"
+     * timestamp instead of a real one.
+     */
+    @Test
+    void alertParserGapHeld_doesNotThrowWhenFinishedAtIsNull() {
+        ImportJob job = heldJob();
+        job.returnToQueueForReprocess(Instant.now());
+        when(importJobRepository.findById(job.getId())).thenReturn(Optional.of(job));
+        when(userRepository.findByPermissionNameAndAccountScope(any(), any()))
+                .thenReturn(List.of(adminUser("triage-admin@example.com")));
+
+        service.alertParserGapHeld(job.getId());
+
+        org.mockito.ArgumentCaptor<EmailMessage> captor = org.mockito.ArgumentCaptor.forClass(EmailMessage.class);
+        verify(emailProvider).send(captor.capture());
+        assertThat(captor.getValue().html()).contains("Held at:</strong> unknown");
+    }
+
     private HeldStatement heldStatement(String heldId, String bankName) {
         HeldStatement held = new HeldStatement(heldId, UUID.randomUUID(), UUID.randomUUID(),
                 "objects/key", "Statement period ends before it starts");

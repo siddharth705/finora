@@ -629,7 +629,6 @@ public class ImportJobWorker {
             String failureCode = ErrorCode.failureCodeOf(cause);
             ImportJob.FailureOutcome[] outcome = {ImportJob.FailureOutcome.RETRY_SCHEDULED};
             int[] attempts = {0};
-            boolean[] enteredTriageReview = {false};
             jobStore.update(jobId, job -> {
                 outcome[0] = job.recordFailure(describe(cause), failureCode, policy, Instant.now());
                 attempts[0] = job.getAttemptCount();
@@ -646,16 +645,25 @@ public class ImportJobWorker {
                 // visibility.
                 if (holdsForTriage(policy, outcome[0], cause)) {
                     job.holdForReview(failureCode, Instant.now());
-                    enteredTriageReview[0] = true;
                 }
             });
-            // Outside jobStore.update's REQUIRES_NEW transaction, deliberately: this is a real
-            // network call (an email send), and AfterCommit is what keeps it from holding a
-            // pooled DB connection across that call, or from firing for a hold that then rolled
-            // back. Re-reads the job fresh (see HeldItemAdminAlertService.alertParserGapHeld's own
-            // doc comment) rather than passing the entity through -- the same reason
-            // notifyIfPreviouslyHeld's notification key is derived from the job id, not the object.
-            if (enteredTriageReview[0]) {
+            // jobStore.update is @Transactional(REQUIRES_NEW), so by this line its transaction has
+            // already committed (or, if the consumer threw, this line is never reached at all --
+            // the exception propagates straight to this method's own catch block below, and no
+            // alert fires for a hold that never happened). AfterCommit.run therefore takes its
+            // "no ambient transaction" branch here and runs immediately rather than deferring --
+            // registered anyway, both for the logging/never-throws discipline every other call site
+            // in this pipeline gets from going through it, and so a future change that moves this
+            // call inside an active transaction gets the deferral for free rather than silently
+            // needing this comment rewritten. holdsForTriage is recomputed rather than tracked in a
+            // third mutable box alongside outcome[0]/attempts[0]: it is a pure function of policy,
+            // outcome[0] and cause, all still in scope, so there is nothing a separate boolean could
+            // record that this call doesn't already answer identically.
+            if (holdsForTriage(policy, outcome[0], cause)) {
+                // Re-reads the job fresh (see HeldItemAdminAlertService.alertParserGapHeld's own
+                // doc comment) rather than passing the entity through -- the same reason
+                // notifyIfPreviouslyHeld's notification key is derived from the job id, not the
+                // object.
                 AfterCommit.run("held-item admin alert (parser gap)",
                         () -> heldItemAdminAlertService.alertParserGapHeld(jobId));
             }
