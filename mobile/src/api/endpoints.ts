@@ -53,8 +53,11 @@ export interface AuthResponseDto {
 }
 
 export const authApi = {
-  register: (email: string, password: string, fullName: string, phoneNumber: string) =>
-    api.post<AuthResponseDto>('/auth/register', { email, password, fullName, phoneNumber }),
+  // referralCode: optional -- set only when the user typed one into RegisterScreen's own
+  // "Referral code (optional)" field. Mirrors the backend's RegisterRequest.referralCode exactly;
+  // an unrecognized or mistyped code is a silent no-op server-side, never a rejected signup.
+  register: (email: string, password: string, fullName: string, phoneNumber: string, referralCode?: string) =>
+    api.post<AuthResponseDto>('/auth/register', { email, password, fullName, phoneNumber, referralCode }),
   login: (identifier: string, password: string) =>
     api.post<AuthResponseDto>('/auth/login', { identifier, password }),
   // Identifier-first entry step (Phase 3B) -- resolves an email or mobile number to what the
@@ -759,4 +762,16 @@ export interface FeedbackSummary {
 export const feedbackApi = {
   submit: (payload: { type: FeedbackType; context: FeedbackContext; message: string }) =>
     api.post<FeedbackSummary>('/feedback', payload).then((r) => r.data),
+};
+
+// Refer & Earn MVP -- mirrors backend ReferralDtos exactly. Just a code and a count, ported from
+// frontend/src/api/endpoints.ts's own copy.
+export interface MyReferralsDto {
+  code: string;
+  referralCount: number;
+}
+
+export const referralsApi = {
+  myCode: () => api.get<{ code: string }>('/referrals/my-code').then((r) => r.data),
+  mine: () => api.get<MyReferralsDto>('/referrals/mine').then((r) => r.data),
 };

@@ -54,6 +54,8 @@ export type MoreStackParamList = {
   // screen (with its own native back) better than a sheet.
   SupportTickets: undefined;
   SupportTicketDetail: { ticketId: string };
+  // Refer & Earn MVP. Reached from this menu (MoreScreen), same pattern as Budgets/Goals/etc.
+  Referrals: undefined;
 };
 
 /**

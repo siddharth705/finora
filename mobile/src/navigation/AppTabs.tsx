@@ -14,6 +14,7 @@ import { ReportsScreen } from '../screens/ReportsScreen';
 import { InsightsScreen } from '../screens/InsightsScreen';
 import { InvestmentsScreen } from '../screens/InvestmentsScreen';
 import { ProfileScreen } from '../screens/ProfileScreen';
+import { ReferralsScreen } from '../screens/ReferralsScreen';
 import { SettingsScreen } from '../screens/SettingsScreen';
 import { SupportTicketDetailScreen } from '../screens/SupportTicketDetailScreen';
 import { SupportTicketsScreen } from '../screens/SupportTicketsScreen';
@@ -52,6 +53,9 @@ function MoreNavigator() {
       <MoreStack.Screen name="Investments" component={InvestmentsScreen} />
       <MoreStack.Screen name="Profile" component={ProfileScreen} />
       <MoreStack.Screen name="Settings" component={SettingsScreen} />
+      {/* Refer & Earn MVP. Header shown, same as Budgets/Goals/Reports/Insights/Investments/
+          Profile/Settings above -- renders no title of its own. */}
+      <MoreStack.Screen name="Referrals" component={ReferralsScreen} options={{ title: 'Refer & Earn' }} />
       {/* Header hidden, same as MoreHome/Accounts/Statements above: this screen renders its own
           full-screen AuthScreenLayout card, and it's reached via a deep link rather than a normal
           in-app push, so there's no prior screen for a native back button to imply. */}
