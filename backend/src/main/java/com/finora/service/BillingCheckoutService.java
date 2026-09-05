@@ -76,6 +76,7 @@ public class BillingCheckoutService {
                     throw new ApiException(HttpStatus.CONFLICT,
                             "You already have a billing subscription. Cancel it before starting a new one.");
                 });
+        ensureNoOrderInFlight(userId);
 
         Plan plan = planRepository.findByCode(planCode)
                 .orElseThrow(() -> new ApiException(HttpStatus.BAD_REQUEST, "Unknown plan code: " + planCode));
@@ -173,6 +174,7 @@ public class BillingCheckoutService {
      *  payment ({@code RazorpayWebhookDispatcher.handleActivated}, extended in Task 2 of this plan
      *  to also stop the old mandate at that point, not before). */
     private void upgradeToNewSubscription(UUID userId, Plan newPlan, BillingPrice newPrice, String billingCycle) {
+        ensureNoOrderInFlight(userId);
         RazorpaySubscriptionDto razorpaySubscription = gateway.createSubscription(
                 newPrice.getRazorpayPlanId(), billingCycle,
                 Map.of("fynoraUserId", userId.toString(), "planCode", newPlan.getCode(), "billingCycle", billingCycle));
@@ -205,5 +207,18 @@ public class BillingCheckoutService {
                 : Instant.now());
         change.setReason(PlanChange.REASON_DOWNGRADE_SCHEDULED);
         planChangeRepository.save(change);
+    }
+
+    /** Closes the double-submit window between "create the Razorpay subscription" and "the
+     *  activation webhook lands": a double-tap, client retry, or two open tabs calling either
+     *  {@code checkout()} or an upgrade in quick succession would otherwise each create their own
+     *  real, live Razorpay subscription before either one's {@code subscriptions} row reflects it
+     *  -- the same failure class {@code checkout()}'s "already has a live subscription" guard
+     *  closes only for a repeat call made AFTER activation, not before it. */
+    private void ensureNoOrderInFlight(UUID userId) {
+        if (subscriptionOrderRepository.existsByUserIdAndStatus(userId, SubscriptionOrder.STATUS_PENDING)) {
+            throw new ApiException(HttpStatus.CONFLICT,
+                    "A billing checkout is already in progress. Please wait for it to complete or try again shortly.");
+        }
     }
 }

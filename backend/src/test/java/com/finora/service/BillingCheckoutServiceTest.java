@@ -117,6 +117,17 @@ class BillingCheckoutServiceTest {
     }
 
     @Test
+    void refusesCheckoutWhenAPendingOrderAlreadyExistsForThisUser() {
+        when(subscriptionOrderRepository.existsByUserIdAndStatus(userId, com.finora.entity.SubscriptionOrder.STATUS_PENDING))
+                .thenReturn(true);
+
+        assertThatThrownBy(() -> service.checkout(userId, "PREMIUM", "MONTHLY"))
+                .isInstanceOf(ApiException.class);
+
+        verify(gateway, never()).createSubscription(any(), any(), anyMap());
+    }
+
+    @Test
     void allowsCheckoutWhenTheExistingSubscriptionIsStillOnFree() {
         Subscription free = new Subscription(); // razorpaySubscriptionId left null, matching FREE
         when(subscriptionRepository.findByUserIdOrderByCreatedAtDesc(userId)).thenReturn(List.of(free));
@@ -294,5 +305,42 @@ class BillingCheckoutServiceTest {
         // webhook confirms real payment (design spec §6.5 step 2) -- this call must not mutate it.
         assertThat(subscription.getPlanId()).isEqualTo(plusPlanId);
         assertThat(subscription.getRazorpaySubscriptionId()).isEqualTo("sub_old");
+    }
+
+    @Test
+    void changePlanRefusesAnUpgradeWhenAPendingOrderAlreadyExistsForThisUser() {
+        UUID plusPlanId = UUID.randomUUID();
+        UUID premiumPlanId = UUID.randomUUID();
+        Plan premium = new Plan();
+        ReflectionTestUtils.setField(premium, "id", premiumPlanId);
+        premium.setCode("PREMIUM");
+        when(planRepository.findByCode("PREMIUM")).thenReturn(Optional.of(premium));
+
+        Subscription subscription = new Subscription();
+        ReflectionTestUtils.setField(subscription, "id", UUID.randomUUID());
+        subscription.setPlanId(plusPlanId);
+        subscription.setBillingCycle("MONTHLY");
+        subscription.setRazorpaySubscriptionId("sub_old");
+        when(subscriptionRepository.findActiveOrTrial(userId)).thenReturn(Optional.of(subscription));
+        Plan plus = new Plan();
+        ReflectionTestUtils.setField(plus, "id", plusPlanId);
+        plus.setCode("PLUS");
+        when(planRepository.findById(plusPlanId)).thenReturn(Optional.of(plus));
+
+        BillingPrice premiumMonthly = new BillingPrice();
+        premiumMonthly.setPlanId(premiumPlanId);
+        premiumMonthly.setBillingCycle("MONTHLY");
+        premiumMonthly.setPrice(new BigDecimal("799.00"));
+        premiumMonthly.setRazorpayPlanId("plan_premium_monthly");
+        when(billingPriceRepository.findByPlanIdAndBillingCycleAndActiveTrue(premiumPlanId, "MONTHLY"))
+                .thenReturn(Optional.of(premiumMonthly));
+        when(subscriptionOrderRepository.existsByUserIdAndStatus(userId, com.finora.entity.SubscriptionOrder.STATUS_PENDING))
+                .thenReturn(true);
+
+        assertThatThrownBy(() -> service.changePlan(userId, "PREMIUM", "MONTHLY"))
+                .isInstanceOf(ApiException.class);
+
+        verify(gateway, never()).createSubscription(any(), any(), anyMap());
+        verify(subscriptionOrderRepository, never()).save(any());
     }
 }
