@@ -1,4 +1,4 @@
-name: Backend corpus coverage (nightly)
+name: Backend corpus coverage
 
 # CapabilityCorpusCoverageTest (@Tag("nightly")) moved here from every PR/merge, per
 # docs/architecture/infrastructure/ci-cd-deferred-work.md's RFC-CI-02 follow-up: it's a coverage
@@ -18,21 +18,43 @@ name: Backend corpus coverage (nightly)
 # gitleaks-nightly.yml (03:30) for the same reason those three are offset from each other: keeping
 # schedules visibly distinct in the Actions history on GitHub-hosted runners with no shared-machine
 # contention to avoid.
+#
+# pull_request trigger added 2026-09-05: PR #930 registered four new capabilities in
+# CapabilityCoverageService.KNOWN_CAPABILITIES with no committed trace covering any of them, and
+# because this job was nightly-only, the gap sat on main undetected until the next scheduled run
+# (fixed in PR #957). KNOWN_CAPABILITIES lives in exactly one file, so a `paths:` filter on that
+# file (plus the two other files a capability's coverage story can touch -- the accept-lists in
+# CapabilityCorpusCoverageTest.java, and the committed traces themselves) catches the next such PR
+# at review time instead of a day later, without adding this job to the other ~99% of backend PRs
+# that never touch capability registration. This does NOT reopen RFC-CI-01 (path-based triggers for
+# ci.yml's five subproject jobs) -- that RFC stayed "Future" because a careless filter there risks
+# silently skipping a job across Finora's many cross-cutting change shapes; this filter carries none
+# of that risk, because it only ever *adds* a run on top of the unconditional nightly schedule, it
+# never removes one.
 on:
   schedule:
     - cron: '45 3 * * *'
+  pull_request:
+    paths:
+      - 'backend/src/main/java/com/finora/imports/CapabilityCoverageService.java'
+      - 'backend/src/test/java/com/finora/imports/CapabilityCorpusCoverageTest.java'
+      - 'backend/src/test/resources/traces/**'
   workflow_dispatch:
 
 concurrency:
-  group: corpus-coverage-nightly
-  cancel-in-progress: false
+  # ref-scoped so concurrent PRs (or a PR run alongside the nightly cron) never queue behind each
+  # other -- cancel-in-progress only for the pull_request case, where a superseding push makes the
+  # older run's result moot; the nightly/dispatch runs keep running to completion (cancel-in-progress
+  # false), matching the rest of this file's original schedule-only design.
+  group: corpus-coverage-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
 
 jobs:
   corpus-coverage:
-    name: Corpus coverage (nightly)
+    name: Corpus coverage
     runs-on: ubuntu-latest
     # A hang detector, not a performance budget -- this test's own corpus is small and in-memory,
     # so a run anywhere near this long means something is actually stuck, not just slow.

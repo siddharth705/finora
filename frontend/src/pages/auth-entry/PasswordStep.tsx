@@ -99,7 +99,7 @@ export function PasswordStep({ identifier: initialIdentifier, banner, onSuccess,
 
   return (
     <form onSubmit={handleSubmit} noValidate>
-      <h2 className="text-2xl font-bold text-ink mb-1">Sign in</h2>
+      <h2 className="font-display text-2xl font-bold text-ink mb-1">Sign in</h2>
       <p className="text-sm text-muted mb-6">Enter your details to access your account</p>
 
       {banner && (
