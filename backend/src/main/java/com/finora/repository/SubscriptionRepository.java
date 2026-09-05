@@ -30,6 +30,8 @@ public interface SubscriptionRepository extends JpaRepository<Subscription, UUID
 
     List<Subscription> findByUserIdOrderByCreatedAtDesc(UUID userId);
 
+    Optional<Subscription> findByRazorpaySubscriptionId(String razorpaySubscriptionId);
+
     /** DataExportService.buildBundle -- native, bypassing {@code @SQLRestriction} the same way
      *  AccountRepository.findByUserIdIncludingDeleted does: a soft-deleted subscription must
      *  still appear in the export, not silently vanish, the same "purge scope exactly" rule this

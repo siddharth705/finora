@@ -24,6 +24,7 @@ public class Subscription extends BaseEntity {
     public static final String STATUS_EXPIRED = "EXPIRED";
     public static final String STATUS_TRIAL = "TRIAL";
     public static final String STATUS_PAYMENT_FAILED = "PAYMENT_FAILED";
+    public static final String STATUS_PAST_DUE = "PAST_DUE";
 
     @Column(name = "user_id", nullable = false)
     private UUID userId;
@@ -52,6 +53,15 @@ public class Subscription extends BaseEntity {
     @Column(name = "payment_provider", length = 30)
     private String paymentProvider;
 
+    @Column(name = "billing_cycle", length = 10)
+    private String billingCycle;
+
+    @Column(name = "razorpay_subscription_id", length = 50)
+    private String razorpaySubscriptionId;
+
+    @Column(name = "auto_renew", nullable = false)
+    private boolean autoRenew = true;
+
     public UUID getUserId() { return userId; }
     public void setUserId(UUID userId) { this.userId = userId; }
     public UUID getPlanId() { return planId; }
@@ -70,4 +80,10 @@ public class Subscription extends BaseEntity {
     public void setTrialEnd(LocalDate trialEnd) { this.trialEnd = trialEnd; }
     public String getPaymentProvider() { return paymentProvider; }
     public void setPaymentProvider(String paymentProvider) { this.paymentProvider = paymentProvider; }
+    public String getBillingCycle() { return billingCycle; }
+    public void setBillingCycle(String billingCycle) { this.billingCycle = billingCycle; }
+    public String getRazorpaySubscriptionId() { return razorpaySubscriptionId; }
+    public void setRazorpaySubscriptionId(String razorpaySubscriptionId) { this.razorpaySubscriptionId = razorpaySubscriptionId; }
+    public boolean isAutoRenew() { return autoRenew; }
+    public void setAutoRenew(boolean autoRenew) { this.autoRenew = autoRenew; }
 }
