@@ -3,6 +3,7 @@ package com.finora.entity;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -32,6 +33,16 @@ class HeldStatementTest {
         assertThat(held.getAssignedEngineerId()).isNull();
         assertThat(held.getResolvedAt()).isNull();
         assertThat(held.getTriggerSummary()).contains("count");
+    }
+
+    @Test
+    void recordSnapshotCarriesTheHoldReasonCategories() {
+        HeldStatement held = held();
+
+        held.recordSnapshot("build-1", "NEEDS_ATTENTION", "NATIVE", false,
+                List.of("COUNT_MISMATCH", "PERIOD_INTEGRITY"));
+
+        assertThat(held.getHoldReasonCategories()).containsExactly("COUNT_MISMATCH", "PERIOD_INTEGRITY");
     }
 
     @Test
@@ -165,7 +176,7 @@ class HeldStatementTest {
     void theSnapshotIsRecordedAsGiven() {
         HeldStatement held = held();
 
-        held.recordSnapshot("abc123", "NEEDS_ATTENTION", "OCR", true);
+        held.recordSnapshot("abc123", "NEEDS_ATTENTION", "OCR", true, List.of("COUNT_MISMATCH"));
 
         assertThat(held.getParserVersion()).isEqualTo("abc123");
         assertThat(held.getReliabilityStatus()).isEqualTo("NEEDS_ATTENTION");

@@ -97,7 +97,7 @@ class HeldStatementServiceRerunIT extends AbstractIntegrationTest {
         HeldStatement held = new HeldStatement(
                 "HLD-2026-9" + System.nanoTime() % 100000, job.getId(), owner.getId(), job.getObjectKey(),
                 "Printed and parsed transaction count disagree (ROW_GROUPING)");
-        held.recordSnapshot("old-build", null, null, null);
+        held.recordSnapshot("old-build", null, null, null, List.of("COUNT_MISMATCH"));
         held = heldStatementRepository.save(held);
         job.holdForTrustReview(sessionId, held.getId(), Instant.now());
         importJobRepository.save(job);
