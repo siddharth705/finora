@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react-native';
+import { act, fireEvent, render, screen } from '@testing-library/react-native';
 import { RegisterScreen } from './RegisterScreen';
 import { ThemeProvider } from '../theme';
 import type { AuthStackParamList } from '../navigation/types';
@@ -59,3 +59,56 @@ describe('RegisterScreen prefill from AuthEntry', () => {
     expect(screen.getByLabelText('Mobile number').props.value).toBe('');
   });
 });
+
+// Refer & Earn MVP: mobile has no `?ref=` URL param to read a code from (unlike web), so this
+// field is the only way a mobile signup can redeem one. Uppercased as typed to match the backend's
+// own stored format (ReferralService.generateUniqueCode) and sent as undefined, not '', when left
+// blank -- see RegisterScreen's own comment on that call site.
+describe('RegisterScreen referral code field', () => {
+  it('uppercases the referral code as it is typed', () => {
+    renderScreen();
+
+    fireEvent.changeText(screen.getByLabelText('Referral code (optional)'), 'ab12cd34');
+
+    expect(screen.getByLabelText('Referral code (optional)').props.value).toBe('AB12CD34');
+  });
+
+  it('passes the typed referral code through to register() on submit', async () => {
+    renderScreen();
+    fillValidForm();
+    fireEvent.changeText(screen.getByLabelText('Referral code (optional)'), 'ab12cd34');
+
+    fireEvent.press(screen.getByText('Create account'));
+    await settle();
+
+    expect(mockRegister).toHaveBeenCalledWith(
+      'jane@example.com', 'Str0ng!Pass', 'Jane Doe', '+919876543210' /* synthetic-ok */, 'AB12CD34'
+    );
+  });
+
+  it('passes undefined, not an empty string, when the referral code is left blank', async () => {
+    renderScreen();
+    fillValidForm();
+
+    fireEvent.press(screen.getByText('Create account'));
+    await settle();
+
+    expect(mockRegister).toHaveBeenCalledWith(
+      'jane@example.com', 'Str0ng!Pass', 'Jane Doe', '+919876543210' /* synthetic-ok */, undefined
+    );
+  });
+});
+
+function fillValidForm() {
+  fireEvent.changeText(screen.getByLabelText('Full name'), 'Jane Doe');
+  fireEvent.changeText(screen.getByLabelText('Email'), 'jane@example.com');
+  fireEvent.changeText(screen.getByLabelText('Mobile number'), '9876543210' /* synthetic-ok */);
+  fireEvent.changeText(screen.getByLabelText('Password (min 8 characters)'), 'Str0ng!Pass');
+  fireEvent.changeText(screen.getByLabelText('Confirm password'), 'Str0ng!Pass');
+}
+
+/** Lets handleSubmit's `finally` setState land before assertions run -- same helper as
+ *  LoginScreen.test.tsx's own settle(). */
+async function settle() {
+  await act(async () => {});
+}
