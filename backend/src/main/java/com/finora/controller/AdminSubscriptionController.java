@@ -41,4 +41,11 @@ public class AdminSubscriptionController {
         subscriptionService.changePlan(userId, request.planCode(), request.reason(), currentUser.id());
         return ApiResponse.ok(null, "Plan updated");
     }
+
+    @PostMapping("/{userId}/cancel-paid-subscription")
+    @PreAuthorize("hasAuthority('SUBSCRIPTION_MANAGEMENT_MANAGE')")
+    public ApiResponse<Void> cancelPaidSubscription(@PathVariable UUID userId) {
+        subscriptionService.cancelPaidSubscription(userId, currentUser.id());
+        return ApiResponse.ok(null, "Paid subscription cancelled");
+    }
 }

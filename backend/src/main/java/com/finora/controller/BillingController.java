@@ -38,4 +38,10 @@ public class BillingController {
         billingCheckoutService.cancel(currentUser.id());
         return ApiResponse.ok(null, "Cancelled");
     }
+
+    @PostMapping("/change-plan")
+    public ApiResponse<Void> changePlan(@Valid @RequestBody com.finora.dto.BillingDtos.UserChangePlanRequest request) {
+        billingCheckoutService.changePlan(currentUser.id(), request.planCode(), request.billingCycle());
+        return ApiResponse.ok(null, "Plan change requested");
+    }
 }
