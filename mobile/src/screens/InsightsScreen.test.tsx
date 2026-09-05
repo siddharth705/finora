@@ -30,6 +30,7 @@ describe('InsightsScreen', () => {
         // Filtered out: no prior average means no comparison to make.
         { category: 'New thing', current: 500, priorAverage: 0, pctChange: null },
       ],
+      coverageCaveat: null,
     });
     recurring.list.mockReset().mockResolvedValue([
       {
@@ -91,7 +92,7 @@ describe('InsightsScreen', () => {
   });
 
   it('explains why a section is empty rather than showing a blank card', async () => {
-    insights.get.mockReset().mockResolvedValue({ sentences: [], movers: [] });
+    insights.get.mockReset().mockResolvedValue({ sentences: [], movers: [], coverageCaveat: null });
     recurring.list.mockReset().mockResolvedValue([]);
     renderScreen();
 
