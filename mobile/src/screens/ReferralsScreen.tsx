@@ -1,4 +1,4 @@
-import { ActivityIndicator, Linking, Platform, Pressable, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Image, Linking, Platform, Pressable, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
 import { useQuery } from '@tanstack/react-query';
 import * as Clipboard from 'expo-clipboard';
 import Ionicons from '@expo/vector-icons/Ionicons';
@@ -17,6 +17,9 @@ const STEPS: { icon: keyof typeof Ionicons.glyphMap; label: string; caption: str
 function shareMessage(code: string) {
   return `Join me on Fynora! Use my referral code ${code} when you sign up.`;
 }
+
+const HERO_ILLUSTRATION = require('../../assets/illustrations/refer-earn-hero.png');
+const HERO_ASPECT_RATIO = 1300 / 620;
 
 /**
  * Deep-links straight into WhatsApp/SMS/Mail rather than the generic OS share sheet -- these are
@@ -44,12 +47,14 @@ const CHANNELS: {
 ];
 
 /**
- * Refer & Earn MVP (mobile) -- ported from frontend/src/pages/Referrals.tsx, cut down to the same
- * scope: a shareable code, a copy/share action, and how many people have joined through it. No
- * wallet balance, no reward tiers or milestones, no per-referral status list -- there is no
- * backend data to honestly show for any of those (see ReferralService's own doc comment for the
- * scope this replaced). The 3-step strip below deliberately stops at "you see it here", not at a
- * reward, because nothing is credited yet.
+ * Refer & Earn (mobile) -- started as an MVP port of frontend/src/pages/Referrals.tsx (a code,
+ * copy/share, and a count), then given a hero illustration and reward-forward copy per a design
+ * reference Sid provided, who has since said he'll expand the functional scope to match. Until
+ * that lands: the hero banner and headline copy reflect the intended direction, but there is
+ * still no wallet balance, reward tier, milestone, or per-referral status list below it -- no
+ * backend data exists yet to honestly show any of those (see ReferralService's own doc comment
+ * for the scope this replaced). The 3-step strip stops at "you see it here", not at a reward,
+ * for the same reason.
  *
  * Mobile has no equivalent of the web's `?ref=` URL param, so there's nothing to build a share
  * LINK out of -- the code itself is the thing to copy/share and hand to a friend, who types it
@@ -117,28 +122,17 @@ export function ReferralsScreen() {
           elsewhere. */}
       <Text style={[styles.screenTitle, { color: c.ink }]}>Refer &amp; Earn</Text>
       <Text style={[styles.screenSubtitle, { color: c.muted }]}>
-        Help your friends take control of their finances.
+        Help your friends take control of their finances — and get rewarded together.
       </Text>
 
-      {/* A lightweight stand-in for the design reference's illustration -- this app has no
-          character artwork asset to embed, so two overlapping avatar glyphs plus a hand-drawn-
-          style annotation carry the same "you and a friend" idea without literally drawing
-          people. Copy stops short of promising a reward, unlike the reference's speech bubbles --
-          nothing is credited in this MVP yet. */}
-      <View style={styles.illustrationRow}>
-        <View style={styles.avatarPair}>
-          <View style={[styles.avatarGlyph, { backgroundColor: c.primary }]}>
-            <Ionicons name="person" size={20} color={c.onPrimary} />
-          </View>
-          <View style={[styles.avatarGlyph, styles.avatarGlyphOverlap, { backgroundColor: c.primaryLight, borderColor: c.bg }]}>
-            <Ionicons name="person" size={20} color={c.primary} />
-          </View>
-          <View style={[styles.heartBadge, { backgroundColor: c.card, borderColor: c.border }]}>
-            <Ionicons name="heart" size={12} color={c.danger} />
-          </View>
-        </View>
-        <Text style={[styles.annotation, { color: c.primary }]}>Better money habits, together</Text>
-      </View>
+      <Image
+        source={HERO_ILLUSTRATION}
+        style={{ width: '100%', aspectRatio: HERO_ASPECT_RATIO }}
+        resizeMode="contain"
+        accessibilityIgnoresInvertColors
+        accessible
+        accessibilityLabel="Two friends checking Fynora on their phones"
+      />
 
       <Card>
         <View style={styles.stepsRow}>
@@ -228,18 +222,6 @@ const styles = StyleSheet.create({
 
   screenTitle: { fontSize: 28, fontWeight: '800', letterSpacing: -0.3 },
   screenSubtitle: { fontSize: 14, marginTop: -4, lineHeight: 19 },
-
-  illustrationRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, paddingVertical: spacing.xs },
-  avatarPair: { flexDirection: 'row', alignItems: 'center' },
-  avatarGlyph: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
-  avatarGlyphOverlap: { marginLeft: -14, borderWidth: 2 },
-  heartBadge: {
-    width: 22, height: 22, borderRadius: 11, borderWidth: 1,
-    alignItems: 'center', justifyContent: 'center', marginLeft: -8, marginTop: -18,
-  },
-  // A small rotation is the cheapest way to read as a hand-drawn margin note (same trick the
-  // design reference uses) without a custom font -- this app has no script typeface loaded.
-  annotation: { flex: 1, fontSize: 13, fontWeight: '600', fontStyle: 'italic', transform: [{ rotate: '-2deg' }] },
 
   stepsRow: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between' },
   stepGroup: { flexDirection: 'row', alignItems: 'flex-start', flex: 1 },
