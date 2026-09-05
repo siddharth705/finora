@@ -577,8 +577,13 @@ class ImportJobWorkerTest {
         assertThat(job.getStatus()).isEqualTo(ImportJob.Status.COMPLETED);
         org.mockito.ArgumentCaptor<NotificationRequest> captor =
                 org.mockito.ArgumentCaptor.forClass(NotificationRequest.class);
-        verify(notificationService).request(captor.capture());
-        NotificationRequest sent = captor.getValue();
+        // Two calls now, not one: entering the hold sends IMPORT_STATEMENT_HELD (this same test's
+        // job passes through HELD_FOR_REVIEW on the way here), and completing sends
+        // IMPORT_STATEMENT_READY. This assertion is about the READY one specifically.
+        verify(notificationService, times(2)).request(captor.capture());
+        NotificationRequest sent = captor.getAllValues().stream()
+                .filter(r -> r.type() == NotificationType.IMPORT_STATEMENT_READY)
+                .findFirst().orElseThrow();
         assertThat(sent.type()).isEqualTo(NotificationType.IMPORT_STATEMENT_READY);
         assertThat(sent.channels())
                 .containsExactlyInAnyOrder(NotificationChannel.PUSH, NotificationChannel.EMAIL);
@@ -618,8 +623,13 @@ class ImportJobWorkerTest {
 
         org.mockito.ArgumentCaptor<NotificationRequest> captor =
                 org.mockito.ArgumentCaptor.forClass(NotificationRequest.class);
-        verify(notificationService).request(captor.capture());
-        assertThat(captor.getValue().params()).containsEntry("bank", "bank");
+        // Two calls, same reason as aPreviouslyHeldJobThatCompletesNotifiesTheUserOnPushAndEmail --
+        // this assertion is about the READY one, which is the one carrying the {{bank}} param.
+        verify(notificationService, times(2)).request(captor.capture());
+        NotificationRequest ready = captor.getAllValues().stream()
+                .filter(r -> r.type() == NotificationType.IMPORT_STATEMENT_READY)
+                .findFirst().orElseThrow();
+        assertThat(ready.params()).containsEntry("bank", "bank");
     }
 
     /** An ordinary first-time success notifies nobody -- we never asked that user to wait. */
@@ -633,9 +643,15 @@ class ImportJobWorkerTest {
         verify(notificationService, never()).request(any());
     }
 
-    /** A held job that has not been reprocessed yet has nothing to announce. */
+    /**
+     * A held job that has not been reprocessed yet has nothing to announce a second time -- but it
+     * does get told once, the moment it holds. Previously nothing was sent at all here (this
+     * test's own former name asserted exactly that); found in review while testing the feature
+     * live, the same silence {@code notifyIfPreviouslyHeld}'s doc comment describes for the READY
+     * side applied on the way IN too.
+     */
     @Test
-    void aHeldJobNotifiesNobodyUntilItActuallyCompletes() throws IOException {
+    void aHeldJobNotifiesTheUserOnceWhenItHolds() throws IOException {
         when(importService.parseAndStageWithSession(any(), any(), any()))
                 .thenThrow(new IllegalStateException("no header row found"));
 
@@ -643,7 +659,49 @@ class ImportJobWorkerTest {
         runAnotherPass();
 
         assertThat(job.getStatus()).isEqualTo(ImportJob.Status.HELD_FOR_REVIEW);
-        verify(notificationService, never()).request(any());
+        org.mockito.ArgumentCaptor<NotificationRequest> captor =
+                org.mockito.ArgumentCaptor.forClass(NotificationRequest.class);
+        verify(notificationService).request(captor.capture());
+        NotificationRequest sent = captor.getValue();
+        assertThat(sent.type()).isEqualTo(NotificationType.IMPORT_STATEMENT_HELD);
+        assertThat(sent.userId()).isEqualTo(job.getUserId());
+        assertThat(sent.channels())
+                .containsExactlyInAnyOrder(NotificationChannel.PUSH, NotificationChannel.EMAIL);
+        assertThat(sent.category()).isEqualTo(NotificationCategory.FINANCIAL);
+        assertThat(sent.notificationKey()).contains(job.getId().toString());
+    }
+
+    /**
+     * The other half of the same fix: a job reprocessed after holding, that fails the SAME way and
+     * holds again, must call {@code notificationService.request} with the IDENTICAL key both
+     * times -- this worker has no in-process guard against calling twice (unlike the mocked
+     * {@code NotificationService} here, the real implementation's {@code ON CONFLICT DO NOTHING}
+     * on that key is what actually absorbs the second attempt, so that dedup itself is
+     * {@code NotificationServiceTest}'s job to prove, not this one's). What this test proves is
+     * the precondition that guarantee depends on: this worker must not mint a fresh key per
+     * attempt the way the admin alert deliberately does.
+     */
+    @Test
+    void aJobHeldAgainAfterAFailedReprocessReusesTheSameNotificationKey() throws IOException {
+        when(importService.parseAndStageWithSession(any(), any(), any()))
+                .thenThrow(new IllegalStateException("no header row found"));
+
+        worker.drainOnce();
+        runAnotherPass();
+        assertThat(job.getStatus()).isEqualTo(ImportJob.Status.HELD_FOR_REVIEW);
+
+        // Reprocessing resets the attempt budget, so exhausting it again to re-dead-letter takes
+        // the same two passes the first hold did.
+        job.returnToQueueForReprocess(Instant.now());
+        runAnotherPass();
+        runAnotherPass();
+        assertThat(job.getStatus()).isEqualTo(ImportJob.Status.HELD_FOR_REVIEW);
+
+        org.mockito.ArgumentCaptor<NotificationRequest> captor =
+                org.mockito.ArgumentCaptor.forClass(NotificationRequest.class);
+        verify(notificationService, times(2)).request(captor.capture());
+        assertThat(captor.getAllValues()).extracting(NotificationRequest::notificationKey)
+                .containsExactly("IMPORT_HELD_" + job.getId(), "IMPORT_HELD_" + job.getId());
     }
 
     // -------------------------------------------------------------------------------------------
