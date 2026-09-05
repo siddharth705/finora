@@ -67,6 +67,7 @@ public class RazorpayWebhookDispatcher {
             case "subscription.authenticated", "subscription.activated" -> handleActivated(payload);
             case "subscription.charged" -> handleCharged(payload);
             case "subscription.pending" -> handlePending(payload);
+            case "subscription.halted" -> handleHalted(payload);
             default -> log.info("Razorpay webhook event '{}' received but not handled in V1.", eventType);
         }
     }
@@ -199,5 +200,39 @@ public class RazorpayWebhookDispatcher {
         payment.setAmount(java.math.BigDecimal.ZERO); // retry attempt, amount not in this webhook's payload
         payment.setCurrency("INR");
         paymentRepository.save(payment);
+    }
+
+    /** spec §5, §9. Retries exhausted — the real access-revoking signal (unlike "pending"). Marks
+     *  any outstanding PENDING payment for this subscription FAILED (the retry sequence is over,
+     *  it never will succeed now) and downgrades straight to FREE — V1 does not build a "resume a
+     *  halted subscription" flow (spec §9); the user re-subscribes via ordinary checkout. */
+    void handleHalted(Map<String, Object> payload) {
+        Map<String, Object> entity = subscriptionEntity(payload);
+        String razorpaySubscriptionId = (String) entity.get("id");
+        if (razorpaySubscriptionId == null) return;
+
+        Optional<Subscription> maybeSubscription = subscriptionRepository.findByRazorpaySubscriptionId(razorpaySubscriptionId);
+        if (maybeSubscription.isEmpty()) return;
+        Subscription subscription = maybeSubscription.get();
+
+        paymentRepository.findBySubscriptionIdOrderByCreatedAtDesc(subscription.getId()).stream()
+                .filter(p -> Payment.STATUS_PENDING.equals(p.getStatus()))
+                .forEach(p -> { p.setStatus(Payment.STATUS_FAILED); paymentRepository.save(p); });
+
+        Plan free = planRepository.findByCode("FREE")
+                .orElseThrow(() -> new IllegalStateException("FREE plan missing -- V99 seed data not applied"));
+        subscription.setPlanId(free.getId());
+        subscription.setBillingCycle(null);
+        subscription.setRazorpaySubscriptionId(null);
+        subscription.setPaymentProvider(null);
+        subscription.setAutoRenew(true);
+        subscription.setStatus(Subscription.STATUS_ACTIVE);
+        subscriptionRepository.save(subscription);
+
+        SubscriptionEvent event = new SubscriptionEvent();
+        event.setSubscriptionId(subscription.getId());
+        event.setEventType(SubscriptionEvent.SUBSCRIPTION_CANCELLED);
+        event.setMetadata(Map.of("reason", "PAYMENT_FAILURE"));
+        subscriptionEventRepository.save(event);
     }
 }

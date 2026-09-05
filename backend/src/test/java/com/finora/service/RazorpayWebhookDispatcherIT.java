@@ -173,4 +173,42 @@ class RazorpayWebhookDispatcherIT extends AbstractIntegrationTest {
         assertThat(payments).hasSize(1);
         assertThat(payments.get(0).getStatus()).isEqualTo(Payment.STATUS_PENDING);
     }
+
+    @Test
+    void haltedDowngradesToFreeAndMarksTheOutstandingPaymentFailed() {
+        User user = createUser();
+        subscriptionService.provisionFreeSubscription(user.getId());
+        Plan premium = planRepository.findByCode("PREMIUM").orElseThrow();
+        Plan free = planRepository.findByCode("FREE").orElseThrow();
+        String razorpaySubscriptionId = "sub_test_" + UUID.randomUUID();
+        Subscription subscription = subscriptionRepository.findActiveOrTrial(user.getId()).orElseThrow();
+        subscription.setPlanId(premium.getId());
+        subscription.setRazorpaySubscriptionId(razorpaySubscriptionId);
+        subscription.setPaymentProvider("RAZORPAY");
+        subscription.setStatus(Subscription.STATUS_PAST_DUE);
+        subscriptionRepository.save(subscription);
+
+        Payment pendingPayment = new Payment();
+        pendingPayment.setUserId(user.getId());
+        pendingPayment.setSubscriptionId(subscription.getId());
+        pendingPayment.setProvider("RAZORPAY");
+        pendingPayment.setStatus(Payment.STATUS_PENDING);
+        pendingPayment.setAmount(new BigDecimal("799.00"));
+        pendingPayment.setCurrency("INR");
+        paymentRepository.save(pendingPayment);
+
+        Map<String, Object> payload = Map.of(
+                "subscription", Map.of("entity", Map.of("id", razorpaySubscriptionId)));
+
+        dispatcher.dispatch("subscription.halted", payload);
+
+        Subscription reloaded = subscriptionRepository.findActiveOrTrial(user.getId()).orElseThrow();
+        assertThat(reloaded.getPlanId()).isEqualTo(free.getId());
+        assertThat(reloaded.getStatus()).isEqualTo(Subscription.STATUS_ACTIVE);
+        assertThat(reloaded.getPaymentProvider()).isNull();
+        assertThat(reloaded.getRazorpaySubscriptionId()).isNull();
+
+        List<Payment> payments = paymentRepository.findByUserIdOrderByCreatedAtDesc(user.getId());
+        assertThat(payments).anyMatch(p -> p.getStatus().equals(Payment.STATUS_FAILED));
+    }
 }
