@@ -7,7 +7,7 @@ import { isCanceled, isOffline } from '../lib/apiError';
 import type {
   Account, AccountStatementGroup, Budget, DashboardSummary, DetectedAccountInfo, Goal,
   ImportSummary, MerchantGroup, ReimportResult, StagedAccountSection, StagedRow, StatementSummary,
-  Transaction, WorkspaceSettings, UnparseableRow,
+  Transaction, TransactionSource, WorkspaceSettings, UnparseableRow,
 } from '../types';
 
 // Ported from frontend/src/api/endpoints.ts -- these are plain axios calls with TS types, no DOM
@@ -178,6 +178,9 @@ export const transactionsApi = {
   // Mirrors frontend/src/api/endpoints.ts.
   confirmNotDuplicate: (id: string) =>
     api.post<Transaction>(`/transactions/${id}/not-duplicate`).then((r) => r.data),
+  // "Where did this number come from?" (Track C/C7) — fetched on demand from the source panel,
+  // never on every row of the Ledger's list.
+  source: (id: string) => api.get<TransactionSource>(`/transactions/${id}/source`).then((r) => r.data),
 };
 
 /**
