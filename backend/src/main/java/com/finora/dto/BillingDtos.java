@@ -50,4 +50,11 @@ public class BillingDtos {
     /** What the frontend/mobile Razorpay Checkout widget needs to open. {@code keyId} is
      *  Razorpay's public key -- safe to expose to a client, it authenticates nothing on its own. */
     public record CheckoutResponseDto(String razorpaySubscriptionId, String keyId) {}
+
+    /** POST /api/v1/billing/change-plan (design spec §6.4/§6.5) -- user-initiated upgrade/downgrade,
+     *  distinct from the admin-facing {@link ChangePlanRequest} above. */
+    public record UserChangePlanRequest(
+            @NotBlank(message = "Plan code is required") String planCode,
+            @NotBlank(message = "Billing cycle is required") String billingCycle
+    ) {}
 }

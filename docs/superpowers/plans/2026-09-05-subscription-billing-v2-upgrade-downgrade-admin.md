@@ -203,8 +203,8 @@ Then add the new tests:
         ReflectionTestUtils.setField(plus, "id", plusPlanId);
         plus.setCode("PLUS");
         when(planRepository.findByCode("PLUS")).thenReturn(Optional.of(plus));
-        when(planRepository.findById(premiumPlanId)).thenReturn(Optional.of(
-                planRepository.findByCode("PREMIUM").orElseThrow()));
+        Plan premium = planRepository.findByCode("PREMIUM").orElseThrow();
+        when(planRepository.findById(premiumPlanId)).thenReturn(Optional.of(premium));
 
         Subscription subscription = new Subscription();
         ReflectionTestUtils.setField(subscription, "id", UUID.randomUUID());
