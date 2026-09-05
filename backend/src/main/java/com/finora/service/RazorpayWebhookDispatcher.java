@@ -68,6 +68,7 @@ public class RazorpayWebhookDispatcher {
             case "subscription.charged" -> handleCharged(payload);
             case "subscription.pending" -> handlePending(payload);
             case "subscription.halted" -> handleHalted(payload);
+            case "subscription.cancelled" -> handleCancelled(payload);
             default -> log.info("Razorpay webhook event '{}' received but not handled in V1.", eventType);
         }
     }
@@ -234,5 +235,25 @@ public class RazorpayWebhookDispatcher {
         event.setEventType(SubscriptionEvent.SUBSCRIPTION_CANCELLED);
         event.setMetadata(Map.of("reason", "PAYMENT_FAILURE"));
         subscriptionEventRepository.save(event);
+    }
+
+    /** spec §5, §6.3. Does not itself downgrade to Free — that happens at
+     * {@code current_period_end}, via {@code SubscriptionReconciliationSweepService} (Task 12), not
+     * from this webhook alone (a missed webhook must not leave paid access active forever). */
+    void handleCancelled(Map<String, Object> payload) {
+        Map<String, Object> entity = subscriptionEntity(payload);
+        String razorpaySubscriptionId = (String) entity.get("id");
+        if (razorpaySubscriptionId == null) return;
+
+        subscriptionRepository.findByRazorpaySubscriptionId(razorpaySubscriptionId).ifPresent(subscription -> {
+            subscription.setStatus(Subscription.STATUS_CANCELLED);
+            subscriptionRepository.save(subscription);
+
+            SubscriptionEvent event = new SubscriptionEvent();
+            event.setSubscriptionId(subscription.getId());
+            event.setEventType(SubscriptionEvent.SUBSCRIPTION_CANCELLED);
+            event.setMetadata(Map.of("reason", "USER_INITIATED"));
+            subscriptionEventRepository.save(event);
+        });
     }
 }

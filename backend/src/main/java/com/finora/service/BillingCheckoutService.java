@@ -3,6 +3,7 @@ package com.finora.service;
 import com.finora.dto.BillingDtos.CheckoutResponseDto;
 import com.finora.entity.BillingPrice;
 import com.finora.entity.Plan;
+import com.finora.entity.Subscription;
 import com.finora.entity.SubscriptionOrder;
 import com.finora.exception.ApiException;
 import com.finora.integrations.razorpay.RazorpayProperties;
@@ -11,6 +12,7 @@ import com.finora.integrations.razorpay.RazorpaySubscriptionGateway;
 import com.finora.repository.BillingPriceRepository;
 import com.finora.repository.PlanRepository;
 import com.finora.repository.SubscriptionOrderRepository;
+import com.finora.repository.SubscriptionRepository;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -29,15 +31,18 @@ public class BillingCheckoutService {
     private final PlanRepository planRepository;
     private final BillingPriceRepository billingPriceRepository;
     private final SubscriptionOrderRepository subscriptionOrderRepository;
+    private final SubscriptionRepository subscriptionRepository;
     private final RazorpaySubscriptionGateway gateway;
     private final RazorpayProperties properties;
 
     public BillingCheckoutService(PlanRepository planRepository, BillingPriceRepository billingPriceRepository,
                                    SubscriptionOrderRepository subscriptionOrderRepository,
+                                   SubscriptionRepository subscriptionRepository,
                                    RazorpaySubscriptionGateway gateway, RazorpayProperties properties) {
         this.planRepository = planRepository;
         this.billingPriceRepository = billingPriceRepository;
         this.subscriptionOrderRepository = subscriptionOrderRepository;
+        this.subscriptionRepository = subscriptionRepository;
         this.gateway = gateway;
         this.properties = properties;
     }
@@ -72,5 +77,17 @@ public class BillingCheckoutService {
         subscriptionOrderRepository.save(order);
 
         return new CheckoutResponseDto(razorpaySubscription.id(), properties.getKeyId());
+    }
+
+    @Transactional
+    public void cancel(UUID userId) {
+        Subscription subscription = subscriptionRepository.findActiveOrTrial(userId)
+                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "No active subscription."));
+        if (subscription.getRazorpaySubscriptionId() == null) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "This subscription has no billing to cancel.");
+        }
+        gateway.cancelSubscription(subscription.getRazorpaySubscriptionId(), true);
+        subscription.setAutoRenew(false);
+        subscriptionRepository.save(subscription);
     }
 }

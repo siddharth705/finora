@@ -32,4 +32,10 @@ public class BillingController {
     public ApiResponse<CheckoutResponseDto> checkout(@Valid @RequestBody CheckoutRequest request) {
         return ApiResponse.ok(billingCheckoutService.checkout(currentUser.id(), request.planCode(), request.billingCycle()));
     }
+
+    @PostMapping("/cancel")
+    public ApiResponse<Void> cancel() {
+        billingCheckoutService.cancel(currentUser.id());
+        return ApiResponse.ok(null, "Cancelled");
+    }
 }

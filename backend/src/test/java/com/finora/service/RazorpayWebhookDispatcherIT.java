@@ -211,4 +211,24 @@ class RazorpayWebhookDispatcherIT extends AbstractIntegrationTest {
         List<Payment> payments = paymentRepository.findByUserIdOrderByCreatedAtDesc(user.getId());
         assertThat(payments).anyMatch(p -> p.getStatus().equals(Payment.STATUS_FAILED));
     }
+
+    @Test
+    void cancelledSetsStatusToCancelledWithoutRevokingAccessYet() {
+        User user = createUser();
+        subscriptionService.provisionFreeSubscription(user.getId());
+        String razorpaySubscriptionId = "sub_test_" + UUID.randomUUID();
+        Subscription subscription = subscriptionRepository.findActiveOrTrial(user.getId()).orElseThrow();
+        subscription.setRazorpaySubscriptionId(razorpaySubscriptionId);
+        subscription.setPaymentProvider("RAZORPAY");
+        subscription.setAutoRenew(false);
+        subscriptionRepository.save(subscription);
+
+        Map<String, Object> payload = Map.of(
+                "subscription", Map.of("entity", Map.of("id", razorpaySubscriptionId)));
+
+        dispatcher.dispatch("subscription.cancelled", payload);
+
+        Subscription reloaded = subscriptionRepository.findByRazorpaySubscriptionId(razorpaySubscriptionId).orElseThrow();
+        assertThat(reloaded.getStatus()).isEqualTo(Subscription.STATUS_CANCELLED);
+    }
 }

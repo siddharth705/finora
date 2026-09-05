@@ -9,8 +9,10 @@ import com.finora.integrations.razorpay.RazorpaySubscriptionGateway;
 import com.finora.repository.BillingPriceRepository;
 import com.finora.repository.PlanRepository;
 import com.finora.repository.RefreshTokenRepository;
+import com.finora.repository.SubscriptionRepository;
 import com.finora.repository.UserRepository;
 import com.finora.security.JwtService;
+import com.finora.service.SubscriptionService;
 import com.finora.testsupport.TestSessions;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -23,6 +25,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class BillingControllerIT extends AbstractIntegrationTest {
@@ -33,6 +36,8 @@ class BillingControllerIT extends AbstractIntegrationTest {
     @Autowired private BillingPriceRepository billingPriceRepository;
     @Autowired private JwtService jwtService;
     @Autowired private RefreshTokenRepository refreshTokens;
+    @Autowired private SubscriptionService subscriptionService;
+    @Autowired private SubscriptionRepository subscriptionRepository;
 
     @MockitoBean private RazorpaySubscriptionGateway gateway;
 
@@ -75,5 +80,25 @@ class BillingControllerIT extends AbstractIntegrationTest {
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(response.getBody()).contains("sub_test_123");
+    }
+
+    @Test
+    void cancelCallsRazorpayAndSetsAutoRenewFalse() {
+        User user = createUser();
+        subscriptionService.provisionFreeSubscription(user.getId());
+        String razorpaySubscriptionId = "sub_test_" + UUID.randomUUID();
+        var subscription = subscriptionRepository.findActiveOrTrial(user.getId()).orElseThrow();
+        subscription.setRazorpaySubscriptionId(razorpaySubscriptionId);
+        subscription.setPaymentProvider("RAZORPAY");
+        subscriptionRepository.save(subscription);
+
+        ResponseEntity<String> response = restTemplate.postForEntity(
+                "/api/v1/billing/cancel", new HttpEntity<>(null, bearerFor(user)), String.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        verify(gateway).cancelSubscription(eq(razorpaySubscriptionId), eq(true));
+
+        var reloaded = subscriptionRepository.findByRazorpaySubscriptionId(razorpaySubscriptionId).orElseThrow();
+        assertThat(reloaded.isAutoRenew()).isFalse();
     }
 }

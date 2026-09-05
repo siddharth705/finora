@@ -10,6 +10,7 @@ import com.finora.integrations.razorpay.RazorpaySubscriptionGateway;
 import com.finora.repository.BillingPriceRepository;
 import com.finora.repository.PlanRepository;
 import com.finora.repository.SubscriptionOrderRepository;
+import com.finora.repository.SubscriptionRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -29,6 +30,7 @@ class BillingCheckoutServiceTest {
     private final PlanRepository planRepository = mock(PlanRepository.class);
     private final BillingPriceRepository billingPriceRepository = mock(BillingPriceRepository.class);
     private final SubscriptionOrderRepository subscriptionOrderRepository = mock(SubscriptionOrderRepository.class);
+    private final SubscriptionRepository subscriptionRepository = mock(SubscriptionRepository.class);
     private final RazorpaySubscriptionGateway gateway = mock(RazorpaySubscriptionGateway.class);
     private final RazorpayProperties properties = new RazorpayProperties();
     private BillingCheckoutService service;
@@ -40,7 +42,7 @@ class BillingCheckoutServiceTest {
     void setUp() {
         properties.setKeyId("rzp_test_123");
         service = new BillingCheckoutService(planRepository, billingPriceRepository,
-                subscriptionOrderRepository, gateway, properties);
+                subscriptionOrderRepository, subscriptionRepository, gateway, properties);
 
         // Plan.id has no public setter (@GeneratedValue) -- same reflection-based construction
         // EntitlementServiceTest already uses for the same reason.
