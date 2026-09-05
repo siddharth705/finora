@@ -444,6 +444,26 @@ public class PdfTableLocator {
     private static final Pattern SAVINGS_AND_BENEFITS_SECTION_MARKER = Pattern.compile(
             "(?i)savings\\s+and\\s+benefits\\s+section");
 
+    // LOAN_SUMMARY_TABLE_CLOSED. Two real HSBC credit-card statements (HSBC CC.pdf, HSBC CC
+    // new.pdf) each print a "Loan Summary Table" caption near the end of their real transaction
+    // table, introducing an unrelated EMI/loan schedule (merchant, booking date, principal,
+    // interest, installment amount, tenure) for a loan-on-card product no expected entity in either
+    // document's ground truth declares -- confirmed via that ground truth's own knownOpenDefects
+    // note: "No second account exists in this document." Without this trigger, that schedule's own
+    // header ("Loan Booking Date"/"Installment amount" cells each individually satisfying
+    // HEADER_HINTS's per-word match) reads as a genuinely new table and opens its own section via
+    // COMPOSITE_STATEMENT below -- a phantom that can never stage a real row (its "Loan Booking
+    // Date" column never equals any of TransactionNormalizer's own DATE_HINTS, which requires the
+    // WHOLE column name, not a word within it) but that still steals every real credit-card-summary
+    // phrase (payment due, credit limit) printed after it, which is why the real ledger section
+    // above it was separately observed mistyped SAVINGS on a credit-card statement -- fixing this
+    // trigger repairs both. Confirmed single-occurrence (`grep`) on both real documents, and in
+    // both cases everything the caption introduces (the loan schedule itself, then payment-
+    // instructions/MITC/legal content) genuinely is this document's own trailing content, same as
+    // every other entry in this list.
+    private static final Pattern LOAN_SUMMARY_TABLE_MARKER = Pattern.compile(
+            "(?i)loan\\s+summary\\s+table");
+
     /** One row-shaped trigger the trailing-content suppression gate checks for, paired with the
      *  capability name to record when it fires -- see {@link #trailingContentTriggerCapability}. */
     private record TrailingContentTrigger(Pattern pattern, String capability) {}
@@ -461,7 +481,8 @@ public class PdfTableLocator {
             new TrailingContentTrigger(STATEMENT_SUMMARY_BLOCK_MARKER, "STATEMENT_SUMMARY_BLOCK_CLOSED"),
             new TrailingContentTrigger(NEUCOINS_FOOTNOTE_MARKER, "NEUCOINS_FOOTNOTE_CLOSED"),
             new TrailingContentTrigger(SAVINGS_AND_BENEFITS_SECTION_MARKER,
-                    "SAVINGS_AND_BENEFITS_SECTION_CLOSED"));
+                    "SAVINGS_AND_BENEFITS_SECTION_CLOSED"),
+            new TrailingContentTrigger(LOAN_SUMMARY_TABLE_MARKER, "LOAN_SUMMARY_TABLE_CLOSED"));
 
     /** The capability name the first matching trigger should record for {@code rowLine}, or null
      *  if none match. {@code pageIndex}/{@code lastPageIndex} exist only for
@@ -521,6 +542,7 @@ public class PdfTableLocator {
             case "CHEQUE_PAYABLE_FOOTER_CLOSED" -> ctx.record("CHEQUE_PAYABLE_FOOTER_CLOSED");
             case "NEUCOINS_FOOTNOTE_CLOSED" -> ctx.record("NEUCOINS_FOOTNOTE_CLOSED");
             case "SAVINGS_AND_BENEFITS_SECTION_CLOSED" -> ctx.record("SAVINGS_AND_BENEFITS_SECTION_CLOSED");
+            case "LOAN_SUMMARY_TABLE_CLOSED" -> ctx.record("LOAN_SUMMARY_TABLE_CLOSED");
             default -> throw new IllegalStateException(
                     "Unknown trailing-content trigger capability: " + capability);
         }
@@ -1299,6 +1321,36 @@ public class PdfTableLocator {
                     continue; // repeated header of the table already in progress -- not a data row
                 }
                 if (currentRows != null) {
+                    // TRAILING_IDENTITY_CARRIED_FORWARD. pendingAuxiliary is a running list built
+                    // across this section's whole lifetime, and closeCurrentSection attaches ALL of
+                    // it to the section that is CLOSING -- correct for the vast majority of it (an
+                    // account-holder/number line that appeared right after THIS section's own
+                    // header genuinely belongs to it), but wrong for its own trailing run: a real
+                    // identity line for the section about to OPEN, printed just before that
+                    // section's own header is recognized, otherwise gets misattributed to the
+                    // section ending here instead. Confirmed on a real HDFC composite statement:
+                    // the Recurring Deposit's own "Account Number"/"Account Type: RECURRING
+                    // DEPOSIT"/"RD ACCOUNT SUMMARY" identity block prints immediately after the
+                    // FIXED DEPOSIT ledger's last row and before the RD table's own header, so it
+                    // landed in the FD section's trailing auxiliary text -- PdfMetadataExtractor
+                    // then correctly extracted AN account number from it, just the wrong section's.
+                    // Extracted from the TRAILING run only (working backward from the end, stopping
+                    // at the first non-identity-shaped line): an identity line buried earlier in the
+                    // section's own aux text, with ordinary content after it, unambiguously belongs
+                    // to THIS section, not the next one.
+                    //
+                    // currentSectionAccountId passed through so a RESTATEMENT of the SAME account
+                    // (the exact real shape AccountIdentityLinePdfTableLocatorTest pins: a deposit
+                    // schedule's own summary block restates its own "Account Number:" line as
+                    // trailing text before a genuinely different table) is never carried forward --
+                    // it identifies the section that is closing, not the one about to open. Found
+                    // by that test failing after this capability first shipped: it correctly stayed
+                    // with the closing section pre-TRAILING_IDENTITY_CARRIED_FORWARD (the ordinary
+                    // "sameAccountIdentityRepeated" branch above already handles a restatement
+                    // correctly on its own), and this capability's own shape-only check had no way
+                    // to tell that apart from a genuinely new identity.
+                    List<String> carriedForwardIdentity =
+                            extractTrailingIdentityLines(pendingAuxiliary, currentSectionAccountId);
                     // A different header shape, or a same-shaped header with a contradicting
                     // identity line since this section opened -- fallback signal for a new section
                     // in a document without a banner line.
@@ -1309,6 +1361,10 @@ public class PdfTableLocator {
                         firstStagedHeaderRowIndex = pendingSectionHeaderRowIndex;
                     }
                     pendingAuxiliary = closed.auxiliary();
+                    if (!carriedForwardIdentity.isEmpty()) {
+                        pendingAuxiliary.addAll(0, carriedForwardIdentity);
+                        if (ctx != null) ctx.record("TRAILING_IDENTITY_CARRIED_FORWARD");
+                    }
                     pendingDroppedCandidates = closed.droppedCandidates();
                     pendingHeaderReconstructionVocab = closed.headerReconstructionVocab();
                     if (ctx != null) ctx.record("COMPOSITE_STATEMENT");
@@ -1952,6 +2008,8 @@ public class PdfTableLocator {
             if (inferred == null) inferred = inferTwoLineDateBlockSection(rows, ctx);
             if (inferred != null) sections.add(inferred);
         }
+        remergeSameTableSections(sections, ctx);
+        dropCompletelyEmptySections(sections, ctx);
         if (ctx != null) ctx.recordTables(sections.size());
         return new LocatedDocument(sections, physicalRowFormationEvidence);
     }
@@ -2258,6 +2316,219 @@ public class PdfTableLocator {
      * verdict by itself.
      */
     private static final int LOW_CONFIDENCE_TRANSACTION_HEADER_COLUMN_COUNT = 3;
+
+    /**
+     * RECONCILED_HEADER_SECTIONS_REMERGED. Folds two adjacent sections back into one when their
+     * final, fully-reconciled column sets turn out identical -- the header-diff split at {@code
+     * headerSignature}'s own call site runs against the RAW row, before {@code
+     * coalesceHeaderRuns}/{@code reconstructHeader} have a chance to normalize it (see that call
+     * site's own comment), so a same-table repeated header can be split on a rendering quirk that
+     * the reconciliation pipeline later proves was never a real difference at all.
+     *
+     * <h2>Two real documents, two different proximate triggers, the same underlying shape</h2>
+     *
+     * On a real SBI credit-card statement, one column label on the repeated header renders ~8pt
+     * detached (in y) from its three siblings, landing in a separate physical row that {@code
+     * wrappedHeaderAt}'s own strict x-proximity merge (correctly) refuses to rejoin -- the split
+     * header is later repaired by the heavier {@code reconstructHeader} engine, but only after the
+     * section-boundary decision has already run. On a real Indusland credit-card statement, the
+     * same five columns render as word-fragments tight enough to stay one physical row, but still
+     * individually un-coalesced at the point the raw signature is hashed -- repaired by the lighter
+     * {@code coalesceHeaderRuns} step inside {@code buildHeaderColumns}, again too late to inform
+     * the split. Both real documents genuinely hold ONE credit-card account each: 30+28 rows on
+     * SBI, 7+2 on Indusland, both halves carrying the identical final column set once reconciled.
+     *
+     * <h2>Why this runs here, once, at the very end -- not earlier, at the split decision</h2>
+     *
+     * Moving reconciliation earlier in the per-row loop would touch the same fragile, heavily-
+     * scarred split-decision code the header-diff block's own comments already document as
+     * deliberately narrow (see {@code headerSignature}'s call site: "this cannot merge two sections
+     * that should stay separate: the REPEATED_HEADER/closeCurrentSection decision above has already
+     * run"). A post-hoc pass over the FINAL section list needs no such surgery: by the time this
+     * runs, every section's rows already reflect whatever reconciliation actually happened, so
+     * comparing their column sets directly is sufficient and touches nothing upstream.
+     *
+     * <h2>The identity-safety guard -- why this cannot merge two genuinely different accounts</h2>
+     *
+     * {@code closeCurrentSection}'s own header-diff branch fires {@code COMPOSITE_STATEMENT} for
+     * BOTH a pure header-shape mismatch AND a same-shaped header following a contradicting {@code
+     * ACCOUNT_IDENTITY_LINE}/{@code SECTION_MARKER} -- the second case is exactly two different
+     * accounts sharing one column layout, and must never be merged back together. {@link
+     * LocatedSection} carries no account-identity field (identity/product interpretation is
+     * strictly downstream, per its own doc comment), so rather than thread new bookkeeping through
+     * the per-row loop, this reuses the SAME {@link #SECTION_MARKER}/{@link #ACCOUNT_IDENTITY_LINE}
+     * patterns that loop already trusts to recognize identity, applied to each candidate section's
+     * own {@code auxiliaryText}: if either section shows so much as one recognized identity line,
+     * account identity might genuinely differ and the merge is refused. Confirmed against real
+     * evidence, not assumed: neither SBI's nor Indusland's real document ever trips either pattern
+     * at all (both state their identity as "Card Number"/"Card No.", a shape neither pattern
+     * recognizes) -- so for the two documents this exists to fix, identity was never resolved for
+     * either candidate section, which is precisely the "genuinely unknown, only the header agrees"
+     * case this guard is designed to allow.
+     *
+     * <h2>Why "identical column set," not "any header at all," is the merge trigger</h2>
+     *
+     * A genuine multi-account composite with two DIFFERENT real sub-tables (HSBC's former Loan
+     * Summary phantom, Shivani's FD/RD blocks) never satisfies this condition -- their reconciled
+     * headers differ, by construction, from whatever table came before. The only way two ADJACENT
+     * sections end up with an IDENTICAL final column set after a header-diff split is precisely
+     * this shape: the same table, momentarily misread as a different one.
+     */
+    private void remergeSameTableSections(List<LocatedSection> sections, DocumentContext ctx) {
+        for (int i = 0; i < sections.size() - 1; ) {
+            LocatedSection first = sections.get(i);
+            LocatedSection second = sections.get(i + 1);
+            if (canRemergeAdjacentSections(first, second)) {
+                List<Map<String, String>> mergedRows = new ArrayList<>(first.rows());
+                mergedRows.addAll(second.rows());
+                List<String> mergedAuxiliary = new ArrayList<>(first.auxiliaryText());
+                mergedAuxiliary.addAll(second.auxiliaryText());
+                List<DroppedCandidateRow> mergedDropped =
+                        new ArrayList<>(first.evidence().droppedTransactionCandidates());
+                mergedDropped.addAll(second.evidence().droppedTransactionCandidates());
+                List<HeaderReconstructionFinding> mergedFindings =
+                        new ArrayList<>(first.evidence().headerReconstructionFindings());
+                mergedFindings.addAll(second.evidence().headerReconstructionFindings());
+                sections.set(i, new LocatedSection(mergedAuxiliary, mergedRows,
+                        new ExtractionEvidence(mergedDropped, mergedFindings)));
+                sections.remove(i + 1);
+                if (ctx != null) ctx.record("RECONCILED_HEADER_SECTIONS_REMERGED");
+                // Re-check the same index: the section that absorbed `second` might now also
+                // reconcile with what is newly at i+1, on a document where the same table was
+                // torn into three or more pieces, not just two.
+            } else {
+                i++;
+            }
+        }
+    }
+
+    /**
+     * A section that closed with literally nothing collected -- zero rows, zero auxiliary text --
+     * can never represent real content; the header-diff split at {@code headerSignature}'s own
+     * call site (see that comment) has no way to know this until the section it opens for a
+     * candidate header turns out empty, and {@code closeCurrentSection} stages it unconditionally
+     * regardless (no empty-guard at its own {@code sections.add(...)} call).
+     *
+     * <p>Confirmed on a real HDFC composite statement: a Fixed Deposit block prints its own
+     * TWO-line caption header back to back -- an 8-column band (FD Number, FD CCY, Original
+     * Principal, ...) immediately followed, with zero intervening text, by a narrower 3-column band
+     * (Current FD Amount, Maturity Date, Available Withdrawable) that is the block's REAL accepted
+     * header. The first band alone clears {@code looksLikeHeaderRow}'s own bar (a date-hint word in
+     * "...Renew Date", two amount-hint words), so the header-diff split opens a section for it --
+     * which the very next line (the second band) immediately closes again, having collected
+     * nothing at all. Measured directly: 0 raw bucketed rows, 0 detected columns, 0
+     * auxiliary-text lines, every metadata field null.
+     *
+     * <p>Deliberately general, not a per-document caption match (unlike {@link
+     * #LOAN_SUMMARY_TABLE_MARKER}'s own targeted suppression, needed there because that phantom
+     * section was NOT empty -- it carried real raw rows and real auxiliary text that had to be
+     * kept, just not as its own section): "collected nothing at all" is a structural fact about the
+     * section itself, true or false regardless of what caused it, so this needs no document-
+     * specific trigger to recognize.
+     *
+     * <p>Never drops the LAST remaining section, even an empty one -- {@code sections} must stay
+     * non-empty here, since emptying it after this point would skip every headerless-inference
+     * fallback above, which has already had its own chance and declined.
+     */
+    private void dropCompletelyEmptySections(List<LocatedSection> sections, DocumentContext ctx) {
+        for (int i = sections.size() - 1; i >= 0 && sections.size() > 1; i--) {
+            LocatedSection section = sections.get(i);
+            if (section.rows().isEmpty() && section.auxiliaryText().isEmpty()) {
+                sections.remove(i);
+                if (ctx != null) ctx.record("EMPTY_SECTION_DROPPED");
+            }
+        }
+    }
+
+    /** True when {@code first} and {@code second} are safe to fold back into one section -- see
+     *  {@link #remergeSameTableSections}'s own doc comment for the full guard rationale. Both
+     *  sections must carry real rows (an empty section is a different problem, handled elsewhere),
+     *  their rows' own column sets must be identical, and neither may show a recognized account-
+     *  identity line -- the one signal that would mean these are two different real accounts, not
+     *  one table momentarily misread as two. */
+    private boolean canRemergeAdjacentSections(LocatedSection first, LocatedSection second) {
+        if (first.rows().isEmpty() || second.rows().isEmpty()) return false;
+        // The UNION of every row's own keys, not just rows().get(0) -- an individual row can
+        // legitimately carry fewer keys than its section's real column set (a value genuinely
+        // blank on that one row, a trailing/partial row), confirmed on the real Indusland document
+        // this exists to fix: its very first bucketed row carries only a Date value, while the
+        // section's other rows carry the full five-column set. Comparing row 0 alone refused a
+        // same-table merge that should have fired. This is the same union-of-all-rows approach
+        // PdfPipelineDiagnostic's own "Detected table columns" report already uses.
+        if (!detectedColumnsOf(first).equals(detectedColumnsOf(second))) return false;
+        return first.auxiliaryText().stream().noneMatch(this::looksLikeIdentityLine)
+                && second.auxiliaryText().stream().noneMatch(this::looksLikeIdentityLine);
+    }
+
+    private static Set<String> detectedColumnsOf(LocatedSection section) {
+        Set<String> columns = new LinkedHashSet<>();
+        for (Map<String, String> row : section.rows()) columns.addAll(row.keySet());
+        return columns;
+    }
+
+    // A real SECTION_MARKER/ACCOUNT_IDENTITY_LINE banner is inherently short -- a label plus a
+    // number ("SAVINGS ACCOUNT - 1234567890", "Account No: 1234567890"), the shape both patterns   // synthetic-ok: invented placeholder digits, not a real account number
+    // were designed to recognize per ORIGINAL PHYSICAL ROW elsewhere in this class. Reused here
+    // against LocatedSection.auxiliaryText(), whose entries can be long, multi-sentence blocks
+    // (several original rows already joined), the same SECTION_MARKER pattern false-matched a real
+    // SBI MITC disclaimer's illustrative example -- "...a Credit Card account is 31st March
+    // 2021..." -- purely because "Credit Card account" and a 4-digit year happened to appear in one
+    // long sentence together. This length cap is what tells a genuine short banner apart from a
+    // coincidental match buried in ordinary prose; a real banner line never approaches it.
+    private static final int IDENTITY_LINE_MAX_LENGTH = 80;
+
+    private boolean looksLikeIdentityLine(String line) {
+        if (line.length() > IDENTITY_LINE_MAX_LENGTH) return false;
+        return SECTION_MARKER.matcher(line).find() || ACCOUNT_IDENTITY_LINE.matcher(line).find();
+    }
+
+    // How many of pendingAuxiliary's own trailing lines extractTrailingIdentityLines is willing to
+    // search for a real identity match. Bounded, not unlimited, so a coincidental identity-shaped
+    // line genuinely belonging to a section's OWN much-earlier content can never be reached by this
+    // search -- only a match close enough to the split to plausibly BE the next section's own
+    // leading block. The real document that forced this (see extractTrailingIdentityLines' own doc
+    // comment) needed 9: "Account Number : ..." sits nine lines back from that trailing block's own
+    // last line, itself not identity-shaped ("RD ACCOUNT SUMMARY", a caption, not a label:value
+    // line) -- rounded up with a small margin, not tuned to the exact number.
+    private static final int TRAILING_IDENTITY_LOOKBACK = 12;
+
+    /** TRAILING_IDENTITY_CARRIED_FORWARD's own extraction step -- see the header-diff call site's
+     *  own comment for why this exists. A real misattributed identity block is rarely ONE
+     *  identity-shaped line alone: a name, a customer ID, the identity line itself, then a caption
+     *  ("RD ACCOUNT SUMMARY") all belong together, and only the identity line in the middle of that
+     *  run actually matches {@link #looksLikeIdentityLine}. So this searches the last {@link
+     *  #TRAILING_IDENTITY_LOOKBACK} lines of {@code auxiliary} for the LAST (closest to the end)
+     *  identity match, and -- once found -- carries everything from THAT line to the end forward,
+     *  not just lines that individually match. Mutates {@code auxiliary} in place and returns the
+     *  removed lines in their original order, ready to seed the NEXT section's own leading
+     *  auxiliary text. Returns an empty list, unmodified, when no match is found within the
+     *  lookback window -- the common case, on every document with no such misattribution.
+     *
+     *  <p>{@code closingSectionAccountId} (may be null) is the identity already established for the
+     *  section that is closing. A matched line whose OWN parsed identity ({@link #accountIdentityIn})
+     *  equals it is a RESTATEMENT of that same account, not evidence of a new one about to open --
+     *  see AccountIdentityLinePdfTableLocatorTest's own
+     *  trailingIdentityRestatement_keepsItsMetadata_doesNotStealTheNextSections for the real shape
+     *  this guards (a deposit schedule's own summary block restates its own "Account Number:" line
+     *  before a genuinely different table follows). Such a line is skipped,
+     *  not treated as the carry point -- the search continues further back for a genuinely
+     *  different identity, exactly as if this line were not identity-shaped at all. */
+    private List<String> extractTrailingIdentityLines(List<String> auxiliary, String closingSectionAccountId) {
+        int searchFrom = Math.max(0, auxiliary.size() - TRAILING_IDENTITY_LOOKBACK);
+        int lastIdentityIndex = -1;
+        for (int i = auxiliary.size() - 1; i >= searchFrom; i--) {
+            String line = auxiliary.get(i);
+            if (!looksLikeIdentityLine(line)) continue;
+            String parsedId = accountIdentityIn(line);
+            if (parsedId != null && parsedId.equals(closingSectionAccountId)) continue;
+            lastIdentityIndex = i;
+            break;
+        }
+        if (lastIdentityIndex < 0) return List.of();
+        List<String> carried = new ArrayList<>(auxiliary.subList(lastIdentityIndex, auxiliary.size()));
+        auxiliary.subList(lastIdentityIndex, auxiliary.size()).clear();
+        return carried;
+    }
 
     /** Closes whatever section is currently open: flushes any pending leading narration, then
      *  either stages it as a real {@link LocatedSection} or -- when {@link

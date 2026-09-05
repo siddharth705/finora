@@ -60,7 +60,9 @@ public class CapabilityCoverageService {
             "RUNNING_BALANCE", "DR_CR_SUFFIX", "LEADING_PLUS_CREDIT", "DATE_TIME_COLUMN",
             "WRAPPED_DESCRIPTION", "REPEATED_HEADER", "REPEATED_ACCOUNT_BANNER",
             "PAGE_BOUNDARY_ISOLATION", "COMPOSITE_STATEMENT", "CREDIT_CARD_SUMMARY_SIGNAL",
-            "OFFSET_COLUMN_ANCHORS", "COLUMN_SPAN_PLACEMENT", "GRID_METADATA_FALLBACK", "GRID_METADATA_TRAILING_LABEL",
+            "OFFSET_COLUMN_ANCHORS", "COLUMN_SPAN_PLACEMENT", "RECONCILED_HEADER_SECTIONS_REMERGED",
+            "TRAILING_IDENTITY_CARRIED_FORWARD", "INVESTMENT_FRAGMENT_REMERGED", "EMPTY_SECTION_DROPPED",
+            "GRID_METADATA_FALLBACK", "GRID_METADATA_TRAILING_LABEL",
             "LEADING_NAME_LINE", "LEADING_NARRATION_CONTINUATION",
             "FINANCIAL_PRODUCT_CLASSIFICATION",
             // Added once CapabilityCorpusCoverageTest found the engine recording them with the
@@ -299,6 +301,13 @@ public class CapabilityCoverageService {
             // transaction's trailing narration before this trigger existed. See
             // PdfTableLocator.SAVINGS_AND_BENEFITS_SECTION_MARKER.
             "SAVINGS_AND_BENEFITS_SECTION_CLOSED",
+            // Two real HSBC credit-card statements each print a "Loan Summary Table" caption
+            // introducing an unrelated loan-on-card EMI schedule -- without this trigger, that
+            // schedule's own header read as a genuinely new table and opened its own phantom
+            // section (which could never stage a real row, but stole the real ledger's own
+            // credit-card-summary vocabulary in the process). See
+            // PdfTableLocator.LOAN_SUMMARY_TABLE_MARKER.
+            "LOAN_SUMMARY_TABLE_CLOSED",
             // A real Canara Bank statement's own bare "Chq: <reference>" trailer line, past
             // MAX_TRAILING_CONTINUATION_ROWS's count cap, recovered as trailing content anyway by
             // content shape rather than count -- see PdfTableLocator.CHEQUE_REFERENCE_TRAILER.
