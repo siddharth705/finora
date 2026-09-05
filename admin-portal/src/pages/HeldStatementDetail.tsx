@@ -73,12 +73,17 @@ function HeldStatementDetailContent({ heldId }: { heldId: string }) {
 
   // Pre-fills the notes/findings editors with what is already on the row, once, when the row
   // first loads -- not on every refetch, or an operator's in-progress edit would be clobbered the
-  // moment their own save triggers this same query to refresh.
+  // moment their own save triggers this same query to refresh. markFalsePositive is included for a
+  // different reason: without this, the checkbox always renders unchecked, even for an already-
+  // resolved hold that WAS marked false positive at approve time -- contradicting the timeline
+  // entry on the very same screen. For an unresolved hold `falsePositive` is always null, so `??
+  // false` still defaults to unchecked there.
   useEffect(() => {
     if (detail.data) {
       setNotesDraft(detail.data.summary.engineerNotes ?? '');
       setRootCauseDraft(detail.data.summary.rootCause ?? '');
       setFixReferenceDraft(detail.data.summary.fixReference ?? '');
+      setMarkFalsePositive(detail.data.summary.falsePositive ?? false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [detail.data?.summary.id]);
@@ -92,8 +97,9 @@ function HeldStatementDetailContent({ heldId }: { heldId: string }) {
   }, [heldId]);
 
   // Same stale-state class of bug the rerun result above already guards against: a checked box
-  // left over from a previous hold (or from before a successful approve) must never silently ride
-  // along into the next approve call on a different row.
+  // left over from a previous hold must never silently ride along into the next approve call on a
+  // different row. This fires the instant navigation occurs, before the new query resolves; the
+  // effect above then corrects it to the new row's real persisted value once data loads.
   useEffect(() => {
     setMarkFalsePositive(false);
   }, [heldId]);

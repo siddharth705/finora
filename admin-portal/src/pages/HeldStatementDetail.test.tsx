@@ -236,6 +236,26 @@ describe('HeldStatementDetail', () => {
     expect(screen.getByText(/already imported/i)).toBeInTheDocument();
   });
 
+  /**
+   * Without this, the checkbox always renders unchecked -- even for a hold that WAS marked false
+   * positive at approve time -- contradicting the timeline entry on the very same screen. This is
+   * the same class of stale-UI-state bug the rerun-result reset already guards against, just in
+   * the other direction: here the fetched data must overwrite a local default, not the other way
+   * around.
+   */
+  it('shows the checkbox as checked when a resolved hold was marked false positive', async () => {
+    vi.mocked(adminHeldStatementApi.get).mockResolvedValue({
+      ...detail,
+      summary: { ...summary, status: 'IMPORTED', falsePositive: true },
+    });
+    mockAuth(['TRUST_REVIEW_MANAGE'], ['ADMIN']);
+    renderPage();
+    await screen.findByText(/count disagree/i);
+
+    expect(screen.getByLabelText(/mark as false positive/i)).toBeChecked();
+    expect(screen.getByLabelText(/mark as false positive/i)).toBeDisabled();
+  });
+
   it('leaves approve and reject enabled on an open hold', async () => {
     mockAuth(['TRUST_REVIEW_MANAGE'], ['ADMIN']);
     renderPage();

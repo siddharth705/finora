@@ -204,7 +204,11 @@ class WrappedHeaderOnAScoringLinePdfTableLocatorTest {
         expected.put("axis-credit-card-statement", new int[]{1, 110});
         expected.put("bob-repeated-account-banner", new int[]{1, 58});
         expected.put("bob-savings-ledger-validation", new int[]{1, 58});
-        expected.put("canara-savings-ledger-validation", new int[]{1, 60});
+        // 61, not 60: SAME_DAY_CONTINUATION_TRANSACTION now recognizes this trace's dateless
+        // "Closing Balance" marker (it restates the last transaction's own balance, same shape as
+        // the "Opening Balance" row already at row 0) as its own row instead of being silently
+        // absorbed into the last real transaction's description text.
+        expected.put("canara-savings-ledger-validation", new int[]{1, 61});
         expected.put("central-bank-savings-ledger-validation", new int[]{1, 223}); // was {1, 224}
         expected.put("hdfc-composite-deposit-schedules", new int[]{4, 102});
         // {2, 6} before looksLikePaymentSummaryPanel: same panel shape, 2 rows dropped.
