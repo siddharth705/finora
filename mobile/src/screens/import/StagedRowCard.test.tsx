@@ -137,3 +137,44 @@ describe('StagedRowCard — duplicate review', () => {
     });
   });
 });
+
+/**
+ * Track C/C3: isUnconfirmedGuess already surfaces the LOW-confidence sources ("Needs a look").
+ * This is the other half -- naming the source for the ones with real evidence behind them, so a
+ * confident suggestion doesn't read as indistinguishable from a lucky keyword match.
+ */
+describe('StagedRowCard — confident-source provenance (Track C/C3)', () => {
+  it.each([
+    ['learned', 'Learned from you'],
+    ['user_rule', 'Your rule'],
+    ['global_rule', 'Community rule'],
+    ['file', 'From your statement'],
+  ])('labels a %s row as "%s"', (categorySource, label) => {
+    renderCard({ row: row({ categorySource: categorySource as StagedRow['categorySource'] }) });
+    expect(screen.getByText(label)).toBeTruthy();
+  });
+
+  // The common, unremarkable path -- badging every row here would be exactly the noise "Needs a
+  // look" exists to stand out from.
+  it('shows no provenance badge for a plain keyword-table match', () => {
+    renderCard({ row: row({ categorySource: 'rule' }) });
+    expect(screen.queryByText('Learned from you')).toBeNull();
+    expect(screen.queryByText('Your rule')).toBeNull();
+    expect(screen.queryByText('Community rule')).toBeNull();
+    expect(screen.queryByText('From your statement')).toBeNull();
+  });
+
+  // Mutually exclusive by construction (categorySource is one value) -- pinned explicitly so a
+  // future categorySource added to both functions can't silently render both badges on one row.
+  it.each(['default', 'structural_p2p'] as const)(
+    'shows "Needs a look" rather than a provenance badge for %s',
+    (categorySource) => {
+      renderCard({ row: row({ categorySource }) });
+      expect(screen.getByText('Needs a look')).toBeTruthy();
+      expect(screen.queryByText('Learned from you')).toBeNull();
+      expect(screen.queryByText('Your rule')).toBeNull();
+      expect(screen.queryByText('Community rule')).toBeNull();
+      expect(screen.queryByText('From your statement')).toBeNull();
+    }
+  );
+});
