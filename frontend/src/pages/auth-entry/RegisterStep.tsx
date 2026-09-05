@@ -156,6 +156,13 @@ export function RegisterStep({ prefill, referralCode, onSuccess, onAccountExists
 
       {error && <p className="text-danger text-sm mb-4">{error}</p>}
 
+      <GoogleSignInButton text="signup_with" onCredential={handleGoogleCredential} onError={setError} />
+      <div className="mt-3">
+        <AppleSignInButton onCredential={handleAppleCredential} onError={setError} />
+      </div>
+
+      <AuthDivider />
+
       <label htmlFor="register-fullname" className="block text-xs font-medium text-muted mb-1">Full name</label>
       <div className="relative mb-1">
         <User size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
@@ -296,13 +303,6 @@ export function RegisterStep({ prefill, referralCode, onSuccess, onAccountExists
         {loading ? 'Creating account…' : 'Create account'}
         {!loading && <ArrowRight size={15} />}
       </button>
-
-      <AuthDivider />
-
-      <GoogleSignInButton text="signup_with" onCredential={handleGoogleCredential} onError={setError} />
-      <div className="mt-3">
-        <AppleSignInButton onCredential={handleAppleCredential} onError={setError} />
-      </div>
     </form>
   );
 }

@@ -110,6 +110,13 @@ export function IdentifyStep({ onExists, onContinue, onSuccess }: IdentifyStepPr
 
       {error && <p className="text-danger text-sm mb-4">{error}</p>}
 
+      <GoogleSignInButton text="signin_with" onCredential={handleGoogleCredential} onError={setError} />
+      <div className="mt-3">
+        <AppleSignInButton onCredential={handleAppleCredential} onError={setError} />
+      </div>
+
+      <AuthDivider />
+
       <label htmlFor="auth-entry-identifier" className="block text-xs font-medium text-muted mb-1">Email or mobile number</label>
       <div className="relative mb-6">
         <User size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
@@ -132,13 +139,6 @@ export function IdentifyStep({ onExists, onContinue, onSuccess }: IdentifyStepPr
       >
         {loading ? 'Continuing…' : 'Continue'}
       </button>
-
-      <AuthDivider />
-
-      <GoogleSignInButton text="signin_with" onCredential={handleGoogleCredential} onError={setError} />
-      <div className="mt-3">
-        <AppleSignInButton onCredential={handleAppleCredential} onError={setError} />
-      </div>
     </form>
   );
 }

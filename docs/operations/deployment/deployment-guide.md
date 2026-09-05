@@ -402,14 +402,17 @@ API allowance as **untrusted**, not as a domain to migrate away from politely:
 ## Dev environment (admin-portal, frontend, mobile)
 
 The backend already runs on two Railway environments — Production (`api.fynora.net`) and Dev.
-The Dev environment's own custom domain and every `dev-*.finoratech.info` reference below are
-stale in the same way as the production ones above (see the hard-cutover note): they still name
-a domain this project no longer controls, and no `fynora.net` Dev-tier equivalent has been
-provisioned yet. Remove Dev's `finoratech.info` custom domain in Railway and the `dev-app.`/
-`dev-admin.` ones in Cloudflare Pages the same way as the production custom domains; re-add the
-`dev-*.fynora.net` equivalents (and update `CORS_ORIGINS`/`APP_BASE_URL`/`ADMIN_APP_BASE_URL`
-below, Cloudflare Pages' Preview env bucket, and `mobile/eas.json`'s `dev` profile — see
-`docs/engineering/mobile/mobile-setup.md`) once they exist. This section covers giving the three
+This section used to say no `fynora.net` Dev-tier equivalent existed yet — no longer true for two
+of the three. Verified directly (`dig` + `curl /actuator/health` or a plain request), not assumed:
+`dev-api.fynora.net` and `dev-app.fynora.net` are live, resolving to the same Cloudflare edge as
+production and answering 200; `dev-admin.fynora.net` does not resolve yet. So `dev-admin.` is the
+one still needing the same treatment `finoratech.info`'s hard-cutover note describes for
+production — remove the stale `dev-admin.finoratech.info` Cloudflare Pages custom domain and
+re-add `dev-admin.fynora.net` once DNS for it exists — while `dev-api.`/`dev-app.` just need every
+remaining `finoratech.info` reference below (`CORS_ORIGINS`/`APP_BASE_URL`, Cloudflare Pages'
+Preview env bucket, `mobile/eas.json`'s `dev` profile — see
+`docs/engineering/mobile/mobile-setup.md`) updated to the `fynora.net` value that already works.
+This section covers giving the three
 client surfaces (admin-portal, frontend, mobile) a matching Dev tier, so a feature can be
 exercised end-to-end against a live backend before it ever touches production data, Firebase, or
 real Google accounts.
@@ -428,7 +431,8 @@ to `main` by opening (or reusing) a `main → dev` PR and enabling auto-merge on
 would be rejected by the protection rule itself, so this goes through the same required checks
 (`Backend (Java 25)`, `User frontend`, `Admin portal`, `Mobile (Expo)`, `End-to-end smoke
 (Chromium)`) as any other change to a protected branch, rather than bypassing them. Cloudflare
-Pages binds `dev-app.finoratech.info` / `dev-admin.finoratech.info` to this branch as a
+Pages binds `dev-app.fynora.net` (live, verified) / `dev-admin.finoratech.info` (not yet migrated —
+see the "Dev environment" section above) to this branch as a
 **branch-alias custom domain** (Pages project → Settings → Custom domains → set up a custom
 domain, then repoint that hostname's DNS CNAME at `dev.<pages-project>.pages.dev` instead of the
 bare `<pages-project>.pages.dev`) — not a second Pages project.
@@ -444,7 +448,7 @@ entirely. Revisit this once that changes. The repo's "Allow auto-merge" setting 
 
 Cloudflare Pages' environment-variable UI has only two buckets, Production and Preview — there is
 no native per-branch scoping. The Dev-specific `VITE_*` values (the six `VITE_FIREBASE_*` keys,
-`VITE_API_BASE_URL=https://dev-api.finoratech.info`, plus `VITE_GOOGLE_LOGIN_CLIENT_ID` on
+`VITE_API_BASE_URL=https://dev-api.fynora.net`, plus `VITE_GOOGLE_LOGIN_CLIENT_ID` on
 `frontend/` and `VITE_BACKEND_ORIGIN` on `admin-portal/`) go in the **Preview** bucket — which
 means every open PR's preview deployment also picks them up, not just the `dev` branch. That's the
 intended outcome: no PR preview should ever be able to reach Production's Firebase project or data.
@@ -457,7 +461,7 @@ how each of those is shaped; the Dev environment's copies just point at the new 
 the existing one).
 
 **Mobile has no cloud-built Dev profile.** `mobile/eas.json`'s `dev` build profile inlines
-`EXPO_PUBLIC_API_BASE_URL=https://dev-api.finoratech.info` directly (no confidentiality reason to
+`EXPO_PUBLIC_API_BASE_URL=https://dev-api.fynora.net` directly (no confidentiality reason to
 route a public API origin through EAS's environment-variable store — see `mobile-setup.md` for why
 `EXPO_PUBLIC_*` values are inlined into the client bundle regardless), but a genuinely custom EAS
 environment name for the Dev Firebase config files is only available on a paid EAS plan. Build the
