@@ -5,6 +5,7 @@ import {
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRoute, type RouteProp } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { usePreventScreenCapture } from 'expo-screen-capture';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { categoriesApi, transactionsApi, type PagedResponse, type TransactionFilters } from '../api/endpoints';
 import { OptionPickerModal } from '../components/OptionPickerModal';
@@ -45,6 +46,10 @@ export function getLedgerNextPageParam(lastPage: PagedResponse<Transaction>) {
 }
 
 export function LedgerScreen() {
+  // D3 (Track D security cleanup). Every row here is a real transaction description and amount --
+  // the same screenshot/screen-recording exposure Dashboard, Accounts, and Statement History
+  // already guard against, just not yet extended to the Ledger itself.
+  usePreventScreenCapture();
   const c = useTheme();
   const insets = useSafeAreaInsets();
   const largeText = useLargeFontScale();

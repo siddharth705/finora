@@ -51,6 +51,16 @@ describe('isEnabled / setEnabled', () => {
     expect(await appLock.isEnabled()).toBe(false);
     expect(await SecureStore.getItemAsync('finora_app_lock_enabled')).toBeNull();
   });
+
+  // D1 (Track D). "Absent" and "threw" must not collapse to the same false -- a genuinely absent
+  // key means the user never turned the lock on (fine to open), but a thrown read means whether
+  // the lock is on cannot actually be determined, which has to fail closed instead.
+  it('fails closed to true (not the generic false-on-error safeStorage would give) when the read throws', async () => {
+    const mockedGetItemAsync = SecureStore.getItemAsync as jest.MockedFunction<typeof SecureStore.getItemAsync>;
+    mockedGetItemAsync.mockRejectedValueOnce(new Error('keychain unavailable'));
+
+    expect(await appLock.isEnabled()).toBe(true);
+  });
 });
 
 describe('authenticate', () => {

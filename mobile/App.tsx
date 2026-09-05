@@ -8,6 +8,7 @@ import { AppLockGate } from './src/components/AppLockGate';
 import { OfflineBoundary } from './src/components/OfflineBanner';
 import { RootWarningBoundary } from './src/components/RootWarningBanner';
 import { AuthProvider } from './src/context/AuthContext';
+import { sweepFileCache } from './src/lib/fileCacheSweep';
 import { initMonitoring, withMonitoring } from './src/lib/monitoring';
 import { RootNavigator } from './src/navigation/RootNavigator';
 import { ThemeProvider, useAppFonts } from './src/theme';
@@ -55,6 +56,10 @@ function App() {
   // network-monitoring effect just above: subscribed here, not at module scope, so it's torn down
   // cleanly rather than leaking across fast-refresh reloads in development.
   useEffect(() => startQueryPersistence(), []);
+  // D2 (Track D security cleanup) -- see fileCacheSweep.ts's own doc comment for exactly what
+  // this backstops and why it's age-based. Once per cold start, same posture as the two effects
+  // above.
+  useEffect(() => sweepFileCache(), []);
 
   // Fires after this render has committed, i.e. after RootNavigator's tree (its own bootstrapping
   // spinner, at minimum) has something real to paint -- see the preventAutoHideAsync comment

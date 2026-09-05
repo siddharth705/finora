@@ -5,6 +5,7 @@ import {
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigation } from '@react-navigation/native';
 import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
+import { usePreventScreenCapture } from 'expo-screen-capture';
 import { AnimatedNumber } from '../components/AnimatedNumber';
 import { Button } from '../components/Button';
 import { Card, EmptyState } from '../components/Card';
@@ -31,6 +32,10 @@ import type { AppTabParamList } from '../navigation/types';
  * which is both the better touch affordance and the fix for that.
  */
 export function BudgetsScreen() {
+  // D3 (Track D security cleanup). Budget amounts and category spend are financial figures like
+  // any other -- same screenshot/screen-recording exposure Dashboard/Accounts/Statement History
+  // already guard against.
+  usePreventScreenCapture();
   const c = useTheme();
   const queryClient = useQueryClient();
   // BudgetsScreen lives inside the More stack (see AppTabs.tsx), not on the tab bar itself --

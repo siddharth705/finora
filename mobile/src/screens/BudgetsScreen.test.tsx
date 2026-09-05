@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useNavigation } from '@react-navigation/native';
+import { usePreventScreenCapture } from 'expo-screen-capture';
 import { BudgetsScreen } from './BudgetsScreen';
 import { budgetsApi, categoriesApi } from '../api/endpoints';
 import { currentYearMonth, monthDateRange, monthLabel } from '../lib/format';
@@ -182,5 +183,15 @@ describe('skeleton loading', () => {
     expect(screen.getByLabelText('Choose a category')).toBeTruthy();
     expect(screen.getByText('Set Budget')).toBeTruthy();
     expect(screen.getAllByTestId('skeleton-budget-card', { hidden: true }).length).toBeGreaterThan(0);
+  });
+});
+
+// D3 (Track D security cleanup). Budget amounts are as screenshot-attractive as anything on the
+// Dashboard or Accounts screen, which already guard against this.
+describe('screen capture protection (Track D/D3)', () => {
+  it('calls usePreventScreenCapture on mount', () => {
+    renderScreen();
+
+    expect(usePreventScreenCapture).toHaveBeenCalled();
   });
 });
