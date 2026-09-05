@@ -376,6 +376,18 @@ export const adminHeldImportApi = {
     api.post<{ reprocessed: number }>('/admin/held-imports/reprocess-all').then((r) => r.data),
   resolve: (jobId: string, reason: string) =>
     api.post<HeldImportRow>(`/admin/held-imports/${jobId}/resolve`, { reason }).then((r) => r.data),
+  // Same pattern as adminHeldStatementApi.download -- a plain <a href> can't carry the Bearer
+  // token, so this rides the authenticated axios instance and triggers the browser download
+  // client-side. Uses the statement's real fileName (available from the already-loaded detail),
+  // unlike the trust-review sibling's hardcoded ".pdf" -- CSV imports can be held too.
+  download: async (jobId: string, fileName: string) => {
+    try {
+      const res = await api.get(`/admin/held-imports/${jobId}/document`, { responseType: 'blob' });
+      downloadBlob(res.data as Blob, fileName);
+    } catch (err) {
+      throw await withBlobErrorMessage(err);
+    }
+  },
 };
 
 /** The trust-review queue -- statements the pipeline held back because the extraction's own

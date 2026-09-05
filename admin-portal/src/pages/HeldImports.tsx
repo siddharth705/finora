@@ -1,10 +1,11 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Clock, PlayCircle, RefreshCw } from 'lucide-react';
+import { Clock, Download, PlayCircle, RefreshCw } from 'lucide-react';
 import { AdminLayout } from '../components/AdminLayout';
 import { RequirePermission } from '../components/ProtectedRoute';
 import { DataTable, type DataTableColumn } from '../components/DataTable';
 import { Pagination } from '../components/Pagination';
+import { useAdminAuth } from '../context/AdminAuthContext';
 import { adminHeldImportApi } from '../api/endpoints';
 import { formatWhen } from '../lib/formatWhen';
 import type { HeldImportRow, HeldImportDetail } from '../types';
@@ -230,15 +231,46 @@ function HeldImportDetailPanel({
   onClose: () => void;
 }) {
   const [reason, setReason] = useState('');
+  const { roles } = useAdminAuth();
+  const canDownload = roles.includes('ADMIN') || roles.includes('SUPER_ADMIN');
+  const [downloading, setDownloading] = useState(false);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
+
+  async function handleDownload() {
+    if (!detail) return;
+    setDownloading(true);
+    setDownloadError(null);
+    try {
+      await adminHeldImportApi.download(detail.job.id, detail.job.fileName);
+    } catch {
+      setDownloadError('Could not download this statement.');
+    } finally {
+      setDownloading(false);
+    }
+  }
 
   return (
     <div className="bg-card border border-border rounded-xl2 p-6 space-y-5">
       <div className="flex items-start justify-between">
         <h2 className="text-lg font-semibold text-ink">Held import</h2>
-        <button className="text-muted hover:text-ink text-sm" onClick={onClose}>
-          Close
-        </button>
+        <div className="flex items-center gap-3">
+          {detail && canDownload && (
+            <button
+              type="button"
+              onClick={() => void handleDownload()}
+              disabled={downloading}
+              className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-1.5 text-xs text-ink hover:bg-card disabled:opacity-50"
+            >
+              <Download className="h-3.5 w-3.5" />
+              {downloading ? 'Downloading…' : 'Download statement'}
+            </button>
+          )}
+          <button className="text-muted hover:text-ink text-sm" onClick={onClose}>
+            Close
+          </button>
+        </div>
       </div>
+      {downloadError && <p className="text-xs text-red-400">{downloadError}</p>}
 
       {loading && <p className="text-muted text-sm">Loading…</p>}
 
