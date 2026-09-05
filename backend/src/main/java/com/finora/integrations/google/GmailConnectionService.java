@@ -247,10 +247,21 @@ public class GmailConnectionService {
             // which allows only one CONNECTED/REAUTH_REQUIRED row per user. DISCONNECTED rather than
             // a dedicated status: it drops out of LIVE and out of NEEDS_RECONNECT the same way a
             // user-initiated disconnect does, which is exactly right once this reconnect succeeds.
+            //
+            // Bug fix, confirmed against a live production failure: saveAndFlush, not save. Plain
+            // save() only registers the UPDATE in the persistence context -- it does not run it.
+            // Hibernate's default flush order runs ALL insertions before ANY updates, regardless of
+            // the order save() was called in, so the fresh row's INSERT below was reaching Postgres
+            // BEFORE this UPDATE did. At that instant the old row was still live, so the partial
+            // unique index saw two live rows for this user_id and the insert failed with
+            // "duplicate key value violates unique constraint uq_gmail_connections_active_user" --
+            // the exact thing this close() call exists to prevent. Flushing here forces the UPDATE
+            // to hit the database first, so the row is actually out of LIVE by the time the INSERT
+            // runs.
             connections.findByUserIdAndStatusIn(userId, LIVE)
                     .ifPresent(stale -> {
                         stale.close(GmailConnection.Status.DISCONNECTED);
-                        connections.save(stale);
+                        connections.saveAndFlush(stale);
                     });
 
             GmailConnection connection = new GmailConnection();
