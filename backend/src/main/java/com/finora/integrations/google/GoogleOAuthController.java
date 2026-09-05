@@ -96,7 +96,15 @@ public class GoogleOAuthController {
             // Deliberately no exception text in the redirect: this URL lands in the user's history
             // and referrer headers, and the message could describe internals. The specific reason
             // is logged server-side and the settings page shows the real status by re-fetching it.
-            log.warn("Gmail OAuth callback failed: {}", e.getClass().getSimpleName());
+            //
+            // Bug fix: "logged server-side" was only ever true of the exception's CLASS, not its
+            // message -- for an ApiException (the expected case) the message is the one clean,
+            // human-written sentence explaining exactly what went wrong, and it was being thrown
+            // away, leaving only "ApiException" to diagnose a real failure by. Sanitized the same
+            // way the `error` param above is, since GoogleOAuthClient's messages can echo details
+            // from Google's own error responses.
+            log.warn("Gmail OAuth callback failed: {}: {}", e.getClass().getSimpleName(),
+                    LogSanitizer.sanitize(e.getMessage()));
             return redirectTo("gmail=failed");
         }
     }
