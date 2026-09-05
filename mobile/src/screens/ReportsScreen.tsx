@@ -11,7 +11,9 @@ import { OptionPickerModal } from '../components/OptionPickerModal';
 import { ProgressBar } from '../components/ProgressBar';
 import { reportsApi } from '../api/endpoints';
 import { toUserMessage } from '../lib/apiError';
-import { fmtCurrency, monthDateRange, monthLabel } from '../lib/format';
+import {
+  fmtCurrency, monthDateRange, monthLabel, monthLabelLong,
+} from '../lib/format';
 import { shareCsv, sharePdf } from '../lib/reportExport';
 import { radius, spacing, useTheme } from '../theme';
 import type { AppTabParamList } from '../navigation/types';
@@ -244,7 +246,7 @@ export function ReportsScreen() {
                     accessibilityRole="button"
                     accessibilityLabel={`${cat.category}: ${fmtCurrency(cat.amount)}, ${pct.toFixed(
                       0
-                    )} percent of this month's spending`}
+                    )} percent of ${monthLabelLong(month as string)}'s spending`}
                     accessibilityHint="Opens these transactions"
                     android_ripple={{ color: c.border }}
                     onPress={() => {
