@@ -364,6 +364,11 @@ export function ImportScreen() {
   // upload()'s finally, so the panel doesn't fall back to 'idle' for a frame while `uploadCompleted`
   // is still true (see that state's own doc comment).
   function celebrateThenAdvance(advance: () => void) {
+    // Defensive, not currently reachable: every caller of upload() already refuses to run while
+    // `uploading` (which covers uploadCompleted too) is true, so this can't yet fire twice before
+    // the first timer completes. Guards against that invariant quietly breaking later, rather than
+    // leaking the earlier timer and calling `advance` twice.
+    if (completionTimer.current) clearTimeout(completionTimer.current);
     setUploadCompleted(true);
     completionTimer.current = setTimeout(() => {
       setUploadCompleted(false);
@@ -530,9 +535,13 @@ export function ImportScreen() {
                 {/* The only way out of this screen while an upload is in flight. It matters most
                     on the request that can never time out on its own (see toUploadProgressConfig):
                     on a dead connection the bar simply freezes, and without this the user is stuck
-                    watching it. Gone once uploadCompleted flips true -- there is nothing left to
-                    cancel by then. */}
-                {uploading && <Button label="Cancel upload" variant="link" onPress={cancelUpload} />}
+                    watching it.
+                    Bug fix: gated on panelState, not `uploading` -- uploadProgress (what `uploading`
+                    reads) isn't reset to null until celebrateThenAdvance's dwell timer fires, so
+                    `uploading` stays true for the whole 'completed' checkmark too. This button was
+                    sitting there through the entire dwell, doing nothing (cancelUpload's abort
+                    controller is already null by then -- upload() already succeeded). */}
+                {panelState === 'uploading' && <Button label="Cancel upload" variant="link" onPress={cancelUpload} />}
               </>
             )}
             {showPasswordPanel && pendingPdf && (

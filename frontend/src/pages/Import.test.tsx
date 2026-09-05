@@ -291,6 +291,28 @@ describe('Import — file-type routing', () => {
     expect(screen.queryByTestId('upload-completed')).not.toBeInTheDocument();
   });
 
+  /**
+   * Bug fix: pendingPdf used to clear the instant stagePdf resolved, which made showUploadPicker
+   * (`!pendingPdf`) true for the whole Completed dwell -- swapping the password panel out for the
+   * dropzone, a different element further down the page, with "Continue previous import"/the retry
+   * banner able to render ABOVE it. The checkmark appeared in a box the user wasn't looking at,
+   * with unrelated content flashing in alongside it. The fix keeps pendingPdf (and this panel)
+   * mounted through the dwell so the PDF path's checkmark appears where its own progress bar just
+   * was, exactly like the dropzone already does for a CSV.
+   */
+  it('shows the Completed checkmark inside the PDF password panel, not the dropzone', async () => {
+    const user = userEvent.setup();
+    renderImport();
+
+    await pickAndUploadPdf(user);
+
+    expect(await screen.findByTestId('upload-completed')).toBeInTheDocument();
+    expect(screen.getByTestId('pdf-password-panel')).toBeInTheDocument();
+    expect(screen.queryByTestId('statement-dropzone')).not.toBeInTheDocument();
+
+    expect(await screen.findByRole('button', { name: /confirm import/i })).toBeInTheDocument();
+  });
+
   it('rejects an unsupported file type dropped onto the dropzone, without calling either staging endpoint', async () => {
     renderImport();
 

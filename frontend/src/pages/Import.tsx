@@ -535,11 +535,27 @@ export default function Import() {
   // single frame between "100%" and the review screen. uploadProgress is reset here, not in
   // upload()'s finally, so the panel doesn't fall back to 'idle' for a frame while `uploadCompleted`
   // is still true (see that state's own doc comment).
+  //
+  // Also clears pendingPdf/pdfPassword/passwordState here, not immediately on success -- bug fix:
+  // clearing them right away used to make showUploadPicker (`!pendingPdf`) true for the whole
+  // dwell, which swapped the PDF-password panel out for the dropzone (a different element further
+  // down the page, with the "Continue previous import" list and retry banner rendering ABOVE it)
+  // right as the checkmark was meant to appear where the user was already looking. Keeping the
+  // panel mounted (its password field just sits there disabled) through the dwell is what makes
+  // the PDF path morph in place instead of jumping to a different box.
   function celebrateThenAdvance(advance: () => void) {
+    // Defensive, not currently reachable: every caller of upload() already refuses to run while
+    // `uploading` (which covers uploadCompleted too) is true, so this can't yet fire twice before
+    // the first timer completes. Guards against that invariant quietly breaking later, rather than
+    // leaking the earlier timer and calling `advance` twice.
+    if (completionTimer.current) clearTimeout(completionTimer.current);
     setUploadCompleted(true);
     completionTimer.current = setTimeout(() => {
       setUploadCompleted(false);
       setUploadProgress(null);
+      setPendingPdf(null);
+      setPdfPassword('');
+      setPasswordState(null);
       advance();
     }, UPLOAD_COMPLETE_DWELL_MS);
   }
@@ -577,11 +593,9 @@ export default function Import() {
         : await importApi.stageCsv(file, setUploadProgress);
       setSessionId(res.sessionId);
       setFileFormat(isPdf ? 'PDF' : 'CSV');
-      // The document opened, so the password (if any) has done its whole job. Drop both it and
-      // the file: neither is needed again, and confirm/reimport work from the server-side session.
-      setPendingPdf(null);
-      setPdfPassword('');
-      setPasswordState(null);
+      // The document opened, so the password (if any) has done its whole job -- neither it nor the
+      // file is needed again, confirm/reimport work from the server-side session. Not cleared here
+      // though: see celebrateThenAdvance's own comment for why that has to wait until the dwell ends.
 
       // Multi-account PDF (e.g. an HSBC-style composite statement bundling a savings account and
       // a credit-card account in one file) -- res.staging is null here, res.sections is what's

@@ -1,7 +1,7 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import type { ReactNode } from 'react';
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { StyleSheet, Text, View } from 'react-native';
+import { AccessibilityInfo, Platform, StyleSheet, Text, View } from 'react-native';
 import Animated, {
   FadeIn, FadeOut, useAnimatedStyle, useSharedValue, withTiming,
 } from 'react-native-reanimated';
@@ -43,6 +43,18 @@ export function UploadProgressPanel({
 
   const fillStyle = useAnimatedStyle(() => ({ width: `${fillPct.value}%` }));
 
+  // accessibilityLiveRegion below is Android-only -- React Native has no iOS equivalent, so a
+  // VoiceOver user gets no signal that the upload actually succeeded before the screen silently
+  // moves on to review a moment later (same gap, same fix, as RootWarningBanner/OfflineBanner).
+  // Announced only on the transition INTO 'completed', not on every render while it's showing.
+  const wasCompleted = useRef(state === 'completed');
+  useEffect(() => {
+    if (Platform.OS === 'ios' && !wasCompleted.current && state === 'completed') {
+      AccessibilityInfo.announceForAccessibility('Completed');
+    }
+    wasCompleted.current = state === 'completed';
+  }, [state]);
+
   return (
     <View>
       {state === 'idle' && (
@@ -73,6 +85,8 @@ export function UploadProgressPanel({
           exiting={FadeOut.duration(150)}
           style={[styles.completed, { backgroundColor: c.ink }]}
           testID="upload-completed"
+          accessible
+          accessibilityLiveRegion="polite"
         >
           <Ionicons name="checkmark-circle" size={26} color={c.success} />
           <Text style={[styles.completedText, { color: c.card }]}>Completed</Text>

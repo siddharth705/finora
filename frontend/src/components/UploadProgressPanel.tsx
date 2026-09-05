@@ -64,7 +64,12 @@ export function UploadProgressPanel({
             className="bg-ink text-card rounded-xl2 py-5 flex flex-col items-center gap-2"
           >
             <CheckCircle2 size={26} className="text-success" />
-            <p className="font-medium text-sm">Completed</p>
+            {/* role="status" (same convention as DuplicateReview's own success/failure text) --
+                without it, a screen-reader user gets no announcement that the upload actually
+                succeeded before the page silently moves on to the review step a moment later. Not
+                added to the "Uploading… N%" text above: that updates every percent, and a live
+                region announcing each tick would be far noisier than useful. */}
+            <p className="font-medium text-sm" role="status">Completed</p>
           </motion.div>
         )}
       </AnimatePresence>

@@ -278,6 +278,11 @@ describe('ImportScreen — upload completion dwell', () => {
 
     expect(await screen.findByTestId('upload-completed')).toBeTruthy();
     expect(screen.queryByText('Choose a file')).toBeNull();
+    // Bug fix: "Cancel upload" used to stay on screen through the whole dwell -- uploadProgress
+    // (what its old visibility check read) isn't reset to null until the dwell timer fires, so it
+    // outlived the request it was meant to cancel. Pressing it did nothing by then (the abort
+    // controller is already null), which is a dead button sitting next to a success checkmark.
+    expect(screen.queryByText('Cancel upload')).toBeNull();
 
     // ...and then it actually does move on to the review step, on its own, with no further
     // interaction. A longer timeout than the default 1000ms: UPLOAD_COMPLETE_DWELL_MS alone is
