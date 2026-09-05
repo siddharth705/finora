@@ -135,7 +135,7 @@ export function IdentifyStep({ onExists, onContinue, onSuccess }: IdentifyStepPr
       <button
         type="submit"
         disabled={loading}
-        className="w-full bg-primary hover:bg-primary-dark text-on-primary rounded-lg py-2.5 text-sm font-semibold disabled:opacity-50"
+        className="w-full bg-primary hover:bg-primary-dark active:scale-[0.98] transition-transform text-on-primary rounded-lg py-2.5 text-sm font-semibold disabled:opacity-50"
       >
         {loading ? 'Continuing…' : 'Continue'}
       </button>
