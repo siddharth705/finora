@@ -2,19 +2,19 @@ import { useEffect, useRef } from 'react';
 import type { ReactNode } from 'react';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { AccessibilityInfo, Platform, StyleSheet, Text, View } from 'react-native';
-import Animated, {
-  FadeIn, FadeOut, useAnimatedStyle, useSharedValue, withTiming,
-} from 'react-native-reanimated';
+import Animated, { useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 import { radius, spacing, useTheme } from '../theme';
 
 export type UploadPanelState = 'idle' | 'uploading' | 'completed';
 
 /**
- * The three-state upload micro-interaction shared by ImportScreen's file picker and its
- * PDF-password panel -- the same widget the web app builds with Framer Motion's `layout`
- * animation, done here with Reanimated (there is no Framer Motion equivalent in React Native).
- * Purely presentational, same as the web version: the caller owns `state`/`progress` and the
- * timing of when `state` becomes 'completed' -- see ImportScreen's `celebrateThenAdvance`.
+ * The three-state upload widget shared by ImportScreen's file picker and its PDF-password panel
+ * -- the mobile counterpart of the web app's Framer Motion version. Purely presentational, same as
+ * the web version: the caller owns `state`/`progress` and the timing of when `state` becomes
+ * 'completed' -- see ImportScreen's `celebrateThenAdvance`.
+ *
+ * The three states swap with no transition animation of their own (see the bug-fix comment below
+ * for why) -- only the progress-fill bar animates, via Reanimated's `useAnimatedStyle`.
  */
 export function UploadProgressPanel({
   state,
@@ -28,7 +28,7 @@ export function UploadProgressPanel({
   progress: number;
   /** The caller's own idle-state content (a "Choose a file" button, or an "Upload statement"
    *  button plus its "Choose a different file" link) -- this component only supplies the
-   *  uploading/completed states and the animated swap between whichever apply at that call site. */
+   *  uploading/completed states and the swap between whichever apply at that call site. */
   idle: ReactNode;
 }) {
   const c = useTheme();
@@ -57,32 +57,32 @@ export function UploadProgressPanel({
 
   return (
     <View>
-      {state === 'idle' && (
-        <Animated.View entering={FadeIn.duration(200)} exiting={FadeOut.duration(150)}>
-          {idle}
-        </Animated.View>
-      )}
+      {/* Bug fix: these three branches used to be Animated.View with entering/exiting
+          (FadeIn/FadeOut) -- fine individually, but a CSV's idle -> uploading -> completed
+          sequence fires in well under a second, faster than those 150-200ms exit animations can
+          finish. Fabric's mounting manager crashed outright when the next branch's insert landed
+          before the previous one's animated removal had: "IllegalStateException: addViewAt:
+          failed to insert view [598] into parent [578] at index 5" / "IndexOutOfBoundsException:
+          index=5 count=4" -- reproduced in CI's Maestro import flow (PR #994), confirmed via the
+          crash's device logcat, not guessed. Plain Views mount/unmount on React's own schedule
+          with no separate native-thread animation to race. The progress-fill bar below keeps its
+          `useAnimatedStyle`/`withTiming` width animation -- that's a style animation on values,
+          not a mount/unmount layout transition, and isn't part of this crash class. */}
+      {state === 'idle' && <View>{idle}</View>}
 
       {state === 'uploading' && (
-        <Animated.View
-          entering={FadeIn.duration(200)}
-          exiting={FadeOut.duration(150)}
-          style={styles.progressWrap}
-          testID="upload-progress"
-        >
+        <View style={styles.progressWrap} testID="upload-progress">
           <Text style={[styles.progressText, { color: c.ink }]}>
             {progress < 100 ? `Uploading… ${progress}%` : 'Reading statement…'}
           </Text>
           <View style={[styles.progressTrack, { backgroundColor: c.border }]}>
             <Animated.View style={[styles.progressFill, { backgroundColor: c.primary }, fillStyle]} />
           </View>
-        </Animated.View>
+        </View>
       )}
 
       {state === 'completed' && (
-        <Animated.View
-          entering={FadeIn.duration(200)}
-          exiting={FadeOut.duration(150)}
+        <View
           style={[styles.completed, { backgroundColor: c.ink }]}
           testID="upload-completed"
           accessible
@@ -90,7 +90,7 @@ export function UploadProgressPanel({
         >
           <Ionicons name="checkmark-circle" size={26} color={c.success} />
           <Text style={[styles.completedText, { color: c.card }]}>Completed</Text>
-        </Animated.View>
+        </View>
       )}
     </View>
   );
