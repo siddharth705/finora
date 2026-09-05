@@ -32,7 +32,7 @@ jest.mock('@react-navigation/native', () => ({
  */
 
 jest.mock('../api/endpoints', () => ({
-  transactionsApi: { search: jest.fn(), remove: jest.fn(), updateCategory: jest.fn() },
+  transactionsApi: { search: jest.fn(), remove: jest.fn(), updateCategory: jest.fn(), source: jest.fn() },
   categoriesApi: { list: jest.fn() },
 }));
 
@@ -479,5 +479,63 @@ describe('drill-through filters (Track C/C4)', () => {
 
     expect(await screen.findByText('Travel')).toBeTruthy();
     expect(screen.queryByText('Food')).toBeNull();
+  });
+});
+
+describe('"Where this came from" panel (Track C/C7)', () => {
+  it('opens the source panel for the tapped row without also opening the category picker', async () => {
+    transactions.search.mockResolvedValue(page([txn()]) as never);
+    transactions.source.mockResolvedValue({
+      available: true, sourceLabel: 'CSV_IMPORT', statementDeleted: false, statementImportId: 'si-1',
+      fileName: 'march-statement.pdf', rowPosition: 14, importedAt: '2026-08-15T10:00:00Z',
+      accountName: 'HDFC Savings', statementPeriodStart: '2026-03-01', statementPeriodEnd: '2026-03-31',
+    } as never);
+
+    renderScreen();
+    fireEvent.press(await screen.findByTestId('source-button-t-1'));
+
+    expect(await screen.findByText('march-statement.pdf')).toBeTruthy();
+    // Tapping the info button must not also trigger the row's own onPress (category picker).
+    expect(screen.queryByText('Change category')).toBeNull();
+    expect(transactions.source).toHaveBeenCalledWith('t-1');
+  });
+
+  it('closes without affecting the row underneath', async () => {
+    transactions.search.mockResolvedValue(page([txn()]) as never);
+    transactions.source.mockResolvedValue({
+      available: false, sourceLabel: 'MANUAL', statementDeleted: false, statementImportId: null, fileName: null,
+      rowPosition: null, importedAt: null, accountName: null,
+      statementPeriodStart: null, statementPeriodEnd: null,
+    } as never);
+
+    renderScreen();
+    fireEvent.press(await screen.findByTestId('source-button-t-1'));
+    expect(await screen.findByText('You entered this transaction yourself.')).toBeTruthy();
+
+    fireEvent.press(screen.getByText('Close'));
+
+    await waitFor(() => expect(screen.queryByText('You entered this transaction yourself.')).toBeNull());
+    expect(screen.getByText('Grocery run')).toBeTruthy();
+  });
+
+  // The actual bug this test guards: the visible info Pressable is nested inside the row's own
+  // already-accessible Pressable, so it can NEVER be an independently reachable screen-reader
+  // stop (VoiceOver/TalkBack group the whole subtree into one atomic element) -- no matter what
+  // accessibilityLabel it carries. The real, reachable path for a screen-reader user is the
+  // 'viewSource' accessibilityAction declared on the OUTER row, exercised here the same way a
+  // screen reader's rotor would trigger it, not a direct press on the inner Pressable.
+  it('is reachable for a screen-reader user via the row\'s viewSource accessibility action', async () => {
+    transactions.search.mockResolvedValue(page([txn()]) as never);
+    transactions.source.mockResolvedValue({
+      available: true, sourceLabel: 'CSV_IMPORT', statementImportId: 'si-1',
+      fileName: 'march-statement.pdf', rowPosition: 14, importedAt: '2026-08-15T10:00:00Z',
+      accountName: 'HDFC Savings', statementPeriodStart: '2026-03-01', statementPeriodEnd: '2026-03-31',
+      statementDeleted: false,
+    } as never);
+
+    renderScreen();
+    fireEvent(await screen.findByText('Grocery run'), 'accessibilityAction', { nativeEvent: { actionName: 'viewSource' } });
+
+    expect(await screen.findByText('march-statement.pdf')).toBeTruthy();
   });
 });

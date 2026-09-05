@@ -41,6 +41,11 @@ const NON_FINANCIAL_KEYS = new Set([
   // right after creating a new ticket.
   'support-tickets-mine',
   'support-ticket-detail',
+  // Track C/C7. Which statement row a transaction came from is fixed at import time -- editing
+  // this transaction's (or any other transaction's) category, amount, or notes never changes
+  // which file/row it was originally read from. Same reasoning as 'statement-import-transactions'
+  // above.
+  'transaction-source',
 ]);
 
 function sourceFiles(dir: string): string[] {
