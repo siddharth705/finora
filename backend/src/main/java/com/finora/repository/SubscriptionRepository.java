@@ -8,6 +8,7 @@ import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -53,4 +54,11 @@ public interface SubscriptionRepository extends JpaRepository<Subscription, UUID
     @Modifying
     @Query(value = "DELETE FROM subscriptions WHERE user_id = :userId", nativeQuery = true)
     void hardDeleteByUserId(@Param("userId") UUID userId);
+
+    /** SubscriptionReconciliationSweepService (design spec §6.3) -- the safety net for a missed
+     *  {@code subscription.cancelled} webhook. Not scoped to {@code ACTIVE}/{@code TRIAL} on
+     *  purpose: {@code status='CANCELLED'} is exactly the state a cancellation already reached. */
+    @Query("SELECT s FROM Subscription s WHERE s.autoRenew = false AND s.status = 'CANCELLED' " +
+           "AND s.renewalDate < :cutoff")
+    List<Subscription> findCancelledSubscriptionsPastPeriodEnd(@Param("cutoff") LocalDate cutoff);
 }

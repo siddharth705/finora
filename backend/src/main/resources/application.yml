@@ -351,6 +351,15 @@ app:
       # the way account-purge/counterparty-backfill have.
       interval-ms: ${NET_WORTH_SNAPSHOT_SWEEP_INTERVAL_MS:14400000}
       initial-delay-ms: ${NET_WORTH_SNAPSHOT_SWEEP_INITIAL_DELAY_MS:300000}
+  # Subscription billing V1 -- safety net for a missed subscription.cancelled webhook (design spec
+  # §6.3). Nothing depends on this running promptly: a subscription sits CANCELLED-past-period-end
+  # for at most one sweep interval before downgrading, and the webhook path is expected to beat it
+  # to the downgrade in the overwhelming majority of cases.
+  subscription-reconciliation:
+    sweep:
+      enabled: ${SUBSCRIPTION_RECONCILIATION_SWEEP_ENABLED:true}
+      interval-ms: ${SUBSCRIPTION_RECONCILIATION_SWEEP_INTERVAL_MS:3600000}
+      initial-delay-ms: ${SUBSCRIPTION_RECONCILIATION_SWEEP_INITIAL_DELAY_MS:300000}
   security:
     # RateLimitFilter's own doc comment already flagged this: request.getRemoteAddr() only
     # returns the real client IP when nothing sits between the client and this app. Railway (like
