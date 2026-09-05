@@ -133,19 +133,22 @@ export default function Budgets() {
         </div>
       )}
 
-      <FinoraCard padding="sm" className="flex gap-2 items-end">
-        <div>
-          <label htmlFor="budget-category" className="block text-xs uppercase text-gray-500 mb-1">Category</label>
-          <input id="budget-category" value={newCategory} onChange={(e) => setNewCategory(e.target.value)} className="bg-card text-ink border rounded px-2 py-1.5 text-sm" />
+      <FinoraCard>
+        <SectionHeader title="Set a Budget" size="sm" />
+        <div className="flex gap-2 items-end">
+          <div>
+            <label htmlFor="budget-category" className="block text-xs uppercase text-gray-500 mb-1">Category</label>
+            <input id="budget-category" value={newCategory} onChange={(e) => setNewCategory(e.target.value)} className="bg-card text-ink border rounded px-2 py-1.5 text-sm" />
+          </div>
+          <div>
+            <label htmlFor="budget-monthly-limit" className="block text-xs uppercase text-gray-500 mb-1">Monthly limit</label>
+            <input id="budget-monthly-limit" type="number" value={newLimit} onChange={(e) => setNewLimit(e.target.value)} className="bg-card text-ink border rounded px-2 py-1.5 text-sm" />
+          </div>
+          <Button onClick={addOrUpdate} loading={saving} size="md" className="uppercase">
+            Set Budget
+          </Button>
+          {saved && <span className="text-success text-xs">Saved.</span>}
         </div>
-        <div>
-          <label htmlFor="budget-monthly-limit" className="block text-xs uppercase text-gray-500 mb-1">Monthly limit</label>
-          <input id="budget-monthly-limit" type="number" value={newLimit} onChange={(e) => setNewLimit(e.target.value)} className="bg-card text-ink border rounded px-2 py-1.5 text-sm" />
-        </div>
-        <Button onClick={addOrUpdate} loading={saving} size="md" className="uppercase">
-          Set Budget
-        </Button>
-        {saved && <span className="text-success text-xs">Saved.</span>}
       </FinoraCard>
       {error && <p className="text-danger text-sm">{error}</p>}
 

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import Budgets from './Budgets';
 import { budgetsApi, categoriesApi, type CategoryOption } from '../api/endpoints';
@@ -131,6 +132,19 @@ describe('Budgets', () => {
     renderPage();
 
     expect(await screen.findByText('Spending Breakdown')).toBeInTheDocument();
+  });
+
+  it('still saves a budget through the restyled form', async () => {
+    vi.mocked(budgetsApi.list).mockResolvedValue([]);
+    vi.mocked(budgetsApi.upsert).mockResolvedValue(budget());
+    renderPage();
+
+    await screen.findByText('No budgets set');
+    await userEvent.type(screen.getByLabelText('Category'), 'Travel');
+    await userEvent.type(screen.getByLabelText('Monthly limit'), '3000');
+    await userEvent.click(screen.getByRole('button', { name: /set budget/i }));
+
+    await waitFor(() => expect(budgetsApi.upsert).toHaveBeenCalledWith('Travel', 3000));
   });
 
   // The actual bug this page had: `budgets` started `[]`, which the render logic couldn't tell
