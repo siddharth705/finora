@@ -4,9 +4,11 @@
 
 **Goal:** Build user-initiated upgrade/downgrade (`change-plan`), the admin-override guard against
 overwriting a live paid subscription, and the matching admin action to release one — the three
-pieces the original design spec scoped to "Plan 2" (§6.4–§6.6). This is Plan 2 of 4 (Plan 1: backend
-core, merged — [`#1008`](https://github.com/siddharth705/finora/pull/1008); Plan 3: web UI; Plan 4:
-mobile UI), fully testable on its own on top of Plan 1's already-merged infrastructure.
+pieces the original design spec scoped to "Plan 2" (§6.4–§6.6) — plus nullable tax/invoice schema
+prep (Task 5) added after product review, with no behavior attached to it yet. This is Plan 2 of 4
+(Plan 1: backend core, merged — [`#1008`](https://github.com/siddharth705/finora/pull/1008); Plan 3:
+web UI; Plan 4: mobile UI), fully testable on its own on top of Plan 1's already-merged
+infrastructure.
 
 **Architecture:** Downgrade uses Razorpay's own native scheduled-plan-change feature
 (`schedule_change_at: cycle_end`) and needs no new reconciliation code — Plan 1's
@@ -1250,6 +1252,213 @@ call site compiles against the new signature before declaring this task done.
 ```bash
 git add backend/src/test/java/com/finora/controller/SubscriptionUpgradeDowngradeEndToEndIT.java
 git commit -m "test(backend): add end-to-end upgrade and downgrade integration tests"
+```
+
+---
+
+## Task 5: Tax and invoice schema prep (no behavior change)
+
+Added per explicit product review after this plan was first drafted: nullable columns only, so a
+future GST rollout or invoice-download feature doesn't need a breaking schema change to land. **No
+task in this plan populates or reads these columns.** Coupons are deliberately NOT included here —
+unlike tax/invoice, a coupon needs no schema prepared in advance: `plan_changes`/`payments` impose
+no constraint that would block adding `discount_amount`/`coupon_code` columns whenever a coupon
+feature is actually built, so preparing for it now would be speculative schema with no near-term
+consumer.
+
+**Files:**
+- Create: `backend/src/main/resources/db/migration/V155__billing_tax_and_invoice_fields.sql`
+- Modify: `backend/src/main/java/com/finora/entity/Payment.java` (add `baseAmount`, `taxAmount`,
+  `invoiceId`, `invoiceUrl`)
+- Modify: `backend/src/main/java/com/finora/entity/BillingPrice.java` (add `gstRate`)
+- Test: `backend/src/test/java/com/finora/repository/PaymentRepositoryIT.java` (new file — no such
+  test exists yet for this entity)
+
+**Interfaces:**
+- Produces: `Payment.getBaseAmount()`/`setBaseAmount(BigDecimal)`,
+  `.getTaxAmount()`/`setTaxAmount(BigDecimal)`, `.getInvoiceId()`/`setInvoiceId(String)`,
+  `.getInvoiceUrl()`/`setInvoiceUrl(String)` — all nullable, all optional. `BillingPrice
+  .getGstRate()`/`setGstRate(BigDecimal)` — nullable, a percentage (e.g. `18.00` for 18%), purely
+  informational until a real GST calculation is built.
+- Consumes: nothing new — this task has no dependency on Tasks 1–4 and none of them depend on it;
+  it can be done in any order relative to the rest of this plan.
+
+- [ ] **Step 1: Confirm the migration version is still free**
+
+```bash
+git fetch origin
+git ls-tree -r --name-only origin/main -- backend/src/main/resources/db/migration | sort -t'V' -k2 -n | tail -3
+```
+Expected: `V154__subscription_billing_v1.sql` is still the latest (confirmed free at `V155` when
+this task was written, 2026-09-05). If a `V155` (or later) already exists, rename this migration to
+the next free number and update every reference to `V155` in this task accordingly.
+
+- [ ] **Step 2: Write the migration**
+
+```sql
+-- Subscription billing V2 (docs/superpowers/plans/2026-09-05-subscription-billing-v2-upgrade-downgrade-admin.md).
+-- Nullable schema prep for tax (GST) and invoice references, requested during product review before
+-- any GST or invoice-download feature is actually built. No writer populates these yet -- adding the
+-- columns now avoids a breaking migration once one is needed. "amount" on payments keeps its
+-- existing meaning (the total actually charged); base_amount/tax_amount are an optional breakdown
+-- of that same total, not a replacement for it.
+
+ALTER TABLE payments ADD COLUMN base_amount NUMERIC(10, 2);
+ALTER TABLE payments ADD COLUMN tax_amount NUMERIC(10, 2);
+ALTER TABLE payments ADD COLUMN invoice_id VARCHAR(50);
+ALTER TABLE payments ADD COLUMN invoice_url VARCHAR(500);
+
+-- Percentage (e.g. 18.00 for 18%), not an amount -- billing_prices.price stays GST-exclusive until
+-- a real tax calculation exists; this column only records the rate that would apply, for whenever
+-- that calculation is built.
+ALTER TABLE billing_prices ADD COLUMN gst_rate NUMERIC(5, 2);
+```
+
+- [ ] **Step 3: Update `Payment.java`**
+
+Add the four new nullable columns and their accessors, alongside the existing ones:
+
+```java
+    @Column(name = "base_amount", precision = 10, scale = 2)
+    private BigDecimal baseAmount;
+
+    @Column(name = "tax_amount", precision = 10, scale = 2)
+    private BigDecimal taxAmount;
+
+    @Column(name = "invoice_id", length = 50)
+    private String invoiceId;
+
+    @Column(name = "invoice_url", length = 500)
+    private String invoiceUrl;
+```
+
+```java
+    public BigDecimal getBaseAmount() { return baseAmount; }
+    public void setBaseAmount(BigDecimal baseAmount) { this.baseAmount = baseAmount; }
+    public BigDecimal getTaxAmount() { return taxAmount; }
+    public void setTaxAmount(BigDecimal taxAmount) { this.taxAmount = taxAmount; }
+    public String getInvoiceId() { return invoiceId; }
+    public void setInvoiceId(String invoiceId) { this.invoiceId = invoiceId; }
+    public String getInvoiceUrl() { return invoiceUrl; }
+    public void setInvoiceUrl(String invoiceUrl) { this.invoiceUrl = invoiceUrl; }
+```
+
+- [ ] **Step 4: Update `BillingPrice.java`**
+
+Add the new nullable column and its accessor, alongside the existing ones:
+
+```java
+    @Column(name = "gst_rate", precision = 5, scale = 2)
+    private BigDecimal gstRate;
+```
+
+```java
+    public BigDecimal getGstRate() { return gstRate; }
+    public void setGstRate(BigDecimal gstRate) { this.gstRate = gstRate; }
+```
+
+- [ ] **Step 5: Write the failing repository test**
+
+```java
+package com.finora.repository;
+
+import com.finora.AbstractIntegrationTest;
+import com.finora.entity.Payment;
+import com.finora.entity.User;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+
+import java.math.BigDecimal;
+import java.util.UUID;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+class PaymentRepositoryIT extends AbstractIntegrationTest {
+
+    @Autowired private PaymentRepository paymentRepository;
+    @Autowired private UserRepository userRepository;
+
+    private User createUser() {
+        User user = new User();
+        user.setEmail("payment-tax-invoice-it-" + UUID.randomUUID() + "@example.com");
+        user.setPasswordHash("irrelevant");
+        user.setFullName("Payment Tax Invoice IT User");
+        user.setRole("USER");
+        user.setPhoneVerified(true);
+        return userRepository.save(user);
+    }
+
+    @Test
+    void savesAndReloadsTheOptionalTaxAndInvoiceFields() {
+        User user = createUser();
+        Payment payment = new Payment();
+        payment.setUserId(user.getId());
+        payment.setAmount(new BigDecimal("943.82"));
+        payment.setCurrency("INR");
+        payment.setProvider("RAZORPAY");
+        payment.setStatus(Payment.STATUS_SUCCESS);
+        payment.setBaseAmount(new BigDecimal("799.00"));
+        payment.setTaxAmount(new BigDecimal("144.82"));
+        payment.setInvoiceId("inv_test_123");
+        payment.setInvoiceUrl("https://razorpay.com/invoices/inv_test_123");
+        Payment saved = paymentRepository.save(payment);
+
+        Payment reloaded = paymentRepository.findById(saved.getId()).orElseThrow();
+        assertThat(reloaded.getBaseAmount()).isEqualByComparingTo(new BigDecimal("799.00"));
+        assertThat(reloaded.getTaxAmount()).isEqualByComparingTo(new BigDecimal("144.82"));
+        assertThat(reloaded.getInvoiceId()).isEqualTo("inv_test_123");
+        assertThat(reloaded.getInvoiceUrl()).isEqualTo("https://razorpay.com/invoices/inv_test_123");
+    }
+
+    @Test
+    void leavesTheNewFieldsNullWhenNeverSet() {
+        // Every existing writer (RazorpayWebhookDispatcher.handleCharged/handlePending, Plan 1) does
+        // not set these -- confirms that keeps working exactly as it does today, with no NOT NULL
+        // constraint newly required of them.
+        User user = createUser();
+        Payment payment = new Payment();
+        payment.setUserId(user.getId());
+        payment.setAmount(new BigDecimal("399.00"));
+        payment.setCurrency("INR");
+        payment.setProvider("RAZORPAY");
+        payment.setStatus(Payment.STATUS_SUCCESS);
+        Payment saved = paymentRepository.save(payment);
+
+        Payment reloaded = paymentRepository.findById(saved.getId()).orElseThrow();
+        assertThat(reloaded.getBaseAmount()).isNull();
+        assertThat(reloaded.getTaxAmount()).isNull();
+        assertThat(reloaded.getInvoiceId()).isNull();
+        assertThat(reloaded.getInvoiceUrl()).isNull();
+    }
+}
+```
+
+- [ ] **Step 6: Run the migration and the test**
+
+```bash
+cd backend && ./mvnw test -Dtest=PaymentRepositoryIT
+```
+Expected: PASS. Flyway applies `V155` as part of Testcontainers startup; if it fails with a
+migration checksum/version error, re-check Step 1's version-freshness assumption first.
+
+- [ ] **Step 7: Run the full backend suite once to confirm the new nullable columns don't break any
+  existing writer**
+
+```bash
+cd backend && ./mvnw test
+```
+Expected: PASS — in particular, `RazorpayWebhookDispatcherIT`'s `handleCharged`/`handlePending`
+tests (Plan 1) construct `Payment` without setting the four new fields; confirm they still pass
+exactly as before (nullable columns, no new constraint).
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add backend/src/main/resources/db/migration/V155__billing_tax_and_invoice_fields.sql \
+        backend/src/main/java/com/finora/entity/Payment.java \
+        backend/src/main/java/com/finora/entity/BillingPrice.java \
+        backend/src/test/java/com/finora/repository/PaymentRepositoryIT.java
+git commit -m "feat(db): add nullable tax and invoice reference columns for future GST/invoicing"
 ```
 
 ---
