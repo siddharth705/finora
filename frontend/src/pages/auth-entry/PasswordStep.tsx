@@ -110,6 +110,13 @@ export function PasswordStep({ identifier: initialIdentifier, banner, onSuccess,
       )}
       {error && <p className="text-danger text-sm mb-4">{error}</p>}
 
+      <GoogleSignInButton text="signin_with" onCredential={handleGoogleCredential} onError={setError} />
+      <div className="mt-3">
+        <AppleSignInButton onCredential={handleAppleCredential} onError={setError} />
+      </div>
+
+      <AuthDivider />
+
       <label htmlFor="password-step-identifier" className="block text-xs font-medium text-muted mb-1">Email or mobile number</label>
       <input
         id="password-step-identifier"
@@ -143,13 +150,6 @@ export function PasswordStep({ identifier: initialIdentifier, banner, onSuccess,
         {loading ? 'Signing in…' : 'Sign in'}
         {!loading && <ArrowRight size={15} />}
       </button>
-
-      <AuthDivider />
-
-      <GoogleSignInButton text="signin_with" onCredential={handleGoogleCredential} onError={setError} />
-      <div className="mt-3">
-        <AppleSignInButton onCredential={handleAppleCredential} onError={setError} />
-      </div>
 
       <div className="flex items-start gap-2.5 bg-primary-light rounded-lg p-3 mt-6">
         <ShieldCheck size={16} className="text-primary flex-shrink-0 mt-0.5" />
