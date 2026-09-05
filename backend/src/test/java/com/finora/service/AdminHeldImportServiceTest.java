@@ -114,6 +114,24 @@ class AdminHeldImportServiceTest {
                 eq(job.getId()), any());
     }
 
+    /**
+     * Caught in review: an earlier version of this method accepted any job regardless of status,
+     * the same gap {@code reprocess_isRejectedForAJobThatIsNotHeld} exists to catch for reprocess.
+     * Download hands out raw statement bytes, so a job that never entered this triage queue at all
+     * -- QUEUED here, but equally a COMPLETED or plain FAILED one -- must not be downloadable
+     * through it just because its id is known.
+     */
+    @Test
+    void download_isRejectedForAJobThatIsNotHeld() {
+        ImportJob job = new ImportJob(UUID.randomUUID(), "statement.csv", "hash", "objects/key", "CSV");
+        when(repository.findById(job.getId())).thenReturn(Optional.of(job));
+
+        assertThatThrownBy(() -> service.download(adminUserId, job.getId()))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("QUEUED");
+        verify(auditService, never()).record(any(), anyString(), anyString(), any(), any());
+    }
+
     @Test
     void download_throwsNotFoundForAnUnknownJob() {
         UUID missing = UUID.randomUUID();

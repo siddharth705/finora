@@ -116,12 +116,23 @@ public class AdminHeldImportService {
      * are read, not after, for the identical reason that doc gives: a failed read must still leave
      * a record that the attempt was made.
      *
+     * <p>Restricted to {@code HELD_FOR_REVIEW} the same way {@link #reprocess} and {@link #resolve}
+     * already are -- caught in review: an earlier version of this method only called {@link
+     * #require}, which (like {@link #detail}) accepts any job regardless of status. That is fine for
+     * {@code detail}, which discloses no statement content, but this endpoint hands out the raw
+     * bytes, and the sibling {@code HeldStatementService.download} is structurally scoped to
+     * held-only records (it looks up a {@code HeldStatement}, which by construction exists only for
+     * held items). Without this check, {@code IMPORT_TRIAGE_MANAGE} would let staff pull any
+     * customer's statement by guessing or enumerating a job id, not only the ones actually sitting in
+     * this triage queue.
+     *
      * <p>Not {@code readOnly}: it writes the audit entry. See {@code HeldStatementService.download}'s
      * own doc for the read-only-swallows-writes bug this avoids by omission.
      */
     @Transactional
     public DownloadedStatement download(UUID actingAdminId, UUID jobId) {
         ImportJob job = require(jobId);
+        requireHeld(job, "downloaded");
         auditService.record(actingAdminId, "HELD_IMPORT_DOWNLOADED", "ImportJob", jobId,
                 Map.of("actorId", actingAdminId.toString(),
                         "subjectUserId", job.getUserId().toString()));

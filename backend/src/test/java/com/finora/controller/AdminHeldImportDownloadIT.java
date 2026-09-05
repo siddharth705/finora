@@ -130,6 +130,26 @@ class AdminHeldImportDownloadIT extends AbstractIntegrationTest {
         assertThat(response.getHeaders().getContentType()).isEqualTo(MediaType.APPLICATION_PDF);
     }
 
+    /**
+     * Caught in review: an earlier version of this endpoint accepted any job id regardless of
+     * status, since {@code AdminHeldImportService.download} only called {@code require}, not
+     * {@code requireHeld}. Proven here against a real, still-live QUEUED job with real stored bytes
+     * -- not just a unit test with a mocked repository -- so a regression that let the query still
+     * find the job but skip the status check would still be caught.
+     */
+    @Test
+    void downloadRefusesAJobThatIsNotHeld() {
+        User owner = createUser("USER");
+        ContentAddress address = storage.store(PDF_BYTES);
+        ImportJob job = importJobRepository.save(
+                new ImportJob(owner.getId(), "hdfc-june.pdf", address.hash(), address.key(), "PDF"));
+        User admin = createUser("ADMIN");
+
+        ResponseEntity<byte[]> response = download(job.getId(), admin);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+    }
+
     @Test
     void anUnknownJobIdIs404NotAnAttributeError() {
         User admin = createUser("ADMIN");
