@@ -135,17 +135,18 @@ public class AuditService {
 
     /**
      * Same as {@link #record}, except the row is committed in its own transaction rather than
-     * joining the caller's.
+     * joining the caller's. Two different callers need that guarantee, for two different reasons:
      *
-     * <p>Bug found via manual verification of Phase C's export endpoint: {@code
-     * DataExportService.buildBundle} is {@code @Transactional(readOnly = true)}, and its
-     * wrong-password branch called plain {@code record(...)} immediately before throwing {@link
-     * com.finora.exception.ApiException} (a {@code RuntimeException}). Because {@code record}
-     * carries no propagation of its own, that write joined the same transaction -- so Spring's
-     * default rollback-on-RuntimeException rule discarded the just-written audit row along with
-     * everything else the moment the exception propagated. The row was never visible in {@code
-     * audit_logs} despite {@code record()} having been called; only a real Postgres transaction
-     * (not a mocked repository) can show this at all, which is why no unit test caught it.
+     * <p><b>1. Surviving a rollback.</b> Bug found via manual verification of Phase C's export
+     * endpoint: {@code DataExportService.buildBundle} is {@code @Transactional(readOnly = true)},
+     * and its wrong-password branch called plain {@code record(...)} immediately before throwing
+     * {@link com.finora.exception.ApiException} (a {@code RuntimeException}). Because {@code
+     * record} carries no propagation of its own, that write joined the same transaction -- so
+     * Spring's default rollback-on-RuntimeException rule discarded the just-written audit row
+     * along with everything else the moment the exception propagated. The row was never visible in
+     * {@code audit_logs} despite {@code record()} having been called; only a real Postgres
+     * transaction (not a mocked repository) can show this at all, which is why no unit test caught
+     * it.
      *
      * <p>The same "record a failure, then throw" shape exists at several other call sites across
      * this codebase. A follow-up swept them: {@code UserAccountLifecycleService.deactivate()}
@@ -159,10 +160,33 @@ public class AuditService {
      * this audit trail exists specifically to catch (repeated wrong-password attempts against a
      * password-gated endpoint) is exactly the kind of event that must not silently vanish just
      * because the request that triggered it went on to fail for the reason being recorded.
+     *
+     * <p><b>2. Running inside an {@code afterCommit} callback.</b> Production incident, 2026-09-03
+     * (see {@code MerchantLearningEventWorker}'s own class doc for the mechanism this shares):
+     * {@code TransactionSynchronization.afterCommit()} runs synchronously, on the same thread that
+     * just committed, <em>before</em> Spring's {@code cleanupAfterCompletion()} unbinds that
+     * transaction's resources. A plain {@link #record} called from inside one of these callbacks
+     * (as every {@code EMAIL_SENT} audit in {@code AuthService} used to be) "joins" that
+     * still-bound-but-already-committed transaction instead of starting a real one, and the save
+     * silently never flushes -- confirmed against real Postgres in
+     * {@code AuthServiceEmailAuditIT}: every {@code EMAIL_SENT} row was absent after a real
+     * {@code register()}/{@code reactivate()}/{@code resetPassword()} call, on every run, not as a
+     * rare race. {@code REQUIRES_NEW} fixes both cases by the same mechanism: it always suspends
+     * whatever is on the thread -- an active transaction about to roll back, or a stale one that
+     * already committed -- and starts a genuinely new one.
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void recordEvenOnRollback(UUID userId, String action, String entityType, UUID entityId) {
-        record(userId, action, entityType, entityId, null);
+        recordEvenOnRollback(userId, action, entityType, entityId, null);
+    }
+
+    /** Same as {@link #recordEvenOnRollback(UUID, String, String, UUID)}, carrying metadata --
+     *  the {@code EMAIL_SENT} audits this exists for are worth little without knowing which
+     *  provider was used and whether the send actually succeeded. */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void recordEvenOnRollback(UUID userId, String action, String entityType, UUID entityId,
+                                      Map<String, Object> metadata) {
+        record(userId, action, entityType, entityId, metadata);
     }
 
     /**
