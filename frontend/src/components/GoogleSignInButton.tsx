@@ -61,7 +61,9 @@ export function GoogleSignInButton({ text, onCredential, onError }: GoogleSignIn
           containerRef.current.replaceChildren();
           accountsId.renderButton(containerRef.current, {
             theme: 'outline',
-            size: 'large',
+            // 'medium', not the default 'large' -- auth redesign follow-up: matched against
+            // AppleSignInButton.tsx's own height instead of trusting either default.
+            size: 'medium',
             width: String(measuredWidth),
             text,
             // Google defaults to a left-pinned logo with the text centered in the remaining
