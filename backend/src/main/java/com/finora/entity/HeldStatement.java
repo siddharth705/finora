@@ -10,6 +10,7 @@ import jakarta.persistence.Version;
 
 import java.time.Instant;
 import java.util.EnumSet;
+import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 
@@ -96,6 +97,12 @@ public class HeldStatement {
     @Column(name = "fix_reference")
     private String fixReference;
 
+    @Column(name = "hold_reason_categories")
+    private List<String> holdReasonCategories;
+
+    @Column(name = "false_positive")
+    private Boolean falsePositive;
+
     /** BH-001, same reasoning as {@code ImportJob.version}'s own doc: every other
      *  concurrently-written entity here already carries one. This row is mutated by several
      *  independent actors (assign, investigate, notes, findings, approve, reject, rerun-parser),
@@ -133,13 +140,23 @@ public class HeldStatement {
         this.triggerSummary = triggerSummary;
     }
 
-    /** The extraction snapshot, recorded once when the hold is created. */
+    /**
+     * The extraction snapshot, recorded once when the hold is created.
+     *
+     * <p>{@code holdReasonCategories} is part of that same one-time snapshot, not a live view: it
+     * answers "what did the ORIGINAL parse trigger on," and stays exactly what it was even after a
+     * later {@code rerunParser} call re-evaluates the current build against the same bytes.
+     * {@code rerunParser} never calls this method -- confirmed by reading its full body -- so a
+     * rerun changing the hold's status can never retroactively change what this column says caused
+     * the hold in the first place.
+     */
     public void recordSnapshot(String parserVersion, String reliabilityStatus, String textSource,
-                               Boolean headerReconstructionUncertain) {
+                               Boolean headerReconstructionUncertain, List<String> holdReasonCategories) {
         this.parserVersion = parserVersion;
         this.reliabilityStatus = reliabilityStatus;
         this.textSource = textSource;
         this.headerReconstructionUncertain = headerReconstructionUncertain;
+        this.holdReasonCategories = holdReasonCategories;
     }
 
     /** Set once, when the hold is opened. See the {@code bank_name} column comment for why this is
@@ -193,11 +210,12 @@ public class HeldStatement {
      * engineer, and an operator who can see the extraction is fine should be able to release it.
      * The rule is one resolution, not one path.
      */
-    public void markImported(UUID adminId, Instant now) {
+    public void markImported(UUID adminId, Instant now, Boolean falsePositive) {
         refuseIfResolved("imported");
         this.status = Status.IMPORTED;
         this.resolvedBy = adminId;
         this.resolvedAt = now;
+        this.falsePositive = falsePositive;
     }
 
     /**
@@ -239,6 +257,8 @@ public class HeldStatement {
     public String getEngineerNotes() { return engineerNotes; }
     public String getRootCause() { return rootCause; }
     public String getFixReference() { return fixReference; }
+    public List<String> getHoldReasonCategories() { return holdReasonCategories; }
+    public Boolean getFalsePositive() { return falsePositive; }
     public Long getVersion() { return version; }
     public Instant getCreatedAt() { return createdAt; }
     public Instant getAssignedAt() { return assignedAt; }

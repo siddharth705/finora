@@ -228,6 +228,51 @@ class TrustPredicateTest {
                 .isFalse();
     }
 
+    // --------------------------------------------------------------------- structured categories
+
+    @Test
+    void countMismatchCarriesTheCountMismatchCategory() {
+        HoldDecision decision = TrustPredicate.evaluate(
+                List.of(report(summaryTotals("FAILED", "ROW_GROUPING"))), List.of(), TODAY);
+
+        assertThat(decision.hold()).isTrue();
+        assertThat(decision.categories()).containsExactly(TrustPredicate.Category.COUNT_MISMATCH);
+    }
+
+    /** Two sections, two different named causes, both COUNT_MISMATCH -- the category list must not
+     *  report the same category twice just because two different reason sentences fired. */
+    @Test
+    void twoDifferentCountMismatchCausesStillProduceOneDeduplicatedCategory() {
+        HoldDecision decision = TrustPredicate.evaluate(
+                List.of(report(summaryTotals("FAILED", "ROW_GROUPING")),
+                        report(summaryTotals("FAILED", "DIRECTION"))),
+                List.of(), TODAY);
+
+        assertThat(decision.categories()).containsExactly(TrustPredicate.Category.COUNT_MISMATCH);
+        assertThat(decision.reasons()).as("the two distinct sentences are still both kept").hasSize(2);
+    }
+
+    @Test
+    void droppedTransactionCarriesTheDroppedTransactionCategory() {
+        HoldDecision decision = TrustPredicate.evaluate(
+                List.of(report(droppedRows("PRE_HEADER_ACTIVITY_CANDIDATE", 1))), List.of(), TODAY);
+
+        assertThat(decision.categories()).containsExactly(TrustPredicate.Category.DROPPED_TRANSACTION);
+    }
+
+    @Test
+    void periodIntegrityCarriesThePeriodIntegrityCategory() {
+        HoldDecision decision = TrustPredicate.evaluate(List.of(),
+                period(LocalDate.of(2026, 8, 31), LocalDate.of(2026, 8, 1)), TODAY);
+
+        assertThat(decision.categories()).containsExactly(TrustPredicate.Category.PERIOD_INTEGRITY);
+    }
+
+    @Test
+    void releaseCarriesNoCategories() {
+        assertThat(HoldDecision.RELEASE.categories()).isEmpty();
+    }
+
     // ---------------------------------------------------------------------------- shape and nulls
 
     @Test
