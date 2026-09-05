@@ -4,7 +4,9 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.finora.AbstractIntegrationTest;
 import com.finora.entity.User;
+import com.finora.integrations.razorpay.RazorpaySubscriptionGateway;
 import com.finora.repository.RefreshTokenRepository;
+import com.finora.repository.SubscriptionRepository;
 import com.finora.repository.UserRepository;
 import com.finora.security.JwtService;
 import com.finora.service.SubscriptionService;
@@ -13,6 +15,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.http.*;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 import java.util.Map;
 import java.util.UUID;
@@ -28,6 +31,8 @@ class AdminSubscriptionControllerIT extends AbstractIntegrationTest {
     @Autowired private JwtService jwtService;
     @Autowired private RefreshTokenRepository refreshTokens;
     @Autowired private SubscriptionService subscriptionService;
+    @Autowired private SubscriptionRepository subscriptionRepository;
+    @MockitoBean private RazorpaySubscriptionGateway gateway;
     private final ObjectMapper mapper = new ObjectMapper();
 
     private User createUser(String role) {
@@ -114,5 +119,43 @@ class AdminSubscriptionControllerIT extends AbstractIntegrationTest {
             }
         }
         assertThat(confirmed).isTrue();
+    }
+
+    @Test
+    void admin_isBlockedFromChangingPlan_whileAUserHasAnActiveRazorpaySubscription() {
+        User admin = createUser("ADMIN");
+        User target = createUser("USER");
+        subscriptionService.provisionFreeSubscription(target.getId());
+        var subscription = subscriptionRepository.findActiveOrTrial(target.getId()).orElseThrow();
+        subscription.setPaymentProvider("RAZORPAY");
+        subscription.setRazorpaySubscriptionId("sub_test_" + UUID.randomUUID());
+        subscriptionRepository.save(subscription);
+
+        ResponseEntity<String> response = restTemplate.exchange(
+                "/api/v1/admin/subscriptions/" + target.getId() + "/plan", HttpMethod.PUT,
+                new HttpEntity<>(Map.of("planCode", "PLUS", "reason", "test"), bearerFor(admin)), String.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+    }
+
+    @Test
+    void admin_cancelsThePaidSubscription_thenChangePlanSucceeds() {
+        User admin = createUser("ADMIN");
+        User target = createUser("USER");
+        subscriptionService.provisionFreeSubscription(target.getId());
+        var subscription = subscriptionRepository.findActiveOrTrial(target.getId()).orElseThrow();
+        subscription.setPaymentProvider("RAZORPAY");
+        subscription.setRazorpaySubscriptionId("sub_test_" + UUID.randomUUID());
+        subscriptionRepository.save(subscription);
+
+        ResponseEntity<String> cancelResponse = restTemplate.postForEntity(
+                "/api/v1/admin/subscriptions/" + target.getId() + "/cancel-paid-subscription",
+                new HttpEntity<>(bearerFor(admin)), String.class);
+        assertThat(cancelResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
+
+        ResponseEntity<String> changePlanResponse = restTemplate.exchange(
+                "/api/v1/admin/subscriptions/" + target.getId() + "/plan", HttpMethod.PUT,
+                new HttpEntity<>(Map.of("planCode", "PLUS", "reason", "beta tester"), bearerFor(admin)), String.class);
+        assertThat(changePlanResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
     }
 }

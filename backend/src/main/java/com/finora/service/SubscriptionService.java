@@ -8,6 +8,7 @@ import com.finora.entity.Subscription;
 import com.finora.entity.SubscriptionEvent;
 import com.finora.entity.User;
 import com.finora.exception.ApiException;
+import com.finora.integrations.razorpay.RazorpaySubscriptionGateway;
 import com.finora.repository.PlanChangeRepository;
 import com.finora.repository.PlanRepository;
 import com.finora.repository.SubscriptionEventRepository;
@@ -41,18 +42,20 @@ public class SubscriptionService {
     private final PlanRepository planRepository;
     private final UserRepository userRepository;
     private final AuditService auditService;
+    private final RazorpaySubscriptionGateway gateway;
 
     public SubscriptionService(SubscriptionRepository subscriptionRepository,
                                 SubscriptionEventRepository subscriptionEventRepository,
                                 PlanChangeRepository planChangeRepository,
                                 PlanRepository planRepository, UserRepository userRepository,
-                                AuditService auditService) {
+                                AuditService auditService, RazorpaySubscriptionGateway gateway) {
         this.subscriptionRepository = subscriptionRepository;
         this.subscriptionEventRepository = subscriptionEventRepository;
         this.planChangeRepository = planChangeRepository;
         this.planRepository = planRepository;
         this.userRepository = userRepository;
         this.auditService = auditService;
+        this.gateway = gateway;
     }
 
     /** Called from every account-creation path (AuthService.createUserRecord and
@@ -116,6 +119,10 @@ public class SubscriptionService {
     public void changePlan(UUID userId, String newPlanCode, String reason, UUID actingAdminId) {
         Subscription subscription = subscriptionRepository.findActiveOrTrial(userId)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "This user has no active subscription."));
+        if ("RAZORPAY".equals(subscription.getPaymentProvider())) {
+            throw new ApiException(HttpStatus.CONFLICT,
+                    "This user has an active paid subscription. Cancel it first before granting a complimentary plan.");
+        }
         Plan newPlan = planRepository.findByCode(newPlanCode)
                 .orElseThrow(() -> new ApiException(HttpStatus.BAD_REQUEST, "Unknown plan code: " + newPlanCode));
 
@@ -142,5 +149,27 @@ public class SubscriptionService {
 
         auditService.record(userId, "SUBSCRIPTION_PLAN_CHANGED", "Subscription", subscription.getId(),
                 Map.of("toPlanCode", newPlanCode, "reason", reason, "actorId", actingAdminId.toString()));
+    }
+
+    /** design spec §6.6. Admin support action, immediate (not at cycle end) -- this is what unblocks
+     *  the guard above: an admin cannot grant a complimentary plan over a live Razorpay subscription
+     *  until they explicitly stop it here first. Deliberately leaves {@code subscriptions.plan_id}
+     *  untouched -- the admin's very next call is expected to be {@link #changePlan}, which will set
+     *  whatever plan the admin intends; this method's only job is releasing the Razorpay link. */
+    @Transactional
+    public void cancelPaidSubscription(UUID userId, UUID actingAdminId) {
+        Subscription subscription = subscriptionRepository.findActiveOrTrial(userId)
+                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "This user has no active subscription."));
+        if (subscription.getRazorpaySubscriptionId() == null) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "This subscription has no billing to cancel.");
+        }
+        gateway.cancelSubscription(subscription.getRazorpaySubscriptionId(), false);
+        subscription.setRazorpaySubscriptionId(null);
+        subscription.setAutoRenew(false);
+        subscription.setPaymentProvider(null);
+        subscriptionRepository.save(subscription);
+
+        auditService.record(userId, "SUBSCRIPTION_PAID_CANCELLED_BY_ADMIN", "Subscription", subscription.getId(),
+                Map.of("actorId", actingAdminId.toString()));
     }
 }
