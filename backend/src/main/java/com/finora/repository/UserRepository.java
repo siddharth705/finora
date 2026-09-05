@@ -178,4 +178,20 @@ public interface UserRepository extends JpaRepository<User, UUID> {
      *  does both the ACTIVE filter (at the query layer, not a per-candidate check in the loop)
      *  and the timezone read. */
     List<User> findByIdInAndStatus(Collection<UUID> ids, String status);
+
+    // --- HeldItemAdminAlertService ---
+
+    /**
+     * Every admin-scope user whose roles collectively grant the named permission — resolved live
+     * from the RBAC graph {@code AuthorizationService} already reads on every authenticated
+     * request, not a configured mailing list. {@code DISTINCT} because a user with two roles that
+     * both carry the same permission (e.g. ADMIN and a future custom role) must be emailed once,
+     * not twice.
+     */
+    @Query("""
+           SELECT DISTINCT u FROM User u JOIN u.roles r JOIN r.permissions p
+           WHERE p.name = :permissionName AND u.accountScope = :accountScope
+           """)
+    List<User> findByPermissionNameAndAccountScope(@Param("permissionName") String permissionName,
+                                                    @Param("accountScope") String accountScope);
 }

@@ -33,6 +33,7 @@ import com.finora.notification.domain.NotificationType;
 import com.finora.repository.HeldStatementEventRepository;
 import com.finora.repository.HeldStatementRepository;
 import com.finora.repository.ImportJobRepository;
+import com.finora.util.AfterCommit;
 import com.finora.util.PageBounds;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -83,6 +84,7 @@ public class HeldStatementService {
     private final StatementContentService statementContentService;
     private final ImportService importService;
     private final ParserVersionProvider parserVersionProvider;
+    private final HeldItemAdminAlertService heldItemAdminAlertService;
 
     public HeldStatementService(HeldStatementRepository repository,
                                 HeldStatementEventRepository eventRepository,
@@ -95,7 +97,8 @@ public class HeldStatementService {
                                 ObjectMapper objectMapper,
                                 StatementContentService statementContentService,
                                 ImportService importService,
-                                ParserVersionProvider parserVersionProvider) {
+                                ParserVersionProvider parserVersionProvider,
+                                HeldItemAdminAlertService heldItemAdminAlertService) {
         this.repository = repository;
         this.eventRepository = eventRepository;
         this.idGenerator = idGenerator;
@@ -108,6 +111,7 @@ public class HeldStatementService {
         this.statementContentService = statementContentService;
         this.importService = importService;
         this.parserVersionProvider = parserVersionProvider;
+        this.heldItemAdminAlertService = heldItemAdminAlertService;
     }
 
     /**
@@ -152,6 +156,20 @@ public class HeldStatementService {
         // the event is the immutable record of what the predicate actually said at hold time.
         eventRepository.save(new HeldStatementEvent(held.getId(), null, "HELD_CREATED",
                 null, HeldStatement.Status.HELD.name(), decision.summary()));
+        // Deferred until createHold's own REQUIRES_NEW transaction commits -- openHold is a plain
+        // internal call from within that same method, not a separately-proxied one, so the
+        // transaction is still active here and AfterCommit genuinely defers rather than running
+        // immediately (contrast ImportJobWorker's parser-gap alert, whose own comment explains why
+        // that call site is the other case). A real network call must not hold a pooled DB
+        // connection across that wait, and must not fire for a hold that then rolled back.
+        //
+        // heldId extracted into a local first, not read as held.getHeldId() inside the lambda: the
+        // lambda's captured state should be the bare id HeldItemAdminAlertService.alertTrustReviewHeld
+        // re-reads by, not a reference that keeps the whole managed entity reachable for as long as
+        // the registered TransactionSynchronization lives.
+        String heldId = held.getHeldId();
+        AfterCommit.run("held-item admin alert (trust review)",
+                () -> heldItemAdminAlertService.alertTrustReviewHeld(heldId));
         return held;
     }
 
