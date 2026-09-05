@@ -30,6 +30,11 @@ export const CORRUPT_PDF = 'IMPORT_011';
 // ExplicitZeroActivityDetector.java's own doc comment (backend) for the evidence.
 export const NO_ACTIVITY_IN_PERIOD = 'IMPORT_014';
 
+// The honest explanation for a multi-day trust-review hold that didn't clear -- without this
+// curated entry, the person who waited through that review sees the same generic "couldn't
+// complete this import" every other unrecognised failure gets, with no account of why.
+export const TRUST_REVIEW_REJECTED = 'IMPORT_015';
+
 // The UI must tell this apart from a genuinely expired/missing session -- reaching a completed
 // job's "Review this import" action after the same session was already reviewed and confirmed
 // through the normal flow used to show the generic expired-session message ("please upload the
