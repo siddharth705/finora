@@ -9,7 +9,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BrandMark } from './BrandMark';
-import { radius, spacing, useTheme } from '../theme';
+import { fonts, radius, spacing, useTheme } from '../theme';
 
 /**
  * Shared chrome for the four auth screens: brand mark, title/subtitle, an inline error banner,
@@ -85,7 +85,7 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
   },
   brandName: {
-    fontWeight: '800',
+    fontFamily: fonts.display,
     fontSize: 17,
     letterSpacing: 1.2,
   },
@@ -95,8 +95,8 @@ const styles = StyleSheet.create({
     padding: spacing.lg,
   },
   title: {
+    fontFamily: fonts.display,
     fontSize: 22,
-    fontWeight: '700',
     marginBottom: 4,
   },
   subtitle: {
