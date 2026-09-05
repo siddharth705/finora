@@ -1267,7 +1267,9 @@ feature is actually built, so preparing for it now would be speculative schema w
 consumer.
 
 **Files:**
-- Create: `backend/src/main/resources/db/migration/V155__billing_tax_and_invoice_fields.sql`
+- Create: `backend/src/main/resources/db/migration/V156__billing_tax_and_invoice_fields.sql`
+  (originally drafted as `V155`; renumbered to `V156` before merge because another concurrent
+  session's `V155__import_statement_held_notification.sql` landed on `origin/main` first)
 - Modify: `backend/src/main/java/com/finora/entity/Payment.java` (add `baseAmount`, `taxAmount`,
   `invoiceId`, `invoiceUrl`)
 - Modify: `backend/src/main/java/com/finora/entity/BillingPrice.java` (add `gstRate`)
@@ -1291,7 +1293,9 @@ git ls-tree -r --name-only origin/main -- backend/src/main/resources/db/migratio
 ```
 Expected: `V154__subscription_billing_v1.sql` is still the latest (confirmed free at `V155` when
 this task was written, 2026-09-05). If a `V155` (or later) already exists, rename this migration to
-the next free number and update every reference to `V155` in this task accordingly.
+the next free number and update every reference to `V155` in this task accordingly. (This is exactly
+what happened: `V155__import_statement_held_notification.sql` merged to `origin/main` from a
+concurrent session before this branch merged, so the migration below is `V156`.)
 
 - [ ] **Step 2: Write the migration**
 
@@ -1438,7 +1442,7 @@ class PaymentRepositoryIT extends AbstractIntegrationTest {
 ```bash
 cd backend && ./mvnw test -Dtest=PaymentRepositoryIT
 ```
-Expected: PASS. Flyway applies `V155` as part of Testcontainers startup; if it fails with a
+Expected: PASS. Flyway applies `V156` as part of Testcontainers startup; if it fails with a
 migration checksum/version error, re-check Step 1's version-freshness assumption first.
 
 - [ ] **Step 7: Run the full backend suite once to confirm the new nullable columns don't break any
@@ -1454,7 +1458,7 @@ exactly as before (nullable columns, no new constraint).
 - [ ] **Step 8: Commit**
 
 ```bash
-git add backend/src/main/resources/db/migration/V155__billing_tax_and_invoice_fields.sql \
+git add backend/src/main/resources/db/migration/V156__billing_tax_and_invoice_fields.sql \
         backend/src/main/java/com/finora/entity/Payment.java \
         backend/src/main/java/com/finora/entity/BillingPrice.java \
         backend/src/test/java/com/finora/repository/PaymentRepositoryIT.java
