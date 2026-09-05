@@ -22,6 +22,8 @@ class RazorpayWebhookDispatcherIT extends AbstractIntegrationTest {
     @Autowired private SubscriptionOrderRepository subscriptionOrderRepository;
     @Autowired private SubscriptionEventRepository subscriptionEventRepository;
     @Autowired private SubscriptionService subscriptionService;
+    @Autowired private BillingPriceRepository billingPriceRepository;
+    @Autowired private PaymentRepository paymentRepository;
 
     private User createUser() {
         User user = new User();
@@ -78,5 +80,74 @@ class RazorpayWebhookDispatcherIT extends AbstractIntegrationTest {
                 "subscription", Map.of("entity", Map.of("id", "sub_never_created", "current_end", 0L)));
 
         dispatcher.dispatch("subscription.activated", payload); // must not throw
+    }
+
+    @Test
+    void chargedInsertsAPaymentRowAndExtendsTheRenewalDate() {
+        User user = createUser();
+        subscriptionService.provisionFreeSubscription(user.getId());
+        Plan plus = planRepository.findByCode("PLUS").orElseThrow();
+        BillingPrice plusMonthly = billingPriceRepository
+                .findByPlanIdAndBillingCycleAndActiveTrue(plus.getId(), "MONTHLY").orElseThrow();
+        String razorpayPlanId = "plan_test_" + UUID.randomUUID();
+        plusMonthly.setRazorpayPlanId(razorpayPlanId);
+        billingPriceRepository.save(plusMonthly);
+        String razorpaySubscriptionId = "sub_test_" + UUID.randomUUID();
+
+        Subscription subscription = subscriptionRepository.findActiveOrTrial(user.getId()).orElseThrow();
+        subscription.setPlanId(plus.getId());
+        subscription.setBillingCycle("MONTHLY");
+        subscription.setRazorpaySubscriptionId(razorpaySubscriptionId);
+        subscription.setPaymentProvider("RAZORPAY");
+        subscriptionRepository.save(subscription);
+
+        Map<String, Object> payload = Map.of(
+                "payment", Map.of("entity", Map.of("id", "pay_test_123", "amount", 79900)),
+                "subscription", Map.of("entity", Map.of(
+                        "id", razorpaySubscriptionId, "plan_id", razorpayPlanId, "current_end", 1893456000L))); // synthetic-ok: fixture epoch second
+
+        dispatcher.dispatch("subscription.charged", payload);
+
+        List<Payment> payments = paymentRepository.findByUserIdOrderByCreatedAtDesc(user.getId());
+        assertThat(payments).hasSize(1);
+        assertThat(payments.get(0).getStatus()).isEqualTo(Payment.STATUS_SUCCESS);
+        assertThat(payments.get(0).getProviderTransactionId()).isEqualTo("pay_test_123");
+        assertThat(payments.get(0).getAmount()).isEqualByComparingTo(new BigDecimal("799.00"));
+
+        Subscription reloaded = subscriptionRepository.findActiveOrTrial(user.getId()).orElseThrow();
+        assertThat(reloaded.getStatus()).isEqualTo(Subscription.STATUS_ACTIVE);
+    }
+
+    @Test
+    void chargedReconcilesPlanWhenTheChargedRazorpayPlanIdDiffersFromTheLocalPlan() {
+        // Simulates a scheduled downgrade (Plan 2, spec §6.4) taking effect: Razorpay charges the
+        // NEW (lower) plan's razorpay_plan_id at cycle end, and this webhook is what notices.
+        User user = createUser();
+        subscriptionService.provisionFreeSubscription(user.getId());
+        Plan premium = planRepository.findByCode("PREMIUM").orElseThrow();
+        Plan plus = planRepository.findByCode("PLUS").orElseThrow();
+        BillingPrice plusMonthly = billingPriceRepository
+                .findByPlanIdAndBillingCycleAndActiveTrue(plus.getId(), "MONTHLY").orElseThrow();
+        String newRazorpayPlanId = "plan_test_" + UUID.randomUUID();
+        plusMonthly.setRazorpayPlanId(newRazorpayPlanId);
+        billingPriceRepository.save(plusMonthly);
+        String razorpaySubscriptionId = "sub_test_" + UUID.randomUUID();
+
+        Subscription subscription = subscriptionRepository.findActiveOrTrial(user.getId()).orElseThrow();
+        subscription.setPlanId(premium.getId()); // still Premium locally
+        subscription.setBillingCycle("MONTHLY");
+        subscription.setRazorpaySubscriptionId(razorpaySubscriptionId);
+        subscription.setPaymentProvider("RAZORPAY");
+        subscriptionRepository.save(subscription);
+
+        Map<String, Object> payload = Map.of(
+                "payment", Map.of("entity", Map.of("id", "pay_test_456", "amount", 39900)),
+                "subscription", Map.of("entity", Map.of(
+                        "id", razorpaySubscriptionId, "plan_id", newRazorpayPlanId, "current_end", 1893456000L))); // synthetic-ok: fixture epoch second
+
+        dispatcher.dispatch("subscription.charged", payload);
+
+        Subscription reloaded = subscriptionRepository.findActiveOrTrial(user.getId()).orElseThrow();
+        assertThat(reloaded.getPlanId()).isEqualTo(plus.getId());
     }
 }

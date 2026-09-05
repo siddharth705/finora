@@ -1,9 +1,12 @@
 package com.finora.service;
 
+import com.finora.entity.Payment;
 import com.finora.entity.Plan;
 import com.finora.entity.Subscription;
 import com.finora.entity.SubscriptionEvent;
 import com.finora.entity.SubscriptionOrder;
+import com.finora.repository.BillingPriceRepository;
+import com.finora.repository.PaymentRepository;
 import com.finora.repository.PlanRepository;
 import com.finora.repository.SubscriptionEventRepository;
 import com.finora.repository.SubscriptionOrderRepository;
@@ -33,15 +36,21 @@ public class RazorpayWebhookDispatcher {
     private final SubscriptionOrderRepository subscriptionOrderRepository;
     private final SubscriptionEventRepository subscriptionEventRepository;
     private final PlanRepository planRepository;
+    private final BillingPriceRepository billingPriceRepository;
+    private final PaymentRepository paymentRepository;
 
     public RazorpayWebhookDispatcher(SubscriptionRepository subscriptionRepository,
                                       SubscriptionOrderRepository subscriptionOrderRepository,
                                       SubscriptionEventRepository subscriptionEventRepository,
-                                      PlanRepository planRepository) {
+                                      PlanRepository planRepository,
+                                      BillingPriceRepository billingPriceRepository,
+                                      PaymentRepository paymentRepository) {
         this.subscriptionRepository = subscriptionRepository;
         this.subscriptionOrderRepository = subscriptionOrderRepository;
         this.subscriptionEventRepository = subscriptionEventRepository;
         this.planRepository = planRepository;
+        this.billingPriceRepository = billingPriceRepository;
+        this.paymentRepository = paymentRepository;
     }
 
     /**
@@ -56,6 +65,7 @@ public class RazorpayWebhookDispatcher {
     public void dispatch(String eventType, Map<String, Object> payload) {
         switch (eventType) {
             case "subscription.authenticated", "subscription.activated" -> handleActivated(payload);
+            case "subscription.charged" -> handleCharged(payload);
             default -> log.info("Razorpay webhook event '{}' received but not handled in V1.", eventType);
         }
     }
@@ -108,6 +118,62 @@ public class RazorpayWebhookDispatcher {
         event.setEventType(SubscriptionEvent.SUBSCRIPTION_CREATED);
         event.setMetadata(Map.of("planCode", plan.getCode(), "billingCycle", order.getBillingCycle(),
                 "razorpaySubscriptionId", razorpaySubscriptionId));
+        subscriptionEventRepository.save(event);
+    }
+
+    /** spec §5, §6.4. Renewal is otherwise fully passive — this is also the reconciliation point
+     *  that makes a scheduled downgrade (Plan 2) actually take effect: if the charged Razorpay plan
+     *  id no longer matches what BillingPrice says the local plan should be billed under, the local
+     *  plan_id is corrected to match. */
+    @SuppressWarnings("unchecked")
+    void handleCharged(Map<String, Object> payload) {
+        Map<String, Object> subscriptionEntity = subscriptionEntity(payload);
+        String razorpaySubscriptionId = (String) subscriptionEntity.get("id");
+        if (razorpaySubscriptionId == null) return;
+
+        Optional<Subscription> maybeSubscription = subscriptionRepository.findByRazorpaySubscriptionId(razorpaySubscriptionId);
+        if (maybeSubscription.isEmpty()) {
+            log.warn("subscription.charged for unknown razorpaySubscriptionId {}, ignoring.", razorpaySubscriptionId);
+            return;
+        }
+        Subscription subscription = maybeSubscription.get();
+
+        String chargedRazorpayPlanId = (String) subscriptionEntity.get("plan_id");
+        if (chargedRazorpayPlanId != null) {
+            billingPriceRepository.findAll().stream()
+                    .filter(bp -> chargedRazorpayPlanId.equals(bp.getRazorpayPlanId()))
+                    .findFirst()
+                    .ifPresent(bp -> {
+                        subscription.setPlanId(bp.getPlanId());
+                        subscription.setBillingCycle(bp.getBillingCycle());
+                    });
+        }
+        subscription.setStatus(Subscription.STATUS_ACTIVE);
+        Object currentEnd = subscriptionEntity.get("current_end");
+        if (currentEnd instanceof Number n) {
+            subscription.setRenewalDate(LocalDate.ofInstant(Instant.ofEpochSecond(n.longValue()), ZoneOffset.UTC));
+        }
+        subscriptionRepository.save(subscription);
+
+        Map<String, Object> paymentEntity = (Map<String, Object>) payload.get("payment");
+        paymentEntity = paymentEntity == null ? Map.of() : (Map<String, Object>) paymentEntity.get("entity");
+        Payment payment = new Payment();
+        payment.setUserId(subscription.getUserId());
+        payment.setSubscriptionId(subscription.getId());
+        payment.setProvider("RAZORPAY");
+        payment.setStatus(Payment.STATUS_SUCCESS);
+        Object amountPaise = paymentEntity.get("amount");
+        payment.setAmount(amountPaise instanceof Number n
+                ? java.math.BigDecimal.valueOf(n.longValue(), 2)
+                : java.math.BigDecimal.ZERO);
+        payment.setCurrency("INR");
+        payment.setProviderTransactionId((String) paymentEntity.get("id"));
+        paymentRepository.save(payment);
+
+        SubscriptionEvent event = new SubscriptionEvent();
+        event.setSubscriptionId(subscription.getId());
+        event.setEventType(SubscriptionEvent.SUBSCRIPTION_RENEWED);
+        event.setMetadata(Map.of("razorpaySubscriptionId", razorpaySubscriptionId));
         subscriptionEventRepository.save(event);
     }
 }
