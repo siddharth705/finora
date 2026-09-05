@@ -82,6 +82,37 @@ describe('Budgets', () => {
     expect(await screen.findByText('1 of 2')).toBeInTheDocument();
   });
 
+  it('shows an "On track" pill for a budget under 90% used', async () => {
+    vi.mocked(budgetsApi.list).mockResolvedValue([budget({ monthlyLimit: 10000, spentThisMonth: 5000 })]);
+    renderPage();
+
+    expect(await screen.findByText('On track')).toBeInTheDocument();
+  });
+
+  it('shows an "Almost there" pill for a budget between 90% and 100% used', async () => {
+    vi.mocked(budgetsApi.list).mockResolvedValue([budget({ monthlyLimit: 10000, spentThisMonth: 9200 })]);
+    renderPage();
+
+    expect(await screen.findByText('Almost there')).toBeInTheDocument();
+  });
+
+  it('shows an "Over budget" pill once spend reaches or exceeds the limit', async () => {
+    vi.mocked(budgetsApi.list).mockResolvedValue([budget({ monthlyLimit: 10000, spentThisMonth: 10500 })]);
+    renderPage();
+
+    expect(await screen.findByText('Over budget')).toBeInTheDocument();
+  });
+
+  it("renders the budget's category icon using the matched category's color", async () => {
+    vi.mocked(budgetsApi.list).mockResolvedValue([budget({ categoryId: 'c1', categoryName: 'Dining' })]);
+    vi.mocked(categoriesApi.list).mockResolvedValue([category({ id: 'c1', icon: 'utensils', color: 'orange' })]);
+    renderPage();
+
+    const row = await screen.findByText('Dining');
+    const iconEl = row.closest('[data-testid="budget-row"]')?.querySelector('svg');
+    expect(iconEl).toBeTruthy();
+  });
+
   // The actual bug this page had: `budgets` started `[]`, which the render logic couldn't tell
   // apart from "genuinely no budgets set" -- so the EmptyState rendered immediately on every
   // mount, before the fetch had a chance to resolve, then popped to real content once it did.

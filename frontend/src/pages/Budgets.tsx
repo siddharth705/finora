@@ -3,8 +3,9 @@ import { useQueryClient } from '@tanstack/react-query';
 import { PiggyBank, Wallet, CheckCircle2, CalendarClock } from 'lucide-react';
 import { budgetsApi, categoriesApi, type CategoryOption } from '../api/endpoints';
 import type { Budget } from '../types';
-import { FinoraCard, EmptyState, Button, Skeleton, MetricCard } from '../design-system';
+import { FinoraCard, EmptyState, Button, Skeleton, MetricCard, Badge } from '../design-system';
 import { useDelayedLoading } from '../hooks/useDelayedLoading';
+import { ICON_COMPONENTS, COLOR_HEX } from '../lib/categoryIcons';
 
 function fmt(n: number) {
   // Negative amounts (e.g. a month where spend exceeded income) must render as "-₹500",
@@ -16,6 +17,12 @@ function daysLeftInMonth(): number {
   const now = new Date();
   const lastDayOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
   return lastDayOfMonth - now.getDate();
+}
+
+function budgetStatus(pct: number): { label: string; tone: 'success' | 'warning' | 'danger' } {
+  if (pct >= 100) return { label: 'Over budget', tone: 'danger' };
+  if (pct >= 90) return { label: 'Almost there', tone: 'warning' };
+  return { label: 'On track', tone: 'success' };
 }
 
 export default function Budgets() {
@@ -144,10 +151,12 @@ export default function Budgets() {
             <Skeleton.Region label="Loading budgets">
               <div className="space-y-3">
                 {[0, 1, 2].map((i) => (
-                  <div key={i} className="grid grid-cols-[140px_1fr_140px] items-center gap-3">
-                    <Skeleton.Text width="w-20" />
-                    <Skeleton.Block className="h-2 w-full" />
-                    <Skeleton.Text width="w-24" />
+                  <div key={i} className="flex items-center gap-3">
+                    <Skeleton.Circle size={32} />
+                    <Skeleton.Text width="w-32" />
+                    <Skeleton.Block className="h-2 flex-1" />
+                    <Skeleton.Text width="w-36" />
+                    <Skeleton.Block className="h-5 w-20" />
                   </div>
                 ))}
               </div>
@@ -163,14 +172,26 @@ export default function Budgets() {
           />
         ) : (
           budgets.map((b) => {
-            const pct = b.monthlyLimit > 0 ? Math.min(100, (b.spentThisMonth / b.monthlyLimit) * 100) : 0;
+            const pct = b.monthlyLimit > 0 ? Math.min(999, (b.spentThisMonth / b.monthlyLimit) * 100) : 0;
+            const barPct = Math.min(100, pct);
+            const status = budgetStatus(pct);
+            const cat = categoriesById.get(b.categoryId);
+            const Icon = ICON_COMPONENTS[cat?.icon ?? 'tag'] ?? Wallet;
+            const color = COLOR_HEX[cat?.color ?? 'gray'];
             return (
-              <div key={b.id} className="grid grid-cols-[140px_1fr_140px] items-center gap-3 text-sm">
-                <span>{b.categoryName}</span>
-                <div className="h-2 bg-black/10 rounded overflow-hidden">
-                  <div className={`h-full ${pct >= 100 ? 'bg-danger' : pct >= 90 ? 'bg-primary' : 'bg-success'}`} style={{ width: `${pct}%` }} />
+              <div key={b.id} data-testid="budget-row" className="flex items-center gap-3 text-sm">
+                <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0" style={{ backgroundColor: `${color}26` }}>
+                  <Icon size={16} style={{ color }} />
                 </div>
-                <span>{fmt(b.spentThisMonth)} / {fmt(b.monthlyLimit)}</span>
+                <span className="w-32 flex-shrink-0 truncate">{b.categoryName}</span>
+                <div className="flex-1 h-2 bg-black/10 rounded overflow-hidden">
+                  <div
+                    className={`h-full ${status.tone === 'danger' ? 'bg-danger' : status.tone === 'warning' ? 'bg-warning' : 'bg-success'}`}
+                    style={{ width: `${barPct}%` }}
+                  />
+                </div>
+                <span className="w-36 flex-shrink-0 text-right">{fmt(b.spentThisMonth)} / {fmt(b.monthlyLimit)}</span>
+                <Badge tone={status.tone} label={status.label} className="flex-shrink-0" />
               </div>
             );
           })
