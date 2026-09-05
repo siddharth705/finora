@@ -59,13 +59,19 @@ import static org.assertj.core.api.Assertions.assertThat;
  * someone to remember.
  *
  * <p><b>{@code @Tag("nightly")}.</b> This is a coverage metric, not a correctness gate — the doc
- * above already says a drop here means "add a trace", not "something broke". Runs on the nightly
- * schedule ({@code corpus-coverage-nightly.yml}) instead of every PR/merge (backend/pom.xml's
- * {@code excludedGroups}), the one candidate out of four slow corpus-driven tests investigated for
- * this that was actually safe to defer — the other three (trace PII scanning, a silent-data-loss
- * regression sweep, a targeted real-document defect test) stay on every run because deferring any
- * of them risks a real correctness or security regression sitting on main for a day, not just a
- * stale metric.
+ * above already says a drop here means "add a trace", not "something broke". Excluded from the
+ * default backend suite (backend/pom.xml's {@code excludedGroups}) rather than run on every PR —
+ * the one candidate out of four slow corpus-driven tests investigated for this that was actually
+ * safe to defer; the other three (trace PII scanning, a silent-data-loss regression sweep, a
+ * targeted real-document defect test) stay on every run because deferring any of them risks a real
+ * correctness or security regression sitting on main for a day, not just a stale metric.
+ *
+ * <p>Run by {@code corpus-coverage-nightly.yml} on its own daily schedule, and — added 2026-09-05
+ * after PR #930 registered four new capabilities with no committed trace covering any of them, a
+ * gap the nightly-only cadence let sit on main for a day before catching (fixed in PR #957) — also
+ * on any pull request that touches {@link CapabilityCoverageService}, this class, or the committed
+ * trace corpus, so the next capability registered without coverage is caught at review time
+ * instead. See that workflow file's own comment for the exact path filter.
  */
 @Tag("nightly")
 class CapabilityCorpusCoverageTest {
