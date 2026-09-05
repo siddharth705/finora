@@ -147,6 +147,15 @@ describe('Budgets', () => {
     await waitFor(() => expect(budgetsApi.upsert).toHaveBeenCalledWith('Travel', 3000));
   });
 
+  it('still shows budgets, falling back to a default icon, when categories fail to load', async () => {
+    vi.mocked(budgetsApi.list).mockResolvedValue([budget({ categoryId: 'c1', categoryName: 'Dining' })]);
+    vi.mocked(categoriesApi.list).mockRejectedValue(new Error('categories service down'));
+    renderPage();
+
+    expect(await screen.findByText('Dining')).toBeInTheDocument();
+    expect(screen.queryByText('Could not load budgets.')).not.toBeInTheDocument();
+  });
+
   it('renders stat cards, the category list, the spending breakdown chart, and the form together', async () => {
     vi.mocked(budgetsApi.list).mockResolvedValue([
       budget({ id: 'b1', categoryId: 'c1', categoryName: 'Dining', monthlyLimit: 10000, spentThisMonth: 8400 }),

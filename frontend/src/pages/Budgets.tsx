@@ -47,10 +47,23 @@ export default function Budgets() {
 
   function load() {
     setLoading(true);
-    Promise.all([budgetsApi.list(), categoriesApi.list()])
-      .then(([budgetList, categoryList]) => {
-        setBudgets(budgetList);
-        setCategoriesById(new Map(categoryList.map((c) => [c.id, c])));
+    // Categories only supply each row's icon/color -- cosmetic, with a safe fallback already
+    // built into the row rendering (`?? 'tag'` / `?? 'gray'`) -- so a categories-service hiccup
+    // must not block budgets from showing at all. Promise.all here would fail the whole page on
+    // either request failing; allSettled lets a categories failure degrade silently to those
+    // fallbacks while a budgets failure still surfaces the real error.
+    Promise.allSettled([budgetsApi.list(), categoriesApi.list()])
+      .then(([budgetsResult, categoriesResult]) => {
+        if (budgetsResult.status === 'rejected') {
+          setError('Could not load budgets.');
+          return;
+        }
+        setBudgets(budgetsResult.value);
+        setCategoriesById(
+          categoriesResult.status === 'fulfilled'
+            ? new Map(categoriesResult.value.map((c) => [c.id, c]))
+            : new Map()
+        );
       })
       .catch(() => setError('Could not load budgets.'))
       .finally(() => setLoading(false));
@@ -153,58 +166,58 @@ export default function Budgets() {
       {error && <p className="text-danger text-sm">{error}</p>}
 
       <div className="grid lg:grid-cols-3 gap-4">
-      <FinoraCard padding="sm" className="lg:col-span-2 space-y-3">
-        {loading ? (
-          showSkeleton && (
-            <Skeleton.Region label="Loading budgets">
-              <div className="space-y-3">
-                {[0, 1, 2].map((i) => (
-                  <div key={i} className="flex items-center gap-3">
-                    <Skeleton.Circle size={32} />
-                    <Skeleton.Text width="w-32" />
-                    <Skeleton.Block className="h-2 flex-1" />
-                    <Skeleton.Text width="w-36" />
-                    <Skeleton.Block className="h-5 w-20" />
+        <FinoraCard padding="sm" className="lg:col-span-2 space-y-3">
+          {loading ? (
+            showSkeleton && (
+              <Skeleton.Region label="Loading budgets">
+                <div className="space-y-3">
+                  {[0, 1, 2].map((i) => (
+                    <div key={i} className="flex items-center gap-3">
+                      <Skeleton.Circle size={32} />
+                      <Skeleton.Text width="w-32" />
+                      <Skeleton.Block className="h-2 flex-1" />
+                      <Skeleton.Text width="w-36" />
+                      <Skeleton.Block className="h-5 w-20" />
+                    </div>
+                  ))}
+                </div>
+              </Skeleton.Region>
+            )
+          ) : budgets.length === 0 ? (
+            <EmptyState
+              icon={PiggyBank}
+              iconBg="bg-orange-100"
+              iconColor="text-orange-600"
+              title="No budgets set"
+              desc="Create your first budget above to start tracking spending."
+            />
+          ) : (
+            budgets.map((b) => {
+              const pct = b.monthlyLimit > 0 ? Math.min(999, (b.spentThisMonth / b.monthlyLimit) * 100) : 0;
+              const barPct = Math.min(100, pct);
+              const status = budgetStatus(pct);
+              const cat = categoriesById.get(b.categoryId);
+              const Icon = ICON_COMPONENTS[cat?.icon ?? 'tag'] ?? Wallet;
+              const color = COLOR_HEX[cat?.color ?? 'gray'];
+              return (
+                <div key={b.id} data-testid="budget-row" className="flex items-center gap-3 text-sm">
+                  <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0" style={{ backgroundColor: `${color}26` }}>
+                    <Icon size={16} style={{ color }} />
                   </div>
-                ))}
-              </div>
-            </Skeleton.Region>
-          )
-        ) : budgets.length === 0 ? (
-          <EmptyState
-            icon={PiggyBank}
-            iconBg="bg-orange-100"
-            iconColor="text-orange-600"
-            title="No budgets set"
-            desc="Create your first budget above to start tracking spending."
-          />
-        ) : (
-          budgets.map((b) => {
-            const pct = b.monthlyLimit > 0 ? Math.min(999, (b.spentThisMonth / b.monthlyLimit) * 100) : 0;
-            const barPct = Math.min(100, pct);
-            const status = budgetStatus(pct);
-            const cat = categoriesById.get(b.categoryId);
-            const Icon = ICON_COMPONENTS[cat?.icon ?? 'tag'] ?? Wallet;
-            const color = COLOR_HEX[cat?.color ?? 'gray'];
-            return (
-              <div key={b.id} data-testid="budget-row" className="flex items-center gap-3 text-sm">
-                <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0" style={{ backgroundColor: `${color}26` }}>
-                  <Icon size={16} style={{ color }} />
+                  <span className="w-32 flex-shrink-0 truncate">{b.categoryName}</span>
+                  <div className="flex-1 h-2 bg-black/10 rounded overflow-hidden">
+                    <div
+                      className={`h-full ${status.tone === 'danger' ? 'bg-danger' : status.tone === 'warning' ? 'bg-warning' : 'bg-success'}`}
+                      style={{ width: `${barPct}%` }}
+                    />
+                  </div>
+                  <span className="w-36 flex-shrink-0 text-right">{fmt(b.spentThisMonth)} / {fmt(b.monthlyLimit)}</span>
+                  <Badge tone={status.tone} label={status.label} className="flex-shrink-0" />
                 </div>
-                <span className="w-32 flex-shrink-0 truncate">{b.categoryName}</span>
-                <div className="flex-1 h-2 bg-black/10 rounded overflow-hidden">
-                  <div
-                    className={`h-full ${status.tone === 'danger' ? 'bg-danger' : status.tone === 'warning' ? 'bg-warning' : 'bg-success'}`}
-                    style={{ width: `${barPct}%` }}
-                  />
-                </div>
-                <span className="w-36 flex-shrink-0 text-right">{fmt(b.spentThisMonth)} / {fmt(b.monthlyLimit)}</span>
-                <Badge tone={status.tone} label={status.label} className="flex-shrink-0" />
-              </div>
-            );
-          })
-        )}
-      </FinoraCard>
+              );
+            })
+          )}
+        </FinoraCard>
 
         <FinoraCard>
           <SectionHeader title="Spending Breakdown" size="sm" />
