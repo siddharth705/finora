@@ -2,9 +2,11 @@ package com.finora.service;
 
 import com.finora.AbstractIntegrationTest;
 import com.finora.entity.*;
+import com.finora.integrations.razorpay.RazorpaySubscriptionGateway;
 import com.finora.repository.*;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 import java.math.BigDecimal;
 import java.util.List;
@@ -12,6 +14,10 @@ import java.util.Map;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.never;
 
 class RazorpayWebhookDispatcherIT extends AbstractIntegrationTest {
 
@@ -24,6 +30,8 @@ class RazorpayWebhookDispatcherIT extends AbstractIntegrationTest {
     @Autowired private SubscriptionService subscriptionService;
     @Autowired private BillingPriceRepository billingPriceRepository;
     @Autowired private PaymentRepository paymentRepository;
+
+    @MockitoBean private RazorpaySubscriptionGateway gateway;
 
     private User createUser() {
         User user = new User();
@@ -304,5 +312,68 @@ class RazorpayWebhookDispatcherIT extends AbstractIntegrationTest {
                 .filter(e -> e.getEventType().equals(SubscriptionEvent.SUBSCRIPTION_CREATED))
                 .count();
         assertThat(after - before).isEqualTo(1);
+    }
+
+    @Test
+    void activatingAnUpgradeCancelsTheOldRazorpaySubscriptionImmediately() {
+        User user = createUser();
+        subscriptionService.provisionFreeSubscription(user.getId());
+        Plan plus = planRepository.findByCode("PLUS").orElseThrow();
+        Plan premium = planRepository.findByCode("PREMIUM").orElseThrow();
+        String oldRazorpaySubscriptionId = "sub_old_" + UUID.randomUUID();
+        String newRazorpaySubscriptionId = "sub_new_" + UUID.randomUUID();
+
+        Subscription subscription = subscriptionRepository.findActiveOrTrial(user.getId()).orElseThrow();
+        subscription.setPlanId(plus.getId());
+        subscription.setBillingCycle("MONTHLY");
+        subscription.setRazorpaySubscriptionId(oldRazorpaySubscriptionId);
+        subscription.setPaymentProvider("RAZORPAY");
+        subscriptionRepository.save(subscription);
+
+        SubscriptionOrder order = new SubscriptionOrder();
+        order.setUserId(user.getId());
+        order.setPlanId(premium.getId());
+        order.setBillingCycle("MONTHLY");
+        order.setRazorpaySubscriptionId(newRazorpaySubscriptionId);
+        order.setStatus(SubscriptionOrder.STATUS_PENDING);
+        order.setAmount(new BigDecimal("799.00"));
+        subscriptionOrderRepository.save(order);
+
+        Map<String, Object> payload = Map.of(
+                "subscription", Map.of("entity", Map.of(
+                        "id", newRazorpaySubscriptionId, "current_end", 1893456000L))); // synthetic-ok: fixture epoch second
+
+        dispatcher.dispatch("subscription.activated", payload);
+
+        Subscription reloaded = subscriptionRepository.findActiveOrTrial(user.getId()).orElseThrow();
+        assertThat(reloaded.getPlanId()).isEqualTo(premium.getId());
+        assertThat(reloaded.getRazorpaySubscriptionId()).isEqualTo(newRazorpaySubscriptionId);
+        verify(gateway).cancelSubscription(oldRazorpaySubscriptionId, false);
+    }
+
+    @Test
+    void aBrandNewSignupActivationNeverCallsCancel() {
+        // The existing activation path (Plan 1) has no prior razorpaySubscriptionId on the row --
+        // the same code that stops an old upgrade mandate must do nothing here.
+        User user = createUser();
+        subscriptionService.provisionFreeSubscription(user.getId());
+        Plan premium = planRepository.findByCode("PREMIUM").orElseThrow();
+        String razorpaySubscriptionId = "sub_test_" + UUID.randomUUID();
+
+        SubscriptionOrder order = new SubscriptionOrder();
+        order.setUserId(user.getId());
+        order.setPlanId(premium.getId());
+        order.setBillingCycle("MONTHLY");
+        order.setRazorpaySubscriptionId(razorpaySubscriptionId);
+        order.setStatus(SubscriptionOrder.STATUS_PENDING);
+        order.setAmount(new BigDecimal("799.00"));
+        subscriptionOrderRepository.save(order);
+
+        Map<String, Object> payload = Map.of(
+                "subscription", Map.of("entity", Map.of("id", razorpaySubscriptionId, "current_end", 1893456000L))); // synthetic-ok: fixture epoch second
+
+        dispatcher.dispatch("subscription.activated", payload);
+
+        verify(gateway, never()).cancelSubscription(any(), anyBoolean());
     }
 }

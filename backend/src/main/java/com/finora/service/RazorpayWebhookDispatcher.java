@@ -5,6 +5,7 @@ import com.finora.entity.Plan;
 import com.finora.entity.Subscription;
 import com.finora.entity.SubscriptionEvent;
 import com.finora.entity.SubscriptionOrder;
+import com.finora.integrations.razorpay.RazorpaySubscriptionGateway;
 import com.finora.repository.BillingPriceRepository;
 import com.finora.repository.PaymentRepository;
 import com.finora.repository.PlanRepository;
@@ -38,19 +39,22 @@ public class RazorpayWebhookDispatcher {
     private final PlanRepository planRepository;
     private final BillingPriceRepository billingPriceRepository;
     private final PaymentRepository paymentRepository;
+    private final RazorpaySubscriptionGateway gateway;
 
     public RazorpayWebhookDispatcher(SubscriptionRepository subscriptionRepository,
                                       SubscriptionOrderRepository subscriptionOrderRepository,
                                       SubscriptionEventRepository subscriptionEventRepository,
                                       PlanRepository planRepository,
                                       BillingPriceRepository billingPriceRepository,
-                                      PaymentRepository paymentRepository) {
+                                      PaymentRepository paymentRepository,
+                                      RazorpaySubscriptionGateway gateway) {
         this.subscriptionRepository = subscriptionRepository;
         this.subscriptionOrderRepository = subscriptionOrderRepository;
         this.subscriptionEventRepository = subscriptionEventRepository;
         this.planRepository = planRepository;
         this.billingPriceRepository = billingPriceRepository;
         this.paymentRepository = paymentRepository;
+        this.gateway = gateway;
     }
 
     /**
@@ -117,6 +121,8 @@ public class RazorpayWebhookDispatcher {
                         "-- provisionFreeSubscription should have created one at signup."));
         Plan plan = planRepository.findById(order.getPlanId()).orElseThrow();
 
+        String oldRazorpaySubscriptionId = subscription.getRazorpaySubscriptionId();
+
         subscription.setPlanId(plan.getId());
         subscription.setBillingCycle(order.getBillingCycle());
         subscription.setRazorpaySubscriptionId(razorpaySubscriptionId);
@@ -128,6 +134,25 @@ public class RazorpayWebhookDispatcher {
             subscription.setRenewalDate(LocalDate.ofInstant(Instant.ofEpochSecond(n.longValue()), ZoneOffset.UTC));
         }
         subscriptionRepository.save(subscription);
+
+        // design spec §6.5 step 4. A pre-existing, DIFFERENT razorpaySubscriptionId on the row
+        // means this activation is completing an upgrade over an old, still live subscription --
+        // stop it now that the new one is confirmed active, not before (spec §6.5's whole reason
+        // for this ordering: cancelling first would risk leaving the user with no active paid
+        // access if they abandoned the new checkout). Deliberately NOT allowed to roll back this
+        // transaction: the new subscription is genuinely active and correctly billing regardless of
+        // whether stopping the old one succeeds, so a Razorpay error here is caught, logged for
+        // manual follow-up, and does not undo the activation that already happened. A brand-new
+        // signup has no prior razorpaySubscriptionId (null), so this never fires for that path.
+        if (oldRazorpaySubscriptionId != null && !oldRazorpaySubscriptionId.equals(razorpaySubscriptionId)) {
+            try {
+                gateway.cancelSubscription(oldRazorpaySubscriptionId, false);
+            } catch (RuntimeException e) {
+                log.error("Upgrade completed for user {} but cancelling the old Razorpay subscription {} " +
+                        "failed -- requires manual follow-up to stop it from charging again.",
+                        subscription.getUserId(), oldRazorpaySubscriptionId, e);
+            }
+        }
 
         SubscriptionEvent event = new SubscriptionEvent();
         event.setSubscriptionId(subscription.getId());
