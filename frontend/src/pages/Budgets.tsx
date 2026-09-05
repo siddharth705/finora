@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { PiggyBank } from 'lucide-react';
-import { budgetsApi } from '../api/endpoints';
+import { budgetsApi, categoriesApi, type CategoryOption } from '../api/endpoints';
 import type { Budget } from '../types';
 import { FinoraCard, EmptyState, Button, Skeleton } from '../design-system';
 import { useDelayedLoading } from '../hooks/useDelayedLoading';
@@ -25,11 +25,18 @@ export default function Budgets() {
   // EmptyState branch explicitly; `showSkeleton` (useDelayedLoading) only controls whether a
   // skeleton appears during that gate, not whether the wrong content shows.
   const [loading, setLoading] = useState(true);
+  const [categoriesById, setCategoriesById] = useState<Map<string, CategoryOption>>(new Map());
   const queryClient = useQueryClient();
 
   function load() {
     setLoading(true);
-    budgetsApi.list().then(setBudgets).catch(() => setError('Could not load budgets.')).finally(() => setLoading(false));
+    Promise.all([budgetsApi.list(), categoriesApi.list()])
+      .then(([budgetList, categoryList]) => {
+        setBudgets(budgetList);
+        setCategoriesById(new Map(categoryList.map((c) => [c.id, c])));
+      })
+      .catch(() => setError('Could not load budgets.'))
+      .finally(() => setLoading(false));
   }
   useEffect(load, []);
   const showSkeleton = useDelayedLoading(loading);

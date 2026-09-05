@@ -2,21 +2,34 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import Budgets from './Budgets';
-import { budgetsApi } from '../api/endpoints';
+import { budgetsApi, categoriesApi, type CategoryOption } from '../api/endpoints';
 import type { Budget } from '../types';
 
 vi.mock('../api/endpoints', () => ({
   budgetsApi: { list: vi.fn(), upsert: vi.fn() },
+  categoriesApi: { list: vi.fn() },
 }));
 
 function budget(overrides: Partial<Budget> = {}): Budget {
   return {
     id: 'b1',
+    categoryId: 'c1',
     categoryName: 'Dining',
     monthlyLimit: 5000,
     spentThisMonth: 2000,
     ...overrides,
   } as Budget;
+}
+
+function category(overrides: Partial<CategoryOption> = {}): CategoryOption {
+  return {
+    id: 'c1',
+    name: 'Dining',
+    isSystem: true,
+    icon: 'utensils',
+    color: 'orange',
+    ...overrides,
+  };
 }
 
 function renderPage() {
@@ -31,6 +44,16 @@ function renderPage() {
 describe('Budgets', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(categoriesApi.list).mockResolvedValue([]);
+  });
+
+  it('fetches categories alongside budgets, to look up each budget row\'s icon and color', async () => {
+    vi.mocked(budgetsApi.list).mockResolvedValue([budget({ categoryId: 'c1', categoryName: 'Dining' })]);
+    vi.mocked(categoriesApi.list).mockResolvedValue([category({ id: 'c1' })]);
+
+    renderPage();
+
+    await waitFor(() => expect(categoriesApi.list).toHaveBeenCalledTimes(1));
   });
 
   // The actual bug this page had: `budgets` started `[]`, which the render logic couldn't tell
