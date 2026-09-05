@@ -17,11 +17,26 @@ name: Mobile E2E (Maestro)
 # e2e-nightly.yml makes for the web suite, just no longer the ONLY trigger. `workflow_dispatch`
 # still exists so a release can force a run on demand.
 #
+# `types: [opened, reopened]`, not the pull_request default (which adds `synchronize`) -- this is
+# still not a required check, so an interim push mid-review gets no blocking signal from it either
+# way, and re-running the full ~25-45 minute emulator boot on every single push while a PR is being
+# iterated on burns real CI minutes for feedback nobody is gated on. One run at PR-open is enough
+# to catch a mobile-breaking change early; `push: branches: [main]` below is what actually gates
+# the change once it lands, since a mobile-touching PR can still pick up new commits after that
+# one opening run without ever re-triggering this job before merge.
+#
 # 03:15 UTC, offset from e2e-nightly.yml's 03:00 and gitleaks-nightly.yml's 03:30 for the same
 # reason those two are offset from each other: keeping schedules visibly distinct in the Actions
 # history, not because the jobs would conflict (GitHub-hosted runners give every job its own VM).
 on:
   pull_request:
+    types: [opened, reopened]
+    paths:
+      - 'mobile/**'
+      - '.github/workflows/maestro-nightly.yml'
+  push:
+    branches:
+      - main
     paths:
       - 'mobile/**'
       - '.github/workflows/maestro-nightly.yml'
@@ -32,7 +47,8 @@ on:
 # Per-ref, not the single global lane this had while nightly-only -- that would have serialised
 # every open PR's run behind one queue once this started triggering on pull_request. Matches
 # ci.yml's own group exactly: a new push supersedes the in-flight run on any branch except main,
-# where every run's result (nightly or workflow_dispatch) is worth keeping rather than discarding.
+# where every run's result (a merge landing via push, nightly, or workflow_dispatch) is worth
+# keeping rather than discarding.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
