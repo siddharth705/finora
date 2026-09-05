@@ -199,7 +199,7 @@ export function ReportsScreen() {
       ) : reportError || !report ? (
         <Card style={styles.section}>
           <Text style={[styles.error, { color: c.danger }]}>
-            Couldn&apos;t load this month&apos;s report — pull down to try again.
+            Couldn&apos;t load {monthLabelLong(month as string)}&apos;s report — pull down to try again.
           </Text>
         </Card>
       ) : (
@@ -232,7 +232,7 @@ export function ReportsScreen() {
           <Card style={styles.section}>
             <SectionHeading title="Category Breakdown" />
             {report.categories.length === 0 ? (
-              <EmptyState message="No expenses recorded this month." />
+              <EmptyState message={`No expenses recorded in ${monthLabelLong(month as string)}.`} />
             ) : (
               report.categories.map((cat) => {
                 const pct = categoryTotal > 0 ? (cat.amount / categoryTotal) * 100 : 0;

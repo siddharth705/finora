@@ -159,7 +159,7 @@ describe('ReportsScreen', () => {
     api.forMonth.mockReset().mockRejectedValue(new Error('boom'));
     renderScreen();
 
-    expect(await screen.findByText(/Couldn't load this month's report/)).toBeTruthy();
+    expect(await screen.findByText(/Couldn't load July 2026's report/)).toBeTruthy();
   });
 
   describe('skeleton loading', () => {
