@@ -72,7 +72,7 @@ export default function VerifyEmailChange() {
           <span className="w-7 h-7 rounded-lg bg-gradient-to-br from-primary to-primary-dark flex items-center justify-center">
             <Sparkles size={14} className="text-on-primary" strokeWidth={2.5} />
           </span>
-          <span className="font-extrabold tracking-wide text-ink">FYNORA</span>
+          <span className="font-display font-extrabold tracking-wide text-ink">FYNORA</span>
         </div>
 
         {/* Mobile has no way to intercept this page's own https:// URL directly (no hosted

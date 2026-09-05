@@ -35,6 +35,11 @@ export default {
       },
       fontFamily: {
         sans: ['Inter', 'system-ui', 'sans-serif'],
+        // Same pair the marketing page already loads (see index.css's `.m-display`/`.m-h2`
+        // classes and index.html's Google Fonts link) -- this just makes it available as a
+        // Tailwind utility for product-UI headings outside the marketing surface, starting with
+        // the auth screens.
+        display: ['Manrope', 'Inter', 'system-ui', 'sans-serif'],
       },
       boxShadow: {
         card: '0 1px 2px rgba(16,24,40,0.04), 0 1px 3px rgba(16,24,40,0.06)',
