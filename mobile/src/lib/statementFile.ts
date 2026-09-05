@@ -1,4 +1,5 @@
 import * as DocumentPicker from 'expo-document-picker';
+import * as appLock from './appLock';
 import type { RNFile } from '../api/endpoints';
 
 /**
@@ -26,14 +27,17 @@ const ACCEPTED_MIME = ['text/csv', 'text/comma-separated-values', 'application/p
  * one. Throws only for a genuinely unusable selection, so callers can show that message.
  */
 export async function pickStatement(): Promise<PickedStatement | null> {
-  const result = await DocumentPicker.getDocumentAsync({
+  // Bug found in review (Track D/D5): the native picker backgrounds this app the same way
+  // Sharing.shareAsync does, and without this suppression AppLockGate would show a spurious lock
+  // prompt the instant the picker's own UI (or a provider like Drive/iCloud) returns focus here.
+  const result = await appLock.withShareSuppression(() => DocumentPicker.getDocumentAsync({
     type: ACCEPTED_MIME,
     // Copies the file into the app's cache directory. Without this the URI can point into a
     // provider (Drive, iCloud) that the upload cannot read, or that is revoked the moment the
     // picker closes -- which fails later, during upload, where the cause is far less obvious.
     copyToCacheDirectory: true,
     multiple: false,
-  });
+  }));
 
   if (result.canceled || !result.assets?.length) return null;
 

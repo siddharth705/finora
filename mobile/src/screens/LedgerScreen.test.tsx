@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { usePreventScreenCapture } from 'expo-screen-capture';
 import { DEFAULT_LEDGER_FILTERS, LEDGER_PAGE_SIZE, LedgerScreen, getLedgerNextPageParam } from './LedgerScreen';
 import { categoriesApi, transactionsApi } from '../api/endpoints';
 import { hapticImpact } from '../lib/haptics';
@@ -537,5 +538,17 @@ describe('"Where this came from" panel (Track C/C7)', () => {
     fireEvent(await screen.findByText('Grocery run'), 'accessibilityAction', { nativeEvent: { actionName: 'viewSource' } });
 
     expect(await screen.findByText('march-statement.pdf')).toBeTruthy();
+  });
+});
+
+// D3 (Track D security cleanup). Transaction descriptions/amounts are as screenshot-attractive
+// as anything on the Dashboard or Accounts screen, which already guard against this.
+describe('screen capture protection (Track D/D3)', () => {
+  it('calls usePreventScreenCapture on mount', () => {
+    transactions.search.mockResolvedValue(page([]) as never);
+
+    renderScreen();
+
+    expect(usePreventScreenCapture).toHaveBeenCalled();
   });
 });
