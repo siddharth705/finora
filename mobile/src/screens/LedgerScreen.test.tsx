@@ -32,7 +32,7 @@ jest.mock('@react-navigation/native', () => ({
  */
 
 jest.mock('../api/endpoints', () => ({
-  transactionsApi: { search: jest.fn(), remove: jest.fn(), updateCategory: jest.fn() },
+  transactionsApi: { search: jest.fn(), remove: jest.fn(), updateCategory: jest.fn(), source: jest.fn() },
   categoriesApi: { list: jest.fn() },
 }));
 
@@ -479,5 +479,42 @@ describe('drill-through filters (Track C/C4)', () => {
 
     expect(await screen.findByText('Travel')).toBeTruthy();
     expect(screen.queryByText('Food')).toBeNull();
+  });
+});
+
+describe('"Where this came from" panel (Track C/C7)', () => {
+  it('opens the source panel for the tapped row without also opening the category picker', async () => {
+    transactions.search.mockResolvedValue(page([txn()]) as never);
+    transactions.source.mockResolvedValue({
+      available: true, sourceLabel: 'CSV_IMPORT', statementImportId: 'si-1',
+      fileName: 'march-statement.pdf', rowPosition: 14, importedAt: '2026-08-15T10:00:00Z',
+      accountName: 'HDFC Savings', statementPeriodStart: '2026-03-01', statementPeriodEnd: '2026-03-31',
+    } as never);
+
+    renderScreen();
+    fireEvent.press(await screen.findByLabelText('Where this came from'));
+
+    expect(await screen.findByText('march-statement.pdf')).toBeTruthy();
+    // Tapping the info button must not also trigger the row's own onPress (category picker).
+    expect(screen.queryByText('Change category')).toBeNull();
+    expect(transactions.source).toHaveBeenCalledWith('t-1');
+  });
+
+  it('closes without affecting the row underneath', async () => {
+    transactions.search.mockResolvedValue(page([txn()]) as never);
+    transactions.source.mockResolvedValue({
+      available: false, sourceLabel: 'MANUAL', statementImportId: null, fileName: null,
+      rowPosition: null, importedAt: null, accountName: null,
+      statementPeriodStart: null, statementPeriodEnd: null,
+    } as never);
+
+    renderScreen();
+    fireEvent.press(await screen.findByLabelText('Where this came from'));
+    expect(await screen.findByText('You entered this transaction yourself.')).toBeTruthy();
+
+    fireEvent.press(screen.getByText('Close'));
+
+    await waitFor(() => expect(screen.queryByText('You entered this transaction yourself.')).toBeNull());
+    expect(screen.getByText('Grocery run')).toBeTruthy();
   });
 });

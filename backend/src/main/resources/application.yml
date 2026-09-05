@@ -335,6 +335,22 @@ app:
       # Two minutes, so a deploy's first pass lands after boot and any migration have settled
       # rather than competing with them.
       initial-delay-ms: ${COUNTERPARTY_BACKFILL_SWEEP_INITIAL_DELAY_MS:120000}
+  net-worth-snapshot:
+    sweep:
+      # NetWorthSnapshotSweepService (Track C/C8). NetWorthController's manual "Save today's
+      # snapshot" endpoint stays as a same-day override -- this just means a user's history no
+      # longer has a gap for the day nobody remembered to press it. Off under test for the same
+      # reason every other sweep here is: a background thread writing net_worth_snapshots mid-test
+      # is the cross-test pollution BH-058 was about. Tests call
+      # NetWorthSnapshotSweepService.sweep() directly, which does not consult this flag.
+      enabled: ${NET_WORTH_SNAPSHOT_SWEEP_ENABLED:true}
+      # Four hours: frequent enough that every user's own local midnight (see the per-user
+      # UserZone.of resolution in NetWorthService.saveSnapshotForToday) falls inside some run,
+      # without this class having to reason about timezones itself at all. The work itself is
+      # cheap -- one upsert per user with at least one account -- so there is no batch-size to tune
+      # the way account-purge/counterparty-backfill have.
+      interval-ms: ${NET_WORTH_SNAPSHOT_SWEEP_INTERVAL_MS:14400000}
+      initial-delay-ms: ${NET_WORTH_SNAPSHOT_SWEEP_INITIAL_DELAY_MS:300000}
   security:
     # RateLimitFilter's own doc comment already flagged this: request.getRemoteAddr() only
     # returns the real client IP when nothing sits between the client and this app. Railway (like
