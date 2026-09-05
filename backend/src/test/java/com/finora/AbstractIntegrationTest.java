@@ -42,6 +42,21 @@ import org.testcontainers.containers.PostgreSQLContainer;
  * what the comment always claimed. The container outlives every test class in the JVM, and
  * Testcontainers' Ryuk sidecar removes it when the JVM exits, so nothing leaks.
  *
+ * <p><b>Profile guard.</b> pom.xml's surefire/failsafe {@code systemPropertyVariables} set
+ * {@code spring.profiles.active=test} on the forked JVM -- that is the only reason
+ * {@code application-test.yml} (which disables six background schedulers under test, among other
+ * things) ever loads instead of {@code application.yml}'s {@code dev} default. Nothing enforces
+ * that this class is only ever reached through that fork: an IDE's own "Run Test" launches its own
+ * JVM directly against the compiled classpath, entirely outside Maven's plugin execution, and does
+ * not carry that system property unless the run configuration sets it explicitly. That is exactly
+ * the bug fixed once already (see the {@code spring.profiles.active} note on the surefire plugin in
+ * pom.xml, and {@code MerchantLearningQueueIT}'s history) for the one path that was actually
+ * exercised at the time -- a live scheduler thread, caught mid-suite, only reachable because the
+ * profile silently was not "test". An IDE run is the same failure shape from a different entry
+ * point, so it gets the same guard: checked before the container starts, so a bypassed run fails in
+ * milliseconds with a clear cause instead of after paying for a Postgres container, or worse,
+ * passing while quietly exercising live schedulers against shared state.
+ *
  * <p><b>{@code @Isolated}.</b> {@code junit-platform.properties} turns on class-level parallel
  * execution for the suite, safe for the ~217 pure-unit {@code *Test.java} classes (fresh mocks
  * per class, no shared state). Every subclass of this one shares the single cached
@@ -72,6 +87,32 @@ public abstract class AbstractIntegrationTest {
             .withPassword("finora");
 
     static {
+        // See this class's own "Profile guard" doc comment above. Checked first, before the
+        // container starts, so a bypassed run fails in milliseconds rather than after paying for
+        // Postgres -- and reads System.getProperty, not the Environment/Spring context (which
+        // does not exist yet at static-init time): this is exactly the JVM system property
+        // pom.xml's surefire/failsafe systemPropertyVariables set, so it is what actually proves
+        // that fork -- not just a value -- was reached.
+        String activeProfile = System.getProperty("spring.profiles.active");
+        if (!"test".equals(activeProfile)) {
+            throw new IllegalStateException(
+                    "spring.profiles.active is "
+                            + (activeProfile == null ? "unset" : "'" + activeProfile + "'")
+                            + ", not \"test\". This integration test was not launched through Maven's"
+                            + " surefire/failsafe plugin execution (pom.xml's systemPropertyVariables"
+                            + " is what normally sets this) -- an IDE's own \"Run Test\" button starts"
+                            + " its own JVM directly against the compiled classpath and skips it unless"
+                            + " the run configuration says otherwise. Without \"test\" active,"
+                            + " application-test.yml never loads and every background scheduler it"
+                            + " disables (merchant-learning queue, import-session cleanup,"
+                            + " statement-storage sweep, account-purge sweep, audit-log redaction,"
+                            + " Gmail state-cleanup/discovery) runs live against this class's shared"
+                            + " Testcontainers Postgres instead -- the exact defect fixed once already,"
+                            + " see the spring.profiles.active note on the surefire plugin in pom.xml."
+                            + " Fix: run via `./mvnw test` / `./mvnw verify`, or add"
+                            + " -Dspring.profiles.active=test to your IDE run configuration's VM"
+                            + " options.");
+        }
         // Started here, not by the JUnit extension, so that no per-class lifecycle can stop it.
         POSTGRES.start();
     }

@@ -30,10 +30,14 @@ jest.mock('react-native-safe-area-context', () => ({
 
 // A controllable stand-in for useRoute -- StatementHistoryScreen.test.tsx's file-level
 // jest.mock('@react-navigation/native') pattern, extended with the one hook this screen calls that
-// screen didn't.
+// screen didn't. mockNavigate (Track C/C6) is a plain jest.fn(): this screen only ever calls
+// navigate() to leave, never asserts on the result of being navigated TO, so nothing here needs
+// the shared-getParent()-stub shape the More-stack screens' own test files use.
 let mockRouteParams: { reimport?: unknown } | undefined;
+const mockNavigate = jest.fn();
 jest.mock('@react-navigation/native', () => ({
   useRoute: () => ({ params: mockRouteParams }),
+  useNavigation: () => ({ navigate: mockNavigate }),
 }));
 
 const api = {
@@ -103,6 +107,7 @@ async function pressImport() {
 describe('ImportScreen — re-import confirm attempt key', () => {
   beforeEach(() => {
     mockRouteParams = undefined;
+    mockNavigate.mockClear();
     api.accounts.list.mockReset().mockResolvedValue([]);
     api.categories.list.mockReset().mockResolvedValue([]);
     api.import.listSessions.mockReset().mockResolvedValue([]);
@@ -171,5 +176,70 @@ describe('ImportScreen — re-import confirm attempt key', () => {
     // mock's claimedKeys check rejects it exactly as the real backend would.
     expect(secondCall[1].idempotencyKey).not.toBe(firstCall[1].idempotencyKey);
     expect(await screen.findByText('Import complete')).toBeTruthy();
+  });
+});
+
+/**
+ * Track C/C6: depended on C4's Ledger drill-through filters existing at all -- without them this
+ * would land on the whole, unfiltered ledger, no more useful than the Transactions tab a user
+ * could already reach on their own.
+ */
+describe('ImportScreen — "View in Ledger" (Track C/C6)', () => {
+  beforeEach(() => {
+    mockRouteParams = undefined;
+    mockNavigate.mockClear();
+    api.accounts.list.mockReset().mockResolvedValue([]);
+    api.categories.list.mockReset().mockResolvedValue([]);
+    api.import.listSessions.mockReset().mockResolvedValue([]);
+    api.statements.confirmReimport.mockReset();
+  });
+
+  async function reachSummary(summary: Record<string, unknown>) {
+    api.statements.confirmReimport.mockResolvedValue(summary as never);
+    mockRouteParams = reimportParams('stmt-1', 1);
+    render(tree());
+    await pressImport();
+    await screen.findByText('Import complete');
+  }
+
+  it('filters by the confirmed account and the statement\'s own period', async () => {
+    await reachSummary({
+      imported: 1, skipped: 0, duplicatesDetected: 0, transfersIdentified: 0, newMerchantsLearned: 0,
+      accountsCreated: [], productsCreated: {}, categoriesAssigned: {}, warnings: [],
+      account: { id: 'acct-1', name: 'HDFC Savings' }, totalCredits: 0, totalDebits: 45,
+      statementOpeningBalance: null, statementClosingBalance: null,
+      statementPeriodStart: '2026-07-01', statementPeriodEnd: '2026-07-31',
+      importDurationMs: 1, source: 'reimport',
+    });
+
+    fireEvent.press(screen.getByText('View in Ledger'));
+
+    expect(mockNavigate).toHaveBeenCalledWith('Transactions', {
+      filters: expect.objectContaining({
+        accountId: 'acct-1', dateFrom: '2026-07-01', dateTo: '2026-07-31',
+        label: 'HDFC Savings · 2026-07-01 to 2026-07-31',
+      }),
+    });
+  });
+
+  // ImportSummary.account is nullable (see the type's own comment) -- must degrade to an
+  // unfiltered-by-account Ledger rather than crash reading `.id` off null.
+  it('still opens the Ledger when the confirm response carries no account', async () => {
+    await reachSummary({
+      imported: 1, skipped: 0, duplicatesDetected: 0, transfersIdentified: 0, newMerchantsLearned: 0,
+      accountsCreated: [], productsCreated: {}, categoriesAssigned: {}, warnings: [],
+      account: null, totalCredits: 0, totalDebits: 45,
+      statementOpeningBalance: null, statementClosingBalance: null,
+      statementPeriodStart: null, statementPeriodEnd: null,
+      importDurationMs: 1, source: 'reimport',
+    });
+
+    fireEvent.press(screen.getByText('View in Ledger'));
+
+    expect(mockNavigate).toHaveBeenCalledWith('Transactions', {
+      filters: expect.objectContaining({
+        accountId: undefined, dateFrom: undefined, dateTo: undefined, label: 'This import',
+      }),
+    });
   });
 });

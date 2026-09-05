@@ -76,6 +76,15 @@ export interface BucketedSlice {
   label: string;
   value: number;
   color: string;
+  /**
+   * Track C/C4. Whether this slice's label names exactly one real entry the caller can drill
+   * into -- false for the synthetic overflow bucket (several small entries folded into one row
+   * with nobody's individual amount) and for a real entry whose value has been added into by that
+   * fold (the "merges into an existing Other" case below): once folded, "Other" no longer means
+   * only its own real entry, so drilling into it as though it did would silently exclude
+   * everything else the row is currently showing.
+   */
+  drillable: boolean;
 }
 
 /**
@@ -95,7 +104,7 @@ export function bucketTopSlices(
 ): BucketedSlice[] {
   const sorted = [...entries].sort((a, b) => b[1] - a[1]);
   if (sorted.length <= colors.length) {
-    return sorted.map(([label, value], i) => ({ label, value, color: colors[i] }));
+    return sorted.map(([label, value], i) => ({ label, value, color: colors[i], drillable: true }));
   }
   const named = sorted.slice(0, colors.length - 1);
   const rest = sorted.slice(colors.length - 1).reduce((sum, [, value]) => sum + value, 0);
@@ -106,11 +115,12 @@ export function bucketTopSlices(
       label,
       value: i === collidingIndex ? value + rest : value,
       color: colors[i],
+      drillable: i !== collidingIndex,
     }));
   }
   return [
-    ...named.map(([label, value], i) => ({ label, value, color: colors[i] })),
-    { label: otherLabel, value: rest, color: colors[colors.length - 1] },
+    ...named.map(([label, value], i) => ({ label, value, color: colors[i], drillable: true })),
+    { label: otherLabel, value: rest, color: colors[colors.length - 1], drillable: false },
   ];
 }
 

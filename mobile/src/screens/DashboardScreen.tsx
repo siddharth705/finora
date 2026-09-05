@@ -17,7 +17,9 @@ import {
 } from '../api/endpoints';
 import { useAuth } from '../context/AuthContext';
 import { CHART_PALETTE, bucketTopSlices } from '../lib/chartGeometry';
-import { fmtCurrency, fromLocalDateString, greeting, monthLabel, monthLabelLong } from '../lib/format';
+import {
+  fmtCurrency, fromLocalDateString, greeting, monthDateRange, monthLabel, monthLabelLong,
+} from '../lib/format';
 import { invalidateFinancialData } from '../lib/invalidateFinancialData';
 import { usePrefetchAdjacentScreens } from '../lib/prefetchAdjacentScreens';
 import { deriveRefreshing, isPausedCold } from '../lib/refreshingIndicator';
@@ -311,10 +313,20 @@ export function DashboardScreen() {
 
   const kpis = summary
     ? [
-        { label: 'Total Balance', value: summary.currentBalance, delta: null as number | null, invert: false },
-        { label: 'Income', value: summary.monthlyIncome, delta: summary.incomeDeltaPct, invert: false },
-        { label: 'Expenses', value: summary.monthlyExpense, delta: summary.expenseDeltaPct, invert: true },
-        { label: 'Net Savings', value: summary.netCashFlow, delta: summary.netDeltaPct, invert: false },
+        {
+          label: 'Total Balance', value: summary.currentBalance, delta: null as number | null, invert: false,
+          // Track C/C5. Total Balance is a STOCK (Account.balance right now), not a flow this
+          // reporting period describes, so it has no month-over-month % to put in the same slot
+          // the other three KPIs use -- what belongs there instead is when the number was last
+          // touched. Account.balance only moves when a transaction posts, so if the newest one on
+          // file is from a past month, this figure is only as fresh as that: reuses the exact
+          // periodIsCurrent/reportingMonth this screen already computes for the identical reason
+          // (Bug 05) rather than inventing a second "how current is this" concept.
+          caption: periodIsCurrent ? 'As of today' : `As of ${monthLabel(summary.reportingMonth!)}`,
+        },
+        { label: 'Income', value: summary.monthlyIncome, delta: summary.incomeDeltaPct, invert: false, caption: null as string | null },
+        { label: 'Expenses', value: summary.monthlyExpense, delta: summary.expenseDeltaPct, invert: true, caption: null as string | null },
+        { label: 'Net Savings', value: summary.netCashFlow, delta: summary.netDeltaPct, invert: false, caption: null as string | null },
       ]
     : [];
 
@@ -397,7 +409,9 @@ export function DashboardScreen() {
                   accessibilityLabel={
                     k.delta !== null && k.delta !== undefined
                       ? `${k.label}: ${fmtCurrency(k.value)}, ${k.delta >= 0 ? 'up' : 'down'} ${Math.abs(k.delta).toFixed(1)} percent ${deltaSpokenLabel}`
-                      : `${k.label}: ${fmtCurrency(k.value)}`
+                      : k.caption
+                        ? `${k.label}: ${fmtCurrency(k.value)}, ${k.caption}`
+                        : `${k.label}: ${fmtCurrency(k.value)}`
                   }
                 >
                   <Text style={[styles.kpiLabel, { color: c.muted }]}>{k.label}</Text>
@@ -422,6 +436,8 @@ export function DashboardScreen() {
                     >
                       {k.delta >= 0 ? '▲' : '▼'} {Math.abs(k.delta).toFixed(1)}% {deltaLabel}
                     </Text>
+                  ) : k.caption ? (
+                    <Text style={[styles.kpiDelta, { color: c.mutedInk }]}>{k.caption}</Text>
                   ) : (
                     <Text style={styles.kpiDelta} />
                   )}
@@ -674,6 +690,18 @@ export function DashboardScreen() {
             <DonutChart
               slices={donutSlices}
               centerLabel={fmtCurrency(donutSlices.reduce((s, x) => s + x.value, 0))}
+              onSlicePress={(categoryName) => {
+                // reportingMonth can't be null here -- donutSlices is only non-empty when summary
+                // has real category spend, which requires a real reporting month behind it.
+                const { dateFrom, dateTo } = monthDateRange(summary!.reportingMonth!);
+                navigation.navigate('Transactions', {
+                  filters: {
+                    categoryName, dateFrom, dateTo,
+                    label: `${categoryName} · ${monthLabel(summary!.reportingMonth!)}`,
+                    nonce: Date.now(),
+                  },
+                });
+              }}
             />
           )
         ) : (

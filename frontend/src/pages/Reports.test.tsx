@@ -60,8 +60,9 @@ describe('Reports — loading states', () => {
 
     // Toolbar is up (months resolved)...
     expect(await screen.findByLabelText('Month')).toBeInTheDocument();
-    // ...and the body below it announces itself rather than being empty.
-    expect(screen.getByText("Loading this month's report")).toBeInTheDocument();
+    // ...and the body below it announces itself rather than being empty, naming the actual month
+    // on screen rather than asserting "this month" -- see check-reporting-period-labels.py.
+    expect(screen.getByText("Loading August 2026's report")).toBeInTheDocument();
   });
 
   /**
@@ -84,7 +85,7 @@ describe('Reports — loading states', () => {
     expect(await screen.findByText('Refreshing…')).toBeInTheDocument();
     // The previous month's data is still there -- not replaced by a skeleton.
     expect(screen.getByText('Food')).toBeInTheDocument();
-    expect(screen.queryByText("Loading this month's report")).not.toBeInTheDocument();
+    expect(screen.queryByText("Loading July 2026's report")).not.toBeInTheDocument();
   });
 
   /**
