@@ -197,6 +197,12 @@ function HeldImportsContent() {
 
       {selectedId && (
         <HeldImportDetailPanel
+          // Keyed on selectedId, not just conditionally rendered: the table rows stay clickable
+          // with the panel open (this isn't a modal), so clicking "Details" on a different row
+          // changes selectedId without ever passing through null -- the panel would otherwise keep
+          // its same component instance and carry the previous job's `downloading`/`downloadError`
+          // local state into the newly-selected job's view. Found in review.
+          key={selectedId}
           detail={detail.data}
           loading={detail.isLoading}
           busy={reprocess.isPending || resolve.isPending}

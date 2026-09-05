@@ -199,6 +199,42 @@ describe('HeldImports', () => {
     expect(screen.queryByRole('button', { name: /download statement/i })).not.toBeInTheDocument();
   });
 
+  /**
+   * Found in review: the panel was not keyed on selectedId, and the table stays clickable with
+   * the panel open (not a modal) -- so switching from one job's Details to another's kept the
+   * same component instance and carried the first job's failed-download error into the second
+   * job's view, misattributing it.
+   */
+  it('does not carry a failed download error over when switching to a different held job', async () => {
+    const secondRow: HeldImportRow = {
+      ...heldRow, id: '33333333-3333-3333-3333-333333333333', fileName: 'sbi-july.pdf',
+    };
+    vi.mocked(adminHeldImportApi.list).mockResolvedValue({
+      content: [heldRow, secondRow], page: 0, size: 25, totalElements: 2, totalPages: 1,
+    });
+    vi.mocked(adminHeldImportApi.get).mockImplementation((jobId: string) =>
+      Promise.resolve(jobId === secondRow.id ? { ...heldDetail, job: secondRow } : heldDetail));
+    vi.mocked(adminHeldImportApi.download).mockRejectedValue(new Error('network error'));
+    mockAuth(['IMPORT_TRIAGE_MANAGE'], ['ADMIN']);
+    renderPage();
+    await screen.findByText('hdfc-june.pdf');
+
+    const [firstDetailsButton] = await screen.findAllByRole('button', { name: /details/i });
+    await userEvent.click(firstDetailsButton);
+    await userEvent.click(await screen.findByRole('button', { name: /download statement/i }));
+    await screen.findByText(/could not download this statement/i);
+
+    // Straight to the SECOND row's Details, panel A still open the whole time -- selectedId
+    // never passes through null, which is exactly the path that must not carry state over.
+    const [, secondDetailsButton] = await screen.findAllByRole('button', { name: /details/i });
+    await userEvent.click(secondDetailsButton);
+    // Confirms the panel actually switched to job B's data (not just that the stale error faded
+    // on its own) -- the filename now appears twice, once in the table row and once in the panel.
+    await waitFor(() => expect(screen.getAllByText('sbi-july.pdf')).toHaveLength(2));
+
+    expect(screen.queryByText(/could not download this statement/i)).not.toBeInTheDocument();
+  });
+
   it('shows the waiting and reprocessing counts separately', async () => {
     mockAuth(['IMPORT_TRIAGE_MANAGE']);
     renderPage();
