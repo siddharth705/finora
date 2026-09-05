@@ -24,9 +24,17 @@ const HERO_ASPECT_RATIO = 1300 / 620;
 /**
  * Deep-links straight into WhatsApp/SMS/Mail rather than the generic OS share sheet -- these are
  * fixed brand/system colors, not theme tokens, the same way a WhatsApp or Gmail icon stays its own
- * color in every app that shows one, light or dark. `canOpenURL` gates WhatsApp specifically since
- * it's the one channel that isn't guaranteed to be installed; `sms:`/`mailto:` are handled by the
- * OS on both platforms, so those two skip the check.
+ * color in every app that shows one, light or dark.
+ *
+ * No `canOpenURL` pre-check for any of these, WhatsApp included. `canOpenURL` only answers
+ * accurately for a scheme declared in iOS's `LSApplicationQueriesSchemes` (Info.plist) or
+ * Android's manifest `<queries>` -- neither is declared for `whatsapp:` in app.config.ts, so
+ * `canOpenURL('whatsapp://...')` returns false unconditionally, even with WhatsApp installed
+ * (this was tried first and was a real, confirmed bug: the WhatsApp button silently always fell
+ * through to the generic share sheet). `openURL` itself carries no such restriction on either
+ * platform -- it just rejects if nothing can handle the URL -- so attempting it directly and
+ * catching that rejection is both simpler and actually correct, with no native config to add or
+ * rebuild to ship it.
  */
 const CHANNELS: {
   key: string;
@@ -34,10 +42,9 @@ const CHANNELS: {
   icon: keyof typeof Ionicons.glyphMap;
   color: string;
   url: (code: string) => string;
-  guarded?: boolean;
 }[] = [
   { key: 'whatsapp', label: 'WhatsApp', icon: 'logo-whatsapp', color: '#25D366',
-    url: (code) => `whatsapp://send?text=${encodeURIComponent(shareMessage(code))}`, guarded: true },
+    url: (code) => `whatsapp://send?text=${encodeURIComponent(shareMessage(code))}` },
   { key: 'sms', label: 'Messages', icon: 'chatbubble-outline', color: '#0A84FF',
     url: (code) => Platform.OS === 'ios'
       ? `sms:&body=${encodeURIComponent(shareMessage(code))}`
@@ -87,13 +94,14 @@ export function ReferralsScreen() {
 
   async function handleChannel(channel: (typeof CHANNELS)[number]) {
     if (!data?.code) return;
-    const url = channel.url(data.code);
-    if (channel.guarded && !(await Linking.canOpenURL(url))) {
-      // App not installed -- fall back to the OS share sheet rather than doing nothing.
+    try {
+      await Linking.openURL(channel.url(data.code));
+    } catch {
+      // No app installed to handle this URL (most commonly WhatsApp), or the OS rejected it --
+      // same fallback handleShare() itself already falls back to: leave the user with the OS
+      // share sheet rather than a dead tap.
       await handleShare();
-      return;
     }
-    await Linking.openURL(url);
   }
 
   if (isLoading) {

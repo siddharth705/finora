@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
-import { Linking, Share } from 'react-native';
+import { Linking, Platform, Share } from 'react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import * as Clipboard from 'expo-clipboard';
 import { ReferralsScreen } from './ReferralsScreen';
@@ -16,7 +16,6 @@ jest.mock('expo-clipboard', () => ({
 const api = referralsApi as jest.Mocked<typeof referralsApi>;
 const clipboard = Clipboard as jest.Mocked<typeof Clipboard>;
 
-const canOpenURL = jest.spyOn(Linking, 'canOpenURL');
 const openURL = jest.spyOn(Linking, 'openURL').mockResolvedValue(undefined);
 const shareSpy = jest.spyOn(Share, 'share').mockResolvedValue({ action: Share.sharedAction });
 
@@ -37,8 +36,8 @@ describe('ReferralsScreen', () => {
   beforeEach(() => {
     api.mine.mockReset();
     clipboard.setStringAsync.mockClear();
-    canOpenURL.mockReset();
     openURL.mockClear();
+    openURL.mockResolvedValue(undefined);
     shareSpy.mockClear();
   });
 
@@ -76,9 +75,12 @@ describe('ReferralsScreen', () => {
     expect(await screen.findByText("Couldn't load your referral code.")).toBeTruthy();
   });
 
-  it('opens WhatsApp with the code pre-filled when it is installed', async () => {
+  // No canOpenURL pre-check, deliberately (see ReferralsScreen's own doc comment on CHANNELS):
+  // canOpenURL is unreliable for whatsapp:// without native config this app doesn't declare, so
+  // the real behavior is attempt-then-catch. These two tests exercise exactly that, via openURL
+  // resolving vs. rejecting -- not a canOpenURL mock, which would test the wrong mechanism.
+  it('opens WhatsApp with the code pre-filled when it resolves', async () => {
     api.mine.mockResolvedValue({ code: 'ABCD1234', referralCount: 0 });
-    canOpenURL.mockResolvedValue(true);
     renderScreen();
     await screen.findByText('ABCD1234');
 
@@ -90,20 +92,19 @@ describe('ReferralsScreen', () => {
     expect(shareSpy).not.toHaveBeenCalled();
   });
 
-  it('falls back to the OS share sheet when WhatsApp is not installed', async () => {
+  it('falls back to the OS share sheet when opening WhatsApp rejects (not installed)', async () => {
     api.mine.mockResolvedValue({ code: 'ABCD1234', referralCount: 0 });
-    canOpenURL.mockResolvedValue(false);
+    openURL.mockRejectedValueOnce(new Error('No app handles whatsapp://'));
     renderScreen();
     await screen.findByText('ABCD1234');
 
     fireEvent.press(screen.getByLabelText('Share via WhatsApp'));
     await settle();
 
-    expect(openURL).not.toHaveBeenCalled();
     expect(shareSpy).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringContaining('ABCD1234') }));
   });
 
-  it('opens the SMS/mail composers directly, with no installed-app check', async () => {
+  it('opens the iOS-style SMS composer URL on iOS', async () => {
     api.mine.mockResolvedValue({ code: 'ABCD1234', referralCount: 0 });
     renderScreen();
     await screen.findByText('ABCD1234');
@@ -113,9 +114,31 @@ describe('ReferralsScreen', () => {
     fireEvent.press(screen.getByLabelText('Share via Email'));
     await settle();
 
-    expect(canOpenURL).not.toHaveBeenCalled();
-    expect(openURL).toHaveBeenCalledWith(expect.stringMatching(/^sms:/));
+    expect(openURL).toHaveBeenCalledWith(expect.stringMatching(/^sms:&body=/));
     expect(openURL).toHaveBeenCalledWith(expect.stringMatching(/^mailto:/));
+  });
+
+  // Platform.OS is 'ios' throughout this suite (jest-expo's default) -- this is the only test
+  // that exercises the Android branch of the sms: URL ternary, which is otherwise completely
+  // untested (a bug flagged and fixed in review: an assertion of `/^sms:/` alone passes
+  // identically for either branch, silently hiding a broken Android URL).
+  it('opens the Android-style SMS composer URL on Android', async () => {
+    const originalOS = Platform.OS;
+    // A plain writable string at runtime (see react-native/Libraries/Utilities/Platform.ios.js) --
+    // this is the standard way to exercise a Platform.OS branch in RN tests, restored below.
+    Platform.OS = 'android';
+    try {
+      api.mine.mockResolvedValue({ code: 'ABCD1234', referralCount: 0 });
+      renderScreen();
+      await screen.findByText('ABCD1234');
+
+      fireEvent.press(screen.getByLabelText('Share via Messages'));
+      await settle();
+
+      expect(openURL).toHaveBeenCalledWith(expect.stringMatching(/^sms:\?body=/));
+    } finally {
+      Platform.OS = originalOS;
+    }
   });
 
   it('opens the OS share sheet from "More"', async () => {
