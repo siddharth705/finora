@@ -11,7 +11,9 @@ import { OptionPickerModal } from '../components/OptionPickerModal';
 import { ProgressBar } from '../components/ProgressBar';
 import { reportsApi } from '../api/endpoints';
 import { toUserMessage } from '../lib/apiError';
-import { fmtCurrency, monthDateRange, monthLabel, monthLabelLong } from '../lib/format';
+import {
+  fmtCurrency, monthDateRange, monthLabel, monthLabelLong,
+} from '../lib/format';
 import { shareCsv, sharePdf } from '../lib/reportExport';
 import { radius, spacing, useTheme } from '../theme';
 import type { AppTabParamList } from '../navigation/types';
