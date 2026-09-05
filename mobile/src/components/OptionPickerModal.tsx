@@ -61,6 +61,12 @@ export function OptionPickerModal({ visible, title, options, selected, onSelect,
                 }}
                 accessibilityRole="button"
                 accessibilityState={{ selected: isSelected }}
+                // Disambiguates this row from an unrelated same-named element elsewhere on a
+                // screen using this picker (Track C/C4: BudgetsScreen's own category name is now
+                // ALSO a drill-through button's accessible name, and RNTL's role/name query
+                // matches on substring, not exact equality, so "Groceries" alone can't tell the
+                // two apart by accessibility props either).
+                testID={`option-${item}`}
                 style={[styles.option, { borderBottomColor: c.border }]}
                 android_ripple={{ color: c.border }}
               >

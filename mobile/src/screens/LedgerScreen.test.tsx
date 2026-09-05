@@ -4,7 +4,15 @@ import { DEFAULT_LEDGER_FILTERS, LEDGER_PAGE_SIZE, LedgerScreen, getLedgerNextPa
 import { categoriesApi, transactionsApi } from '../api/endpoints';
 import { hapticImpact } from '../lib/haptics';
 import { invalidateFinancialData } from '../lib/invalidateFinancialData';
+import type { LedgerDrillThroughFilters } from '../navigation/types';
 import type { Transaction } from '../types';
+
+// Controllable stand-in for useRoute, same pattern ImportScreen.test.tsx uses for its own
+// reimport-arrival params (Track C/C4).
+let mockRouteParams: { filters?: LedgerDrillThroughFilters } | undefined;
+jest.mock('@react-navigation/native', () => ({
+  useRoute: () => ({ params: mockRouteParams }),
+}));
 
 /**
  * Three outcomes of the same request must stay visibly different:
@@ -79,6 +87,7 @@ function renderScreen() {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockRouteParams = undefined;
   categories.list.mockResolvedValue([
     { id: 'c-1', name: 'Food', isSystem: true },
     { id: 'c-2', name: 'Travel', isSystem: true },
@@ -367,5 +376,108 @@ describe('correcting a category from the ledger', () => {
     // category sheet on top of a delete confirmation.
     expect(screen.queryByText('Change category')).toBeNull();
     expect(hapticImpact).toHaveBeenCalled();
+  });
+});
+
+/**
+ * Track C/C4: a drill-through arriving from a donut legend row, a budget card, an insight/mover
+ * row, or a report's category breakdown. This tab stays mounted like every other one, so the
+ * nonce/re-arrival tests below matter for the same reason ImportScreen's own reimport-arrival
+ * tests do -- a second drill-through must be told apart from the first still sitting in state.
+ */
+describe('drill-through filters (Track C/C4)', () => {
+  function filters(over: Partial<LedgerDrillThroughFilters> = {}): LedgerDrillThroughFilters {
+    return { label: 'Dining', nonce: 1, ...over };
+  }
+
+  beforeEach(() => {
+    transactions.search.mockResolvedValue(page([]) as never);
+  });
+
+  it('applies an incoming categoryId directly, with no lookup needed', async () => {
+    mockRouteParams = { filters: filters({ categoryId: 'c-9' }) };
+
+    renderScreen();
+
+    await waitFor(() => expect(transactions.search).toHaveBeenCalledWith(
+      expect.objectContaining({ categoryId: 'c-9' })
+    ));
+  });
+
+  // Track C/C6: ImportScreen's "View in Ledger" is the one caller that sets this.
+  it('applies an incoming accountId, alongside a category or on its own', async () => {
+    mockRouteParams = { filters: filters({ accountId: 'acct-1', categoryId: undefined, label: 'HDFC Savings' }) };
+
+    renderScreen();
+
+    await waitFor(() => expect(transactions.search).toHaveBeenCalledWith(
+      expect.objectContaining({ accountId: 'acct-1' })
+    ));
+  });
+
+  it('resolves a categoryName against the category list already fetched for the picker', async () => {
+    mockRouteParams = { filters: filters({ categoryName: 'Travel' }) };
+
+    renderScreen();
+
+    await waitFor(() => expect(transactions.search).toHaveBeenCalledWith(
+      expect.objectContaining({ categoryId: 'c-2' })
+    ));
+  });
+
+  // A category renamed or deleted since the caller last saw it -- degrades to no category filter
+  // rather than a search built from an id that doesn't exist, which could never match anything.
+  it('drops the category filter rather than search for an unresolvable name', async () => {
+    mockRouteParams = { filters: filters({ categoryName: 'Nonexistent', dateFrom: '2026-08-01', dateTo: '2026-08-31' }) };
+
+    renderScreen();
+
+    await waitFor(() => expect(transactions.search).toHaveBeenCalledWith(
+      expect.objectContaining({ categoryId: undefined, dateFrom: '2026-08-01', dateTo: '2026-08-31' })
+    ));
+  });
+
+  it('applies the date range and shows the active filter so the result is not a silent mystery', async () => {
+    mockRouteParams = { filters: filters({ categoryId: 'c-1', dateFrom: '2026-08-01', dateTo: '2026-08-31', label: 'Food · August 2026' }) };
+
+    renderScreen();
+
+    await waitFor(() => expect(transactions.search).toHaveBeenCalledWith(
+      expect.objectContaining({ categoryId: 'c-1', dateFrom: '2026-08-01', dateTo: '2026-08-31' })
+    ));
+    expect(await screen.findByText('Food · August 2026')).toBeTruthy();
+  });
+
+  it('clears the filter on request and searches again without it', async () => {
+    mockRouteParams = { filters: filters({ categoryId: 'c-1', label: 'Food' }) };
+    renderScreen();
+    await screen.findByText('Food');
+    transactions.search.mockClear();
+
+    fireEvent.press(screen.getByLabelText('Clear filter: Food'));
+
+    expect(screen.queryByText('Food')).toBeNull();
+    await waitFor(() => expect(transactions.search).toHaveBeenCalledWith(
+      expect.objectContaining({ categoryId: undefined })
+    ));
+  });
+
+  // The tab stays mounted (React Navigation's default), so its local state survives a visit to
+  // History and back -- the nonce is what tells a genuinely new arrival apart from the same old
+  // params still sitting in route.params.filters.
+  it('recognises a second drill-through even though the tab never unmounted between the two', async () => {
+    mockRouteParams = { filters: filters({ categoryId: 'c-1', label: 'Food', nonce: 1 }) };
+    const view = renderScreen();
+    await screen.findByText('Food');
+
+    mockRouteParams = { filters: filters({ categoryId: 'c-2', label: 'Travel', nonce: 2 }) };
+    view.rerender(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })}>
+        <LedgerScreen />
+      </QueryClientProvider>
+    );
+
+    expect(await screen.findByText('Travel')).toBeTruthy();
+    expect(screen.queryByText('Food')).toBeNull();
   });
 });
