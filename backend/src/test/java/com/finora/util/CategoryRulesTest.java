@@ -222,6 +222,56 @@ class CategoryRulesTest {
     }
 
     /**
+     * Real corpus finding (docs/superpowers/specs/2026-09-01-transaction-categorization-design.md
+     * §1): "Pureplay Skin Sciences" is a real D2C skincare/personal-care brand sold via
+     * e-commerce, missing from the vocabulary the same way "asspl" and "cinnabon" were.
+     */
+    @Test
+    void suggestCategory_matchesPureplay_skincareEcommerceBrand() {
+        assertThat(CategoryRules.suggestCategory("UPI-PUREPLAY SKIN SCIENCES-REF881234")).isEqualTo("Shopping");
+    }
+
+    /**
+     * Real corpus finding: "PMJJBY" is the Government of India's Pradhan Mantri Jeevan Jyoti
+     * Bima Yojana life-insurance scheme, appearing on real statements with a bank-specific
+     * "JNS-" narration prefix.
+     */
+    @Test
+    void suggestCategory_matchesPmjjby_governmentInsuranceScheme() {
+        assertThat(CategoryRules.suggestCategory("JNS-PMJJBY PREMIUM DEDUCTION")).isEqualTo("Insurance");
+    }
+
+    /**
+     * Real corpus finding: "NSE MF" is the National Stock Exchange's mutual-fund investment
+     * platform -- a real narration uses "MF" rather than the already-seeded "mutual fund"/
+     * "mutualfunds" spellings.
+     */
+    @Test
+    void suggestCategory_matchesNseMf_mutualFundPlatformAbbreviation() {
+        assertThat(CategoryRules.suggestCategory("NET PAYIN TO NSE MF A/C 9182736")).isEqualTo("Investments");
+    }
+
+    /**
+     * Real corpus finding (docs/superpowers/specs/2026-09-01-transaction-categorization-design.md
+     * §1): "Housingcom Gurgaon" -- Housing.com printed as one contiguous word on the real
+     * statement. Mapped to Rent on the assumption this is a rent-payment-facilitator narration
+     * (Housing.com/NoBroker/CRED-RentPay-style products let a tenant pay a landlord through the
+     * platform for a fee); confirm this category before relying on it (see Task 3's Context).
+     */
+    @Test
+    void suggestCategory_matchesHousingcom_rentPaymentFacilitator() {
+        assertThat(CategoryRules.suggestCategory("UPI-HOUSINGCOM GURGAON-REF773311")).isEqualTo("Rent");
+    }
+
+    /** Guards the same class of bug the file's other word-boundary tests describe (see
+     *  theNewKeywordsAreWordBoundedLikeEveryOther): "housingcom" must not match inside a longer
+     *  word it happens to be a prefix of. */
+    @Test
+    void suggestCategory_housingCommunityIsNotMisclassifiedAsRent() {
+        assertThat(CategoryRules.suggestCategory("HOUSINGCOMMUNITY CENTRE FEE")).isNotEqualTo("Rent");
+    }
+
+    /**
      * Real corpus finding: "Tobox Ventures" is the registered corporate name behind "Gokhana"
      * (a real narration reads "TOBOX VENTURES PRIVATE LIMITED/GOKHANA."), appearing as the
      * merchant name on statements that print the corporate entity rather than the brand.
