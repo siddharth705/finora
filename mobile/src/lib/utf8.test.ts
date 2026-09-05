@@ -25,6 +25,18 @@ describe('decodeUtf8', () => {
   it('decodes an empty buffer as an empty string', () => {
     expect(decodeUtf8(bytes())).toBe('');
   });
+
+  // Bug found in review (Track D/D4): queryCacheCipher.ts passes decodeUtf8 the Uint8Array view
+  // expo-crypto hands back, not a plain top-level ArrayBuffer. A view's own `.buffer` is the
+  // UNDERLYING buffer, which can be larger than the view itself (a non-zero byteOffset, or a
+  // byteLength short of the buffer's own) -- decoding `view.buffer` directly would include
+  // whatever surrounds the view's intended bytes instead of just them.
+  it('decodes only the view\'s own byteOffset/byteLength, not the whole underlying buffer', () => {
+    const underlying = new Uint8Array([0xff, 0xff, 0x68, 0x69, 0xff, 0xff]).buffer; // "hi" at offset 2
+    const view = new Uint8Array(underlying, 2, 2);
+
+    expect(decodeUtf8(view)).toBe('hi');
+  });
 });
 
 // D4 (Track D security cleanup). queryCacheCipher.ts needs this direction: expo-crypto's

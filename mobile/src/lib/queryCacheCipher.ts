@@ -74,7 +74,10 @@ export async function decryptFromStorage(ciphertext: string): Promise<string | n
     const key = await getOrCreateKey();
     const sealed = AESSealedData.fromCombined(ciphertext);
     const bytes = await aesDecryptAsync(sealed, key, { output: 'bytes' });
-    return decodeUtf8(bytes.buffer);
+    // Bug found in review (Track D/D4): decodeUtf8 now reads the Uint8Array view's own
+    // byteOffset/byteLength directly -- see its own doc comment for why passing `bytes.buffer`
+    // instead would risk decoding bytes outside the view if it were ever backed by a larger buffer.
+    return decodeUtf8(bytes);
   } catch {
     return null;
   }

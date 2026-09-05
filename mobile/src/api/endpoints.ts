@@ -1,10 +1,10 @@
 import { File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import { api, rawApi, type ApiEnvelope } from './client';
-import { withShareSuppression } from '../lib/appLock';
 import { encodeBase64 } from '../lib/base64';
 import { decodeUtf8 } from '../lib/utf8';
 import { isCanceled, isOffline } from '../lib/apiError';
+import { shareFileAndCleanUp } from '../lib/shareFile';
 import type {
   Account, AccountStatementGroup, Budget, DashboardSummary, DetectedAccountInfo, Goal,
   ImportSummary, MerchantGroup, ReimportResult, StagedAccountSection, StagedRow, StatementSummary,
@@ -447,24 +447,11 @@ export const statementImportsApi = {
     if (file.exists) file.delete();
     file.create();
     file.write(encodeBase64(res.data), { encoding: 'base64' });
-    try {
-      // D5 (Track D security cleanup) -- see appLock.ts's withShareSuppression doc comment.
-      await withShareSuppression(() => Sharing.shareAsync(file.uri, {
-        mimeType: fileName.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'text/csv',
-        UTI: fileName.toLowerCase().endsWith('.pdf') ? 'com.adobe.pdf' : 'public.comma-separated-values-text',
-        dialogTitle: fileName,
-      }));
-    } finally {
-      // D2 (Track D security cleanup). Decrypted statement bytes existed on disk only to hand
-      // the share sheet a real URI -- once shareAsync resolves (shared, dismissed, or thrown)
-      // there is no reason left to keep them there. Best-effort: see reportExport.ts's share()
-      // for why a failed cleanup must not surface as a new error.
-      try {
-        file.delete();
-      } catch {
-        // See comment above.
-      }
-    }
+    await shareFileAndCleanUp(file, {
+      mimeType: fileName.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'text/csv',
+      UTI: fileName.toLowerCase().endsWith('.pdf') ? 'com.adobe.pdf' : 'public.comma-separated-values-text',
+      dialogTitle: fileName,
+    });
   },
   // `password` is only ever needed for a statement originally uploaded as a protected PDF: the
   // stored bytes are still encrypted, and the password used at upload is deliberately never
@@ -751,17 +738,7 @@ export const supportApi = {
     if (file.exists) file.delete();
     file.create();
     file.write(encodeBase64(res.data), { encoding: 'base64' });
-    try {
-      // D5 (Track D security cleanup) -- see appLock.ts's withShareSuppression doc comment.
-      await withShareSuppression(() => Sharing.shareAsync(file.uri, { mimeType: contentType, dialogTitle: filename }));
-    } finally {
-      // D2 (Track D security cleanup) -- same reasoning as statementImportsApi.downloadFile above.
-      try {
-        file.delete();
-      } catch {
-        // Best-effort; see statementImportsApi.downloadFile's own comment above.
-      }
-    }
+    await shareFileAndCleanUp(file, { mimeType: contentType, dialogTitle: filename });
   },
 };
 

@@ -124,10 +124,24 @@ describe('toPrintableHtml', () => {
  */
 describe('shareCsv / sharePdf clean up the cache file after sharing', () => {
   const shareAsync = Sharing.shareAsync as jest.Mock;
+  const isAvailableAsync = Sharing.isAvailableAsync as jest.Mock;
   const printToFileAsync = Print.printToFileAsync as jest.Mock;
 
   beforeEach(() => {
     shareAsync.mockReset().mockResolvedValue(undefined);
+    isAvailableAsync.mockReset().mockResolvedValue(true);
+  });
+
+  // Bug found in review (Track D/D2): the isAvailableAsync() check used to run before shareCsv's
+  // own try/finally, so a device with sharing unavailable threw straight out of share() and left
+  // the just-written cache file behind with no cleanup at all.
+  it('shareCsv still deletes its cache file when sharing is unavailable on the device', async () => {
+    isAvailableAsync.mockResolvedValue(false);
+
+    await expect(shareCsv(report)).rejects.toThrow('Sharing is not available on this device.');
+
+    const file = new File(Paths.cache, `fynora-report-${report.month}.csv`);
+    expect(file.exists).toBe(false);
   });
 
   it('shareCsv deletes its own cache file after a successful share', async () => {

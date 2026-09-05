@@ -123,24 +123,28 @@ const storage = {
   },
   removeItem: (key: string) => AsyncStorage.removeItem(key),
   // The only guarded operation. Reads must still work (restore) and deletes must ALWAYS work --
-  // suppressing removeItem would defeat the wipe this guard exists to protect. The epoch check
-  // stays first and synchronous, exactly as before encryption was added: a write already
-  // invalidated by a logout/session-expiry skips straight past, before spending any work
-  // encrypting a payload nobody wants written.
+  // suppressing removeItem would defeat the wipe this guard exists to protect. The FIRST check
+  // is the original early-exit: a write already invalidated by a logout/session-expiry skips
+  // straight past, before spending any work encrypting a payload nobody wants written.
+  //
+  // The SECOND check (bug fix, found in review) is what actually closes the race the epoch guard
+  // exists for, now that a write is here at all. Before encryption existed, the epoch comparison
+  // and the AsyncStorage.setItem call it guarded ran in the SAME synchronous tick -- nothing else
+  // could run in between. `await encryptForStorage(value)` is a genuine yield point (a SecureStore
+  // read on first use, a native AES call), so a logout arriving during that window bumps
+  // cacheEpoch while this call has already passed the first check -- without re-checking against
+  // the SAME captured epochAtCall right before the write, the encrypted payload would land on
+  // disk anyway, reopening exactly the "queued write resurrects the departed user's data" leak
+  // documented above.
   setItem: async (key: string, value: string) => {
-    if (pendingWriteEpoch !== cacheEpoch) return;
+    const epochAtCall = pendingWriteEpoch;
+    if (epochAtCall !== cacheEpoch) return;
     const encrypted = await encryptForStorage(value);
-    if (encrypted !== null) {
+    if (encrypted !== null && epochAtCall === cacheEpoch) {
       await AsyncStorage.setItem(key, encrypted);
     }
   },
 };
-
-/** Test-only: the raw storage adapter (epoch guard + D4 encryption), exposed so that wiring can
- *  be verified directly against the real AsyncStorage mock without driving the whole
- *  persistQueryClient/persistQueryClientRestore machinery to reach it -- same convention as
- *  appLock.ts's own __resetAuthenticatingStateForTests. */
-export const __testStorage = storage;
 
 const basePersister = createAsyncStoragePersister({ storage, key: PERSIST_KEY });
 

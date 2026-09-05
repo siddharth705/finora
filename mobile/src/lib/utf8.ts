@@ -55,8 +55,21 @@ export function encodeUtf8(str: string): Uint8Array {
   return Uint8Array.from(bytes);
 }
 
-export function decodeUtf8(buffer: ArrayBufferLike): string {
-  const bytes = new Uint8Array(buffer);
+/**
+ * Bug found in review (Track D/D4): queryCacheCipher.ts calls this with `someUint8Array.buffer`,
+ * not the view itself. `.buffer` is the view's UNDERLYING ArrayBuffer, which can be larger than
+ * the view when the view has a non-zero byteOffset or a byteLength short of the buffer's own
+ * (a subarray, or a view expo-crypto handed back into some larger pooled buffer) -- `new
+ * Uint8Array(buffer)` ignores both and would decode whatever surrounds the intended bytes instead
+ * of just them. Accepting the view directly and reading its own byteOffset/byteLength keeps this
+ * correct regardless of what the caller passes; `ArrayBufferLike` is kept for
+ * statementImportsApi.downloadFile's use, which already has a real top-level ArrayBuffer with no
+ * view to speak of.
+ */
+export function decodeUtf8(input: ArrayBufferLike | ArrayBufferView): string {
+  const bytes = ArrayBuffer.isView(input)
+    ? new Uint8Array(input.buffer, input.byteOffset, input.byteLength)
+    : new Uint8Array(input);
   let out = '';
   let i = 0;
 

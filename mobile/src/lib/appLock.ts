@@ -29,74 +29,84 @@ const ENABLED_KEY = 'finora_app_lock_enabled';
  * genuine foreground return, and locked the whole app on top of the confirmation the user had
  * just given -- the reported loop's real starting point, not something scoped to AppLockGate's
  * own re-lock flow.
+ *
+ * D5 (Track D security cleanup) added a second, identical need: opening the OS share sheet
+ * (Sharing.shareAsync -- statementImportsApi.downloadFile, supportApi.downloadAttachment,
+ * reportExport.ts's shareCsv/sharePdf, and the DocumentPicker calls in statementFile.ts/
+ * ticketAttachment.ts) backgrounds this app the exact same way, for the exact same reason: native
+ * UI taking over the screen, not the user actually leaving and coming back. Both trackers below
+ * share this one shape -- an in-flight count (checked live) plus a last-finished timestamp
+ * (checked for a short grace window after) -- because in both cases the native foreground
+ * notification and this module's own "the flow just ended" moment are two independent, unsynced
+ * signals; an in-flight check alone isn't enough on its own (see AppLockGate's own comment on the
+ * Face ID sheet for the on-device-confirmed version of this race).
  */
-let authenticatingCount = 0;
-let lastResolvedAt = 0;
+function createActivityTracker() {
+  let count = 0;
+  let lastFinishedAt = 0;
+  return {
+    isActive: () => count > 0,
+    justFinished: (windowMs: number) => Date.now() - lastFinishedAt < windowMs,
+    enter: () => {
+      count++;
+    },
+    exit: () => {
+      count--;
+      lastFinishedAt = Date.now();
+    },
+    /** Test-only. This state is meant to persist for the life of the app process, but that is
+     *  exactly what makes it a cross-test hazard: `lastFinishedAt` is stamped with the REAL
+     *  wall-clock time by every test that completes a real tracked call, and Jest runs tests in
+     *  the same file milliseconds apart -- comfortably inside justFinished's own windows -- so
+     *  without a reset between tests, an early test's call can silently suppress a later,
+     *  unrelated test's foreground check. */
+    resetForTests: () => {
+      count = 0;
+      lastFinishedAt = 0;
+    },
+  };
+}
+
+const authenticating = createActivityTracker();
+const sharing = createActivityTracker();
 
 /** True for the entire duration of any authenticate() call in progress, from any caller. */
 export function isAuthenticating(): boolean {
-  return authenticatingCount > 0;
+  return authenticating.isActive();
 }
 
 /** True if some authenticate() call (from any caller) resolved within the last `windowMs`. */
 export function justFinishedAuthenticating(windowMs: number): boolean {
-  return Date.now() - lastResolvedAt < windowMs;
+  return authenticating.justFinished(windowMs);
 }
 
-/**
- * D5 (Track D security cleanup, docs/project-management/plans/mobile-correctness-trust-roadmap.md).
- * Opening the OS share sheet (Sharing.shareAsync -- statementImportsApi.downloadFile,
- * supportApi.downloadAttachment, reportExport.ts's shareCsv/sharePdf) backgrounds this app exactly
- * the same way a biometric prompt does: AppState swings inactive/background then back to active
- * as a side effect of native UI taking over the screen, not because the user actually left and
- * came back. Before this existed, AppLockGate's foreground listener had no way to tell that blip
- * apart from a genuine return, and re-locked the app in the middle of (or immediately after) the
- * user's own share flow. Same isXInFlight/justFinishedX shape as isAuthenticating/
- * justFinishedAuthenticating above, for the identical reason: two independent native notification
- * paths that don't synchronize with each other, so an in-flight check alone isn't enough on its
- * own -- see AppLockGate's own comment on the Face ID sheet for the on-device-confirmed version
- * of this same race.
- */
-let sharingCount = 0;
-let lastShareFinishedAt = 0;
+export function __resetAuthenticatingStateForTests(): void {
+  authenticating.resetForTests();
+}
 
 /** True for the entire duration of any withShareSuppression()-wrapped share in progress. */
 export function isSharing(): boolean {
-  return sharingCount > 0;
+  return sharing.isActive();
 }
 
 /** True if some withShareSuppression()-wrapped share resolved within the last `windowMs`. */
 export function justFinishedSharing(windowMs: number): boolean {
-  return Date.now() - lastShareFinishedAt < windowMs;
+  return sharing.justFinished(windowMs);
 }
 
 /** Wraps a Sharing.shareAsync call (or a whole write-then-share flow) so AppLockGate's foreground
  *  listener can recognize the AppState blip it causes -- see this section's own doc comment. */
 export async function withShareSuppression<T>(fn: () => Promise<T>): Promise<T> {
-  sharingCount++;
+  sharing.enter();
   try {
     return await fn();
   } finally {
-    sharingCount--;
-    lastShareFinishedAt = Date.now();
+    sharing.exit();
   }
 }
 
-/** Test-only, same reasoning as __resetAuthenticatingStateForTests below. */
 export function __resetSharingStateForTests(): void {
-  sharingCount = 0;
-  lastShareFinishedAt = 0;
-}
-
-/** Test-only. This module-level state is meant to persist for the life of the app process, but
- *  that is exactly what makes it a cross-test hazard: `lastResolvedAt` is stamped with the REAL
- *  wall-clock time by every test that completes a real authenticate() call, and Jest runs tests
- *  in the same file milliseconds apart -- comfortably inside justFinishedAuthenticating's own
- *  windows -- so without a reset between tests, an early test's authenticate() call can silently
- *  suppress a later, unrelated test's foreground check. */
-export function __resetAuthenticatingStateForTests(): void {
-  authenticatingCount = 0;
-  lastResolvedAt = 0;
+  sharing.resetForTests();
 }
 
 export async function isSupported(): Promise<boolean> {
@@ -127,6 +137,26 @@ export async function isEnabled(): Promise<boolean> {
   }
 }
 
+/**
+ * Bug found in review (Track D/D1/D6): AppLockSection's own useEffect used to call isEnabled()
+ * directly and paint its result straight onto the Settings switch. isEnabled()'s fail-closed
+ * `true` is the right default for AppLockGate (there's a lock screen behind it, with its own
+ * escape hatch), but painted onto a Settings toggle it lies -- a transient SecureStore read
+ * failure would show App Lock as ON to a user who never turned it on, with no error and no way to
+ * tell the difference from having actually enabled it.
+ *
+ * This has no failure-closed default of its own because nothing here decides whether to challenge
+ * for auth; it exists purely so a UI can tell "confirmed off" apart from "couldn't confirm" and
+ * show an honest state instead of guessing in either direction.
+ */
+export async function isEnabledConfirmed(): Promise<{ enabled: boolean; confirmed: boolean }> {
+  try {
+    return { enabled: (await SecureStore.getItemAsync(ENABLED_KEY)) === 'true', confirmed: true };
+  } catch {
+    return { enabled: false, confirmed: false };
+  }
+}
+
 export async function setEnabled(enabled: boolean): Promise<void> {
   if (enabled) {
     await safeStorage.setItem(ENABLED_KEY, 'true');
@@ -142,7 +172,7 @@ export async function setEnabled(enabled: boolean): Promise<void> {
  *  biometric, user cancelled, hardware unavailable, nothing enrolled) is collapsed to false --
  *  the caller has exactly one thing to decide either way: stay locked, or unlock. */
 export async function authenticate(promptMessage: string): Promise<boolean> {
-  authenticatingCount++;
+  authenticating.enter();
   try {
     const result = await LocalAuthentication.authenticateAsync({
       promptMessage,
@@ -162,7 +192,6 @@ export async function authenticate(promptMessage: string): Promise<boolean> {
     // every other rejection path.
     return false;
   } finally {
-    authenticatingCount--;
-    lastResolvedAt = Date.now();
+    authenticating.exit();
   }
 }

@@ -1,9 +1,8 @@
 import { File, Paths } from 'expo-file-system';
 import * as Print from 'expo-print';
-import * as Sharing from 'expo-sharing';
 import type { ReportData } from '../api/endpoints';
-import { withShareSuppression } from './appLock';
 import { fmtCurrency } from './format';
+import { shareFileAndCleanUp } from './shareFile';
 
 /**
  * Turning a month's report into something the user can keep.
@@ -99,30 +98,6 @@ export function toPrintableHtml(report: ReportData): string {
 </html>`;
 }
 
-async function share(uri: string, mimeType: string, utiType: string, dialogTitle: string) {
-  if (!(await Sharing.isAvailableAsync())) {
-    throw new Error('Sharing is not available on this device.');
-  }
-  try {
-    // D5 (Track D security cleanup). The share sheet backgrounds this app the same way a
-    // biometric prompt does -- without this, AppLockGate's foreground listener couldn't tell that
-    // apart from a genuine return and re-locked mid-share or right after.
-    await withShareSuppression(() => Sharing.shareAsync(uri, { mimeType, UTI: utiType, dialogTitle }));
-  } finally {
-    // D2 (Track D security cleanup, docs/project-management/plans/mobile-correctness-trust-roadmap.md).
-    // This file existed only to hand the OS share sheet a real URI -- shareAsync resolving
-    // (shared, dismissed, or thrown) is exactly when its job is done. Leaving it behind is the
-    // "persists forever, unencrypted" gap this closes. Best-effort: a failed cleanup must not
-    // turn a completed (or already-failed) share into a new user-facing error -- sweepFileCache's
-    // startup sweep is the backstop if this doesn't run.
-    try {
-      new File(uri).delete();
-    } catch {
-      // See comment above.
-    }
-  }
-}
-
 export async function shareCsv(report: ReportData): Promise<void> {
   const name = `fynora-report-${report.month}.csv`;
   const file = new File(Paths.cache, name);
@@ -130,10 +105,13 @@ export async function shareCsv(report: ReportData): Promise<void> {
   if (file.exists) file.delete();
   file.create();
   file.write(toCsv(report));
-  await share(file.uri, 'text/csv', 'public.comma-separated-values-text', name);
+  await shareFileAndCleanUp(file, {
+    mimeType: 'text/csv', UTI: 'public.comma-separated-values-text', dialogTitle: name,
+  });
 }
 
 export async function sharePdf(report: ReportData): Promise<void> {
   const { uri } = await Print.printToFileAsync({ html: toPrintableHtml(report) });
-  await share(uri, 'application/pdf', 'com.adobe.pdf', `fynora-report-${report.month}.pdf`);
+  const name = `fynora-report-${report.month}.pdf`;
+  await shareFileAndCleanUp(new File(uri), { mimeType: 'application/pdf', UTI: 'com.adobe.pdf', dialogTitle: name });
 }

@@ -12,10 +12,21 @@ import { Directory, File, Paths } from 'expo-file-system';
  * It also catches anything the per-site cleanup missed (the app killed mid-share, a delete() call
  * itself failing).
  *
+ * Recurses ONE level into subdirectories -- an earlier version of this swept only the top level of
+ * the cache directory on the assumption every writer here puts a plain file directly there. That
+ * assumption was false for exactly the two sites this module exists to catch: confirmed against
+ * the actual native module source, expo-document-picker copies into a `DocumentPicker/`
+ * subdirectory on both Android (`FileUtilities.generateOutputPath(context.cacheDir,
+ * "DocumentPicker", ext)`) and iOS (`cacheDirURL.appendingPathComponent("DocumentPicker")`), and
+ * expo-print's own `sharePdf` output similarly lands in a `Print/` subdirectory. One level is
+ * deep enough to reach both without turning this into a general recursive filesystem walker that
+ * could wander into some future library's own deeply-nested structure -- a subdirectory found at
+ * the second level is left alone, not deleted or recursed into.
+ *
  * Age-based, not name-pattern-based: the picked file keeps the user's own original filename (no
  * "fynora-" prefix to match on the way reportExport's own exports have), so age is the only
- * reliable signal. Nothing this app writes to the top level of the cache directory is meant to
- * outlive one upload or share flow, so an hour is a generous margin, not a tight one.
+ * reliable signal. Nothing this app writes into the cache directory is meant to outlive one
+ * upload or share flow, so an hour is a generous margin, not a tight one.
  */
 const MAX_AGE_MS = 60 * 60 * 1000;
 
@@ -24,26 +35,29 @@ const MAX_AGE_MS = 60 * 60 * 1000;
  *  `Date.now()` (see its own module doc comment), so a test proving "old enough gets deleted,
  *  young enough survives" has to compare against a `now` it controls, not real wall-clock time. */
 export function sweepFileCache(now: number = Date.now()): void {
+  sweepDirectory(new Directory(Paths.cache), now - MAX_AGE_MS, /* recurse */ true);
+}
+
+function sweepDirectory(dir: Directory, cutoff: number, recurse: boolean): void {
   let entries: (Directory | File)[];
   try {
-    entries = new Directory(Paths.cache).list();
+    entries = dir.list();
   } catch {
     return; // Nothing to sweep, or the directory itself is unreadable -- not fatal either way.
   }
 
-  const cutoff = now - MAX_AGE_MS;
   for (const entry of entries) {
-    // Subdirectories are left alone -- every writer above puts a plain file directly at the top
-    // level, so a subdirectory here belongs to something else (a library's own cache) that
-    // manages its own lifetime.
-    if (!(entry instanceof File)) continue;
-    try {
-      const modifiedAt = entry.lastModified;
-      if (modifiedAt !== null && modifiedAt < cutoff) {
-        entry.delete();
+    if (entry instanceof File) {
+      try {
+        const modifiedAt = entry.lastModified;
+        if (modifiedAt !== null && modifiedAt < cutoff) {
+          entry.delete();
+        }
+      } catch {
+        // Best-effort: one unreadable or already-gone entry must not stop the rest of the sweep.
       }
-    } catch {
-      // Best-effort: one unreadable or already-gone entry must not stop the rest of the sweep.
+    } else if (recurse) {
+      sweepDirectory(entry, cutoff, false);
     }
   }
 }

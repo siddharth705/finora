@@ -2,6 +2,7 @@ import { Text } from 'react-native';
 import { act, render, waitFor } from '@testing-library/react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AuthProvider, useAuth } from './AuthContext';
+import { sweepFileCache } from '../lib/fileCacheSweep';
 
 /**
  * MOB-AUTH-02 -- logout must not leave one person's money in the cache for the next.
@@ -23,6 +24,8 @@ jest.mock('../api/endpoints', () => ({
     logout: jest.fn(async () => ({ message: 'ok' })),
   },
 }));
+
+jest.mock('../lib/fileCacheSweep', () => ({ sweepFileCache: jest.fn() }));
 
 const SOMEONE_ELSES_MONEY = { currentBalance: 987654, monthlyExpense: 35500 };
 
@@ -93,5 +96,22 @@ describe('MOB-AUTH-02: signing out clears cached financial data', () => {
 
     expect(auth.token).toBeNull();
     expect(auth.email).toBeNull();
+  });
+
+  // Bug found in review (Track D/D2/D7): App.tsx's own sweepFileCache() call only runs once per
+  // JS process lifetime (an empty-deps effect on the root component), so a device that's rarely
+  // force-quit could go a long time without a sweep. A picked statement or ticket attachment
+  // copied into the cache directory for the departing session should not wait out the rest of
+  // sweepFileCache's own one-hour age margin once there's a clean point -- sign-out -- to know for
+  // certain that file's purpose is over.
+  it('sweeps the file cache on sign-out', async () => {
+    renderWithCache();
+    await waitFor(() => expect(auth.bootstrapping).toBe(false));
+
+    await act(async () => {
+      auth.logout();
+    });
+
+    expect(sweepFileCache).toHaveBeenCalled();
   });
 });
