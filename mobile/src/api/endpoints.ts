@@ -173,6 +173,11 @@ export const transactionsApi = {
   bulkDelete: (ids: string[]) => api.post('/transactions/bulk-delete', { ids }),
   bulkRecategorize: (ids: string[], category: string) =>
     api.post('/transactions/bulk-category', { ids, category }),
+  // BH-027: "no, these really are two separate transactions." Records a human ruling that
+  // outranks the reconciliation engine's own guess -- see TransactionService.confirmNotDuplicate.
+  // Mirrors frontend/src/api/endpoints.ts.
+  confirmNotDuplicate: (id: string) =>
+    api.post<Transaction>(`/transactions/${id}/not-duplicate`).then((r) => r.data),
 };
 
 /**
