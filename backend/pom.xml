@@ -301,6 +301,18 @@
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-test</artifactId>
       <scope>test</scope>
+      <!-- Subscription billing V1: jsonassert (a transitive test dependency of this starter) pulls
+           in Vaadin's stripped-down org.json.JSONObject reimplementation (android-json), which
+           shadows razorpay-java's real org.json:json on the test classpath and lacks methods
+           (e.g. toMap()) that real org.json:json has — RazorpayWebhookController relies on the
+           real implementation. Confirmed via `mvn dependency:tree`: android-json arrives here,
+           in `test` scope, only through jsonassert. -->
+      <exclusions>
+        <exclusion>
+          <groupId>com.vaadin.external.google</groupId>
+          <artifactId>android-json</artifactId>
+        </exclusion>
+      </exclusions>
     </dependency>
     <dependency>
       <groupId>org.springframework.security</groupId>
@@ -384,6 +396,16 @@
     <dependency>
       <groupId>io.micrometer</groupId>
       <artifactId>micrometer-registry-prometheus</artifactId>
+    </dependency>
+
+    <!-- Subscription billing V1 (docs/superpowers/specs/2026-09-05-subscription-billing-v1-design.md).
+         Official Razorpay Java SDK — Subscriptions API client and webhook signature verification.
+         Version pinned: Razorpay does not participate in spring-boot-starter-parent's dependency
+         management. -->
+    <dependency>
+      <groupId>com.razorpay</groupId>
+      <artifactId>razorpay-java</artifactId>
+      <version>1.4.10</version>
     </dependency>
 
   </dependencies>

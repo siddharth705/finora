@@ -18,6 +18,7 @@ public class PlanChange {
     public static final String REASON_USER_INITIATED = "USER_INITIATED";
     public static final String REASON_PAYMENT_FAILURE_DOWNGRADE = "PAYMENT_FAILURE_DOWNGRADE";
     public static final String REASON_ADMIN_OVERRIDE = "ADMIN_OVERRIDE";
+    public static final String REASON_DOWNGRADE_SCHEDULED = "DOWNGRADE_SCHEDULED";
 
     @Id
     @GeneratedValue
