@@ -156,6 +156,21 @@ public class HeldStatementService {
         // the event is the immutable record of what the predicate actually said at hold time.
         eventRepository.save(new HeldStatementEvent(held.getId(), null, "HELD_CREATED",
                 null, HeldStatement.Status.HELD.name(), decision.summary()));
+        // Same "we announce nothing on the way in" gap ImportJobWorker's parser-gap hold had, and
+        // the same fix: a transactional-outbox write sharing this REQUIRES_NEW transaction, not a
+        // real network call, so it belongs here rather than behind AfterCommit. See
+        // ImportJobWorker.notifyHeldForReview's own doc for why one shared NotificationType and key
+        // shape covers both hold reasons, and why a job cannot double-notify through this path --
+        // createHold's own findByImportJobId short-circuit above means openHold, and this call,
+        // only ever run once per job to begin with.
+        notificationService.request(NotificationRequest.of(
+                job.getUserId(),
+                NotificationType.IMPORT_STATEMENT_HELD,
+                NotificationCategory.FINANCIAL,
+                NotificationPriority.NORMAL,
+                "IMPORT_HELD_" + job.getId(),
+                Set.of(NotificationChannel.PUSH, NotificationChannel.EMAIL),
+                Map.of()));
         // Deferred until createHold's own REQUIRES_NEW transaction commits -- openHold is a plain
         // internal call from within that same method, not a separately-proxied one, so the
         // transaction is still active here and AfterCommit genuinely defers rather than running

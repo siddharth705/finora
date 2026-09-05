@@ -25,6 +25,7 @@ vi.mock('../api/endpoints', () => ({
     reprocess: vi.fn(),
     reprocessAll: vi.fn(),
     resolve: vi.fn(),
+    download: vi.fn(),
   },
 }));
 
@@ -58,10 +59,11 @@ function renderPage() {
   );
 }
 
-function mockAuth(permissions: string[]) {
+function mockAuth(permissions: string[], roles: string[] = []) {
   vi.mocked(useAdminAuth).mockReturnValue(mockAdminAuthState({
     hasPermission: (p: string) => permissions.includes(p),
     permissions,
+    roles,
     fullName: 'Ops Admin',
   }));
 }
@@ -169,6 +171,89 @@ describe('HeldImports', () => {
 
     await waitFor(() => expect(adminHeldImportApi.resolve).toHaveBeenCalledWith(
       heldRow.id, 'scanned image, no text layer'));
+  });
+
+  it('lets an operator with an admin role download the held statement', async () => {
+    vi.mocked(adminHeldImportApi.download).mockResolvedValue(undefined);
+    mockAuth(['IMPORT_TRIAGE_MANAGE'], ['ADMIN']);
+    renderPage();
+    await screen.findByText('hdfc-june.pdf');
+    await userEvent.click(screen.getByRole('button', { name: /details/i }));
+    await screen.findByText(/no header row found/);
+
+    await userEvent.click(screen.getByRole('button', { name: /download statement/i }));
+
+    await waitFor(() => expect(adminHeldImportApi.download)
+      .toHaveBeenCalledWith(heldRow.id, heldRow.fileName));
+  });
+
+  /**
+   * Found in review: this used to always show a fixed generic string, discarding whatever the
+   * server actually said -- unlike reprocess/resolve on this same page, which both surface the
+   * real message. A download can fail for a specific, actionable reason too (e.g. the job was
+   * resolved by someone else a moment ago), and that reason is what an operator needs to read.
+   */
+  it('surfaces the server\'s own download error rather than a generic failure', async () => {
+    vi.mocked(adminHeldImportApi.download).mockRejectedValue({
+      response: { data: { message: 'This job was already resolved by another admin.' } },
+    });
+    mockAuth(['IMPORT_TRIAGE_MANAGE'], ['ADMIN']);
+    renderPage();
+    await screen.findByText('hdfc-june.pdf');
+    await userEvent.click(screen.getByRole('button', { name: /details/i }));
+    await screen.findByText(/no header row found/);
+
+    await userEvent.click(screen.getByRole('button', { name: /download statement/i }));
+
+    expect(await screen.findByText(/already resolved by another admin/i)).toBeInTheDocument();
+  });
+
+  /** Mirrors HeldStatementDetail's identical rule and identical reasoning: a role that can work
+   *  the queue must not see a control for an action the backend would refuse anyway. */
+  it('hides the download control from a non-admin role', async () => {
+    mockAuth(['IMPORT_TRIAGE_MANAGE'], ['SUPPORT']);
+    renderPage();
+    await screen.findByText('hdfc-june.pdf');
+    await userEvent.click(screen.getByRole('button', { name: /details/i }));
+    await screen.findByText(/no header row found/);
+
+    expect(screen.queryByRole('button', { name: /download statement/i })).not.toBeInTheDocument();
+  });
+
+  /**
+   * Found in review: the panel was not keyed on selectedId, and the table stays clickable with
+   * the panel open (not a modal) -- so switching from one job's Details to another's kept the
+   * same component instance and carried the first job's failed-download error into the second
+   * job's view, misattributing it.
+   */
+  it('does not carry a failed download error over when switching to a different held job', async () => {
+    const secondRow: HeldImportRow = {
+      ...heldRow, id: '33333333-3333-3333-3333-333333333333', fileName: 'sbi-july.pdf',
+    };
+    vi.mocked(adminHeldImportApi.list).mockResolvedValue({
+      content: [heldRow, secondRow], page: 0, size: 25, totalElements: 2, totalPages: 1,
+    });
+    vi.mocked(adminHeldImportApi.get).mockImplementation((jobId: string) =>
+      Promise.resolve(jobId === secondRow.id ? { ...heldDetail, job: secondRow } : heldDetail));
+    vi.mocked(adminHeldImportApi.download).mockRejectedValue(new Error('network error'));
+    mockAuth(['IMPORT_TRIAGE_MANAGE'], ['ADMIN']);
+    renderPage();
+    await screen.findByText('hdfc-june.pdf');
+
+    const [firstDetailsButton] = await screen.findAllByRole('button', { name: /details/i });
+    await userEvent.click(firstDetailsButton);
+    await userEvent.click(await screen.findByRole('button', { name: /download statement/i }));
+    await screen.findByText(/could not download this statement/i);
+
+    // Straight to the SECOND row's Details, panel A still open the whole time -- selectedId
+    // never passes through null, which is exactly the path that must not carry state over.
+    const [, secondDetailsButton] = await screen.findAllByRole('button', { name: /details/i });
+    await userEvent.click(secondDetailsButton);
+    // Confirms the panel actually switched to job B's data (not just that the stale error faded
+    // on its own) -- the filename now appears twice, once in the table row and once in the panel.
+    await waitFor(() => expect(screen.getAllByText('sbi-july.pdf')).toHaveLength(2));
+
+    expect(screen.queryByText(/could not download this statement/i)).not.toBeInTheDocument();
   });
 
   it('shows the waiting and reprocessing counts separately', async () => {

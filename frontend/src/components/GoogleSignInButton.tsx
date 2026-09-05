@@ -61,7 +61,16 @@ export function GoogleSignInButton({ text, onCredential, onError }: GoogleSignIn
           containerRef.current.replaceChildren();
           accountsId.renderButton(containerRef.current, {
             theme: 'outline',
-            size: 'large',
+            // 'medium', not the default 'large' -- Google's own tier ordering (small < medium <
+            // large, per https://developers.google.com/identity/gsi/web/reference/js-reference#size)
+            // makes this a real reduction regardless of exact pixel values, which Google doesn't
+            // publish and which this component can't observe ahead of render (GIS never reports
+            // its own rendered height back to the caller). The 44px this actually renders at in
+            // production (measured live on app.fynora.net with the real client_id/origin -- a
+            // synthetic test page with a placeholder client_id skips Google's real sizing path
+            // and is not representative) is what min-h-[44px] below and
+            // AppleSignInButton.tsx's py-2.5 are matched against.
+            size: 'medium',
             width: String(measuredWidth),
             text,
             // Google defaults to a left-pinned logo with the text centered in the remaining
@@ -95,7 +104,7 @@ export function GoogleSignInButton({ text, onCredential, onError }: GoogleSignIn
       {/* Google measures and draws its own button into this div once renderButton() runs --
           fixed height reserves the space up front so the rest of the form doesn't jump once it
           appears. */}
-      <div ref={containerRef} className="w-full min-h-[40px]" aria-busy={!ready} />
+      <div ref={containerRef} className="w-full min-h-[44px]" aria-busy={!ready} />
     </div>
   );
 }

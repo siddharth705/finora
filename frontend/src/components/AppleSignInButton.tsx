@@ -112,6 +112,14 @@ export function AppleSignInButton({ onCredential, onError }: AppleSignInButtonPr
   }
 
   return (
+    // py-2.5 (42px) -- a prior pass here shrank this to py-1.5 (34px) against a *synthetic* test
+    // page's reading of Google's 'medium' button (32px). That test used a placeholder client_id;
+    // Google's real GSI button, measured live on app.fynora.net with the actual authorized
+    // client_id/origin, renders 'medium' at 44px, not 32px -- confirmed the synthetic number
+    // wasn't representative of production (a fake client_id on an unauthorized origin skips
+    // Google's real sizing path entirely). 42px is the closest standard Tailwind step to that
+    // real 44px, close enough that the two buttons read as the same height. See
+    // GoogleSignInButton.tsx's own comment for the corresponding real measurement.
     <button
       type="button"
       onClick={() => void handleClick()}
