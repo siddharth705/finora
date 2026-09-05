@@ -16,6 +16,7 @@ import com.finora.imports.DocumentContext;
 import com.finora.imports.ExplicitZeroActivityDetector;
 import com.finora.imports.RowKind;
 import com.finora.imports.TransactionNormalizer;
+import com.finora.imports.product.FinancialProductType;
 import com.finora.imports.product.ProductAttributeExtractor;
 import com.finora.imports.product.ProductAttributes;
 import com.finora.imports.product.ProductDiscovery;
@@ -206,6 +207,8 @@ public class PdfPreviewGenerator {
         // runs) is ever in scope.
         ctx.recordTextSource(acquired.source());
         PdfTableLocator.LocatedDocument doc = tableLocator.locateAll(positioned, ctx);
+        doc = new PdfTableLocator.LocatedDocument(
+                mergeOrphanedInvestmentFragments(doc.sections(), ctx), doc.physicalRowFormationEvidence());
         // Read from the positioned runs rather than from the located table: the summary grid has
         // its own column layout, so bucketing it against the TRANSACTION table's anchors shreds it
         // -- on a real HDFC statement it arrives as one unparseable row reading "Credit Amount
@@ -633,6 +636,119 @@ public class PdfPreviewGenerator {
                     importVerifier.reviseSummaryTotals(s.verification(), s.rows(), printedSummary, 0)));
         }
         return revised;
+    }
+
+    /**
+     * INVESTMENT_FRAGMENT_REMERGED. A real deposit product routinely prints its own account/holding
+     * across TWO structurally different tables under one logical account -- a summary block (rate,
+     * principal, maturity) and a separate schedule (installments, per-instrument rows) -- with no
+     * SECTION_MARKER-style identity banner tying them together, so {@link PdfTableLocator} (which
+     * has no notion of product type at all -- see {@code LocatedSection}'s own doc comment) stages
+     * them as two independent sections. The summary table alone usually carries enough evidence to
+     * classify confidently; the schedule alone often does not, because the two tables' own expected
+     * signals ({@code MATURITY_FIELD}, {@code INTEREST_RATE_FIELD} on one; {@code
+     * INSTALLMENT_FIELD} on the other) never repeat on both, capping its own standalone confidence
+     * below the classifier's own 0.6 confidence threshold even with a genuine hypothesis.
+     *
+     * <p>Confirmed on a real HDFC composite statement: a Recurring Deposit's own "RD ACCOUNT
+     * SUMMARY" table (2 rows, 95% confident RECURRING_DEPOSIT on its own) is immediately followed
+     * by its own "LATEST INSTALLMENT DETAILS" table (7 rows, scores only 50% alone -- 2 of RD's 4
+     * expected signals recorded NEGATIVE, since neither MATURITY_FIELD nor INTEREST_RATE_FIELD
+     * repeats on an installment schedule -- falls to UNKNOWN, and UNKNOWN.hasTransactions()==false
+     * means those 7 real rows never stage as transactions either, even though they were correctly
+     * extracted). Merging the two sections' raw content BEFORE classification runs (rather than
+     * trying to combine two already-built {@code StagedAccountSection} DTOs afterward, each with
+     * its own derived attribute fields) lets the ordinary classification pipeline see every signal
+     * together in one pass, the same evidence {@code FinancialProductClassifierTest}'s own {@code
+     * anInstallmentScheduleIsARecurringDepositAndRoutesToInvestments} proves is sufficient when
+     * both tables' signals are present together.
+     *
+     * <h2>Why this is narrowly scoped, not a general "merge adjacent sections" pass</h2>
+     *
+     * Deliberately requires the FIRST section to already be a confidently-classified, VALIDATED
+     * INVESTMENT-domain product on its own -- never merges two sections that are merely adjacent,
+     * and never merges INTO a section whose own classification is itself uncertain. A trial
+     * classification of the SECOND section, run the identical way {@link #buildSections} will run
+     * it for real, must also come back exactly {@link FinancialProductType#UNKNOWN} -- a section
+     * that already classifies as something else (a genuinely separate, distinct account) is never
+     * absorbed. Running the real, same-signature classification twice for a merge candidate (once
+     * here to decide, once again inside {@code buildSections} on whatever the pre-pass leaves
+     * behind) is redundant work, not redundant risk: both calls are pure functions of the same
+     * evidence, so the second call simply confirms what the first already found.
+     */
+    private List<PdfTableLocator.LocatedSection> mergeOrphanedInvestmentFragments(
+            List<PdfTableLocator.LocatedSection> sections, DocumentContext ctx) {
+        List<PdfTableLocator.LocatedSection> merged = new ArrayList<>(sections);
+        for (int i = 0; i < merged.size() - 1; ) {
+            if (canMergeAsInvestmentFragment(merged, i)) {
+                PdfTableLocator.LocatedSection first = merged.get(i);
+                PdfTableLocator.LocatedSection second = merged.get(i + 1);
+                List<Map<String, String>> mergedRows = new ArrayList<>(first.rows());
+                mergedRows.addAll(second.rows());
+                List<String> mergedAuxiliary = new ArrayList<>(first.auxiliaryText());
+                mergedAuxiliary.addAll(second.auxiliaryText());
+                List<PdfTableLocator.DroppedCandidateRow> mergedDropped =
+                        new ArrayList<>(first.evidence().droppedTransactionCandidates());
+                mergedDropped.addAll(second.evidence().droppedTransactionCandidates());
+                List<PdfTableLocator.HeaderReconstructionFinding> mergedFindings =
+                        new ArrayList<>(first.evidence().headerReconstructionFindings());
+                mergedFindings.addAll(second.evidence().headerReconstructionFindings());
+                merged.set(i, new PdfTableLocator.LocatedSection(mergedAuxiliary, mergedRows,
+                        new PdfTableLocator.ExtractionEvidence(mergedDropped, mergedFindings)));
+                merged.remove(i + 1);
+                if (ctx != null) ctx.record("INVESTMENT_FRAGMENT_REMERGED");
+                // Re-check the same index: the section that just absorbed a fragment might itself
+                // still be confidently classified and immediately followed by ANOTHER orphaned
+                // fragment (a document with more than two tables under one deposit account).
+            } else {
+                i++;
+            }
+        }
+        return merged;
+    }
+
+    /** True when {@code sections.get(index)} is a confidently-classified, validated INVESTMENT-
+     *  domain product and {@code sections.get(index + 1)}, classified the same way {@link
+     *  #buildSections} classifies it for real, comes back UNKNOWN -- see {@link
+     *  #mergeOrphanedInvestmentFragments}'s own doc comment for the full rationale. */
+    private boolean canMergeAsInvestmentFragment(List<PdfTableLocator.LocatedSection> sections, int index) {
+        int sectionCount = sections.size();
+        ProductDiscovery.DiscoveredProduct first = classifySectionAlone(sections.get(index), index, sectionCount);
+        if (!first.validation().isValidated() || !first.classification().isConfident()) return false;
+        if (first.type().domain() != FinancialProductType.Domain.INVESTMENT) return false;
+
+        ProductDiscovery.DiscoveredProduct second =
+                classifySectionAlone(sections.get(index + 1), index + 1, sectionCount);
+        return second.type() == FinancialProductType.UNKNOWN;
+    }
+
+    /**
+     * Columns are the UNION of every row's own keys, not just the first row's -- {@code
+     * bucketRow} only puts a key in a row's map when that row actually has a value there, so a
+     * ledger whose first row happens to be (say) a deposit with no matching withdrawal loses the
+     * "Withdrawals" column entirely if only that row is consulted.
+     *
+     * <p>Confirmed as a real regression this merge introduced: {@code
+     * ClosingBalanceEvidenceSectionIndexIT}'s own composite fixture stages a genuine SAVINGS
+     * section (Date/Transaction Details/Deposits/Withdrawals/Balance, two rows -- one a pure
+     * deposit, one a pure withdrawal) immediately after a confidently-classified RECURRING_DEPOSIT
+     * section. Row-0-only columns there are missing "Withdrawals" (row 0 is the deposit), which is
+     * enough to drop SAVINGS' own trial classification to {@code UNKNOWN} -- satisfying {@link
+     * #canMergeAsInvestmentFragment}'s "second section is UNKNOWN alone" test for a completely
+     * unrelated reason than the one it exists to catch, and merging a real, independent account's
+     * two transactions into the deposit section, dropping it entirely (raw section count 4 -> 3,
+     * the savings section and its balance gone without a trace). Verified directly: the same
+     * section trial-classified with row-0-only columns comes back UNKNOWN; with the union across
+     * both rows it comes back SAVINGS.
+     */
+    private ProductDiscovery.DiscoveredProduct classifySectionAlone(PdfTableLocator.LocatedSection section,
+                                                                      int sectionIndex, int sectionCount) {
+        List<String> columns = section.rows().stream()
+                .flatMap(row -> row.keySet().stream())
+                .distinct()
+                .toList();
+        return productDiscovery.discover(new ProductEvidenceCollector.Section(columns, section.auxiliaryText(),
+                null, section.rows().size(), sectionIndex, sectionCount));
     }
 
     /**

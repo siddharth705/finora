@@ -150,21 +150,35 @@ class MultiSectionZeroExtractionTest {
     // ---------------------------------------------------------------- what must not change
 
     /**
-     * The regression control. Four genuinely different products in one file (savings ledger, FD
-     * schedule, RD summary, RD installment schedule), 75 real transactions in the ledger -- so the
-     * guard must not fire, and nothing about the outcome may move.
+     * The regression control. Three genuinely different products in one file (savings ledger, FD
+     * schedule, RD account -- summary and installment schedule merged into one, see below), 75
+     * real transactions in the ledger -- so the guard must not fire, and nothing about the
+     * outcome may move.
+     *
+     * <p>Raw section count was 4, not 3, before {@code PdfPreviewGenerator}'s own
+     * INVESTMENT_FRAGMENT_REMERGED: {@code PdfTableLocator} located the RD account's own summary
+     * table and its separate installment schedule as two independent sections (no identity banner
+     * ties them together, and PdfTableLocator has no notion of product type at all), which then
+     * classified UNKNOWN on its own and would have been dropped by THIS filter as one more
+     * deposit section rather than recognized as the same real RD account. Merging them earlier,
+     * before classification runs, is a correction to this same document's own extraction, not a
+     * behaviour this filter needed to change around -- see PdfPreviewGenerator's own doc comment
+     * for the full mechanism and the real evidence it was built from.
      *
      * <p>Asserted at full detail rather than by row count: the filter's existing behaviour (drop
-     * the three deposit sections, carry their rows onto the survivor as unparseable) collapses this
+     * the two deposit sections, carry their rows onto the survivor as unparseable) collapses this
      * to a single-account response, and every figure the review screen shows comes out of it.
      */
     @Test
-    void hdfcComposite_fourGenuineProducts_isCompletelyUnaffected() throws Exception {
+    void hdfcComposite_threeGenuineProducts_isCompletelyUnaffected() throws Exception {
         PdfStagingSessionResponse response = stage("hdfc-composite-deposit-schedules");
 
         assertThat(rawSectionCountOf("hdfc-composite-deposit-schedules"))
-                .as("still four located sections -- this fix touches no parser or locator code")
-                .isEqualTo(4);
+                .as("three located sections -- the RD account's own summary and installment "
+                        + "schedule now correctly merge into one before this filter's own "
+                        + "no-parser-or-locator-code concern even applies; see this test's own "
+                        + "doc comment")
+                .isEqualTo(3);
         assertThat(response.multiAccount()).isFalse();
         assertThat(response.staging().rows()).hasSize(75);
         assertThat(response.staging().totalParsed()).isEqualTo(75);

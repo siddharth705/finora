@@ -632,6 +632,36 @@ public final class PdfFixtureBuilder {
         return render(List.of(page));
     }
 
+    /**
+     * A single Recurring Deposit account whose own summary table (rate, principal-equivalent
+     * installment amount, maturity date) is immediately followed -- no identity banner, no blank
+     * line -- by its own separate installment schedule (a different column set entirely, no
+     * maturity/interest columns of its own). Modeled on a real HDFC composite statement's own RD
+     * block, which prints exactly this shape and forces {@code
+     * PdfPreviewGenerator#mergeOrphanedInvestmentFragments} to exist: the schedule alone never
+     * carries enough of RD's own expected signals to classify above threshold, so without the
+     * merge it falls to UNKNOWN and its real installment rows never stage, even though {@link
+     * PdfTableLocator} correctly extracts every one of them.
+     */
+    public static byte[] buildOrphanedInvestmentScheduleSample() throws IOException {
+        // Anchors spaced wider than each header LABEL's own rendered width at FONT_SIZE (see this
+        // method's sibling buildCompositeMultiProductStatementSample's own comment on why -- a
+        // narrower gap here previously let "Installment Amount" and "Sequence Number" render into
+        // their own neighbour, garbling both into one unreadable run).
+        float[] summaryCol = {LEFT_MARGIN, 170f, 290f, 400f};
+        float[] scheduleCol = {LEFT_MARGIN, 180f, 290f, 400f};
+
+        PageBuilder page = new PageBuilder();
+        page.line("RD ACCOUNT SUMMARY")
+                .row(summaryCol, "Account No", "Installment Amount", "Maturity Date", "Rate Of Interest")
+                .row(summaryCol, "555123456", "1000.00", "20/03/2030", "6.75")
+                .row(scheduleCol, "Sequence Number", "Due Date", "Amount Paid", "Installment Frequency")
+                .row(scheduleCol, "1", "01/04/2026", "1000.00", "Monthly")
+                .row(scheduleCol, "2", "01/05/2026", "1000.00", "Monthly");
+
+        return render(List.of(page));
+    }
+
     // ==================== OFFSET_COLUMN_ANCHORS ====================
 
     /**

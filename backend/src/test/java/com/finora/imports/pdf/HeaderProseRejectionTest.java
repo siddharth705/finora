@@ -260,8 +260,13 @@ class HeaderProseRejectionTest {
                 .as("still 102 located rows across all four sections")
                 .isEqualTo(102);
 
+        // PdfPreviewGenerator.mergeOrphanedInvestmentFragments merges this document's own RD
+        // account summary and its separate installment schedule into one section before
+        // classification runs -- a correction to the RD account's own extraction, not something
+        // this class's own header-prose-rejection concern touches. locateAll's own raw output
+        // above stays 4, unaffected; only the generator-level, post-classification count moves.
         List<StagedAccountSection> generated = generate(CONTROL);
-        assertThat(generated).hasSize(4);
+        assertThat(generated).hasSize(3);
         int staged = generated.stream().mapToInt(s -> s.rows().size()).sum();
         assertThat(staged).as("still 75 staged transactions").isEqualTo(75);
     }
