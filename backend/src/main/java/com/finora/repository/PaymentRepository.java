@@ -13,6 +13,8 @@ public interface PaymentRepository extends JpaRepository<Payment, UUID> {
 
     List<Payment> findByUserIdOrderByCreatedAtDesc(UUID userId);
 
+    List<Payment> findBySubscriptionIdOrderByCreatedAtDesc(UUID subscriptionId);
+
     /** AccountPurgeSweepService. Native, bypassing Hibernate entirely -- same naming discipline as
      *  {@code SubscriptionRepository.hardDeleteByUserId}. Unlike subscription_events/plan_changes,
      *  payments has its own user_id column, so it gets its own explicit purge call rather than
