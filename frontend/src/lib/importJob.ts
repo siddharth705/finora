@@ -71,6 +71,17 @@ export function isSettled(job: { status: ImportJobProgress['status'] }): boolean
 }
 
 /**
+ * Whether a job ended by being handed to a person instead of finishing on its own — the two
+ * triage holds, `HELD_FOR_REVIEW` (a parser gap) and `HELD_FOR_TRUST_REVIEW` (the extraction's own
+ * evidence didn't add up). Both are terminal per {@link isSettled}, but unlike a genuine FAILED or
+ * CANCELLED outcome, a held job is not actually over — the person is owed the same "stay on screen
+ * and read why" treatment a FAILED job already gets, not a silent reset to the empty dropzone.
+ */
+export function isHeld(job: { status: ImportJobProgress['status'] }): boolean {
+  return job.status === 'HELD_FOR_REVIEW' || job.status === 'HELD_FOR_TRUST_REVIEW';
+}
+
+/**
  * How often StatementHistory's "Recent Imports" list should refetch, in ms, or `false` to stop --
  * while ANY listed job hasn't reached a terminal state, since that's the only reason to keep
  * polling at all. A page with nothing in flight (the common case) pays no ongoing cost.
