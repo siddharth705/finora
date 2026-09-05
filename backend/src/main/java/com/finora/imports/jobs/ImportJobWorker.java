@@ -1,6 +1,7 @@
 package com.finora.imports.jobs;
 
 import com.finora.entity.ImportJob;
+import com.finora.exception.ApiException;
 import com.finora.exception.ErrorCode;
 import com.finora.imports.ImportService;
 import com.finora.imports.analysis.ImportVerificationRecorder;
@@ -435,8 +436,12 @@ public class ImportJobWorker {
      * Whether a dead-lettered failure belongs in the admin triage queue.
      *
      * <p>The queue exists for one thing: a parser gap on a statement layout this codebase has not
-     * seen. Fix the parser, reprocess, done. Two conditions establish that -- the classification
-     * was RETRY_ONCE_THEN_ALERT (nothing recognised the exception) and the attempt budget is spent.
+     * seen. Fix the parser, reprocess, done. Two conditions establish that for an exception nothing
+     * recognised at all -- the classification was RETRY_ONCE_THEN_ALERT and the attempt budget is
+     * spent. {@link #carriesRecoveredEvidence} establishes the same thing a second way, for a
+     * curated {@code ErrorCode} exception that recognised SOMETHING (a "no transaction table
+     * found") but whose own recovered-lines evidence says that verdict is plausibly wrong -- see
+     * its own doc comment.
      *
      * <p><b>StatementIntegrityException is excluded, despite satisfying both.</b> Those two
      * conditions quietly encode a third one -- that a human can fix something and reprocess -- and
@@ -476,9 +481,42 @@ public class ImportJobWorker {
      */
     private static boolean holdsForTriage(ErrorCode.RetryPolicy policy,
                                           ImportJob.FailureOutcome outcome, Exception cause) {
-        return outcome == ImportJob.FailureOutcome.DEAD_LETTERED
-                && policy == ErrorCode.RetryPolicy.RETRY_ONCE_THEN_ALERT
-                && isOperatorRemediable(cause);
+        if (outcome != ImportJob.FailureOutcome.DEAD_LETTERED || !isOperatorRemediable(cause)) {
+            return false;
+        }
+        return policy == ErrorCode.RetryPolicy.RETRY_ONCE_THEN_ALERT || carriesRecoveredEvidence(cause);
+    }
+
+    /**
+     * A curated "nothing was extracted" failure ({@code IMPORT_NO_HEADER_DETECTED} /
+     * {@code IMPORT_NO_TRANSACTIONS_FOUND}) is {@code FAIL_FAST} -- retrying the exact same bytes
+     * against the exact same parser build cannot succeed, so the {@code RETRY_ONCE_THEN_ALERT}
+     * branch above never fires for it, and by default it dead-letters straight to FAILED with no
+     * triage visibility. That default is right for the common case behind those two codes: a
+     * summary, a T&C page, or some other non-statement upload, where there was genuinely nothing to
+     * find and a human reviewing it would learn nothing an engineer could act on.
+     *
+     * <p>But {@code ExtractionCheck}'s own recovered-lines count (see its class doc, "never lose
+     * information") already distinguishes that from a document where the engine found date/amount-
+     * shaped text it could not anchor into a table -- real evidence a transaction table exists, not
+     * proof that it doesn't. That is exactly the "fix the parser, reprocess, done" situation
+     * {@link #holdsForTriage} exists for; the only reason it dead-ends on the user instead is that
+     * it happens to be thrown as a curated {@link ErrorCode} rather than an unrecognised exception.
+     *
+     * <p>Not hypothetical: confirmed against a real statement, a Paytm passbook export whose date
+     * column is split across two lines ("Date &" / "Time"), which the table locator did not
+     * recognise. It had a genuine "Passbook Payments History" table with two real transactions --
+     * recoveredLines was non-zero -- and IMPORT_NO_HEADER_DETECTED sent it straight to FAILED with
+     * no admin visibility at all, for exactly the class of layout gap this queue exists to catch.
+     */
+    private static boolean carriesRecoveredEvidence(Throwable cause) {
+        if (!(cause instanceof ApiException api)) return false;
+        ErrorCode code = api.getCode();
+        if (code != ErrorCode.IMPORT_NO_HEADER_DETECTED && code != ErrorCode.IMPORT_NO_TRANSACTIONS_FOUND) {
+            return false;
+        }
+        Object recoveredLines = api.getDetails().get("recoveredLines");
+        return recoveredLines instanceof Integer lines && lines > 0;
     }
 
     /**

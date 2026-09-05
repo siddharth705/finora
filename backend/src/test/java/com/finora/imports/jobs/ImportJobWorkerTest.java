@@ -319,6 +319,45 @@ class ImportJobWorkerTest {
     }
 
     /**
+     * The exception this pins: confirmed against a real Paytm passbook export whose date column
+     * splits across two lines, which the table locator did not recognise -- but which contained a
+     * genuine "Passbook Payments History" table with real transactions. ExtractionCheck still
+     * throws the curated IMPORT_NO_HEADER_DETECTED (same code as the truly-nothing-here case above),
+     * but attaches recoveredLines as evidence the document was not empty. That evidence is what
+     * should route it to the same triage queue an unrecognised exception gets, instead of dead-
+     * ending on the user exactly like the case above.
+     */
+    @Test
+    void aKnownErrorCodeFailureWithRecoveredEvidenceIsHeldForReview() throws IOException {
+        when(importService.parseAndStageWithSession(any(), any(), any()))
+                .thenThrow(new ApiException(ErrorCode.IMPORT_NO_HEADER_DETECTED.defaultStatus(),
+                        ErrorCode.IMPORT_NO_HEADER_DETECTED,
+                        "Finora could not find a transaction table anywhere in this statement.",
+                        java.util.Map.of("recoveredLines", 4)));
+
+        worker.drainOnce();
+
+        assertThat(job.getStatus()).isEqualTo(ImportJob.Status.HELD_FOR_REVIEW);
+        assertThat(job.getFailureCode()).isEqualTo("IMPORT_NO_HEADER_DETECTED");
+        assertThat(job.wasHeldForReview()).isTrue();
+    }
+
+    /** Zero recovered lines is the same as none at all -- there is nothing plausible to review. */
+    @Test
+    void aKnownErrorCodeFailureWithZeroRecoveredLinesIsNotHeld() throws IOException {
+        when(importService.parseAndStageWithSession(any(), any(), any()))
+                .thenThrow(new ApiException(ErrorCode.IMPORT_NO_HEADER_DETECTED.defaultStatus(),
+                        ErrorCode.IMPORT_NO_HEADER_DETECTED,
+                        "Finora could not find a transaction table anywhere in this statement.",
+                        java.util.Map.of("recoveredLines", 0)));
+
+        worker.drainOnce();
+
+        assertThat(job.getStatus()).isEqualTo(ImportJob.Status.FAILED);
+        assertThat(job.wasHeldForReview()).isFalse();
+    }
+
+    /**
      * Exhausted transient-infrastructure retries stay in FAILED too.
      *
      * <p>Storage being down is not a parser gap, and five attempts against it prove nothing an
