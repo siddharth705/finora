@@ -206,6 +206,23 @@ describe('HeldStatementDetail', () => {
     expect(screen.getByRole('button', { name: /download statement/i })).toBeInTheDocument();
   });
 
+  it('discloses that downloading is logged, matching the held-imports queue', async () => {
+    mockAuth(['TRUST_REVIEW_MANAGE'], ['ADMIN']);
+    renderPage();
+    await screen.findByText(/count disagree/i);
+
+    expect(await screen.findByText(/downloading this statement has been logged against your account/i))
+      .toBeInTheDocument();
+  });
+
+  it('does not show the download-is-logged disclosure to a role that cannot download', async () => {
+    mockAuth(['TRUST_REVIEW_MANAGE'], ['SUPPORT']);
+    renderPage();
+    await screen.findByText(/count disagree/i);
+
+    expect(screen.queryByText(/downloading this statement has been logged/i)).not.toBeInTheDocument();
+  });
+
   /**
    * The repository owner's decision, 2026-09-04: the download is pinned to ADMIN/SUPER_ADMIN, not
    * merely to TRUST_REVIEW_MANAGE. An operator holding only the permission (able to reach this
