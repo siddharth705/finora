@@ -220,4 +220,47 @@ class CategoryRulesTest {
         // keyword must not match inside a longer word.
         assertThat(CategoryRules.suggestCategory("GOKHANAPUR LAND TAX")).isEqualTo("Other");
     }
+
+    /**
+     * Real corpus finding: "Tobox Ventures" is the registered corporate name behind "Gokhana"
+     * (a real narration reads "TOBOX VENTURES PRIVATE LIMITED/GOKHANA."), appearing as the
+     * merchant name on statements that print the corporate entity rather than the brand.
+     */
+    @Test
+    void suggestCategory_matchesTobox_corporateNameBehindGokhana() {
+        assertThat(CategoryRules.suggestCategory("UPI-TOBOX VENTURES-REF551209")).isEqualTo("Dining");
+    }
+
+    /** Some real statements truncate this narration to "TOBOX VENT" (a column-width truncation) --
+     *  the keyword must still match on that shortened form, which is why "tobox" is kept as a bare
+     *  single word rather than the two-word "tobox ventures". */
+    @Test
+    void suggestCategory_matchesTobox_evenWhenNarrationIsTruncated() {
+        assertThat(CategoryRules.suggestCategory("UPI/TOBOX VENT/REF88213")).isEqualTo("Dining");
+    }
+
+    /** Word-boundary collision guard: "tobox" must not match as a prefix inside a longer,
+     *  unrelated word. */
+    @Test
+    void suggestCategory_toboxicIsNotMisclassifiedAsDining() {
+        assertThat(CategoryRules.suggestCategory("TOBOXIC LEATHERWORKS FEE")).isNotEqualTo("Dining");
+    }
+
+    /**
+     * Real corpus finding: "Indian Railways" is a distinct real narration form for the national
+     * railway institution, naming it directly rather than through the "irctc" booking portal
+     * already in this table.
+     */
+    @Test
+    void suggestCategory_matchesIndianRailways_asDistinctFromIrctc() {
+        assertThat(CategoryRules.suggestCategory("UPI-INDIAN RAILWAYS-REF662140")).isEqualTo("Transport");
+    }
+
+    /** Word-boundary/phrase collision guard: a bare "indian" would misfire on this real corpus
+     *  narration ("INDIAN CLEARING CORP" settlement lines) -- kept as the full two-word phrase
+     *  specifically to avoid it, the same choice already made for "nse mf" and "cc payment". */
+    @Test
+    void suggestCategory_indianClearingCorpIsNotMisclassifiedAsTransport() {
+        assertThat(CategoryRules.suggestCategory("INDIAN CLEARING CORP SETTLEMENT")).isNotEqualTo("Transport");
+    }
 }
