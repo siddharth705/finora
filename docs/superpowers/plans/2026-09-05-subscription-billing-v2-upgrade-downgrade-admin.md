@@ -1139,7 +1139,7 @@ class SubscriptionUpgradeDowngradeEndToEndIT extends AbstractIntegrationTest {
         Plan plus = planRepository.findByCode("PLUS").orElseThrow();
         BillingPrice plusMonthly = billingPriceRepository
                 .findByPlanIdAndBillingCycleAndActiveTrue(plus.getId(), "MONTHLY").orElseThrow();
-        String downgradeRazorpayPlanId = "plan_e2e_plus_" + UUID.randomUUID();
+        String downgradeRazorpayPlanId = "plan_e2e_" + UUID.randomUUID(); // stays under razorpay_plan_id's VARCHAR(50)
         plusMonthly.setRazorpayPlanId(downgradeRazorpayPlanId);
         billingPriceRepository.save(plusMonthly);
         String razorpaySubscriptionId = "sub_e2e_" + UUID.randomUUID();
@@ -1183,7 +1183,7 @@ class SubscriptionUpgradeDowngradeEndToEndIT extends AbstractIntegrationTest {
         Plan premium = planRepository.findByCode("PREMIUM").orElseThrow();
         BillingPrice premiumMonthly = billingPriceRepository
                 .findByPlanIdAndBillingCycleAndActiveTrue(premium.getId(), "MONTHLY").orElseThrow();
-        String upgradeRazorpayPlanId = "plan_e2e_premium_" + UUID.randomUUID();
+        String upgradeRazorpayPlanId = "plan_e2e_" + UUID.randomUUID(); // stays under razorpay_plan_id's VARCHAR(50)
         premiumMonthly.setRazorpayPlanId(upgradeRazorpayPlanId);
         billingPriceRepository.save(premiumMonthly);
         String oldRazorpaySubscriptionId = "sub_e2e_old_" + UUID.randomUUID();
