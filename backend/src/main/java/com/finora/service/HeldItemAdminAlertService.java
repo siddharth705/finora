@@ -149,7 +149,7 @@ public class HeldItemAdminAlertService {
         List<User> recipients =
                 userRepository.findByPermissionNameAndAccountScope(permissionName, User.SCOPE_ADMIN);
         if (recipients.isEmpty()) {
-            log.info("No admin holds {} -- no held-item alert sent for \"{}\"", permissionName, subject);
+            log.warn("No admin holds {} -- no held-item alert sent for \"{}\"", permissionName, subject);
             return;
         }
         for (User recipient : recipients) {

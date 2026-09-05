@@ -25,6 +25,7 @@ vi.mock('../api/endpoints', () => ({
     reprocess: vi.fn(),
     reprocessAll: vi.fn(),
     resolve: vi.fn(),
+    download: vi.fn(),
   },
 }));
 
@@ -58,10 +59,11 @@ function renderPage() {
   );
 }
 
-function mockAuth(permissions: string[]) {
+function mockAuth(permissions: string[], roles: string[] = []) {
   vi.mocked(useAdminAuth).mockReturnValue(mockAdminAuthState({
     hasPermission: (p: string) => permissions.includes(p),
     permissions,
+    roles,
     fullName: 'Ops Admin',
   }));
 }
@@ -169,6 +171,32 @@ describe('HeldImports', () => {
 
     await waitFor(() => expect(adminHeldImportApi.resolve).toHaveBeenCalledWith(
       heldRow.id, 'scanned image, no text layer'));
+  });
+
+  it('lets an operator with an admin role download the held statement', async () => {
+    vi.mocked(adminHeldImportApi.download).mockResolvedValue(undefined);
+    mockAuth(['IMPORT_TRIAGE_MANAGE'], ['ADMIN']);
+    renderPage();
+    await screen.findByText('hdfc-june.pdf');
+    await userEvent.click(screen.getByRole('button', { name: /details/i }));
+    await screen.findByText(/no header row found/);
+
+    await userEvent.click(screen.getByRole('button', { name: /download statement/i }));
+
+    await waitFor(() => expect(adminHeldImportApi.download)
+      .toHaveBeenCalledWith(heldRow.id, heldRow.fileName));
+  });
+
+  /** Mirrors HeldStatementDetail's identical rule and identical reasoning: a role that can work
+   *  the queue must not see a control for an action the backend would refuse anyway. */
+  it('hides the download control from a non-admin role', async () => {
+    mockAuth(['IMPORT_TRIAGE_MANAGE'], ['SUPPORT']);
+    renderPage();
+    await screen.findByText('hdfc-june.pdf');
+    await userEvent.click(screen.getByRole('button', { name: /details/i }));
+    await screen.findByText(/no header row found/);
+
+    expect(screen.queryByRole('button', { name: /download statement/i })).not.toBeInTheDocument();
   });
 
   it('shows the waiting and reprocessing counts separately', async () => {

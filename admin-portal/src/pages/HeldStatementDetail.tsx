@@ -201,6 +201,12 @@ function HeldStatementDetailContent({ heldId }: { heldId: string }) {
           </button>
         )}
       </div>
+      {canDownload && (
+        <p className="text-xs text-muted">
+          Downloading this statement has been logged against your account, because it shows
+          content from a customer&apos;s bank statement.
+        </p>
+      )}
 
       {actionError && (
         <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-3">

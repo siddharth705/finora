@@ -1874,6 +1874,27 @@ describe('Import — queued imports', () => {
   });
 
   /**
+   * The bug found during live testing (2026-09-05): a held job settles in the same polling tick
+   * that would show it, so ImportProgress used to unmount itself before the "additional checks"
+   * message could ever paint -- the screen just reverted to the blank dropzone with no
+   * explanation. Only FAILED was ever exempted from the reset; the two HELD_* statuses were not.
+   */
+  it('keeps the progress panel on screen (not the blank dropzone) when a job is held for review', async () => {
+    vi.mocked(importJobsApi.progress).mockResolvedValue(queuedJob({ status: 'HELD_FOR_REVIEW' }));
+    const user = userEvent.setup();
+    renderImport();
+    await waitFor(() => expect(importJobsApi.availability).toHaveBeenCalled());
+
+    await user.upload(screen.getByTestId('statement-file-input'), csvFile());
+
+    expect(await screen.findByText('Running additional checks')).toBeInTheDocument();
+    expect(await screen.findByText(/We'll notify you once it's ready/)).toBeInTheDocument();
+    // Actually still there, not just rendered once before an immediate unmount.
+    expect(screen.getByTestId('import-progress')).toBeInTheDocument();
+    expect(screen.queryByTestId('statement-file-input')).not.toBeInTheDocument();
+  });
+
+  /**
    * The other half of the same review finding: `ImportStageRecorder` deliberately tolerates its
    * own write failing without breaking the import ("a measurement gap, not an outage"), so a
    * FAILED job can genuinely reach the client with an empty stage list. Before the fix,

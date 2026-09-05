@@ -38,6 +38,7 @@ class AdminHeldImportServiceTest {
     private ImportJobRepository repository;
     private ImportJobWorker worker;
     private AuditService auditService;
+    private com.finora.imports.storage.StatementContentService statementContentService;
     private AdminHeldImportService service;
 
     private final UUID adminUserId = UUID.randomUUID();
@@ -47,7 +48,8 @@ class AdminHeldImportServiceTest {
         repository = mock(ImportJobRepository.class);
         worker = mock(ImportJobWorker.class);
         auditService = mock(AuditService.class);
-        service = new AdminHeldImportService(repository, worker, auditService);
+        statementContentService = mock(com.finora.imports.storage.StatementContentService.class);
+        service = new AdminHeldImportService(repository, worker, auditService, statementContentService);
         when(repository.save(any(ImportJob.class))).thenAnswer(inv -> inv.getArgument(0));
     }
 
@@ -94,6 +96,32 @@ class AdminHeldImportServiceTest {
 
         verify(auditService).record(eq(adminUserId), eq("HELD_IMPORT_VIEWED"), eq("ImportJob"),
                 eq(job.getId()), any(Map.class));
+    }
+
+    @Test
+    void download_auditsAndReturnsTheStatementBytes() {
+        ImportJob job = heldJob();
+        when(repository.findById(job.getId())).thenReturn(Optional.of(job));
+        byte[] bytes = "%PDF-1.4 fixture".getBytes();
+        when(statementContentService.read(job)).thenReturn(bytes);
+
+        AdminHeldImportService.DownloadedStatement result = service.download(adminUserId, job.getId());
+
+        assertThat(result.content()).isEqualTo(bytes);
+        assertThat(result.fileName()).isEqualTo(job.getFileName());
+        assertThat(result.contentType()).isEqualTo("application/pdf");
+        verify(auditService).record(eq(adminUserId), eq("HELD_IMPORT_DOWNLOADED"), eq("ImportJob"),
+                eq(job.getId()), any());
+    }
+
+    @Test
+    void download_throwsNotFoundForAnUnknownJob() {
+        UUID missing = UUID.randomUUID();
+        when(repository.findById(missing)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.download(adminUserId, missing))
+                .isInstanceOf(ApiException.class);
+        verify(auditService, never()).record(any(), anyString(), anyString(), any(), any());
     }
 
     /**
