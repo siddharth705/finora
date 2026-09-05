@@ -56,6 +56,32 @@ describe('Budgets', () => {
     await waitFor(() => expect(categoriesApi.list).toHaveBeenCalledTimes(1));
   });
 
+  it('shows the four stat cards once budgets and categories have loaded', async () => {
+    vi.mocked(budgetsApi.list).mockResolvedValue([
+      budget({ id: 'b1', categoryId: 'c1', categoryName: 'Dining', monthlyLimit: 10000, spentThisMonth: 8400 }),
+      budget({ id: 'b2', categoryId: 'c2', categoryName: 'Shopping', monthlyLimit: 8000, spentThisMonth: 4230 }),
+    ]);
+    renderPage();
+
+    // Total Spend = 8400 + 4230 = 12630; Total Budget = 10000 + 8000 = 18000
+    expect(await screen.findByText('₹12,630')).toBeInTheDocument();
+    expect(screen.getByText('₹12,630 / ₹18,000')).toBeInTheDocument();
+    // Budgets on Track: "on track" is < 90% used. Dining is 84% (on track), Shopping is 53% (on track) -> 2 of 2.
+    expect(screen.getByText('2 of 2')).toBeInTheDocument();
+    expect(screen.getByText('Budgets on Track')).toBeInTheDocument();
+    expect(screen.getByText('Days Left')).toBeInTheDocument();
+  });
+
+  it('counts a budget at or above 90% used as not on track', async () => {
+    vi.mocked(budgetsApi.list).mockResolvedValue([
+      budget({ id: 'b1', categoryId: 'c1', monthlyLimit: 4000, spentThisMonth: 3800 }), // 95%, not on track
+      budget({ id: 'b2', categoryId: 'c2', monthlyLimit: 8000, spentThisMonth: 4230 }), // 53%, on track
+    ]);
+    renderPage();
+
+    expect(await screen.findByText('1 of 2')).toBeInTheDocument();
+  });
+
   // The actual bug this page had: `budgets` started `[]`, which the render logic couldn't tell
   // apart from "genuinely no budgets set" -- so the EmptyState rendered immediately on every
   // mount, before the fetch had a chance to resolve, then popped to real content once it did.

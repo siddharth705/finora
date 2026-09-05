@@ -1,15 +1,21 @@
 import { useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { PiggyBank } from 'lucide-react';
+import { PiggyBank, Wallet, CheckCircle2, CalendarClock } from 'lucide-react';
 import { budgetsApi, categoriesApi, type CategoryOption } from '../api/endpoints';
 import type { Budget } from '../types';
-import { FinoraCard, EmptyState, Button, Skeleton } from '../design-system';
+import { FinoraCard, EmptyState, Button, Skeleton, MetricCard } from '../design-system';
 import { useDelayedLoading } from '../hooks/useDelayedLoading';
 
 function fmt(n: number) {
   // Negative amounts (e.g. a month where spend exceeded income) must render as "-₹500",
   // not "₹-500" -- string concatenation put the currency symbol before the sign.
   return (n < 0 ? '-₹' : '₹') + Math.round(Math.abs(n)).toLocaleString('en-IN');
+}
+
+function daysLeftInMonth(): number {
+  const now = new Date();
+  const lastDayOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+  return lastDayOfMonth - now.getDate();
 }
 
 export default function Budgets() {
@@ -71,8 +77,51 @@ export default function Budgets() {
     }
   }
 
+  const totalSpend = budgets.reduce((sum, b) => sum + b.spentThisMonth, 0);
+  const totalLimit = budgets.reduce((sum, b) => sum + b.monthlyLimit, 0);
+  const onTrackCount = budgets.filter((b) => b.monthlyLimit > 0 && (b.spentThisMonth / b.monthlyLimit) * 100 < 90).length;
+
   return (
     <div className="space-y-4">
+      {loading ? (
+        showSkeleton && (
+          <Skeleton.Region label="Loading budget summary" className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            {[0, 1, 2, 3].map((i) => <Skeleton.Card key={i} />)}
+          </Skeleton.Region>
+        )
+      ) : (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <MetricCard
+            label="Total Spend"
+            value={fmt(totalSpend)}
+            icon={Wallet}
+            iconBg="bg-primary-light"
+            iconColor="text-primary"
+          />
+          <MetricCard
+            label="Total Budget"
+            value={`${fmt(totalSpend)} / ${fmt(totalLimit)}`}
+            icon={PiggyBank}
+            iconBg="bg-primary-light"
+            iconColor="text-primary"
+          />
+          <MetricCard
+            label="Budgets on Track"
+            value={`${onTrackCount} of ${budgets.length}`}
+            icon={CheckCircle2}
+            iconBg="bg-success-bg"
+            iconColor="text-success"
+          />
+          <MetricCard
+            label="Days Left"
+            value={String(daysLeftInMonth())}
+            icon={CalendarClock}
+            iconBg="bg-warning-bg"
+            iconColor="text-warning"
+          />
+        </div>
+      )}
+
       <FinoraCard padding="sm" className="flex gap-2 items-end">
         <div>
           <label htmlFor="budget-category" className="block text-xs uppercase text-gray-500 mb-1">Category</label>
