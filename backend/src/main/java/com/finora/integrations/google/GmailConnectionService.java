@@ -230,6 +230,13 @@ public class GmailConnectionService {
             connections.findByGoogleUserIdAndStatusIn(identity.sub(), LIVE)
                     .filter(existing -> !existing.getUserId().equals(userId))
                     .ifPresent(existing -> {
+                        // Diagnostic: which two accounts, and what state the other one is in.
+                        // No secrets here -- ids and an enum value, the same shape already logged
+                        // a few lines below for the success path.
+                        log.warn("Gmail reconnect for user {} refused: googleUserId {} is already "
+                                        + "{} on connection {} belonging to user {}.",
+                                userId, identity.sub(), existing.getStatus(), existing.getId(),
+                                existing.getUserId());
                         throw new ApiException(HttpStatus.CONFLICT,
                                 "That Google account is already connected to another Finora account.");
                     });
