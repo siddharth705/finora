@@ -78,7 +78,13 @@ class ErrorCodeTest {
                         // accurate enough to import, which is nothing the user can correct and
                         // re-uploading the same file would reach the same outcome. It opts in to
                         // stay off the red/danger banner, exactly as the code above it does.
-                        ErrorCode.IMPORT_TRUST_REVIEW_REJECTED);
+                        ErrorCode.IMPORT_TRUST_REVIEW_REJECTED,
+                        // IMPORT_SESSION_HELD_FOR_REVIEW (2026-09-05) is a third such stretch: a
+                        // premature request, not a user mistake -- there is nothing to correct, the
+                        // statement is simply still being reviewed. Opts in for the same reason as
+                        // the two above it: keep this off the red/danger banner a genuine failure
+                        // gets.
+                        ErrorCode.IMPORT_SESSION_HELD_FOR_REVIEW);
     }
 
     @Test

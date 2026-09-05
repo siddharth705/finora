@@ -127,6 +127,28 @@ public interface ImportJobRepository extends JpaRepository<ImportJob, UUID> {
     List<ImportJob> findByImportSessionId(UUID importSessionId);
 
     /**
+     * The jobs behind these sessions that ever went through a trust hold, whatever became of it --
+     * {@link com.finora.imports.ImportSessionService#claimForConfirmation} and {@code
+     * listResumableSessions} both need this to keep a session out of the user's confirm step, and
+     * the check has to survive the hold being RESOLVED, not just while it is still open.
+     *
+     * <p>Bug fix. A first version of this query filtered on {@code status = HELD_FOR_TRUST_REVIEW}
+     * directly, which is exactly wrong the moment an operator resolves the hold: {@code
+     * HeldStatementService.reject()} moves the job to plain {@code FAILED} (the same terminal
+     * status any other failed import reaches) and never touches the {@code ImportSession} row at
+     * all -- unlike {@code approve()}, whose release is the one case a session SHOULD become
+     * confirmable again. A status-only filter cannot tell those two terminal outcomes apart, so a
+     * rejected extraction's session silently became confirmable again within its ordinary 48h TTL,
+     * reopening the exact bug this whole guard exists to close, just through the reject path
+     * instead of the still-held one. {@code heldStatementId IS NOT NULL} is the query's only job:
+     * name every job that ever had a hold at all, terminal or not, and let the caller resolve
+     * "still blocking" against {@code HeldStatement.status} -- the one place that distinction is
+     * actually recorded (see {@code HeldStatementRepository.findByImportJobIdInAndStatusNot}).
+     */
+    List<ImportJob> findByImportSessionIdInAndHeldStatementIdIsNotNull(
+            java.util.Collection<UUID> importSessionIds);
+
+    /**
      * Whether a job outside {@code excludedStatuses} still references this object key. Feeds
      * {@code StatementStorageSweepService}'s reference check alongside {@code
      * StatementImportRepository.existsByObjectKey} and {@code ImportSessionRepository.existsByObjectKey}
