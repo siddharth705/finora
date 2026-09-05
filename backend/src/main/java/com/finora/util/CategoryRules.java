@@ -125,6 +125,30 @@ public final class CategoryRules {
         return sb.length() > 0 ? sb.toString() : (n.isEmpty() ? "unknown" : n);
     }
 
+    /**
+     * {@link #extractMerchant} reduced further for the per-transaction "who was this with" label
+     * (Transaction.merchant) the UI shows and looks up on Logo.dev by name.
+     *
+     * extractMerchant()'s raw output must stay untouched for its other callers, which reduce both
+     * sides of a comparison the same way (see MerchantNormalizationEngine.firstSignificantToken,
+     * which already skips {@link PaymentRailTokens} for that grouping key) -- changing what
+     * extractMerchant itself returns for a bare rail narration would change that grouping key too
+     * and defeat the deliberate null-means-"don't group" behavior documented there.
+     *
+     * A display label that survives as nothing but a rail word ("upi", "ach") is actively
+     * misleading rather than merely uninformative: MerchantLogo looks it up on Logo.dev by name
+     * and gets back a real, unrelated company that happens to trademark that word. Null lets
+     * Transaction.merchant stay unset, and the ledger UI already falls back to the transaction's
+     * own description when merchant is empty.
+     */
+    public static String extractMerchantLabel(String desc) {
+        String merchant = extractMerchant(desc);
+        for (String token : merchant.split(" ")) {
+            if (!PaymentRailTokens.isRailToken(token)) return merchant;
+        }
+        return null;
+    }
+
     // Compiled once at class-load time rather than per suggestCategory() call -- this runs once
     // per CSV row during statement import, so recompiling the same ~90 patterns on every row
     // would be pure waste.
