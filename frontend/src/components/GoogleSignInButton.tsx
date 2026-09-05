@@ -62,7 +62,11 @@ export function GoogleSignInButton({ text, onCredential, onError }: GoogleSignIn
           accountsId.renderButton(containerRef.current, {
             theme: 'outline',
             // 'medium', not the default 'large' -- auth redesign follow-up: matched against
-            // AppleSignInButton.tsx's own height instead of trusting either default.
+            // AppleSignInButton.tsx's own height (py-1.5, 34px) instead of trusting either
+            // default. Measured directly, not from Google's docs (which don't publish exact
+            // px per size tier): a throwaway page loading the real accounts.google.com/gsi/client
+            // script gave large=40px, medium=32px, small=20px -- 'large' was the mismatch, not a
+            // rendering bug. min-h-[32px] below is kept in sync with this for the same reason.
             size: 'medium',
             width: String(measuredWidth),
             text,
@@ -97,7 +101,7 @@ export function GoogleSignInButton({ text, onCredential, onError }: GoogleSignIn
       {/* Google measures and draws its own button into this div once renderButton() runs --
           fixed height reserves the space up front so the rest of the form doesn't jump once it
           appears. */}
-      <div ref={containerRef} className="w-full min-h-[40px]" aria-busy={!ready} />
+      <div ref={containerRef} className="w-full min-h-[32px]" aria-busy={!ready} />
     </div>
   );
 }

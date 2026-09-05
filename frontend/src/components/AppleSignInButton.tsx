@@ -112,6 +112,11 @@ export function AppleSignInButton({ onCredential, onError }: AppleSignInButtonPr
   }
 
   return (
+    // py-1.5, not the original py-2.5 (measured 42px vs GoogleSignInButton.tsx's 'large' at
+    // 40px) -- auth redesign follow-up: reduced and matched against Google's button, which moved
+    // to 'medium' (32px) in the same change. py-1.5 measures 34px, the closest standard Tailwind
+    // spacing step to an exact match -- see GoogleSignInButton.tsx's own comment for how both
+    // numbers were actually measured, not assumed from either SDK's docs.
     <button
       type="button"
       onClick={() => void handleClick()}
