@@ -81,8 +81,11 @@ public final class BankRegistry {
         register("SBI", "State Bank of India", "SBI", "#22409A", "SBI", "sbi",
                 Category.PUBLIC_SECTOR, "https://sbi.co.in", "SBIN",
                 new String[]{"SBI", "SBIYONO", "YONO SBI", "STATEBANKOFINDIA"});
+        // pnb.bank.in, not the legacy pnbindia.in -- RBI's bank.in registry domain, and the one
+        // BankLogo.tsx's Logo.dev lookup should resolve against (pnbindia.in was returning an
+        // unrelated organization's logo from Logo.dev's own catalog for this domain).
         register("PNB", "Punjab National Bank", "PNB", "#7A1029", "PNB", "pnb",
-                Category.PUBLIC_SECTOR, "https://pnbindia.in", "PUNB",
+                Category.PUBLIC_SECTOR, "https://pnb.bank.in", "PUNB",
                 new String[]{"PNB", "PNBONE", "PNB ONE", "PUNJABNATIONALBANK"});
         register("BOB", "Bank of Baroda", "Bank of Baroda", "#F3711C", "BOB", "bob",
                 Category.PUBLIC_SECTOR, "https://www.bankofbaroda.in", "BARB",
