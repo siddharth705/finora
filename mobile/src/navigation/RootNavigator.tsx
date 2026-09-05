@@ -62,7 +62,7 @@ export function RootNavigator() {
   // "ready" gate) and the nav-state-persistence hook (its own "which tree does this state belong
   // to" gate) -- both need exactly this condition, not a slightly different one.
   const isAppTabsActive = token !== null && phoneVerified;
-  const { onNavigationReady } = useEmailChangeDeepLink(navigationRef, isAppTabsActive);
+  const { onNavigationReady } = useEmailChangeDeepLink(navigationRef, isAppTabsActive, token !== null);
   const navPersistence = useNavigationStatePersistence(bootstrapping, isAppTabsActive);
 
   // Session restore reads SecureStore asynchronously (see AuthContext). Rendering anything

@@ -1,4 +1,5 @@
 import * as DocumentPicker from 'expo-document-picker';
+import * as appLock from './appLock';
 import type { RNFile } from '../api/endpoints';
 
 /**
@@ -20,13 +21,16 @@ export class AttachmentTooLargeError extends Error {}
 /** Returns null when the user dismisses the picker -- a cancel is not an error. Throws only for
  *  a genuinely unusable selection (over size), so the caller can show that message. */
 export async function pickTicketAttachment(): Promise<RNFile | null> {
-  const result = await DocumentPicker.getDocumentAsync({
+  // Bug found in review (Track D/D5): same as pickStatement() -- the native picker backgrounds
+  // this app, and without this suppression AppLockGate would show a spurious lock prompt the
+  // instant the picker (or a provider like Drive/iCloud) returns focus here.
+  const result = await appLock.withShareSuppression(() => DocumentPicker.getDocumentAsync({
     type: ACCEPTED_MIME,
     // Same reasoning as pickStatement(): without this the URI can point into a provider (Drive,
     // iCloud) the upload cannot read, or one that's revoked the moment the picker closes.
     copyToCacheDirectory: true,
     multiple: false,
-  });
+  }));
 
   if (result.canceled || !result.assets?.length) return null;
 

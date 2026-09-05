@@ -5,6 +5,7 @@ import {
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigation } from '@react-navigation/native';
 import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
+import { usePreventScreenCapture } from 'expo-screen-capture';
 import { Card, EmptyState, SectionHeading } from '../components/Card';
 import { SkeletonCard } from '../components/skeletons/Skeletons';
 import { OptionPickerModal } from '../components/OptionPickerModal';
@@ -47,6 +48,10 @@ function ReportBodySkeleton() {
  * already loaded opens instantly here instead of being fetched a second time.
  */
 export function ReportsScreen() {
+  // D3 (Track D security cleanup). Category breakdowns and totals are financial figures like any
+  // other -- same screenshot/screen-recording exposure Dashboard/Accounts/Statement History
+  // already guard against.
+  usePreventScreenCapture();
   const c = useTheme();
   const queryClient = useQueryClient();
   // Lives inside the More stack, not on the tab bar itself -- see BudgetsScreen's identical

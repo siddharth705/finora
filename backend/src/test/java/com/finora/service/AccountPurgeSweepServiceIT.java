@@ -296,13 +296,11 @@ class AccountPurgeSweepServiceIT extends AbstractIntegrationTest {
         Referral referredByOther = new Referral();
         referredByOther.setReferrerUserId(otherUserId);
         referredByOther.setReferredUserId(userId);
-        referredByOther.setStatus(Referral.STATUS_REGISTERED);
         referralRepository.save(referredByOther);
 
         Referral referredOther = new Referral();
         referredOther.setReferrerUserId(userId);
         referredOther.setReferredUserId(otherUserId);
-        referredOther.setStatus(Referral.STATUS_REGISTERED);
         referralRepository.save(referredOther);
 
         WalletLedgerEntry walletEntry = new WalletLedgerEntry();
