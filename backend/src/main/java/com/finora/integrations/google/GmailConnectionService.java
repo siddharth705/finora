@@ -101,11 +101,21 @@ public class GmailConnectionService {
 
         // Rejected here rather than at the unique index, so the user gets "you already have a
         // mailbox connected" instead of an opaque conflict after sitting through a consent screen.
-        connections.findByUserIdAndStatusIn(userId, LIVE).ifPresent(existing -> {
-            throw new ApiException(HttpStatus.CONFLICT,
-                    "A Gmail account (" + existing.getGoogleEmail() + ") is already connected. "
-                            + "Disconnect it first to connect a different one.");
-        });
+        //
+        // Deliberately CONNECTED only, not the whole LIVE set. REAUTH_REQUIRED is the state the
+        // "Reconnect" button itself targets -- a dead grant that "nothing but the user reconnecting
+        // will fix" (see the status's own doc comment). Blocking that case here made the one action
+        // the UI offers for it fail every time: Settings.tsx renders "Reconnect Gmail" precisely
+        // when needsReconnect is true, and that button calls this same method. persistConnection
+        // below retires the stale REAUTH_REQUIRED row so the fresh one doesn't collide with the
+        // one-live-connection-per-user index (V80).
+        connections.findByUserIdAndStatusIn(userId, LIVE)
+                .filter(existing -> existing.getStatus() == GmailConnection.Status.CONNECTED)
+                .ifPresent(existing -> {
+                    throw new ApiException(HttpStatus.CONFLICT,
+                            "A Gmail account (" + existing.getGoogleEmail() + ") is already connected. "
+                                    + "Disconnect it first to connect a different one.");
+                });
 
         byte[] raw = new byte[STATE_BYTES];
         secureRandom.nextBytes(raw);
@@ -222,6 +232,18 @@ public class GmailConnectionService {
                     .ifPresent(existing -> {
                         throw new ApiException(HttpStatus.CONFLICT,
                                 "That Google account is already connected to another Finora account.");
+                    });
+
+            // beginConnect now lets a REAUTH_REQUIRED row through (that is the whole point of
+            // "Reconnect"), so one can still be live here. Close it before inserting the fresh row
+            // below -- otherwise this insert collides with uq_gmail_connections_active_user (V80),
+            // which allows only one CONNECTED/REAUTH_REQUIRED row per user. DISCONNECTED rather than
+            // a dedicated status: it drops out of LIVE and out of NEEDS_RECONNECT the same way a
+            // user-initiated disconnect does, which is exactly right once this reconnect succeeds.
+            connections.findByUserIdAndStatusIn(userId, LIVE)
+                    .ifPresent(stale -> {
+                        stale.close(GmailConnection.Status.DISCONNECTED);
+                        connections.save(stale);
                     });
 
             GmailConnection connection = new GmailConnection();

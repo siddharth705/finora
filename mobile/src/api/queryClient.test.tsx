@@ -13,6 +13,17 @@ const PERSIST_KEY = 'finora_query_cache';
 // copy rather than loosening that module's surface for a test.
 const PERSIST_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
+// D4 (Track D security cleanup) added AES encryption to queryClient.ts's storage adapter. This
+// file's own job is the epoch guard and restore/clear mechanics, already covered in exhaustive
+// detail below -- real cipher behavior is queryCacheCipher.test.ts's job. Identity functions here
+// keep every existing assertion in this file (seeding AsyncStorage with a plain JSON blob,
+// JSON.parse-ing what comes back out of it) working exactly as it did before encryption existed,
+// rather than needing every one of them rewritten to route through real (or fake) AES too.
+jest.mock('../lib/queryCacheCipher', () => ({
+  encryptForStorage: jest.fn(async (plaintext: string) => plaintext),
+  decryptFromStorage: jest.fn(async (ciphertext: string) => ciphertext),
+}));
+
 function blob(clientState: unknown, over: Partial<{ timestamp: number; buster: string }> = {}) {
   return JSON.stringify({ timestamp: Date.now(), buster: '1', clientState, ...over });
 }
@@ -224,6 +235,47 @@ describe('pauseQueryPersistence', () => {
     // The queued write fires somewhere in here.
     await new Promise((resolve) => setTimeout(resolve, 1200));
 
+    expect(await AsyncStorage.getItem(PERSIST_KEY)).toBeNull();
+  });
+
+  /**
+   * D4 (Track D security cleanup) bug found in review: encryption inserted a genuine async yield
+   * point (`await encryptForStorage(value)`) BETWEEN the epoch check above and the actual
+   * AsyncStorage.setItem call -- a gap the fully-synchronous pre-encryption version never had.
+   * Without a second check right before the write, a logout landing while encryption is still in
+   * flight would no longer be caught: the call already passed its (now-stale) first check.
+   *
+   * Unlike the sibling tests above, this doesn't need to fight the persister's 1000ms throttle at
+   * all -- asyncThrottle runs the very FIRST call on a fresh subscription immediately (their own
+   * established finding), so controlling encryptForStorage's own resolution timing is enough to
+   * park a write exactly where the race lives, without any wall-clock wait.
+   */
+  it('does not let a write already inside encryptForStorage land after a logout races it', async () => {
+    await AsyncStorage.removeItem(PERSIST_KEY);
+    startQueryPersistence();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    const { encryptForStorage } = require('../lib/queryCacheCipher');
+    let resolveEncrypt: (() => void) | undefined;
+    encryptForStorage.mockImplementationOnce(
+      (plaintext: string) => new Promise<string>((resolve) => { resolveEncrypt = () => resolve(plaintext); })
+    );
+
+    queryClient.setQueryData(['dashboard-summary'], { currentBalance: 111 });
+    await waitFor(() => expect(encryptForStorage).toHaveBeenCalled());
+
+    // The logout races the still-pending encrypt call.
+    pauseQueryPersistence();
+    queryClient.clear();
+    await clearPersistedQueryCache();
+    expect(await AsyncStorage.getItem(PERSIST_KEY)).toBeNull();
+
+    // The encrypt call finally resolves -- AFTER the logout above.
+    resolveEncrypt?.();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    // Without the second epoch check, this write would land here, resurrecting the logged-out
+    // user's balance on disk for the next person to sign in on this device.
     expect(await AsyncStorage.getItem(PERSIST_KEY)).toBeNull();
   });
 

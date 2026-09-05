@@ -1,4 +1,5 @@
 import * as DocumentPicker from 'expo-document-picker';
+import * as appLock from './appLock';
 import { AttachmentTooLargeError, pickTicketAttachment } from './ticketAttachment';
 
 jest.mock('expo-document-picker', () => ({ getDocumentAsync: jest.fn() }));
@@ -8,6 +9,21 @@ const picker = DocumentPicker as jest.Mocked<typeof DocumentPicker>;
 describe('pickTicketAttachment', () => {
   beforeEach(() => {
     picker.getDocumentAsync.mockReset();
+    appLock.__resetSharingStateForTests();
+  });
+
+  // Bug found in review (Track D/D5): the native picker backgrounds this app the same way
+  // Sharing.shareAsync does; without withShareSuppression, AppLockGate would show a spurious lock
+  // prompt the instant the picker (or a provider like Drive/iCloud) returns focus here.
+  it('suppresses AppLockGate for the duration of the picker call', async () => {
+    picker.getDocumentAsync.mockImplementation(async () => {
+      expect(appLock.isSharing()).toBe(true);
+      return { canceled: true, assets: null };
+    });
+
+    expect(appLock.isSharing()).toBe(false);
+    await pickTicketAttachment();
+    expect(appLock.isSharing()).toBe(false);
   });
 
   it('returns null when the user cancels -- a cancel is not an error', async () => {
