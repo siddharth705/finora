@@ -88,6 +88,32 @@ interface ReimportParams {
 }
 
 /**
+ * Track C/C4. A drill-through into the Ledger from wherever a category or a month is already on
+ * screen -- a donut legend row, a budget card, an insight/mover row, a report's category
+ * breakdown. `categoryId` wins when a caller already has one (BudgetsScreen's Budget carries its
+ * own); `categoryName` is for the three callers that only ever see a NAME (spendByCategory,
+ * category movers, a report's per-category breakdown are all keyed by name, not id) -- LedgerScreen
+ * resolves it against the category list it already fetches for its own picker, rather than adding
+ * a categories query to three more screens just to look up an id nothing else on those screens
+ * needs. `label` is what the active-filter chip actually shows, so a caller can word it exactly
+ * ("Dining · August 2026") rather than LedgerScreen reconstructing it from parts.
+ *
+ * `nonce` mirrors ImportScreen's own re-import param: the Transactions tab stays mounted like
+ * every other tab, so its params outlive a visit, and without a per-arrival key a second
+ * drill-through with an unchanged categoryName/date range (tapping the same donut slice twice)
+ * would not be recognised as a new arrival by a render-time state update keyed on the params
+ * themselves.
+ */
+export interface LedgerDrillThroughFilters {
+  categoryId?: string;
+  categoryName?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  label: string;
+  nonce: number;
+}
+
+/**
  * Four tabs, deliberately, even though Phase 4 landed the Reports/Insights/Investments screens the
  * roadmap sketched as a fifth "Insights" tab. Those three are report surfaces people open
  * occasionally, not destinations they switch between mid-task, and a fifth tab would shrink every
@@ -96,7 +122,9 @@ interface ReimportParams {
  */
 export type AppTabParamList = {
   Home: undefined;
-  Transactions: undefined;
+  // Params only ever set when arriving via a drill-through (Track C/C4); a normal tap on the
+  // Transactions tab carries none and the screen shows everything, as always.
+  Transactions: { filters: LedgerDrillThroughFilters } | undefined;
   // Params only ever set when arriving from "Re-import" on the Statement History screen; a normal
   // tap on the Import tab carries none and the screen starts at its upload step as always.
   Import: { reimport: ReimportParams } | undefined;

@@ -3,6 +3,7 @@ import {
   ActivityIndicator, Alert, FlatList, Pressable, ScrollView, StyleSheet, Text, TextInput, View,
 } from 'react-native';
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useRoute, type RouteProp } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { categoriesApi, transactionsApi, type PagedResponse, type TransactionFilters } from '../api/endpoints';
 import { OptionPickerModal } from '../components/OptionPickerModal';
@@ -15,6 +16,7 @@ import { useLargeFontScale } from '../lib/useLargeFontScale';
 import { fmtCurrency } from '../lib/format';
 import { counterpartyLabel } from '../lib/counterpartyLabel';
 import { radius, spacing, useTheme } from '../theme';
+import type { AppTabParamList, LedgerDrillThroughFilters } from '../navigation/types';
 import type { Transaction } from '../types';
 
 export const LEDGER_PAGE_SIZE = 20;
@@ -45,12 +47,30 @@ export function LedgerScreen() {
   const insets = useSafeAreaInsets();
   const largeText = useLargeFontScale();
   const queryClient = useQueryClient();
+  const route = useRoute<RouteProp<AppTabParamList, 'Transactions'>>();
   const [keywordInput, setKeywordInput] = useState('');
   const debouncedKeyword = useDebouncedValue(keywordInput, 300);
   const [typeFilter, setTypeFilter] = useState<TypeFilter>('ALL');
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [recategorizing, setRecategorizing] = useState<Transaction | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // Track C/C4. The active drill-through, if any -- a donut legend row, a budget card, an
+  // insight/mover row, or a report's category breakdown. Local state, not read from route.params
+  // directly, because this tab stays mounted like every other one: without a state copy, tapping
+  // "Clear" would have nothing to set to null (params themselves are the caller's, not this
+  // screen's, to clear), and the stale params would simply reapply on the next render.
+  const [activeDrillThrough, setActiveDrillThrough] = useState<LedgerDrillThroughFilters | null>(null);
+  const [consumedNonce, setConsumedNonce] = useState<number | null>(null);
+  const incomingFilters = route.params?.filters;
+  // Adjusted during render, not in an effect -- React's documented pattern for "reset state when
+  // an input changes" (same pattern ImportScreen's own reimport arrival uses, for the identical
+  // reason: this tab's params outlive a visit, so a second drill-through has to be told apart from
+  // the first one still sitting in state, which is exactly what the nonce is for).
+  if (incomingFilters && incomingFilters.nonce !== consumedNonce) {
+    setConsumedNonce(incomingFilters.nonce);
+    setActiveDrillThrough(incomingFilters);
+  }
 
   // Loaded lazily: only fetched once, cheap, and the picker needs it the instant a row is tapped.
   const { data: categories = [] } = useQuery({
@@ -59,13 +79,25 @@ export function LedgerScreen() {
     staleTime: 5 * 60_000, // the category list barely changes within a session
   });
 
+  // Track C/C4. `categoryId` wins when the caller already had one (a Budget carries its own);
+  // otherwise resolved from `categoryName` against the SAME category list this screen already
+  // fetches for its own picker above -- see LedgerDrillThroughFilters's own doc comment for why
+  // that beats adding a categories query to three more screens. Genuinely unresolvable (a category
+  // renamed or deleted since the caller last saw it) degrades to no category filter at all rather
+  // than a search that can never match anything -- the date range, if any, still narrows the list.
+  const resolvedCategoryId = activeDrillThrough?.categoryId
+    ?? categories.find((cat) => cat.name === activeDrillThrough?.categoryName)?.id;
+
   const filters: TransactionFilters = useMemo(
     () => ({
       ...DEFAULT_LEDGER_FILTERS,
       keyword: debouncedKeyword || undefined,
       type: typeFilter === 'ALL' ? undefined : typeFilter,
+      categoryId: resolvedCategoryId,
+      dateFrom: activeDrillThrough?.dateFrom,
+      dateTo: activeDrillThrough?.dateTo,
     }),
-    [debouncedKeyword, typeFilter]
+    [debouncedKeyword, typeFilter, resolvedCategoryId, activeDrillThrough]
   );
 
   /**
@@ -208,6 +240,30 @@ export function LedgerScreen() {
         ))}
       </View>
 
+      {/* Track C/C4. The drill-through this screen arrived with, if any -- shown rather than
+          silently applied, since a filtered list with nothing on screen explaining WHY reads as
+          "the ledger is broken", not "you drilled into Dining for August". Clearing it does not
+          touch route.params (nothing here owns those -- they belong to whichever screen navigated
+          in); it only resets this screen's own copy, the same way typing over the search field
+          would. */}
+      {activeDrillThrough ? (
+        <View style={styles.filterRow}>
+          <View style={[styles.drillChip, { borderColor: c.primary, backgroundColor: c.primaryLight }]}>
+            <Text style={[styles.drillChipText, { color: c.primary }]} numberOfLines={1}>
+              {activeDrillThrough.label}
+            </Text>
+            <Pressable
+              onPress={() => setActiveDrillThrough(null)}
+              hitSlop={8}
+              accessibilityRole="button"
+              accessibilityLabel={`Clear filter: ${activeDrillThrough.label}`}
+            >
+              <Text style={[styles.drillChipClear, { color: c.primary }]}>✕</Text>
+            </Pressable>
+          </View>
+        </View>
+      ) : null}
+
       {error ? <Text style={[styles.error, { color: c.danger }]}>{error}</Text> : null}
 
       {isLoading ? (
@@ -259,7 +315,7 @@ export function LedgerScreen() {
           contentContainerStyle={styles.listContent}
           ListEmptyComponent={
             <Text style={[styles.empty, { color: c.muted }]}>
-              {debouncedKeyword || typeFilter !== 'ALL'
+              {debouncedKeyword || typeFilter !== 'ALL' || activeDrillThrough
                 ? 'No transactions match these filters.'
                 : 'No transactions yet. Import a statement to get started.'}
             </Text>
@@ -408,6 +464,13 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   chipText: { fontSize: 12, fontWeight: '600' },
+  // Track C/C4.
+  drillChip: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    borderWidth: 1, borderRadius: 999, paddingHorizontal: 14, minHeight: 36,
+  },
+  drillChipText: { fontSize: 12, fontWeight: '600' },
+  drillChipClear: { fontSize: 13, fontWeight: '700' },
   error: { fontSize: 13, paddingHorizontal: spacing.md, paddingBottom: spacing.sm },
   centered: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   listContent: { paddingHorizontal: spacing.md, paddingBottom: spacing.xl },

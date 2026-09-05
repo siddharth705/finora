@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { useNavigation } from '@react-navigation/native';
 import { ReportsScreen } from './ReportsScreen';
 import { reportsApi, type ReportData } from '../api/endpoints';
 import { shareCsv, sharePdf } from '../lib/reportExport';
@@ -202,5 +203,27 @@ describe('category shares', () => {
     expect(
       screen.getByLabelText(/Groceries: ₹2,000, 40 percent of this month's spending/)
     ).toBeTruthy();
+  });
+});
+
+describe('drill-through into the ledger (Track C/C4)', () => {
+  beforeEach(() => {
+    api.availableMonths.mockReset().mockResolvedValue(MONTHS);
+    api.forMonth.mockReset().mockImplementation(async (m: string) => reportFor(m));
+  });
+
+  it('opens Transactions filtered to this category and the whole month currently on screen', async () => {
+    renderScreen();
+    await loadedReport();
+    const { navigate } = useNavigation<never>() as unknown as { navigate: jest.Mock };
+    navigate.mockClear();
+
+    fireEvent.press(screen.getByLabelText(/Groceries: ₹12,000/));
+
+    expect(navigate).toHaveBeenCalledWith('Transactions', {
+      filters: expect.objectContaining({
+        categoryName: 'Groceries', dateFrom: '2026-07-01', dateTo: '2026-07-31', label: 'Groceries · Jul 26',
+      }),
+    });
   });
 });
