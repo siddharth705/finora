@@ -114,6 +114,24 @@ export function RegisterScreen({ navigation, route }: Props) {
         </View>
       }
     >
+      {showSocialSignIn ? (
+        <>
+          <View style={styles.socialStack}>
+            <GoogleSignInButton onCredential={handleGoogleCredential} onError={setError} />
+            <AppleSignInButton
+              buttonType={AppleAuthentication.AppleAuthenticationButtonType.SIGN_UP}
+              onCredential={handleAppleCredential}
+              onError={setError}
+            />
+          </View>
+          <View style={styles.dividerRow}>
+            <View style={[styles.dividerLine, { backgroundColor: c.border }]} />
+            <Text style={[styles.dividerText, { color: c.muted }]}>Or continue below</Text>
+            <View style={[styles.dividerLine, { backgroundColor: c.border }]} />
+          </View>
+        </>
+      ) : null}
+
       <TextField
         label="Full name"
         value={fullName}
@@ -196,24 +214,6 @@ export function RegisterScreen({ navigation, route }: Props) {
 
       <Button label="Create account" onPress={handleSubmit} loading={loading} disabled={!formValid} />
 
-      {showSocialSignIn ? (
-        <>
-          <View style={styles.dividerRow}>
-            <View style={[styles.dividerLine, { backgroundColor: c.border }]} />
-            <Text style={[styles.dividerText, { color: c.muted }]}>OR</Text>
-            <View style={[styles.dividerLine, { backgroundColor: c.border }]} />
-          </View>
-          <View style={styles.socialStack}>
-            <GoogleSignInButton onCredential={handleGoogleCredential} onError={setError} />
-            <AppleSignInButton
-              buttonType={AppleAuthentication.AppleAuthenticationButtonType.SIGN_UP}
-              onCredential={handleAppleCredential}
-              onError={setError}
-            />
-          </View>
-        </>
-      ) : null}
-
       {/* The web form gates submission on an explicit Terms & Privacy checkbox. Those pages are
           marketing routes that aren't part of the mobile app, so there's nothing to link to yet;
           the checkbox is deliberately omitted rather than shown pointing nowhere. Restore it
@@ -246,6 +246,11 @@ const styles = StyleSheet.create({
   dividerText: {
     fontSize: 11,
     fontWeight: '600',
+    // Applied here rather than typed in caps: VoiceOver/TalkBack often spell out a long
+    // hardcoded-caps phrase letter by letter, mistaking it for an acronym -- this keeps the
+    // underlying text natural-case (readable as words) while still rendering all-caps visually,
+    // same split the web AuthDivider already gets from CSS text-transform.
+    textTransform: 'uppercase',
   },
   socialStack: {
     gap: spacing.sm,
