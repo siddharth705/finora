@@ -71,6 +71,17 @@ export function monthLabel(monthStr: string): string {
   return new Date(y, m - 1, 1).toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
 }
 
+/**
+ * "2026-08" -> "August 2026". Same explicit y/m/1 construction as monthLabel above, not
+ * `new Date(monthStr)` -- a bare "YYYY-MM" parses as UTC midnight, which renders as the PRIOR
+ * month in any timezone behind UTC (the same class of bug fmtDate's own comment documents for
+ * full dates). Long form, for a sentence naming a month rather than a chart axis tick.
+ */
+export function monthLabelLong(monthStr: string): string {
+  const [y, m] = monthStr.split('-').map(Number);
+  return new Date(y, m - 1, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+}
+
 /** Up to two letters for the avatar badge. "?" rather than an empty circle when there's no name. */
 export function initials(name: string | null | undefined): string {
   if (!name) return '?';

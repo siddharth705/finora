@@ -981,7 +981,7 @@ public class ImportService {
             }
             t.setTxnDate(row.date());
             t.setDescription(row.description());
-            t.setMerchant(CategoryRules.extractMerchant(row.description()));
+            t.setMerchant(CategoryRules.extractMerchantLabel(row.description()));
             t.setAmount(row.amount());
             t.setTxnType(com.finora.util.EnumParsing.parse(Transaction.Type.class, row.type(), "type"));
             // GMAIL_IMPORT only when the session actually said so (C5-B); everything else keeps

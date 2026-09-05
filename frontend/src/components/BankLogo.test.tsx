@@ -26,13 +26,24 @@ describe('logoDevUrl', () => {
 });
 
 /**
- * The circuit breaker, proved to actually trip.
+ * The circuit breaker, proved to actually trip -- and proved to stay scoped to the domain that
+ * actually failed.
  *
  * Production logged a wall of `403 (Forbidden)` from the logo CDN (Brandfetch, under the
  * integration this replaced) -- one per bank logo on the page, because each logo discovered the
  * same failure independently, each burning its own timeout first. A breaker that cannot be shown
- * to trip is not a breaker, so this asserts the second logo never requests Logo.dev at all after
- * the first one is rejected.
+ * to trip is not a breaker, so the first test asserts the same bank's logo never requests Logo.dev
+ * again after being rejected once.
+ *
+ * Bug fix: the breaker used to be a single page-wide flag, tripped by ANY bank's rejection and
+ * then skipping Logo.dev for EVERY bank for the rest of the session -- correct only if a rejection
+ * always means "this token/config is broken for everyone" (true for a 403), but Logo.dev also
+ * returns 404 for one domain simply not being in its catalog (an ordinary, per-bank outcome, not a
+ * systemic one) -- and a plain `<img>`'s onError cannot tell the two apart. One obscure bank
+ * missing from Logo.dev's catalog was silently disabling real, resolvable logos (HDFC, ICICI, ...)
+ * for every other bank shown afterwards on the same page -- observed as bank logos loading
+ * inconsistently depending on account list order. The second test asserts a DIFFERENT bank's
+ * lookup is unaffected by an earlier bank's rejection.
  */
 describe('BankLogo Logo.dev circuit breaker', () => {
   const hdfc: BankInfo = {
@@ -70,6 +81,35 @@ describe('BankLogo Logo.dev circuit breaker', () => {
     const second = render(<FreshBankLogo bank={hdfc} />);
     const secondImg = second.container.querySelector('img');
     expect(secondImg?.getAttribute('src') ?? '').not.toContain('img.logo.dev');
+
+    vi.unstubAllEnvs();
+  });
+
+  it('does not block a different bank from requesting Logo.dev after one bank is rejected', async () => {
+    vi.stubEnv('VITE_LOGODEV_TOKEN', 'test-token');
+    vi.resetModules();
+    const { BankLogo: FreshBankLogo } = await import('./BankLogo');
+
+    const icici: BankInfo = {
+      ...hdfc,
+      id: 'ICICI',
+      officialName: 'ICICI Bank',
+      shortName: 'ICICI',
+      initials: 'ICICI',
+      websiteUrl: 'https://www.icicibank.com',
+      ifscPrefix: 'ICIC',
+    };
+
+    const hdfcRender = render(<FreshBankLogo bank={hdfc} />);
+    const hdfcImg = hdfcRender.container.querySelector('img');
+    fireEvent.error(hdfcImg!);
+    hdfcRender.unmount();
+
+    // A completely different bank, never rejected itself, must still get its own shot at
+    // Logo.dev -- HDFC's rejection is a fact about hdfcbank.com, not about ICICI's own domain.
+    const iciciRender = render(<FreshBankLogo bank={icici} />);
+    const iciciImg = iciciRender.container.querySelector('img');
+    expect(iciciImg?.getAttribute('src')).toContain('img.logo.dev');
 
     vi.unstubAllEnvs();
   });

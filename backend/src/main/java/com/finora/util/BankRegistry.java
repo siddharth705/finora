@@ -81,8 +81,11 @@ public final class BankRegistry {
         register("SBI", "State Bank of India", "SBI", "#22409A", "SBI", "sbi",
                 Category.PUBLIC_SECTOR, "https://sbi.co.in", "SBIN",
                 new String[]{"SBI", "SBIYONO", "YONO SBI", "STATEBANKOFINDIA"});
+        // pnb.bank.in, not the legacy pnbindia.in -- RBI's bank.in registry domain, and the one
+        // BankLogo.tsx's Logo.dev lookup should resolve against (pnbindia.in was returning an
+        // unrelated organization's logo from Logo.dev's own catalog for this domain).
         register("PNB", "Punjab National Bank", "PNB", "#7A1029", "PNB", "pnb",
-                Category.PUBLIC_SECTOR, "https://pnbindia.in", "PUNB",
+                Category.PUBLIC_SECTOR, "https://pnb.bank.in", "PUNB",
                 new String[]{"PNB", "PNBONE", "PNB ONE", "PUNJABNATIONALBANK"});
         register("BOB", "Bank of Baroda", "Bank of Baroda", "#F3711C", "BOB", "bob",
                 Category.PUBLIC_SECTOR, "https://www.bankofbaroda.in", "BARB",
@@ -196,13 +199,13 @@ public final class BankRegistry {
                 Category.FOREIGN, "https://www.hsbc.co.in", "HSBC",
                 new String[]{"HSBC"});
         register("SCB", "Standard Chartered", "Standard Chartered", "#0473EA", "SC", "standard-chartered",
-                Category.FOREIGN, "https://www.sc.com/in", "SCBL",
+                Category.FOREIGN, "https://www.sc.com", "SCBL",
                 new String[]{"STANDARDCHARTERED", "STANCHART"});
         register("DBS", "DBS Bank", "DBS Bank", "#E31937", "DBS", "dbs",
-                Category.FOREIGN, "https://www.dbs.com/in", "DBSS",
+                Category.FOREIGN, "https://www.dbs.com", "DBSS",
                 new String[]{"DBSBANK"});
         register("DEUTSCHE", "Deutsche Bank", "Deutsche Bank", "#0018A8", "DB", "deutsche",
-                Category.FOREIGN, "https://www.db.com/india", null,
+                Category.FOREIGN, "https://www.db.com", null,
                 new String[]{"DEUTSCHEBANK"});
         register("CITI", "Citibank", "Citi", "#003B70", "CITI", "citi",
                 Category.FOREIGN, "https://www.online.citibank.co.in", null,

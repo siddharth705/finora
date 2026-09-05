@@ -91,7 +91,16 @@ public class InsightsService {
     public InsightsDto build(UUID userId) {
         Optional<Pipeline> maybePipeline = pipeline(userId);
         if (maybePipeline.isEmpty()) {
-            return new InsightsDto(List.of("Upload or add transactions to see spending insights."), List.of(), null);
+            // Track C/C2 bug fix: coverageCaveat used to be hard-coded null here. pipeline() gates
+            // on having at least one reportable EXPENSE transaction (see its own early return), but
+            // a coverage gap is about STATEMENT PERIODS, not transaction type -- coverageGapsAcross
+            // never looks at txns at all. An account whose only activity this period is income (a
+            // salary-only account, or one that has only just started importing) genuinely can have
+            // a missing statement, and previously could never be told so: the mobile banner and the
+            // original sentence both read this same field. There's no transaction-derived "current
+            // month" to check here, so this falls back to the user's own calendar "today" instead.
+            return new InsightsDto(List.of("Upload or add transactions to see spending insights."), List.of(),
+                    coverageCaveatWithNoTransactions(userId));
         }
         Pipeline pipeline = maybePipeline.get();
         List<Transaction> txns = pipeline.txns();
@@ -142,13 +151,7 @@ public class InsightsService {
         // "state the fact, then its caveat" ordering a reader expects. Reuses PR #589's own
         // pattern for the new-category sentence: gate on data presence, degrade gracefully, one
         // clear sentence rather than reworking every existing one.
-        List<StatementCoverageAnalyzer.CoverageGap> currentMonthGaps = pipeline.gaps().stream()
-                .filter(g -> monthIntersects(currentMonth, g))
-                .toList();
-        InsightsDto.CoverageCaveat coverageCaveat = currentMonthGaps.isEmpty() ? null
-                : new InsightsDto.CoverageCaveat(currentMonth, currentMonthGaps.stream()
-                        .map(g -> new InsightsDto.CoverageCaveat.GapWindow(g.gapStart(), g.gapEnd()))
-                        .toList());
+        InsightsDto.CoverageCaveat coverageCaveat = buildCoverageCaveat(currentMonth, pipeline.gaps());
         if (coverageCaveat != null) {
             sentences.add(String.format(Locale.ENGLISH,
                     "Some transactions for %s may be missing \u2014 import that statement to complete your history.",
@@ -316,6 +319,40 @@ public class InsightsService {
             gaps.addAll(StatementCoverageAnalyzer.analyze(periods).gaps());
         }
         return gaps;
+    }
+
+    /**
+     * The current-reporting-month coverage caveat, shared by both the normal path (build(), where
+     * {@code currentMonth} is the newest month with reportable expense data) and
+     * {@link #coverageCaveatWithNoTransactions}, where it's the user's calendar month instead.
+     * Null when nothing found here touches that month -- same "degrade to nothing" shape as every
+     * other optional field this service produces.
+     */
+    private InsightsDto.CoverageCaveat buildCoverageCaveat(
+            String currentMonth, List<StatementCoverageAnalyzer.CoverageGap> gaps) {
+        List<StatementCoverageAnalyzer.CoverageGap> currentMonthGaps = gaps.stream()
+                .filter(g -> monthIntersects(currentMonth, g))
+                .toList();
+        return currentMonthGaps.isEmpty() ? null
+                : new InsightsDto.CoverageCaveat(currentMonth, currentMonthGaps.stream()
+                        .map(g -> new InsightsDto.CoverageCaveat.GapWindow(g.gapStart(), g.gapEnd()))
+                        .toList());
+    }
+
+    /**
+     * coverageCaveat for a user pipeline() found nothing to build sentences/movers from -- either
+     * no transactions at all, or (the case this exists for) reportable activity that is entirely
+     * INCOME. pipeline()'s own early return has always gated ALL of build()'s output on having at
+     * least one EXPENSE transaction, but a coverage gap is a property of STATEMENT PERIODS
+     * (coverageGapsAcross never reads transaction type at all) -- an income-only account can be
+     * missing a statement just as easily as any other, and until this fix, could never be told so.
+     */
+    private InsightsDto.CoverageCaveat coverageCaveatWithNoTransactions(UUID userId) {
+        List<UUID> liveAccountIds = accountRepository.findByUserId(userId).stream()
+                .map(com.finora.entity.Account::getId).toList();
+        if (liveAccountIds.isEmpty()) return null;
+        String currentMonth = YearMonth.now(UserZone.forUser(userRepository, userId)).toString();
+        return buildCoverageCaveat(currentMonth, coverageGapsAcross(userId, liveAccountIds));
     }
 
     /** Whether a {@code "yyyy-MM"} month bucket shares any calendar day with a coverage gap. */
