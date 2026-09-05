@@ -369,6 +369,11 @@ class GmailConnectionServiceTest {
      * beginConnect lets a REAUTH_REQUIRED row through, completing that flow must retire it rather
      * than insert a second row, or the insert collides with uq_gmail_connections_active_user (V80),
      * which allows only one CONNECTED/REAUTH_REQUIRED row per user.
+     *
+     * <p>What this test cannot prove: a mocked repository has no flush order, so it cannot catch
+     * the real production bug this shape once had -- {@code saveAndFlush}, not {@code save}, is
+     * load-bearing (see the service method's own comment). {@link GmailReconnectFlushOrderingIT}
+     * covers that against a real Postgres; this test only pins the entity-level behaviour.
      */
     @Test
     @DisplayName("completing a reconnect retires the stale REAUTH_REQUIRED row instead of colliding with it")
@@ -390,7 +395,7 @@ class GmailConnectionServiceTest {
         assertThat(stale.getEncryptedRefreshToken()).isNull();
         assertThat(saved.getStatus()).isEqualTo(GmailConnection.Status.CONNECTED);
         assertThat(saved).isNotSameAs(stale);
-        verify(connections).save(stale);
+        verify(connections).saveAndFlush(stale);
         verify(connections).save(saved);
     }
 
