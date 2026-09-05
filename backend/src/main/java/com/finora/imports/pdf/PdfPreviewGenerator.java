@@ -722,9 +722,31 @@ public class PdfPreviewGenerator {
         return second.type() == FinancialProductType.UNKNOWN;
     }
 
+    /**
+     * Columns are the UNION of every row's own keys, not just the first row's -- {@code
+     * bucketRow} only puts a key in a row's map when that row actually has a value there, so a
+     * ledger whose first row happens to be (say) a deposit with no matching withdrawal loses the
+     * "Withdrawals" column entirely if only that row is consulted.
+     *
+     * <p>Confirmed as a real regression this merge introduced: {@code
+     * ClosingBalanceEvidenceSectionIndexIT}'s own composite fixture stages a genuine SAVINGS
+     * section (Date/Transaction Details/Deposits/Withdrawals/Balance, two rows -- one a pure
+     * deposit, one a pure withdrawal) immediately after a confidently-classified RECURRING_DEPOSIT
+     * section. Row-0-only columns there are missing "Withdrawals" (row 0 is the deposit), which is
+     * enough to drop SAVINGS' own trial classification to {@code UNKNOWN} -- satisfying {@link
+     * #canMergeAsInvestmentFragment}'s "second section is UNKNOWN alone" test for a completely
+     * unrelated reason than the one it exists to catch, and merging a real, independent account's
+     * two transactions into the deposit section, dropping it entirely (raw section count 4 -> 3,
+     * the savings section and its balance gone without a trace). Verified directly: the same
+     * section trial-classified with row-0-only columns comes back UNKNOWN; with the union across
+     * both rows it comes back SAVINGS.
+     */
     private ProductDiscovery.DiscoveredProduct classifySectionAlone(PdfTableLocator.LocatedSection section,
                                                                       int sectionIndex, int sectionCount) {
-        List<String> columns = section.rows().isEmpty() ? List.of() : List.copyOf(section.rows().get(0).keySet());
+        List<String> columns = section.rows().stream()
+                .flatMap(row -> row.keySet().stream())
+                .distinct()
+                .toList();
         return productDiscovery.discover(new ProductEvidenceCollector.Section(columns, section.auxiliaryText(),
                 null, section.rows().size(), sectionIndex, sectionCount));
     }
