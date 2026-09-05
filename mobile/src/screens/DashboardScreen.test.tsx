@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import { Dimensions, RefreshControl } from 'react-native';
 import { QueryClient, QueryClientProvider, onlineManager } from '@tanstack/react-query';
+import { useNavigation } from '@react-navigation/native';
 import { DashboardScreen } from './DashboardScreen';
 import {
   accountsApi, budgetsApi, dashboardApi, goalsApi, insightsApi, reportsApi, transactionsApi, userApi,
@@ -130,7 +131,7 @@ beforeEach(() => {
     content: [], page: 0, size: 5, totalElements: 0, totalPages: 0,
   } as never);
   goals.list.mockResolvedValue([]);
-  insights.get.mockResolvedValue({ sentences: [], movers: [] } as never);
+  insights.get.mockResolvedValue({ sentences: [], movers: [], coverageCaveat: null } as never);
   user.get.mockResolvedValue({ timezone: 'Asia/Kolkata' } as never);
   reports.availableMonths.mockResolvedValue([]);
   reports.forMonth.mockResolvedValue({} as never);
@@ -831,5 +832,77 @@ describe('Financial Health Score, Categorization Confidence, Detected Issues (Tr
     fireEvent.press(screen.getByLabelText('Not a duplicate: Swiggy'));
 
     expect(await screen.findByText("Couldn't update this transaction. Please try again.")).toBeTruthy();
+  });
+});
+
+/**
+ * Track C/C2: promoting the statement coverage-gap warning from a buried Insights sentence to a
+ * proactive Dashboard banner with a CTA into Import. InsightsService has always aggregated this
+ * across every live account and returned it on /insights; nothing on mobile rendered the
+ * structured field until now (only the flattened sentence, folded in among several others).
+ */
+describe('statement coverage-gap banner (Track C/C2)', () => {
+  // Every test in this file isolates the summary call (see the file's own top comment) -- each
+  // test below sets it explicitly rather than relying on whatever a PRECEDING test happened to
+  // leave behind, since beforeEach only clears call history (jest.clearAllMocks), not mocked
+  // implementations.
+  beforeEach(() => {
+    dashboard.summary.mockResolvedValue(emptySummary());
+  });
+
+  it('stays absent when nothing is missing', async () => {
+    insights.get.mockResolvedValue({ sentences: [], movers: [], coverageCaveat: null } as never);
+
+    renderScreen();
+
+    await screen.findByTestId('kpi-Expenses');
+    expect(screen.queryByText(/Possible gap/)).toBeNull();
+  });
+
+  it('names the month and offers a way into Import when a gap touches the current month', async () => {
+    insights.get.mockResolvedValue({
+      sentences: ['Some transactions for August 2026 may be missing — import that statement to complete your history.'],
+      movers: [],
+      coverageCaveat: { month: '2026-08', gaps: [{ gapStart: '2026-08-05', gapEnd: '2026-08-19' }] },
+    } as never);
+
+    renderScreen();
+
+    expect(await screen.findByText('Possible gap in August 2026')).toBeTruthy();
+    expect(screen.getByText(/Import that statement/)).toBeTruthy();
+    // Said once, as the banner -- not also as an Insights bullet. The banner's own body copy is
+    // deliberately worded differently from the backend's sentence, so this can only match the
+    // filtered-out original.
+    expect(screen.queryByText(/may be missing — import that statement to complete your history/)).toBeNull();
+  });
+
+  it('leaves unrelated Insights sentences in place -- the filter targets one sentence, not the whole card', async () => {
+    insights.get.mockResolvedValue({
+      sentences: [
+        'Some transactions for August 2026 may be missing — import that statement to complete your history.',
+        'Groceries was your biggest category at ₹6,000.',
+      ],
+      movers: [],
+      coverageCaveat: { month: '2026-08', gaps: [{ gapStart: '2026-08-05', gapEnd: '2026-08-19' }] },
+    } as never);
+
+    renderScreen();
+
+    expect(await screen.findByText(/Groceries was your biggest category/)).toBeTruthy();
+  });
+
+  it('opens Import when the banner is tapped', async () => {
+    insights.get.mockResolvedValue({
+      sentences: [],
+      movers: [],
+      coverageCaveat: { month: '2026-08', gaps: [{ gapStart: '2026-08-05', gapEnd: '2026-08-19' }] },
+    } as never);
+    const { navigate } = useNavigation<never>() as unknown as { navigate: jest.Mock };
+    navigate.mockClear();
+
+    renderScreen();
+    fireEvent.press(await screen.findByText('Possible gap in August 2026'));
+
+    expect(navigate).toHaveBeenCalledWith('Import');
   });
 });

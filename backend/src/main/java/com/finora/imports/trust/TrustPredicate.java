@@ -84,6 +84,11 @@ public final class TrustPredicate {
 
     private TrustPredicate() {}
 
+    /** The machine-readable tag behind each of {@code evaluate}'s reason sentences -- see Plan 4's
+     *  Decisions table for why {@code held_statements.hold_reason_categories} exists rather than
+     *  parsing {@code trigger_summary}'s prose back apart. */
+    public enum Category { COUNT_MISMATCH, DROPPED_TRANSACTION, PERIOD_INTEGRITY }
+
     /**
      * @param reports one report per account section, or null for an import that verified nothing
      * @param periods one {@code {start, end}} pair per account section; the array, or either
@@ -97,24 +102,35 @@ public final class TrustPredicate {
         // the same way, and telling an operator "the counts disagree" three times reads as three
         // separate problems.
         Set<String> reasons = new LinkedHashSet<>();
+        Set<Category> categories = new LinkedHashSet<>();
 
         if (reports != null) {
             for (ImportDto.VerificationReport report : reports) {
                 if (report == null || report.findings() == null) continue;
                 for (ImportDto.VerificationFinding finding : report.findings()) {
                     if (finding == null) continue;
-                    countMismatch(finding).ifPresent(reasons::add);
-                    droppedTransaction(finding).ifPresent(reasons::add);
+                    countMismatch(finding).ifPresent(r -> {
+                        reasons.add(r);
+                        categories.add(Category.COUNT_MISMATCH);
+                    });
+                    droppedTransaction(finding).ifPresent(r -> {
+                        reasons.add(r);
+                        categories.add(Category.DROPPED_TRANSACTION);
+                    });
                 }
             }
         }
         if (periods != null) {
             for (LocalDate[] period : periods) {
-                periodIntegrity(period, today).ifPresent(reasons::add);
+                periodIntegrity(period, today).ifPresent(r -> {
+                    reasons.add(r);
+                    categories.add(Category.PERIOD_INTEGRITY);
+                });
             }
         }
 
-        return reasons.isEmpty() ? HoldDecision.RELEASE : new HoldDecision(true, List.copyOf(reasons));
+        return reasons.isEmpty() ? HoldDecision.RELEASE
+                : new HoldDecision(true, List.copyOf(reasons), List.copyOf(categories));
     }
 
     /** Keyed on the cause rather than the outcome -- see {@link #COUNT_MISMATCH_CAUSES} for why

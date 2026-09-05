@@ -179,6 +179,15 @@ export function ImportScreen() {
       accountName: reimportParam.accountName,
       password: reimportParam.password,
     });
+    // A new re-import target is a new attempt, never a retry of whatever this screen was doing
+    // before -- same reasoning as resetToUpload's identical line. Without this, a key kept after a
+    // FAILED confirm of a different statement (this ref survives the round trip to History and
+    // back, since the tab stays mounted) rides along into this one. claimReimportAttempt on the
+    // backend looks the key up by (user, key) alone, with no statementImportId in the lookup, so it
+    // reports this never-before-confirmed re-import as already confirmed -- and the mistaken 409
+    // then keeps the stale key in place for every retry, since a failed confirm always keeps its
+    // key for the attempt it belongs to.
+    attemptKey.current = null;
     setFileFormat(null);
     setSessionId(null);
     setRows(reimportParam.staging.rows);

@@ -1594,7 +1594,84 @@ public class PdfTableLocator {
                 // crossing a header/section boundary above.
                 boolean samePage = lastRowPage != null && !row.isEmpty() && row.get(0).pageIndex() == lastRowPage;
 
-                if (hasDateValue(bucketed, yearsByPage.getOrDefault(rowPageIndex, PageDateEvidence.NONE))) {
+                // SAME_DAY_CONTINUATION_TRANSACTION. The date-anchor model above assumes every real
+                // transaction prints its own date value -- true everywhere else in this class, false
+                // on a real HSBC savings statement (OCR-acquired, but the mechanism is generic to any
+                // acquisition source: nothing here reads TextSource): a second same-day transaction
+                // does not repeat the date at all, it simply continues under the first one's.
+                //
+                // Traced on that real document: the first transaction's own reference-number lines
+                // (two of them) push trailingCountSinceLastAnchor to the trailing cap by the time its
+                // own amount+balance row is merged, so the SECOND transaction's reference lines
+                // exhaust the cap's aligned-narration extension too, and by the time ITS OWN
+                // amount+balance row arrives, both continuesTheBlock (the accumulated pitch has
+                // drifted 1.7pt past blockPitch, just over BLOCK_PITCH_TOLERANCE) and the plain count
+                // check fail. The row falls into the ordinary "leading narration for whatever anchor
+                // comes next" branch below -- exactly correct for a row that truly precedes an
+                // unrelated transaction, and exactly wrong here, because "whatever comes next" is the
+                // FOLLOWING day's transaction, not this one. Two failures result, not one:
+                // mergeLeadingInto stamps the wrong date onto it, and when this document's third
+                // transaction's own amount+balance row later reaches the now-already-populated
+                // Balance cell that merge stole, mergeInto's own guard against invalidating a
+                // structured value redirects the second value into free text instead of staging it --
+                // that transaction never becomes a row at all.
+                //
+                // The signal a genuinely NEW transaction gives that no amount of pitch or count
+                // tuning can: it carries its own Balance, and the anchor still open already recorded
+                // one. A ledger states one running balance per transaction, never two, so this can
+                // only mean a second transaction has arrived under the still-open anchor's date --
+                // never a continuation of it, regardless of how the trailing-continuation state
+                // machine below would otherwise have classified this exact row. Deliberately
+                // narrower than the general "reopen a transaction on any amount collision" idea it
+                // might generalize to: only Balance is checked, because it is the one value every
+                // layout this class already recognizes as singular per transaction, whereas
+                // Withdrawals/Deposits legitimately repeat blank across many real layouts and would
+                // need evidence of their own before being trusted the same way.
+                //
+                // Bug fix, found regression-testing this against the full real corpus: the anchor's
+                // OWN date must independently pass hasDateValue before its value is trusted enough
+                // to copy forward -- assuming "already an anchor" implied "already has a genuine
+                // date" was wrong. A real Kotak savings statement opens its very first section with
+                // an "Opening Balance" row via the completely separate currentRows.isEmpty() branch
+                // below, which admits it on the strength of a real Balance value alone and a bare
+                // "-" placeholder in the date column -- never checked against hasDateValue at all.
+                // Every following row's own date column failed to parse for unrelated reasons, so
+                // every one of them collided on Balance against whatever came before, and each
+                // collision copied the previous row's already-corrupt "date" forward and appended
+                // its own unparseable text onto it (mergeInto's date guard only refuses to overwrite
+                // a date that already parses; "-" doesn't). 2 expected rows became 110, each one's
+                // date field longer than the last. Requiring hasDateValue on the anchor itself stops
+                // the chain at its first link: there is no genuine date to share when the anchor
+                // never had one, so this branch now correctly declines and the row falls through to
+                // whatever handled it before this branch existed.
+                if (!hasDateValue(bucketed, yearsByPage.getOrDefault(rowPageIndex, PageDateEvidence.NONE))
+                        && currentRows != null && !currentRows.isEmpty()
+                        && hasDateValue(currentRows.get(currentRows.size() - 1),
+                                yearsByPage.getOrDefault(rowPageIndex, PageDateEvidence.NONE))
+                        && closesADifferentTransactionThanTheOpenAnchor(bucketed,
+                                currentRows.get(currentRows.size() - 1), headerNames)) {
+                    Map<String, String> openAnchor = currentRows.get(currentRows.size() - 1);
+                    Map<String, String> sameDayRow = new LinkedHashMap<>();
+                    headerNames.stream().filter(this::isDateColumn).findFirst()
+                            .ifPresent(dateColumn -> sameDayRow.put(dateColumn, openAnchor.get(dateColumn)));
+                    if (pendingLeading != null) {
+                        mergeInto(sameDayRow, pendingLeading, headerNames);
+                        pendingLeading = null;
+                        pendingLeadingFromProximity = false;
+                        pendingLeadingAllBelongAbove = true;
+                        leadingCount = 0;
+                    }
+                    mergeInto(sameDayRow, bucketed, headerNames);
+                    currentRows.add(sameDayRow);
+                    if (ctx != null) ctx.record("SAME_DAY_CONTINUATION_TRANSACTION");
+                    anchorCarriedItsOwnNarration = hasNarrationOfItsOwn(bucketed, headerNames);
+                    if (gapFromPreviousRow != null) blockSeparation = gapFromPreviousRow;
+                    lastRowPage = row.get(0).pageIndex();
+                    lastRowY = row.get(0).y();
+                    blockPitch = null;
+                    blockNarrationLeftX = null;
+                    trailingCountSinceLastAnchor = 0;
+                } else if (hasDateValue(bucketed, yearsByPage.getOrDefault(rowPageIndex, PageDateEvidence.NONE))) {
                     // Read BEFORE any leading narration is merged in: the question is whether this
                     // transaction printed its own narration on its own date row, which merging a
                     // buffered leading line would otherwise disguise.
@@ -5235,6 +5312,56 @@ public class PdfTableLocator {
      *  a hint, so this only adds the qualified spellings of a column that already qualified. */
     private boolean isAmountColumn(String columnName) {
         return matchesAnyHint(columnName, AMOUNT_COLUMN_HINTS);
+    }
+
+    /** True when {@code bucketed} and {@code openAnchor} each carry their own non-blank, genuinely
+     *  numeric value in the table's Balance column -- see SAME_DAY_CONTINUATION_TRANSACTION's own
+     *  doc comment (this method's only caller) for why that is unambiguous evidence of two
+     *  different transactions rather than one continuing the other. Exact-matched against
+     *  "balance" specifically (not {@link #isAmountColumn}'s broader hint set), the same match
+     *  {@code headerReconstructionUncertain} and other single-column lookups in this class already
+     *  use for the one column a running-balance layout can never repeat within one transaction.
+     *
+     *  <p>Two guards, both found regression-testing this against the full real corpus rather than
+     *  reasoned out in advance:
+     *
+     *  <p>First, the table must actually HAVE a date column at all. A real AU credit-card
+     *  statement prints a short interest/EMI breakdown panel as its own two-column Amount/Balance
+     *  table with no date of any kind -- rows there are independent breakdown entries, not
+     *  transactions in a ledger, and "shares the open anchor's day" is not even a meaningful claim
+     *  to make about them. Without this guard, every one of that panel's rows collided with the
+     *  one before it (each states its own "Balance" figure) and was promoted into a bogus new row.
+     *
+     *  <p>Second, both values must actually look like currency -- parseable AND carrying a decimal
+     *  point. A real Bank of Baroda statement's page footer (page number, masked support-line
+     *  digits, a repeated masked account number) sits below the last transaction on the page, and
+     *  {@link #PAGE_FOOTER} does not recognize every shape a real footer takes (this one reads
+     *  "Page N | M", not "Page N of M"); its stray digit groups land in the Balance column's x-range
+     *  purely by coincidence and, unlike this table's every genuine balance, carry no decimal point
+     *  at all. Requiring one is not a guess at what "genuine" looks like here: it is true of every
+     *  real balance value on both documents this branch exists for (HSBC DB.pdf, this same BOB
+     *  statement's own real transactions) and false of the footer noise that triggered this guard.
+     *  {@link CsvParser#parseNumeric} is also required so a decimal point alone (an ellipsis, an
+     *  abbreviation like "No.") cannot satisfy this on its own.
+     *
+     *  <p>Returns false with no balance column found -- a layout with no balance column at all
+     *  gives this check nothing to work with, which leaves every document without one exactly as
+     *  this class already handles it. */
+    private boolean closesADifferentTransactionThanTheOpenAnchor(Map<String, String> bucketed,
+                                                                    Map<String, String> openAnchor,
+                                                                    List<String> headerNames) {
+        if (headerNames == null) return false;
+        if (headerNames.stream().noneMatch(this::isDateColumn)) return false;
+        String balanceColumn = headerNames.stream()
+                .filter(h -> CsvParser.normalizeHeaderCell(h).equals("balance"))
+                .findFirst().orElse(null);
+        if (balanceColumn == null) return false;
+        return looksLikeAGenuineBalanceValue(bucketed.get(balanceColumn))
+                && looksLikeAGenuineBalanceValue(openAnchor.get(balanceColumn));
+    }
+
+    private boolean looksLikeAGenuineBalanceValue(String value) {
+        return value != null && value.contains(".") && CsvParser.parseNumeric(value) != null;
     }
 
     // Word-boundary regex, not matchesAnyHint's per-word exact match and not a plain substring

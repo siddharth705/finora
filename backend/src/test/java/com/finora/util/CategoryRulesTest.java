@@ -37,6 +37,38 @@ class CategoryRulesTest {
     }
 
     @Test
+    void extractMerchantLabel_isNullWhenNothingButARailTokenSurvives() {
+        // "UPI-REF9182736" has no counterparty at all once the numeric reference is stripped --
+        // extractMerchant() itself still returns "upi" (its raw reduction is reused elsewhere for
+        // symmetric matching, see MerchantNormalizationEngine), but the per-transaction label the
+        // UI shows -- and looks up on Logo.dev by name -- must not be a bare rail word: Logo.dev
+        // resolves "upi"/"ach" to real, unrelated trademarked companies.
+        assertThat(CategoryRules.extractMerchant("UPI-REF9182736")).isEqualTo("upi");
+        assertThat(CategoryRules.extractMerchantLabel("UPI-REF9182736")).isNull();
+    }
+
+    @Test
+    void extractMerchantLabel_isNullWhenEveryTokenIsARailWord() {
+        // "ach" and "transfer" are both in PaymentRailTokens.RAIL_TOKENS -- no counterparty word
+        // survives, so this must null out exactly like the single-rail-token case above.
+        assertThat(CategoryRules.extractMerchantLabel("ACH TRANSFER")).isNull();
+    }
+
+    @Test
+    void extractMerchantLabel_keepsTheRealMerchantWhenARailTokenLeadsIt() {
+        assertThat(CategoryRules.extractMerchantLabel("UPI-SUNIL VERMA-REF9182736"))
+                .isEqualTo("upi sunil verma");
+    }
+
+    @Test
+    void extractMerchantLabel_keepsUnknownAsIs() {
+        // "unknown" is extractMerchant()'s own empty-input fallback (see the test above), not a
+        // rail word -- extractMerchantLabel must not treat it as "nothing survived" and null it
+        // out a second time.
+        assertThat(CategoryRules.extractMerchantLabel("")).isEqualTo("unknown");
+    }
+
+    @Test
     void suggestCategory_matchesDiningKeyword() {
         assertThat(CategoryRules.suggestCategory("SWIGGY*ORDR9182 BLR")).isEqualTo("Dining");
     }

@@ -157,7 +157,12 @@ public class AdminHeldStatementController {
     public ApiResponse<HeldStatementDto> approve(@PathVariable String heldId,
                                                  @RequestBody(required = false) Map<String, String> body) {
         String note = body == null ? null : body.get("note");
-        return ApiResponse.ok(heldStatementService.approve(currentUser.id(), heldId, note),
+        // Boolean.valueOf rather than Boolean.parseBoolean, deliberately -- see Plan 4's own
+        // Decisions table: a value going into permanent aggregate metrics should not silently
+        // treat a malformed string the same as an explicit "false".
+        Boolean falsePositive = body == null || body.get("falsePositive") == null
+                ? null : Boolean.valueOf(body.get("falsePositive"));
+        return ApiResponse.ok(heldStatementService.approve(currentUser.id(), heldId, note, falsePositive),
                 "Import released");
     }
 

@@ -288,6 +288,29 @@ class AdminHeldStatementControllerIT extends AbstractIntegrationTest {
     }
 
     /**
+     * The frontend sends {@code falsePositive} as a genuine JSON boolean (`{"falsePositive":
+     * true}`), never as a quoted string -- but the controller declares its request body as {@code
+     * Map<String, String>}, so this is really asking whether Jackson's default scalar coercion
+     * turns a JSON boolean into the Java string {@code "true"} before {@code Boolean.valueOf} ever
+     * sees it. Nothing before this test exercised that path: the service-level test for this same
+     * behaviour calls {@code HeldStatementService.approve} directly, bypassing the controller's
+     * JSON deserialization entirely. Verified here with a real HTTP request rather than assumed.
+     */
+    @Test
+    void approveAcceptsFalsePositiveAsARealJsonBooleanNotAQuotedString() {
+        HeldStatement held = seedHold("HLD-2026-100013");
+        User admin = createUser("ADMIN");
+
+        ResponseEntity<String> response = post(
+                "/api/v1/admin/held-statements/HLD-2026-100013/approve", admin,
+                "{\"falsePositive\":true}");
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(heldStatementRepository.findById(held.getId()).orElseThrow().getFalsePositive())
+                .isTrue();
+    }
+
+    /**
      * The promise the held-state copy already made the user: "we'll notify you once it's ready".
      *
      * <p>Nothing else can keep it. The worker's own {@code notifyIfPreviouslyHeld} gates on {@code

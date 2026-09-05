@@ -17,7 +17,7 @@ import {
 } from '../api/endpoints';
 import { useAuth } from '../context/AuthContext';
 import { CHART_PALETTE, bucketTopSlices } from '../lib/chartGeometry';
-import { fmtCurrency, fromLocalDateString, greeting, monthLabel } from '../lib/format';
+import { fmtCurrency, fromLocalDateString, greeting, monthLabel, monthLabelLong } from '../lib/format';
 import { invalidateFinancialData } from '../lib/invalidateFinancialData';
 import { usePrefetchAdjacentScreens } from '../lib/prefetchAdjacentScreens';
 import { deriveRefreshing, isPausedCold } from '../lib/refreshingIndicator';
@@ -250,7 +250,13 @@ export function DashboardScreen() {
   // computed from zero transactions has nothing real behind it.
   const isEmpty = (recentTxnsQ.data?.totalElements ?? 0) === 0;
   const goals = (goalsQ.data ?? []).slice(0, 2);
-  const sentences = insightsQ.data?.sentences ?? [];
+  const coverageCaveat = insightsQ.data?.coverageCaveat ?? null;
+  // The coverage-caveat sentence (Track C/C2) is promoted to its own banner below rather than said
+  // twice -- filtered out of the bullet list by the one fixed, always-English substring
+  // InsightsService's template ever produces it with ("may be missing"). Safe as an exact
+  // correspondence, not a heuristic: that phrase appears in exactly one sentence template, added
+  // if and only if coverageCaveat is non-null (see InsightsService.build).
+  const sentences = (insightsQ.data?.sentences ?? []).filter((s) => !s.includes('may be missing'));
   const firstName = fullName?.split(' ')[0] ?? 'there';
 
   /**
@@ -327,6 +333,33 @@ export function DashboardScreen() {
         Here's what's happening with your finances.
         {!periodIsCurrent && ` Your latest figures are from ${periodLabel}.`}
       </Text>
+
+      {/* Track C/C2. InsightsService has always computed this (aggregated across every live
+          account, so it needs no per-account plumbing) and said so as one bullet buried in the
+          Insights card below -- easy to miss entirely on a screen full of other numbers. A gap in
+          the statement history means every total on this screen may be undercounting the current
+          month, which is a data-completeness warning, not a spending observation, so it is
+          promoted above everything it could be silently distorting, with a way to actually fix it.
+          Ranked above the review-queue nudge below: a category label can wait, a missing
+          statement calls the KPIs above into question right now. */}
+      {coverageCaveat ? (
+        <Pressable
+          onPress={() => navigation.navigate('Import')}
+          accessibilityRole="button"
+          accessibilityLabel={`Possible gap in your ${monthLabelLong(coverageCaveat.month)} history. Import that statement to complete it.`}
+          accessibilityHint="Opens the Import screen"
+        >
+          <Card style={{ ...styles.coverageBanner, backgroundColor: c.warningBg }}>
+            <Text style={[styles.coverageBannerTitle, { color: c.warningInk }]}>
+              Possible gap in {monthLabelLong(coverageCaveat.month)}
+            </Text>
+            <Text style={[styles.coverageBannerBody, { color: c.warningInk }]}>
+              Some transactions may be missing from your history.
+            </Text>
+            <Text style={[styles.coverageBannerCta, { color: c.primary }]}>Import that statement ›</Text>
+          </Card>
+        </Pressable>
+      ) : null}
 
       {/* A count of work, never a chart slice. The categorization design spec (§3) draws a hard
           line here: "Other" is a real category a user chose, while "needs review" is a queue
@@ -786,4 +819,9 @@ const styles = StyleSheet.create({
   duplicateMeta: { fontSize: 11, marginTop: 2 },
   duplicateAction: { fontSize: 12, fontWeight: '600' },
   duplicateActionDisabled: { opacity: 0.5 },
+  // Track C/C2.
+  coverageBanner: { marginBottom: spacing.md },
+  coverageBannerTitle: { fontSize: 14, fontWeight: '600' },
+  coverageBannerBody: { fontSize: 12, marginTop: 2 },
+  coverageBannerCta: { fontSize: 12, fontWeight: '600', marginTop: spacing.sm },
 });

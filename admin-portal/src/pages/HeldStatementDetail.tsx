@@ -58,6 +58,7 @@ function HeldStatementDetailContent({ heldId }: { heldId: string }) {
 
   const [actionError, setActionError] = useState<string | null>(null);
   const [approveNote, setApproveNote] = useState('');
+  const [markFalsePositive, setMarkFalsePositive] = useState(false);
   const [rejectReason, setRejectReason] = useState('');
   const [engineerIdInput, setEngineerIdInput] = useState('');
   const [notesDraft, setNotesDraft] = useState('');
@@ -72,12 +73,17 @@ function HeldStatementDetailContent({ heldId }: { heldId: string }) {
 
   // Pre-fills the notes/findings editors with what is already on the row, once, when the row
   // first loads -- not on every refetch, or an operator's in-progress edit would be clobbered the
-  // moment their own save triggers this same query to refresh.
+  // moment their own save triggers this same query to refresh. markFalsePositive is included for a
+  // different reason: without this, the checkbox always renders unchecked, even for an already-
+  // resolved hold that WAS marked false positive at approve time -- contradicting the timeline
+  // entry on the very same screen. For an unresolved hold `falsePositive` is always null, so `??
+  // false` still defaults to unchecked there.
   useEffect(() => {
     if (detail.data) {
       setNotesDraft(detail.data.summary.engineerNotes ?? '');
       setRootCauseDraft(detail.data.summary.rootCause ?? '');
       setFixReferenceDraft(detail.data.summary.fixReference ?? '');
+      setMarkFalsePositive(detail.data.summary.falsePositive ?? false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [detail.data?.summary.id]);
@@ -90,6 +96,14 @@ function HeldStatementDetailContent({ heldId }: { heldId: string }) {
     setRerunResult(null);
   }, [heldId]);
 
+  // Same stale-state class of bug the rerun result above already guards against: a checked box
+  // left over from a previous hold must never silently ride along into the next approve call on a
+  // different row. This fires the instant navigation occurs, before the new query resolves; the
+  // effect above then corrects it to the new row's real persisted value once data loads.
+  useEffect(() => {
+    setMarkFalsePositive(false);
+  }, [heldId]);
+
   function invalidate() {
     void queryClient.invalidateQueries({ queryKey: ['held-statement-detail', heldId] });
     void queryClient.invalidateQueries({ queryKey: ['held-statements-list'] });
@@ -100,7 +114,14 @@ function HeldStatementDetailContent({ heldId }: { heldId: string }) {
   }
 
   const approve = useMutation({
-    mutationFn: () => adminHeldStatementApi.approve(heldId, approveNote || undefined),
+    // markFalsePositive || undefined, not the bare boolean -- the checkbox defaults to false, so
+    // passing it straight through would send an explicit `false` on every approval where the
+    // operator never touched it, indistinguishable from "explicitly reviewed and confirmed not a
+    // false positive." Only `true` (checked) is ever a real signal from this control; unchecked
+    // must reach the backend as an absent field, so the nullable `Boolean falsePositive` stays
+    // reachable as `null`.
+    mutationFn: () => adminHeldStatementApi.approve(
+        heldId, approveNote || undefined, markFalsePositive || undefined),
     onSuccess: () => { setActionError(null); invalidate(); },
     onError,
   });
@@ -379,6 +400,15 @@ function HeldStatementDetailContent({ heldId }: { heldId: string }) {
             Approve
           </button>
         </div>
+        <label className="flex items-center gap-2 text-xs text-muted">
+          <input
+            type="checkbox"
+            checked={markFalsePositive}
+            onChange={(e) => setMarkFalsePositive(e.target.checked)}
+            disabled={resolved}
+          />
+          Mark as false positive — the trust predicate flagged this, but the extraction was actually fine
+        </label>
         <div className="flex flex-wrap gap-2">
           <input
             value={rejectReason}

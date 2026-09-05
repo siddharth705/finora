@@ -89,7 +89,7 @@ class HeldStatementRepositoryIT extends AbstractIntegrationTest {
     void countsOnlyTheOpenQueue() {
         seed("HLD-2026-000010");
         HeldStatement resolved = seed("HLD-2026-000011");
-        resolved.markImported(staff(), Instant.now());
+        resolved.markImported(staff(), Instant.now(), null);
         repository.save(resolved);
 
         assertThat(repository.countByStatusIn(OPEN)).isEqualTo(1);
@@ -106,7 +106,7 @@ class HeldStatementRepositoryIT extends AbstractIntegrationTest {
         HeldStatement held = seed("HLD-2026-000020");
         UUID engineer = staff();
         Instant now = Instant.now();
-        held.recordSnapshot("parser-sha", "NEEDS_ATTENTION", "OCR", true);
+        held.recordSnapshot("parser-sha", "NEEDS_ATTENTION", "OCR", true, List.of("COUNT_MISMATCH"));
         held.assign(engineer, now);
         held.addNotes("Second section's rows never reached the ledger.");
         repository.saveAndFlush(held);
@@ -119,6 +119,7 @@ class HeldStatementRepositoryIT extends AbstractIntegrationTest {
         assertThat(reloaded.getReliabilityStatus()).isEqualTo("NEEDS_ATTENTION");
         assertThat(reloaded.getTextSource()).isEqualTo("OCR");
         assertThat(reloaded.getHeaderReconstructionUncertain()).isTrue();
+        assertThat(reloaded.getHoldReasonCategories()).containsExactly("COUNT_MISMATCH");
         assertThat(reloaded.getEngineerNotes()).contains("never reached the ledger");
         assertThat(reloaded.getTriggerSummary()).contains("count");
         assertThat(reloaded.getStatementObjectKey()).isEqualTo("objects/k1");

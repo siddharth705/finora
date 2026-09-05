@@ -508,9 +508,20 @@ interface CategoryMover {
   priorAverage: number;
   pctChange: number | null;
 }
+/**
+ * Track C/C2. Populated only when the current reporting month intersects a known coverage gap on
+ * any of the user's live accounts -- see InsightsService.coverageGapsAcross on the backend. Mirrors
+ * InsightsDto.CoverageCaveat exactly; this endpoint has always returned it (it just went unread
+ * until now), so no backend change was needed to add this field.
+ */
+export interface CoverageCaveat {
+  month: string;
+  gaps: { gapStart: string; gapEnd: string }[];
+}
 export interface InsightsData {
   sentences: string[];
   movers: CategoryMover[];
+  coverageCaveat: CoverageCaveat | null;
 }
 export interface RecurringItem {
   merchant: string;
