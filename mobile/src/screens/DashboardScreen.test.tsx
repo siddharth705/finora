@@ -41,7 +41,9 @@ function expensesKpiValue(): string {
 jest.mock('../api/endpoints', () => ({
   dashboardApi: { summary: jest.fn() },
   accountsApi: { list: jest.fn() },
-  transactionsApi: { search: jest.fn(), needsReview: jest.fn(), needsReviewGroups: jest.fn() },
+  transactionsApi: {
+    search: jest.fn(), needsReview: jest.fn(), needsReviewGroups: jest.fn(), confirmNotDuplicate: jest.fn(),
+  },
   goalsApi: { list: jest.fn() },
   insightsApi: { get: jest.fn() },
   userApi: { get: jest.fn() },
@@ -84,6 +86,7 @@ function emptySummary(over: Partial<DashboardSummary> = {}): DashboardSummary {
     healthScore: 0,
     healthLabel: 'No data',
     healthBreakdown: {},
+    healthBreakdownDetail: {},
     healthScoreAvailable: false,
     healthScoreTransactionCount: 0,
     healthScoreMinTransactions: 10,
@@ -91,6 +94,15 @@ function emptySummary(over: Partial<DashboardSummary> = {}): DashboardSummary {
     notifications: [],
     reportingMonth: null,
     reportingMonthIsCurrent: true,
+    // Track C/C1 fields: real defaults, not just whatever `as DashboardSummary` would paper over --
+    // a genuinely undefined categorizationConfidenceScore (as opposed to backend's real `null`)
+    // would otherwise slip past this cast and render as a broken "undefined out of 100" card in
+    // any test whose recentTxnsQ fixture happens to make isEmpty false.
+    categorizationConfidenceScore: null,
+    categorizationConfidenceTransactionCount: 0,
+    categorizationConfidenceMinTransactions: 5,
+    duplicateTransactionCount: 0,
+    detectedDuplicates: [],
     ...over,
   } as DashboardSummary;
 }
@@ -659,5 +671,165 @@ describe('categorization review nudge', () => {
 
     await screen.findByTestId('kpi-Expenses');
     expect(screen.queryByText(/needs? a quick look/i)).toBeNull();
+  });
+});
+
+/**
+ * Track C/C1: porting frontend/src/pages/Dashboard.tsx's Financial Health Score, Categorization
+ * Confidence and Detected Issues cards. DashboardService has always computed and returned all
+ * three; this is the first mobile UI that renders any of them.
+ */
+describe('Financial Health Score, Categorization Confidence, Detected Issues (Track C/C1)', () => {
+  // isEmpty is driven by recentTxnsQ, not by summary -- one non-empty transaction is enough to
+  // clear it for every test in this block that needs Health Score / Categorization Confidence
+  // visible, without having to fight the file-wide default (totalElements: 0) per test.
+  function markNotEmpty() {
+    transactions.search.mockResolvedValue({
+      content: [{
+        id: 't1', accountId: 'a1', categoryId: 'c1', categoryName: 'Shopping', date: '2026-08-01',
+        description: 'Coffee', merchant: 'Cafe', paymentMethod: 'CARD', amount: 150, type: 'EXPENSE',
+        tags: [], notes: null, reconciliationStatus: 'OK', recurring: false, needsCategoryReview: false,
+        categoryManuallySet: false,
+      }],
+      page: 0, size: 5, totalElements: 1, totalPages: 1,
+    } as never);
+  }
+
+  it('hides Financial Health Score entirely while the account is empty, even with a score computed', async () => {
+    // isEmpty stays true (the file-wide default: totalElements 0) -- a score computed from zero
+    // real transactions has nothing behind it, same reasoning as the web card's own comment.
+    dashboard.summary.mockResolvedValue(emptySummary({ healthScoreAvailable: true, healthScore: 72, healthLabel: 'Good' }));
+
+    renderScreen();
+
+    await screen.findByTestId('kpi-Expenses');
+    expect(screen.queryByText('Financial Health Score')).toBeNull();
+  });
+
+  it('shows onboarding progress, not a score, below the transaction-count floor', async () => {
+    markNotEmpty();
+    dashboard.summary.mockResolvedValue(emptySummary({
+      healthScoreAvailable: false, healthScoreTransactionCount: 4, healthScoreMinTransactions: 10,
+    }));
+
+    renderScreen();
+
+    expect(await screen.findByText('Getting Started')).toBeTruthy();
+    expect(screen.getByText('4 / 10 transactions')).toBeTruthy();
+    expect(screen.getByText('40%')).toBeTruthy();
+  });
+
+  it('shows the score and breakdown once available, with each row\'s detail hidden until asked for', async () => {
+    markNotEmpty();
+    dashboard.summary.mockResolvedValue(emptySummary({
+      healthScoreAvailable: true,
+      healthScore: 82,
+      healthLabel: 'Excellent',
+      healthBreakdown: { 'Debt Score': 100, 'Savings Rate': 65 },
+      healthBreakdownDetail: { 'Debt Score': 'No credit card balance carried over.' },
+    }));
+
+    renderScreen();
+
+    expect(await screen.findByText('82')).toBeTruthy();
+    expect(screen.getByText('Excellent')).toBeTruthy();
+    expect(screen.getByText('Debt Score')).toBeTruthy();
+    expect(screen.getByText('100%')).toBeTruthy();
+    // Savings Rate has no detail entry -- no "Why?" control to offer for it.
+    const whys = screen.getAllByText('Why?');
+    expect(whys).toHaveLength(1);
+    expect(screen.queryByText('No credit card balance carried over.')).toBeNull();
+
+    fireEvent.press(whys[0]);
+
+    expect(await screen.findByText('No credit card balance carried over.')).toBeTruthy();
+    expect(screen.getByText('Hide')).toBeTruthy();
+  });
+
+  it('hides Categorization Confidence below the engine-decided-transaction floor (score null)', async () => {
+    markNotEmpty();
+    dashboard.summary.mockResolvedValue(emptySummary({ categorizationConfidenceScore: null }));
+
+    renderScreen();
+
+    await screen.findByTestId('kpi-Expenses');
+    expect(screen.queryByText('Categorization Confidence')).toBeNull();
+  });
+
+  it('shows the categorization confidence score, label and transaction count once available', async () => {
+    markNotEmpty();
+    dashboard.summary.mockResolvedValue(emptySummary({
+      categorizationConfidenceScore: 91, categorizationConfidenceTransactionCount: 23,
+    }));
+
+    renderScreen();
+
+    expect(await screen.findByText('Categorization Confidence')).toBeTruthy();
+    expect(screen.getByText('91')).toBeTruthy();
+    expect(screen.getByText('Excellent')).toBeTruthy();
+    expect(screen.getByText(/Based on 23 automatically categorized transactions/)).toBeTruthy();
+  });
+
+  it('hides Detected Issues when nothing was flagged', async () => {
+    dashboard.summary.mockResolvedValue(emptySummary({ duplicateTransactionCount: 0 }));
+
+    renderScreen();
+
+    await screen.findByTestId('kpi-Expenses');
+    expect(screen.queryByText('Detected Issues')).toBeNull();
+  });
+
+  // Deliberately NOT gated on isEmpty, unlike the two cards above -- markNotEmpty() is not called
+  // here, pinning that a flagged duplicate on an otherwise-empty account still surfaces.
+  it('lists detected duplicates and says how many more exist beyond the capped list', async () => {
+    dashboard.summary.mockResolvedValue(emptySummary({
+      duplicateTransactionCount: 3,
+      detectedDuplicates: [
+        { transactionId: 'tx-1', date: '2026-07-10', merchant: 'Swiggy', amount: 450 },
+      ],
+    }));
+
+    renderScreen();
+
+    expect(await screen.findByText('Detected Issues')).toBeTruthy();
+    expect(screen.getByText(/We found 3 transactions/)).toBeTruthy();
+    expect(screen.getByText('Swiggy')).toBeTruthy();
+    expect(screen.getByText('and 2 more')).toBeTruthy();
+  });
+
+  it('confirms a detected duplicate and refreshes the figures it just changed', async () => {
+    dashboard.summary.mockResolvedValue(emptySummary({
+      duplicateTransactionCount: 1,
+      detectedDuplicates: [{ transactionId: 'tx-1', date: '2026-07-10', merchant: 'Swiggy', amount: 450 }],
+    }));
+    transactions.confirmNotDuplicate.mockResolvedValue({} as never);
+
+    const { queryClient } = renderScreen();
+    const invalidateSpy = jest.spyOn(queryClient, 'invalidateQueries');
+    await screen.findByText('Swiggy');
+
+    fireEvent.press(screen.getByLabelText('Not a duplicate: Swiggy'));
+
+    await waitFor(() => expect(transactions.confirmNotDuplicate).toHaveBeenCalledWith('tx-1'));
+    // dashboard-summary (the card itself) and recent-transactions/transactions (the row's status
+    // just changed) all have to refresh -- BH-027's whole point is that this transaction counts
+    // again everywhere it didn't before.
+    await waitFor(() => expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['dashboard-summary'] }));
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['transactions'] });
+  });
+
+  it('shows an inline error rather than silently dropping a failed confirmation', async () => {
+    dashboard.summary.mockResolvedValue(emptySummary({
+      duplicateTransactionCount: 1,
+      detectedDuplicates: [{ transactionId: 'tx-1', date: '2026-07-10', merchant: 'Swiggy', amount: 450 }],
+    }));
+    transactions.confirmNotDuplicate.mockRejectedValue(new Error('network'));
+
+    renderScreen();
+    await screen.findByText('Swiggy');
+
+    fireEvent.press(screen.getByLabelText('Not a duplicate: Swiggy'));
+
+    expect(await screen.findByText("Couldn't update this transaction. Please try again.")).toBeTruthy();
   });
 });

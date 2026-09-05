@@ -17,12 +17,13 @@ import {
 } from '../api/endpoints';
 import { useAuth } from '../context/AuthContext';
 import { CHART_PALETTE, bucketTopSlices } from '../lib/chartGeometry';
-import { fmtCurrency, greeting, monthLabel } from '../lib/format';
+import { fmtCurrency, fromLocalDateString, greeting, monthLabel } from '../lib/format';
+import { invalidateFinancialData } from '../lib/invalidateFinancialData';
 import { usePrefetchAdjacentScreens } from '../lib/prefetchAdjacentScreens';
 import { deriveRefreshing, isPausedCold } from '../lib/refreshingIndicator';
 import { reviewNudgeLabel, reviewQueueCount } from '../lib/reviewQueue';
 import { useLargeFontScale } from '../lib/useLargeFontScale';
-import { radius, spacing, useTheme } from '../theme';
+import { radius, spacing, useTheme, type Palette } from '../theme';
 import type { AppTabParamList } from '../navigation/types';
 
 type CashFlowRange = '3M' | '6M' | '12M';
@@ -34,6 +35,47 @@ const RANGE_MONTHS: Record<CashFlowRange, number> = { '3M': 3, '6M': 6, '12M': 1
  * same way in two places.
  */
 const OTHER_LABEL = 'Other';
+
+/**
+ * Track C/C1. Same 80/60/40 cutoffs and label vocabulary as frontend/src/pages/Dashboard.tsx's
+ * identical helper, for the overall Financial Health Score and label and (via scoreLabel below)
+ * Categorization Confidence.
+ *
+ * `warningInk`, not `warning`, for "Fair": `warning` is tuned for icons/borders/bars (see
+ * theme/palette.ts's own comment on why warningInk exists) and falls under WCAG AA as plain text
+ * on this screen's background -- warningInk is the token built for exactly that.
+ */
+function healthColor(label: string, c: Palette): string {
+  switch (label) {
+    case 'Excellent': return c.success;
+    case 'Good': return c.primary;
+    case 'Fair': return c.warningInk;
+    default: return c.danger;
+  }
+}
+
+/**
+ * Same cutoffs as healthColor, applied to one breakdown row's own score -- ported so a perfect
+ * sub-score doesn't inherit the overall label's color (see the web helper's own comment: a
+ * Debt Score of 100 rendering as a full red bar because the OVERALL score reads "Needs Attention"
+ * is exactly the bug this avoids). A bar fill, not text, so `warning` itself (not `warningInk`) is
+ * the right token here.
+ */
+function healthBarColor(score: number, c: Palette): string {
+  if (score >= 80) return c.success;
+  if (score >= 60) return c.primary;
+  if (score >= 40) return c.warning;
+  return c.danger;
+}
+
+/** Same 0-100 scale and vocabulary as healthColor above -- Categorization Confidence reuses it
+ *  rather than inventing a second one for the same range. */
+function scoreLabel(score: number): string {
+  if (score >= 80) return 'Excellent';
+  if (score >= 60) return 'Good';
+  if (score >= 40) return 'Fair';
+  return 'Needs Attention';
+}
 
 export function DashboardScreen() {
   // SEC-17 (docs/quality/bug-reports/2026-08-19-security-review-findings.md). Balances and
@@ -52,6 +94,12 @@ export function DashboardScreen() {
   const navigation = useNavigation<BottomTabNavigationProp<AppTabParamList>>();
   const queryClient = useQueryClient();
   const [cashFlowRange, setCashFlowRange] = useState<CashFlowRange>('6M');
+  // Which ONE Financial Health Score breakdown row (if any) has its "Why?" detail expanded --
+  // one at a time, tracked by name since these rows are rendered inline rather than as their own
+  // component. Mirrors frontend/src/pages/Dashboard.tsx.
+  const [expandedHealthDetail, setExpandedHealthDetail] = useState<string | null>(null);
+  const [confirmingDuplicateId, setConfirmingDuplicateId] = useState<string | null>(null);
+  const [duplicateConfirmError, setDuplicateConfirmError] = useState<string | null>(null);
 
   // useQueries (not one Promise.all) so a single failing endpoint degrades to one empty section
   // instead of blanking the screen -- same reasoning as the web Dashboard's own comment.
@@ -177,8 +225,30 @@ export function DashboardScreen() {
       .forEach((key) => void queryClient.invalidateQueries({ queryKey: [key] }));
   }
 
+  // BH-027's own service-layer doc comment: "the user asked for this row to count, so it counts
+  // now." transactionsApi.confirmNotDuplicate already existed and already worked on the backend --
+  // this is the first mobile UI that calls it. invalidateFinancialData covers dashboard-summary
+  // (the card itself), recent-transactions/transactions (the row's own status just changed), and
+  // every KPI the reinstated transaction now counts toward.
+  async function handleConfirmNotDuplicate(transactionId: string) {
+    setConfirmingDuplicateId(transactionId);
+    setDuplicateConfirmError(null);
+    try {
+      await transactionsApi.confirmNotDuplicate(transactionId);
+      invalidateFinancialData(queryClient);
+    } catch {
+      setDuplicateConfirmError("Couldn't update this transaction. Please try again.");
+    } finally {
+      setConfirmingDuplicateId(null);
+    }
+  }
+
   const summary = summaryQ.data;
   const recentTxns = recentTxnsQ.data?.content ?? [];
+  // Same signal frontend/src/pages/Dashboard.tsx uses to hide Financial Health Score,
+  // Categorization Confidence and Detected Issues below: a score, average, or duplicate flag
+  // computed from zero transactions has nothing real behind it.
+  const isEmpty = (recentTxnsQ.data?.totalElements ?? 0) === 0;
   const goals = (goalsQ.data ?? []).slice(0, 2);
   const sentences = insightsQ.data?.sentences ?? [];
   const firstName = fullName?.split(' ')[0] ?? 'there';
@@ -327,6 +397,190 @@ export function DashboardScreen() {
             ))
           : [0, 1, 2, 3].map((i) => <SkeletonCard key={i} style={styles.kpiCard} lines={1} />)}
       </View>
+
+      {/* Financial Health Score -- DashboardService.computeHealthScore has always returned this
+          (score, label, a breakdown), sent on every load; nothing on mobile rendered it until now
+          (Track C/C1). Hidden entirely while isEmpty, same reasoning as web: a score computed from
+          zero transactions has nothing real behind it. healthScoreAvailable (a real transaction-
+          count floor, not just isEmpty) covers the thin-but-not-zero range, showing onboarding
+          progress instead of a harsh score. */}
+      {!isEmpty && summary ? (
+        <Card style={styles.section}>
+          <SectionHeading title="Financial Health Score" />
+          {summary.healthScoreAvailable ? (
+            <View style={styles.healthLayout}>
+              <View style={styles.healthScoreBlock}>
+                <Text style={[styles.healthScoreValue, { color: healthColor(summary.healthLabel!, c) }]}>
+                  {summary.healthScore}
+                </Text>
+                <Text style={[styles.body, { color: c.muted }]}>out of 100</Text>
+                <Text style={[styles.healthScoreLabel, { color: healthColor(summary.healthLabel!, c) }]}>
+                  {summary.healthLabel}
+                </Text>
+              </View>
+              <View style={styles.healthBreakdown}>
+                {Object.entries(summary.healthBreakdown).map(([name, score]) => {
+                  const detail = summary.healthBreakdownDetail[name];
+                  const isExpanded = expandedHealthDetail === name;
+                  return (
+                    <View key={name} style={styles.healthRow}>
+                      <View style={styles.healthRowHeader}>
+                        <View style={styles.healthRowLabelGroup}>
+                          <Text style={[styles.healthRowLabel, { color: c.ink }]}>{name}</Text>
+                          {detail ? (
+                            <Pressable
+                              onPress={() => setExpandedHealthDetail((cur) => (cur === name ? null : name))}
+                              hitSlop={8}
+                              accessibilityRole="button"
+                              accessibilityState={{ expanded: isExpanded }}
+                              accessibilityLabel={`${name}: ${isExpanded ? 'hide details' : 'why?'}`}
+                            >
+                              <Text style={[styles.healthWhy, { color: c.primary }]}>
+                                {isExpanded ? 'Hide' : 'Why?'}
+                              </Text>
+                            </Pressable>
+                          ) : null}
+                        </View>
+                        <Text style={[styles.healthRowScore, { color: c.muted }]}>{Math.round(score)}%</Text>
+                      </View>
+                      <View style={[styles.progressTrack, { backgroundColor: c.border }]}>
+                        <View
+                          style={[
+                            styles.progressFill,
+                            { width: `${Math.max(0, Math.min(100, score))}%`, backgroundColor: healthBarColor(score, c) },
+                          ]}
+                        />
+                      </View>
+                      {detail && isExpanded ? (
+                        <Text style={[styles.healthDetail, { color: c.muted }]}>{detail}</Text>
+                      ) : null}
+                    </View>
+                  );
+                })}
+              </View>
+            </View>
+          ) : (
+            <View style={styles.healthGettingStarted}>
+              <Text style={[styles.healthGettingStartedTitle, { color: c.ink }]}>Getting Started</Text>
+              <Text style={[styles.body, { color: c.muted }]}>
+                Import more transactions to unlock your Financial Health Score.
+              </Text>
+              <View style={styles.healthProgressWrap}>
+                <View style={styles.healthProgressLabels}>
+                  <Text style={[styles.body, { color: c.muted }]}>
+                    {summary.healthScoreTransactionCount} / {summary.healthScoreMinTransactions} transactions
+                  </Text>
+                  <Text style={[styles.body, { color: c.muted }]}>
+                    {Math.round(Math.min(100, (summary.healthScoreTransactionCount / summary.healthScoreMinTransactions) * 100))}%
+                  </Text>
+                </View>
+                <View style={[styles.progressTrack, { backgroundColor: c.border }]}>
+                  <View
+                    style={[
+                      styles.progressFill,
+                      {
+                        width: `${Math.min(100, (summary.healthScoreTransactionCount / summary.healthScoreMinTransactions) * 100)}%`,
+                        backgroundColor: c.primary,
+                      },
+                    ]}
+                  />
+                </View>
+              </View>
+            </View>
+          )}
+        </Card>
+      ) : null}
+
+      {/* Categorization Confidence -- how sure the categorization engine was, on average, about
+          the categories it assigned this month. A positive, ongoing data-quality signal, distinct
+          from the category-review warning (which only fires when spend is badly miscategorized).
+          Hidden below categorizationConfidenceMinTransactions engine-decided transactions this
+          month (server-side floor, same reasoning as healthScoreAvailable above). */}
+      {!isEmpty && summary && summary.categorizationConfidenceScore !== null ? (
+        <Card style={styles.section}>
+          <SectionHeading title="Categorization Confidence" />
+          <View style={styles.confidenceRow}>
+            <Text
+              style={[
+                styles.healthScoreValue,
+                { color: healthColor(scoreLabel(summary.categorizationConfidenceScore), c) },
+              ]}
+            >
+              {summary.categorizationConfidenceScore}
+            </Text>
+            <Text style={[styles.body, { color: c.muted }]}>out of 100</Text>
+          </View>
+          <Text
+            style={[
+              styles.healthScoreLabel,
+              { color: healthColor(scoreLabel(summary.categorizationConfidenceScore), c) },
+            ]}
+          >
+            {scoreLabel(summary.categorizationConfidenceScore)}
+          </Text>
+          <Text style={[styles.body, styles.confidenceCaption, { color: c.muted }]}>
+            Based on {summary.categorizationConfidenceTransactionCount} automatically categorized
+            transaction{summary.categorizationConfidenceTransactionCount === 1 ? '' : 's'} {periodLabel}.
+          </Text>
+        </Card>
+      ) : null}
+
+      {/* Detected Issues -- ReconciliationService's own duplicate pass already silently excludes a
+          row from every total above the moment it runs, and until now nothing told the user it
+          happened. transactionsApi.confirmNotDuplicate (BH-027, "no, these really are two separate
+          transactions") already existed on the backend to let a human overrule that guess -- this
+          is the first mobile UI that calls it. Shown only when something was actually flagged. */}
+      {summary && summary.duplicateTransactionCount > 0 ? (
+        <Card style={styles.section}>
+          <SectionHeading title="Detected Issues" />
+          <Text style={[styles.body, { color: c.muted, marginBottom: spacing.sm }]}>
+            {summary.duplicateTransactionCount === 1
+              ? 'We found 1 transaction that looks like a duplicate and excluded it from your totals.'
+              : `We found ${summary.duplicateTransactionCount} transactions that look like duplicates and excluded them from your totals.`}
+          </Text>
+          {duplicateConfirmError ? (
+            <Text style={[styles.body, { color: c.danger, marginBottom: spacing.sm }]}>
+              {duplicateConfirmError}
+            </Text>
+          ) : null}
+          {summary.detectedDuplicates.map((d) => (
+            <View key={d.transactionId} style={[styles.duplicateRow, { borderBottomColor: c.border }]}>
+              <View style={styles.duplicateMain}>
+                <Text style={[styles.duplicateMerchant, { color: c.ink }]} numberOfLines={1}>
+                  {d.merchant}
+                </Text>
+                <Text style={[styles.duplicateMeta, { color: c.mutedInk }]}>
+                  {fromLocalDateString(d.date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}
+                  {' · '}
+                  {fmtCurrency(d.amount)}
+                </Text>
+              </View>
+              <Pressable
+                onPress={() => void handleConfirmNotDuplicate(d.transactionId)}
+                disabled={confirmingDuplicateId === d.transactionId}
+                hitSlop={8}
+                accessibilityRole="button"
+                accessibilityLabel={`Not a duplicate: ${d.merchant}`}
+              >
+                <Text
+                  style={[
+                    styles.duplicateAction,
+                    { color: c.primary },
+                    confirmingDuplicateId === d.transactionId && styles.duplicateActionDisabled,
+                  ]}
+                >
+                  {confirmingDuplicateId === d.transactionId ? 'Confirming…' : 'Not a duplicate'}
+                </Text>
+              </Pressable>
+            </View>
+          ))}
+          {summary.duplicateTransactionCount > summary.detectedDuplicates.length ? (
+            <Text style={[styles.body, { color: c.muted, marginTop: spacing.sm }]}>
+              and {summary.duplicateTransactionCount - summary.detectedDuplicates.length} more
+            </Text>
+          ) : null}
+        </Card>
+      ) : null}
 
       <Card style={styles.section}>
         <SectionHeading
@@ -503,4 +757,33 @@ const styles = StyleSheet.create({
   progressFill: { height: 6, borderRadius: 3 },
   goalMeta: { fontSize: 11, marginTop: 4 },
   insight: { fontSize: 13, lineHeight: 20, marginBottom: 4 },
+  body: { fontSize: 13, lineHeight: 19 },
+  // Track C/C1.
+  healthLayout: { gap: spacing.md },
+  healthScoreBlock: { alignItems: 'flex-start' },
+  healthScoreValue: { fontSize: 32, fontWeight: '700' },
+  healthScoreLabel: { fontSize: 13, fontWeight: '600', marginTop: 2 },
+  healthBreakdown: { gap: spacing.sm },
+  healthRow: {},
+  healthRowHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 4 },
+  healthRowLabelGroup: { flexDirection: 'row', alignItems: 'baseline', gap: 6, flexShrink: 1 },
+  healthRowLabel: { fontSize: 12 },
+  healthWhy: { fontSize: 12, fontWeight: '600', textDecorationLine: 'underline' },
+  healthRowScore: { fontSize: 12 },
+  healthDetail: { fontSize: 11, lineHeight: 15, marginTop: 4 },
+  healthGettingStarted: { alignItems: 'center', paddingVertical: spacing.sm, gap: 4 },
+  healthGettingStartedTitle: { fontSize: 14, fontWeight: '600' },
+  healthProgressWrap: { width: '100%', marginTop: spacing.sm, gap: 6 },
+  healthProgressLabels: { flexDirection: 'row', justifyContent: 'space-between' },
+  confidenceRow: { flexDirection: 'row', alignItems: 'baseline', gap: spacing.xs },
+  confidenceCaption: { marginTop: spacing.xs },
+  duplicateRow: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth, gap: spacing.sm,
+  },
+  duplicateMain: { flex: 1 },
+  duplicateMerchant: { fontSize: 14 },
+  duplicateMeta: { fontSize: 11, marginTop: 2 },
+  duplicateAction: { fontSize: 12, fontWeight: '600' },
+  duplicateActionDisabled: { opacity: 0.5 },
 });
