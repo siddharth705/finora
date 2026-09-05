@@ -30,7 +30,14 @@ public final class CategoryRules {
     public static final Map<String, List<String>> RULES = new LinkedHashMap<>();
     static {
         RULES.put("Salary", List.of("salary", "payroll", "income tax refund", "stipend"));
-        RULES.put("Rent", List.of("house rent", "rent paid", "rent payment", "monthly rent", "rent due", "landlord", "housing society", "maintenance chg"));
+        // "housingcom" (Housing.com, printed as one contiguous word on the real statement) added
+        // after checking this project's own real bank-statement corpus (docs/superpowers/specs/
+        // 2026-09-01-transaction-categorization-design.md §1) -- mapped to Rent on the assumption
+        // this is a rent-payment-facilitator narration (see CategoryRulesTest's Housingcom test
+        // comment for the reasoning and its caveat). Safe as a bare keyword: word-boundary matching
+        // only matches the exact bounded token "housingcom", never as a prefix inside a longer run
+        // like "housingcommunity" (guarded by suggestCategory_housingCommunityIsNotMisclassifiedAsRent).
+        RULES.put("Rent", List.of("house rent", "rent paid", "rent payment", "monthly rent", "rent due", "landlord", "housing society", "maintenance chg", "housingcom"));
         RULES.put("Groceries", List.of("bigbasket", "blinkit", "zepto", "grofers", "dmart", "grocery", "supermarket"));
         // "asspl" (Amazon Seller Services' actual card-statement abbreviation) and "cinnabon"
         // added after checking this project's own real bank-statement corpus (docs/superpowers/
