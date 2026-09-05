@@ -51,7 +51,13 @@
   #     wrangler pages dev and watching the console, not by trusting the docs alone.
   #   - font-src adds https://fonts.gstatic.com, where fonts.googleapis.com's stylesheet actually
   #     points its @font-face src at.
-  #   - img-src adds https://cdn.brandfetch.io -- BankLogo.tsx's Brandfetch Logo API.
+  #   - img-src adds https://img.logo.dev -- BankLogo.tsx/MerchantLogo.tsx's Logo.dev API. Was
+  #     https://cdn.brandfetch.io until the Brandfetch->Logo.dev migration (BankLogo.tsx's own
+  #     comment history) swapped the provider in code but never updated this allowlist, so every
+  #     deployed environment (production and PR previews; the Vite dev server sends no CSP at all)
+  #     silently CSP-blocked every Logo.dev image request -- no network entry, no 403, just a
+  #     block before the request was even sent, which BankLogo.tsx's circuit breaker then read as
+  #     a rejection and used to disable Logo.dev for the rest of that page load.
   #   - connect-src adds api.fynora.net (the deployed backend origin VITE_API_BASE_URL points at --
   #     see src/api/client.ts). api.finoratech.info used to be listed alongside it during the
   #     Fynora domain migration; finoratech.info was sold and is no longer under this project's
@@ -85,7 +91,7 @@
   #     loads).
   #   - frame-ancestors 'none' takes over X-Frame-Options' job (both do the same thing; setting
   #     both would just be two places to keep in sync).
-  Content-Security-Policy: default-src 'self'; script-src 'self' https://www.gstatic.com https://www.google.com https://accounts.google.com/gsi/client https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://accounts.google.com/gsi/style; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: https://cdn.brandfetch.io; connect-src 'self' https://api.fynora.net https://dev-api.fynora.net https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://accounts.google.com/gsi/ https://www.google.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io; frame-src https://www.google.com https://accounts.google.com/gsi/; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'
+  Content-Security-Policy: default-src 'self'; script-src 'self' https://www.gstatic.com https://www.google.com https://accounts.google.com/gsi/client https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://accounts.google.com/gsi/style; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: https://img.logo.dev; connect-src 'self' https://api.fynora.net https://dev-api.fynora.net https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://accounts.google.com/gsi/ https://www.google.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io; frame-src https://www.google.com https://accounts.google.com/gsi/; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'
   Strict-Transport-Security: max-age=31536000; includeSubDomains
   Referrer-Policy: strict-origin-when-cross-origin
 
