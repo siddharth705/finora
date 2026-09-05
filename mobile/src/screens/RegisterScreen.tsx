@@ -212,7 +212,7 @@ export function RegisterScreen({ navigation, route }: Props) {
         error={touched.confirmPassword && !passwordsMatch ? "Passwords don't match." : null}
       />
 
-      <Button label="Create account" onPress={handleSubmit} loading={loading} disabled={!formValid} />
+      <Button label="Create account" onPress={handleSubmit} loading={loading} disabled={!formValid} pressScale />
 
       {/* The web form gates submission on an explicit Terms & Privacy checkbox. Those pages are
           marketing routes that aren't part of the mobile app, so there's nothing to link to yet;
