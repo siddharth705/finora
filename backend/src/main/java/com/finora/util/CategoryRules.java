@@ -41,7 +41,15 @@ public final class CategoryRules {
         // "gokhana" is a workplace-cafeteria ordering platform, and the single highest-frequency
         // unmatched brand in the corpus: 105 rows across 6 of the 29 statements, i.e. multiple
         // distinct people, which is what separates real vocabulary from overfitting to one payer.
-        RULES.put("Dining", List.of("swiggy", "zomato", "restaurant", "cafe", "starbucks", "dominos", "mcdonald", "kfc", "cinnabon", "gokhana"));
+        // "tobox" (Tobox Ventures Private Limited, the registered corporate name behind
+        // "Gokhana" -- a real narration links them directly: "TOBOX VENTURES PRIVATE LIMITED/
+        // GOKHANA.") added after re-checking this project's own real bank-statement corpus for
+        // additional vocabulary beyond the 2026-09-01 review (docs/superpowers/plans/2026-09-05-
+        // categorization-vocabulary-expansion.md Task 1). Kept as a bare word rather than "tobox
+        // ventures" because one real statement truncates the narration to "TOBOX VENT" -- a
+        // two-word phrase keyword would miss that form. Safe as a bare keyword: not a substring of,
+        // or a container of, any other keyword in this table.
+        RULES.put("Dining", List.of("swiggy", "zomato", "restaurant", "cafe", "starbucks", "dominos", "mcdonald", "kfc", "cinnabon", "gokhana", "tobox"));
         RULES.put("Transport", List.of("uber", "ola", "rapido", "irctc", "petrol", "fuel", "metro", "fastag", "parking"));
         RULES.put("Utilities", List.of("electricity", "power bill", "water bill", "gas bill", "broadband", "airtel", "jio", "recharge"));
         RULES.put("Shopping", List.of("amazon", "flipkart", "myntra", "ajio", "nykaa", "decathlon", "asspl"));
