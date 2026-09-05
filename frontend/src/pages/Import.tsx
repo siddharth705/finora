@@ -15,6 +15,7 @@ import { isLikelyMatch } from '../lib/holderNameMatcher';
 import { DuplicateReview } from '../components/DuplicateReview';
 import { ImportProgress } from '../components/ImportProgress';
 import { ImportTimeline } from '../components/ImportTimeline';
+import { UploadProgressPanel, type UploadPanelState } from '../components/UploadProgressPanel';
 import {
   EMPTY_REVIEW,
   applyDecisionToSimilar,
@@ -37,6 +38,11 @@ import { formatDate, formatDateDDMMMYYYY } from '../utils/date';
 
 type Step = 'upload' | 'review' | 'summary';
 type AccountChoice = 'existing' | 'new';
+
+// How long the "Completed" checkmark stays on screen before the step actually advances -- long
+// enough to register as a real confirmation, short enough not to feel like a delay. Exported so a
+// test can assert against the same number rather than a magic 900 duplicated in the test file.
+export const UPLOAD_COMPLETE_DWELL_MS = 900;
 
 // Per-account review state for the multi-account case (a PDF whose upload detected more than one
 // account section, e.g. an HSBC-style composite statement) -- one of these per detected
@@ -227,6 +233,16 @@ export default function Import() {
   // 0-100 while a file is uploading, null otherwise -- purely the network-transfer portion (see
   // ProgressCallback's own doc comment in endpoints.ts), so 100% means "processing," not "done."
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
+  // True for a brief dwell after a synchronous stage call succeeds, before the step actually
+  // advances to 'review' -- see celebrateThenAdvance below. Deliberately not derived from
+  // uploadProgress: at the moment this flips true, uploadProgress is still 100 (this state exists
+  // ON TOP of it), and it needs to survive uploadProgress being reset back to null when the dwell
+  // ends, or the completed panel would flash back to idle for one frame before 'review' renders.
+  const [uploadCompleted, setUploadCompleted] = useState(false);
+  const completionTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (completionTimer.current) clearTimeout(completionTimer.current);
+  }, []);
 
   // A chosen PDF, held here between selection and upload so the optional password can be typed
   // first, and so a wrong password can be retried against the SAME file without re-picking it.
@@ -514,9 +530,42 @@ export default function Import() {
     if (discarded) startOver();
   }
 
+  // Holds the panel on 'completed' for UPLOAD_COMPLETE_DWELL_MS before running `advance` (a
+  // setStep call) -- the pause that makes the checkmark a real, noticeable state rather than a
+  // single frame between "100%" and the review screen. uploadProgress is reset here, not in
+  // upload()'s finally, so the panel doesn't fall back to 'idle' for a frame while `uploadCompleted`
+  // is still true (see that state's own doc comment).
+  //
+  // Also clears pendingPdf/pdfPassword/passwordState here, not immediately on success -- bug fix:
+  // clearing them right away used to make showUploadPicker (`!pendingPdf`) true for the whole
+  // dwell, which swapped the PDF-password panel out for the dropzone (a different element further
+  // down the page, with the "Continue previous import" list and retry banner rendering ABOVE it)
+  // right as the checkmark was meant to appear where the user was already looking. Keeping the
+  // panel mounted (its password field just sits there disabled) through the dwell is what makes
+  // the PDF path morph in place instead of jumping to a different box.
+  function celebrateThenAdvance(advance: () => void) {
+    // Defensive, not currently reachable: every caller of upload() already refuses to run while
+    // `uploading` (which covers uploadCompleted too) is true, so this can't yet fire twice before
+    // the first timer completes. Guards against that invariant quietly breaking later, rather than
+    // leaking the earlier timer and calling `advance` twice.
+    if (completionTimer.current) clearTimeout(completionTimer.current);
+    setUploadCompleted(true);
+    completionTimer.current = setTimeout(() => {
+      setUploadCompleted(false);
+      setUploadProgress(null);
+      setPendingPdf(null);
+      setPdfPassword('');
+      setPasswordState(null);
+      advance();
+    }, UPLOAD_COMPLETE_DWELL_MS);
+  }
+
   async function upload(file: File, isPdf: boolean, password: string | undefined) {
     clearError();
     setUploadProgress(0);
+    // Set once a synchronous stage call succeeds, so the finally block below skips its usual
+    // reset and leaves uploadProgress/uploadCompleted for celebrateThenAdvance to clear itself.
+    let holdForCompletion = false;
     try {
       // The queue, when this deployment has one and the file does not need a password.
       //
@@ -544,24 +593,24 @@ export default function Import() {
         : await importApi.stageCsv(file, setUploadProgress);
       setSessionId(res.sessionId);
       setFileFormat(isPdf ? 'PDF' : 'CSV');
-      // The document opened, so the password (if any) has done its whole job. Drop both it and
-      // the file: neither is needed again, and confirm/reimport work from the server-side session.
-      setPendingPdf(null);
-      setPdfPassword('');
-      setPasswordState(null);
+      // The document opened, so the password (if any) has done its whole job -- neither it nor the
+      // file is needed again, confirm/reimport work from the server-side session. Not cleared here
+      // though: see celebrateThenAdvance's own comment for why that has to wait until the dwell ends.
 
       // Multi-account PDF (e.g. an HSBC-style composite statement bundling a savings account and
       // a credit-card account in one file) -- res.staging is null here, res.sections is what's
       // populated instead. See PdfStagingSessionResult's own doc comment in endpoints.ts.
       if ('multiAccount' in res && res.multiAccount && res.sections) {
         setMultiSections(res.sections.map((s) => initialSectionState(s, existingAccounts)));
-        setStep('review');
+        holdForCompletion = true;
+        celebrateThenAdvance(() => setStep('review'));
         return;
       }
 
       const staging = res.staging!; // guaranteed non-null whenever multiAccount is false/absent
       hydrateReviewFrom(staging);
-      setStep('review');
+      holdForCompletion = true;
+      celebrateThenAdvance(() => setStep('review'));
     } catch (e: any) {
       // e.response is only ever populated when the server actually answered the request --
       // axios leaves it undefined for anything that never got a response at all (network down,
@@ -598,7 +647,7 @@ export default function Import() {
         showError(e.response?.data?.message ?? (isPdf ? 'Could not parse this PDF.' : 'Could not parse this CSV.'));
       }
     } finally {
-      setUploadProgress(null);
+      if (!holdForCompletion) setUploadProgress(null);
     }
   }
 
@@ -809,6 +858,11 @@ export default function Import() {
   // -- hoisted once rather than repeated three times so the three conditions can't silently
   // diverge if one is edited later.
   const showUploadPicker = step === 'upload' && !jobId && !pendingPdf;
+  // Drives UploadProgressPanel in both the dropzone and the PDF-password panel below. `uploading`
+  // (not just `uploadProgress !== null`) is what every interaction guard checks, so a click during
+  // the completed dwell can't reopen the file picker underneath the checkmark.
+  const uploading = uploadProgress !== null || uploadCompleted;
+  const uploadPanelState: UploadPanelState = uploadCompleted ? 'completed' : uploadProgress !== null ? 'uploading' : 'idle';
 
   return (
     <div className="space-y-4">
@@ -891,7 +945,7 @@ export default function Import() {
               className="bg-card rounded p-6 shadow border border-border space-y-4"
               onSubmit={(e) => {
                 e.preventDefault();
-                if (uploadProgress === null) void upload(pendingPdf, true, pdfPassword || undefined);
+                if (!uploading) void upload(pendingPdf, true, pdfPassword || undefined);
               }}
             >
               <div className="flex items-center gap-2 text-sm text-ink">
@@ -915,7 +969,7 @@ export default function Import() {
                   placeholder="Leave blank if the file isn't protected"
                   value={pdfPassword}
                   onChange={(e) => setPdfPassword(e.target.value)}
-                  disabled={uploadProgress !== null}
+                  disabled={uploading}
                   aria-describedby="pdf-password-help"
                 />
                 <p
@@ -931,35 +985,27 @@ export default function Import() {
                 </p>
               </div>
 
-              {uploadProgress !== null ? (
-                <div data-testid="upload-progress">
-                  <p className="font-medium text-sm text-ink mb-2">
-                    {uploadProgress < 100 ? `Uploading… ${uploadProgress}%` : 'Processing statement…'}
-                  </p>
-                  <div className="w-full bg-border rounded-full h-2 overflow-hidden">
-                    <div
-                      className="bg-primary h-2 rounded-full transition-all duration-150"
-                      style={{ width: `${uploadProgress}%` }}
-                    />
+              <UploadProgressPanel
+                state={uploadPanelState}
+                progress={uploadProgress ?? 0}
+                idle={
+                  <div className="flex items-center gap-3">
+                    <Button type="submit">Upload statement</Button>
+                    <button
+                      type="button"
+                      className="text-sm text-muted underline"
+                      onClick={() => {
+                        setPendingPdf(null);
+                        setPdfPassword('');
+                        setPasswordState(null);
+                        clearError();
+                      }}
+                    >
+                      Choose a different file
+                    </button>
                   </div>
-                </div>
-              ) : (
-                <div className="flex items-center gap-3">
-                  <Button type="submit">Upload statement</Button>
-                  <button
-                    type="button"
-                    className="text-sm text-muted underline"
-                    onClick={() => {
-                      setPendingPdf(null);
-                      setPdfPassword('');
-                      setPasswordState(null);
-                      clearError();
-                    }}
-                  >
-                    Choose a different file
-                  </button>
-                </div>
-              )}
+                }
+              />
             </form>
           )}
 
@@ -1033,17 +1079,17 @@ export default function Import() {
             <div
               data-testid="statement-dropzone"
               role="button"
-              tabIndex={uploadProgress === null ? 0 : -1}
-              aria-disabled={uploadProgress !== null}
-              className={`bg-card rounded p-8 shadow border-2 border-dashed border-border text-center ${uploadProgress === null ? 'cursor-pointer' : 'cursor-default'}`}
-              onClick={() => uploadProgress === null && fileInput.current?.click()}
+              tabIndex={uploading ? -1 : 0}
+              aria-disabled={uploading}
+              className={`bg-card rounded p-8 shadow border-2 border-dashed border-border text-center ${uploading ? 'cursor-default' : 'cursor-pointer'}`}
+              onClick={() => !uploading && fileInput.current?.click()}
               // Bug fix: the actual <input type="file"> is visually hidden (className="hidden",
               // display:none), which removes it from the tab order entirely -- a keyboard-only user
               // had no way to open the file picker on this page at all, the primary way data enters
               // Fynora. This div is now itself a focusable, keyboard-operable trigger (Enter/Space),
               // matching the standard accessible-clickable-div pattern.
               onKeyDown={(e) => {
-                if (uploadProgress !== null) return;
+                if (uploading) return;
                 if (e.key === 'Enter' || e.key === ' ') {
                   e.preventDefault();
                   fileInput.current?.click();
@@ -1052,45 +1098,36 @@ export default function Import() {
               onDragOver={(e) => e.preventDefault()}
               onDrop={(e) => {
                 e.preventDefault();
-                if (uploadProgress === null && e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
+                if (!uploading && e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
               }}
             >
-              {uploadProgress !== null ? (
-                <div data-testid="upload-progress">
-                  <UploadCloud size={28} className="mx-auto mb-3 text-primary animate-pulse" />
-                  <p className="font-medium text-sm text-ink mb-3">
-                    {uploadProgress < 100 ? `Uploading… ${uploadProgress}%` : 'Processing statement…'}
-                  </p>
-                  <div className="w-full max-w-xs mx-auto bg-border rounded-full h-2 overflow-hidden">
-                    <div
-                      className="bg-primary h-2 rounded-full transition-all duration-150"
-                      style={{ width: `${uploadProgress}%` }}
-                    />
-                  </div>
-                </div>
-              ) : (
-                <>
-                  <UploadCloud size={28} className="mx-auto mb-3 text-primary" />
-                  <p className="font-medium text-sm text-ink">
-                    <strong>Click to upload</strong> or drag a bank/credit card statement here
-                  </p>
-                  <p className="text-xs text-muted mt-2 flex items-center justify-center gap-3">
-                    <span className="flex items-center gap-1"><FileSpreadsheet size={13} /> CSV exports</span>
-                    <span className="flex items-center gap-1"><FileText size={13} /> PDF statements</span>
-                  </p>
-                  <p className="text-[11px] text-muted mt-2">
-                    PDF support covers digital, text-based statements for now — a scanned or photographed
-                    PDF won't have selectable text for us to read, so those still need a CSV export instead.
-                  </p>
-                </>
-              )}
+              <UploadProgressPanel
+                state={uploadPanelState}
+                progress={uploadProgress ?? 0}
+                idle={
+                  <>
+                    <UploadCloud size={28} className="mx-auto mb-3 text-primary" />
+                    <p className="font-medium text-sm text-ink">
+                      <strong>Click to upload</strong> or drag a bank/credit card statement here
+                    </p>
+                    <p className="text-xs text-muted mt-2 flex items-center justify-center gap-3">
+                      <span className="flex items-center gap-1"><FileSpreadsheet size={13} /> CSV exports</span>
+                      <span className="flex items-center gap-1"><FileText size={13} /> PDF statements</span>
+                    </p>
+                    <p className="text-[11px] text-muted mt-2">
+                      PDF support covers digital, text-based statements for now — a scanned or photographed
+                      PDF won't have selectable text for us to read, so those still need a CSV export instead.
+                    </p>
+                  </>
+                }
+              />
               <input
                 ref={fileInput}
                 type="file"
                 accept=".csv,.pdf"
                 data-testid="statement-file-input"
                 className="hidden"
-                disabled={uploadProgress !== null}
+                disabled={uploading}
                 onChange={(e) => {
                   const picked = e.target.files?.[0];
                   // Clearing the input matters now that a PDF can bounce back here via "Choose a
