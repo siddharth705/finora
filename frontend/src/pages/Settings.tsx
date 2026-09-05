@@ -238,9 +238,13 @@ export default function Settings() {
       // different origin entirely, the same reason GoogleOAuthController.connect()'s own doc
       // comment gives for returning the URL rather than issuing a redirect itself.
       window.location.href = authorizationUrl;
-    } catch {
+    } catch (err) {
       setGmailConnecting(false);
-      setGmailActionError("Couldn't start the Gmail connection -- please try again.");
+      // Same reasoning as handleGmailSyncNow below: the backend already returns a message worth
+      // showing (e.g. "already connected" 409s), so surface it instead of a generic one that hides
+      // the real reason and, worse, tells the user to retry something a retry cannot fix.
+      const message = (err as { response?: { data?: { message?: string } } })?.response?.data?.message;
+      setGmailActionError(message || "Couldn't start the Gmail connection -- please try again.");
     }
   }
 
