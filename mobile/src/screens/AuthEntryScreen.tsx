@@ -155,6 +155,20 @@ export function AuthEntryScreen({ navigation }: Props) {
       subtitle="Enter your email or mobile number to continue"
       error={error}
     >
+      {showSocialSignIn ? (
+        <>
+          <View style={styles.socialStack}>
+            <GoogleSignInButton onCredential={handleGoogleCredential} onError={setError} />
+            <AppleSignInButton onCredential={handleAppleCredential} onError={setError} />
+          </View>
+          <View style={styles.dividerRow}>
+            <View style={[styles.dividerLine, { backgroundColor: c.border }]} />
+            <Text style={[styles.dividerText, { color: c.muted }]}>Or continue below</Text>
+            <View style={[styles.dividerLine, { backgroundColor: c.border }]} />
+          </View>
+        </>
+      ) : null}
+
       <TextField
         label="Email or mobile number"
         value={identifier}
@@ -169,20 +183,6 @@ export function AuthEntryScreen({ navigation }: Props) {
       />
 
       <Button label="Continue" onPress={handleSubmit} loading={loading} />
-
-      {showSocialSignIn ? (
-        <>
-          <View style={styles.dividerRow}>
-            <View style={[styles.dividerLine, { backgroundColor: c.border }]} />
-            <Text style={[styles.dividerText, { color: c.muted }]}>OR</Text>
-            <View style={[styles.dividerLine, { backgroundColor: c.border }]} />
-          </View>
-          <View style={styles.socialStack}>
-            <GoogleSignInButton onCredential={handleGoogleCredential} onError={setError} />
-            <AppleSignInButton onCredential={handleAppleCredential} onError={setError} />
-          </View>
-        </>
-      ) : null}
 
       <View style={[styles.notice, { backgroundColor: c.primaryLight }]}>
         <Text style={[styles.noticeText, { color: c.ink }]}>
@@ -213,6 +213,11 @@ const styles = StyleSheet.create({
   dividerText: {
     fontSize: 11,
     fontWeight: '600',
+    // Applied here rather than typed in caps: VoiceOver/TalkBack often spell out a long
+    // hardcoded-caps phrase letter by letter, mistaking it for an acronym -- this keeps the
+    // underlying text natural-case (readable as words) while still rendering all-caps visually,
+    // same split the web AuthDivider already gets from CSS text-transform.
+    textTransform: 'uppercase',
   },
   socialStack: {
     gap: spacing.sm,
