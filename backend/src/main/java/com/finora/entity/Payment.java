@@ -47,6 +47,18 @@ public class Payment {
     @Column(nullable = false, length = 20)
     private String status;
 
+    @Column(name = "base_amount", precision = 10, scale = 2)
+    private BigDecimal baseAmount;
+
+    @Column(name = "tax_amount", precision = 10, scale = 2)
+    private BigDecimal taxAmount;
+
+    @Column(name = "invoice_id", length = 50)
+    private String invoiceId;
+
+    @Column(name = "invoice_url", length = 500)
+    private String invoiceUrl;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt = Instant.now();
 
@@ -71,4 +83,12 @@ public class Payment {
     public Instant getCreatedAt() { return createdAt; }
     public Instant getUpdatedAt() { return updatedAt; }
     public void setUpdatedAt(Instant updatedAt) { this.updatedAt = updatedAt; }
+    public BigDecimal getBaseAmount() { return baseAmount; }
+    public void setBaseAmount(BigDecimal baseAmount) { this.baseAmount = baseAmount; }
+    public BigDecimal getTaxAmount() { return taxAmount; }
+    public void setTaxAmount(BigDecimal taxAmount) { this.taxAmount = taxAmount; }
+    public String getInvoiceId() { return invoiceId; }
+    public void setInvoiceId(String invoiceId) { this.invoiceId = invoiceId; }
+    public String getInvoiceUrl() { return invoiceUrl; }
+    public void setInvoiceUrl(String invoiceUrl) { this.invoiceUrl = invoiceUrl; }
 }

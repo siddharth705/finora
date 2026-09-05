@@ -40,6 +40,9 @@ public class BillingPrice {
     @Column(nullable = false)
     private boolean active = true;
 
+    @Column(name = "gst_rate", precision = 5, scale = 2)
+    private BigDecimal gstRate;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt = Instant.now();
 
@@ -62,4 +65,6 @@ public class BillingPrice {
     public Instant getCreatedAt() { return createdAt; }
     public Instant getUpdatedAt() { return updatedAt; }
     public void setUpdatedAt(Instant updatedAt) { this.updatedAt = updatedAt; }
+    public BigDecimal getGstRate() { return gstRate; }
+    public void setGstRate(BigDecimal gstRate) { this.gstRate = gstRate; }
 }

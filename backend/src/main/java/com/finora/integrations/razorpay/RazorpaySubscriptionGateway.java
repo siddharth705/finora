@@ -20,10 +20,16 @@ public interface RazorpaySubscriptionGateway {
     RazorpaySubscriptionDto fetchSubscription(String razorpaySubscriptionId);
 
     /** {@code cancelAtCycleEnd=true} for every user-initiated cancellation (spec §6.3); {@code false}
-     *  is reserved for the admin support action in Plan 2 (spec §6.6), which needs an immediate stop. */
+     *  is an immediate stop, used by two Plan 2 callers: the admin support action (spec §6.6), and
+     *  {@code RazorpayWebhookDispatcher.handleActivated} stopping the OLD subscription once an
+     *  upgrade's new one is confirmed active (spec §6.5 step 4). */
     void cancelSubscription(String razorpaySubscriptionId, boolean cancelAtCycleEnd);
 
-    /** {@code scheduleAtCycleEnd=true} defers the change to the next billing cycle (spec §6.4,
-     *  downgrade); {@code false} applies it now (spec §6.5, upgrade — used by Plan 2, not this plan). */
+    /** {@code scheduleAtCycleEnd=true} defers the change to the next billing cycle -- the only mode
+     *  used today, by Plan 2's downgrade (spec §6.4; {@code BillingCheckoutService.scheduleDowngrade}).
+     *  Plan 2's upgrade does NOT call this method at all: it creates a second, independent Razorpay
+     *  subscription instead (spec §6.5) and cancels the old one only after the new one activates, so
+     *  {@code scheduleAtCycleEnd=false} has no caller yet -- kept for a same-subscription immediate
+     *  plan change, should one ever be needed. */
     void updateSubscription(String razorpaySubscriptionId, String newRazorpayPlanId, boolean scheduleAtCycleEnd);
 }
