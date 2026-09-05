@@ -2,7 +2,7 @@ import { api, rawApi, type ApiEnvelope } from './client';
 import { downloadBlob } from '../lib/download';
 import type {
 
-  AccountDto, ActivationFunnelDto, ActivityTrendPointDto, AdminReferralSummaryDto, AdminUpdateUserRequest, AuditLogDto, BankDto, CategoryConfidencePoint,
+  AccountDto, ActivationFunnelDto, ActivityTrendPointDto, AdminUpdateUserRequest, AuditLogDto, BankDto, CategoryConfidencePoint,
   CoverageDto,
   HeldImportRow, HeldImportDetail, HeldImportSummary,
   HeldStatementRow, HeldStatementQuery, HeldStatementDetail, HeldStatementRerunResult,
@@ -309,14 +309,6 @@ export const adminSubscriptionsApi = {
     api.get<PagedResponse<SubscriptionSummaryDto>>('/admin/subscriptions', { params: { page, size } }).then((r) => r.data),
   changePlan: (userId: string, planCode: string, reason: string) =>
     api.put(`/admin/subscriptions/${userId}/plan`, { planCode, reason }),
-};
-
-// D-28 PR4-C. REFERRAL_MANAGEMENT_VIEW/_MANAGE-gated (V101), same split as adminSubscriptionsApi.
-export const adminReferralsApi = {
-  list: (page: number, size: number) =>
-    api.get<PagedResponse<AdminReferralSummaryDto>>('/admin/referrals', { params: { page, size } }).then((r) => r.data),
-  creditReward: (referralId: string, amount: number, reason: string) =>
-    api.post(`/admin/referrals/${referralId}/credit`, { amount, reason }),
 };
 
 export const adminSystemApi = {
