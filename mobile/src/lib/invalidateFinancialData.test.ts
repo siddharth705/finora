@@ -46,6 +46,10 @@ const NON_FINANCIAL_KEYS = new Set([
   // which file/row it was originally read from. Same reasoning as 'statement-import-transactions'
   // above.
   'transaction-source',
+  // Refer & Earn MVP. A referral relationship (and the resulting count) only changes when someone
+  // else signs up with this user's code -- no transaction, account, or import write moves it. Same
+  // reasoning as 'support-tickets-mine' above.
+  'referrals-mine',
 ]);
 
 function sourceFiles(dir: string): string[] {

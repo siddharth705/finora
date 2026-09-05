@@ -271,6 +271,48 @@ describe('Import — file-type routing', () => {
     expect(screen.queryByTestId('pdf-password-panel')).not.toBeInTheDocument();
   });
 
+  it('flashes a Completed checkmark before advancing to the review step', async () => {
+    const user = userEvent.setup();
+    renderImport();
+
+    await user.upload(screen.getByTestId('statement-file-input'), csvFile());
+
+    // The step doesn't jump straight from "uploading" to "review" -- there's a real, brief
+    // Completed state in between (UPLOAD_COMPLETE_DWELL_MS in Import.tsx), not just a fast-enough
+    // transition that happens to never get caught mid-flight.
+    expect(await screen.findByTestId('upload-completed')).toBeInTheDocument();
+    // Still the same dropzone container -- only its inner content morphed -- so the drag-and-drop
+    // prompt it showed a moment ago is what's gone, not the container itself.
+    expect(screen.queryByText(/click to upload/i)).not.toBeInTheDocument();
+
+    // ...and then it actually does move on to the review step, on its own, with no further
+    // interaction.
+    expect(await screen.findByRole('button', { name: /confirm import/i })).toBeInTheDocument();
+    expect(screen.queryByTestId('upload-completed')).not.toBeInTheDocument();
+  });
+
+  /**
+   * Bug fix: pendingPdf used to clear the instant stagePdf resolved, which made showUploadPicker
+   * (`!pendingPdf`) true for the whole Completed dwell -- swapping the password panel out for the
+   * dropzone, a different element further down the page, with "Continue previous import"/the retry
+   * banner able to render ABOVE it. The checkmark appeared in a box the user wasn't looking at,
+   * with unrelated content flashing in alongside it. The fix keeps pendingPdf (and this panel)
+   * mounted through the dwell so the PDF path's checkmark appears where its own progress bar just
+   * was, exactly like the dropzone already does for a CSV.
+   */
+  it('shows the Completed checkmark inside the PDF password panel, not the dropzone', async () => {
+    const user = userEvent.setup();
+    renderImport();
+
+    await pickAndUploadPdf(user);
+
+    expect(await screen.findByTestId('upload-completed')).toBeInTheDocument();
+    expect(screen.getByTestId('pdf-password-panel')).toBeInTheDocument();
+    expect(screen.queryByTestId('statement-dropzone')).not.toBeInTheDocument();
+
+    expect(await screen.findByRole('button', { name: /confirm import/i })).toBeInTheDocument();
+  });
+
   it('rejects an unsupported file type dropped onto the dropzone, without calling either staging endpoint', async () => {
     renderImport();
 
@@ -2414,7 +2456,10 @@ describe('Import — ownership name-mismatch warning', () => {
     renderImport();
 
     await pickAndUploadPdf(user);
-    await user.click(screen.getByRole('button', { name: /confirm import/i }));
+    // findByRole, not getByRole: the review step no longer appears the instant stagePdf resolves --
+    // there's a brief real "Completed" checkmark dwell first (UPLOAD_COMPLETE_DWELL_MS in
+    // Import.tsx) before the step actually advances.
+    await user.click(await screen.findByRole('button', { name: /confirm import/i }));
 
     expect(await screen.findByText('Statement Check')).toBeInTheDocument();
     expect(screen.getByText(/Sunil Verma/)).toBeInTheDocument();
@@ -2428,7 +2473,10 @@ describe('Import — ownership name-mismatch warning', () => {
     renderImport();
 
     await pickAndUploadPdf(user);
-    await user.click(screen.getByRole('button', { name: /confirm import/i }));
+    // findByRole, not getByRole: the review step no longer appears the instant stagePdf resolves --
+    // there's a brief real "Completed" checkmark dwell first (UPLOAD_COMPLETE_DWELL_MS in
+    // Import.tsx) before the step actually advances.
+    await user.click(await screen.findByRole('button', { name: /confirm import/i }));
     await screen.findByText('Statement Check');
     await user.click(screen.getByRole('button', { name: 'Continue Import' }));
 
@@ -2444,7 +2492,10 @@ describe('Import — ownership name-mismatch warning', () => {
     renderImport();
 
     await pickAndUploadPdf(user);
-    await user.click(screen.getByRole('button', { name: /confirm import/i }));
+    // findByRole, not getByRole: the review step no longer appears the instant stagePdf resolves --
+    // there's a brief real "Completed" checkmark dwell first (UPLOAD_COMPLETE_DWELL_MS in
+    // Import.tsx) before the step actually advances.
+    await user.click(await screen.findByRole('button', { name: /confirm import/i }));
     await screen.findByText('Statement Check');
     await user.click(screen.getByRole('button', { name: 'Upload Different Statement' }));
 
@@ -2458,7 +2509,10 @@ describe('Import — ownership name-mismatch warning', () => {
     renderImport();
 
     await pickAndUploadPdf(user);
-    await user.click(screen.getByRole('button', { name: /confirm import/i }));
+    // findByRole, not getByRole: the review step no longer appears the instant stagePdf resolves --
+    // there's a brief real "Completed" checkmark dwell first (UPLOAD_COMPLETE_DWELL_MS in
+    // Import.tsx) before the step actually advances.
+    await user.click(await screen.findByRole('button', { name: /confirm import/i }));
 
     await waitFor(() => expect(importApi.confirm).toHaveBeenCalledTimes(1));
     expect(screen.queryByText('Statement Check')).not.toBeInTheDocument();
@@ -2473,7 +2527,10 @@ describe('Import — ownership name-mismatch warning', () => {
     renderImport();
 
     await pickAndUploadPdf(user);
-    await user.click(screen.getByRole('button', { name: /confirm import/i }));
+    // findByRole, not getByRole: the review step no longer appears the instant stagePdf resolves --
+    // there's a brief real "Completed" checkmark dwell first (UPLOAD_COMPLETE_DWELL_MS in
+    // Import.tsx) before the step actually advances.
+    await user.click(await screen.findByRole('button', { name: /confirm import/i }));
 
     await waitFor(() => expect(importApi.confirm).toHaveBeenCalledTimes(1));
     expect(screen.queryByText('Statement Check')).not.toBeInTheDocument();
@@ -2490,7 +2547,10 @@ describe('Import — ownership name-mismatch warning', () => {
     renderImport();
 
     await pickAndUploadPdf(user);
-    await user.click(screen.getByRole('button', { name: /confirm import/i }));
+    // findByRole, not getByRole: the review step no longer appears the instant stagePdf resolves --
+    // there's a brief real "Completed" checkmark dwell first (UPLOAD_COMPLETE_DWELL_MS in
+    // Import.tsx) before the step actually advances.
+    await user.click(await screen.findByRole('button', { name: /confirm import/i }));
 
     await waitFor(() => expect(importApi.confirm).toHaveBeenCalledTimes(1));
     expect(screen.queryByText('Statement Check')).not.toBeInTheDocument();

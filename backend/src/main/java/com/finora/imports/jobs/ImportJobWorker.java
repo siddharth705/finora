@@ -1,6 +1,7 @@
 package com.finora.imports.jobs;
 
 import com.finora.entity.ImportJob;
+import com.finora.exception.ApiException;
 import com.finora.exception.ErrorCode;
 import com.finora.imports.ImportService;
 import com.finora.imports.analysis.ImportVerificationRecorder;
@@ -16,6 +17,8 @@ import com.finora.notification.domain.NotificationCategory;
 import com.finora.notification.domain.NotificationChannel;
 import com.finora.notification.domain.NotificationPriority;
 import com.finora.notification.domain.NotificationType;
+import com.finora.service.HeldItemAdminAlertService;
+import com.finora.util.AfterCommit;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -137,6 +140,7 @@ public class ImportJobWorker {
     private final ImportVerificationRecorder verificationRecorder;
     private final com.finora.service.HeldStatementService heldStatementService;
     private final ParserVersionProvider parserVersionProvider;
+    private final HeldItemAdminAlertService heldItemAdminAlertService;
 
     @Value("${app.import.queue.enabled:false}")
     private boolean enabled;
@@ -150,7 +154,8 @@ public class ImportJobWorker {
                             NotificationService notificationService,
                             ImportVerificationRecorder verificationRecorder,
                             com.finora.service.HeldStatementService heldStatementService,
-                            ParserVersionProvider parserVersionProvider) {
+                            ParserVersionProvider parserVersionProvider,
+                            HeldItemAdminAlertService heldItemAdminAlertService) {
         this.jobStore = jobStore;
         this.importService = importService;
         this.statementContentService = statementContentService;
@@ -161,6 +166,7 @@ public class ImportJobWorker {
         this.verificationRecorder = verificationRecorder;
         this.heldStatementService = heldStatementService;
         this.parserVersionProvider = parserVersionProvider;
+        this.heldItemAdminAlertService = heldItemAdminAlertService;
 
         observability.publishQueueDepth(WORKER, JOB_KIND, jobStore::queueDepth);
         observability.publishOldestPendingAge(WORKER, JOB_KIND, jobStore::oldestQueuedAt);
@@ -435,8 +441,12 @@ public class ImportJobWorker {
      * Whether a dead-lettered failure belongs in the admin triage queue.
      *
      * <p>The queue exists for one thing: a parser gap on a statement layout this codebase has not
-     * seen. Fix the parser, reprocess, done. Two conditions establish that -- the classification
-     * was RETRY_ONCE_THEN_ALERT (nothing recognised the exception) and the attempt budget is spent.
+     * seen. Fix the parser, reprocess, done. Two conditions establish that for an exception nothing
+     * recognised at all -- the classification was RETRY_ONCE_THEN_ALERT and the attempt budget is
+     * spent. {@link #carriesRecoveredEvidence} establishes the same thing a second way, for a
+     * curated {@code ErrorCode} exception that recognised SOMETHING (a "no transaction table
+     * found") but whose own recovered-lines evidence says that verdict is plausibly wrong -- see
+     * its own doc comment.
      *
      * <p><b>StatementIntegrityException is excluded, despite satisfying both.</b> Those two
      * conditions quietly encode a third one -- that a human can fix something and reprocess -- and
@@ -476,9 +486,42 @@ public class ImportJobWorker {
      */
     private static boolean holdsForTriage(ErrorCode.RetryPolicy policy,
                                           ImportJob.FailureOutcome outcome, Exception cause) {
-        return outcome == ImportJob.FailureOutcome.DEAD_LETTERED
-                && policy == ErrorCode.RetryPolicy.RETRY_ONCE_THEN_ALERT
-                && isOperatorRemediable(cause);
+        if (outcome != ImportJob.FailureOutcome.DEAD_LETTERED || !isOperatorRemediable(cause)) {
+            return false;
+        }
+        return policy == ErrorCode.RetryPolicy.RETRY_ONCE_THEN_ALERT || carriesRecoveredEvidence(cause);
+    }
+
+    /**
+     * A curated "nothing was extracted" failure ({@code IMPORT_NO_HEADER_DETECTED} /
+     * {@code IMPORT_NO_TRANSACTIONS_FOUND}) is {@code FAIL_FAST} -- retrying the exact same bytes
+     * against the exact same parser build cannot succeed, so the {@code RETRY_ONCE_THEN_ALERT}
+     * branch above never fires for it, and by default it dead-letters straight to FAILED with no
+     * triage visibility. That default is right for the common case behind those two codes: a
+     * summary, a T&C page, or some other non-statement upload, where there was genuinely nothing to
+     * find and a human reviewing it would learn nothing an engineer could act on.
+     *
+     * <p>But {@code ExtractionCheck}'s own recovered-lines count (see its class doc, "never lose
+     * information") already distinguishes that from a document where the engine found date/amount-
+     * shaped text it could not anchor into a table -- real evidence a transaction table exists, not
+     * proof that it doesn't. That is exactly the "fix the parser, reprocess, done" situation
+     * {@link #holdsForTriage} exists for; the only reason it dead-ends on the user instead is that
+     * it happens to be thrown as a curated {@link ErrorCode} rather than an unrecognised exception.
+     *
+     * <p>Not hypothetical: confirmed against a real statement, a Paytm passbook export whose date
+     * column is split across two lines ("Date &" / "Time"), which the table locator did not
+     * recognise. It had a genuine "Passbook Payments History" table with two real transactions --
+     * recoveredLines was non-zero -- and IMPORT_NO_HEADER_DETECTED sent it straight to FAILED with
+     * no admin visibility at all, for exactly the class of layout gap this queue exists to catch.
+     */
+    private static boolean carriesRecoveredEvidence(Throwable cause) {
+        if (!(cause instanceof ApiException api)) return false;
+        ErrorCode code = api.getCode();
+        if (code != ErrorCode.IMPORT_NO_HEADER_DETECTED && code != ErrorCode.IMPORT_NO_TRANSACTIONS_FOUND) {
+            return false;
+        }
+        Object recoveredLines = api.getDetails().get("recoveredLines");
+        return recoveredLines instanceof Integer lines && lines > 0;
     }
 
     /**
@@ -604,6 +647,26 @@ public class ImportJobWorker {
                     job.holdForReview(failureCode, Instant.now());
                 }
             });
+            // jobStore.update is @Transactional(REQUIRES_NEW), so by this line its transaction has
+            // already committed (or, if the consumer threw, this line is never reached at all --
+            // the exception propagates straight to this method's own catch block below, and no
+            // alert fires for a hold that never happened). AfterCommit.run therefore takes its
+            // "no ambient transaction" branch here and runs immediately rather than deferring --
+            // registered anyway, both for the logging/never-throws discipline every other call site
+            // in this pipeline gets from going through it, and so a future change that moves this
+            // call inside an active transaction gets the deferral for free rather than silently
+            // needing this comment rewritten. holdsForTriage is recomputed rather than tracked in a
+            // third mutable box alongside outcome[0]/attempts[0]: it is a pure function of policy,
+            // outcome[0] and cause, all still in scope, so there is nothing a separate boolean could
+            // record that this call doesn't already answer identically.
+            if (holdsForTriage(policy, outcome[0], cause)) {
+                // Re-reads the job fresh (see HeldItemAdminAlertService.alertParserGapHeld's own
+                // doc comment) rather than passing the entity through -- the same reason
+                // notifyIfPreviouslyHeld's notification key is derived from the job id, not the
+                // object.
+                AfterCommit.run("held-item admin alert (parser gap)",
+                        () -> heldItemAdminAlertService.alertParserGapHeld(jobId));
+            }
             switch (outcome[0]) {
                 case DEAD_LETTERED -> {
                     log.error("Import job {} failed {} times and will not be retried automatically",

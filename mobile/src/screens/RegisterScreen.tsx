@@ -36,6 +36,7 @@ export function RegisterScreen({ navigation, route }: Props) {
   );
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [referralCode, setReferralCode] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   // Only surface field-level errors once a field has been left, so the empty form doesn't mount
@@ -70,7 +71,10 @@ export function RegisterScreen({ navigation, route }: Props) {
     try {
       // Trimmed at the submission boundary so the account is never created with stray whitespace
       // in the name or email. +91 is prepended here, once -- it's never held in state.
-      await register(email.trim(), password, trimmedName, `+91${phoneNumber}`);
+      // referralCode is sent as undefined (not '') when blank -- redeemCode() treats a blank
+      // string as "no code" server-side either way, but this keeps the request body honest about
+      // what the user actually typed.
+      await register(email.trim(), password, trimmedName, `+91${phoneNumber}`, referralCode.trim() || undefined);
       // No navigation: RootNavigator switches stacks off AuthContext state, landing on
       // VerifyPhone since a fresh registration is never phone-verified yet.
     } catch (err) {
@@ -210,6 +214,16 @@ export function RegisterScreen({ navigation, route }: Props) {
         autoCapitalize="none"
         autoComplete="new-password"
         error={touched.confirmPassword && !passwordsMatch ? "Passwords don't match." : null}
+      />
+
+      <TextField
+        label="Referral code (optional)"
+        value={referralCode}
+        onChangeText={(v) => setReferralCode(v.toUpperCase())}
+        placeholder="e.g. AB12CD34"
+        autoCapitalize="characters"
+        autoCorrect={false}
+        maxLength={20}
       />
 
       <Button label="Create account" onPress={handleSubmit} loading={loading} disabled={!formValid} pressScale />
