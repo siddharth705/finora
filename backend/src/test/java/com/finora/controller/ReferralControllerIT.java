@@ -17,8 +17,8 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/** D-28 PR4-C end to end -- a real user's own code, generated lazily against a real (empty)
- *  referral_codes table, and their own (empty) referrals list. */
+/** Refer &amp; Earn MVP end to end -- a real user's own code, generated lazily against a real
+ *  (empty) referral_codes table, and their own (zero) referral count. */
 class ReferralControllerIT extends AbstractIntegrationTest {
 
     @Autowired private TestRestTemplate restTemplate;
@@ -61,7 +61,7 @@ class ReferralControllerIT extends AbstractIntegrationTest {
     }
 
     @Test
-    void mine_returnsAnEmptyListAndZeroBalance_forAUserWhoHasReferredNoOne() throws Exception {
+    void mine_returnsTheCodeAndZeroCount_forAUserWhoHasReferredNoOne() throws Exception {
         User user = createUser();
 
         ResponseEntity<String> response = restTemplate.exchange(
@@ -69,7 +69,7 @@ class ReferralControllerIT extends AbstractIntegrationTest {
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
         JsonNode data = mapper.readTree(response.getBody()).get("data");
-        assertThat(data.get("referrals").size()).isZero();
-        assertThat(data.get("walletBalance").asDouble()).isEqualTo(0.0);
+        assertThat(data.get("code").asText()).isNotBlank();
+        assertThat(data.get("referralCount").asInt()).isZero();
     }
 }

@@ -41,23 +41,18 @@ public class SubscriptionService {
     private final PlanRepository planRepository;
     private final UserRepository userRepository;
     private final AuditService auditService;
-    // D-28 PR4-C: notified after a successful change so a referred user's REGISTERED referral can
-    // advance to SUBSCRIBED -- see ReferralService.onPlanChanged's own doc comment for why this is
-    // the one referral-lifecycle step that's automatic rather than admin-manual.
-    private final ReferralService referralService;
 
     public SubscriptionService(SubscriptionRepository subscriptionRepository,
                                 SubscriptionEventRepository subscriptionEventRepository,
                                 PlanChangeRepository planChangeRepository,
                                 PlanRepository planRepository, UserRepository userRepository,
-                                AuditService auditService, ReferralService referralService) {
+                                AuditService auditService) {
         this.subscriptionRepository = subscriptionRepository;
         this.subscriptionEventRepository = subscriptionEventRepository;
         this.planChangeRepository = planChangeRepository;
         this.planRepository = planRepository;
         this.userRepository = userRepository;
         this.auditService = auditService;
-        this.referralService = referralService;
     }
 
     /** Called from every account-creation path (AuthService.createUserRecord and
@@ -147,7 +142,5 @@ public class SubscriptionService {
 
         auditService.record(userId, "SUBSCRIPTION_PLAN_CHANGED", "Subscription", subscription.getId(),
                 Map.of("toPlanCode", newPlanCode, "reason", reason, "actorId", actingAdminId.toString()));
-
-        referralService.onPlanChanged(userId, newPlanCode, actingAdminId);
     }
 }
