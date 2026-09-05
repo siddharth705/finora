@@ -35,7 +35,8 @@ interface AuthState {
     email: string,
     password: string,
     fullName: string,
-    phoneNumber: string
+    phoneNumber: string,
+    referralCode?: string
   ) => Promise<{ phoneVerified: boolean }>;
   // D-23 Phase 2. Mirrors frontend/src/context/AuthContext.tsx's own loginWithGoogle exactly --
   // same contract, same persist() reuse.
@@ -266,9 +267,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     regEmail: string,
     password: string,
     name: string,
-    phoneNumber: string
+    phoneNumber: string,
+    referralCode?: string
   ): Promise<{ phoneVerified: boolean }> {
-    const res = await authApi.register(regEmail, password, name, phoneNumber);
+    const res = await authApi.register(regEmail, password, name, phoneNumber, referralCode);
     await persist(res.data);
     // VerifyPhoneScreen fetches the account's real phone number itself (userApi.get(), now that
     // it's authenticated) rather than being handed it through navigation params.
