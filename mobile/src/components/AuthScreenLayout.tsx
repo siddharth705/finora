@@ -8,6 +8,8 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import Animated, { FadeInDown } from 'react-native-reanimated';
+import { AuthAmbientBackground } from './AuthAmbientBackground';
 import { BrandMark } from './BrandMark';
 import { fonts, radius, spacing, useTheme } from '../theme';
 
@@ -38,6 +40,7 @@ export function AuthScreenLayout({ title, subtitle, error, banner, children, foo
       style={[styles.flex, { backgroundColor: c.bg }]}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
+      <AuthAmbientBackground />
       <ScrollView
         contentContainerStyle={[
           styles.scroll,
@@ -45,12 +48,15 @@ export function AuthScreenLayout({ title, subtitle, error, banner, children, foo
         ]}
         keyboardShouldPersistTaps="handled"
       >
-        <View style={styles.brandRow}>
+        <Animated.View entering={FadeInDown.duration(400)} style={styles.brandRow}>
           <BrandMark size={30} />
           <Text style={[styles.brandName, { color: c.ink }]}>FYNORA</Text>
-        </View>
+        </Animated.View>
 
-        <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }]}>
+        <Animated.View
+          entering={FadeInDown.delay(80).duration(450)}
+          style={[styles.card, { backgroundColor: c.card, borderColor: c.border }]}
+        >
           <Text style={[styles.title, { color: c.ink }]}>{title}</Text>
           {subtitle ? <Text style={[styles.subtitle, { color: c.muted }]}>{subtitle}</Text> : null}
 
@@ -62,7 +68,7 @@ export function AuthScreenLayout({ title, subtitle, error, banner, children, foo
           ) : null}
 
           {children}
-        </View>
+        </Animated.View>
 
         {footer ? <View style={styles.footer}>{footer}</View> : null}
       </ScrollView>

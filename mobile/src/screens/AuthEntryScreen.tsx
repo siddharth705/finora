@@ -127,7 +127,7 @@ export function AuthEntryScreen({ navigation }: Props) {
           retained and nothing was lost.
         </Text>
 
-        <Button label="Reactivate my account" onPress={handleReactivate} loading={loading} />
+        <Button label="Reactivate my account" onPress={handleReactivate} loading={loading} pressScale />
         <View style={styles.cancelRow}>
           <Button
             label="Not you? Go back"
@@ -168,7 +168,7 @@ export function AuthEntryScreen({ navigation }: Props) {
         onSubmitEditing={handleSubmit}
       />
 
-      <Button label="Continue" onPress={handleSubmit} loading={loading} />
+      <Button label="Continue" onPress={handleSubmit} loading={loading} pressScale />
 
       {showSocialSignIn ? (
         <>

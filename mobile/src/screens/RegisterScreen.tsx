@@ -194,7 +194,7 @@ export function RegisterScreen({ navigation, route }: Props) {
         error={touched.confirmPassword && !passwordsMatch ? "Passwords don't match." : null}
       />
 
-      <Button label="Create account" onPress={handleSubmit} loading={loading} disabled={!formValid} />
+      <Button label="Create account" onPress={handleSubmit} loading={loading} disabled={!formValid} pressScale />
 
       {showSocialSignIn ? (
         <>
