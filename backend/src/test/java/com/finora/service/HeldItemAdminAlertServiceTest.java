@@ -1,6 +1,7 @@
 package com.finora.service;
 
 import com.finora.config.EmailProperties;
+import com.finora.entity.HeldStatement;
 import com.finora.entity.ImportJob;
 import com.finora.entity.User;
 import com.finora.exception.ErrorCode;
@@ -134,6 +135,67 @@ class HeldItemAdminAlertServiceTest {
         service.alertParserGapHeld(job.getId());
 
         verify(emailProvider).send(argThatEmailTo("triage-admin@example.com"));
+    }
+
+    private HeldStatement heldStatement(String heldId, String bankName) {
+        HeldStatement held = new HeldStatement(heldId, UUID.randomUUID(), UUID.randomUUID(),
+                "objects/key", "Statement period ends before it starts");
+        held.recordBank(bankName);
+        return held;
+    }
+
+    @Test
+    void alertTrustReviewHeld_emailsEveryAdminHoldingTrustReviewManage() {
+        HeldStatement held = heldStatement("HELD-00001", "HDFC Bank");
+        when(heldStatementRepository.findByHeldId("HELD-00001")).thenReturn(Optional.of(held));
+        User admin = adminUser("trust-review-admin@example.com");
+        when(userRepository.findByPermissionNameAndAccountScope("TRUST_REVIEW_MANAGE", User.SCOPE_ADMIN))
+                .thenReturn(List.of(admin));
+
+        service.alertTrustReviewHeld("HELD-00001");
+
+        verify(emailProvider).send(argThatEmailTo("trust-review-admin@example.com"));
+    }
+
+    @Test
+    void alertTrustReviewHeld_includesTheHeldIdReasonAndAnAdminPortalLink() {
+        HeldStatement held = heldStatement("HELD-00002", "HDFC Bank");
+        when(heldStatementRepository.findByHeldId("HELD-00002")).thenReturn(Optional.of(held));
+        when(userRepository.findByPermissionNameAndAccountScope(any(), any()))
+                .thenReturn(List.of(adminUser("trust-review-admin@example.com")));
+
+        service.alertTrustReviewHeld("HELD-00002");
+
+        org.mockito.ArgumentCaptor<EmailMessage> captor = org.mockito.ArgumentCaptor.forClass(EmailMessage.class);
+        verify(emailProvider).send(captor.capture());
+        EmailMessage sent = captor.getValue();
+        assertThat(sent.html()).contains("HELD-00002");
+        assertThat(sent.html()).contains("Statement period ends before it starts");
+        assertThat(sent.html()).contains("https://admin.example.com/held-statements/HELD-00002");
+    }
+
+    @Test
+    void alertTrustReviewHeld_omitsTheBankLineWhenNoBankWasDetected() {
+        HeldStatement held = heldStatement("HELD-00003", null);
+        when(heldStatementRepository.findByHeldId("HELD-00003")).thenReturn(Optional.of(held));
+        when(userRepository.findByPermissionNameAndAccountScope(any(), any()))
+                .thenReturn(List.of(adminUser("trust-review-admin@example.com")));
+
+        service.alertTrustReviewHeld("HELD-00003");
+
+        org.mockito.ArgumentCaptor<EmailMessage> captor = org.mockito.ArgumentCaptor.forClass(EmailMessage.class);
+        verify(emailProvider).send(captor.capture());
+        assertThat(captor.getValue().html()).doesNotContain("<strong>Bank:</strong>");
+    }
+
+    @Test
+    void alertTrustReviewHeld_sendsNothingWhenTheHeldStatementNoLongerExists() {
+        when(heldStatementRepository.findByHeldId("HELD-00004")).thenReturn(Optional.empty());
+
+        service.alertTrustReviewHeld("HELD-00004");
+
+        verify(userRepository, never()).findByPermissionNameAndAccountScope(any(), any());
+        verify(emailProvider, never()).send(any());
     }
 
     private static EmailMessage argThatEmailTo(String email) {
