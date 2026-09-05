@@ -266,6 +266,46 @@ class CapabilityCorpusCoverageTest {
                         + "it would be cited for is not real coverage. Covered by a synthetic fixture in "
                         + "StatementClosingMarkerPdfPreviewGeneratorTest instead, mutation-checked "
                         + "against the pre-fix code.");
+        // Four entries below are PR #930's new capabilities. Verified directly (dumped every
+        // committed trace's own fired-capability set with PdfTableLocator.locateAll, per this
+        // test's own capabilitiesTheCorpusExercises) rather than assumed from the PR description.
+        DECLARED_WITHOUT_A_TRACE.put("LOAN_SUMMARY_TABLE_CLOSED",
+                "no trace yet -- evidenced from two real HSBC credit-card statements (HSBC CC.pdf, "
+                        + "HSBC CC new.pdf), neither of which has a committed trace in this corpus; the "
+                        + "two committed HSBC traces (hsbc-credit-card-yearless-dates, "
+                        + "hsbc-savings-ledger-validation) are captured from different real documents "
+                        + "and confirmed directly not to exercise this capability. Real-corpus behavior "
+                        + "verified via the ground-truth gate (scripts/run-corpus-ground-truth.py) "
+                        + "against the original files. Covered instead by "
+                        + "LoanSummaryTableClosedPdfTableLocatorTest's fully hand-synthesized fixture.");
+        DECLARED_WITHOUT_A_TRACE.put("RECONCILED_HEADER_SECTIONS_REMERGED",
+                "no trace yet -- evidenced from the real sbi-credit-card-statement and "
+                        + "indusland-credit-card-account-number-inheritance documents, which HAVE "
+                        + "committed traces, but both traces (captured 2026-08-12 and 2026-09-01) "
+                        + "predate this trigger, the same reason already documented for "
+                        + "SAVINGS_AND_BENEFITS_SECTION_CLOSED and CHEQUE_PAYABLE_FOOTER_CLOSED above -- "
+                        + "confirmed directly, neither trace exercises this capability as committed. "
+                        + "Real-corpus behavior verified via the ground-truth gate "
+                        + "(scripts/run-corpus-ground-truth.py) against the original files. Covered "
+                        + "instead by ReconciledHeaderSectionsRemergedPdfTableLocatorTest's fully "
+                        + "hand-synthesized fixture.");
+        DECLARED_WITHOUT_A_TRACE.put("EMPTY_SECTION_DROPPED",
+                "no trace yet -- evidenced from a real Shivani_HDFC.pdf statement with no committed "
+                        + "trace in this corpus. Real-corpus behavior verified via the ground-truth gate "
+                        + "(scripts/run-corpus-ground-truth.py) against the original file. Covered "
+                        + "instead by EmptySectionDroppedPdfTableLocatorTest's fully hand-synthesized "
+                        + "fixture.");
+        DECLARED_WITHOUT_A_TRACE.put("INVESTMENT_FRAGMENT_REMERGED",
+                "no trace CAN cover it here, for the same scoping reason as "
+                        + "PRINTED_TRANSACTION_TABLE_DATE_RANGE above: this fires in "
+                        + "PdfPreviewGenerator's orphaned-fragment merge pass, never from "
+                        + "PdfTableLocator.locateAll -- the one call this test ever makes against a "
+                        + "committed trace. Evidenced from a real Shivani_HDFC.pdf statement with no "
+                        + "committed trace in this corpus; real-corpus behavior verified via the "
+                        + "ground-truth gate (scripts/run-corpus-ground-truth.py) against the original "
+                        + "file. Covered instead by "
+                        + "InvestmentFragmentRemergedPdfPreviewGeneratorTest's fully hand-synthesized "
+                        + "fixture.");
         // RIGHT_ALIGNED_AMOUNTS was here, with the note "either the three traces genuinely avoid
         // right-aligned amount columns, or the recording sits on a path they do not take. Measure
         // before capturing." It was measured, and the answer was a third thing: the two HDFC
