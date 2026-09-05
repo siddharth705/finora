@@ -147,6 +147,22 @@ describe('Budgets', () => {
     await waitFor(() => expect(budgetsApi.upsert).toHaveBeenCalledWith('Travel', 3000));
   });
 
+  it('renders stat cards, the category list, the spending breakdown chart, and the form together', async () => {
+    vi.mocked(budgetsApi.list).mockResolvedValue([
+      budget({ id: 'b1', categoryId: 'c1', categoryName: 'Dining', monthlyLimit: 10000, spentThisMonth: 8400 }),
+    ]);
+    vi.mocked(categoriesApi.list).mockResolvedValue([category({ id: 'c1', icon: 'utensils', color: 'orange' })]);
+    renderPage();
+
+    expect(await screen.findByText('Total Spend')).toBeInTheDocument();
+    expect(screen.getByText('Dining')).toBeInTheDocument();
+    // 8400 / 10000 = 84%, under the 90% "On track" threshold -- same budget Task 3's stat-card
+    // test already classifies as on-track.
+    expect(screen.getByText('On track')).toBeInTheDocument();
+    expect(screen.getByText('Spending Breakdown')).toBeInTheDocument();
+    expect(screen.getByText('Set a Budget')).toBeInTheDocument();
+  });
+
   // The actual bug this page had: `budgets` started `[]`, which the render logic couldn't tell
   // apart from "genuinely no budgets set" -- so the EmptyState rendered immediately on every
   // mount, before the fetch had a chance to resolve, then popped to real content once it did.
