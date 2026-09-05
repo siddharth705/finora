@@ -66,6 +66,7 @@ public class RazorpayWebhookDispatcher {
         switch (eventType) {
             case "subscription.authenticated", "subscription.activated" -> handleActivated(payload);
             case "subscription.charged" -> handleCharged(payload);
+            case "subscription.pending" -> handlePending(payload);
             default -> log.info("Razorpay webhook event '{}' received but not handled in V1.", eventType);
         }
     }
@@ -175,5 +176,28 @@ public class RazorpayWebhookDispatcher {
         event.setEventType(SubscriptionEvent.SUBSCRIPTION_RENEWED);
         event.setMetadata(Map.of("razorpaySubscriptionId", razorpaySubscriptionId));
         subscriptionEventRepository.save(event);
+    }
+
+    /** spec §5. PAST_DUE, not a revoked state — Razorpay's own retry is in progress and, per its
+     *  documented behavior, does not itself affect access (design spec §3). */
+    void handlePending(Map<String, Object> payload) {
+        Map<String, Object> entity = subscriptionEntity(payload);
+        String razorpaySubscriptionId = (String) entity.get("id");
+        if (razorpaySubscriptionId == null) return;
+
+        Optional<Subscription> maybeSubscription = subscriptionRepository.findByRazorpaySubscriptionId(razorpaySubscriptionId);
+        if (maybeSubscription.isEmpty()) return;
+        Subscription subscription = maybeSubscription.get();
+        subscription.setStatus(Subscription.STATUS_PAST_DUE);
+        subscriptionRepository.save(subscription);
+
+        Payment payment = new Payment();
+        payment.setUserId(subscription.getUserId());
+        payment.setSubscriptionId(subscription.getId());
+        payment.setProvider("RAZORPAY");
+        payment.setStatus(Payment.STATUS_PENDING);
+        payment.setAmount(java.math.BigDecimal.ZERO); // retry attempt, amount not in this webhook's payload
+        payment.setCurrency("INR");
+        paymentRepository.save(payment);
     }
 }

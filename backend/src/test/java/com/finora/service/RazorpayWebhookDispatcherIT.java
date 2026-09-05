@@ -150,4 +150,27 @@ class RazorpayWebhookDispatcherIT extends AbstractIntegrationTest {
         Subscription reloaded = subscriptionRepository.findActiveOrTrial(user.getId()).orElseThrow();
         assertThat(reloaded.getPlanId()).isEqualTo(plus.getId());
     }
+
+    @Test
+    void pendingSetsStatusToPastDueButDoesNotRevokeAccess() {
+        User user = createUser();
+        subscriptionService.provisionFreeSubscription(user.getId());
+        String razorpaySubscriptionId = "sub_test_" + UUID.randomUUID();
+        Subscription subscription = subscriptionRepository.findActiveOrTrial(user.getId()).orElseThrow();
+        subscription.setRazorpaySubscriptionId(razorpaySubscriptionId);
+        subscription.setPaymentProvider("RAZORPAY");
+        subscriptionRepository.save(subscription);
+
+        Map<String, Object> payload = Map.of(
+                "subscription", Map.of("entity", Map.of("id", razorpaySubscriptionId)));
+
+        dispatcher.dispatch("subscription.pending", payload);
+
+        Subscription reloaded = subscriptionRepository.findByRazorpaySubscriptionId(razorpaySubscriptionId).orElseThrow();
+        assertThat(reloaded.getStatus()).isEqualTo(Subscription.STATUS_PAST_DUE);
+
+        List<Payment> payments = paymentRepository.findByUserIdOrderByCreatedAtDesc(user.getId());
+        assertThat(payments).hasSize(1);
+        assertThat(payments.get(0).getStatus()).isEqualTo(Payment.STATUS_PENDING);
+    }
 }
