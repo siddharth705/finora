@@ -5,6 +5,11 @@ import com.finora.dto.HeldImportDto;
 import com.finora.dto.PagedResponse;
 import com.finora.security.CurrentUser;
 import com.finora.service.AdminHeldImportService;
+import com.finora.service.AdminHeldImportService.DownloadedStatement;
+import org.springframework.http.ContentDisposition;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -62,6 +67,27 @@ public class AdminHeldImportController {
     @GetMapping("/{jobId}")
     public ApiResponse<HeldImportDto.Detail> detail(@PathVariable UUID jobId) {
         return ApiResponse.ok(heldImportService.detail(currentUser.id(), jobId));
+    }
+
+    /**
+     * Hands the raw statement bytes to a member of staff -- the one action in this queue with more
+     * risk than the rest of the controller combined. Gated the same way {@code
+     * AdminHeldStatementController.document} is: {@code IMPORT_TRIAGE_MANAGE} is grantable to a
+     * future support/triage role, and that role must never be able to take the document itself, so
+     * both conditions are restated in this one expression rather than layered as class-level plus
+     * method-level -- a method-level {@code @PreAuthorize} REPLACES the class-level rule for Spring
+     * Security, it does not add to it, which would silently drop the class's permission check for
+     * this one endpoint alone.
+     */
+    @PreAuthorize("hasAuthority('IMPORT_TRIAGE_MANAGE') and hasAnyRole('ADMIN', 'SUPER_ADMIN')")
+    @GetMapping("/{jobId}/document")
+    public ResponseEntity<byte[]> document(@PathVariable UUID jobId) {
+        DownloadedStatement file = heldImportService.download(currentUser.id(), jobId);
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType(file.contentType()))
+                .header(HttpHeaders.CONTENT_DISPOSITION,
+                        ContentDisposition.attachment().filename(file.fileName()).build().toString())
+                .body(file.content());
     }
 
     /** Requeues one held job with a fresh attempt budget. 409 if it is in any other state, naming
