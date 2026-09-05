@@ -1030,18 +1030,10 @@ export const billingApi = {
   history: () => api.get<BillingHistoryEntry[]>('/billing/history').then((r) => r.data),
 };
 
-// D-28 PR4-C. The referral program (proposal §4) -- mirrors backend ReferralDtos exactly.
-export interface MyReferralEntry {
-  referralId: string;
-  referredUserFullName: string | null;
-  status: string;
-  reward: number | null;
-  createdAt: string;
-}
-
+// Refer & Earn MVP -- mirrors backend ReferralDtos exactly. Just a code and a count.
 export interface MyReferralsDto {
-  referrals: MyReferralEntry[];
-  walletBalance: number;
+  code: string;
+  referralCount: number;
 }
 
 export const referralsApi = {

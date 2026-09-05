@@ -42,7 +42,6 @@ class SubscriptionServiceTest {
     private PlanRepository planRepository;
     private UserRepository userRepository;
     private AuditService auditService;
-    private ReferralService referralService;
     private SubscriptionService service;
 
     private final UUID userId = UUID.randomUUID();
@@ -56,9 +55,8 @@ class SubscriptionServiceTest {
         planRepository = mock(PlanRepository.class);
         userRepository = mock(UserRepository.class);
         auditService = mock(AuditService.class);
-        referralService = mock(ReferralService.class);
         service = new SubscriptionService(subscriptionRepository, subscriptionEventRepository,
-                planChangeRepository, planRepository, userRepository, auditService, referralService);
+                planChangeRepository, planRepository, userRepository, auditService);
         when(subscriptionRepository.save(any(Subscription.class))).thenAnswer(inv -> {
             Subscription s = inv.getArgument(0);
             if (s.getId() == null) ReflectionTestUtils.setField(s, "id", UUID.randomUUID());
@@ -131,9 +129,6 @@ class SubscriptionServiceTest {
         verify(auditService).record(eq(userId), eq("SUBSCRIPTION_PLAN_CHANGED"), eq("Subscription"),
                 eq(existing.getId()), metadataCaptor.capture());
         assertThat(metadataCaptor.getValue()).containsEntry("actorId", adminId.toString());
-        // D-28 PR4-C: a real plan change is the one thing that can advance a referred user's
-        // REGISTERED referral to SUBSCRIBED -- see ReferralService.onPlanChanged.
-        verify(referralService).onPlanChanged(userId, "PREMIUM", adminId);
     }
 
     @Test
@@ -151,8 +146,6 @@ class SubscriptionServiceTest {
 
         verify(subscriptionRepository, never()).save(any());
         verify(planChangeRepository, never()).save(any());
-        // A no-op plan change must not touch the referral lifecycle either.
-        verifyNoInteractions(referralService);
     }
 
     @Test
