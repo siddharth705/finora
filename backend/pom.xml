@@ -386,6 +386,16 @@
       <artifactId>micrometer-registry-prometheus</artifactId>
     </dependency>
 
+    <!-- Subscription billing V1 (docs/superpowers/specs/2026-09-05-subscription-billing-v1-design.md).
+         Official Razorpay Java SDK — Subscriptions API client and webhook signature verification.
+         Version pinned: Razorpay does not participate in spring-boot-starter-parent's dependency
+         management. -->
+    <dependency>
+      <groupId>com.razorpay</groupId>
+      <artifactId>razorpay-java</artifactId>
+      <version>1.4.10</version>
+    </dependency>
+
   </dependencies>
 
   <build>

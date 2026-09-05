@@ -697,6 +697,15 @@ app:
         paytm:
           enabled: ${GMAIL_PARSER_PAYTM_ENABLED:false}
 
+    # Subscription billing V1 (docs/superpowers/specs/2026-09-05-subscription-billing-v1-design.md).
+    # Unset is a supported state, same posture as google above -- checkout/webhook endpoints answer
+    # 503 until a real Razorpay account exists (spec §10), nothing else in the application depends
+    # on this being present.
+    razorpay:
+      key-id: ${RAZORPAY_KEY_ID:}
+      key-secret: ${RAZORPAY_KEY_SECRET:}
+      webhook-secret: ${RAZORPAY_WEBHOOK_SECRET:}
+
   # NotificationDispatcher's poller/nudge -- same enabled-flag shape as learning/import above.
   notification:
     queue:
