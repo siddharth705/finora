@@ -145,7 +145,7 @@ export function PasswordStep({ identifier: initialIdentifier, banner, onSuccess,
       <button
         type="submit"
         disabled={loading}
-        className="w-full bg-primary hover:bg-primary-dark text-on-primary rounded-lg py-2.5 text-sm font-semibold flex items-center justify-center gap-1.5 disabled:opacity-50"
+        className="w-full bg-primary hover:bg-primary-dark active:scale-[0.98] transition-transform text-on-primary rounded-lg py-2.5 text-sm font-semibold flex items-center justify-center gap-1.5 disabled:opacity-50"
       >
         {loading ? 'Signing in…' : 'Sign in'}
         {!loading && <ArrowRight size={15} />}

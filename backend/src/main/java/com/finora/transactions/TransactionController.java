@@ -20,15 +20,18 @@ public class TransactionController {
 
     private final TransactionService transactionService;
     private final TransactionExplanationService explanationService;
+    private final TransactionSourceService sourceService;
     private final TransactionGroupingService transactionGroupingService;
     private final CurrentUser currentUser;
 
     public TransactionController(TransactionService transactionService,
                                   TransactionExplanationService explanationService,
+                                  TransactionSourceService sourceService,
                                   TransactionGroupingService transactionGroupingService,
                                   CurrentUser currentUser) {
         this.transactionService = transactionService;
         this.explanationService = explanationService;
+        this.sourceService = sourceService;
         this.transactionGroupingService = transactionGroupingService;
         this.currentUser = currentUser;
     }
@@ -80,6 +83,12 @@ public class TransactionController {
     @GetMapping("/{id}/explanation")
     public ApiResponse<TransactionExplanationDto> explanation(@PathVariable UUID id) {
         return ApiResponse.ok(explanationService.explain(currentUser.id(), id));
+    }
+
+    /** "Where did this number come from?" (Track C/C7) — fetched on demand, same as explanation() above. */
+    @GetMapping("/{id}/source")
+    public ApiResponse<TransactionSourceDto> source(@PathVariable UUID id) {
+        return ApiResponse.ok(sourceService.explainSource(currentUser.id(), id));
     }
 
     @PostMapping

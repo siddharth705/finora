@@ -167,10 +167,19 @@ input, textarea, select {
   animation: journeyReveal 0.4s ease both;
 }
 
+/* Auth redesign Phase 3. Same fadeInUp keyframe the landing page's .reveal already uses, but
+   fired on mount like .journey-reveal-item above rather than on scroll-into-view -- AuthEntry's
+   card and marketing panel are both above the fold, so there's nothing to wait for. A per-element
+   inline `animationDelay` (set at the call site) staggers the two rather than a second class. */
+.auth-reveal {
+  animation: fadeInUp 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
 /* Respect reduced-motion preferences — the reveal/float/gradient animations are decoration,
    not information, so it's safe to just skip them entirely rather than degrade gracefully. */
 @media (prefers-reduced-motion: reduce) {
-  .reveal, .reveal.reveal-visible, .float-slow, .float-slower, .animated-gradient-text, .journey-reveal-item {
+  .reveal, .reveal.reveal-visible, .float-slow, .float-slower, .animated-gradient-text,
+  .journey-reveal-item, .auth-reveal {
     animation: none !important;
     opacity: 1 !important;
     transform: none !important;

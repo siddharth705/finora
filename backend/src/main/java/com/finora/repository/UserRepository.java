@@ -8,6 +8,8 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.time.Instant;
+import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -167,4 +169,13 @@ public interface UserRepository extends JpaRepository<User, UUID> {
     @Query("SELECT u.id FROM User u WHERE u.status = :status AND u.deletionRequestedAt < :cutoff")
     java.util.List<UUID> findIdsByStatusAndDeletionRequestedAtBefore(
             @Param("status") String status, @Param("cutoff") Instant cutoff, Pageable pageable);
+
+    // --- NetWorthSnapshotSweepService ---
+
+    /** Full entities, not ids -- unlike the id-only projections above, the sweep needs each
+     *  user's timezone too (NetWorthService.snapshotForTodayOnly), so fetching ids here would
+     *  just trade this one batch query for N more one-at-a-time User lookups later. One query
+     *  does both the ACTIVE filter (at the query layer, not a per-candidate check in the loop)
+     *  and the timezone read. */
+    List<User> findByIdInAndStatus(Collection<UUID> ids, String status);
 }

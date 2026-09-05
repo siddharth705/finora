@@ -43,6 +43,19 @@
   #     (developers.google.com/identity/gsi/web/guides/get-google-api-clientid), not the bare
   #     origin, to avoid trusting all of accounts.google.com's script surface for what only needs
   #     this one file.
+  #   - script-src also adds https://appleid.cdn-apple.com -- D-26 (web) Sign In with Apple
+  #     (src/lib/appleIdentity.ts) loads appleid.auth.js from this exact origin. Same failure shape
+  #     as the Google Sign-In gap above and found the same way: reproduced live in a real browser
+  #     console against production, showing "Loading the script 'https://appleid.cdn-apple.com/
+  #     appleauth/static/jsapi/appleid/1/en_US/appleid.auth.js' violates... script-src... The action
+  #     has been blocked." -- the button rendered and the click handler ran, but the script load
+  #     never resolved or rejected, so it hung on "Signing in..." forever rather than erroring.
+  #     Unlike GIS, Apple's flow is a popup (window.open) rather than an embedded iframe, so this
+  #     does NOT need a frame-src entry -- the popup navigates to Apple's own origin, which has its
+  #     own CSP, not this page's. Not yet verified whether a connect-src entry is also needed (Apple
+  #     Sign In JS may make its own background calls the way GIS's credential-state calls did) --
+  #     no real Apple Services ID existed to test that against until now, so this is the one thing
+  #     to watch the console for on the next real sign-in attempt rather than a settled fact.
   #   - style-src adds https://fonts.googleapis.com (index.html's Google Fonts <link>) and
   #     'unsafe-inline' -- this app sets style={{...}} inline styles throughout (28 files). Also
   #     https://accounts.google.com/gsi/style -- GIS's own rendered button loads a stylesheet from
@@ -91,7 +104,7 @@
   #     loads).
   #   - frame-ancestors 'none' takes over X-Frame-Options' job (both do the same thing; setting
   #     both would just be two places to keep in sync).
-  Content-Security-Policy: default-src 'self'; script-src 'self' https://www.gstatic.com https://www.google.com https://accounts.google.com/gsi/client https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://accounts.google.com/gsi/style; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: https://img.logo.dev; connect-src 'self' https://api.fynora.net https://dev-api.fynora.net https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://accounts.google.com/gsi/ https://www.google.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io; frame-src https://www.google.com https://accounts.google.com/gsi/; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'
+  Content-Security-Policy: default-src 'self'; script-src 'self' https://www.gstatic.com https://www.google.com https://accounts.google.com/gsi/client https://appleid.cdn-apple.com https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://accounts.google.com/gsi/style; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: https://img.logo.dev; connect-src 'self' https://api.fynora.net https://dev-api.fynora.net https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://accounts.google.com/gsi/ https://www.google.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io; frame-src https://www.google.com https://accounts.google.com/gsi/; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'
   Strict-Transport-Security: max-age=31536000; includeSubDomains
   Referrer-Policy: strict-origin-when-cross-origin
 
