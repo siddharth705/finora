@@ -24,15 +24,34 @@ looks different from a current one.
 
 WHAT IT CHECKS
 --------------
-For each client that renders the dashboard summary:
+There are two screen shapes in this codebase that can make this claim, and they get different
+checks because "the right period" means something different for each of them.
+
+DASHBOARD_SCREENS render the newest month the account has DATA for -- a period the client did not
+choose and must read off the server. For each of these:
 
 1. It reads `reportingMonth` and `reportingMonthIsCurrent` at all. A client that never looks at
    them cannot be rendering the right period, whatever its labels say.
-2. It contains no hardcoded month assertion ("this month", "vs last month", "last month") in the
-   dashboard screen. Those must be derived from the fields above.
+2. It contains no hardcoded month assertion ("this month", "vs last month", "last month"). Those
+   must be derived from the fields above.
 
 Both checks are needed. Check 2 alone passes a client that deleted its labels entirely; check 1
 alone passes a client that reads the fields and ignores them.
+
+PICKER_SCREENS render whichever month the user explicitly chose from a picker -- there is no
+"newest month with data" inference and no `reportingMonthIsCurrent` to read, because the client
+already knows the period: it's sitting in the picker's own state. So only check 2 applies, against
+a different guard list (see PICKER_GUARDS below) -- one naming the identifiers that actually spell
+out the picked month, not the ones that mean "is this the current month".
+
+This split exists because reusing DASHBOARD_SCREENS's checks for a picker screen would require
+either (a) inventing a `reportingMonthIsCurrent`-shaped field a picker screen has no reason to have,
+which would fail every picker screen permanently, or (b) accepting the bare word "month" as a guard,
+which appears on nearly every line of a Reports-shaped screen and would guard almost nothing. Bug 05
+itself was found in exactly this second, unscanned shape: mobile's `ReportsScreen.tsx` category-row
+accessibility label hardcoded "this month's spending" regardless of the month picked in its own
+picker, and DASHBOARD_SCREENS could not have caught it -- the file was never in the list, and even
+if it had been, `reportingMonth`/`reportingMonthIsCurrent` don't exist on that screen to read.
 
 WHY A CHECK RATHER THAN SHARED CODE
 -----------------------------------
@@ -70,6 +89,15 @@ DASHBOARD_SCREENS = [
 
 REQUIRED_FIELDS = ("reportingMonth", "reportingMonthIsCurrent")
 
+# The screen that renders a report for a month the user picked from an explicit picker, per client.
+# Unlike DASHBOARD_SCREENS these have no "newest month with data" inference to get wrong -- the
+# period is already sitting in the picker's own state -- so the only way to misreport it is to
+# assert a period claim that doesn't name that state. See PICKER_GUARDS.
+PICKER_SCREENS = [
+    "frontend/src/pages/Reports.tsx",
+    "mobile/src/screens/ReportsScreen.tsx",
+]
+
 # Phrases that assert a period. These are NOT banned outright -- "this month" is the correct text
 # when the reporting month IS the current one, and both clients legitimately use it as the guarded
 # branch of a ternary. What is banned is asserting one UNCONDITIONALLY.
@@ -86,6 +114,15 @@ PERIOD_CLAIMS = ("this month", "vs last month", "versus last month")
 PERIOD_GUARDS = ("reportingMonth", "reportingMonthIsCurrent", "periodIsCurrent",
                  "periodLabel", "deltaLabel", "deltaSpokenLabel")
 
+# Identifiers that mean the surrounding expression names the month the PICKER has selected, rather
+# than asserting "this"/"last" against it. Deliberately narrower than PERIOD_GUARDS: the bare word
+# "month" appears on nearly every line of a Reports-shaped screen (state, props, comments) and would
+# guard almost any claim by coincidence. These name the specific helpers/state that actually spell
+# the picked month out, which is the only thing that makes a claim here correct -- there is no
+# "is this the current month" branch to take instead, because the period is a user choice, not a
+# fact about today's date.
+PICKER_GUARDS = ("monthLabel", "monthLabelLong", "pickedMonth")
+
 # A guarded claim sits inside a ternary that spans a few lines at most:
 #     const periodLabel = periodIsCurrent
 #       ? 'this month'
@@ -95,20 +132,33 @@ PERIOD_GUARDS = ("reportingMonth", "reportingMonthIsCurrent", "periodIsCurrent",
 GUARD_WINDOW = 3
 
 
+def _blank_preserving_lines(match: "re.Match") -> str:
+    """Replace a multi-line comment match with the same number of newlines.
+
+    A block comment can span many lines; collapsing it to a single space (as re.sub's replacement
+    would) deletes those newlines and shifts every subsequent line number reported by this script.
+    Preserving the newline count keeps `problems` pointing at the actual flagged line.
+    """
+    return "\n" * match.group(0).count("\n")
+
+
 def strip_comments_and_jsx_comments(text: str) -> str:
     """Blank out // line comments, /* */ blocks, and {/* */} JSX comments.
 
     Without this the check fires on its own documentation: both dashboard files explain the bug in
     prose that necessarily contains the banned phrases.
     """
-    text = re.sub(r"\{/\*.*?\*/\}", " ", text, flags=re.S)
-    text = re.sub(r"/\*.*?\*/", " ", text, flags=re.S)
-    text = re.sub(r"^\s*//[^\n]*", " ", text, flags=re.M)
+    text = re.sub(r"\{/\*.*?\*/\}", _blank_preserving_lines, text, flags=re.S)
+    text = re.sub(r"/\*.*?\*/", _blank_preserving_lines, text, flags=re.S)
+    # `[ \t]*`, not `\s*`: `\s` matches newlines too, so `^\s*//` would reach backwards across a
+    # blank line into the comment on the line below and swallow that newline in the replacement,
+    # shifting every line number after it by one.
+    text = re.sub(r"^[ \t]*//[^\n]*", " ", text, flags=re.M)
     text = re.sub(r"(?<=[;)}\s])//[^\n]*", " ", text)
     return text
 
 
-def check(path: str) -> list:
+def check(path: str, required_fields: tuple, guards: tuple, explain: str) -> list:
     full = os.path.join(REPO_ROOT, path)
     if not os.path.exists(full):
         return [f"{path}: expected to exist -- if this screen moved, update this script"]
@@ -118,7 +168,7 @@ def check(path: str) -> list:
 
     problems = []
 
-    for field in REQUIRED_FIELDS:
+    for field in required_fields:
         if field not in raw:
             problems.append(
                 f"{path}: never reads `{field}`. It cannot be rendering the right period, "
@@ -132,24 +182,31 @@ def check(path: str) -> list:
             if claim not in line:
                 continue
             window = lines[max(0, i - GUARD_WINDOW):i + GUARD_WINDOW + 1]
-            if any(guard in "\n".join(window) for guard in PERIOD_GUARDS):
-                continue  # conditional on the reported period -- this is the correct shape
-            problems.append(
-                f"{path}:{i + 1}: asserts \"{claim}\" unconditionally. The dashboard's figures are "
-                f"the newest month with DATA, which is routinely not the current one -- make this "
-                f"label conditional on reportingMonthIsCurrent.")
+            if any(guard in "\n".join(window) for guard in guards):
+                continue  # conditional on / naming the real period -- this is the correct shape
+            problems.append(f"{path}:{i + 1}: asserts \"{claim}\" unconditionally. {explain}")
 
     return problems
+
+
+DASHBOARD_EXPLAIN = ("The dashboard's figures are the newest month with DATA, which is routinely "
+                      "not the current one -- make this label conditional on reportingMonthIsCurrent.")
+PICKER_EXPLAIN = ("This screen's period is whatever month the user picked, not necessarily the "
+                   "current one -- name it with monthLabel/monthLabelLong instead of asserting "
+                   "this/last month.")
 
 
 def main() -> int:
     problems = []
     for path in DASHBOARD_SCREENS:
-        problems.extend(check(path))
+        problems.extend(check(path, REQUIRED_FIELDS, PERIOD_GUARDS, DASHBOARD_EXPLAIN))
+    for path in PICKER_SCREENS:
+        problems.extend(check(path, (), PICKER_GUARDS, PICKER_EXPLAIN))
 
+    total = len(DASHBOARD_SCREENS) + len(PICKER_SCREENS)
     if not problems:
-        print(f"check-reporting-period-labels: {len(DASHBOARD_SCREENS)} dashboard screen(s) clean "
-              f"-- every client renders the period the server reported.")
+        print(f"check-reporting-period-labels: {total} screen(s) clean -- every client renders "
+              f"the period it actually has, not an assumed one.")
         return 0
 
     print("REPORTING PERIOD LABEL DRIFT", file=sys.stderr)
