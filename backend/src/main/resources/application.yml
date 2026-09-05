@@ -351,6 +351,15 @@ app:
       # the way account-purge/counterparty-backfill have.
       interval-ms: ${NET_WORTH_SNAPSHOT_SWEEP_INTERVAL_MS:14400000}
       initial-delay-ms: ${NET_WORTH_SNAPSHOT_SWEEP_INITIAL_DELAY_MS:300000}
+  # Subscription billing V1 -- safety net for a missed subscription.cancelled webhook (design spec
+  # §6.3). Nothing depends on this running promptly: a subscription sits CANCELLED-past-period-end
+  # for at most one sweep interval before downgrading, and the webhook path is expected to beat it
+  # to the downgrade in the overwhelming majority of cases.
+  subscription-reconciliation:
+    sweep:
+      enabled: ${SUBSCRIPTION_RECONCILIATION_SWEEP_ENABLED:true}
+      interval-ms: ${SUBSCRIPTION_RECONCILIATION_SWEEP_INTERVAL_MS:3600000}
+      initial-delay-ms: ${SUBSCRIPTION_RECONCILIATION_SWEEP_INITIAL_DELAY_MS:300000}
   security:
     # RateLimitFilter's own doc comment already flagged this: request.getRemoteAddr() only
     # returns the real client IP when nothing sits between the client and this app. Railway (like
@@ -696,6 +705,15 @@ app:
           enabled: ${GMAIL_PARSER_CRED_ENABLED:false}
         paytm:
           enabled: ${GMAIL_PARSER_PAYTM_ENABLED:false}
+
+    # Subscription billing V1 (docs/superpowers/specs/2026-09-05-subscription-billing-v1-design.md).
+    # Unset is a supported state, same posture as google above -- checkout/webhook endpoints answer
+    # 503 until a real Razorpay account exists (spec §10), nothing else in the application depends
+    # on this being present.
+    razorpay:
+      key-id: ${RAZORPAY_KEY_ID:}
+      key-secret: ${RAZORPAY_KEY_SECRET:}
+      webhook-secret: ${RAZORPAY_WEBHOOK_SECRET:}
 
   # NotificationDispatcher's poller/nudge -- same enabled-flag shape as learning/import above.
   notification:
