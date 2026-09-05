@@ -5,6 +5,7 @@ import com.finora.dto.PagedResponse;
 import com.finora.entity.ImportJob;
 import com.finora.exception.ApiException;
 import com.finora.imports.jobs.ImportJobWorker;
+import com.finora.imports.storage.StatementContentService;
 import com.finora.repository.ImportJobRepository;
 import com.finora.util.PageBounds;
 import org.springframework.data.domain.PageRequest;
@@ -54,13 +55,16 @@ public class AdminHeldImportService {
     private final ImportJobRepository repository;
     private final ImportJobWorker worker;
     private final AuditService auditService;
+    private final StatementContentService statementContentService;
 
     public AdminHeldImportService(ImportJobRepository repository,
                                   ImportJobWorker worker,
-                                  AuditService auditService) {
+                                  AuditService auditService,
+                                  StatementContentService statementContentService) {
         this.repository = repository;
         this.worker = worker;
         this.auditService = auditService;
+        this.statementContentService = statementContentService;
     }
 
     /** One page of held jobs, oldest first -- the longest-waiting user is the one to look at. */
@@ -99,6 +103,41 @@ public class AdminHeldImportService {
                         "subjectUserId", job.getUserId().toString(),
                         "failureCode", String.valueOf(job.getFailureCode())));
         return HeldImportDto.Detail.from(job);
+    }
+
+    /** What the download endpoint hands back -- everything the controller needs to set the
+     *  response headers, in one value. Same shape as {@code HeldStatementService.DownloadedStatement},
+     *  for the same reason: a byte array plus the two headers a browser download needs. */
+    public record DownloadedStatement(String fileName, byte[] content, String contentType) {}
+
+    /**
+     * The one place in this queue that hands a customer's bank statement to a member of staff --
+     * mirrors {@code HeldStatementService.download}'s reasoning exactly. Audited BEFORE the bytes
+     * are read, not after, for the identical reason that doc gives: a failed read must still leave
+     * a record that the attempt was made.
+     *
+     * <p>Not {@code readOnly}: it writes the audit entry. See {@code HeldStatementService.download}'s
+     * own doc for the read-only-swallows-writes bug this avoids by omission.
+     */
+    @Transactional
+    public DownloadedStatement download(UUID actingAdminId, UUID jobId) {
+        ImportJob job = require(jobId);
+        auditService.record(actingAdminId, "HELD_IMPORT_DOWNLOADED", "ImportJob", jobId,
+                Map.of("actorId", actingAdminId.toString(),
+                        "subjectUserId", job.getUserId().toString()));
+        byte[] content = statementContentService.read(job);
+        return new DownloadedStatement(job.getFileName(), content, contentTypeFor(job.getSourceFormat()));
+    }
+
+    /** Same switch {@code HeldStatementService.contentTypeFor} makes, over the formats this system
+     *  actually stores -- not a filename-extension lookup, which is attacker-influenced. */
+    private static String contentTypeFor(String sourceFormat) {
+        if (sourceFormat == null) return "application/octet-stream";
+        return switch (sourceFormat.toUpperCase()) {
+            case "CSV" -> "text/csv";
+            case "PDF" -> "application/pdf";
+            default -> "application/octet-stream";
+        };
     }
 
     /**
