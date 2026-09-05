@@ -23,6 +23,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -36,6 +37,7 @@ class HeldStatementServiceTest {
     private HeldStatementIdGenerator idGenerator;
     private ImportJobRepository importJobRepository;
     private HeldItemAdminAlertService heldItemAdminAlertService;
+    private NotificationService notificationService;
     private HeldStatementService service;
 
     @BeforeEach
@@ -46,7 +48,7 @@ class HeldStatementServiceTest {
         importJobRepository = mock(ImportJobRepository.class);
         ImportVerificationFindingRepository findingRepository = mock(ImportVerificationFindingRepository.class);
         AuditService auditService = mock(AuditService.class);
-        NotificationService notificationService = mock(NotificationService.class);
+        notificationService = mock(NotificationService.class);
         ImportSessionService importSessionService = mock(ImportSessionService.class);
         StatementContentService statementContentService = mock(StatementContentService.class);
         ImportService importService = mock(ImportService.class);
@@ -82,8 +84,34 @@ class HeldStatementServiceTest {
         verify(heldItemAdminAlertService).alertTrustReviewHeld("HELD-00099");
     }
 
+    /**
+     * The user side of the same moment: previously nothing told them their statement was being
+     * held at all (found live in testing). Checked here, not just on the admin-alert side, since
+     * openHold is the one place both fire.
+     */
+    @Test
+    void createHold_notifiesTheUserTheStatementIsHeld() {
+        ImportJob job = job();
+        StagedForJob staged = new StagedForJob(UUID.randomUUID(), 5, 5, "HDFC Bank", List.of(), List.of());
+
+        service.createHold(job, staged, periodIntegrityDecision(), "abc123");
+
+        org.mockito.ArgumentCaptor<com.finora.notification.api.NotificationRequest> captor =
+                org.mockito.ArgumentCaptor.forClass(com.finora.notification.api.NotificationRequest.class);
+        verify(notificationService).request(captor.capture());
+        com.finora.notification.api.NotificationRequest sent = captor.getValue();
+        assertThat(sent.type())
+                .isEqualTo(com.finora.notification.domain.NotificationType.IMPORT_STATEMENT_HELD);
+        assertThat(sent.userId()).isEqualTo(job.getUserId());
+        assertThat(sent.notificationKey()).isEqualTo("IMPORT_HELD_" + job.getId());
+        assertThat(sent.channels()).containsExactlyInAnyOrder(
+                com.finora.notification.domain.NotificationChannel.PUSH,
+                com.finora.notification.domain.NotificationChannel.EMAIL);
+    }
+
     /** {@code createHold} is idempotent on the job id (its own doc comment) -- a second call for
-     *  the same job must not open a second hold, and therefore must not send a second alert. */
+     *  the same job must not open a second hold, and therefore must not send a second alert or a
+     *  second user notification. */
     @Test
     void createHold_doesNotAlertASecondTime_whenAHoldAlreadyExistsForThisJob() {
         ImportJob job = job();
@@ -95,5 +123,6 @@ class HeldStatementServiceTest {
         service.createHold(job, staged, periodIntegrityDecision(), "abc123");
 
         verify(heldItemAdminAlertService, never()).alertTrustReviewHeld(any());
+        verify(notificationService, never()).request(any());
     }
 }

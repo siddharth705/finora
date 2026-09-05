@@ -24,6 +24,7 @@ import {
   NO_ACTIVITY_IN_PERIOD,
   SCANNED_OCR_REQUIRED,
   CORRUPT_PDF,
+  TRUST_REVIEW_REJECTED,
 } from './errorCodes';
 
 export const IMPORT_FAILURE_MESSAGES: Record<string, string> = {
@@ -49,6 +50,12 @@ export const IMPORT_FAILURE_MESSAGES: Record<string, string> = {
   [CORRUPT_PDF]:
     'This file appears to be damaged or incomplete. Downloading it again from your bank usually ' +
     'fixes this.',
+  // Reuses the backend's own already-approved wording verbatim rather than authoring new copy --
+  // ErrorCode.java's own comment on this code says changing either half of that message "is a
+  // product call, not a tidy-up", so this entry only wires the existing decision through.
+  [TRUST_REVIEW_REJECTED]:
+    'We checked this statement and could not read it accurately enough to import it. Nothing ' +
+    'was added to your accounts.',
 };
 
 /**

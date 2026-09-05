@@ -616,6 +616,34 @@ public class ImportJobWorker {
                 Map.of("bank", bankName == null || bankName.isBlank() ? "bank" : bankName)));
     }
 
+    /**
+     * Tells a user their statement is being held for review -- previously the pipeline announced
+     * nothing at this moment at all (see {@code notifyIfPreviouslyHeld}'s own doc: "A held import
+     * is not finished, so it announces nothing" describes the READY side of this, but the same
+     * silence applied here too, on the way IN).
+     *
+     * <p>Same transactional-outbox reasoning {@code notifyIfPreviouslyHeld} gives: called inside
+     * {@code jobStore.update}'s {@code REQUIRES_NEW} transaction, the same one that persists {@code
+     * holdForReview}, so the hold and the outbox write are atomic -- not a real network call, so
+     * there is no reason to defer it past commit the way the admin alert has to be.
+     *
+     * <p>Keyed on the job id alone, not the attempt: a job that gets reprocessed, fails the same
+     * way, and re-holds reuses this exact key, so {@code NotificationService.request}'s {@code ON
+     * CONFLICT DO NOTHING} idempotency silently absorbs the second attempt. One "we're checking"
+     * is what the user is owed, not a re-notification per internal retry -- the reprocess story is
+     * for the admin alert (which deliberately DOES re-fire per attempt) to carry, not this one.
+     */
+    private void notifyHeldForReview(ImportJob job) {
+        notificationService.request(NotificationRequest.of(
+                job.getUserId(),
+                NotificationType.IMPORT_STATEMENT_HELD,
+                NotificationCategory.FINANCIAL,
+                NotificationPriority.NORMAL,
+                "IMPORT_HELD_" + job.getId(),
+                Set.of(NotificationChannel.PUSH, NotificationChannel.EMAIL),
+                Map.of()));
+    }
+
     private void recordFailure(WorkerExecution execution, UUID jobId, Exception cause) {
         try {
             // Classified once, outside the update lambda: classification reads nothing from the
@@ -645,6 +673,7 @@ public class ImportJobWorker {
                 // visibility.
                 if (holdsForTriage(policy, outcome[0], cause)) {
                     job.holdForReview(failureCode, Instant.now());
+                    notifyHeldForReview(job);
                 }
             });
             // jobStore.update is @Transactional(REQUIRES_NEW), so by this line its transaction has
