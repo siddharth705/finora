@@ -1645,7 +1645,7 @@ public class PdfTableLocator {
                 // never had one, so this branch now correctly declines and the row falls through to
                 // whatever handled it before this branch existed.
                 if (!hasDateValue(bucketed, yearsByPage.getOrDefault(rowPageIndex, PageDateEvidence.NONE))
-                        && currentRows != null && !currentRows.isEmpty()
+                        && !currentRows.isEmpty()
                         && hasDateValue(currentRows.get(currentRows.size() - 1),
                                 yearsByPage.getOrDefault(rowPageIndex, PageDateEvidence.NONE))
                         && closesADifferentTransactionThanTheOpenAnchor(bucketed,
