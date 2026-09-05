@@ -222,4 +222,32 @@ describe('MOB-AUTH-01: concurrent refresh', () => {
     const wroteRefresh = secureStore.setItemAsync.mock.calls.some(([k]) => k === REFRESH_TOKEN_KEY);
     expect(wroteAccess).toBe(wroteRefresh);
   });
+
+  it('does not strand a stale refresh token when persisting the rotated pair partially fails', async () => {
+    // The server has already rotated R1 -> R2 by the time these writes run (authApi.refresh
+    // already succeeded). If the access-token write lands but the refresh-token write then fails
+    // -- a real SecureStore/Keystore hiccup, not a hypothetical -- a silently-swallowed failure
+    // would leave storage holding a new access token paired with the OLD, already-invalidated
+    // refresh token. The next ordinary refresh would present that stale R1 again, which the
+    // server reads as theft and revokes every session for the user, on every device.
+    secureStore.__store.set(REFRESH_TOKEN_KEY, 'R1');
+    const realSetItem = secureStore.setItemAsync.getMockImplementation()!;
+    secureStore.setItemAsync.mockImplementation(async (key: string, value: string) => {
+      if (key === REFRESH_TOKEN_KEY) throw new Error('simulated keychain write failure');
+      return realSetItem(key, value);
+    });
+
+    await reject401().catch(() => {});
+
+    // THE ASSERTION. Either the pair is fully persisted, or neither key survives -- there must be
+    // no state where a new access token sits next to the old, already-rotated refresh token.
+    const storedRefresh = secureStore.__store.get(REFRESH_TOKEN_KEY);
+    expect(storedRefresh === undefined || storedRefresh === 'R2').toBe(true);
+
+    // Confirm this isn't just a lucky read: presenting whatever ended up in storage again must
+    // never reproduce the double-presentation of R1 that signals theft.
+    secureStore.setItemAsync.mockImplementation(realSetItem);
+    await reject401().catch(() => {});
+    expect(presented.filter((t) => t === 'R1')).toHaveLength(1);
+  });
 });
