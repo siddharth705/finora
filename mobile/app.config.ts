@@ -164,6 +164,10 @@ const config: ExpoConfig = {
     // SplashScreen.preventAutoHideAsync()/hideAsync() at runtime -- see App.tsx's own comment --
     // and Expo's installer requires the plugin registered for that runtime API to be present.
     'expo-splash-screen',
+    // Same reasoning as expo-splash-screen just above: no build-time options, listed only because
+    // App.tsx calls useFonts() (from expo-font) at runtime and Expo's installer requires the
+    // plugin registered for that.
+    'expo-font',
     '@react-native-community/datetimepicker',
     '@react-native-firebase/app',
     '@react-native-firebase/auth',

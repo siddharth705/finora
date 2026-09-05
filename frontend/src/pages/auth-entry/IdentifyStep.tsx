@@ -105,7 +105,7 @@ export function IdentifyStep({ onExists, onContinue, onSuccess }: IdentifyStepPr
 
   return (
     <form onSubmit={handleSubmit} noValidate>
-      <h2 className="text-2xl font-extrabold text-ink mb-1">Sign in or create an account</h2>
+      <h2 className="font-display text-2xl font-extrabold text-ink mb-1">Sign in or create an account</h2>
       <p className="text-sm text-muted mb-6">Enter your email or mobile number to continue</p>
 
       {error && <p className="text-danger text-sm mb-4">{error}</p>}

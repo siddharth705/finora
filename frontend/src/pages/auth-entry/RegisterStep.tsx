@@ -151,7 +151,7 @@ export function RegisterStep({ prefill, referralCode, onSuccess, onAccountExists
 
   return (
     <form onSubmit={handleSubmit} noValidate>
-      <h2 className="text-2xl font-bold text-ink mb-1">Create your account</h2>
+      <h2 className="font-display text-2xl font-bold text-ink mb-1">Create your account</h2>
       <p className="text-sm text-muted mb-6">Start your journey towards financial clarity</p>
 
       {error && <p className="text-danger text-sm mb-4">{error}</p>}
