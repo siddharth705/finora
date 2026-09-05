@@ -105,6 +105,10 @@ interface ReimportParams {
  * themselves.
  */
 export interface LedgerDrillThroughFilters {
+  /** Track C/C6: ImportScreen's "View in Ledger" carries the just-confirmed statement's own
+   *  account -- the one piece of context none of C4's four original callers had a reason to
+   *  filter by. */
+  accountId?: string;
   categoryId?: string;
   categoryName?: string;
   dateFrom?: string;

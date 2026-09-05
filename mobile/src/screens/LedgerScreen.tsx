@@ -93,6 +93,10 @@ export function LedgerScreen() {
       ...DEFAULT_LEDGER_FILTERS,
       keyword: debouncedKeyword || undefined,
       type: typeFilter === 'ALL' ? undefined : typeFilter,
+      // accountId: Track C/C6 (ImportScreen's "View in Ledger") is the only caller that ever sets
+      // this -- needs no name resolution, since ImportScreen already has the confirmed account's
+      // real id from the confirm response itself.
+      accountId: activeDrillThrough?.accountId,
       categoryId: resolvedCategoryId,
       dateFrom: activeDrillThrough?.dateFrom,
       dateTo: activeDrillThrough?.dateTo,

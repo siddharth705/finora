@@ -3,7 +3,8 @@ import {
   ActivityIndicator, Alert, FlatList, Pressable, ScrollView, StyleSheet, Text, TextInput, View,
 } from 'react-native';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useRoute, type RouteProp } from '@react-navigation/native';
+import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
+import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Button } from '../../components/Button';
 import { Card, SectionHeading } from '../../components/Card';
@@ -42,6 +43,7 @@ export function ImportScreen() {
   const insets = useSafeAreaInsets();
   const queryClient = useQueryClient();
   const route = useRoute<RouteProp<AppTabParamList, 'Import'>>();
+  const navigation = useNavigation<BottomTabNavigationProp<AppTabParamList>>();
   const reimportParam = route.params?.reimport;
 
   const [step, setStep] = useState<Step>('upload');
@@ -635,6 +637,31 @@ export function ImportScreen() {
             ) : null}
             <View style={styles.actions}>
               <Button label="Import another" onPress={resetToUpload} />
+              {/* Track C/C6. Depended on C4's Ledger filters existing at all -- without them this
+                  would land on the whole, unfiltered ledger, no more useful than the Transactions
+                  tab a user could already reach on their own. account can genuinely be null (see
+                  ImportSummary's own type); the period alone still narrows down to this import
+                  when it is. */}
+              <View style={styles.viewInLedger}>
+                <Button
+                  label="View in Ledger"
+                  variant="link"
+                  onPress={() => {
+                    const period = summary.statementPeriodStart && summary.statementPeriodEnd
+                      ? ` · ${summary.statementPeriodStart} to ${summary.statementPeriodEnd}`
+                      : '';
+                    navigation.navigate('Transactions', {
+                      filters: {
+                        accountId: summary.account?.id,
+                        dateFrom: summary.statementPeriodStart ?? undefined,
+                        dateTo: summary.statementPeriodEnd ?? undefined,
+                        label: `${summary.account?.name ?? 'This import'}${period}`,
+                        nonce: Date.now(),
+                      },
+                    });
+                  }}
+                />
+              </View>
             </View>
           </Card>
         </View>
@@ -983,6 +1010,7 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   cancel: { marginTop: spacing.sm },
+  viewInLedger: { marginTop: spacing.sm },
   statRow: { flexDirection: 'row', gap: spacing.md, marginBottom: spacing.sm },
   stat: { flex: 1 },
   statValue: { fontSize: 20, fontWeight: '700' },

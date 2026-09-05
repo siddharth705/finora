@@ -404,6 +404,17 @@ describe('drill-through filters (Track C/C4)', () => {
     ));
   });
 
+  // Track C/C6: ImportScreen's "View in Ledger" is the one caller that sets this.
+  it('applies an incoming accountId, alongside a category or on its own', async () => {
+    mockRouteParams = { filters: filters({ accountId: 'acct-1', categoryId: undefined, label: 'HDFC Savings' }) };
+
+    renderScreen();
+
+    await waitFor(() => expect(transactions.search).toHaveBeenCalledWith(
+      expect.objectContaining({ accountId: 'acct-1' })
+    ));
+  });
+
   it('resolves a categoryName against the category list already fetched for the picker', async () => {
     mockRouteParams = { filters: filters({ categoryName: 'Travel' }) };
 
