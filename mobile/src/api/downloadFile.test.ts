@@ -1,3 +1,5 @@
+import { File } from 'expo-file-system';
+import * as Sharing from 'expo-sharing';
 import { statementImportsApi } from './endpoints';
 import { api } from './client';
 
@@ -23,6 +25,15 @@ jest.mock('expo-sharing', () => ({
 }));
 
 const get = api.get as jest.Mock;
+const MockedFile = File as unknown as jest.Mock;
+const shareAsync = Sharing.shareAsync as jest.Mock;
+
+/** The one File instance downloadFile constructs for this call -- `new File(...)` is a mock
+ *  factory returning a fresh plain object each invocation, so assertions on `.delete` have to
+ *  go through the specific instance the code under test actually got, not a call made before it. */
+function lastFileInstance() {
+  return MockedFile.mock.results[MockedFile.mock.results.length - 1].value;
+}
 
 function arrayBufferError(status: number, body: unknown) {
   const json = JSON.stringify(body);
@@ -74,5 +85,46 @@ describe('statementImportsApi.downloadFile — error message survives a failed d
         },
       },
     });
+  });
+});
+
+/**
+ * D2 (Track D security cleanup). Decrypted statement bytes only ever existed on disk to hand the
+ * OS share sheet a real URI -- once shareAsync settles, the file has to go, whether the share
+ * itself succeeded, was dismissed, or the share call threw.
+ */
+describe('statementImportsApi.downloadFile — cleans up the cache file after sharing', () => {
+  beforeEach(() => {
+    get.mockReset().mockResolvedValue({ data: new Uint8Array([1, 2, 3]).buffer });
+    shareAsync.mockReset();
+  });
+
+  it('deletes the cache file after a successful share', async () => {
+    shareAsync.mockResolvedValue(undefined);
+
+    await statementImportsApi.downloadFile('stmt-1', 'statement.pdf');
+
+    expect(lastFileInstance().delete).toHaveBeenCalled();
+  });
+
+  it('still deletes the cache file when the share itself throws', async () => {
+    shareAsync.mockRejectedValue(new Error('share sheet dismissed with an error'));
+
+    await expect(statementImportsApi.downloadFile('stmt-1', 'statement.pdf')).rejects.toThrow();
+
+    expect(lastFileInstance().delete).toHaveBeenCalled();
+  });
+
+  it('does not let a failed cleanup mask a successful share', async () => {
+    shareAsync.mockResolvedValue(undefined);
+    MockedFile.mockImplementationOnce(() => ({
+      exists: false,
+      delete: jest.fn(() => { throw new Error('already gone'); }),
+      create: jest.fn(),
+      write: jest.fn(),
+      uri: 'file:///mock/statement.pdf',
+    }));
+
+    await expect(statementImportsApi.downloadFile('stmt-1', 'statement.pdf')).resolves.toBeUndefined();
   });
 });

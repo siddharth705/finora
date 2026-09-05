@@ -56,12 +56,24 @@ export function parseEmailChangeDeepLink(url: string): EmailChangeDeepLinkParams
 export function useEmailChangeDeepLink(
   navigationRef: NavigationContainerRefWithCurrent<AppTabParamList>,
   ready: boolean,
+  // D6 (Track D security cleanup). Bug found in review: `ready` (isAppTabsActive =
+  // token !== null && phoneVerified) also drops for a SIGNED-IN user hit with a mid-session
+  // PHONE_VERIFICATION_REQUIRED response (AuthContext's onPhoneVerificationRequired flips
+  // phoneVerified back to false without touching the token) -- the original ready:true->false
+  // heuristic clears pendingRef in that case too, silently dropping a legitimate pending link that
+  // was only ever waiting for `ready` to turn true again. `signedIn` (token !== null alone) is
+  // unaffected by that transition, so it's what a real sign-out is keyed on instead.
+  signedIn: boolean,
 ) {
   const pendingRef = useRef<EmailChangeDeepLinkParams | null>(null);
   // Mirrors `ready` into a ref rather than reading the prop directly from tryConsume, so
   // tryConsume itself can stay referentially stable (useCallback, empty deps) instead of being
   // redefined -- and its effects re-subscribed -- on every `ready` change.
   const readyRef = useRef(ready);
+  // D6 (Track D security cleanup). Tracks the PREVIOUS `signedIn` value so the effect below can
+  // tell a genuine sign-out (signedIn: true -> false) apart from every other reason `ready` can
+  // drop -- see that effect's own comment on why only a real sign-out should clear pendingRef.
+  const wasSignedInRef = useRef(signedIn);
 
   const tryConsume = useCallback(() => {
     if (!readyRef.current) return;
@@ -87,8 +99,25 @@ export function useEmailChangeDeepLink(
 
   useEffect(() => {
     readyRef.current = ready;
+    // D6 (Track D security cleanup, docs/project-management/plans/mobile-correctness-trust-roadmap.md).
+    // A link that arrived before `ready` first turned true is legitimately still waiting to be
+    // consumed the moment it does -- that's the whole point of stashing it, and this must NOT
+    // clear it in that case. But once a session that WAS signed in ends (a real sign-out), any
+    // link still sitting here belongs to whichever identity was signed in when it arrived, not to
+    // whoever signs in next on this device. The backend's own findByIdAndUserId scoping already
+    // makes replaying it against a new user a no-op (a generic "invalid or expired" error, never a
+    // cross-account action) -- this just stops a stale, another-identity's link from even
+    // reaching that far and confusingly flashing an error at someone who never tapped anything.
+    //
+    // Keyed on `signedIn`, not `ready`: see this hook's own param doc comment above for the case
+    // that distinction exists to fix (a mid-session phone re-verification challenge, which also
+    // drops `ready` for a user who never signed out).
+    if (wasSignedInRef.current && !signedIn) {
+      pendingRef.current = null;
+    }
+    wasSignedInRef.current = signedIn;
     tryConsume();
-  }, [ready, tryConsume]);
+  }, [ready, signedIn, tryConsume]);
 
   // Wired to NavigationContainer's own onReady prop: navigationRef.isReady() can still be false
   // on the very first render where `ready` flips true (AppTabs mounting is not synchronous with

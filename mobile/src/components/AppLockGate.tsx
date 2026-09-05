@@ -124,8 +124,14 @@ export function AppLockGate({ children }: { children: ReactNode }) {
       // was blind to the Settings-triggered prompt specifically). Otherwise this is
       // indistinguishable from the user actually backgrounding and returning, and re-locking here
       // just re-prompts, which blips AppState again, forever.
+      //
+      // D5 (Track D security cleanup): the identical blip happens when the OS share sheet opens
+      // (statementImportsApi.downloadFile, supportApi.downloadAttachment, reportExport.ts's
+      // shareCsv/sharePdf, all wrapped in appLock.withShareSuppression) -- without this, returning
+      // from "Save to Files" or AirDrop re-locked the app mid-share or right after.
       const skipAsSelfInduced =
-        appLock.isAuthenticating() || appLock.justFinishedAuthenticating(REGROUND_GRACE_MS);
+        appLock.isAuthenticating() || appLock.justFinishedAuthenticating(REGROUND_GRACE_MS) ||
+        appLock.isSharing() || appLock.justFinishedSharing(REGROUND_GRACE_MS);
       if (cameToForeground && token !== null && !skipAsSelfInduced) {
         void appLock.isEnabled().then((enabled) => {
           if (enabled) lockAndPrompt();

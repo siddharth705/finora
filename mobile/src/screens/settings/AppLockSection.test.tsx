@@ -23,6 +23,21 @@ function renderSection() {
 }
 
 describe('AppLockSection', () => {
+  // Bug found in review (Track D/D1/D6): isEnabled()'s fail-closed `true` is correct for
+  // AppLockGate's own lock-screen decision, but this screen used to paint that same value
+  // straight onto the Settings switch -- so a transient SecureStore read failure showed App Lock
+  // as ON to a user who never turned it on, with no indication anything had gone wrong.
+  it('shows an error instead of guessing at the toggle state when the current setting cannot be read', async () => {
+    mockedHasHardware.mockResolvedValueOnce(true);
+    mockedIsEnrolled.mockResolvedValueOnce(true);
+    const mockedGetItemAsync = SecureStore.getItemAsync as jest.MockedFunction<typeof SecureStore.getItemAsync>;
+    mockedGetItemAsync.mockRejectedValueOnce(new Error('keychain unavailable'));
+    renderSection();
+
+    expect(await screen.findByText(/Couldn.t check whether App Lock is on/i)).toBeTruthy();
+    expect(screen.queryByLabelText('App Lock')).toBeNull();
+  });
+
   it('explains why the toggle is unavailable on unsupported hardware', async () => {
     mockedHasHardware.mockResolvedValueOnce(false);
     mockedIsEnrolled.mockResolvedValueOnce(false);
