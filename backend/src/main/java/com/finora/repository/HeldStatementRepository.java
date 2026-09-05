@@ -9,6 +9,7 @@ import org.springframework.data.repository.query.Param;
 
 import java.time.Instant;
 import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -69,4 +70,60 @@ public interface HeldStatementRepository extends JpaRepository<HeldStatement, UU
      */
     @Query(value = "SELECT nextval('held_statement_reference_seq')", nativeQuery = true)
     long nextHeldSequence();
+
+    // --- telemetry (Plan 4) ---------------------------------------------------------------------
+
+    /** One row per (status, count) -- the resolution breakdown. Native, matching {@code
+     *  ImportJobRepository}'s own telemetry-query idiom in this codebase. */
+    @Query(value = "SELECT status, count(*) FROM held_statements GROUP BY status", nativeQuery = true)
+    List<Object[]> telemetryStatusCounts();
+
+    /**
+     * How many resolved holds were explicitly marked false positive. {@code FILTER} matches this
+     * codebase's own established telemetry idiom ({@code ImportJobRepository.telemetryFlagCounts}).
+     *
+     * <p>{@code resolvedStatuses} is passed in rather than hardcoded as {@code status IN ('IMPORTED',
+     * 'REJECTED')} in the SQL string, so this query's idea of "resolved" can never drift from
+     * {@code HeldStatement.Status.RESOLVED}'s own {@code EnumSet} -- the caller passes that set's
+     * {@code .name()}s, not a second, hand-maintained copy of the same two strings. See Plan 4's
+     * own Decisions table.
+     */
+    @Query(value = """
+           SELECT count(*) FILTER (WHERE status = ANY(:resolvedStatuses)),
+                  count(*) FILTER (WHERE false_positive = true)
+             FROM held_statements
+           """, nativeQuery = true)
+    List<Object[]> telemetryFalsePositiveCounts(@Param("resolvedStatuses") String[] resolvedStatuses);
+
+    /** Which trust condition fired, across every hold that has any recorded (older holds predating
+     *  V152 have null and are correctly excluded, not counted as zero). {@code unnest} rather than
+     *  one FILTER per category, so a category Brief Phase 11 adds later needs no new query -- see
+     *  Plan 4's own Decisions table. */
+    @Query(value = """
+           SELECT category, count(*)
+             FROM held_statements, unnest(hold_reason_categories) AS category
+            GROUP BY category
+           """, nativeQuery = true)
+    List<Object[]> telemetryCategoryCounts();
+
+    /**
+     * Median hours from created to resolved, over every hold that has resolved. Median, not mean --
+     * see Plan 4's own Decisions table for why. Null (via a single-row, single-null-column result
+     * when nothing has resolved) rather than a division-by-zero exception.
+     *
+     * <p>Intentionally live and unsummarized, matching every other query in this class -- computed
+     * fresh from the full table on every request, nothing cached or scheduled. {@code
+     * PERCENTILE_CONT} over the whole table is one of the more expensive queries this class runs;
+     * fine at this system's current and expected near-term volume, but if {@code held_statements}
+     * ever reaches the scale where this becomes a real cost, revisit rather than assume it stays
+     * cheap forever -- flagged explicitly during Plan 4's review so it's a documented trade-off,
+     * not a surprise later.
+     */
+    @Query(value = """
+           SELECT PERCENTILE_CONT(0.5) WITHIN GROUP (
+                      ORDER BY EXTRACT(EPOCH FROM (resolved_at - created_at)) / 3600.0)
+             FROM held_statements
+            WHERE resolved_at IS NOT NULL
+           """, nativeQuery = true)
+    Double telemetryMedianResolutionHours();
 }

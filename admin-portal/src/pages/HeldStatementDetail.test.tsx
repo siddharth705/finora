@@ -44,6 +44,7 @@ const summary: HeldStatementRow = {
   engineerNotes: null,
   rootCause: null,
   fixReference: null,
+  falsePositive: null,
   createdAt: '2026-09-01T08:00:00Z',
   assignedAt: null,
   readyAt: null,
@@ -170,6 +171,33 @@ describe('HeldStatementDetail', () => {
     expect(events.map((el) => el.textContent)).toEqual(['HELD_CREATED', 'ASSIGNED']);
   });
 
+  it('sends falsePositive when the checkbox is checked at approve time', async () => {
+    mockAuth(['TRUST_REVIEW_MANAGE'], ['ADMIN']);
+    renderPage();
+    await screen.findByText(/count disagree/i);
+
+    fireEvent.click(screen.getByLabelText(/mark as false positive/i));
+    fireEvent.click(screen.getByRole('button', { name: /^approve$/i }));
+
+    await waitFor(() => expect(adminHeldStatementApi.approve)
+      .toHaveBeenCalledWith('HLD-2026-100001', undefined, true));
+  });
+
+  it('omits falsePositive entirely when the checkbox is left unchecked, never sends false', async () => {
+    // A plain useState(false) fed straight into the mutation would send an explicit `false` on
+    // every single approval, permanently collapsing the backend's null ("never marked") vs false
+    // ("explicitly not a false positive") distinction the moment this UI shipped. This test exists
+    // specifically to catch that regression, not just to describe the happy path.
+    mockAuth(['TRUST_REVIEW_MANAGE'], ['ADMIN']);
+    renderPage();
+    await screen.findByText(/count disagree/i);
+
+    fireEvent.click(screen.getByRole('button', { name: /^approve$/i }));
+
+    await waitFor(() => expect(adminHeldStatementApi.approve)
+      .toHaveBeenCalledWith('HLD-2026-100001', undefined, undefined));
+  });
+
   it('shows the download control for an ADMIN role', async () => {
     mockAuth(['TRUST_REVIEW_MANAGE'], ['ADMIN']);
     renderPage();
@@ -206,6 +234,26 @@ describe('HeldStatementDetail', () => {
     expect(screen.getByRole('button', { name: /^approve$/i })).toBeDisabled();
     expect(screen.getByRole('button', { name: /^reject$/i })).toBeDisabled();
     expect(screen.getByText(/already imported/i)).toBeInTheDocument();
+  });
+
+  /**
+   * Without this, the checkbox always renders unchecked -- even for a hold that WAS marked false
+   * positive at approve time -- contradicting the timeline entry on the very same screen. This is
+   * the same class of stale-UI-state bug the rerun-result reset already guards against, just in
+   * the other direction: here the fetched data must overwrite a local default, not the other way
+   * around.
+   */
+  it('shows the checkbox as checked when a resolved hold was marked false positive', async () => {
+    vi.mocked(adminHeldStatementApi.get).mockResolvedValue({
+      ...detail,
+      summary: { ...summary, status: 'IMPORTED', falsePositive: true },
+    });
+    mockAuth(['TRUST_REVIEW_MANAGE'], ['ADMIN']);
+    renderPage();
+    await screen.findByText(/count disagree/i);
+
+    expect(screen.getByLabelText(/mark as false positive/i)).toBeChecked();
+    expect(screen.getByLabelText(/mark as false positive/i)).toBeDisabled();
   });
 
   it('leaves approve and reject enabled on an open hold', async () => {
@@ -300,5 +348,22 @@ describe('HeldStatementDetail', () => {
 
     await screen.findByText(/a different trigger/i);
     expect(screen.queryByText(/clears under the current parser build/i)).not.toBeInTheDocument();
+  });
+
+  it('resets the false-positive checkbox once navigation moves to a different held statement', async () => {
+    vi.mocked(adminHeldStatementApi.get).mockImplementation((heldId: string) =>
+      Promise.resolve(heldId === 'HLD-2026-100002'
+        ? { ...detail, summary: { ...summary, heldId: 'HLD-2026-100002', triggerSummary: 'A different trigger' } }
+        : detail));
+    mockAuth(['TRUST_REVIEW_MANAGE'], ['ADMIN']);
+    renderPageWithNav();
+    await screen.findByText(/count disagree/i);
+    fireEvent.click(screen.getByLabelText(/mark as false positive/i));
+    expect(screen.getByLabelText(/mark as false positive/i)).toBeChecked();
+
+    fireEvent.click(screen.getByRole('link', { name: /go to other hold/i }));
+
+    await screen.findByText(/a different trigger/i);
+    expect(screen.getByLabelText(/mark as false positive/i)).not.toBeChecked();
   });
 });

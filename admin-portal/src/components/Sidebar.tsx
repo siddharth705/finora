@@ -68,6 +68,7 @@ const GROUPS = [
       { to: '/layout-studio', label: 'Layout Studio', icon: FileSearch, end: false, permission: 'PLATFORM_DIAGNOSTICS_VIEW' },
       { to: '/held-imports', label: 'Held Imports', icon: Clock, end: false, permission: 'IMPORT_TRIAGE_MANAGE' },
       { to: '/held-statements', label: 'Held Statements', icon: ShieldAlert, end: false, permission: 'TRUST_REVIEW_MANAGE' },
+      { to: '/trust-review-metrics', label: 'Trust Review Metrics', icon: BarChart3, end: false, permission: 'PLATFORM_DIAGNOSTICS_VIEW' },
       { to: '/import-trace', label: 'Import Trace', icon: Route, end: false, permission: 'PLATFORM_DIAGNOSTICS_VIEW' },
       { to: '/import-row-trace', label: 'Import Row Trace', icon: ListOrdered, end: false, permission: 'PLATFORM_DIAGNOSTICS_VIEW' },
       { to: '/settings', label: 'Settings', icon: Settings, end: false, permission: 'SYSTEM_SETTINGS' },

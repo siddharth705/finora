@@ -1179,10 +1179,24 @@ export interface HeldStatementRow {
   engineerNotes: string | null;
   rootCause: string | null;
   fixReference: string | null;
+  falsePositive: boolean | null;
   createdAt: string;
   assignedAt: string | null;
   readyAt: string | null;
   resolvedAt: string | null;
+}
+
+/** Mirrors the backend's `HeldStatementTelemetryDto` exactly, field for field. `falsePositives`
+ *  is a count of `approved`, not `resolved` -- see that field's own backend doc for why dividing
+ *  by `resolved` would understate the true proportion. */
+export interface HeldStatementTelemetrySummary {
+  totalHolds: number;
+  resolved: number;
+  approved: number;
+  rejected: number;
+  falsePositives: number;
+  byCategory: Record<string, number>;
+  medianResolutionHours: number | null;
 }
 
 /** Every filter is optional; `status` narrows within the open queue and can never surface a
