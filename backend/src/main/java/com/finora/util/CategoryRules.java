@@ -50,7 +50,14 @@ public final class CategoryRules {
         // two-word phrase keyword would miss that form. Safe as a bare keyword: not a substring of,
         // or a container of, any other keyword in this table.
         RULES.put("Dining", List.of("swiggy", "zomato", "restaurant", "cafe", "starbucks", "dominos", "mcdonald", "kfc", "cinnabon", "gokhana", "tobox"));
-        RULES.put("Transport", List.of("uber", "ola", "rapido", "irctc", "petrol", "fuel", "metro", "fastag", "parking"));
+        // "indian railways" (the national railway institution, named directly rather than
+        // through its "irctc" booking portal already above) added after re-checking this
+        // project's own real bank-statement corpus for additional vocabulary beyond the
+        // 2026-09-01 review (docs/superpowers/plans/2026-09-05-categorization-vocabulary-
+        // expansion.md Task 1). Kept as the full two-word phrase, not a bare "indian": a bare
+        // keyword would misfire on real "INDIAN CLEARING CORP" settlement narrations seen in the
+        // same corpus (guarded by suggestCategory_indianClearingCorpIsNotMisclassifiedAsTransport).
+        RULES.put("Transport", List.of("uber", "ola", "rapido", "irctc", "petrol", "fuel", "metro", "fastag", "parking", "indian railways"));
         RULES.put("Utilities", List.of("electricity", "power bill", "water bill", "gas bill", "broadband", "airtel", "jio", "recharge"));
         RULES.put("Shopping", List.of("amazon", "flipkart", "myntra", "ajio", "nykaa", "decathlon", "asspl"));
         RULES.put("Health", List.of("pharmacy", "apollo", "medplus", "hospital", "clinic", "netmeds", "1mg"));
