@@ -136,6 +136,12 @@ jest.mock('@react-navigation/native', () => {
     // that wants to ASSERT a navigation still declares its own file-level jest.mock of this
     // module, which overrides this one entirely (see StatementHistoryScreen.test.tsx).
     useNavigation: () => navigationStub,
+    // No params by default -- a screen that only reads route.params to seed an OPTIONAL drill-
+    // through (Track C/C4's LedgerScreen, ImportScreen's re-import arrival) must still render
+    // correctly with none. A test that wants to ASSERT on a specific incoming param set declares
+    // its own file-level jest.mock of this module, same as useNavigation above (see
+    // ImportScreen.test.tsx / LedgerScreen.test.tsx).
+    useRoute: () => ({ params: undefined }),
   };
 });
 

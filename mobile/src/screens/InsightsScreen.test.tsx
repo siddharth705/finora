@@ -1,5 +1,6 @@
-import { render, screen } from '@testing-library/react-native';
+import { fireEvent, render, screen } from '@testing-library/react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { useNavigation } from '@react-navigation/native';
 import { InsightsScreen } from './InsightsScreen';
 import { insightsApi, recurringApi } from '../api/endpoints';
 
@@ -133,5 +134,20 @@ describe('InsightsScreen', () => {
     expect(await screen.findByText('netflix')).toBeTruthy();
     expect(screen.queryByText("This Month's Observations")).toBeNull();
     expect(screen.queryByText('Category Movers')).toBeNull();
+  });
+
+  describe('drill-through into the ledger (Track C/C4)', () => {
+    it('opens Transactions filtered to just this category -- no date range, since none is known here', async () => {
+      renderScreen();
+      await screen.findByText('Dining');
+      const { navigate } = useNavigation<never>() as unknown as { navigate: jest.Mock };
+      navigate.mockClear();
+
+      fireEvent.press(screen.getByLabelText(/Dining: ₹4,000 versus a usual ₹6,000/));
+
+      expect(navigate).toHaveBeenCalledWith('Transactions', {
+        filters: { categoryName: 'Dining', label: 'Dining', nonce: expect.any(Number) },
+      });
+    });
   });
 });

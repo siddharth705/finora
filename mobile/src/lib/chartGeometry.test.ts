@@ -94,8 +94,8 @@ describe('bucketTopSlices', () => {
   it('returns one slice per entry, sorted by value descending, when there is room in the palette', () => {
     const slices = bucketTopSlices([['b', 20], ['a', 30]], colors, 'Other');
     expect(slices).toEqual([
-      { label: 'a', value: 30, color: 'red' },
-      { label: 'b', value: 20, color: 'green' },
+      { label: 'a', value: 30, color: 'red', drillable: true },
+      { label: 'b', value: 20, color: 'green', drillable: true },
     ]);
   });
 
@@ -106,9 +106,9 @@ describe('bucketTopSlices', () => {
       'Other'
     );
     expect(slices).toEqual([
-      { label: 'a', value: 40, color: 'red' },
-      { label: 'b', value: 30, color: 'green' },
-      { label: 'Other', value: 30, color: 'blue' }, // c (20) + d (10)
+      { label: 'a', value: 40, color: 'red', drillable: true },
+      { label: 'b', value: 30, color: 'green', drillable: true },
+      { label: 'Other', value: 30, color: 'blue', drillable: false }, // c (20) + d (10)
     ]);
   });
 
@@ -122,9 +122,11 @@ describe('bucketTopSlices', () => {
       'Other'
     );
     expect(slices).toEqual([
-      { label: 'a', value: 40, color: 'red' },
-      { label: 'b', value: 30, color: 'green' },
-      { label: 'Other', value: 15, color: 'blue' }, // 5 (its own) + 10 (d, folded in)
+      { label: 'a', value: 40, color: 'red', drillable: true },
+      { label: 'b', value: 30, color: 'green', drillable: true },
+      // Not drillable: this row's 15 is no longer just the real "Other" category's own spend --
+      // drilling into "Other" here would silently exclude d's 10, which the row is also showing.
+      { label: 'Other', value: 15, color: 'blue', drillable: false }, // 5 (its own) + 10 (d, folded in)
     ]);
   });
 });

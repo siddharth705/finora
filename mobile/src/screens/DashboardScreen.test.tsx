@@ -906,3 +906,50 @@ describe('statement coverage-gap banner (Track C/C2)', () => {
     expect(navigate).toHaveBeenCalledWith('Import');
   });
 });
+
+describe('Spending by Category donut drill-through (Track C/C4)', () => {
+  it('navigates to Transactions with the tapped category and the reporting month it belongs to', async () => {
+    dashboard.summary.mockResolvedValue(emptySummary({
+      spendByCategory: { Dining: 4000, Groceries: 6000 },
+      monthlyExpense: 10000,
+      reportingMonth: '2026-08',
+      reportingMonthIsCurrent: false,
+    }));
+    const { navigate } = useNavigation<never>() as unknown as { navigate: jest.Mock };
+    navigate.mockClear();
+
+    renderScreen();
+
+    fireEvent.press(await screen.findByRole('button', { name: 'Dining: ₹4,000' }));
+
+    expect(navigate).toHaveBeenCalledWith('Transactions', {
+      filters: expect.objectContaining({
+        categoryName: 'Dining', dateFrom: '2026-08-01', dateTo: '2026-08-31', label: 'Dining · Aug 26',
+      }),
+    });
+  });
+});
+
+describe('"As of" staleness caption on Total Balance (Track C/C5)', () => {
+  it('reads "As of today" when the reporting month is the current one', async () => {
+    dashboard.summary.mockResolvedValue(emptySummary({ reportingMonthIsCurrent: true }));
+
+    renderScreen();
+
+    expect(await screen.findByText('As of today')).toBeTruthy();
+    expect(screen.getByLabelText(/Total Balance: .*, As of today/)).toBeTruthy();
+    // Total Balance's own new slot, not a change to the other three -- with every delta null
+    // (emptySummary's default), Income/Expenses/Net Savings all take the SAME "no delta" branch
+    // Total Balance used to, and none of them grows a caption of its own.
+    expect(screen.getAllByText(/^As of/)).toHaveLength(1);
+  });
+
+  it('names the stale month instead, when the reporting month is not the current one', async () => {
+    dashboard.summary.mockResolvedValue(emptySummary({ reportingMonth: '2026-06', reportingMonthIsCurrent: false }));
+
+    renderScreen();
+
+    expect(await screen.findByText('As of Jun 26')).toBeTruthy();
+    expect(screen.queryByText('As of today')).toBeNull();
+  });
+});
