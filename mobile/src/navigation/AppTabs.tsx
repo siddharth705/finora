@@ -53,9 +53,10 @@ function MoreNavigator() {
       <MoreStack.Screen name="Investments" component={InvestmentsScreen} />
       <MoreStack.Screen name="Profile" component={ProfileScreen} />
       <MoreStack.Screen name="Settings" component={SettingsScreen} />
-      {/* Refer & Earn MVP. Header shown, same as Budgets/Goals/Reports/Insights/Investments/
-          Profile/Settings above -- renders no title of its own. */}
-      <MoreStack.Screen name="Referrals" component={ReferralsScreen} options={{ title: 'Refer & Earn' }} />
+      {/* Header hidden, same as MoreHome/Accounts/Statements/CategoryReview/SupportTickets above:
+          the screen renders its own large title to match the web/design-reference hero
+          treatment. */}
+      <MoreStack.Screen name="Referrals" component={ReferralsScreen} options={{ headerShown: false }} />
       {/* Header hidden, same as MoreHome/Accounts/Statements above: this screen renders its own
           full-screen AuthScreenLayout card, and it's reached via a deep link rather than a normal
           in-app push, so there's no prior screen for a native back button to imply. */}
