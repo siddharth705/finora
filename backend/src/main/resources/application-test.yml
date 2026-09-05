@@ -101,3 +101,11 @@ app:
       # which ignores this flag.
       discovery:
         enabled: false
+
+    # Subscription billing V1 -- RazorpayProperties.isConfigured() requires all three of these
+    # non-blank, so every one must be set here or every webhook/checkout request 503s before ever
+    # reaching its own logic under test.
+    razorpay:
+      key-id: test-key-id
+      key-secret: test-key-secret
+      webhook-secret: test-webhook-secret

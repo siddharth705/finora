@@ -301,6 +301,18 @@
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-test</artifactId>
       <scope>test</scope>
+      <!-- Subscription billing V1: jsonassert (a transitive test dependency of this starter) pulls
+           in Vaadin's stripped-down org.json.JSONObject reimplementation (android-json), which
+           shadows razorpay-java's real org.json:json on the test classpath and lacks methods
+           (e.g. toMap()) that real org.json:json has — RazorpayWebhookController relies on the
+           real implementation. Confirmed via `mvn dependency:tree`: android-json arrives here,
+           in `test` scope, only through jsonassert. -->
+      <exclusions>
+        <exclusion>
+          <groupId>com.vaadin.external.google</groupId>
+          <artifactId>android-json</artifactId>
+        </exclusion>
+      </exclusions>
     </dependency>
     <dependency>
       <groupId>org.springframework.security</groupId>
