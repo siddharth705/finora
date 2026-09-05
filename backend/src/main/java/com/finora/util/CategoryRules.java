@@ -30,7 +30,14 @@ public final class CategoryRules {
     public static final Map<String, List<String>> RULES = new LinkedHashMap<>();
     static {
         RULES.put("Salary", List.of("salary", "payroll", "income tax refund", "stipend"));
-        RULES.put("Rent", List.of("house rent", "rent paid", "rent payment", "monthly rent", "rent due", "landlord", "housing society", "maintenance chg"));
+        // "housingcom" (Housing.com, printed as one contiguous word on the real statement) added
+        // after checking this project's own real bank-statement corpus (docs/superpowers/specs/
+        // 2026-09-01-transaction-categorization-design.md §1) -- mapped to Rent on the assumption
+        // this is a rent-payment-facilitator narration (see CategoryRulesTest's Housingcom test
+        // comment for the reasoning and its caveat). Safe as a bare keyword: word-boundary matching
+        // only matches the exact bounded token "housingcom", never as a prefix inside a longer run
+        // like "housingcommunity" (guarded by suggestCategory_housingCommunityIsNotMisclassifiedAsRent).
+        RULES.put("Rent", List.of("house rent", "rent paid", "rent payment", "monthly rent", "rent due", "landlord", "housing society", "maintenance chg", "housingcom"));
         RULES.put("Groceries", List.of("bigbasket", "blinkit", "zepto", "grofers", "dmart", "grocery", "supermarket"));
         // "asspl" (Amazon Seller Services' actual card-statement abbreviation) and "cinnabon"
         // added after checking this project's own real bank-statement corpus (docs/superpowers/
@@ -59,7 +66,12 @@ public final class CategoryRules {
         // same corpus (guarded by suggestCategory_indianClearingCorpIsNotMisclassifiedAsTransport).
         RULES.put("Transport", List.of("uber", "ola", "rapido", "irctc", "petrol", "fuel", "metro", "fastag", "parking", "indian railways"));
         RULES.put("Utilities", List.of("electricity", "power bill", "water bill", "gas bill", "broadband", "airtel", "jio", "recharge"));
-        RULES.put("Shopping", List.of("amazon", "flipkart", "myntra", "ajio", "nykaa", "decathlon", "asspl"));
+        // "pureplay" (Pureplay Skin Sciences, a real D2C skincare/personal-care e-commerce brand)
+        // added after checking this project's own real bank-statement corpus (docs/superpowers/
+        // specs/2026-09-01-transaction-categorization-design.md §1) -- a real, verified miss, safe
+        // as a bare keyword: not a substring of any other keyword or common English/Indian-banking-
+        // narration word, so word-boundary matching has nothing plausible to misfire against.
+        RULES.put("Shopping", List.of("amazon", "flipkart", "myntra", "ajio", "nykaa", "decathlon", "asspl", "pureplay"));
         RULES.put("Health", List.of("pharmacy", "apollo", "medplus", "hospital", "clinic", "netmeds", "1mg"));
         RULES.put("Entertainment", List.of("netflix", "prime video", "hotstar", "spotify", "bookmyshow", "pvr", "inox"));
         // "mutualfunds" is not redundant with "mutual fund": matching is word-boundary over the
@@ -67,7 +79,12 @@ public final class CategoryRules {
         // never splits a run-together word. The unspaced form is what actually appears on real
         // statements (12 rows on the corpus, all previously "Other"), so the spaced keyword could
         // never reach them.
-        RULES.put("Investments", List.of("mutual fund", "mutualfunds", "sip", "zerodha", "groww", "upstox", "nps", "ppf", "demat"));
+        // "nse mf" (National Stock Exchange's mutual-fund investment platform) added after
+        // checking this project's own real bank-statement corpus -- kept as the exact two-word
+        // phrase seen on the real narration ("NSE MF"), the same choice already made for
+        // "cc payment": matching the full phrase rather than a bare "mf" avoids the false-positive
+        // risk a 2-letter fragment would carry.
+        RULES.put("Investments", List.of("mutual fund", "mutualfunds", "sip", "zerodha", "groww", "upstox", "nps", "ppf", "demat", "nse mf"));
         RULES.put("Fees/Interest", List.of("annual fee", "late fee", "finance charge", "interest charged", "penalty"));
         // "cc payment" added after checking this project's own real bank-statement corpus (see
         // Shopping/Dining comment above) -- a real BharatBillPay narration ("BPPY CC PAYMENT")
@@ -85,7 +102,11 @@ public final class CategoryRules {
         // "bingo"/"tango" (so e.g. a "MongoDB" hosting charge would misfire as a donation). The
         // compound phrases below keep the same real-world coverage without the false positives.
         RULES.put("Loan EMI", List.of("loan emi", "emi payment", "emi deduction", "personal loan", "home loan", "car loan", "auto loan"));
-        RULES.put("Insurance", List.of("insurance", "lic premium", "policybazaar", "premium payment"));
+        // "pmjjby" (Pradhan Mantri Jeevan Jyoti Bima Yojana, a real Government of India life-
+        // insurance scheme) added after checking this project's own real bank-statement corpus --
+        // safe as a bare keyword for the same reason "pureplay" above is: a distinctive acronym,
+        // not a substring of any other keyword or common narration word.
+        RULES.put("Insurance", List.of("insurance", "lic premium", "policybazaar", "premium payment", "pmjjby"));
         // "nwd" (Non-Home-branch Withdrawal, the standard NPCI/bank narration code for an ATM
         // withdrawal at another bank's machine) added after checking this project's own real
         // bank-statement corpus -- the only real ATM row in it ("NWD-416021XXXXXX5853-...") was
