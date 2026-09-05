@@ -14,6 +14,7 @@ function source(over: Partial<TransactionSource> = {}): TransactionSource {
   return {
     available: true,
     sourceLabel: 'CSV_IMPORT',
+    statementDeleted: false,
     statementImportId: 'si-1',
     fileName: 'march-statement.pdf',
     rowPosition: 14,
@@ -84,6 +85,22 @@ describe('TransactionSourceModal (Track C/C7)', () => {
     expect(await screen.findByText('Imported from a Gmail receipt, not a bank statement row.')).toBeTruthy();
   });
 
+  // The bug this guards: a row that WAS tracked but whose statement import was later deleted
+  // used to render the exact same "predates tracking" sentence as a row that never had a
+  // tracked position at all -- a false claim for this case.
+  it('tells apart "the statement was deleted" from "this predates tracking"', async () => {
+    transactions.source.mockResolvedValue(source({
+      available: false, sourceLabel: 'CSV_IMPORT', statementDeleted: true, statementImportId: null,
+      fileName: null, rowPosition: null, importedAt: null, accountName: null,
+      statementPeriodStart: null, statementPeriodEnd: null,
+    }));
+
+    renderModal('t-1');
+
+    expect(await screen.findByText('The bank statement this was imported from is no longer available.')).toBeTruthy();
+    expect(screen.queryByText('Imported before Finora tracked exactly which row a transaction came from.')).toBeNull();
+  });
+
   it('says so, rather than nothing, when the request fails', async () => {
     transactions.source.mockRejectedValue(new Error('network down'));
 
@@ -108,5 +125,46 @@ describe('TransactionSourceModal (Track C/C7)', () => {
 
     expect(await screen.findByText('march-statement.pdf')).toBeTruthy();
     expect(screen.queryByText('Account')).toBeNull();
+  });
+
+  // The bug this whole block guards: joining an unguarded fmtDate(null) into a template literal
+  // renders the literal text "null" -- a real, documented case, since statementPeriodStart/End
+  // are two independently nullable columns.
+  describe('statement period rendering (mixed null dates)', () => {
+    it('shows only the start date when the end date is unknown, never the word "null"', async () => {
+      transactions.source.mockResolvedValue(source({ statementPeriodStart: '2026-03-01', statementPeriodEnd: null }));
+
+      renderModal('t-1');
+
+      // fmtDate renders en-IN day-month-year, e.g. "1 Mar 2026" -- not the US "Mar 1, 2026" order.
+      expect(await screen.findByText('1 Mar 2026')).toBeTruthy();
+      expect(screen.queryByText(/null/)).toBeNull();
+    });
+
+    it('shows only the end date when the start date is unknown, never the word "null"', async () => {
+      transactions.source.mockResolvedValue(source({ statementPeriodStart: null, statementPeriodEnd: '2026-03-31' }));
+
+      renderModal('t-1');
+
+      expect(await screen.findByText('31 Mar 2026')).toBeTruthy();
+      expect(screen.queryByText(/null/)).toBeNull();
+    });
+
+    it('omits the statement period field entirely when neither date is known', async () => {
+      transactions.source.mockResolvedValue(source({ statementPeriodStart: null, statementPeriodEnd: null }));
+
+      renderModal('t-1');
+
+      expect(await screen.findByText('march-statement.pdf')).toBeTruthy();
+      expect(screen.queryByText('Statement period')).toBeNull();
+    });
+
+    it('joins both dates when both are known', async () => {
+      transactions.source.mockResolvedValue(source());
+
+      renderModal('t-1');
+
+      expect(await screen.findByText('1 Mar 2026 – 31 Mar 2026')).toBeTruthy();
+    });
   });
 });

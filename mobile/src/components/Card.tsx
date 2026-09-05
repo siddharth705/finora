@@ -30,6 +30,20 @@ export function EmptyState({ message }: { message: string }) {
   return <Text style={[styles.empty, { color: c.muted }]}>{message}</Text>;
 }
 
+/** A label/value pair inside a details grid -- wrap a row of these in a `View` styled
+ *  `{ flexDirection: 'row', flexWrap: 'wrap' }` for the two-per-row layout StatementHistoryScreen
+ *  and TransactionSourceModal both use. Previously two nearly-identical private copies of this
+ *  same component (and its styles) lived in those two files. */
+export function DetailField({ label, value }: { label: string; value: string }) {
+  const c = useTheme();
+  return (
+    <View style={styles.detailField}>
+      <Text style={[styles.detailFieldLabel, { color: c.muted }]}>{label}</Text>
+      <Text style={[styles.detailFieldValue, { color: c.ink }]}>{value}</Text>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   card: {
     borderWidth: 1,
@@ -51,4 +65,7 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.md,
     textAlign: 'center',
   },
+  detailField: { width: '50%', paddingVertical: 6, paddingRight: spacing.sm },
+  detailFieldLabel: { fontSize: 12, fontWeight: '500', marginBottom: 4 },
+  detailFieldValue: { fontSize: 13, lineHeight: 18 },
 });

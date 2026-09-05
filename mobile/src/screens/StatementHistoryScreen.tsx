@@ -11,7 +11,7 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import { statementImportsApi } from '../api/endpoints';
 import { PDF_PASSWORD_INVALID, PDF_PASSWORD_REQUIRED } from '../api/errorCodes';
 import { Button } from '../components/Button';
-import { Card, EmptyState, SectionHeading } from '../components/Card';
+import { Card, DetailField, EmptyState, SectionHeading } from '../components/Card';
 import { apiErrorCode, toUserMessage } from '../lib/apiError';
 import { fmtCurrency, fmtDate } from '../lib/format';
 import { invalidateFinancialData } from '../lib/invalidateFinancialData';
@@ -400,17 +400,22 @@ function StatementDetailModal({ detail, onClose }: { detail: Detail; onClose: ()
 
           {mode === 'summary' ? (
             <View style={styles.fieldGrid}>
-              <Field label="Statement period" value={
-                statement.statementPeriodStart
-                  ? `${fmtDate(statement.statementPeriodStart)} – ${fmtDate(statement.statementPeriodEnd)}`
+              <DetailField label="Statement period" value={
+                // Guards each date independently -- statementPeriodStart/End are two separately
+                // nullable columns (a real, documented extraction gap), not a both-or-neither
+                // pair. Joining fmtDate(end) unguarded here used to render the literal text
+                // "null" whenever only the start date had been extracted.
+                statement.statementPeriodStart || statement.statementPeriodEnd
+                  ? [fmtDate(statement.statementPeriodStart), fmtDate(statement.statementPeriodEnd)]
+                      .filter(Boolean).join(' – ')
                   : 'Unknown'
               } />
-              <Field label="Imported" value={fmtDate(statement.importedAt) ?? '—'} />
-              <Field label="Opening balance" value={statement.openingBalance != null ? fmtCurrency(statement.openingBalance) : '—'} />
-              <Field label="Closing balance" value={statement.closingBalance != null ? fmtCurrency(statement.closingBalance) : '—'} />
-              <Field label="Transactions imported" value={String(statement.transactionsImported)} />
-              <Field label="Transactions skipped" value={String(statement.transactionsSkipped)} />
-              <Field label="Duplicates flagged" value={String(statement.duplicateCount)} />
+              <DetailField label="Imported" value={fmtDate(statement.importedAt) ?? '—'} />
+              <DetailField label="Opening balance" value={statement.openingBalance != null ? fmtCurrency(statement.openingBalance) : '—'} />
+              <DetailField label="Closing balance" value={statement.closingBalance != null ? fmtCurrency(statement.closingBalance) : '—'} />
+              <DetailField label="Transactions imported" value={String(statement.transactionsImported)} />
+              <DetailField label="Transactions skipped" value={String(statement.transactionsSkipped)} />
+              <DetailField label="Duplicates flagged" value={String(statement.duplicateCount)} />
             </View>
           ) : isLoading ? (
             <ActivityIndicator color={c.primary} style={styles.detailLoading} />
@@ -442,16 +447,6 @@ function StatementDetailModal({ detail, onClose }: { detail: Detail; onClose: ()
   );
 }
 
-function Field({ label, value }: { label: string; value: string }) {
-  const c = useTheme();
-  return (
-    <View style={styles.field}>
-      <Text style={[styles.fieldLabel, { color: c.muted }]}>{label}</Text>
-      <Text style={[styles.body, { color: c.ink }]}>{value}</Text>
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
   flex: { flex: 1 },
   flexShrink: { flexShrink: 1 },
@@ -479,7 +474,6 @@ const styles = StyleSheet.create({
   detailList: { maxHeight: 360 },
   detailLoading: { marginVertical: spacing.md },
   fieldGrid: { flexDirection: 'row', flexWrap: 'wrap' },
-  field: { width: '50%', paddingVertical: 6, paddingRight: spacing.sm },
   fieldLabel: { fontSize: 12, fontWeight: '500', marginBottom: 4 },
   helpText: { fontSize: 12, lineHeight: 17 },
   input: { borderWidth: 1, borderRadius: radius.md, paddingHorizontal: 12, minHeight: 48, fontSize: 15 },

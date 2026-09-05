@@ -69,6 +69,7 @@ class TransactionSourceServiceTest {
 
         assertThat(result.available()).isTrue();
         assertThat(result.sourceLabel()).isEqualTo("CSV_IMPORT");
+        assertThat(result.statementDeleted()).isFalse();
         assertThat(result.statementImportId()).isEqualTo(statementImportId);
         assertThat(result.fileName()).isEqualTo("march-statement.pdf");
         assertThat(result.rowPosition()).isEqualTo(14);
@@ -87,6 +88,7 @@ class TransactionSourceServiceTest {
 
         assertThat(result.available()).isFalse();
         assertThat(result.sourceLabel()).isEqualTo("MANUAL");
+        assertThat(result.statementDeleted()).isFalse();
         assertThat(result.fileName()).isNull();
         assertThat(result.rowPosition()).isNull();
     }
@@ -100,6 +102,7 @@ class TransactionSourceServiceTest {
 
         assertThat(result.available()).isFalse();
         assertThat(result.sourceLabel()).isEqualTo("GMAIL_IMPORT");
+        assertThat(result.statementDeleted()).isFalse();
     }
 
     @Test
@@ -119,6 +122,8 @@ class TransactionSourceServiceTest {
 
         assertThat(result.available()).isFalse();
         assertThat(result.sourceLabel()).isEqualTo("CSV_IMPORT");
+        // Never had a row -- a genuinely different fact from "had one, lost it" below.
+        assertThat(result.statementDeleted()).isFalse();
     }
 
     @Test
@@ -131,6 +136,10 @@ class TransactionSourceServiceTest {
 
         assertThat(result.available()).isFalse();
         assertThat(result.sourceLabel()).isEqualTo("CSV_IMPORT");
+        // The row WAS tracked -- statementDeleted distinguishes this from "never had a row"
+        // above, so the client doesn't tell the user their transaction predates tracking when it
+        // doesn't.
+        assertThat(result.statementDeleted()).isTrue();
     }
 
     @Test
@@ -148,6 +157,7 @@ class TransactionSourceServiceTest {
         TransactionSourceDto result = service.explainSource(userId, txnId);
 
         assertThat(result.available()).isTrue();
+        assertThat(result.statementDeleted()).isFalse();
         assertThat(result.accountName()).isNull();
         assertThat(result.fileName()).isEqualTo("stmt.csv");
     }

@@ -112,11 +112,15 @@ export type CounterpartyType =
  * Track C/C7. Mirrors the backend's `TransactionSourceDto` exactly. `available: false` is a real
  * answer ("this wasn't imported from a bank statement row" -- a manual entry, a Gmail receipt, or
  * one imported before row-position tracking existed), not an error -- every field but
- * `sourceLabel` is null in that case.
+ * `sourceLabel`/`statementDeleted` is null in that case. `statementDeleted` distinguishes "never
+ * had a tracked row" from "it had one, but the statement import row was later deleted" -- the two
+ * are different facts and read very differently to a user, even though both leave `available`
+ * false and `sourceLabel` unchanged.
  */
 export interface TransactionSource {
   available: boolean;
   sourceLabel: 'MANUAL' | 'CSV_IMPORT' | 'GMAIL_IMPORT';
+  statementDeleted: boolean;
   statementImportId: string | null;
   fileName: string | null;
   rowPosition: number | null;

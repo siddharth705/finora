@@ -385,9 +385,20 @@ export function LedgerScreen() {
               // as a rotor entry duplicating what a plain double-tap already does. Default
               // activation maps to onPress, so only the non-default action needs declaring.
               accessibilityHint="Changes this transaction's category"
-              accessibilityActions={[{ name: 'delete', label: 'Delete transaction' }]}
+              // Track C/C7's info button below is a SIGHTED-only affordance, not a second
+              // accessibility stop: nesting an accessible Pressable inside one that's already
+              // accessible={true} (the default neither opts out of) doesn't create a separate
+              // screen-reader-reachable node on either platform -- VoiceOver/TalkBack treat the
+              // whole subtree as one atomic element, and activating it fires THIS Pressable's own
+              // onPress, not the nested one's. 'viewSource' is the same fix already applied to
+              // 'delete' above for the identical reason: a rotor action reaches it either way.
+              accessibilityActions={[
+                { name: 'delete', label: 'Delete transaction' },
+                { name: 'viewSource', label: 'Show where this came from' },
+              ]}
               onAccessibilityAction={(e) => {
                 if (e.nativeEvent.actionName === 'delete') confirmDelete(t);
+                if (e.nativeEvent.actionName === 'viewSource') setViewingSourceId(t.id);
               }}
             >
               <View style={styles.rowMain}>
@@ -415,15 +426,19 @@ export function LedgerScreen() {
                 </Text>
               )}
               {/* Track C/C7. Nested inside the row's own Pressable -- RN gives the innermost
-                  touch target the tap, so this doesn't collide with onPress/onLongPress above.
-                  Its own accessibilityRole/Label make it a separate stop for a screen reader
-                  rather than getting absorbed into the row's already-long label. */}
+                  touch target the tap, so this doesn't collide with onPress/onLongPress above,
+                  for a SIGHTED user. Deliberately `accessible={false}`: the outer row's own
+                  accessible={true} (default) already makes its whole subtree one atomic
+                  VoiceOver/TalkBack element, so this nested Pressable can never be an
+                  independently reachable second stop regardless of its own accessibilityLabel --
+                  the 'viewSource' accessibilityAction declared on the outer row above is the
+                  real, reachable path for a screen-reader user. */}
               <Pressable
                 onPress={() => setViewingSourceId(t.id)}
                 hitSlop={10}
                 style={styles.sourceButton}
-                accessibilityRole="button"
-                accessibilityLabel="Where this came from"
+                accessible={false}
+                testID={`source-button-${t.id}`}
               >
                 <Ionicons name="information-circle-outline" size={18} color={c.muted} />
               </Pressable>

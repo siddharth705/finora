@@ -41,24 +41,27 @@ public class TransactionSourceService {
     public TransactionSourceDto explainSource(UUID userId, UUID transactionId) {
         Transaction t = OwnershipGuard.requireOwned(
                 transactionRepository.findById(transactionId), Transaction::getUserId, userId, "Transaction");
+        String sourceLabel = t.getSource().name();
 
         if (t.getStatementImportId() == null || t.getSourceRowPosition() == null) {
-            return TransactionSourceDto.notAvailable(t.getSource().name());
+            return TransactionSourceDto.notAvailable(sourceLabel);
         }
 
         StatementImport statementImport = statementImportRepository.findById(t.getStatementImportId()).orElse(null);
         if (statementImport == null) {
             // The import row this transaction came from has since been deleted (a superseded
             // upload, or account-purge cleanup) -- the transaction itself survives, but there is
-            // no longer a file/period to point to. Same "state it plainly" answer as any other
-            // not-available case above, not a 404: the TRANSACTION still exists and is owned.
-            return TransactionSourceDto.notAvailable(t.getSource().name());
+            // no longer a file/period to point to. A DIFFERENT fact from the "never had a row"
+            // case above -- see TransactionSourceDto's own doc comment on why statementDeleted
+            // exists to tell them apart, rather than a 404: the TRANSACTION still exists and is
+            // owned.
+            return TransactionSourceDto.statementDeleted(sourceLabel);
         }
 
         String accountName = accountRepository.findById(statementImport.getAccountId())
                 .map(Account::getName).orElse(null);
 
-        return new TransactionSourceDto(true, t.getSource().name(), statementImport.getId(),
+        return new TransactionSourceDto(true, sourceLabel, false, statementImport.getId(),
                 statementImport.getFileName(), t.getSourceRowPosition(), statementImport.getImportedAt(),
                 accountName, statementImport.getStatementPeriodStart(), statementImport.getStatementPeriodEnd());
     }
