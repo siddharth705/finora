@@ -295,44 +295,31 @@ describe('Dashboard — Financial Health Score', () => {
     expect(balanceValue).toHaveClass('font-display');
   });
 
-  it('wraps the greeting in a hero card with Financial Health and Savings Rate chips', async () => {
+  it('wraps the greeting in a hero card with a decorative, hidden illustration', async () => {
     renderDashboard();
 
     const heading = await screen.findByRole('heading', { level: 1 });
     expect(heading.textContent).toMatch(/👋/);
-
-    expect(screen.getByText('Financial Health: Excellent · 82/100')).toBeInTheDocument();
-    expect(screen.getByText('Savings rate 44%')).toBeInTheDocument();
 
     const illustration = document.querySelector('[data-testid="dashboard-hero-illustration"]');
     expect(illustration).toBeTruthy();
     expect(illustration).toHaveAttribute('aria-hidden', 'true');
   });
 
-  it('omits the Financial Health chip when the score is not yet available', async () => {
-    vi.mocked(dashboardApi.summary).mockReset().mockResolvedValue(
-      summary({ healthScoreAvailable: false, healthScore: null, healthLabel: null, healthScoreTransactionCount: 3 }),
-    );
+  it('offers Import Statement and Add Transaction quick actions in the hero, not a repeat of the Financial Health/Savings Rate numbers already shown just below', async () => {
+    const user = userEvent.setup();
     renderDashboard();
 
-    await screen.findByRole('heading', { level: 1 });
-    expect(screen.queryByText(/Financial Health:/)).not.toBeInTheDocument();
-    expect(screen.getByText('Savings rate 44%')).toBeInTheDocument();
-  });
+    const heading = await screen.findByRole('heading', { level: 1 });
+    const hero = within(heading.closest('div.bg-card') as HTMLElement);
 
-  it('omits the Financial Health chip for a zero-transaction account even if healthScoreAvailable is stale-true', async () => {
-    // healthScoreAvailable comes from a separate backend computation than recentTxnsQ's
-    // totalElements -- this fixture combo (isEmpty true, healthScoreAvailable true) shouldn't
-    // occur in practice, but the chip must not trust healthScoreAvailable alone, the same reason
-    // the full Financial Health Score card below it gates on !isEmpty rather than that flag.
-    vi.mocked(transactionsApi.search).mockReset().mockResolvedValue({
-      content: [], page: 0, size: 4, totalElements: 0, totalPages: 0,
-    });
-    renderDashboard();
+    expect(hero.queryByText(/Financial Health:/)).not.toBeInTheDocument();
+    expect(hero.queryByText(/Savings rate/)).not.toBeInTheDocument();
 
-    await screen.findByRole('heading', { level: 1 });
-    expect(screen.queryByText(/Financial Health:/)).not.toBeInTheDocument();
-    expect(screen.getByText('Savings rate 44%')).toBeInTheDocument();
+    expect(hero.getByRole('link', { name: /import statement/i })).toHaveAttribute('href', '/app/import');
+
+    await user.click(hero.getByRole('button', { name: /add transaction/i }));
+    expect(await screen.findByRole('heading', { name: /add transaction/i })).toBeInTheDocument();
   });
 });
 

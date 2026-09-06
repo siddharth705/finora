@@ -5,6 +5,8 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 
+import java.util.UUID;
+
 public class AuthDtos {
 
     // Bcrypt silently truncates any input past 72 bytes, so two different passwords that only
@@ -136,14 +138,18 @@ public class AuthDtos {
      *  false, so VerifyPhone.tsx can show which number a code will go to -- a wrong/missing
      *  country code on the account is visible on screen instead of silently failing to deliver.
      *  The frontend fetches the REAL phone number separately (GET /users/me, once authenticated)
-     *  when it actually needs to hand it to Firebase's signInWithPhoneNumber(). */
+     *  when it actually needs to hand it to Firebase's signInWithPhoneNumber(). id is the real
+     *  Fynora user id -- subscription billing V4 (design spec §2) needs it client-side to call
+     *  RevenueCat's Purchases.configure({ appUserID }) with the real id, never an anonymous one;
+     *  there was previously no way for the mobile app to learn its own signed-in user's id at all. */
     public record AuthResponse(
             String token,
             String refreshToken,
             String email,
             String fullName,
             boolean phoneVerified,
-            String maskedPhone
+            String maskedPhone,
+            UUID id
     ) {}
 
     /** @param scope see {@link LoginRequest#scope()} -- a reset link must be issued for the

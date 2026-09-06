@@ -6,6 +6,11 @@ import { AuthProvider, useAuth } from './AuthContext';
 import { api, rawApi } from '../api/client';
 import { safeStorage } from '../lib/safeStorage';
 
+// AuthProvider now calls configureRevenueCat() at sign-in -- unmocked, this pulls in the real
+// react-native-purchases package, which Jest can't transform (an ESM-only transitive dependency).
+// This test has nothing to do with RevenueCat.
+jest.mock('../lib/revenueCat', () => ({ configureRevenueCat: jest.fn() }));
+
 /**
  * MOB-AUTH-04 -- ending a Finora session must also end the Google one.
  *
