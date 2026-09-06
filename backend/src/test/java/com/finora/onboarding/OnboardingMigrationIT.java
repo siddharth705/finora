@@ -11,7 +11,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/** V161's backfill -- every user that existed before this migration must come out of it with
+/** V162's backfill -- every user that existed before this migration must come out of it with
  *  onboarding already marked complete, so nobody already using Fynora is ambushed by a tour on
  *  their next login. See that migration's own comment, and the design spec's §5. */
 class OnboardingMigrationIT extends AbstractIntegrationTest {
@@ -32,7 +32,7 @@ class OnboardingMigrationIT extends AbstractIntegrationTest {
 
     @Test
     void everyUserHasOnboardingCompletedAtSetAfterMigration() {
-        // This user is created AFTER V161 already ran (the migration only runs once, at
+        // This user is created AFTER V162 already ran (the migration only runs once, at
         // Testcontainers bootstrap) -- so it does NOT prove the backfill ran, only that a fresh
         // row genuinely starts unset. See the next test for that half.
         User user = userRepository.saveAndFlush(createUser());
@@ -43,10 +43,10 @@ class OnboardingMigrationIT extends AbstractIntegrationTest {
 
     @Test
     void theBackfillStatementFlipsAnyRowLeftNull() {
-        // V161's own UPDATE ran once, against an empty users table, at this Testcontainers
+        // V162's own UPDATE ran once, against an empty users table, at this Testcontainers
         // instance's schema bootstrap -- there is no way to observe a genuinely pre-migration row
         // from inside a test that only runs after every migration already applied. What this test
-        // proves instead, honestly: V161's exact backfill statement (same predicate, same
+        // proves instead, honestly: V162's exact backfill statement (same predicate, same
         // assignment) does what it claims -- given a row it has never touched (NULL), running it
         // again flips that row to non-null, and only that row.
         User user = userRepository.saveAndFlush(createUser());

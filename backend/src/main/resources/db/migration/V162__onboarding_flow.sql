@@ -1,4 +1,7 @@
--- V161: First-login onboarding flow (tour + Financial Focus + getting-started checklist).
+-- V162: First-login onboarding flow (tour + Financial Focus + getting-started checklist).
+-- Originally written as V161; renumbered when origin/main's V161__unlimited_accounts_entitlement
+-- (an independent in-flight session) landed first -- see the repo's own CLAUDE.md on this
+-- collision pattern. Never renumber a migration that's already been merged; this one hadn't.
 -- See docs/superpowers/specs/2026-09-06-first-login-onboarding-tour-design.md.
 
 -- Same "nullable _at, set once, never cleared except by an explicit reset" convention as

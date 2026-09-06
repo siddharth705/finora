@@ -72,7 +72,7 @@ public class OnboardingService {
         }
         focusRepository.deleteByUserId(userId);
         // Deduplicated (not just validated) before inserting: user_financial_focus has a
-        // UNIQUE(user_id, focus_key) constraint (V161), so the same key appearing twice in one
+        // UNIQUE(user_id, focus_key) constraint (V162), so the same key appearing twice in one
         // request would otherwise hit that constraint mid-transaction and surface as a generic 409
         // "conflicts with an existing record" -- misleading for what's actually just a redundant
         // selection, not a real conflict. The frontend's own toggle-based multi-select can't

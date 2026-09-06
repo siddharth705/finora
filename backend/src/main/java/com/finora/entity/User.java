@@ -248,7 +248,7 @@ public class User {
     private Instant passwordChangedAt;
 
     // Null until the user has completed or skipped the first-login onboarding flow (Welcome ->
-    // Financial Focus -> Tour) -- see V161's migration comment and docs/superpowers/specs/
+    // Financial Focus -> Tour) -- see V162's migration comment and docs/superpowers/specs/
     // 2026-09-06-first-login-onboarding-tour-design.md §5. Set by OnboardingService.complete(),
     // cleared back to null only by OnboardingService.reset() ("Retake Product Tour").
     @Column(name = "onboarding_completed_at")
