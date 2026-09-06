@@ -15,16 +15,16 @@ import { BrandMark } from './BrandMark';
 const COLLAPSED_STORAGE_KEY = 'finora_sidebar_collapsed';
 
 const links = [
-  { to: '/app', label: 'Dashboard', icon: LayoutDashboard, end: true },
+  { to: '/app', label: 'Dashboard', icon: LayoutDashboard, end: true, tourId: 'dashboard' },
   // The CSV import pipeline (CsvImportService, /app/import) has existed since early builds but
   // was never reachable from anywhere in the app's navigation — this was the actual reason it
   // looked like the feature didn't exist at all, not just that it needed polish.
-  { to: '/app/import', label: 'Import Statement', icon: UploadCloud },
+  { to: '/app/import', label: 'Import Statement', icon: UploadCloud, tourId: 'import' },
   { to: '/app/statements', label: 'Statement History', icon: History },
-  { to: '/app/accounts', label: 'Accounts', icon: Wallet },
-  { to: '/app/transactions', label: 'Transactions', icon: ArrowLeftRight },
-  { to: '/app/budgets', label: 'Budgets', icon: PiggyBank },
-  { to: '/app/goals', label: 'Goals', icon: Target },
+  { to: '/app/accounts', label: 'Accounts', icon: Wallet, tourId: 'accounts' },
+  { to: '/app/transactions', label: 'Transactions', icon: ArrowLeftRight, tourId: 'transactions' },
+  { to: '/app/budgets', label: 'Budgets', icon: PiggyBank, tourId: 'budgets' },
+  { to: '/app/goals', label: 'Goals', icon: Target, tourId: 'goals' },
   { to: '/app/investments', label: 'Investments', icon: TrendingUp },
   // end: true -- '/app/reports/advanced' below is a nested child route, and NavLink's default
   // (prefix) matching would otherwise also highlight this link whenever Advanced Reports is the
@@ -35,7 +35,7 @@ const links = [
   // (PremiumFeatureGate on AdvancedReports.tsx), not a 404 or a hidden nav item. Hiding it
   // entirely would mean a Free user can't discover the feature exists at all.
   { to: '/app/reports/advanced', label: 'Advanced Reports', icon: Crown },
-  { to: '/app/insights', label: 'Insights', icon: Sparkles },
+  { to: '/app/insights', label: 'Insights', icon: Sparkles, tourId: 'insights' },
 ];
 
 function initials(name: string | null) {
@@ -93,12 +93,13 @@ export function Sidebar() {
           a native tooltip so a collapsed item is still identifiable on hover, not just by icon
           shape alone. */}
       <nav className="flex-1 space-y-1">
-        {links.map(({ to, label, icon: Icon, end }) => (
+        {links.map(({ to, label, icon: Icon, end, tourId }) => (
           <NavLink
             key={to}
             to={to}
             end={end}
             title={collapsed ? label : undefined}
+            data-tour={tourId}
             className={({ isActive }) =>
               // The sidebar is a fixed-dark surface regardless of the app's own light/dark
               // toggle, so the active state can't use the toggling `primary` token (it's dark
