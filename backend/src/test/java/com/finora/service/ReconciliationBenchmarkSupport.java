@@ -53,6 +53,7 @@ abstract class ReconciliationBenchmarkSupport {
     protected TransactionGraphService transactionGraphService;
     protected GmailReconciliationMatcher gmailReconciliationMatcher;
     protected StatementImportRepository statementImportRepository;
+    protected com.finora.observability.ReconciliationMetrics reconciliationMetrics;
     protected ReconciliationService reconciliationService;
 
     protected final UUID userId = UUID.randomUUID();
@@ -69,11 +70,13 @@ abstract class ReconciliationBenchmarkSupport {
         transactionGraphService = mock(TransactionGraphService.class);
         gmailReconciliationMatcher = mock(GmailReconciliationMatcher.class);
         statementImportRepository = mock(StatementImportRepository.class);
+        reconciliationMetrics = mock(com.finora.observability.ReconciliationMetrics.class);
         liveAccounts = new ArrayList<>();
         ccStatements = new ArrayList<>();
         when(accountRepository.findByUserId(userId)).thenAnswer(inv -> new ArrayList<>(liveAccounts));
         reconciliationService = new ReconciliationService(transactionRepository, accountRepository, relationshipService,
-                auditService, transactionGraphService, gmailReconciliationMatcher, statementImportRepository);
+                auditService, transactionGraphService, gmailReconciliationMatcher, statementImportRepository,
+                reconciliationMetrics);
     }
 
     // --- Fixture builders -----------------------------------------------------------------
