@@ -113,6 +113,18 @@ updates:
   # its own is something to close rather than something to merge as a set. The fix for mobile is an
   # SDK upgrade, which moves react along with everything else it pins. Grouping would only make an
   # unmergeable PR tidier.
+  #
+  # react-native is ignored past 0.86.x for the same reason, learned the hard way: PR #202 grouped
+  # a 0.86.2 -> 0.87.0 bump into npm-minor-and-patch (a "minor" bump by Dependabot's own rules) and
+  # broke all 37 mobile test suites -- `@react-native/assets-registry/registry` was renamed/split in
+  # 0.87.0 and jest-expo ~57.0.4 (the version paired with Expo SDK 57) still imports the old path.
+  # Expo SDK 57 only supports react-native@0.86.x, so a bump past it is never mergeable, grouped or
+  # not. `ignore` is used here rather than the group's `exclude-patterns`: exclude-patterns only
+  # keeps a dependency out of the group, it would still let Dependabot open a standalone PR
+  # proposing the same incompatible version -- smaller blast radius, same broken PR. `ignore` stops
+  # the version from being proposed at all. Patch releases within 0.86.x are still allowed. Revisit
+  # when Expo ships SDK 58 with react-native@0.87.x support, at which point expo, jest-expo and
+  # react-native should all be bumped together (see #242).
   - package-ecosystem: npm
     directory: /mobile
     schedule:
@@ -122,6 +134,9 @@ updates:
     groups:
       npm-minor-and-patch:
         update-types: [minor, patch]
+    ignore:
+      - dependency-name: "react-native"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
     commit-message:
       prefix: "chore(deps)"
 

@@ -15,6 +15,7 @@ import com.finora.repository.SubscriptionOrderRepository;
 import com.finora.repository.SubscriptionRepository;
 import com.finora.repository.UserRepository;
 import com.finora.util.AfterCommit;
+import com.finora.util.LogSanitizer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -82,7 +83,8 @@ public class RazorpayWebhookDispatcher {
             case "subscription.pending" -> handlePending(payload);
             case "subscription.halted" -> handleHalted(payload);
             case "subscription.cancelled" -> handleCancelled(payload);
-            default -> log.info("Razorpay webhook event '{}' received but not handled in V1.", eventType);
+            default -> log.info("Razorpay webhook event '{}' received but not handled in V1.",
+                    LogSanitizer.sanitize(eventType));
         }
     }
 
@@ -113,7 +115,8 @@ public class RazorpayWebhookDispatcher {
 
         Optional<SubscriptionOrder> maybeOrder = subscriptionOrderRepository.findByRazorpaySubscriptionId(razorpaySubscriptionId);
         if (maybeOrder.isEmpty()) {
-            log.warn("subscription.activated for unknown razorpaySubscriptionId {}, ignoring.", razorpaySubscriptionId);
+            log.warn("subscription.activated for unknown razorpaySubscriptionId {}, ignoring.",
+                    LogSanitizer.sanitize(razorpaySubscriptionId));
             return;
         }
         SubscriptionOrder order = maybeOrder.get();
@@ -209,7 +212,8 @@ public class RazorpayWebhookDispatcher {
 
         Optional<Subscription> maybeSubscription = subscriptionRepository.findByRazorpaySubscriptionId(razorpaySubscriptionId);
         if (maybeSubscription.isEmpty()) {
-            log.warn("subscription.charged for unknown razorpaySubscriptionId {}, ignoring.", razorpaySubscriptionId);
+            log.warn("subscription.charged for unknown razorpaySubscriptionId {}, ignoring.",
+                    LogSanitizer.sanitize(razorpaySubscriptionId));
             return;
         }
         Subscription subscription = maybeSubscription.get();

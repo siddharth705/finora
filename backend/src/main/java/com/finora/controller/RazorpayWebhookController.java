@@ -3,6 +3,7 @@ package com.finora.controller;
 import com.finora.integrations.razorpay.RazorpayProperties;
 import com.finora.service.RazorpayWebhookDispatcher;
 import com.finora.service.WebhookEventService;
+import com.finora.util.LogSanitizer;
 import com.razorpay.RazorpayException;
 import com.razorpay.Utils;
 import org.json.JSONObject;
@@ -103,7 +104,10 @@ public class RazorpayWebhookController {
         }
 
         if (!webhookEventService.claim(eventId, "RAZORPAY", eventType, fullBody)) {
-            log.info("Duplicate Razorpay webhook event {} ({}), ignoring.", eventId, eventType);
+            // eventId is an HTTP header, not covered by the body signature check above -- unlike
+            // eventType/rawBody, its value is never actually verified as coming from Razorpay.
+            log.info("Duplicate Razorpay webhook event {} ({}), ignoring.",
+                    LogSanitizer.sanitize(eventId), LogSanitizer.sanitize(eventType));
             return ResponseEntity.ok().build();
         }
 
@@ -112,7 +116,8 @@ public class RazorpayWebhookController {
             webhookEventService.markProcessed(eventId);
         } catch (RuntimeException e) {
             webhookEventService.markFailed(eventId);
-            log.error("Failed to process Razorpay webhook event {} ({}).", eventId, eventType, e);
+            log.error("Failed to process Razorpay webhook event {} ({}).",
+                    LogSanitizer.sanitize(eventId), LogSanitizer.sanitize(eventType), e);
             throw e;
         }
         return ResponseEntity.ok().build();
