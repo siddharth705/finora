@@ -129,7 +129,12 @@ public class ImportController {
     private void requireStatementPeriodWithinFreeLimit(LocalDate start, LocalDate end) {
         if (start == null || end == null) return;
         if (entitlementService.hasEntitlement(currentUser.id(), FeatureEntitlement.EXTENDED_HISTORY)) return;
-        long days = ChronoUnit.DAYS.between(start, end) + 1;
+        // Math.abs, not the raw difference: a genuine printed period always has end >= start, but
+        // this pair is client-supplied (echoed back from staging, same trust boundary every other
+        // reader of these two fields already relies on -- see ConfirmRequest's own doc comment) and
+        // a reversed pair would otherwise compute a negative day count that always slips under the
+        // limit regardless of the statement's real length, silently defeating this whole check.
+        long days = Math.abs(ChronoUnit.DAYS.between(start, end)) + 1;
         if (days > FREE_STATEMENT_PERIOD_MAX_DAYS) {
             throw new ApiException(ErrorCode.STATEMENT_PERIOD_TOO_LONG);
         }

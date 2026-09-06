@@ -116,6 +116,21 @@ class ImportEntitlementGateIT extends AbstractIntegrationTest {
     }
 
     @Test
+    void csvConfirm_onFreePlan_rejectsAReversedPeriodOfTheSameRealLength() throws Exception {
+        // A reversed (end before start) period must reject exactly as its correctly-ordered
+        // equivalent would -- a naive `end - start` day count goes negative for this input and
+        // always slips under the limit, silently defeating the whole check.
+        User user = createUser();
+        subscriptionService.provisionFreeSubscription(user.getId());
+        ConfirmRequest request = confirmRequest(LocalDate.of(2026, 3, 31), LocalDate.of(2026, 1, 1));
+
+        ResponseEntity<String> response = post("/api/v1/import/csv/confirm", user, request);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+        assertThat(errorCodeOf(response)).isEqualTo("ENTITLEMENT_003");
+    }
+
+    @Test
     void csvConfirm_onFreePlan_rejectsAStatementOfThirtyTwoDays() throws Exception {
         User user = createUser();
         subscriptionService.provisionFreeSubscription(user.getId());
