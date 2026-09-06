@@ -3,7 +3,10 @@ import { Button } from '../design-system';
 import { CHECKLIST_ITEMS } from './checklistItems';
 
 interface Props {
-  onDone: () => void;
+  // Async in practice (the real prop, OnboardingFlow's finishOnboarding, awaits
+  // onboardingApi.complete() before resolving) -- goThenNavigate below awaits it, so the type has
+  // to say so, not just `() => void`.
+  onDone: () => void | Promise<void>;
 }
 
 export function SuccessScreen({ onDone }: Props) {
