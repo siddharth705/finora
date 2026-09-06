@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { Pencil, Trash2, X, ChevronLeft, ChevronRight, HelpCircle, Loader2 } from 'lucide-react';
-import { transactionsApi, type TransactionFilters, type UpdateTransactionPayload, type TransactionExplanation } from '../api/endpoints';
+import { transactionsApi, onboardingApi, type TransactionFilters, type UpdateTransactionPayload, type TransactionExplanation } from '../api/endpoints';
 import { AskOnceCard } from '../components/AskOnceCard';
 import { CategoryCombobox } from '../components/CategoryCombobox';
 import { CategoryCreateEditPanel } from '../components/CategoryCreateEditPanel';
@@ -80,6 +80,19 @@ export default function Ledger() {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<Transaction | null>(null);
+
+  // Getting-started checklist: "Review transactions" fires once, on a 1.5s dwell rather than on
+  // mount itself, so a user who opens this page and immediately navigates away doesn't get
+  // credited for a screen they never actually looked at.
+  const checklistQ = useQuery({ queryKey: ['onboarding', 'checklist'], queryFn: onboardingApi.getChecklist });
+  useEffect(() => {
+    const item = checklistQ.data?.items.find((i) => i.key === 'REVIEW_TRANSACTIONS');
+    if (!item || item.completed) return;
+    const timer = setTimeout(() => {
+      onboardingApi.completeChecklistItem('REVIEW_TRANSACTIONS').catch(() => {});
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, [checklistQ.data]);
 
   // Ledger doesn't unmount between two TopBar searches fired while already on this page (same
   // route, just a new ?q=), so the useState initializer above only covers the first visit —

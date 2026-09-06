@@ -1,11 +1,18 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import Insights from './Insights';
-import { insightsApi, recurringApi, type InsightsData, type RecurringItem } from '../api/endpoints';
+import { insightsApi, recurringApi, onboardingApi, type InsightsData, type RecurringItem } from '../api/endpoints';
 
 vi.mock('../api/endpoints', () => ({
   insightsApi: { get: vi.fn() },
   recurringApi: { list: vi.fn() },
+  // Getting-started checklist dwell timer (D-onboarding) -- default to "no VIEW_INSIGHTS item in
+  // the response" so it never fires in tests that don't care about it; the dwell-timer's own
+  // tests override this.
+  onboardingApi: {
+    getChecklist: vi.fn().mockResolvedValue({ items: [], completedCount: 0, totalCount: 6 }),
+    completeChecklistItem: vi.fn().mockResolvedValue(undefined),
+  },
 }));
 
 function insights(overrides: Partial<InsightsData> = {}): InsightsData {
@@ -108,5 +115,48 @@ describe('Insights — section-scoped loading', () => {
     expect(screen.getByText("Loading this month's observations")).toBeInTheDocument();
     expect(screen.getByText('Loading recurring payments')).toBeInTheDocument();
     expect(screen.getByText('Loading category movers')).toBeInTheDocument();
+  });
+});
+
+describe('Insights — getting-started checklist dwell timer', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(insightsApi.get).mockResolvedValue(insights());
+    vi.mocked(recurringApi.list).mockResolvedValue([]);
+  });
+
+  it('marks VIEW_INSIGHTS complete after a 1.5s dwell', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.mocked(onboardingApi.getChecklist).mockResolvedValue({
+      items: [{ key: 'VIEW_INSIGHTS', completed: false }], completedCount: 0, totalCount: 6,
+    });
+    const completeSpy = vi.mocked(onboardingApi.completeChecklistItem).mockResolvedValue(undefined as any);
+
+    render(<Insights />);
+
+    // Flushes the getChecklist().then(setChecklist) microtask (and the re-render/effect it
+    // triggers) before advancing to the dwell timer itself -- vi.waitFor's own polling is timer-
+    // based and deadlocks against fake timers, so this uses advanceTimersByTimeAsync(0) instead.
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(1500);
+
+    expect(completeSpy).toHaveBeenCalledWith('VIEW_INSIGHTS');
+    vi.useRealTimers();
+  });
+
+  it('does not fire if the item is already complete', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.mocked(onboardingApi.getChecklist).mockResolvedValue({
+      items: [{ key: 'VIEW_INSIGHTS', completed: true }], completedCount: 1, totalCount: 6,
+    });
+    const completeSpy = vi.mocked(onboardingApi.completeChecklistItem).mockResolvedValue(undefined as any);
+
+    render(<Insights />);
+
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(1500);
+
+    expect(completeSpy).not.toHaveBeenCalled();
+    vi.useRealTimers();
   });
 });

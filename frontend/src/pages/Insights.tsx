@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Repeat, TrendingUp } from 'lucide-react';
-import { insightsApi, recurringApi, type InsightsData, type RecurringItem } from '../api/endpoints';
+import { insightsApi, recurringApi, onboardingApi, type InsightsData, type RecurringItem, type ChecklistStatus } from '../api/endpoints';
 import { FinoraCard, EmptyState, SectionHeader, Skeleton } from '../design-system';
 import { useDelayedLoading } from '../hooks/useDelayedLoading';
 
@@ -54,6 +54,22 @@ export default function Insights() {
   const [recurringLoading, setRecurringLoading] = useState(true);
   const [insightsError, setInsightsError] = useState(false);
   const [recurringError, setRecurringError] = useState(false);
+  const [checklist, setChecklist] = useState<ChecklistStatus | null>(null);
+
+  // Getting-started checklist: "View insights" fires once, on a 1.5s dwell rather than on mount
+  // itself, so a user who opens this page and immediately navigates away doesn't get credited for
+  // a screen they never actually looked at.
+  useEffect(() => {
+    onboardingApi.getChecklist().then(setChecklist).catch(() => {});
+  }, []);
+  useEffect(() => {
+    const item = checklist?.items.find((i) => i.key === 'VIEW_INSIGHTS');
+    if (!item || item.completed) return;
+    const timer = setTimeout(() => {
+      onboardingApi.completeChecklistItem('VIEW_INSIGHTS').catch(() => {});
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, [checklist]);
 
   useEffect(() => {
     insightsApi.get()
