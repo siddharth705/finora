@@ -6,6 +6,7 @@ import { Line, Doughnut } from 'react-chartjs-2';
 import {
   Chart as ChartJS, ArcElement, LineElement, PointElement, LinearScale, CategoryScale, Tooltip, Legend, Filler,
 } from 'chart.js';
+import type { Plugin } from 'chart.js';
 import {
   Wallet, ArrowDownCircle, ArrowUpCircle, PieChart,
   ShoppingBag, Sparkles, Plus, PiggyBank, TrendingUp, TrendingDown, Target, ShieldCheck, Repeat,
@@ -693,7 +694,17 @@ export default function Dashboard() {
                 <Doughnut
                   data={{
                     labels: categoryEntries.map(([k]) => k),
-                    datasets: [{ data: categoryEntries.map(([, v]) => v), backgroundColor: categoryEntries.map((_, i) => donutColors[i % donutColors.length]), borderWidth: 0 }],
+                    datasets: [{
+                      data: categoryEntries.map(([, v]) => v),
+                      backgroundColor: categoryEntries.map((_, i) => donutColors[i % donutColors.length]),
+                      borderWidth: 0,
+                      // The hovered slice pushes outward -- Chart.js's own built-in affordance for
+                      // "this wedge is interactive", not a plugin. No hoverBorderColor: a canvas
+                      // fillStyle/strokeStyle needs a resolved color, not a live `var(--color-card)`
+                      // reference (canvas isn't part of the CSS cascade), and hardcoding one shade
+                      // would be wrong in the other theme.
+                      hoverOffset: 10,
+                    }],
                   }}
                   options={{
                     cutout: '72%',
@@ -704,7 +715,12 @@ export default function Dashboard() {
                     animation: { animateRotate: true, animateScale: true, duration: 900, easing: 'easeOutQuart' },
                   }}
                 />
-                <div className="absolute inset-0 flex flex-col items-center justify-center">
+                {/* pointer-events-none: this overlay's `inset-0` box, not just its centered text,
+                    was sitting directly on top of the canvas -- it swallowed every mouse event
+                    across the whole donut before Chart.js's own hover handling ever saw them, so
+                    hoverOffset (and the tooltip) never fired no matter what the chart's own
+                    options said. */}
+                <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
                   <span className="text-lg font-bold text-ink">{fmt(totalSpend)}</span>
                   <span className="text-[11px] text-muted">Total</span>
                 </div>
@@ -1135,6 +1151,35 @@ function DashboardSkeleton() {
   );
 }
 
+// A vertical guide line at the hovered month, tying the two lines together at a glance --
+// Chart.js has no built-in crosshair, and pulling in a plugin for one dashed line is more
+// dependency than the effect is worth, so this is the ~15 lines it would otherwise cost.
+// Scoped to this one chart via <Line plugins={[...]}>, not ChartJS.register(), so it can't affect
+// any other chart on the page.
+const cashFlowCrosshairPlugin: Plugin<'line'> = {
+  id: 'cashFlowCrosshair',
+  afterDraw(chart) {
+    const active = chart.tooltip?.getActiveElements();
+    if (!active || active.length === 0) return;
+    const { ctx, chartArea } = chart;
+    const x = active[0].element.x;
+    ctx.save();
+    ctx.beginPath();
+    ctx.setLineDash([4, 4]);
+    ctx.moveTo(x, chartArea.top);
+    ctx.lineTo(x, chartArea.bottom);
+    ctx.lineWidth = 1;
+    // rgba(), not a `--color-*` custom property -- canvas draw calls need a resolved color (see
+    // the Spending Breakdown donut's own hoverBorderColor comment above for why var() silently
+    // fails here). This is --color-muted's light-mode value; a fixed slate reads fine as a subtle
+    // guide line on the dark-mode card too, so it isn't worth threading theme state into a plugin
+    // that has no access to React context.
+    ctx.strokeStyle = 'rgba(100, 116, 139, 0.35)';
+    ctx.stroke();
+    ctx.restore();
+  },
+};
+
 function CashFlowChart({ series }: { series: { month: string; income: number; expense: number }[] }) {
   const labels = series.map((s) => monthLabel(s.month));
   return (
@@ -1142,8 +1187,17 @@ function CashFlowChart({ series }: { series: { month: string; income: number; ex
       data={{
         labels,
         datasets: [
-          { label: 'Income', data: series.map((s) => s.income), borderColor: '#16a34a', backgroundColor: 'rgba(22,163,74,0.08)', fill: true, tension: 0.3 },
-          { label: 'Expenses', data: series.map((s) => s.expense), borderColor: '#ef4444', backgroundColor: 'rgba(239,68,68,0.08)', fill: true, tension: 0.3 },
+          {
+            label: 'Income', data: series.map((s) => s.income), borderColor: '#16a34a', backgroundColor: 'rgba(22,163,74,0.08)', fill: true, tension: 0.3,
+            // Points stay invisible at rest (radius 0, matching how this chart already looked) and
+            // only appear on hover -- pointHoverRadius is what actually reads as "hovering did
+            // something", not just the tooltip box appearing off to the side.
+            pointRadius: 0, pointHoverRadius: 5, pointHoverBackgroundColor: '#16a34a', pointHoverBorderColor: '#fff', pointHoverBorderWidth: 2,
+          },
+          {
+            label: 'Expenses', data: series.map((s) => s.expense), borderColor: '#ef4444', backgroundColor: 'rgba(239,68,68,0.08)', fill: true, tension: 0.3,
+            pointRadius: 0, pointHoverRadius: 5, pointHoverBackgroundColor: '#ef4444', pointHoverBorderColor: '#fff', pointHoverBorderWidth: 2,
+          },
         ],
       }}
       options={{
@@ -1154,7 +1208,13 @@ function CashFlowChart({ series }: { series: { month: string; income: number; ex
         // for a net series -- which is exactly how the same bug got everywhere else it was fixed.
         scales: { y: { ticks: { callback: (v) => fmt(Number(v)) } } },
         animation: { duration: 900, easing: 'easeOutQuart' },
+        // mode: 'index' + intersect: false -- hovering anywhere along a month's x-position shows
+        // both Income and Expenses together, not just whichever line's pixel the cursor happens to
+        // sit exactly on (Chart.js's default `intersect: true` misses if the cursor is a pixel off
+        // a thin line, which is most of the chart's area on a click-and-drag trackpad).
+        interaction: { mode: 'index' as const, intersect: false },
       }}
+      plugins={[cashFlowCrosshairPlugin]}
     />
   );
 }

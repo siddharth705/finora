@@ -90,7 +90,21 @@ public final class CategoryRules {
         // Shopping/Dining comment above) -- a real BharatBillPay narration ("BPPY CC PAYMENT")
         // abbreviated past what "credit card payment"/"card bill payment" already catch. Safe as a
         // two-word phrase: word-boundary matching means "cc" alone is never checked in isolation.
-        RULES.put("Transfer", List.of("credit card payment", "card bill payment", "cc payment", "autopay", "neft to", "imps to", "billdesk"));
+        //
+        // "rtgs" and "self transfer" added per the reconciliation benchmark's post-fix failure
+        // analysis (docs/proposals/reconciliation-benchmark/post-fix-failure-analysis.md, item 1a):
+        // ReconciliationService's transfer pass reuses this exact list to decide whether a
+        // candidate pair looks like a transfer at all (see that pass's own comment), and RTGS is a
+        // real, common Indian settlement rail this list was missing entirely. Deliberately NOT
+        // adding "wallet" or "auto debit" in the same change -- both were considered and rejected:
+        // "auto debit" in particular would misfire on a genuine EMI or insurance auto-debit, which
+        // must NOT be recategorized as a transfer (see the same analysis doc's ranking table, and
+        // the parked EMI/loan-repayment relationship types this project has already deliberately
+        // deferred -- docs/proposals/reconciliation-benchmark/dead-relationship-types-audit.md).
+        // "self transfer" is kept as the two-word phrase real UPI apps print (e.g. "UPI-SELF
+        // TRANSFER-...") rather than the bare word "self", which is common enough in unrelated
+        // narrations that a bare-word match would carry real false-positive risk.
+        RULES.put("Transfer", List.of("credit card payment", "card bill payment", "cc payment", "autopay", "neft to", "imps to", "billdesk", "rtgs", "self transfer"));
         // Appended after the original set (see AuthService.DEFAULT_CATEGORIES, which this list
         // now mirrors) rather than interleaved — insertion order is match priority for
         // suggestCategory's first-match-wins loop, and none of these keywords collide with the
@@ -195,11 +209,33 @@ public final class CategoryRules {
     // in a Coca-Cola purchase on a grocery/dining line). Both are real, evidenced false-positive
     // risks, not theoretical -- fixed once, systemically, for every keyword at once rather than
     // patched keyword-by-keyword.
+    // Reconciliation benchmark, investment-transfer word-boundary finding (docs/proposals/
+    // reconciliation-benchmark/corpus-frequency-analysis.md, "Finding F"): a broker's aggregator ID
+    // gets fused into one token by some payment gateways with no separating character at all --
+    // e.g. "UPI-ICCLGROWWPAY-<ref>-BSE", where "groww" is preceded by "l" and followed by "p" with
+    // no boundary on either side. Measured directly against this project's own real corpus: 8 of 19
+    // real transaction lines mentioning "Groww" carried it ONLY in this fused form -- 42%, not a
+    // theoretical edge case.
+    //
+    // This is deliberately NOT a blanket loosening of word-boundary matching -- the comment on
+    // RULE_PATTERNS above exists precisely because that already burned this codebase twice ("rent"
+    // inside "current", "ola" inside "cola"). The three brand names below are exempted individually,
+    // and only because each is long and phonetically distinctive enough that an accidental
+    // substring collision inside an unrelated English or Indian-banking-narration word is not a
+    // realistic risk the way it would be for a short or generic keyword. Every other Investments
+    // keyword ("sip", "nps", "ppf", "mutualfunds", "demat", "nse mf") stays word-boundary-matched:
+    // "sip" in particular is exactly the short, common-substring case ("gossip", "sipping") this
+    // exemption must never be widened to cover without the same kind of real-corpus evidence
+    // gathered for these three first.
+    private static final Set<String> FUSION_TOLERANT_KEYWORDS = Set.of("groww", "zerodha", "upstox");
+
     private static final Map<String, List<Pattern>> RULE_PATTERNS = new LinkedHashMap<>();
     static {
         for (var entry : RULES.entrySet()) {
             List<Pattern> patterns = entry.getValue().stream()
-                    .map(w -> Pattern.compile(WORD_BOUNDARY + Pattern.quote(w) + WORD_BOUNDARY))
+                    .map(w -> FUSION_TOLERANT_KEYWORDS.contains(w)
+                            ? Pattern.compile(Pattern.quote(w))
+                            : Pattern.compile(WORD_BOUNDARY + Pattern.quote(w) + WORD_BOUNDARY))
                     .toList();
             RULE_PATTERNS.put(entry.getKey(), patterns);
         }
