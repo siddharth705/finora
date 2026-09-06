@@ -320,21 +320,25 @@ export default function Dashboard() {
               <> Your latest figures are from <span className="font-medium text-ink">{periodLabel}</span>.</>
             )}
           </p>
+          {/* Quick actions, not a second reading of the Financial Health / Savings Rate numbers --
+              both already sit one glance below (the KPI row and the Financial Health Score card),
+              so repeating them here added nothing. These two are the shortest path to the two
+              most common next steps, not a duplicate of the full Quick Actions grid further down
+              the page (which covers all seven). */}
           <div className="flex flex-wrap gap-2">
-            {/* !isEmpty here too, not just healthScoreAvailable: the full Financial Health Score
-                card below gates on !isEmpty (see its own comment), and healthScoreAvailable comes
-                from a separately-computed backend transaction count that isn't guaranteed to
-                agree with recentTxnsQ's totalElements -- without this, a zero-transaction account
-                could show a score in this preview chip while the section it summarizes stays
-                hidden. */}
-            {!isEmpty && summary.healthScoreAvailable && (
-              <span className={`inline-flex items-center gap-1.5 rounded-full border border-border bg-bg px-3 py-1.5 text-xs font-semibold ${healthColor(summary.healthLabel!)}`}>
-                <ShieldCheck size={13} /> Financial Health: {summary.healthLabel} · {summary.healthScore}/100
-              </span>
-            )}
-            <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-bg px-3 py-1.5 text-xs font-semibold text-primary">
-              <PiggyBank size={13} /> Savings rate {summary.savingsRatePct.toFixed(0)}%
-            </span>
+            <Link
+              to="/app/import"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-bg hover:bg-surface px-3.5 py-2 text-xs font-semibold text-ink transition-colors"
+            >
+              <UploadCloud size={14} /> Import Statement
+            </Link>
+            <button
+              type="button"
+              onClick={() => setShowAddModal(true)}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-bg hover:bg-surface px-3.5 py-2 text-xs font-semibold text-ink transition-colors"
+            >
+              <Plus size={14} /> Add Transaction
+            </button>
           </div>
         </div>
         {/* Purely decorative -- the illustration carries no information the heading/chips above
