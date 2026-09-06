@@ -140,6 +140,15 @@ updates:
   # expo-modules-core whose peer range accepts worklets 0.12.x, even though Reanimated has already
   # shipped that pairing. Revisit once Expo does -- at which point expo, reanimated and worklets
   # should all be bumped together, the same reasoning as the react-native/expo pairing above.
+  #
+  # @testing-library/react-native's major versions are ignored outright, not just past a specific
+  # version: 14.0.0 (PR #1063) made render()/renderHook()/fireEvent() return Promises by default --
+  # every call site across the mobile test suite (~30+ files) would need an `await` added, for two
+  # narrow bug fixes (14.0.1's waitFor timer cleanup, a TextInput selection detail) that don't
+  # affect anything this codebase has hit. Standalone major bumps aren't part of the
+  # npm-minor-and-patch group above, so without this they would otherwise reopen weekly. Revisit
+  # when there's an actual reason to move (a real bug, or v13 losing compatibility with something
+  # else here) -- not proactively for its own sake.
   - package-ecosystem: npm
     directory: /mobile
     schedule:
@@ -156,6 +165,8 @@ updates:
         update-types: ["version-update:semver-minor", "version-update:semver-major"]
       - dependency-name: "react-native-worklets"
         update-types: ["version-update:semver-minor", "version-update:semver-major"]
+      - dependency-name: "@testing-library/react-native"
+        update-types: ["version-update:semver-major"]
     commit-message:
       prefix: "chore(deps)"
 
