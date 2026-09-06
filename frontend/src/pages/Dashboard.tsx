@@ -358,6 +358,7 @@ export default function Dashboard() {
             invertDelta={k.invertDelta}
             gateReasonText={k.gateReasonText}
             moverLines={k.moverLines}
+            variant="elevated"
           />
         ))}
       </div>

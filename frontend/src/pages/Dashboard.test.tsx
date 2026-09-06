@@ -286,6 +286,14 @@ describe('Dashboard — Financial Health Score', () => {
     expect(card.queryByText('Your savings rate was 18.5%.')).not.toBeInTheDocument();
     expect(card.getByText('You have no credit cards on file.')).toBeInTheDocument();
   });
+
+  it('renders KPI cards with the elevated visual treatment', async () => {
+    renderDashboard();
+
+    await screen.findByText('Financial Health Score');
+    const balanceValue = screen.getByText('₹50,000');
+    expect(balanceValue).toHaveClass('font-display');
+  });
 });
 
 describe('Dashboard — Spending Breakdown category review warning', () => {
