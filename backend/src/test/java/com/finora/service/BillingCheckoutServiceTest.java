@@ -202,8 +202,9 @@ class BillingCheckoutServiceTest {
         subscription.setRazorpaySubscriptionId("sub_existing");
         when(subscriptionRepository.findActiveOrTrial(userId)).thenReturn(Optional.of(subscription));
 
-        service.changePlan(userId, "PLUS", "MONTHLY");
+        CheckoutResponseDto response = service.changePlan(userId, "PLUS", "MONTHLY");
 
+        assertThat(response).isNull();
         verify(gateway, never()).updateSubscription(any(), any(), anyBoolean());
         verify(gateway, never()).createSubscription(any(), any(), anyMap());
     }
@@ -235,8 +236,9 @@ class BillingCheckoutServiceTest {
         when(billingPriceRepository.findByPlanIdAndBillingCycleAndActiveTrue(plusPlanId, "MONTHLY"))
                 .thenReturn(Optional.of(plusMonthly));
 
-        service.changePlan(userId, "PLUS", "MONTHLY");
+        CheckoutResponseDto response = service.changePlan(userId, "PLUS", "MONTHLY");
 
+        assertThat(response).isNull();
         verify(gateway).updateSubscription("sub_existing", "plan_plus_monthly", true);
         verify(gateway, never()).createSubscription(any(), any(), anyMap());
 
@@ -286,7 +288,11 @@ class BillingCheckoutServiceTest {
         when(gateway.createSubscription(eq("plan_premium_monthly"), eq("MONTHLY"), anyMap()))
                 .thenReturn(new RazorpaySubscriptionDto("sub_new", "created"));
 
-        service.changePlan(userId, "PREMIUM", "MONTHLY");
+        CheckoutResponseDto response = service.changePlan(userId, "PREMIUM", "MONTHLY");
+
+        assertThat(response).isNotNull();
+        assertThat(response.razorpaySubscriptionId()).isEqualTo("sub_new");
+        assertThat(response.keyId()).isEqualTo("rzp_test_123");
 
         verify(gateway, never()).updateSubscription(any(), any(), anyBoolean());
         verify(gateway, never()).cancelSubscription(any(), anyBoolean());

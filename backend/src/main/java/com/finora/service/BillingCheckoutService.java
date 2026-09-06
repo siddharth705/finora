@@ -122,7 +122,7 @@ public class BillingCheckoutService {
     private static final java.util.List<String> TIER_ORDER = java.util.List.of("FREE", "PLUS", "PREMIUM");
 
     @Transactional
-    public void changePlan(UUID userId, String planCode, String billingCycle) {
+    public CheckoutResponseDto changePlan(UUID userId, String planCode, String billingCycle) {
         if ("FREE".equals(planCode)) {
             throw new ApiException(HttpStatus.BAD_REQUEST,
                     "Use POST /api/v1/billing/cancel to move to the Free plan.");
@@ -144,7 +144,7 @@ public class BillingCheckoutService {
 
         if (newRank == currentRank) {
             if (billingCycle.equals(subscription.getBillingCycle())) {
-                return;
+                return null;
             }
             throw new ApiException(HttpStatus.BAD_REQUEST,
                     "Changing billing cycle without changing tier is not supported yet -- cancel and re-subscribe.");
@@ -161,10 +161,10 @@ public class BillingCheckoutService {
         }
 
         if (newRank > currentRank) {
-            upgradeToNewSubscription(userId, newPlan, newPrice, billingCycle);
-        } else {
-            scheduleDowngrade(subscription, currentPlan, newPlan, newPrice.getRazorpayPlanId());
+            return upgradeToNewSubscription(userId, newPlan, newPrice, billingCycle);
         }
+        scheduleDowngrade(subscription, currentPlan, newPlan, newPrice.getRazorpayPlanId());
+        return null;
     }
 
     /** design spec §6.5. Creates a NEW, real, external Razorpay subscription and a PENDING
@@ -173,7 +173,7 @@ public class BillingCheckoutService {
      *  razorpaySubscriptionId) until the new subscription's own activation webhook confirms real
      *  payment ({@code RazorpayWebhookDispatcher.handleActivated}, extended in Task 2 of this plan
      *  to also stop the old mandate at that point, not before). */
-    private void upgradeToNewSubscription(UUID userId, Plan newPlan, BillingPrice newPrice, String billingCycle) {
+    private CheckoutResponseDto upgradeToNewSubscription(UUID userId, Plan newPlan, BillingPrice newPrice, String billingCycle) {
         ensureNoOrderInFlight(userId);
         RazorpaySubscriptionDto razorpaySubscription = gateway.createSubscription(
                 newPrice.getRazorpayPlanId(), billingCycle,
@@ -187,6 +187,8 @@ public class BillingCheckoutService {
         order.setStatus(SubscriptionOrder.STATUS_PENDING);
         order.setAmount(newPrice.getPrice());
         subscriptionOrderRepository.save(order);
+
+        return new CheckoutResponseDto(razorpaySubscription.id(), properties.getKeyId());
     }
 
     /** design spec §6.4. Razorpay's own scheduled-plan-change feature defers the actual switch to

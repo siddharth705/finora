@@ -130,4 +130,34 @@ class BillingControllerIT extends AbstractIntegrationTest {
         verify(gateway).updateSubscription(eq(subscription.getRazorpaySubscriptionId()),
                 eq(plusMonthly.getRazorpayPlanId()), eq(true));
     }
+
+    @Test
+    void changePlanReturnsCheckoutDetailsForAnUpgrade() {
+        User user = createUser();
+        subscriptionService.provisionFreeSubscription(user.getId());
+        var subscription = subscriptionRepository.findActiveOrTrial(user.getId()).orElseThrow();
+        Plan plus = planRepository.findByCode("PLUS").orElseThrow();
+        subscription.setPlanId(plus.getId());
+        subscription.setBillingCycle("MONTHLY");
+        subscription.setRazorpaySubscriptionId("sub_test_" + UUID.randomUUID());
+        subscription.setPaymentProvider("RAZORPAY");
+        subscriptionRepository.save(subscription);
+
+        BillingPrice premiumMonthly = billingPriceRepository
+                .findByPlanIdAndBillingCycleAndActiveTrue(planRepository.findByCode("PREMIUM").orElseThrow().getId(), "MONTHLY")
+                .orElseThrow();
+        premiumMonthly.setRazorpayPlanId("plan_test_" + UUID.randomUUID());
+        billingPriceRepository.save(premiumMonthly);
+        when(gateway.createSubscription(eq(premiumMonthly.getRazorpayPlanId()), eq("MONTHLY"), anyMap()))
+                .thenReturn(new RazorpaySubscriptionDto("sub_new_" + UUID.randomUUID(), "created"));
+
+        HttpEntity<String> request = new HttpEntity<>(
+                "{\"planCode\":\"PREMIUM\",\"billingCycle\":\"MONTHLY\"}", bearerFor(user));
+
+        ResponseEntity<String> response = restTemplate.postForEntity(
+                "/api/v1/billing/change-plan", request, String.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(response.getBody()).contains("razorpaySubscriptionId").contains("keyId");
+    }
 }
