@@ -1,17 +1,20 @@
 package com.finora.service;
 
+import com.finora.dto.BillingDtos.SubscriptionHealthDto;
 import com.finora.dto.BillingDtos.SubscriptionSummaryDto;
 import com.finora.dto.PagedResponse;
 import com.finora.entity.Plan;
 import com.finora.entity.PlanChange;
 import com.finora.entity.Subscription;
 import com.finora.entity.SubscriptionEvent;
+import com.finora.entity.SubscriptionOrder;
 import com.finora.entity.User;
 import com.finora.exception.ApiException;
 import com.finora.integrations.razorpay.RazorpaySubscriptionGateway;
 import com.finora.repository.PlanChangeRepository;
 import com.finora.repository.PlanRepository;
 import com.finora.repository.SubscriptionEventRepository;
+import com.finora.repository.SubscriptionOrderRepository;
 import com.finora.repository.SubscriptionRepository;
 import com.finora.repository.UserRepository;
 import com.finora.util.PageBounds;
@@ -43,12 +46,14 @@ public class SubscriptionService {
     private final UserRepository userRepository;
     private final AuditService auditService;
     private final RazorpaySubscriptionGateway gateway;
+    private final SubscriptionOrderRepository subscriptionOrderRepository;
 
     public SubscriptionService(SubscriptionRepository subscriptionRepository,
                                 SubscriptionEventRepository subscriptionEventRepository,
                                 PlanChangeRepository planChangeRepository,
                                 PlanRepository planRepository, UserRepository userRepository,
-                                AuditService auditService, RazorpaySubscriptionGateway gateway) {
+                                AuditService auditService, RazorpaySubscriptionGateway gateway,
+                                SubscriptionOrderRepository subscriptionOrderRepository) {
         this.subscriptionRepository = subscriptionRepository;
         this.subscriptionEventRepository = subscriptionEventRepository;
         this.planChangeRepository = planChangeRepository;
@@ -56,6 +61,7 @@ public class SubscriptionService {
         this.userRepository = userRepository;
         this.auditService = auditService;
         this.gateway = gateway;
+        this.subscriptionOrderRepository = subscriptionOrderRepository;
     }
 
     /** Called from every account-creation path (AuthService.createUserRecord and
@@ -171,5 +177,18 @@ public class SubscriptionService {
 
         auditService.record(userId, "SUBSCRIPTION_PAID_CANCELLED_BY_ADMIN", "Subscription", subscription.getId(),
                 Map.of("actorId", actingAdminId.toString()));
+    }
+
+    /** Admin Portal, Subscription Health (Plan 3 review) -- five platform-wide counts, one plain
+     *  COUNT query each. See {@link SubscriptionHealthDto}'s own doc comment for why these five
+     *  and not more. */
+    @Transactional(readOnly = true)
+    public SubscriptionHealthDto health() {
+        return new SubscriptionHealthDto(
+                subscriptionRepository.countByStatus(Subscription.STATUS_ACTIVE),
+                subscriptionRepository.countByStatus(Subscription.STATUS_PAST_DUE),
+                subscriptionRepository.countByStatus(Subscription.STATUS_PAYMENT_FAILED),
+                subscriptionRepository.countByStatus(Subscription.STATUS_CANCELLED),
+                subscriptionOrderRepository.countByStatus(SubscriptionOrder.STATUS_PENDING));
     }
 }

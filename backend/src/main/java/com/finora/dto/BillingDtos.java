@@ -85,4 +85,16 @@ public class BillingDtos {
      *  nothing gave a user visibility into, or a way to clear, a stuck pending order. */
     public record PendingOrderDto(String planCode, String planName, String billingCycle,
                                    String razorpaySubscriptionId, String keyId) {}
+
+    /** GET /api/v1/admin/subscriptions/health -- platform-wide subscription-state counts for the
+     *  admin Subscription Health dashboard (Plan 3 review). Deliberately just these five: Active
+     *  (paying/complimentary and current), Past Due (Razorpay mid-retry, access still on),
+     *  Payment Failed (retries exhausted, already downgraded), Cancelled (in the grace window
+     *  before the reconciliation sweep moves them to Free), and Pending Orders (checkouts started
+     *  but not yet activated or abandoned) -- the exact five the review asked for, no revenue or
+     *  growth metrics added on top. */
+    public record SubscriptionHealthDto(
+            long activeCount, long pastDueCount, long paymentFailedCount, long cancelledCount,
+            long pendingOrderCount
+    ) {}
 }

@@ -1,11 +1,12 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Users as UsersIcon } from 'lucide-react';
+import { Users as UsersIcon, CheckCircle2, Clock, XCircle, Ban, Hourglass } from 'lucide-react';
 import { AdminLayout } from '../components/AdminLayout';
 import { RequirePermission } from '../components/ProtectedRoute';
 import { DataTable, type DataTableColumn } from '../components/DataTable';
 import { Pagination } from '../components/Pagination';
 import { ConfirmDialog } from '../components/ConfirmDialog';
+import { StatCard } from '../components/StatCard';
 import { useNotify } from '../context/NotificationContext';
 import { adminSubscriptionsApi } from '../api/endpoints';
 import type { SubscriptionSummaryDto } from '../types';
@@ -28,6 +29,12 @@ function SubscriptionsContent() {
   const { data, isLoading } = useQuery({
     queryKey: ['admin-subscriptions', page],
     queryFn: () => adminSubscriptionsApi.list(page, PAGE_SIZE),
+  });
+  // Plan 3 review -- Subscription Health. A small stat row above the table, not folded into
+  // `data` above: it's a platform-wide summary, unrelated to which page of the list is showing.
+  const { data: health, isLoading: healthLoading } = useQuery({
+    queryKey: ['admin-subscriptions-health'],
+    queryFn: () => adminSubscriptionsApi.health(),
   });
 
   const changePlanMutation = useMutation({
@@ -105,6 +112,13 @@ function SubscriptionsContent() {
 
   return (
     <div className="space-y-4">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+        <StatCard icon={CheckCircle2} label="Active" value={healthLoading ? '…' : health?.activeCount ?? 0} tone="success" />
+        <StatCard icon={Clock} label="Past due" value={healthLoading ? '…' : health?.pastDueCount ?? 0} tone="warning" />
+        <StatCard icon={XCircle} label="Payment failed" value={healthLoading ? '…' : health?.paymentFailedCount ?? 0} tone="warning" />
+        <StatCard icon={Ban} label="Cancelled" value={healthLoading ? '…' : health?.cancelledCount ?? 0} />
+        <StatCard icon={Hourglass} label="Pending orders" value={healthLoading ? '…' : health?.pendingOrderCount ?? 0} tone="warning" />
+      </div>
       <p className="text-sm text-muted max-w-xl">
         Every user's current plan. A Razorpay-backed subscription must be cancelled here before its
         plan can be changed manually -- see design spec §6.6.

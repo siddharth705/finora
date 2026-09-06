@@ -17,7 +17,7 @@ import type {
   MerchantUpdateRequest, OperationalDashboardDto, PagedResponse, PermissionDto, PlatformAnalyticsDto,
   PlatformDiagnosticsDto, PlatformSettingsDto, PlatformStatsDto, ReconciliationStatsDto, RecentImportDto,
   RelationshipDto, RelationshipMergeRequest, RoleDto, RuleDto,
-  SearchResultDto, SubscriptionSummaryDto, SystemHealthDto,
+  SearchResultDto, SubscriptionHealthDto, SubscriptionSummaryDto, SystemHealthDto,
   TestMerchantTemplateRequest, TestMerchantTemplateResult, TestRuleRequest, TestRuleResult,
   TopCategoryPoint, TopMerchantPoint, TransactionDto, TrendPoint,
   UpdateBankRequest, UpdateFeatureFlagRequest, UpdateMerchantTemplateRequest,
@@ -313,6 +313,8 @@ export const adminSubscriptionsApi = {
   // this is an admin support action) so changePlan above can then succeed.
   cancelPaidSubscription: (userId: string) =>
     api.post(`/admin/subscriptions/${userId}/cancel-paid-subscription`),
+  // Plan 3 review -- platform-wide counts for the Subscription Health stat row.
+  health: () => api.get<SubscriptionHealthDto>('/admin/subscriptions/health').then((r) => r.data),
 };
 
 export const adminSystemApi = {

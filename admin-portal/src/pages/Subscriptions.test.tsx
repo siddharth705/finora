@@ -27,7 +27,7 @@ vi.mock('../context/NotificationContext', () => ({
   useNotify: () => ({ success: notifySuccess, error: notifyError }),
 }));
 vi.mock('../api/endpoints', () => ({
-  adminSubscriptionsApi: { list: vi.fn(), changePlan: vi.fn(), cancelPaidSubscription: vi.fn() },
+  adminSubscriptionsApi: { list: vi.fn(), changePlan: vi.fn(), cancelPaidSubscription: vi.fn(), health: vi.fn() },
 }));
 
 function renderPage() {
@@ -68,6 +68,9 @@ describe('Subscriptions', () => {
     vi.mocked(adminSubscriptionsApi.list).mockReset();
     vi.mocked(adminSubscriptionsApi.changePlan).mockReset();
     vi.mocked(adminSubscriptionsApi.cancelPaidSubscription).mockReset();
+    vi.mocked(adminSubscriptionsApi.health).mockReset().mockResolvedValue({
+      activeCount: 0, pastDueCount: 0, paymentFailedCount: 0, cancelledCount: 0, pendingOrderCount: 0,
+    });
   });
 
   it('shows an access-denied message when the account lacks SUBSCRIPTION_MANAGEMENT_VIEW', () => {
@@ -152,5 +155,28 @@ describe('Subscriptions', () => {
 
     expect(screen.getByRole('combobox')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /cancel paid subscription/i })).not.toBeInTheDocument();
+  });
+
+  it('shows the Subscription Health stat cards', async () => {
+    mockAuth(['SUBSCRIPTION_MANAGEMENT_VIEW']);
+    vi.mocked(adminSubscriptionsApi.list).mockResolvedValue(pageOf());
+    vi.mocked(adminSubscriptionsApi.health).mockResolvedValue({
+      activeCount: 120, pastDueCount: 5, paymentFailedCount: 3, cancelledCount: 8, pendingOrderCount: 2,
+    });
+
+    renderPage();
+
+    expect(await screen.findByText('120')).toBeInTheDocument();
+    expect(screen.getByText('5')).toBeInTheDocument();
+    expect(screen.getByText('3')).toBeInTheDocument();
+    expect(screen.getByText('8')).toBeInTheDocument();
+    expect(screen.getByText('2')).toBeInTheDocument();
+    expect(screen.getByText(/active/i)).toBeInTheDocument();
+    expect(screen.getByText(/past due/i)).toBeInTheDocument();
+    expect(screen.getByText(/payment failed/i)).toBeInTheDocument();
+    // { selector: 'span' } disambiguates from the page's own descriptive paragraph, which also
+    // contains the word "cancelled".
+    expect(screen.getByText(/cancelled/i, { selector: 'span' })).toBeInTheDocument();
+    expect(screen.getByText(/pending orders/i)).toBeInTheDocument();
   });
 });

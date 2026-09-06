@@ -161,6 +161,16 @@ export interface SubscriptionSummaryDto {
   renewalDate: string | null;
 }
 
+/** Plan 3 review. Mirrors backend BillingDtos.SubscriptionHealthDto exactly -- see that record's
+ *  own doc comment for why these five counts and not more. */
+export interface SubscriptionHealthDto {
+  activeCount: number;
+  pastDueCount: number;
+  paymentFailedCount: number;
+  cancelledCount: number;
+  pendingOrderCount: number;
+}
+
 export interface SystemHealthDto {
   status: string;
   components: Record<string, string>;

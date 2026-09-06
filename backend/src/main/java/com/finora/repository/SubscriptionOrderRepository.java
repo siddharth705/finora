@@ -15,4 +15,8 @@ public interface SubscriptionOrderRepository extends JpaRepository<SubscriptionO
      *  order ever exists for one user, which itself would be its own bug; ordering by
      *  createdAt desc is defensive, not load-bearing. */
     Optional<SubscriptionOrder> findFirstByUserIdAndStatusOrderByCreatedAtDesc(UUID userId, String status);
+
+    /** Admin Portal, Subscription Health (Plan 3 review) -- how many checkouts are currently
+     *  in-flight platform-wide, not per user. */
+    long countByStatus(String status);
 }
