@@ -219,13 +219,15 @@ class GmailReviewServiceTest {
         when(accountRepository.findFirstByUserIdAndName(userId, "Gmail receipts")).thenReturn(Optional.empty());
         AccountDto created = mock(AccountDto.class);
         when(created.id()).thenReturn(createdAccountId);
-        when(accountService.create(eq(userId), any(AccountDto.CreateRequest.class), eq(userId)))
+        // enforceFreeAccountLimit=false -- the Gmail-receipts bucket is exempt from the Free-tier
+        // account cap, see AccountService.create's 4-arg overload doc comment.
+        when(accountService.create(eq(userId), any(AccountDto.CreateRequest.class), eq(userId), eq(false)))
                 .thenReturn(created);
 
         reviewService.approve(userId, sessionId, null);
 
         ArgumentCaptor<AccountDto.CreateRequest> captor = ArgumentCaptor.forClass(AccountDto.CreateRequest.class);
-        verify(accountService).create(eq(userId), captor.capture(), eq(userId));
+        verify(accountService).create(eq(userId), captor.capture(), eq(userId), eq(false));
         assertThat(captor.getValue().name()).isEqualTo("Gmail receipts");
         assertThat(captor.getValue().accountType()).isEqualTo("SAVINGS");
 

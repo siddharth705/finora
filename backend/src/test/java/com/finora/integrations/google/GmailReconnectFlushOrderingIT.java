@@ -72,7 +72,7 @@ class GmailReconnectFlushOrderingIT extends AbstractIntegrationTest {
 
     @LocalServerPort private int port;
 
-    /** Premium, not just any subscription -- GMAIL_SYNC (V161) is the flush-ordering bug's
+    /** Premium, not just any subscription -- GMAIL_SYNC (V162) is the flush-ordering bug's
      *  precondition (a live connect flow), and this test predates and is unrelated to that gate;
      *  it needs a user who can actually reach beginConnect, not a Free/Plus one refused at 403. */
     private User createUser() {
