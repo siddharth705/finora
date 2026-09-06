@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react';
 import { Modal, Text, View, StyleSheet } from 'react-native';
 import { Button } from '../components/Button';
 import { useTheme } from '../theme';
-import { useTourTarget } from './TourTargetRegistry';
 import type { TourStep } from './tourSteps';
 
 interface Props {
@@ -17,9 +16,6 @@ export function TourOverlay({ steps, navigateToTab, onFinish, onSkip }: Props) {
   const [index, setIndex] = useState(0);
   const step = steps[index];
   const isLast = index === steps.length - 1;
-  // Read for the spotlight cutout follow-up (not yet drawn -- see this component's own note
-  // below); registered here so the dependency is visible even before that visual lands.
-  const target = useTourTarget(step.key);
 
   useEffect(() => {
     navigateToTab(step.tab);
@@ -38,13 +34,12 @@ export function TourOverlay({ steps, navigateToTab, onFinish, onSkip }: Props) {
     setIndex((i) => Math.max(0, i - 1));
   }
 
-  // The spotlight cutout itself (measuring `target` via measureInWindow and drawing an
-  // react-native-svg mask around it) is a follow-up, not yet built: a step that just navigated
-  // needs to wait for the new screen to mount and the target ref to register before there is
-  // anything to measure, which is a real race this component doesn't resolve yet. The tooltip
-  // content and Next/Back/Skip/Finish flow -- the thing every test in this file actually
-  // exercises -- ships first; `target` above is read (not yet drawn) so the follow-up's only
-  // remaining work is the visual, not re-threading this data through.
+  // The spotlight cutout itself (reading useTourTarget(step.key), measuring it via
+  // measureInWindow, and drawing an react-native-svg mask around it) is a deliberate follow-up,
+  // not built here: a step that just navigated needs to wait for the new screen to mount and the
+  // target ref to register before there is anything to measure, which is a real race this
+  // component doesn't resolve yet. The tooltip content and Next/Back/Skip/Finish flow -- the
+  // thing every test in this file actually exercises -- ships first.
   return (
     <Modal transparent animationType="fade">
       <View style={styles.backdrop}>
