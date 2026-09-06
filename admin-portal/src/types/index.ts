@@ -153,6 +153,9 @@ export interface SubscriptionSummaryDto {
   planCode: string | null;
   planName: string | null;
   status: string;
+  // Plan 3. "RAZORPAY" means a live Razorpay mandate exists -- the plain plan dropdown must not
+  // fire directly; "ADMIN_GRANT" or null means it's safe to.
+  paymentProvider: string | null;
   startDate: string;
   endDate: string | null;
   renewalDate: string | null;

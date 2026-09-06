@@ -53,7 +53,7 @@ function mockAuth(permissions: string[]) {
 function subscription(overrides: Partial<SubscriptionSummaryDto> = {}): SubscriptionSummaryDto {
   return {
     subscriptionId: 'sub-1', userId: 'user-1', userEmail: 'jane@example.com', userFullName: 'Jane Doe',
-    planCode: 'FREE', planName: 'Free', status: 'ACTIVE', startDate: '2026-08-01',
+    planCode: 'FREE', planName: 'Free', paymentProvider: null, status: 'ACTIVE', startDate: '2026-08-01',
     endDate: null, renewalDate: null, ...overrides,
   };
 }
