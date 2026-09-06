@@ -1,0 +1,119 @@
+name: CodeQL
+
+# Dataflow-based security analysis -- catches injection, unsafe deserialization, auth-flow
+# mistakes, path traversal and SSRF patterns that neither eslint/checkstyle-shaped linting nor
+# scripts/check-dependency-advisories.py's known-CVE tracking can, since both of those only ever
+# see the SHAPE of the code, never how untrusted data actually flows through it.
+#
+# Two languages, two different trigger shapes, deliberately:
+#
+#   - javascript-typescript needs no build step (CodeQL extracts JS/TS by parsing, not compiling),
+#     so it's cheap enough to run on every PR -- a few minutes, no different in kind from the
+#     frontend/admin-portal/mobile jobs ci.yml already runs on every PR.
+#   - java needs a real Maven compile for CodeQL to see anything (it traces actual bytecode
+#     dataflow, not source shape), and that alone costs several minutes on top of extraction and
+#     analysis -- this repo's own backend CI job takes ~4 minutes for `mvnw test` alone. Running
+#     that on every PR would meaningfully erode the CI-time work already done this session
+#     (backend PR-path CI cut from ~7m to ~4m across #775/#777/#784/#786). Weekly-only for Java
+#     gets the same findings with none of that cost; PR-time Java scanning stays a deliberate
+#     later decision, made after seeing what the weekly scans actually surface -- not a default.
+#
+# `push: branches: [main]` matters independently of both of those trade-offs, for both languages:
+# without it, GitHub has no baseline scan of the default branch to diff a PR's results against,
+# and the Security tab has nothing to show for `main` at all -- flagged as a real warning
+# ("Please specify an on.push hook...") the first time this workflow actually ran. Unlike the PR
+# path, `push` to main only fires on merge, not on every PR update, so adding Java here doesn't
+# reopen the PR-time cost question above -- it's the same event frequency as a would-be deploy.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Monday, offset from the existing nightly cluster (corpus-coverage/e2e/gitleaks/maestro all
+    # run 3:00-3:45 UTC daily) and from Dependabot's own Monday cadence, so this doesn't compete
+    # with either for runner time.
+    - cron: '0 4 * * 1'
+  workflow_dispatch:
+
+# Same policy as ci.yml: every commit's result on main is a record worth keeping, everything else
+# is superseded by its own next push.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+# Least privilege at the file level (see ci.yml's own permissions comment for the full reasoning);
+# each job below widens only what CodeQL itself needs (security-events: write to upload SARIF,
+# actions: read for the analyze step to read the initialize step's database).
+permissions:
+  contents: read
+
+jobs:
+  javascript-typescript:
+    name: CodeQL (JavaScript/TypeScript)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v7
+
+      # security-and-quality, not security-extended: the broader suite trades precision for
+      # recall in a way that's a worse fit for a repo this size just starting out with CodeQL --
+      # start narrower, expand once the standard suite's findings have actually been triaged.
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
+        with:
+          languages: javascript-typescript
+          queries: security-and-quality
+
+      - name: Analyze
+        uses: github/codeql-action/analyze@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
+        with:
+          category: "/language:javascript-typescript"
+
+  java:
+    name: CodeQL (Java)
+    # Weekly, on-demand, or on merge to main -- never on the PR path itself. See the file-level
+    # comment on why PR-time Java scanning stays deliberately excluded, and why `push` is exempt
+    # from that reasoning (merge frequency, not PR-update frequency).
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-java@v6
+        with:
+          java-version: '25'
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
+        with:
+          languages: java
+          queries: security-and-quality
+          # Explicit, not left to default: `manual` means CodeQL traces exactly the build command
+          # below rather than guessing its own (autobuild) or skipping compilation entirely (none,
+          # which for a compiled language like Java would produce a database with nothing real to
+          # analyze).
+          build-mode: manual
+
+      # Compile only -- CodeQL traces the bytecode CodeQL's own build-mode tracer captures during
+      # this step, so it needs the code to actually compile, not to pass tests. `-DskipTests`
+      # matches ci.yml's own `mvnw -DskipTests package` pattern for the same reason.
+      - name: Build backend
+        working-directory: backend
+        run: ./mvnw -B --no-transfer-progress -DskipTests compile
+
+      - name: Analyze
+        uses: github/codeql-action/analyze@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
+        with:
+          category: "/language:java"

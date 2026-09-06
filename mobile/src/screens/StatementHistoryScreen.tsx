@@ -11,10 +11,11 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import { statementImportsApi } from '../api/endpoints';
 import { PDF_PASSWORD_INVALID, PDF_PASSWORD_REQUIRED } from '../api/errorCodes';
 import { Button } from '../components/Button';
-import { Card, EmptyState, SectionHeading } from '../components/Card';
+import { Card, DetailField, EmptyState, SectionHeading } from '../components/Card';
 import { apiErrorCode, toUserMessage } from '../lib/apiError';
 import { fmtCurrency, fmtDate } from '../lib/format';
 import { invalidateFinancialData } from '../lib/invalidateFinancialData';
+import { useKeyedSingleFlight } from '../lib/useSingleFlight';
 import { useLargeFontScale } from '../lib/useLargeFontScale';
 import { radius, spacing, useTheme } from '../theme';
 import type { AppTabParamList } from '../navigation/types';
@@ -49,6 +50,7 @@ export function StatementHistoryScreen() {
   const insets = useSafeAreaInsets();
   const queryClient = useQueryClient();
   const navigation = useNavigation();
+  const reimportGuard = useKeyedSingleFlight();
 
   const [openAccounts, setOpenAccounts] = useState<Set<string>>(new Set());
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -82,36 +84,44 @@ export function StatementHistoryScreen() {
    * them — keeps its single-tap re-import.
    */
   async function handleReimport(statement: StatementSummary, password?: string) {
-    setBusyId(statement.id);
-    setError(null);
-    try {
-      const result = await statementImportsApi.reimport(statement.id, password);
-      setPasswordPrompt(null);
-      // Hand the staged rows to the Import TAB rather than rebuilding the review UI here -- it is
-      // the same review and confirm the user already knows. Import lives in the tab navigator and
-      // this screen lives in the More stack, so the jump goes through the parent.
-      navigation.getParent<BottomTabNavigationProp<AppTabParamList>>()?.navigate('Import', {
-        reimport: {
-          statementImportId: statement.id,
-          accountId: result.accountId,
-          accountName: result.accountName,
-          staging: result.staging,
-          password,
-          nonce: Date.now(),
-        },
-      });
-    } catch (e) {
-      const code = apiErrorCode(e);
-      if (code === PDF_PASSWORD_REQUIRED || code === PDF_PASSWORD_INVALID) {
-        // Not a re-import failure and not shown as one -- the statement is intact, it just has not
-        // been unlocked. Keeping the prompt open on INVALID preserves what was typed.
-        setPasswordPrompt({ statement, wrong: code === PDF_PASSWORD_INVALID });
-      } else {
-        setError(toUserMessage(e, 'Could not re-import this statement.'));
+    // Keyed on the statement, not global: the `busyId` state below disables only THIS row, so a
+    // guard that blocked the whole screen would falsely drop a tap on a different statement. What
+    // it protects against is two rapid taps on the SAME row landing before the first setBusyId
+    // reaches a render -- each would otherwise stage its own server-side session for one re-import
+    // (see B5 in the mobile-correctness-trust-roadmap: the confirm side is already claimed
+    // atomically by V133, but nothing stopped a duplicate staging session from being created here).
+    await reimportGuard(statement.id, async () => {
+      setBusyId(statement.id);
+      setError(null);
+      try {
+        const result = await statementImportsApi.reimport(statement.id, password);
+        setPasswordPrompt(null);
+        // Hand the staged rows to the Import TAB rather than rebuilding the review UI here -- it is
+        // the same review and confirm the user already knows. Import lives in the tab navigator and
+        // this screen lives in the More stack, so the jump goes through the parent.
+        navigation.getParent<BottomTabNavigationProp<AppTabParamList>>()?.navigate('Import', {
+          reimport: {
+            statementImportId: statement.id,
+            accountId: result.accountId,
+            accountName: result.accountName,
+            staging: result.staging,
+            password,
+            nonce: Date.now(),
+          },
+        });
+      } catch (e) {
+        const code = apiErrorCode(e);
+        if (code === PDF_PASSWORD_REQUIRED || code === PDF_PASSWORD_INVALID) {
+          // Not a re-import failure and not shown as one -- the statement is intact, it just has not
+          // been unlocked. Keeping the prompt open on INVALID preserves what was typed.
+          setPasswordPrompt({ statement, wrong: code === PDF_PASSWORD_INVALID });
+        } else {
+          setError(toUserMessage(e, 'Could not re-import this statement.'));
+        }
+      } finally {
+        setBusyId(null);
       }
-    } finally {
-      setBusyId(null);
-    }
+    });
   }
 
   function confirmDelete(statement: StatementSummary) {
@@ -390,17 +400,22 @@ function StatementDetailModal({ detail, onClose }: { detail: Detail; onClose: ()
 
           {mode === 'summary' ? (
             <View style={styles.fieldGrid}>
-              <Field label="Statement period" value={
-                statement.statementPeriodStart
-                  ? `${fmtDate(statement.statementPeriodStart)} – ${fmtDate(statement.statementPeriodEnd)}`
+              <DetailField label="Statement period" value={
+                // Guards each date independently -- statementPeriodStart/End are two separately
+                // nullable columns (a real, documented extraction gap), not a both-or-neither
+                // pair. Joining fmtDate(end) unguarded here used to render the literal text
+                // "null" whenever only the start date had been extracted.
+                statement.statementPeriodStart || statement.statementPeriodEnd
+                  ? [fmtDate(statement.statementPeriodStart), fmtDate(statement.statementPeriodEnd)]
+                      .filter(Boolean).join(' – ')
                   : 'Unknown'
               } />
-              <Field label="Imported" value={fmtDate(statement.importedAt) ?? '—'} />
-              <Field label="Opening balance" value={statement.openingBalance != null ? fmtCurrency(statement.openingBalance) : '—'} />
-              <Field label="Closing balance" value={statement.closingBalance != null ? fmtCurrency(statement.closingBalance) : '—'} />
-              <Field label="Transactions imported" value={String(statement.transactionsImported)} />
-              <Field label="Transactions skipped" value={String(statement.transactionsSkipped)} />
-              <Field label="Duplicates flagged" value={String(statement.duplicateCount)} />
+              <DetailField label="Imported" value={fmtDate(statement.importedAt) ?? '—'} />
+              <DetailField label="Opening balance" value={statement.openingBalance != null ? fmtCurrency(statement.openingBalance) : '—'} />
+              <DetailField label="Closing balance" value={statement.closingBalance != null ? fmtCurrency(statement.closingBalance) : '—'} />
+              <DetailField label="Transactions imported" value={String(statement.transactionsImported)} />
+              <DetailField label="Transactions skipped" value={String(statement.transactionsSkipped)} />
+              <DetailField label="Duplicates flagged" value={String(statement.duplicateCount)} />
             </View>
           ) : isLoading ? (
             <ActivityIndicator color={c.primary} style={styles.detailLoading} />
@@ -432,16 +447,6 @@ function StatementDetailModal({ detail, onClose }: { detail: Detail; onClose: ()
   );
 }
 
-function Field({ label, value }: { label: string; value: string }) {
-  const c = useTheme();
-  return (
-    <View style={styles.field}>
-      <Text style={[styles.fieldLabel, { color: c.muted }]}>{label}</Text>
-      <Text style={[styles.body, { color: c.ink }]}>{value}</Text>
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
   flex: { flex: 1 },
   flexShrink: { flexShrink: 1 },
@@ -469,7 +474,6 @@ const styles = StyleSheet.create({
   detailList: { maxHeight: 360 },
   detailLoading: { marginVertical: spacing.md },
   fieldGrid: { flexDirection: 'row', flexWrap: 'wrap' },
-  field: { width: '50%', paddingVertical: 6, paddingRight: spacing.sm },
   fieldLabel: { fontSize: 12, fontWeight: '500', marginBottom: 4 },
   helpText: { fontSize: 12, lineHeight: 17 },
   input: { borderWidth: 1, borderRadius: radius.md, paddingHorizontal: 12, minHeight: 48, fontSize: 15 },

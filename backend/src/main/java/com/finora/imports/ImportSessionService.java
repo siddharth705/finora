@@ -3,12 +3,17 @@ package com.finora.imports;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.finora.config.BuildVersionResolver;
 import com.finora.dto.ImportDto.DetectedAccountInfo;
 import com.finora.dto.ImportDto.StagedAccountSection;
 import com.finora.dto.ImportDto.StagedRow;
+import com.finora.entity.HeldStatement;
+import com.finora.entity.ImportJob;
 import com.finora.entity.ImportSession;
 import com.finora.exception.ApiException;
 import com.finora.exception.ErrorCode;
+import com.finora.repository.HeldStatementRepository;
+import com.finora.repository.ImportJobRepository;
 import com.finora.repository.ImportSessionRepository;
 import com.finora.security.OwnershipGuard;
 import org.springframework.data.domain.PageRequest;
@@ -41,6 +46,35 @@ public class ImportSessionService {
     // comfortably cover "I'll finish this tomorrow," not as a carefully measured number.
     private static final Duration SESSION_TTL = Duration.ofHours(48);
 
+    /**
+     * Job statuses whose session the sweep must leave alone, however old it is.
+     *
+     * <p>A trust review is the one state where a human, not a timer, decides when the rows are
+     * finished with -- and 48 hours is not a generous window for that. The workflow this feature
+     * exists to enable is "an engineer fixes the parser, then re-runs it", which routinely takes
+     * longer. Sweeping mid-review deletes the rows the reviewer is judging AND the rows approving
+     * would hand to the user, after we told them their statement was ready.
+     *
+     * <p>Deliberately narrow. HELD_FOR_REVIEW (the parser-gap hold) is NOT here: that job failed
+     * and has no session to protect, so adding it would retain nothing and only widen an exemption
+     * against a retention rule that exists for a reason.
+     */
+    private static final java.util.Set<com.finora.entity.ImportJob.Status>
+            SESSIONS_PROTECTED_FROM_CLEANUP =
+            java.util.EnumSet.of(com.finora.entity.ImportJob.Status.HELD_FOR_TRUST_REVIEW);
+
+    // Phase 1B superseded this as the PRIMARY freshness signal -- see findLiveSessionByContentHash
+    // -- but kept it as the fallback for the one case a build-version comparison can't resolve: an
+    // environment with no git metadata and no RAILWAY_GIT_COMMIT_SHA/GIT_COMMIT set (local dev
+    // without either, and this class's own test suite). In that case there's no way to tell
+    // "the parser might have changed" from "nothing changed, this is a real retry", so this window
+    // is what still protects a double-click or a retried request from becoming two parses, exactly
+    // as it did before version comparison existed. Deliberately much shorter than SESSION_TTL,
+    // which answers a different question ("how long can a user wait before resuming a review they
+    // started", correctly measured in days) than this one ("how long ago must this exact upload
+    // have happened for it to plausibly be the same attempt", correctly measured in minutes).
+    private static final Duration DUPLICATE_UPLOAD_DEDUP_WINDOW = Duration.ofMinutes(5);
+
     /** How many expired sessions one import may clean up. Bounds the cost this adds to a user's
      *  own upload; a backlog drains over the next few imports instead of in one long delete. */
     private static final int CLEANUP_BATCH_SIZE = 50;
@@ -49,11 +83,20 @@ public class ImportSessionService {
     private boolean sessionCleanupEnabled;
 
     private final ImportSessionRepository importSessionRepository;
+    private final ImportJobRepository importJobRepository;
+    private final HeldStatementRepository heldStatementRepository;
     private final ObjectMapper objectMapper;
+    private final BuildVersionResolver buildVersionResolver;
 
-    public ImportSessionService(ImportSessionRepository importSessionRepository, ObjectMapper objectMapper) {
+    public ImportSessionService(ImportSessionRepository importSessionRepository,
+                                 ImportJobRepository importJobRepository,
+                                 HeldStatementRepository heldStatementRepository, ObjectMapper objectMapper,
+                                 BuildVersionResolver buildVersionResolver) {
         this.importSessionRepository = importSessionRepository;
+        this.importJobRepository = importJobRepository;
+        this.heldStatementRepository = heldStatementRepository;
         this.objectMapper = objectMapper;
+        this.buildVersionResolver = buildVersionResolver;
     }
 
     /**
@@ -108,8 +151,9 @@ public class ImportSessionService {
      */
     @Transactional
     public int sweepExpiredSessions() {
-        List<ImportSession> expired = importSessionRepository.findByExpiresAtBeforeOrderByExpiresAtAsc(
-                Instant.now(), PageRequest.of(0, CLEANUP_BATCH_SIZE));
+        List<ImportSession> expired = importSessionRepository.findSweepableExpiredSessions(
+                Instant.now(), SESSIONS_PROTECTED_FROM_CLEANUP,
+                PageRequest.of(0, CLEANUP_BATCH_SIZE));
         if (expired.isEmpty()) return 0;
         importSessionRepository.deleteAll(expired);
         return expired.size();
@@ -133,6 +177,28 @@ public class ImportSessionService {
         if (removed > 0) {
             log.info("Removed {} expired import session(s) past their {} TTL.", removed, SESSION_TTL);
         }
+    }
+
+    /**
+     * Restarts a session's TTL, for rows whose clock should not have been running.
+     *
+     * <p>Needed by the trust-review release path. A held session is exempt from the sweep while the
+     * review is open, but its {@code expiresAt} is still whatever it was set to at staging time --
+     * so the moment the hold resolves the exemption lifts and an already-elapsed timestamp makes
+     * the row sweepable immediately. Approving would then tell the user their statement is ready
+     * and let the sweep delete it minutes later, which is the same broken promise the exemption was
+     * added to prevent, just moved.
+     *
+     * <p>The user has not seen these rows yet; the wait was ours. Giving them a full window from
+     * the moment they are told is the only honest reading of the TTL.
+     */
+    @Transactional
+    public void renewExpiry(UUID sessionId) {
+        if (sessionId == null) return;
+        importSessionRepository.findById(sessionId).ifPresent(session -> {
+            session.setExpiresAt(Instant.now().plus(SESSION_TTL));
+            importSessionRepository.save(session);
+        });
     }
 
     @Transactional
@@ -209,6 +275,7 @@ public class ImportSessionService {
         session.setStagedRowsJson(writeJson(rows));
         session.setDetectedAccountJson(writeJson(detectedAccount));
         session.setExpiresAt(Instant.now().plus(SESSION_TTL));
+        session.setParserVersion(buildVersionResolver.currentCommit());
         applyDocumentContext(session, documentContext);
         session.setSource(source);
         session.setSourceDomain(sourceDomain);
@@ -265,6 +332,7 @@ public class ImportSessionService {
         session.setSessionKind(ImportSession.KIND_MULTI_ACCOUNT);
         session.setSectionsJson(writeJson(sections));
         session.setExpiresAt(Instant.now().plus(SESSION_TTL));
+        session.setParserVersion(buildVersionResolver.currentCommit());
         applyDocumentContext(session, documentContext);
         if (creditCardSummary != null
                 && creditCardSummary != com.finora.imports.pdf.CreditCardSummaryExtractor.CreditCardSummaryEvidence.NONE) {
@@ -366,9 +434,52 @@ public class ImportSessionService {
      */
     @Transactional(readOnly = true)
     public List<ImportSession> listResumableSessions(UUID userId) {
-        return listActiveSessions(userId).stream()
+        List<ImportSession> active = listActiveSessions(userId).stream()
                 .filter(this::supportsResume)
                 .toList();
+        // A held session is technically STAGED and technically resumable in shape, but "resume"
+        // here means "pick up where you left off and confirm" -- exactly the step a trust hold
+        // exists to withhold (see HoldDecision's own doc comment). Offering it through this list
+        // walked a real user straight past the hold with no indication anything was different;
+        // confirmed end-to-end and closed by the same change that added the guard in
+        // claimForConfirmation below. The statement still has a visible status of its own on the
+        // Statement History "in progress" list (StatementHistory.tsx), which is read-only, so
+        // excluding it here does not make it disappear -- it just stops offering the one action
+        // that must wait for a reviewer.
+        java.util.Set<UUID> blockedSessionIds =
+                sessionsBlockedByTrustReview(active.stream().map(ImportSession::getId).toList());
+        return active.stream().filter(s -> !blockedSessionIds.contains(s.getId())).toList();
+    }
+
+    /**
+     * Which of these sessions must not reach the user's confirm step because a trust review is
+     * open OR was decided against the extraction -- shared by {@link #listResumableSessions} and
+     * {@link #claimForConfirmation} so "is this session held" has exactly one answer rather than
+     * two independently-maintained checks that could drift.
+     *
+     * <p>Keyed on {@link HeldStatement#getStatus()}, not {@link ImportJob.Status}, and that
+     * distinction is load-bearing: a rejected hold moves the job to plain {@code FAILED} --
+     * indistinguishable at the job-status level from any other failed import -- so the only place
+     * "still blocking" vs. "operator cleared it" is actually recorded is the {@code HeldStatement}
+     * row itself. See {@link com.finora.repository.ImportJobRepository
+     * #findByImportSessionIdInAndHeldStatementIdIsNotNull}'s own doc comment for the real bug this
+     * replaced.
+     */
+    private java.util.Set<UUID> sessionsBlockedByTrustReview(java.util.Collection<UUID> sessionIds) {
+        if (sessionIds.isEmpty()) return java.util.Set.of();
+        List<ImportJob> jobsWithAHold =
+                importJobRepository.findByImportSessionIdInAndHeldStatementIdIsNotNull(sessionIds);
+        if (jobsWithAHold.isEmpty()) return java.util.Set.of();
+        java.util.Map<UUID, UUID> heldStatementIdToSessionId = jobsWithAHold.stream()
+                .collect(java.util.stream.Collectors.toMap(
+                        ImportJob::getHeldStatementId, ImportJob::getImportSessionId));
+        return heldStatementRepository
+                .findByImportJobIdInAndStatusNot(
+                        jobsWithAHold.stream().map(ImportJob::getId).toList(),
+                        HeldStatement.Status.IMPORTED)
+                .stream()
+                .map(hs -> heldStatementIdToSessionId.get(hs.getId()))
+                .collect(java.util.stream.Collectors.toSet());
     }
 
     /** Whether the resume UI can reopen a session of this kind. A {@code switch} rather than a
@@ -416,6 +527,27 @@ public class ImportSessionService {
      * duplicate. Deleting it here is a strict subset of what the scheduled sweep already does to
      * the same row; this just does it eagerly, on the one request that actually needs the row
      * gone right now.
+     *
+     * <p><b>Phase 1B: build-version comparison is the real freshness signal now, not age.</b> A
+     * real incident (2026-08-31, a real HDFC statement): a session staged under an old, buggy
+     * parser kept getting replayed on every later re-upload, because "still within its 48h TTL"
+     * was being used as a proxy for "this is the same upload attempt", which it never was -- the
+     * TTL answers "can the user still resume this review", not "was this staged by the build
+     * that's running now". Phase 1A's fix (bounding replay to a short {@link
+     * #DUPLICATE_UPLOAD_DEDUP_WINDOW}) shrank that gap but didn't close it: a session created
+     * seconds before a fix deploys could still be replayed for the rest of that window. This
+     * closes it properly by asking the actual question directly -- was this session staged by the
+     * exact build that's deciding whether to replay it -- whenever that question is answerable at
+     * all ({@link BuildVersionResolver#currentCommit()} non-null). A mismatch, including a
+     * pre-this-feature session whose {@code parserVersion} is null, forces a fresh parse
+     * regardless of age; a match replays regardless of age (still bounded by the TTL check above).
+     * The dedup window is kept as the fallback for the one case version comparison can't resolve:
+     * no git metadata and no {@code RAILWAY_GIT_COMMIT_SHA}/{@code GIT_COMMIT} configured (local
+     * dev without either, and this class's own test suite) -- there, "the parser might have
+     * changed" can't be told apart from "nothing changed, this is a real retry", so this falls
+     * back to the same short-window heuristic Phase 1A introduced rather than either always
+     * trusting (the original bug) or never trusting (breaking double-click/retry protection in
+     * every such environment).
      */
     @Transactional
     public Optional<ImportSession> findLiveSessionByContentHash(UUID userId, String contentHash) {
@@ -425,7 +557,20 @@ public class ImportSessionService {
         if (match.isEmpty()) return Optional.empty();
 
         ImportSession session = match.get();
-        if (session.getExpiresAt().isAfter(Instant.now())) {
+        boolean expired = session.getExpiresAt().isBefore(Instant.now());
+
+        String currentVersion = buildVersionResolver.currentCommit();
+        boolean stale;
+        if (currentVersion != null) {
+            // A null stored version (a session staged before this column existed) can never equal
+            // a real resolved commit, so it's correctly treated as a mismatch here -- not a
+            // coincidental match of two unset values.
+            stale = !currentVersion.equals(session.getParserVersion());
+        } else {
+            stale = session.getCreatedAt().isBefore(Instant.now().minus(DUPLICATE_UPLOAD_DEDUP_WINDOW));
+        }
+
+        if (!expired && !stale) {
             return Optional.of(session);
         }
         importSessionRepository.delete(session);
@@ -442,14 +587,41 @@ public class ImportSessionService {
      * two concurrent legitimate requests from both proceeding. Called as the very first thing
      * confirmSession() does, before any transaction-import work happens at all -- if this method
      * throws, nothing downstream has touched the transactions table yet.
+     *
+     * <p>Also the trust-hold gate, for the same "before any transaction-import work happens"
+     * reason. {@code listResumableSessions} already keeps a held session out of the "Continue
+     * previous import" list, but that is a UI convenience, not enforcement -- this session's id is
+     * still a valid, owned, unexpired, unconfirmed session, so nothing stopped a direct request
+     * (a stale tab, a replayed request, a future caller that doesn't go through that list) from
+     * reaching this method and importing the very rows {@link com.finora.imports.trust.HoldDecision}
+     * said were not trustworthy enough to reach the ledger unreviewed. Confirmed as a real gap end-
+     * to-end, not a hypothetical: the browser flow the resumable list itself offers reached here
+     * and imported a held statement's rows before this check existed.
+     *
+     * <p>The read here is a fast-path convenience, not the enforcement -- {@link
+     * ImportSessionRepository#claimForConfirmation} re-checks the identical hold condition inside
+     * its own atomic UPDATE, so a hold that commits in the gap between this read and that UPDATE
+     * still blocks the confirm. What this read buys is the specific {@code
+     * IMPORT_SESSION_HELD_FOR_REVIEW} error for the overwhelmingly common case, without a second
+     * read on the failure path below for every ordinary held-session request.
      */
     @Transactional
     public ImportSession claimForConfirmation(UUID userId, UUID sessionId) {
         getOwnedSession(userId, sessionId); // ownership + expiry + not-already-confirmed, for a clear error message
+        if (!sessionsBlockedByTrustReview(List.of(sessionId)).isEmpty()) {
+            throw new ApiException(ErrorCode.IMPORT_SESSION_HELD_FOR_REVIEW);
+        }
         int updated = importSessionRepository.claimForConfirmation(sessionId);
         if (updated == 0) {
-            // Lost the race between the read above and this atomic update -- someone/something
-            // else (a concurrent duplicate request for the same session) claimed it first.
+            // The atomic UPDATE's own NOT EXISTS clause means a 0-row result has two possible
+            // causes, not one: a genuine double-submission (someone/something else claimed this
+            // session first), or a hold that committed in the race window between the read above
+            // and this UPDATE. Re-checking here is what tells them apart -- without it, a hold
+            // that landed in exactly that window would report "already confirmed", which is both
+            // wrong and useless to a user who did nothing of the sort.
+            if (!sessionsBlockedByTrustReview(List.of(sessionId)).isEmpty()) {
+                throw new ApiException(ErrorCode.IMPORT_SESSION_HELD_FOR_REVIEW);
+            }
             throw new ApiException(HttpStatus.CONFLICT, "This import has already been confirmed.");
         }
         return importSessionRepository.findById(sessionId)

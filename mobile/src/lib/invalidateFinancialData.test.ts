@@ -35,6 +35,21 @@ const NON_FINANCIAL_KEYS = new Set([
   'devices',
   // The auto-apply confidence threshold. A preference the user sets; no financial write moves it.
   'workspace-settings',
+  // Support, Help & Feedback v1, Phase 8. A support ticket's list/detail is data ABOUT the app,
+  // not financial data in it -- no transaction, account, or import write can change a ticket's
+  // subject, status, or attachments. SupportTicketsScreen refreshes 'support-tickets-mine' itself
+  // right after creating a new ticket.
+  'support-tickets-mine',
+  'support-ticket-detail',
+  // Track C/C7. Which statement row a transaction came from is fixed at import time -- editing
+  // this transaction's (or any other transaction's) category, amount, or notes never changes
+  // which file/row it was originally read from. Same reasoning as 'statement-import-transactions'
+  // above.
+  'transaction-source',
+  // Refer & Earn MVP. A referral relationship (and the resulting count) only changes when someone
+  // else signs up with this user's code -- no transaction, account, or import write moves it. Same
+  // reasoning as 'support-tickets-mine' above.
+  'referrals-mine',
 ]);
 
 function sourceFiles(dir: string): string[] {

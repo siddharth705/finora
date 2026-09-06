@@ -34,17 +34,35 @@ async function enableAppLock() {
 }
 
 beforeEach(() => {
-  appStateListener = undefined;
+  appStateListeners = [];
   AppState.currentState = 'active';
   jest.spyOn(AppState, 'addEventListener').mockImplementation((event, listener) => {
-    if (event === 'change') appStateListener = listener as (status: AppStateStatus) => void;
-    return { remove: jest.fn() };
+    if (event !== 'change') return { remove: jest.fn() };
+    const entry = listener as (status: AppStateStatus) => void;
+    appStateListeners.push(entry);
+    // remove() has to actually deregister, not just be a no-op spy: both AppLockGate and
+    // AuthProvider re-register their 'change' listener whenever their own effect dependencies
+    // change (token, in both cases -- see each component's own effect), which happens more than
+    // once during a single test's bootstrap sequence. A no-op remove() left every torn-down
+    // closure in the array alongside its replacement, all sharing AppLockGate's single
+    // `appState` ref (a useRef is stable across those re-registrations) -- so the FIRST stale
+    // listener to see a background->active transition flipped the shared ref and starved every
+    // listener registered after it, including the current, live one. Actually removing the entry
+    // here is what keeps the array matching what's really still subscribed.
+    return {
+      remove: jest.fn(() => {
+        appStateListeners = appStateListeners.filter((l) => l !== entry);
+      }),
+    };
   });
   // appLock's isAuthenticating/justFinishedAuthenticating are module-level, not component state --
   // see appLock.ts's own comment on why -- which makes them a cross-test hazard without this: a
   // prior test's real authenticate() call stamps the real wall-clock time, easily within a later
   // test's own reground-grace window.
   appLock.__resetAuthenticatingStateForTests();
+  // D5 (Track D security cleanup): isSharing/justFinishedSharing are the identical shape, for the
+  // identical reason -- same cross-test hazard without a reset.
+  appLock.__resetSharingStateForTests();
 });
 
 afterEach(() => {
@@ -53,22 +71,29 @@ afterEach(() => {
 
 /** The real native AppState module never fires a 'change' event under the test runner (there's
  *  no bridge), so it's a safe no-op for every other test here -- but the two foreground tests
- *  below need to actually trigger the listener AppLockGate registers, so they capture it directly
- *  rather than trying to simulate a real native event.
+ *  below need to actually trigger the listeners AppLockGate and AuthProvider each register, so
+ *  they capture every 'change' listener directly rather than trying to simulate a real native
+ *  event.
  *
- *  Driving it through the SAME listener callback both times (not just mutating
- *  AppState.currentState directly) matters: the component's own "was I in the background" memory
- *  is a ref written INSIDE that callback (`appState.current = next`), not a read of the module's
- *  live value -- so a background transition has to go through the listener too, or the later
- *  foreground call has nothing to compare against and never detects a transition at all. */
-let appStateListener: ((status: AppStateStatus) => void) | undefined;
+ *  An array, not a single captured callback: AuthProvider registers its own 'change' listener too
+ *  (Task 14 -- re-registers the push token on foreground), and both this component tree's mount
+ *  order and real AppState's own fan-out (every listener is notified, not just the last one
+ *  registered) mean a single-slot capture would silently stop replaying events to AppLockGate's
+ *  listener the moment a second consumer registered one.
+ *
+ *  Driving it through the SAME listener callbacks both times (not just mutating
+ *  AppState.currentState directly) matters: AppLockGate's own "was I in the background" memory is
+ *  a ref written INSIDE its callback (`appState.current = next`), not a read of the module's live
+ *  value -- so a background transition has to go through the listener too, or the later foreground
+ *  call has nothing to compare against and never detects a transition at all. */
+let appStateListeners: ((status: AppStateStatus) => void)[] = [];
 
 function goToBackground() {
-  appStateListener?.('background');
+  appStateListeners.forEach((listener) => listener('background'));
 }
 
 function returnToForeground() {
-  appStateListener?.('active');
+  appStateListeners.forEach((listener) => listener('active'));
 }
 
 function renderGate(children = <Text>protected content</Text>) {
@@ -371,6 +396,101 @@ describe('a prompt from elsewhere in the app (e.g. AppLockSection enabling the s
 
     // Well past the grace window -- a real return, not the toggle's own trailing blip.
     nowSpy.mockReturnValue(5_000_000 + 5000);
+    mockedAuthenticateAsync.mockResolvedValueOnce({ success: false, error: 'authentication_failed' });
+    goToBackground();
+    await act(async () => returnToForeground());
+
+    await waitFor(() => expect(mockedAuthenticateAsync).toHaveBeenCalledTimes(2));
+    expect(screen.getByText(LOCK_TEXT)).toBeTruthy();
+    nowSpy.mockRestore();
+  });
+});
+
+// D5 (Track D security cleanup). Opening the OS share sheet (statementImportsApi.downloadFile,
+// supportApi.downloadAttachment, reportExport.ts's shareCsv/sharePdf, all wrapped in
+// appLock.withShareSuppression) backgrounds the app the same way a biometric prompt does -- same
+// blip, same fix shape as "a prompt from elsewhere in the app" above, just from a different
+// unrelated-to-authentication caller.
+describe('an in-flight share (e.g. downloading a statement or exporting a report)', () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  it('does not lock while a share is in flight, or shortly after it resolves', async () => {
+    await signIn();
+    await enableAppLock();
+    mockedAuthenticateAsync.mockResolvedValueOnce({ success: true });
+    renderGate();
+    await waitFor(() => expect(screen.getByText('protected content')).toBeTruthy());
+    // See the "still locks" test below's identical line for why this is here: the foreground-
+    // listener effect re-registers (dropping its stale token:null closure for the current one)
+    // slightly after content becomes visible, and the very first blip below needs the CURRENT
+    // listener already in place to exercise the sharing check at all.
+    await act(async () => {});
+
+    // Mocked AFTER mount/unlock, from a REAL Date.now() reading, not an arbitrary small number:
+    // lastResolvedAt above was just stamped with the true wall-clock time (nothing mocked yet),
+    // and a small mocked base (e.g. 6_000_000) minus that real, much larger timestamp is a huge
+    // NEGATIVE number -- which is "< windowMs" by accident, keeping justFinishedAuthenticating
+    // spuriously true no matter how far the mocked clock is later advanced, and letting the test
+    // pass without the sharing check under test ever being exercised. Starting from a realistic
+    // `Date.now()` keeps every comparison below on the same real scale.
+    const baseTime = Date.now();
+    const nowSpy = jest.spyOn(Date, 'now').mockReturnValue(baseTime);
+    // Past the mount-unlock's own authenticating grace -- isAuthenticating/justFinishedAuthenticating
+    // are both false from here on, isolating what's under test.
+    nowSpy.mockReturnValue(baseTime + 1500 + 1);
+
+    // statementImportsApi.downloadFile's own call shape: opens the OS share sheet, nothing to do
+    // with authentication at all.
+    let resolveShare: (() => void) | undefined;
+    const share = appLock.withShareSuppression(
+      () => new Promise<void>((resolve) => { resolveShare = resolve; })
+    );
+
+    // The blip while the share sheet is still open.
+    await act(async () => {
+      goToBackground();
+      returnToForeground();
+    });
+    expect(mockedAuthenticateAsync).toHaveBeenCalledTimes(1); // only the unlock above, no re-prompt
+    expect(screen.queryByText(LOCK_TEXT)).toBeNull();
+
+    resolveShare?.();
+    await share;
+
+    // The trailing blip returning from the share sheet, shortly after it closes.
+    nowSpy.mockReturnValue(baseTime + 1500 + 1 + 200);
+    await act(async () => {
+      goToBackground();
+      returnToForeground();
+    });
+    expect(mockedAuthenticateAsync).toHaveBeenCalledTimes(1); // still no re-prompt
+    expect(screen.queryByText(LOCK_TEXT)).toBeNull();
+
+    nowSpy.mockRestore();
+  });
+
+  it('still locks on a genuine foreground return once the grace period has elapsed', async () => {
+    await signIn();
+    await enableAppLock();
+    mockedAuthenticateAsync.mockResolvedValueOnce({ success: true });
+    renderGate();
+    await waitFor(() => expect(screen.getByText('protected content')).toBeTruthy());
+    // AppLockGate's foreground-listener effect re-registers once the mount effect's own
+    // setCheckedToken(token) commits (its dependency array includes `token`, which starts at
+    // null) -- content being visible only proves the UNLOCK happened, not that this second
+    // effect has already swapped its stale (token: null) listener for the current one. One more
+    // flush closes that gap; the sibling test above never needs this because its two-blip
+    // structure already spans enough awaits for it to happen incidentally.
+    await act(async () => {});
+
+    // See the sibling test above for why this starts from a real Date.now() reading.
+    const baseTime = Date.now();
+    const nowSpy = jest.spyOn(Date, 'now').mockReturnValue(baseTime + 1500 + 1);
+    await appLock.withShareSuppression(() => Promise.resolve());
+
+    // Well past BOTH the authenticating grace AND the sharing grace -- a real return, not the
+    // share sheet's own trailing blip.
+    nowSpy.mockReturnValue(baseTime + 1500 + 1 + 1500 + 1);
     mockedAuthenticateAsync.mockResolvedValueOnce({ success: false, error: 'authentication_failed' });
     goToBackground();
     await act(async () => returnToForeground());

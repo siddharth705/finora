@@ -60,7 +60,10 @@ public class CapabilityCoverageService {
             "RUNNING_BALANCE", "DR_CR_SUFFIX", "LEADING_PLUS_CREDIT", "DATE_TIME_COLUMN",
             "WRAPPED_DESCRIPTION", "REPEATED_HEADER", "REPEATED_ACCOUNT_BANNER",
             "PAGE_BOUNDARY_ISOLATION", "COMPOSITE_STATEMENT", "CREDIT_CARD_SUMMARY_SIGNAL",
-            "OFFSET_COLUMN_ANCHORS", "GRID_METADATA_FALLBACK", "GRID_METADATA_TRAILING_LABEL",
+            "OFFSET_COLUMN_ANCHORS", "COLUMN_SPAN_PLACEMENT", "RECONCILED_HEADER_SECTIONS_REMERGED",
+            "TRAILING_IDENTITY_CARRIED_FORWARD", "INVESTMENT_FRAGMENT_REMERGED", "EMPTY_SECTION_DROPPED",
+            "SAME_DAY_CONTINUATION_TRANSACTION",
+            "GRID_METADATA_FALLBACK", "GRID_METADATA_TRAILING_LABEL",
             "LEADING_NAME_LINE", "LEADING_NARRATION_CONTINUATION",
             "FINANCIAL_PRODUCT_CLASSIFICATION",
             // Added once CapabilityCorpusCoverageTest found the engine recording them with the
@@ -69,6 +72,13 @@ public class CapabilityCoverageService {
             // frequently exercised capabilities there is, so the map had never reported on the
             // thing it most often does.
             "PRINTED_SUMMARY_TOTALS", "RIGHT_ALIGNED_AMOUNTS",
+            // A statement that prints a summary panel in the right margin at the same heights as
+            // its ledger: those runs share a physical row with real transactions but belong to no
+            // column, and nearestColumn has no maximum-distance cap, so they were appended to the
+            // rightmost column. Found on a real IndusInd credit-card statement where one panel
+            // label landed in a transaction's amount cell, making it unparseable and costing that
+            // row entirely -- while the document still classified PARSED_COMPLETE.
+            "MARGIN_PANEL_TEXT_EXCLUDED",
             // A header split across two or three visual lines, found on a real HDFC combined
             // statement whose fixed-deposit schedule was invisible to table location entirely
             // because neither half of its header scored as one. See
@@ -83,6 +93,21 @@ public class CapabilityCoverageService {
             // are inferred from data-row geometry and content shape instead of a label. See
             // PdfTableLocator.inferHeaderlessSection.
             "INFERRED_HEADERLESS_LAYOUT",
+            // A genuinely headerless transaction table sitting BEFORE a completely unrelated table
+            // further down the same document whose own header IS recognized -- found on a real
+            // HSBC credit-card statement whose real ledger has no header at all, but a later page
+            // carries an unrelated EMI "Loan Summary Table" with a genuine one. Once any header is
+            // found, INFERRED_HEADERLESS_LAYOUT's own sections.isEmpty() gate never fires for the
+            // earlier content; this tries headerless inference on just the pre-header slice,
+            // independent of what the main loop found afterward. See
+            // PdfTableLocator.locateAll's own firstHeaderRowIndex doc comment.
+            "HEADERLESS_LAYOUT_BEFORE_LATER_HEADER",
+            // The escape hatch INFERRED_HEADERLESS_LAYOUT's own row-count floor needed to recover
+            // that same real HSBC document's genuine transaction: one real transaction, one short
+            // of the floor, whose "signed" candidacy (an explicit CR/DR marker) and amount exactly
+            // reconcile the document's own printed OPENING BALANCE against its own printed NET
+            // OUTSTANDING BALANCE. See PdfTableLocator.corroboratedByPrintedBalanceReconciliation.
+            "HEADERLESS_BALANCE_RECONCILIATION_CORROBORATED",
             // A fictional worked-example table inside a real AU Small Finance Bank credit-card
             // statement's fee/interest-calculation appendix, indistinguishable from a real header
             // by vocabulary alone -- three of them opened three garbage sections and blocked real
@@ -203,6 +228,51 @@ public class CapabilityCoverageService {
             // PdfMetadataExtractor, which only ever sees auxiliaryText (the lines BEFORE a header is
             // recognized). See TransactionTableDateRangeExtractor.
             "PRINTED_TRANSACTION_TABLE_DATE_RANGE",
+            // A real Kotak Mahindra Bank SAVINGS statement prints its period as a bare,
+            // unlabeled date range directly beneath its own "Account Statement" title -- no
+            // "Statement Period"/"From"/"To" label anywhere near it, so PdfMetadataExtractor's
+            // line-based patterns can never match. Recognized only by its document-structure
+            // relationship to the title (see StatementTitleDateRangeExtractor's own doc comment
+            // for why this is not a general bare-date-range pattern).
+            "PRINTED_TITLE_ADJACENT_DATE_RANGE",
+            // Real Axis Bank and SBI credit-card statements each print their payment due date as
+            // one column of a dense multi-column "Payment Summary" grid -- confirmed the label
+            // text is dropped/detached from its value once PdfTableLocator's line-based
+            // preTableLines view joins the panel's several visual rows into one text line, so no
+            // line-based pattern can ever recover it. Recognized by reading the same raw
+            // positioned-text grid CreditCardSummaryExtractor already reads for its own money
+            // fields (see PaymentDueDateGridExtractor's own doc comment).
+            "PRINTED_PAYMENT_DUE_DATE_GRID",
+            // The same two real documents (Axis, SBI) scramble their own printed credit limit away
+            // from its "Credit Limit" label the same way -- recovered by the same grid-reading
+            // mechanism. Also the more reliable of two readings on a real IndusInd Bank statement:
+            // PdfMetadataExtractor's own line-based GRID_CREDIT_LIMIT_LABEL fallback picks the first
+            // amount-shaped text after the label, which on that document is an unrelated "Payments &
+            // Other Credits" figure a stray word from the same corrupted line join happens to sit in
+            // front of -- one line above the credit limit's own true value. Matching by the label's
+            // own x-column instead of by first-match-wins gets the right one. See
+            // CreditLimitGridExtractor's own doc comment.
+            "PRINTED_CREDIT_LIMIT_GRID",
+            // The same real Axis Bank credit-card statement prints its own account/card number in
+            // this exact scrambled panel too, in two different real layouts (a stacked grid and a
+            // same-row label/value pair) -- recovered the same "read raw positioned text directly"
+            // way, reusing PdfMetadataExtractor's card-number label/value vocabulary. See
+            // AccountNumberGridExtractor's own doc comment.
+            "PRINTED_ACCOUNT_NUMBER_GRID",
+            // The same real Axis Bank credit-card statement also drops its own printed statement
+            // period this way: "Statement Period" arrives glued to its left-hand neighbour into one
+            // run ("Minimum Payment Due Statement Period"), so no line-based pattern can ever match
+            // it, and direct inspection of the section's auxiliaryText found 127 lines with not one
+            // containing the word "period". Recovered by the same grid-reading mechanism, matched by
+            // x-overlap between the label row and the range row beneath it. See
+            // StatementPeriodGridExtractor's own doc comment.
+            "PRINTED_STATEMENT_PERIOD_GRID",
+            // A real ICICI credit-card statement prints its own account number with no label at
+            // all, in a row positioned directly under the transaction table's own "Date" column
+            // header, before the first real transaction row -- recognized by that position and by
+            // its shape (a real transaction date never matches a masked-number pattern), not by any
+            // adjacent label text. See AccountNumberTransactionHeaderExtractor's own doc comment.
+            "PRINTED_ACCOUNT_NUMBER_ABOVE_TRANSACTIONS",
             // Two real, independently-uploaded savings-account statements (Central Bank of India,
             // PNB ONE) each close with a regulatory-boilerplate discrepancy-notification sentence
             // that sits before either document's own true end -- swept into the last real
@@ -232,10 +302,60 @@ public class CapabilityCoverageService {
             // transaction's trailing narration before this trigger existed. See
             // PdfTableLocator.SAVINGS_AND_BENEFITS_SECTION_MARKER.
             "SAVINGS_AND_BENEFITS_SECTION_CLOSED",
+            // Two real HSBC credit-card statements each print a "Loan Summary Table" caption
+            // introducing an unrelated loan-on-card EMI schedule -- without this trigger, that
+            // schedule's own header read as a genuinely new table and opened its own phantom
+            // section (which could never stage a real row, but stole the real ledger's own
+            // credit-card-summary vocabulary in the process). See
+            // PdfTableLocator.LOAN_SUMMARY_TABLE_MARKER.
+            "LOAN_SUMMARY_TABLE_CLOSED",
             // A real Canara Bank statement's own bare "Chq: <reference>" trailer line, past
             // MAX_TRAILING_CONTINUATION_ROWS's count cap, recovered as trailing content anyway by
             // content shape rather than count -- see PdfTableLocator.CHEQUE_REFERENCE_TRAILER.
-            "CHEQUE_REFERENCE_TRAILER_RECOVERED");
+            "CHEQUE_REFERENCE_TRAILER_RECOVERED",
+            // A wrapped narration line admitted past MAX_TRAILING_CONTINUATION_ROWS's count cap
+            // because the document's own line spacing places it with the transaction above. Real
+            // HDFC savings statements set every line on one uniform pitch, which leaves
+            // continuesTheBlock's pitch check with nothing to say, and wrap a third and fourth
+            // narration line on roughly half their transactions. See
+            // PdfTableLocator.belongsToTheRowAbove.
+            "WRAPPED_DESCRIPTION_BEYOND_COUNT_CAP",
+            // One leading-narration buffer holding two transactions' text -- a previous
+            // transaction's narration that ran past the trailing cap, followed by the next
+            // transaction's leading narration -- split at the first row the document places
+            // decisively below rather than above. Found on a real ICICI savings export where
+            // every transaction's remarks began with the previous transaction's reference
+            // tail. See PdfTableLocator's leading branch.
+            "LEADING_BUFFER_SPLIT_AT_ITS_OWN_BOUNDARY",
+            // A statement period stated as two separately colon-labeled fields on one row
+            // ("From : <date>" / "To : <date>") rather than one combined "Period" label -- found
+            // on real HDFC savings-account statements and a real Sanjay HDFC statement. See
+            // PdfMetadataExtractor.FROM_TO_LABELED_PERIOD.
+            "STATEMENT_PERIOD_FROM_TO_FIELDS",
+            // A statement period labeled "Statement From" rather than "Statement Period"/
+            // "Billing Period" -- found on real Manas_HDFC, Shivani_HDFC, and Sanjay SBI
+            // statements. See PdfMetadataExtractor.STATEMENT_FROM_LABELED_PERIOD.
+            "STATEMENT_PERIOD_STATEMENT_FROM_LABEL",
+            // A statement period labeled "Statement of Account" rather than any "...Period"
+            // vocabulary -- found on a real Central Bank of India statement. See
+            // PdfMetadataExtractor.STATEMENT_OF_ACCOUNT_PERIOD.
+            "STATEMENT_PERIOD_STATEMENT_OF_ACCOUNT_LABEL",
+            // A statement period stated as plain prose ("...for the period <date> to <date>")
+            // with no parentheses and no "Label:" shape at all -- found on real canara.pdf and
+            // ICICI saving.pdf statements. See PdfMetadataExtractor.STATEMENT_PERIOD_PROSE.
+            "STATEMENT_PERIOD_PROSE",
+            // A statement period labeled "For Period:" -- found on a real PNB ONE savings
+            // statement, whose own line also carries an unrelated "Statement of Account:<number>"
+            // label before it. See PdfMetadataExtractor.FOR_PERIOD_LABELED.
+            "STATEMENT_PERIOD_FOR_PERIOD_LABEL",
+            // A header block whose column GROUPS wrap to unequal depths -- some columns print
+            // across the top and bottom lines of a multi-line heading, skipping a middle line
+            // entirely, while a second group of columns prints ONLY on that middle line. Found on
+            // a real third-party-generated SBI (Indian Overseas Bank) savings statement and a real
+            // Standard Chartered savings statement, both of which located a table with 2-3 garbled
+            // columns instead of 6-7 and staged zero transaction rows. See
+            // PdfTableLocator.mergeHeaderLinesAdmittingInteriorTierColumns.
+            "WRAPPED_HEADER_INTERIOR_TIER_COLUMNS");
 
     /**
      * @param importsAnalysed    how many imports these counts are drawn from -- a coverage figure

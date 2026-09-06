@@ -1,16 +1,20 @@
 package com.finora.service;
 
+import com.finora.dto.BillingDtos.SubscriptionHealthDto;
 import com.finora.dto.BillingDtos.SubscriptionSummaryDto;
 import com.finora.dto.PagedResponse;
 import com.finora.entity.Plan;
 import com.finora.entity.PlanChange;
 import com.finora.entity.Subscription;
 import com.finora.entity.SubscriptionEvent;
+import com.finora.entity.SubscriptionOrder;
 import com.finora.entity.User;
 import com.finora.exception.ApiException;
+import com.finora.integrations.razorpay.RazorpaySubscriptionGateway;
 import com.finora.repository.PlanChangeRepository;
 import com.finora.repository.PlanRepository;
 import com.finora.repository.SubscriptionEventRepository;
+import com.finora.repository.SubscriptionOrderRepository;
 import com.finora.repository.SubscriptionRepository;
 import com.finora.repository.UserRepository;
 import com.finora.util.PageBounds;
@@ -41,23 +45,23 @@ public class SubscriptionService {
     private final PlanRepository planRepository;
     private final UserRepository userRepository;
     private final AuditService auditService;
-    // D-28 PR4-C: notified after a successful change so a referred user's REGISTERED referral can
-    // advance to SUBSCRIBED -- see ReferralService.onPlanChanged's own doc comment for why this is
-    // the one referral-lifecycle step that's automatic rather than admin-manual.
-    private final ReferralService referralService;
+    private final RazorpaySubscriptionGateway gateway;
+    private final SubscriptionOrderRepository subscriptionOrderRepository;
 
     public SubscriptionService(SubscriptionRepository subscriptionRepository,
                                 SubscriptionEventRepository subscriptionEventRepository,
                                 PlanChangeRepository planChangeRepository,
                                 PlanRepository planRepository, UserRepository userRepository,
-                                AuditService auditService, ReferralService referralService) {
+                                AuditService auditService, RazorpaySubscriptionGateway gateway,
+                                SubscriptionOrderRepository subscriptionOrderRepository) {
         this.subscriptionRepository = subscriptionRepository;
         this.subscriptionEventRepository = subscriptionEventRepository;
         this.planChangeRepository = planChangeRepository;
         this.planRepository = planRepository;
         this.userRepository = userRepository;
         this.auditService = auditService;
-        this.referralService = referralService;
+        this.gateway = gateway;
+        this.subscriptionOrderRepository = subscriptionOrderRepository;
     }
 
     /** Called from every account-creation path (AuthService.createUserRecord and
@@ -105,7 +109,7 @@ public class SubscriptionService {
                     s.getId(), s.getUserId(),
                     user != null ? user.getEmail() : null, user != null ? user.getFullName() : null,
                     plan != null ? plan.getCode() : null, plan != null ? plan.getName() : null,
-                    s.getStatus(), s.getStartDate(), s.getEndDate(), s.getRenewalDate());
+                    s.getStatus(), s.getPaymentProvider(), s.getStartDate(), s.getEndDate(), s.getRenewalDate());
         }));
     }
 
@@ -121,6 +125,10 @@ public class SubscriptionService {
     public void changePlan(UUID userId, String newPlanCode, String reason, UUID actingAdminId) {
         Subscription subscription = subscriptionRepository.findActiveOrTrial(userId)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "This user has no active subscription."));
+        if ("RAZORPAY".equals(subscription.getPaymentProvider())) {
+            throw new ApiException(HttpStatus.CONFLICT,
+                    "This user has an active paid subscription. Cancel it first before granting a complimentary plan.");
+        }
         Plan newPlan = planRepository.findByCode(newPlanCode)
                 .orElseThrow(() -> new ApiException(HttpStatus.BAD_REQUEST, "Unknown plan code: " + newPlanCode));
 
@@ -147,7 +155,40 @@ public class SubscriptionService {
 
         auditService.record(userId, "SUBSCRIPTION_PLAN_CHANGED", "Subscription", subscription.getId(),
                 Map.of("toPlanCode", newPlanCode, "reason", reason, "actorId", actingAdminId.toString()));
+    }
 
-        referralService.onPlanChanged(userId, newPlanCode, actingAdminId);
+    /** design spec §6.6. Admin support action, immediate (not at cycle end) -- this is what unblocks
+     *  the guard above: an admin cannot grant a complimentary plan over a live Razorpay subscription
+     *  until they explicitly stop it here first. Deliberately leaves {@code subscriptions.plan_id}
+     *  untouched -- the admin's very next call is expected to be {@link #changePlan}, which will set
+     *  whatever plan the admin intends; this method's only job is releasing the Razorpay link. */
+    @Transactional
+    public void cancelPaidSubscription(UUID userId, UUID actingAdminId) {
+        Subscription subscription = subscriptionRepository.findActiveOrTrial(userId)
+                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "This user has no active subscription."));
+        if (subscription.getRazorpaySubscriptionId() == null) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "This subscription has no billing to cancel.");
+        }
+        gateway.cancelSubscription(subscription.getRazorpaySubscriptionId(), false);
+        subscription.setRazorpaySubscriptionId(null);
+        subscription.setAutoRenew(false);
+        subscription.setPaymentProvider(null);
+        subscriptionRepository.save(subscription);
+
+        auditService.record(userId, "SUBSCRIPTION_PAID_CANCELLED_BY_ADMIN", "Subscription", subscription.getId(),
+                Map.of("actorId", actingAdminId.toString()));
+    }
+
+    /** Admin Portal, Subscription Health (Plan 3 review) -- five platform-wide counts, one plain
+     *  COUNT query each. See {@link SubscriptionHealthDto}'s own doc comment for why these five
+     *  and not more. */
+    @Transactional(readOnly = true)
+    public SubscriptionHealthDto health() {
+        return new SubscriptionHealthDto(
+                subscriptionRepository.countByStatus(Subscription.STATUS_ACTIVE),
+                subscriptionRepository.countByStatus(Subscription.STATUS_PAST_DUE),
+                subscriptionRepository.countByStatus(Subscription.STATUS_PAYMENT_FAILED),
+                subscriptionRepository.countByStatus(Subscription.STATUS_CANCELLED),
+                subscriptionOrderRepository.countByStatus(SubscriptionOrder.STATUS_PENDING));
     }
 }

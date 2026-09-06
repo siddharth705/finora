@@ -249,7 +249,7 @@ class AuthServiceGoogleLoginTest {
         // not a permanent dead end.
         verify(emailVerificationTokenRepository).save(any());
         verify(emailProvider).sendEmailVerificationEmail(eq("jane@example.com"), anyString());
-        verify(auditService).record(eq(userId), eq("EMAIL_SENT"), eq("User"), eq(userId), any());
+        verify(auditService).recordEvenOnRollback(eq(userId), eq("EMAIL_SENT"), eq("User"), eq(userId), any());
         // Never actually signed in -- no session issued, no login recorded.
         verify(refreshTokenService, never()).issue(any());
         verify(auditService, never()).record(any(), eq("USER_LOGIN_GOOGLE"), any(), any(), any());

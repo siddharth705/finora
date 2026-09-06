@@ -3,6 +3,7 @@ import {
   ActivityIndicator, Alert, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View,
 } from 'react-native';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { usePreventScreenCapture } from 'expo-screen-capture';
 import { AmountPromptModal } from '../components/AmountPromptModal';
 import { Button } from '../components/Button';
 import { Card, EmptyState } from '../components/Card';
@@ -20,6 +21,10 @@ import type { Goal } from '../types';
 
 /** Port of frontend/src/pages/Goals.tsx. */
 export function GoalsScreen() {
+  // D3 (Track D security cleanup). Savings-goal targets and progress are financial figures like
+  // any other -- same screenshot/screen-recording exposure Dashboard/Accounts/Statement History
+  // already guard against.
+  usePreventScreenCapture();
   const c = useTheme();
   const largeText = useLargeFontScale();
   const queryClient = useQueryClient();

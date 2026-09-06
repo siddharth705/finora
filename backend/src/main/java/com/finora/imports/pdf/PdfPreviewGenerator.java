@@ -13,8 +13,10 @@ import com.finora.imports.CsvParser;
 import com.finora.imports.pdf.StatementSummaryExtractor.PrintedSummary;
 import com.finora.imports.pdf.CreditCardSummaryExtractor.CreditCardSummaryEvidence;
 import com.finora.imports.DocumentContext;
+import com.finora.imports.ExplicitZeroActivityDetector;
 import com.finora.imports.RowKind;
 import com.finora.imports.TransactionNormalizer;
+import com.finora.imports.product.FinancialProductType;
 import com.finora.imports.product.ProductAttributeExtractor;
 import com.finora.imports.product.ProductAttributes;
 import com.finora.imports.product.ProductDiscovery;
@@ -192,14 +194,21 @@ public class PdfPreviewGenerator {
         List<PositionedText> positioned = acquired.runs();
         // A count, never the text. Lets ExtractionCheck tell "the pages carry no text" from
         // "we read plenty and could not make a table of it" -- see DocumentContext.
-        if (ctx != null) {
-            ctx.recordExtractedRuns(positioned.size());
-            // Provenance, not a judgement -- see DocumentContext.recordTextSource's own doc
-            // comment. Recorded here because this is the one place the AcquiredDocument itself
-            // (not just its runs) is ever in scope.
-            ctx.recordTextSource(acquired.source());
-        }
+        //
+        // CodeQL (java/useless-null-check), 2026-09-04: this used to be guarded by `if (ctx !=
+        // null)`, which was always true -- ctx comes straight from `new DocumentContext(...)`
+        // above, with no reassignment in between. The guard's own presence is what misled a
+        // second CodeQL query (java/dereferenced-value-may-be-null) into flagging ctx.textSource()
+        // much further down this method as inconsistent with it. Removed rather than kept: every
+        // other ctx use in this method (locateAll, extract, ...) already assumes it's non-null.
+        ctx.recordExtractedRuns(positioned.size());
+        // Provenance, not a judgement -- see DocumentContext.recordTextSource's own doc comment.
+        // Recorded here because this is the one place the AcquiredDocument itself (not just its
+        // runs) is ever in scope.
+        ctx.recordTextSource(acquired.source());
         PdfTableLocator.LocatedDocument doc = tableLocator.locateAll(positioned, ctx);
+        doc = new PdfTableLocator.LocatedDocument(
+                mergeOrphanedInvestmentFragments(doc.sections(), ctx), doc.physicalRowFormationEvidence());
         // Read from the positioned runs rather than from the located table: the summary grid has
         // its own column layout, so bucketing it against the TRANSACTION table's anchors shreds it
         // -- on a real HDFC statement it arrives as one unparseable row reading "Credit Amount
@@ -230,6 +239,60 @@ public class PdfPreviewGenerator {
                 doc.sections().size() <= 1
                         ? TransactionTableDateRangeExtractor.extract(positioned, ctx)
                         : TransactionTableDateRangeExtractor.PrintedDateRange.NONE;
+        // Third tier, same single-section caution as printedDateRange above: a real Kotak Mahindra
+        // Bank SAVINGS statement prints its period as a bare, title-adjacent date range that reaches
+        // neither PdfMetadataExtractor's auxiliaryText nor TransactionTableDateRangeExtractor's
+        // table-header reading (see StatementTitleDateRangeExtractor's own doc comment). Tried only
+        // when the table-header reading above found nothing, and folded into the same
+        // printedDateRange value rather than threaded through every downstream signature as a third
+        // parameter -- every consumer below already treats printedDateRange as "the best positional
+        // reading available," and this is exactly that, just from a third source.
+        if (printedDateRange.start() == null && doc.sections().size() <= 1) {
+            StatementTitleDateRangeExtractor.PrintedDateRange titleDateRange =
+                    StatementTitleDateRangeExtractor.extract(positioned, ctx);
+            if (titleDateRange.start() != null) {
+                printedDateRange = new TransactionTableDateRangeExtractor.PrintedDateRange(
+                        titleDateRange.start(), titleDateRange.end());
+            }
+        }
+        // Fourth tier, same single-section caution and the same folding-into-printedDateRange as the
+        // third: a real Axis credit-card statement states its period inside the payment-summary grid
+        // whose label row reaches none of the three sources above. Measured, not assumed -- that
+        // section's auxiliaryText holds 127 lines and not one contains the word "period", so no
+        // line-based pattern could recover it, while the positioned geometry is unambiguous. See
+        // StatementPeriodGridExtractor's own doc comment.
+        if (printedDateRange.start() == null && doc.sections().size() <= 1) {
+            StatementPeriodGridExtractor.PrintedDateRange gridPeriod =
+                    StatementPeriodGridExtractor.extract(positioned, ctx);
+            if (gridPeriod.start() != null) {
+                printedDateRange = new TransactionTableDateRangeExtractor.PrintedDateRange(
+                        gridPeriod.start(), gridPeriod.end());
+            }
+        }
+
+        // A credit-card statement's own "Payment Summary" grid (Axis, SBI evidence): read
+        // document-wide, same reasoning as printedCreditCardSummary above ("a real credit-card
+        // statement is effectively always one account") -- not gated on section count, since this
+        // is a whole-account fact, not a per-section transaction range the way printedDateRange is.
+        // See PaymentDueDateGridExtractor's own doc comment for why PdfMetadataExtractor's
+        // line-based reading can never recover this on these two real documents at all.
+        LocalDate gridPaymentDueDate = PaymentDueDateGridExtractor.extract(positioned, ctx);
+        // Same reasoning, same document-wide/ungated-on-section-count scope, for the credit limit
+        // itself: the same real Axis/SBI "Payment Summary" grid scrambles "Credit Limit" away from
+        // its own value too -- see CreditLimitGridExtractor's own doc comment.
+        BigDecimal gridCreditLimit = CreditLimitGridExtractor.extract(positioned, ctx);
+        // Same reasoning, same document-wide/ungated-on-section-count scope, for the account/card
+        // number itself: a real Axis credit-card statement's own "Credit Card Number" field is
+        // scrambled the same way its Payment Due Date is -- see AccountNumberGridExtractor's own
+        // doc comment.
+        String gridAccountNumberMasked = AccountNumberGridExtractor.extract(positioned, ctx);
+        // A different real document (ICICI) prints its own account number with no label at all,
+        // positioned directly under the transaction table's own "Date" column header -- neither
+        // scrambled nor label-anchored, so AccountNumberGridExtractor alone can't recover it. See
+        // AccountNumberTransactionHeaderExtractor's own doc comment.
+        if (gridAccountNumberMasked == null) {
+            gridAccountNumberMasked = AccountNumberTransactionHeaderExtractor.extract(positioned, ctx);
+        }
 
         if (doc.sections().isEmpty()) {
             // "Never lose information" (see the engineering principles doc) applies at the
@@ -252,7 +315,8 @@ public class PdfPreviewGenerator {
             // section and there is no other candidate it could describe. Withholding it here left
             // the contradiction -- printed activity, nothing staged -- with nothing to state it.
             StagedAccountSection section = buildLedgerSection(userId, filename, emptySection, unknown, ctx,
-                    printedSummary, printedCreditCardSummary, printedDateRange);
+                    printedSummary, printedCreditCardSummary, printedDateRange, gridPaymentDueDate,
+                    gridCreditLimit, gridAccountNumberMasked, 1);
             return new PdfGenerationResult(List.of(surfaceUnrecognizedText(section, empty.preTableLines())), ctx,
                     printedCreditCardSummary);
         }
@@ -265,11 +329,12 @@ public class PdfPreviewGenerator {
             // every section exists.
             List<StagedAccountSection> staged = buildSections(userId, filename, doc.sections().get(i),
                     i, doc.sections().size(), ctx, PrintedSummary.NONE, printedCreditCardSummary,
-                    printedDateRange);
+                    printedDateRange, gridPaymentDueDate, gridCreditLimit, gridAccountNumberMasked);
             for (StagedAccountSection s : staged) unparseableAcrossDocument.addAll(s.unparseableRows());
             result.addAll(staged);
         }
         result = attributePrintedSummary(result, printedSummary);
+        result = inheritAccountNumberAcrossSections(result);
         // One document's worth, across every section -- the DocumentContext is per-file, and a
         // combined statement's sections all failed (or didn't) as part of the same parse run.
         ctx.recordUnparseable(unparseableAcrossDocument);
@@ -298,12 +363,25 @@ public class PdfPreviewGenerator {
                                                       int sectionIndex, int sectionCount, DocumentContext ctx,
                                                       PrintedSummary printedSummary,
                                                       CreditCardSummaryEvidence printedCreditCardSummary,
-                                                      TransactionTableDateRangeExtractor.PrintedDateRange printedDateRange) {
+                                                      TransactionTableDateRangeExtractor.PrintedDateRange printedDateRange,
+                                                      LocalDate gridPaymentDueDate, BigDecimal gridCreditLimit,
+                                                      String gridAccountNumberMasked) {
         List<String> columns = section.rows().isEmpty() ? List.of() : List.copyOf(section.rows().get(0).keySet());
         ProductDiscovery.DiscoveredProduct product = productDiscovery.discover(
                 new ProductEvidenceCollector.Section(columns, section.auxiliaryText(), null,
                         section.rows().size(), sectionIndex, sectionCount));
-        if (ctx != null) ctx.record("FINANCIAL_PRODUCT_CLASSIFICATION");
+        // CodeQL (java/dereferenced-value-may-be-null #73), 2026-09-04, round 2: this and the two
+        // other `ctx != null` checks in this file (originally at buildLedgerSection/
+        // attributePrintedSummary) were never actually reachable with a null ctx -- traced the
+        // full call graph: buildSections is only ever called from generateSectionsWithContext
+        // passing its own local ctx (from `new DocumentContext(...)`, never reassigned), and every
+        // method below it in the chain (buildProductSections, buildLedgerSection,
+        // buildDetectedAccountInfo, sharedFacts) only ever receives ctx from a caller one level up
+        // in this same chain -- never a literal null anywhere. These guards were what made CodeQL
+        // flag ctx.textSource() in buildLedgerSection as inconsistent with "somewhere this is
+        // checked for null," even after the one *directly* provable case (generateSectionsWithContext
+        // itself) was fixed first.
+        ctx.record("FINANCIAL_PRODUCT_CLASSIFICATION");
 
         // Skipping transaction parsing requires the product to be PROVEN a non-ledger, not merely
         // suspected of it. UNKNOWN's own hasTransactions() is false too (its domain needs user
@@ -317,7 +395,8 @@ public class PdfPreviewGenerator {
             return buildProductSections(filename, section, product, ctx);
         }
         return List.of(buildLedgerSection(userId, filename, section, product, ctx, printedSummary,
-                printedCreditCardSummary, printedDateRange));
+                printedCreditCardSummary, printedDateRange, gridPaymentDueDate, gridCreditLimit,
+                gridAccountNumberMasked, sectionCount));
     }
 
     /**
@@ -341,7 +420,7 @@ public class PdfPreviewGenerator {
             // credit-card-ledger-only concept.
             DetectedAccountInfo detected = facts.toDetectedAccountInfo(product, suggestedAccountType,
                     null, null, facts.metadata().statementPeriodStart(), facts.metadata().statementPeriodEnd(), attrs,
-                    null);
+                    null, facts.metadata().paymentDueDate(), facts.metadata().creditLimit(), null);
             result.add(new StagedAccountSection(detected, List.of(), 0, 0, List.of()));
         }
         return result;
@@ -352,7 +431,9 @@ public class PdfPreviewGenerator {
                                                     ProductDiscovery.DiscoveredProduct product,
                                                     DocumentContext ctx, PrintedSummary printedSummary,
                                                     CreditCardSummaryEvidence printedCreditCardSummary,
-                                                    TransactionTableDateRangeExtractor.PrintedDateRange printedDateRange) {
+                                                    TransactionTableDateRangeExtractor.PrintedDateRange printedDateRange,
+                                                    LocalDate gridPaymentDueDate, BigDecimal gridCreditLimit,
+                                                    String gridAccountNumberMasked, int sectionCount) {
         List<StagedRow> staged = new ArrayList<>();
         // "Never lose information" (see the engineering principles doc) -- a row that fails to
         // normalize is reported with WHY, not just silently absent from the row count. Real cost
@@ -378,6 +459,29 @@ public class PdfPreviewGenerator {
         // PreviewGenerator's identical hoist and MerchantIndex's own doc comment.
         MerchantIndex merchantIndex = transactionNormalizer.merchantIndexFor(userId);
         List<Map<String, String>> sectionRows = section.rows();
+        // Checked once, up front, against the RAW located rows -- before the loop below decides
+        // what any of them mean transactionally. A row can state the statement's own zero-activity
+        // claim and still fail every classification below (see ExplicitZeroActivityDetector's own
+        // doc comment for why it does, on the real evidencing document); this must not depend on
+        // that loop's outcome, since the loop staging zero rows is exactly the situation this
+        // exists to explain.
+        //
+        // Bug fix: same single-section caution as printedDateRange above, and for the identical
+        // reason -- this fact is derived from ONE section's own rows, but DocumentContext is
+        // shared and sticky across the WHOLE document (see its own doc comment), and
+        // ExtractionCheck reads the flag as a whole-document verdict. Left ungated, a composite
+        // statement where one section genuinely declares zero activity and a DIFFERENT section
+        // has an unrelated, genuine extraction failure would have BOTH staged rows sum to zero and
+        // the shared flag already true -- masking the real failure behind "nothing to import from
+        // this file." The real evidencing document (HSBC) locates exactly one section, so this
+        // costs it nothing; it only withholds the fact when a second section exists to be
+        // misattributed to.
+        // ctx is never null here -- see the call-graph trace on the FINANCIAL_PRODUCT_CLASSIFICATION
+        // guard above, in buildSections.
+        if (sectionCount <= 1
+                && ExplicitZeroActivityDetector.anyRowDeclaresZeroTransactionCount(sectionRows)) {
+            ctx.recordExplicitZeroActivityDeclared();
+        }
         for (int i = 0; i < sectionRows.size(); i++) {
             Map<String, String> row = sectionRows.get(i);
             // 1-based, within this section -- same convention as PreviewGenerator's CSV path.
@@ -464,8 +568,9 @@ public class PdfPreviewGenerator {
         staged.sort(Comparator.comparing(StagedRow::date));
 
         int dupCount = (int) staged.stream().filter(StagedRow::likelyDuplicate).count();
-        DetectedAccountInfo detected = buildDetectedAccountInfo(filename, section, staged, balancePoints, product, ctx,
-                printedCreditCardSummary, printedDateRange);
+        DetectedAccountInfo detected = buildDetectedAccountInfo(filename, section, balancePoints, product, ctx,
+                printedCreditCardSummary, printedDateRange, gridPaymentDueDate, gridCreditLimit,
+                gridAccountNumberMasked);
         // Per section rather than per file: a composite statement's sections have separate balance
         // chains, and one can verify while another does not.
         var verification = importVerifier.verify(documentOrder,
@@ -533,6 +638,183 @@ public class PdfPreviewGenerator {
         return revised;
     }
 
+    /**
+     * INVESTMENT_FRAGMENT_REMERGED. A real deposit product routinely prints its own account/holding
+     * across TWO structurally different tables under one logical account -- a summary block (rate,
+     * principal, maturity) and a separate schedule (installments, per-instrument rows) -- with no
+     * SECTION_MARKER-style identity banner tying them together, so {@link PdfTableLocator} (which
+     * has no notion of product type at all -- see {@code LocatedSection}'s own doc comment) stages
+     * them as two independent sections. The summary table alone usually carries enough evidence to
+     * classify confidently; the schedule alone often does not, because the two tables' own expected
+     * signals ({@code MATURITY_FIELD}, {@code INTEREST_RATE_FIELD} on one; {@code
+     * INSTALLMENT_FIELD} on the other) never repeat on both, capping its own standalone confidence
+     * below the classifier's own 0.6 confidence threshold even with a genuine hypothesis.
+     *
+     * <p>Confirmed on a real HDFC composite statement: a Recurring Deposit's own "RD ACCOUNT
+     * SUMMARY" table (2 rows, 95% confident RECURRING_DEPOSIT on its own) is immediately followed
+     * by its own "LATEST INSTALLMENT DETAILS" table (7 rows, scores only 50% alone -- 2 of RD's 4
+     * expected signals recorded NEGATIVE, since neither MATURITY_FIELD nor INTEREST_RATE_FIELD
+     * repeats on an installment schedule -- falls to UNKNOWN, and UNKNOWN.hasTransactions()==false
+     * means those 7 real rows never stage as transactions either, even though they were correctly
+     * extracted). Merging the two sections' raw content BEFORE classification runs (rather than
+     * trying to combine two already-built {@code StagedAccountSection} DTOs afterward, each with
+     * its own derived attribute fields) lets the ordinary classification pipeline see every signal
+     * together in one pass, the same evidence {@code FinancialProductClassifierTest}'s own {@code
+     * anInstallmentScheduleIsARecurringDepositAndRoutesToInvestments} proves is sufficient when
+     * both tables' signals are present together.
+     *
+     * <h2>Why this is narrowly scoped, not a general "merge adjacent sections" pass</h2>
+     *
+     * Deliberately requires the FIRST section to already be a confidently-classified, VALIDATED
+     * INVESTMENT-domain product on its own -- never merges two sections that are merely adjacent,
+     * and never merges INTO a section whose own classification is itself uncertain. A trial
+     * classification of the SECOND section, run the identical way {@link #buildSections} will run
+     * it for real, must also come back exactly {@link FinancialProductType#UNKNOWN} -- a section
+     * that already classifies as something else (a genuinely separate, distinct account) is never
+     * absorbed. Running the real, same-signature classification twice for a merge candidate (once
+     * here to decide, once again inside {@code buildSections} on whatever the pre-pass leaves
+     * behind) is redundant work, not redundant risk: both calls are pure functions of the same
+     * evidence, so the second call simply confirms what the first already found.
+     */
+    private List<PdfTableLocator.LocatedSection> mergeOrphanedInvestmentFragments(
+            List<PdfTableLocator.LocatedSection> sections, DocumentContext ctx) {
+        List<PdfTableLocator.LocatedSection> merged = new ArrayList<>(sections);
+        for (int i = 0; i < merged.size() - 1; ) {
+            if (canMergeAsInvestmentFragment(merged, i)) {
+                PdfTableLocator.LocatedSection first = merged.get(i);
+                PdfTableLocator.LocatedSection second = merged.get(i + 1);
+                List<Map<String, String>> mergedRows = new ArrayList<>(first.rows());
+                mergedRows.addAll(second.rows());
+                List<String> mergedAuxiliary = new ArrayList<>(first.auxiliaryText());
+                mergedAuxiliary.addAll(second.auxiliaryText());
+                List<PdfTableLocator.DroppedCandidateRow> mergedDropped =
+                        new ArrayList<>(first.evidence().droppedTransactionCandidates());
+                mergedDropped.addAll(second.evidence().droppedTransactionCandidates());
+                List<PdfTableLocator.HeaderReconstructionFinding> mergedFindings =
+                        new ArrayList<>(first.evidence().headerReconstructionFindings());
+                mergedFindings.addAll(second.evidence().headerReconstructionFindings());
+                merged.set(i, new PdfTableLocator.LocatedSection(mergedAuxiliary, mergedRows,
+                        new PdfTableLocator.ExtractionEvidence(mergedDropped, mergedFindings)));
+                merged.remove(i + 1);
+                if (ctx != null) ctx.record("INVESTMENT_FRAGMENT_REMERGED");
+                // Re-check the same index: the section that just absorbed a fragment might itself
+                // still be confidently classified and immediately followed by ANOTHER orphaned
+                // fragment (a document with more than two tables under one deposit account).
+            } else {
+                i++;
+            }
+        }
+        return merged;
+    }
+
+    /** True when {@code sections.get(index)} is a confidently-classified, validated INVESTMENT-
+     *  domain product and {@code sections.get(index + 1)}, classified the same way {@link
+     *  #buildSections} classifies it for real, comes back UNKNOWN -- see {@link
+     *  #mergeOrphanedInvestmentFragments}'s own doc comment for the full rationale. */
+    private boolean canMergeAsInvestmentFragment(List<PdfTableLocator.LocatedSection> sections, int index) {
+        int sectionCount = sections.size();
+        ProductDiscovery.DiscoveredProduct first = classifySectionAlone(sections.get(index), index, sectionCount);
+        if (!first.validation().isValidated() || !first.classification().isConfident()) return false;
+        if (first.type().domain() != FinancialProductType.Domain.INVESTMENT) return false;
+
+        ProductDiscovery.DiscoveredProduct second =
+                classifySectionAlone(sections.get(index + 1), index + 1, sectionCount);
+        return second.type() == FinancialProductType.UNKNOWN;
+    }
+
+    /**
+     * Columns are the UNION of every row's own keys, not just the first row's -- {@code
+     * bucketRow} only puts a key in a row's map when that row actually has a value there, so a
+     * ledger whose first row happens to be (say) a deposit with no matching withdrawal loses the
+     * "Withdrawals" column entirely if only that row is consulted.
+     *
+     * <p>Confirmed as a real regression this merge introduced: {@code
+     * ClosingBalanceEvidenceSectionIndexIT}'s own composite fixture stages a genuine SAVINGS
+     * section (Date/Transaction Details/Deposits/Withdrawals/Balance, two rows -- one a pure
+     * deposit, one a pure withdrawal) immediately after a confidently-classified RECURRING_DEPOSIT
+     * section. Row-0-only columns there are missing "Withdrawals" (row 0 is the deposit), which is
+     * enough to drop SAVINGS' own trial classification to {@code UNKNOWN} -- satisfying {@link
+     * #canMergeAsInvestmentFragment}'s "second section is UNKNOWN alone" test for a completely
+     * unrelated reason than the one it exists to catch, and merging a real, independent account's
+     * two transactions into the deposit section, dropping it entirely (raw section count 4 -> 3,
+     * the savings section and its balance gone without a trace). Verified directly: the same
+     * section trial-classified with row-0-only columns comes back UNKNOWN; with the union across
+     * both rows it comes back SAVINGS.
+     */
+    private ProductDiscovery.DiscoveredProduct classifySectionAlone(PdfTableLocator.LocatedSection section,
+                                                                      int sectionIndex, int sectionCount) {
+        List<String> columns = section.rows().stream()
+                .flatMap(row -> row.keySet().stream())
+                .distinct()
+                .toList();
+        return productDiscovery.discover(new ProductEvidenceCollector.Section(columns, section.auxiliaryText(),
+                null, section.rows().size(), sectionIndex, sectionCount));
+    }
+
+    /**
+     * A credit-card statement's account/card number belongs to the whole relationship, not any one
+     * section -- the same "effectively always one account" assumption {@code gridPaymentDueDate}/
+     * {@code printedCreditCardSummary} already make elsewhere in this class, applied here as a
+     * POST-PROCESSING fallback rather than a document-wide extraction: the number itself is already
+     * correctly found by {@link PdfMetadataExtractor} on the section that owns it, and what's
+     * missing is only propagating it to a SIBLING section that never found its own.
+     *
+     * <p>Confirmed on two real documents (SBI, IndusInd): both have a genuine, fully-formed
+     * CREDIT_CARD section that DOES find its own {@code accountNumberMasked}, plus a second,
+     * malformed {@code UNKNOWN}-product fragment (a rewards/purchase-detail sub-table {@link
+     * PdfTableLocator} mis-splits into its own section) that never does.
+     *
+     * <p>Scoped narrowly to avoid mis-attributing a genuinely DIFFERENT account's number onto a
+     * sibling: only ever copies FROM a {@code CREDIT_CARD} section (the "one relationship"
+     * assumption applies to a credit card specifically, not to a generic multi-account composite
+     * statement) INTO a sibling whose own {@code detectedProduct} is {@code UNKNOWN} OR that same
+     * {@code CREDIT_CARD} -- never into a section the pipeline has positively identified as some
+     * OTHER, distinct product. A real composite statement (Shivani_HDFC) has a genuine {@code
+     * RECURRING_DEPOSIT} section with its own certificate number, which must never be overwritten
+     * by a sibling account's number; gating on {@code UNKNOWN}/{@code CREDIT_CARD} specifically
+     * (not "any section missing a number") is what keeps that case untouched.
+     *
+     * <p>The {@code CREDIT_CARD} half of that gate was added once WRAPPED_HEADER_INTERIOR_TIER_COLUMNS
+     * started recognizing IndusInd's own malformed rewards/purchase-detail fragment's Description/
+     * Merchant Category columns well enough for {@code ProductDiscovery} to positively identify it
+     * as {@code CREDIT_CARD} too, rather than leaving it {@code UNKNOWN} -- a genuine improvement
+     * that, left ungated, would have silently stopped this section from ever getting its account
+     * number back: it is still a fragment of the SAME card, just no longer an unidentified one.
+     */
+    private List<StagedAccountSection> inheritAccountNumberAcrossSections(List<StagedAccountSection> sections) {
+        if (sections.size() <= 1) return sections;
+        String sourceAccountNumber = null;
+        for (StagedAccountSection s : sections) {
+            DetectedAccountInfo acc = s.detectedAccount();
+            if (acc != null && "CREDIT_CARD".equals(acc.detectedProduct()) && acc.accountNumberMasked() != null) {
+                sourceAccountNumber = acc.accountNumberMasked();
+                break;
+            }
+        }
+        if (sourceAccountNumber == null) return sections;
+
+        List<StagedAccountSection> revised = new ArrayList<>(sections.size());
+        for (StagedAccountSection s : sections) {
+            DetectedAccountInfo acc = s.detectedAccount();
+            if (acc != null && acc.accountNumberMasked() == null
+                    && ("UNKNOWN".equals(acc.detectedProduct()) || "CREDIT_CARD".equals(acc.detectedProduct()))) {
+                DetectedAccountInfo updated = new DetectedAccountInfo(
+                        acc.suggestedName(), acc.suggestedAccountType(), acc.openingBalance(), acc.closingBalance(),
+                        acc.statementPeriodStart(), acc.statementPeriodEnd(), sourceAccountNumber, acc.creditLimit(),
+                        acc.totalAmountDue(), acc.paymentDueDate(), acc.accountHolderName(), acc.branchName(),
+                        acc.ifscCode(), acc.bank(), acc.detectedProduct(), acc.productConfidence(),
+                        acc.productNeedsReview(), acc.productEvidence(), acc.productIdentityHash(),
+                        acc.principalAmount(), acc.interestRate(), acc.maturityDate(), acc.maturityAmount(),
+                        acc.installmentAmount(), acc.installmentsPaid(), acc.installmentsTotal());
+                revised.add(new StagedAccountSection(updated, s.rows(), s.totalParsed(), s.flaggedDuplicates(),
+                        s.unparseableRows(), s.verification()));
+            } else {
+                revised.add(s);
+            }
+        }
+        return revised;
+    }
+
     private StagedAccountSection surfaceUnrecognizedText(StagedAccountSection section, List<String> extractedLines) {
         List<UnparseableRow> unparseable = new ArrayList<>();
         for (String line : extractedLines) {
@@ -556,11 +838,13 @@ public class PdfPreviewGenerator {
     }
 
     private DetectedAccountInfo buildDetectedAccountInfo(String filename, PdfTableLocator.LocatedSection section,
-                                                           List<StagedRow> staged, List<BalancePoint> balancePoints,
+                                                           List<BalancePoint> balancePoints,
                                                            ProductDiscovery.DiscoveredProduct product,
                                                            DocumentContext ctx,
                                                            CreditCardSummaryEvidence printedCreditCardSummary,
-                                                           TransactionTableDateRangeExtractor.PrintedDateRange printedDateRange) {
+                                                           TransactionTableDateRangeExtractor.PrintedDateRange printedDateRange,
+                                                           LocalDate gridPaymentDueDate, BigDecimal gridCreditLimit,
+                                                           String gridAccountNumberMasked) {
         LocalDate statementStart = null;
         LocalDate statementEnd = null;
         BigDecimal openingBalance = null;
@@ -607,9 +891,35 @@ public class PdfPreviewGenerator {
             closingBalance = resolution.closingBalance();
         }
 
+        // Same precedence as statementStart/statementEnd above: PdfMetadataExtractor's own
+        // line-based field wins when present, and the positioned-text grid reading is only tried
+        // once that comes up empty -- see PaymentDueDateGridExtractor's own doc comment for why
+        // its two real evidencing documents (Axis, SBI) can never be read the line-based way.
+        LocalDate paymentDueDate = facts.metadata().paymentDueDate() != null
+                ? facts.metadata().paymentDueDate() : gridPaymentDueDate;
+
+        // INVERTED precedence from paymentDueDate above -- the positioned-text grid wins here, and
+        // PdfMetadataExtractor's own line-based reading (GRID_CREDIT_LIMIT_LABEL's findGridValue
+        // fallback) is only used when the grid reading found nothing. Evidenced necessary, not just
+        // theoretically safer: on the real Indusland.pdf, the line-based fallback's own "first
+        // amount-shaped match after the label" rule finds the WRONG number -- an unrelated "Payments
+        // & Other Credits" figure that a stray word ("Credit") from the same corrupted line join
+        // happens to sit directly before, one line above the credit limit's own true value. The grid
+        // reading, by matching x-overlap against the label's own column instead of taking the first
+        // number it meets, gets the real value. Confirmed safe to invert: checked all 8 real
+        // credit-card documents directly -- CreditLimitGridExtractor.extract fires on exactly Axis,
+        // SBI and Indusland (where metadata's line-based reading is respectively absent, absent, and
+        // wrong) and returns null on AU/ICICI/Kotak/HDFC/HSBC (none of which carry a bare, standalone
+        // "Credit Limit" text run this extractor's exact-match label requires -- AU's is "Total
+        // Credit Limit:", ICICI's is "Credit Limit (Including cash)", neither an exact match), so
+        // inverting the precedence cannot change their already-correct result.
+        BigDecimal creditLimit = gridCreditLimit != null
+                ? gridCreditLimit : facts.metadata().creditLimit();
+
         return facts.toDetectedAccountInfo(product, suggestedAccountTypeFor(product, facts.creditCardSignals()),
                 openingBalance, closingBalance, statementStart, statementEnd, ProductAttributes.empty(),
-                printedCreditCardSummary == null ? null : printedCreditCardSummary.totalAmountDue());
+                printedCreditCardSummary == null ? null : printedCreditCardSummary.totalAmountDue(),
+                paymentDueDate, creditLimit, gridAccountNumberMasked);
     }
 
     /**
@@ -659,7 +969,9 @@ public class PdfPreviewGenerator {
         boolean creditCardSignals = section.rows().stream().anyMatch(row ->
                 CsvParser.hasHeaderMatch(row, "card number", "minimum due", "minimum amount due"))
                 || countDistinctCreditCardSignals(section.auxiliaryText()) >= MIN_CREDIT_CARD_TEXT_SIGNALS;
-        if (ctx != null && creditCardSignals) ctx.record("CREDIT_CARD_SUMMARY_SIGNAL");
+        // ctx is never null here either -- same call-graph trace as the other two guards removed
+        // in this file (buildSections/buildLedgerSection).
+        if (creditCardSignals) ctx.record("CREDIT_CARD_SUMMARY_SIGNAL");
 
         return new SharedSectionFacts(metadata, bank, suggestedName, creditCardSignals);
     }
@@ -671,12 +983,32 @@ public class PdfPreviewGenerator {
                                                   String suggestedAccountType, BigDecimal openingBalance,
                                                   BigDecimal closingBalance, LocalDate statementStart,
                                                   LocalDate statementEnd, ProductAttributes attrs,
-                                                  BigDecimal totalAmountDue) {
+                                                  BigDecimal totalAmountDue, LocalDate paymentDueDate,
+                                                  BigDecimal creditLimit, String gridAccountNumberMasked) {
+            // Same precedence as paymentDueDate: PdfMetadataExtractor's own line-based field wins
+            // when present, and the positioned-text grid reading (AccountNumberGridExtractor /
+            // AccountNumberTransactionHeaderExtractor) is only tried once that comes up empty -- see
+            // those classes' own doc comments for why a real Axis/ICICI document's own account
+            // number can never be read the line-based way.
+            //
+            // NOT gated on this section's own detectedProduct -- CARD_NUMBER_LABEL_SRC matches
+            // "Account Number" as well as "Card No"/"Credit Card Number" (see PdfMetadataExtractor),
+            // so both grid extractors are real, evidenced signals on SAVINGS statements too (a real
+            // HSBC savings document only recovers its account number via AccountNumberGridExtractor's
+            // PRINTED_ACCOUNT_NUMBER_GRID path) -- gating on "CREDIT_CARD" specifically silently
+            // broke that document, and ICICI CC.pdf's own detectedProduct is UNKNOWN (low-confidence
+            // classification) even though its section genuinely needs this exact fallback. Document-
+            // wide, ungated application carries the same theoretical cross-section leak risk
+            // gridPaymentDueDate already accepts (see that field's own precedent from PR #708); no
+            // real corpus document currently exercises a composite statement with two genuinely
+            // different, positively-identified accounts where this would misfire.
+            String accountNumberMasked = metadata.accountNumberMasked() != null
+                    ? metadata.accountNumberMasked() : gridAccountNumberMasked;
             return new DetectedAccountInfo(
                     suggestedName, suggestedAccountType,
                     openingBalance, closingBalance, statementStart, statementEnd,
-                    metadata.accountNumberMasked(), metadata.creditLimit(), totalAmountDue,
-                    metadata.paymentDueDate(),
+                    accountNumberMasked, creditLimit, totalAmountDue,
+                    paymentDueDate,
                     metadata.accountHolderName(), metadata.branchName(), metadata.ifscCode(),
                     AccountDto.BankDto.from(bank),
                     product.type().name(), product.confidence(), product.needsReview(), product.report(),
@@ -688,7 +1020,7 @@ public class PdfPreviewGenerator {
                     // relationship number, not any one deposit's. Null for a ledger account, whose
                     // number identifies it on its own. See ProductIdentity.forDeposit.
                     ProductIdentity.of(bank.id(), product.type(),
-                            metadata.accountNumberFullForHashingOnly(), metadata.accountNumberMasked(),
+                            metadata.accountNumberFullForHashingOnly(), accountNumberMasked,
                             ProductIdentity.forDeposit(attrs.principalAmount(), attrs.maturityDate(),
                                     attrs.installmentAmount()))
                             .strongKey(),

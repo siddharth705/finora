@@ -15,6 +15,9 @@ vi.mock('../api/endpoints', () => ({
   accountsApi: { list: vi.fn() },
   categoriesApi: { list: vi.fn() },
   transactionsApi: { create: vi.fn() },
+  // Support, Help & Feedback v1, Phase 8: FeedbackModal (rendered from the Help menu below) calls
+  // this directly, so it needs a mock here too or mounting the modal throws.
+  feedbackApi: { submit: vi.fn() },
 }));
 
 function renderTopBar() {
@@ -76,5 +79,88 @@ describe('TopBar — Add Transaction', () => {
       expect.objectContaining({ accountId: 'acct-1', description: 'Coffee', amount: 150 })
     ));
     await waitFor(() => expect(screen.queryByRole('heading', { name: /add transaction/i })).not.toBeInTheDocument());
+  });
+
+  /**
+   * `POST /transactions` moves the account balance on every call, so a double-click or a retried
+   * request whose response was lost does not merely duplicate a row -- it overstates the balance,
+   * permanently and silently (ReconciliationService can flag the second row DUPLICATE, but a
+   * DUPLICATE row still counts toward Account.balance).
+   *
+   * The server side of this shipped in V97 and sat inert, because no client ever sent a key.
+   */
+  describe('idempotency key', () => {
+    it('sends one, so V97 protection is actually exercised', async () => {
+      vi.mocked(transactionsApi.create).mockResolvedValue({} as any);
+      const user = userEvent.setup();
+      renderTopBar();
+      await user.click(screen.getByRole('button', { name: /add transaction/i }));
+      const modal = within((await screen.findByRole('heading', { name: /add transaction/i })).closest('.bg-card') as HTMLElement);
+      await user.type(modal.getByLabelText(/description/i), 'Coffee');
+      await user.type(modal.getByLabelText(/amount/i), '150');
+      await user.click(modal.getByRole('button', { name: /^add transaction$/i }));
+
+      await waitFor(() => expect(transactionsApi.create).toHaveBeenCalledWith(
+        expect.objectContaining({ idempotencyKey: expect.any(String) })
+      ));
+      // The pre-existing assertion above uses objectContaining, so it would have passed happily
+      // whether or not a key was sent -- this is the one that actually pins it.
+      expect(vi.mocked(transactionsApi.create).mock.calls[0][0].idempotencyKey).toBeTruthy();
+    });
+
+    it('reuses the same key when the user retries after a failure', async () => {
+      // This is the whole point. A retry must be recognisable as the SAME attempt: if the first
+      // request actually reached the server and committed, resending a fresh key would create a
+      // second transaction and move the balance again -- the exact bug the key exists to prevent.
+      vi.mocked(transactionsApi.create)
+        .mockRejectedValueOnce(new Error('network'))
+        .mockResolvedValueOnce({} as any);
+      const user = userEvent.setup();
+      renderTopBar();
+      await user.click(screen.getByRole('button', { name: /add transaction/i }));
+      const modal = within((await screen.findByRole('heading', { name: /add transaction/i })).closest('.bg-card') as HTMLElement);
+      await user.type(modal.getByLabelText(/description/i), 'Coffee');
+      await user.type(modal.getByLabelText(/amount/i), '150');
+
+      await user.click(modal.getByRole('button', { name: /^add transaction$/i }));
+      await waitFor(() => expect(transactionsApi.create).toHaveBeenCalledTimes(1));
+      await user.click(modal.getByRole('button', { name: /^add transaction$/i }));
+      await waitFor(() => expect(transactionsApi.create).toHaveBeenCalledTimes(2));
+
+      const calls = vi.mocked(transactionsApi.create).mock.calls;
+      // Assert the key EXISTS before asserting the two match: `undefined === undefined` is true, so
+      // an equality check alone passes just as happily when no key is sent at all.
+      expect(calls[0][0].idempotencyKey).toEqual(expect.any(String));
+      expect(calls[1][0].idempotencyKey).toBe(calls[0][0].idempotencyKey);
+    });
+  });
+});
+
+// Support, Help & Feedback v1, Phase 8: "Send feedback" used to be a mailto: link; it's now the
+// FeedbackModal, and the Help menu also gained a "My Tickets" entry -- both new, so covered here
+// rather than folded into the pre-existing Add Transaction suite above.
+describe('TopBar — Help menu', () => {
+  beforeEach(() => {
+    vi.mocked(dashboardApi.summary).mockReset().mockResolvedValue({ notifications: [] } as any);
+  });
+
+  it('links "My Tickets" to the authenticated support route', async () => {
+    const user = userEvent.setup();
+    renderTopBar();
+
+    await user.click(screen.getByTitle('Help'));
+    const link = screen.getByRole('link', { name: /my tickets/i });
+    expect(link).toHaveAttribute('href', '/app/support');
+  });
+
+  it('opens FeedbackModal from "Send feedback" instead of a mailto link', async () => {
+    const user = userEvent.setup();
+    renderTopBar();
+
+    await user.click(screen.getByTitle('Help'));
+    expect(screen.queryByRole('link', { name: /send feedback/i })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /send feedback/i }));
+    expect(screen.getByRole('heading', { name: /send feedback/i })).toBeInTheDocument();
   });
 });

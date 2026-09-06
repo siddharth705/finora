@@ -4,8 +4,7 @@ import { ShieldCheck, ArrowRight } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { PasswordInput } from '../../components/PasswordInput';
 import { ReactivateAccountPrompt } from '../../components/ReactivateAccountPrompt';
-import { GoogleSignInButton } from '../../components/GoogleSignInButton';
-import { AppleSignInButton } from '../../components/AppleSignInButton';
+import { SocialSignInButtons } from '../../components/SocialSignInButtons';
 import { AuthDivider } from './AuthDivider';
 import { SESSION_ENDED_REASON_KEY } from '../../api/client';
 import { AUTH_ACCOUNT_DEACTIVATED } from '../../api/errorCodes';
@@ -27,6 +26,12 @@ export function PasswordStep({ identifier: initialIdentifier, banner, onSuccess,
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [reactivationToken, setReactivationToken] = useState<string | null>(null);
+  // Seeded at 420 -- Google's own real rendered button width, measured live on production (see
+  // SocialSignInButtons.tsx) -- rather than the form's natural full width, so the form narrows to
+  // match Google/Apple from the first paint instead of flashing full-width and then snapping
+  // narrower once Google's script actually reports back. onWidthKnown corrects this if Google
+  // ever renders differently.
+  const [formWidth, setFormWidth] = useState(420);
   // Same one-shot-read-then-clear pattern as today's Login.tsx -- api/client.ts's forced-signout
   // stashes why the session ended because its window.location.href navigation unmounts React.
   const [sessionEndedReason] = useState<string | null>(() => {
@@ -98,8 +103,8 @@ export function PasswordStep({ identifier: initialIdentifier, banner, onSuccess,
   }
 
   return (
-    <form onSubmit={handleSubmit} noValidate>
-      <h2 className="text-2xl font-bold text-ink mb-1">Sign in</h2>
+    <form onSubmit={handleSubmit} noValidate style={{ maxWidth: formWidth, marginInline: 'auto' }}>
+      <h2 className="font-display text-2xl font-bold text-ink mb-1">Sign in</h2>
       <p className="text-sm text-muted mb-6">Enter your details to access your account</p>
 
       {banner && (
@@ -109,6 +114,16 @@ export function PasswordStep({ identifier: initialIdentifier, banner, onSuccess,
         <p role="status" className="text-warning text-sm bg-warning-bg rounded-lg px-3 py-2 mb-4">{sessionEndedReason}</p>
       )}
       {error && <p className="text-danger text-sm mb-4">{error}</p>}
+
+      <SocialSignInButtons
+        googleText="signin_with"
+        onGoogleCredential={handleGoogleCredential}
+        onAppleCredential={handleAppleCredential}
+        onError={setError}
+        onWidthKnown={setFormWidth}
+      />
+
+      <AuthDivider />
 
       <label htmlFor="password-step-identifier" className="block text-xs font-medium text-muted mb-1">Email or mobile number</label>
       <input
@@ -138,18 +153,11 @@ export function PasswordStep({ identifier: initialIdentifier, banner, onSuccess,
       <button
         type="submit"
         disabled={loading}
-        className="w-full bg-primary hover:bg-primary-dark text-on-primary rounded-lg py-2.5 text-sm font-semibold flex items-center justify-center gap-1.5 disabled:opacity-50"
+        className="w-full bg-primary hover:bg-primary-dark active:scale-[0.98] transition-transform text-on-primary rounded-lg py-2.5 text-sm font-semibold flex items-center justify-center gap-1.5 disabled:opacity-50"
       >
         {loading ? 'Signing in…' : 'Sign in'}
         {!loading && <ArrowRight size={15} />}
       </button>
-
-      <AuthDivider />
-
-      <GoogleSignInButton text="signin_with" onCredential={handleGoogleCredential} onError={setError} />
-      <div className="mt-3">
-        <AppleSignInButton onCredential={handleAppleCredential} onError={setError} />
-      </div>
 
       <div className="flex items-start gap-2.5 bg-primary-light rounded-lg p-3 mt-6">
         <ShieldCheck size={16} className="text-primary flex-shrink-0 mt-0.5" />

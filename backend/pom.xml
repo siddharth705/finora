@@ -301,6 +301,18 @@
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-test</artifactId>
       <scope>test</scope>
+      <!-- Subscription billing V1: jsonassert (a transitive test dependency of this starter) pulls
+           in Vaadin's stripped-down org.json.JSONObject reimplementation (android-json), which
+           shadows razorpay-java's real org.json:json on the test classpath and lacks methods
+           (e.g. toMap()) that real org.json:json has — RazorpayWebhookController relies on the
+           real implementation. Confirmed via `mvn dependency:tree`: android-json arrives here,
+           in `test` scope, only through jsonassert. -->
+      <exclusions>
+        <exclusion>
+          <groupId>com.vaadin.external.google</groupId>
+          <artifactId>android-json</artifactId>
+        </exclusion>
+      </exclusions>
     </dependency>
     <dependency>
       <groupId>org.springframework.security</groupId>
@@ -386,6 +398,16 @@
       <artifactId>micrometer-registry-prometheus</artifactId>
     </dependency>
 
+    <!-- Subscription billing V1 (docs/superpowers/specs/2026-09-05-subscription-billing-v1-design.md).
+         Official Razorpay Java SDK — Subscriptions API client and webhook signature verification.
+         Version pinned: Razorpay does not participate in spring-boot-starter-parent's dependency
+         management. -->
+    <dependency>
+      <groupId>com.razorpay</groupId>
+      <artifactId>razorpay-java</artifactId>
+      <version>1.4.10</version>
+    </dependency>
+
   </dependencies>
 
   <build>
@@ -451,11 +473,26 @@
                 includes "the Testcontainers ones" untrue.
 
                 Fixed by widening surefire's includes rather than adding failsafe and a separate
-                `verify` phase. AbstractIntegrationTest's doc comment describes one container shared
-                across "the full suite", CI runs `./mvnw test` and expects Docker for exactly that
-                reason, and the README says the same. Splitting them into a phase nobody runs would
-                keep the documentation wrong. The trade is that `./mvnw test` genuinely needs a
-                Docker daemon now, which was already the documented expectation.
+                `verify` phase, deliberately, at the time: AbstractIntegrationTest's doc comment
+                described one container shared across "the full suite", CI ran `./mvnw test` and
+                expected Docker for exactly that reason, and the README said the same. Splitting
+                them into a phase nobody runs would have kept the documentation wrong — and that
+                was the actual risk, not the container-sharing mechanics themselves. Failsafe's
+                default forkCount=1/reuseForks=true runs every *IT in one JVM, same as surefire
+                did, so AbstractIntegrationTest's static container is shared exactly as before,
+                just within failsafe's own fork instead of surefire's.
+
+             2026-09-02: split back out, via maven-failsafe-plugin below, now that the actual
+             failure mode — *IT silently not running — has a direct guard instead of relying on
+             "everything lives in one always-invoked command" to prevent it. ci.yml's "Run tests"
+             step now branches: a pull_request runs `./mvnw test` (surefire, unit-only, fast) and
+             a push to main runs `./mvnw verify` (surefire + failsafe, the full suite). Either
+             way, scripts/summarize-surefire.py's "BLOCKED: no *IT classes ran" check still runs
+             by default; only the PR path's own explicit unit-only flag waives it. If a future
+             edit ever breaks failsafe's includes below or the push path stops calling `verify`,
+             that check still fails loudly on the run where *IT was actually expected. This is a
+             different mitigation for the identical incident shape, not a reversion to it — see
+             failsafe's own comment below before touching either plugin's includes.
 
              2. api.version. See the docker.api.version property for why. It has to be passed to the
                 forked test JVM as a system property; setting it in the parent shell does nothing.
@@ -487,13 +524,67 @@
             <include>**/*Test.java</include>
             <include>**/*Tests.java</include>
             <include>**/*TestCase.java</include>
-            <include>**/*IT.java</include>
           </includes>
+          <!-- 2026-09-02: CapabilityCorpusCoverageTest is the one @Tag("nightly") test today (see
+               its own doc comment for why it, specifically, was safe to defer out of every PR/merge
+               run — a coverage metric, not a correctness or security gate). Excluded here rather
+               than by includes or a class rename, so a future second nightly-tagged test needs no
+               pom.xml change to also be excluded, only the tag. The nightly-tests profile below
+               (activated by corpus-coverage-nightly.yml) overrides groups/excludedGroups for its
+               own run; it does not touch includes above, which stays the same list either way.
+
+               Deliberately a profile, not a command-line -D override on this element: tried first,
+               and neither an empty-string nor a real-value override actually took effect against
+               this literal (non-property-placeholder) value, in this Surefire version, verified
+               empirically. A profile's plugin configuration is merged over the main build's
+               deterministically instead, with no such flakiness. -->
+          <excludedGroups>nightly</excludedGroups>
           <systemPropertyVariables>
             <api.version>${docker.api.version}</api.version>
             <spring.profiles.active>test</spring.profiles.active>
           </systemPropertyVariables>
         </configuration>
+      </plugin>
+      <plugin>
+        <!-- *IT's counterpart to the surefire plugin above — read that plugin's comment first,
+             it explains why this exists as a separate plugin rather than folded back into
+             surefire's includes.
+
+             No explicit <version>: surefire has none either, both are managed by
+             spring-boot-starter-parent's dependencyManagement, and pinning one without the other
+             risks them drifting to incompatible versions of the shared surefire-api they both
+             depend on.
+
+             reportsDirectory points at surefire's own output directory rather than failsafe's
+             default (target/failsafe-reports) so scripts/summarize-surefire.py keeps reading one
+             place regardless of which plugin produced which report — it does not need to know
+             the difference, only that everything under target/surefire-reports got there somehow.
+
+             No skip/testFailureIgnore anywhere: the whole point of binding `verify` below is
+             that a failing *IT fails the build. failsafe's default behavior already does this
+             (unlike surefire's `test` phase, integration-test failures don't fail the build on
+             their own; `verify` is the goal that actually asserts it, which is why both goals
+             are bound below and not integration-test alone). -->
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-failsafe-plugin</artifactId>
+        <configuration>
+          <includes>
+            <include>**/*IT.java</include>
+          </includes>
+          <reportsDirectory>${project.build.directory}/surefire-reports</reportsDirectory>
+          <systemPropertyVariables>
+            <api.version>${docker.api.version}</api.version>
+            <spring.profiles.active>test</spring.profiles.active>
+          </systemPropertyVariables>
+        </configuration>
+        <executions>
+          <execution>
+            <goals>
+              <goal>integration-test</goal>
+              <goal>verify</goal>
+            </goals>
+          </execution>
+        </executions>
       </plugin>
       <plugin>
         <!-- Coverage measurement. The suite is large and passing, but until now what fraction of
@@ -509,9 +600,13 @@
              MoneyComparisonUsageTest, FilterPathMatchingTest) was written. What this is for is
              answering "where is there no net at all", which a count cannot answer.
 
-             Bound to `test` rather than `verify` so that `./mvnw test`, the command CI and
-             everyone here already runs, produces target/site/jacoco/index.html with no extra
-             step.
+             Bound to `test` so `./mvnw test` alone (the PR path, unit-only since the *IT split
+             below) still produces target/site/jacoco/index.html with no extra step. A second
+             `report` execution bound to `verify` (below) regenerates it after failsafe's *IT run
+             adds its coverage to the same jacoco.exec — prepare-agent's argLine is shared by both
+             surefire and failsafe here, neither plugin overrides it, so both write into one file
+             rather than two — so the push-to-main path reports the complete picture instead of
+             quietly reverting to the unit-only numbers this comment's own incident is about.
 
              WHAT IT FOUND ON ITS FIRST RUN. 78.3% instructions overall, but com.finora.controller
              at 0.0% across 1700 instructions. That was not a coverage gap: controllers are only
@@ -539,6 +634,14 @@
               <goal>report</goal>
             </goals>
           </execution>
+          <execution>
+            <!-- Same goal, later phase — see this plugin's own doc comment above for why. -->
+            <id>report-after-integration-tests</id>
+            <phase>verify</phase>
+            <goals>
+              <goal>report</goal>
+            </goals>
+          </execution>
         </executions>
         <configuration>
           <excludes>
@@ -553,4 +656,30 @@
       </plugin>
     </plugins>
   </build>
+
+  <profiles>
+    <!-- Activated by corpus-coverage-nightly.yml (-Pnightly-tests) to run ONLY @Tag("nightly")
+         tests instead of the whole unit suite. See the surefire plugin's own comment above for why
+         this is a profile rather than a -D command-line override. -->
+    <profile>
+      <id>nightly-tests</id>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-surefire-plugin</artifactId>
+            <configuration>
+              <groups>nightly</groups>
+              <!-- A tag no test ever carries, not empty: verified empirically that an empty
+                   excludedGroups here does NOT override the base config's "nightly" value during
+                   Maven's profile merge, it silently keeps the base's non-empty value, which would
+                   exclude the very tests the groups line above is trying to include. A real,
+                   deliberately-unused placeholder value sidesteps that merge behavior entirely. -->
+              <excludedGroups>none-excluded-by-the-nightly-profile</excludedGroups>
+            </configuration>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+  </profiles>
 </project>

@@ -2,11 +2,13 @@ import { File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import { api, rawApi, type ApiEnvelope } from './client';
 import { encodeBase64 } from '../lib/base64';
-import { isOffline } from '../lib/apiError';
+import { decodeUtf8 } from '../lib/utf8';
+import { isCanceled, isOffline } from '../lib/apiError';
+import { shareFileAndCleanUp } from '../lib/shareFile';
 import type {
   Account, AccountStatementGroup, Budget, DashboardSummary, DetectedAccountInfo, Goal,
-  ImportSummary, ReimportResult, StagedAccountSection, StagedRow, StatementSummary, Transaction,
-  WorkspaceSettings, UnparseableRow,
+  ImportSummary, MerchantGroup, ReimportResult, StagedAccountSection, StagedRow, StatementSummary,
+  Transaction, TransactionSource, WorkspaceSettings, UnparseableRow,
 } from '../types';
 
 // Ported from frontend/src/api/endpoints.ts -- these are plain axios calls with TS types, no DOM
@@ -15,6 +17,31 @@ import type {
 // statement file download (web's Blob+<a> click has no native equivalent) -- both marked below
 // and left for Phase 3 (Import Flow), which is where the real file-picker/upload/download work
 // happens. Keep this file in sync with the web version by hand for every other endpoint.
+
+/**
+ * Re-reads an ArrayBuffer-typed error response as the JSON envelope it actually is, so the
+ * message survives.
+ *
+ * Mobile's counterpart to the web app's `withBlobErrorMessage`: any request sent with
+ * responseType: 'arraybuffer' gets that response type applied to error responses too. The
+ * backend's error body is a normal ApiResponse envelope, but axios hands it over as a raw
+ * ArrayBuffer, so every consumer that looks for `.data.message` -- including client.ts's own
+ * interceptor -- finds nothing and the actionable text is discarded. Mutates the error in place
+ * so the shape callers already expect (`err.response.data.message`) is what they get.
+ */
+async function withArrayBufferErrorMessage(err: unknown): Promise<unknown> {
+  const response = (err as { response?: { data?: unknown } })?.response;
+  if (!(response?.data instanceof ArrayBuffer)) return err;
+  try {
+    const parsed = JSON.parse(decodeUtf8(response.data));
+    response.data = { message: parsed?.message, errorCode: parsed?.errorCode };
+  } catch {
+    // Not JSON (a proxy's HTML error page, a truncated body). Leave a usable message rather than
+    // an unreadable ArrayBuffer, which is what the caller had before this existed.
+    response.data = { message: 'The download failed and the server did not explain why.' };
+  }
+  return err;
+}
 
 export interface AuthResponseDto {
   token: string;
@@ -26,8 +53,11 @@ export interface AuthResponseDto {
 }
 
 export const authApi = {
-  register: (email: string, password: string, fullName: string, phoneNumber: string) =>
-    api.post<AuthResponseDto>('/auth/register', { email, password, fullName, phoneNumber }),
+  // referralCode: optional -- set only when the user typed one into RegisterScreen's own
+  // "Referral code (optional)" field. Mirrors the backend's RegisterRequest.referralCode exactly;
+  // an unrecognized or mistyped code is a silent no-op server-side, never a rejected signup.
+  register: (email: string, password: string, fullName: string, phoneNumber: string, referralCode?: string) =>
+    api.post<AuthResponseDto>('/auth/register', { email, password, fullName, phoneNumber, referralCode }),
   login: (identifier: string, password: string) =>
     api.post<AuthResponseDto>('/auth/login', { identifier, password }),
   // Identifier-first entry step (Phase 3B) -- resolves an email or mobile number to what the
@@ -132,6 +162,10 @@ export const transactionsApi = {
   search: (filters: TransactionFilters) =>
     api.get<PagedResponse<Transaction>>('/transactions', { params: filters }).then((r) => r.data),
   needsReview: () => api.get<Transaction[]>('/transactions/needs-review').then((r) => r.data),
+  // The bulk half of the review backlog. Disjoint from needsReview() above -- the server removes
+  // anything it returns here from that list, so the two are rendered together, not as alternatives.
+  needsReviewGroups: () =>
+    api.get<MerchantGroup[]>('/transactions/groups/needs-review').then((r) => r.data),
   create: (body: unknown) => api.post<Transaction>('/transactions', body).then((r) => r.data),
   update: (id: string, body: UpdateTransactionPayload) =>
     api.put<Transaction>(`/transactions/${id}`, body).then((r) => r.data),
@@ -143,6 +177,14 @@ export const transactionsApi = {
   bulkDelete: (ids: string[]) => api.post('/transactions/bulk-delete', { ids }),
   bulkRecategorize: (ids: string[], category: string) =>
     api.post('/transactions/bulk-category', { ids, category }),
+  // BH-027: "no, these really are two separate transactions." Records a human ruling that
+  // outranks the reconciliation engine's own guess -- see TransactionService.confirmNotDuplicate.
+  // Mirrors frontend/src/api/endpoints.ts.
+  confirmNotDuplicate: (id: string) =>
+    api.post<Transaction>(`/transactions/${id}/not-duplicate`).then((r) => r.data),
+  // "Where did this number come from?" (Track C/C7) — fetched on demand from the source panel,
+  // never on every row of the Ledger's list.
+  source: (id: string) => api.get<TransactionSource>(`/transactions/${id}/source`).then((r) => r.data),
 };
 
 /**
@@ -225,6 +267,10 @@ export interface ConfirmPayload {
   // Only meaningful to confirmReimport, for a statement whose stored bytes are a password-protected
   // PDF -- see ConfirmRequest's own doc comment on the backend. Every other confirm path ignores it.
   password?: string;
+  // Also reimport-only (Track B/B1). Identifies one logical confirm ATTEMPT so the server can
+  // refuse a replay of it -- a first-time import needs no key, since its ImportSession is claimed
+  // atomically server-side and cannot be confirmed twice. See lib/idempotencyKey.ts.
+  idempotencyKey?: string;
 }
 
 interface SectionConfirmPayload {
@@ -248,7 +294,7 @@ export interface ImportSessionSummary {
   expiresAt: string;
 }
 
-interface StagingResult {
+export interface StagingResult {
   rows: StagedRow[];
   totalParsed: number;
   flaggedDuplicates: number;
@@ -269,9 +315,14 @@ type ProgressCallback = (percent: number) => void;
 // connection can legitimately take longer than that, and unlike an ordinary JSON call, this one
 // already gives the user live proof it's still working via onUploadProgress. Applies whether or
 // not a progress callback was actually passed, since the upload itself is what can be slow.
-function toUploadProgressConfig(onProgress?: ProgressCallback) {
+function toUploadProgressConfig(onProgress?: ProgressCallback, signal?: AbortSignal) {
   return {
     timeout: 0,
+    // Why a signal matters MORE here than on an ordinary call: this is the one request with
+    // `timeout: 0`, so nothing else will ever end it. Without a way to abort, a stalled upload on a
+    // dead connection hangs until the OS tears the socket down, with the progress bar frozen and no
+    // way out of the screen.
+    ...(signal ? { signal } : {}),
     ...(onProgress
       ? {
           onUploadProgress: (e: { loaded: number; total?: number }) => {
@@ -310,6 +361,10 @@ async function stageWithRetry<T>(attempt: () => Promise<T>): Promise<T> {
   try {
     return await attempt();
   } catch (e) {
+    // Cancel is checked first and deliberately: a cancelled request has no response and so passes
+    // isOffline's test, which meant this retried the very upload the user just cancelled -- the
+    // file went up a second time and the cancel appeared to do nothing.
+    if (isCanceled(e)) throw e;
     if (!isOffline(e)) throw e;
     return attempt();
   }
@@ -322,12 +377,12 @@ export const importApi = {
   // hand -- turned out to be a red herring for the real bug below (see stageWithRetry's own doc
   // comment), but wrong regardless of that, since a manual header without a boundary can never be
   // valid multipart.
-  stageCsv: (file: RNFile, onProgress?: ProgressCallback) => {
+  stageCsv: (file: RNFile, onProgress?: ProgressCallback, signal?: AbortSignal) => {
     const form = new FormData();
     form.append('file', file as unknown as Blob);
     return stageWithRetry(() =>
       api
-        .post<{ sessionId: string; staging: StagingResult }>('/import/csv/stage', form, toUploadProgressConfig(onProgress))
+        .post<{ sessionId: string; staging: StagingResult }>('/import/csv/stage', form, toUploadProgressConfig(onProgress, signal))
         .then((r) => r.data)
     );
   },
@@ -335,13 +390,13 @@ export const importApi = {
   // the form body, never the query string, so it can't reach a server access log. Omitted when
   // blank, and harmless when the file turns out not to need one -- so the caller never has to
   // inspect the file to decide whether to send it.
-  stagePdf: (file: RNFile, onProgress?: ProgressCallback, password?: string) => {
+  stagePdf: (file: RNFile, onProgress?: ProgressCallback, password?: string, signal?: AbortSignal) => {
     const form = new FormData();
     form.append('file', file as unknown as Blob);
     if (password) form.append('password', password);
     return stageWithRetry(() =>
       api
-        .post<PdfStagingSessionResult>('/import/pdf/stage', form, toUploadProgressConfig(onProgress))
+        .post<PdfStagingSessionResult>('/import/pdf/stage', form, toUploadProgressConfig(onProgress, signal))
         .then((r) => r.data)
     );
   },
@@ -377,13 +432,25 @@ export const statementImportsApi = {
     if (!(await Sharing.isAvailableAsync())) {
       throw new Error('Sharing is not available on this device.');
     }
-    const res = await api.get<ArrayBuffer>(`/statement-imports/${id}/file`, { responseType: 'arraybuffer' });
+    let res;
+    try {
+      res = await api.get<ArrayBuffer>(`/statement-imports/${id}/file`, { responseType: 'arraybuffer' });
+    } catch (err) {
+      // responseType: 'arraybuffer' applies to ERROR responses too, so on a 4xx/5xx error.response.data
+      // is an ArrayBuffer rather than the parsed {message, errorCode} envelope. client.ts's interceptor
+      // tests error.response?.data?.message, an ArrayBuffer has no such property, the normalising
+      // branch is skipped, and the caller gets an error with no readable detail -- for a path whose
+      // backend failures are specific and actionable ("Statement ... is in object storage, but no
+      // storage provider is configured"). Decoding the buffer back to text restores the envelope the
+      // rest of the app expects.
+      throw await withArrayBufferErrorMessage(err);
+    }
     const file = new File(Paths.cache, fileName);
     // A previous share of the same statement leaves the file behind; write() will not overwrite.
     if (file.exists) file.delete();
     file.create();
     file.write(encodeBase64(res.data), { encoding: 'base64' });
-    await Sharing.shareAsync(file.uri, {
+    await shareFileAndCleanUp(file, {
       mimeType: fileName.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'text/csv',
       UTI: fileName.toLowerCase().endsWith('.pdf') ? 'com.adobe.pdf' : 'public.comma-separated-values-text',
       dialogTitle: fileName,
@@ -448,9 +515,20 @@ interface CategoryMover {
   priorAverage: number;
   pctChange: number | null;
 }
+/**
+ * Track C/C2. Populated only when the current reporting month intersects a known coverage gap on
+ * any of the user's live accounts -- see InsightsService.coverageGapsAcross on the backend. Mirrors
+ * InsightsDto.CoverageCaveat exactly; this endpoint has always returned it (it just went unread
+ * until now), so no backend change was needed to add this field.
+ */
+export interface CoverageCaveat {
+  month: string;
+  gaps: { gapStart: string; gapEnd: string }[];
+}
 export interface InsightsData {
   sentences: string[];
   movers: CategoryMover[];
+  coverageCaveat: CoverageCaveat | null;
 }
 export interface RecurringItem {
   merchant: string;
@@ -561,4 +639,139 @@ export interface DeviceSession {
 export const devicesApi = {
   list: () => api.get<DeviceSession[]>('/users/me/devices').then((r) => r.data),
   revoke: (id: string) => api.delete<{ message: string }>(`/users/me/devices/${id}`).then((r) => r.data),
+};
+
+// --- Push notification device tokens (Task 14) ---
+// Mirrors backend DeviceTokenController exactly: POST /device-tokens registers this device's FCM
+// token, POST /device-tokens/revoke removes it. Revoke is a POST, not a DELETE-with-body -- the
+// backend has no precedent for a DELETE carrying a body (some proxies strip it), and the client
+// identifies the token to revoke by its own raw string, never a server-side row id it was never
+// given. `platform` must be exactly 'ANDROID' or 'IOS' (backend validates
+// @Pattern(regexp = "ANDROID|IOS")) -- but it is NOT what routes delivery: iOS devices register an
+// FCM token too (via @react-native-firebase/messaging), and FCM relays every send to Apple's APNs
+// on this project's behalf (see backend FcmPushProvider's class doc, Ruling O / Task 11). This
+// field is retained for diagnostics and per-platform delivery metrics only.
+export type DevicePlatform = 'ANDROID' | 'IOS';
+export interface RegisteredDeviceToken {
+  id: string;
+  platform: DevicePlatform;
+  registeredAt: string;
+}
+export const deviceTokensApi = {
+  register: (body: { token: string; platform: DevicePlatform }) =>
+    api.post<RegisteredDeviceToken>('/device-tokens', body).then((r) => r.data),
+  // Backend returns ApiResponse.ok(null, "Device token revoked") -- the response-envelope unwrap
+  // (see client.ts) yields the inner `data`, which is null, not a { message } object.
+  revoke: (body: { token: string }) =>
+    api.post<null>('/device-tokens/revoke', body).then((r) => r.data),
+};
+
+// Support, Help & Feedback v1 (Phase 8, mobile). Mirrors frontend/src/api/endpoints.ts's own
+// SupportTicketCategory/Status and FeedbackType/Context unions exactly -- see that file's comment
+// for why a value added on one side with nothing here to render it is worth guarding against at
+// compile time.
+export type SupportTicketCategory =
+  | 'STATEMENT_IMPORT' | 'CATEGORIZATION' | 'ACCOUNT_LINKING' | 'DATA_ACCURACY' | 'TECHNICAL_ISSUE' | 'OTHER';
+export type SupportTicketStatus = 'OPEN' | 'IN_PROGRESS' | 'RESOLVED' | 'CLOSED';
+export type ClientPlatform = 'WEB' | 'MOBILE_ANDROID' | 'MOBILE_IOS';
+
+export interface SupportTicketAttachmentSummary {
+  id: string;
+  filename: string;
+  contentType: string;
+  sizeBytes: number;
+}
+
+export interface SupportTicketSummary {
+  id: string;
+  ticketNumber: string;
+  userId: string;
+  category: SupportTicketCategory;
+  subject: string;
+  status: SupportTicketStatus;
+  claimedByAdminId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SupportTicketDetail extends SupportTicketSummary {
+  description: string;
+  source: ClientPlatform;
+  appVersion: string | null;
+  resolvedAt: string | null;
+  closedAt: string | null;
+  attachments: SupportTicketAttachmentSummary[];
+}
+
+export const supportApi = {
+  // No explicit Content-Type header, same reasoning as importApi.stageCsv/stagePdf above: a
+  // hand-set 'multipart/form-data' with no boundary is invalid HTTP, and axios only computes the
+  // correct boundary when nothing has already set Content-Type. Wrapped in stageWithRetry for the
+  // same reason those two are: this follows immediately after a DocumentPicker handoff when an
+  // attachment is attached, and is the exact timing gap that helper exists for.
+  create: (payload: { category: SupportTicketCategory; subject: string; description: string; file?: RNFile | null }) => {
+    const form = new FormData();
+    form.append('category', payload.category);
+    form.append('subject', payload.subject);
+    form.append('description', payload.description);
+    if (payload.file) form.append('file', payload.file as unknown as Blob);
+    return stageWithRetry(() =>
+      api.post<SupportTicketDetail>('/support/tickets', form).then((r) => r.data)
+    );
+  },
+  list: (page = 0, size = 25) =>
+    api.get<PagedResponse<SupportTicketSummary>>('/support/tickets', { params: { page, size } }).then((r) => r.data),
+  detail: (id: string) => api.get<SupportTicketDetail>(`/support/tickets/${id}`).then((r) => r.data),
+  /** Same pattern as statementImportsApi.downloadFile: write the bytes into the cache directory
+   *  and hand the URI to the native share sheet -- there is no in-sandbox "download" a user could
+   *  otherwise find. */
+  downloadAttachment: async (ticketId: string, attachmentId: string, filename: string, contentType: string) => {
+    if (!(await Sharing.isAvailableAsync())) {
+      throw new Error('Sharing is not available on this device.');
+    }
+    let res;
+    try {
+      res = await api.get<ArrayBuffer>(`/support/tickets/${ticketId}/attachments/${attachmentId}`, { responseType: 'arraybuffer' });
+    } catch (err) {
+      // Same fix as statementImportsApi.downloadFile -- see withArrayBufferErrorMessage's own doc
+      // comment above for why responseType: 'arraybuffer' loses the server's real error message.
+      throw await withArrayBufferErrorMessage(err);
+    }
+    const file = new File(Paths.cache, filename);
+    if (file.exists) file.delete();
+    file.create();
+    file.write(encodeBase64(res.data), { encoding: 'base64' });
+    await shareFileAndCleanUp(file, { mimeType: contentType, dialogTitle: filename });
+  },
+};
+
+export type FeedbackType = 'BUG' | 'FEATURE_REQUEST' | 'IMPROVEMENT' | 'GENERAL';
+export type FeedbackContext =
+  | 'DASHBOARD' | 'TRANSACTIONS' | 'REPORTS' | 'BUDGETS' | 'GOALS' | 'IMPORT_FLOW' | 'ACCOUNTS' | 'SETTINGS' | 'HELP' | 'OTHER';
+
+export interface FeedbackSummary {
+  id: string;
+  userId: string;
+  type: FeedbackType;
+  context: FeedbackContext;
+  source: ClientPlatform;
+  message: string;
+  createdAt: string;
+}
+
+export const feedbackApi = {
+  submit: (payload: { type: FeedbackType; context: FeedbackContext; message: string }) =>
+    api.post<FeedbackSummary>('/feedback', payload).then((r) => r.data),
+};
+
+// Refer & Earn MVP -- mirrors backend ReferralDtos exactly. Just a code and a count, ported from
+// frontend/src/api/endpoints.ts's own copy.
+export interface MyReferralsDto {
+  code: string;
+  referralCount: number;
+}
+
+export const referralsApi = {
+  myCode: () => api.get<{ code: string }>('/referrals/my-code').then((r) => r.data),
+  mine: () => api.get<MyReferralsDto>('/referrals/mine').then((r) => r.data),
 };

@@ -13,6 +13,11 @@ import java.util.UUID;
 
 public interface AuditLogRepository extends JpaRepository<AuditLog, UUID> {
 
+    /** Every event recorded against one entity, oldest first -- e.g. proving in an integration
+     *  test that a real audit row landed with the expected action and metadata, not just that a
+     *  mock was called. */
+    List<AuditLog> findByEntityIdOrderByCreatedAtAsc(UUID entityId);
+
     // Admin Portal, Operational Dashboard KPI -- "Active users today." User has no lastLoginAt
     // column, so this counts distinct accounts with a real USER_LOGIN audit event (AuthService
     // already writes one on every successful login) in the window, rather than adding a new

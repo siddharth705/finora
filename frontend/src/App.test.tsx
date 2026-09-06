@@ -1,11 +1,24 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, waitFor } from '@testing-library/react';
 import App from './App';
 
 // App mounts the whole provider stack; nothing here should reach the network.
 vi.mock('./api/endpoints', () => ({
   authApi: { login: vi.fn(), logout: vi.fn(), register: vi.fn(), refresh: vi.fn() },
   userApi: { get: vi.fn(), update: vi.fn() },
+}));
+
+// Preventive, not currently load-bearing: no test here reaches a chart today, because Dashboard
+// and Investments (the only two modules importing react-chartjs-2) are lazy() and sit behind
+// ProtectedRoute, and these tests have no session. But this file renders the whole routed app, so
+// it is the one place where adding a test that mocks auth and lands on an authenticated route
+// would silently mount a live Chart.js instance -- and in jsdom that instance is built with
+// canvas === null, so its first update() throws uncaught and unmounts the entire React root
+// mid-test (see the long note in Dashboard.test.tsx). Cheaper to hold the line here than to
+// rediscover that as an intermittent failure in an unrelated test.
+vi.mock('react-chartjs-2', () => ({
+  Line: () => <div data-testid="line-chart" />,
+  Doughnut: () => <div data-testid="doughnut-chart" />,
 }));
 
 /**

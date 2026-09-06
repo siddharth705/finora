@@ -106,6 +106,64 @@ public enum ErrorCode {
     IMPORT_PDF_TOO_LARGE("IMPORT_013", HttpStatus.UNPROCESSABLE_ENTITY,
             "This PDF has too many pages to process. Split it into smaller files (e.g. by date range) "
                     + "and import each one separately.", true),
+    // Deliberately separate from IMPORT_007 even though both are thrown from the exact same
+    // zero-staged-rows call site (ExtractionCheck.rejectIfNothingWasExtracted) -- they are not the
+    // same event. 007 means the table WAS found and every row inside it was rejected: a real
+    // extraction failure. This means ExplicitZeroActivityDetector found a row where the statement
+    // ITSELF states, in both directions at once, that nothing happened during the period it
+    // covers -- confirmed against a real HSBC composite statement in the corpus, whose savings
+    // ledger prints an explicit zero transaction count alongside an unchanged opening/closing
+    // balance. Folding this into 007 is the exact failure IMPORT_007's own comment already
+    // describes for IMPORT_001/007: a customer whose statement genuinely had no activity was being
+    // told Finora could not read their file, which is not what happened.
+    //
+    // userActionRequired=true here is a deliberate stretch of what the field literally means
+    // ("the user can reasonably correct the input") -- there is nothing to correct. It is chosen
+    // anyway because it is the only lever the existing contract exposes to keep this off the
+    // red/danger banner treatment IMPORT_FAILURE_MESSAGES otherwise gives every IMPORT_* code; see
+    // that file's own comment. Still UNPROCESSABLE_ENTITY, and still thrown rather than a 2xx
+    // success, because nothing was staged and no account or session is created here -- only the
+    // wording and the code change, not what happens next.
+    IMPORT_NO_ACTIVITY_IN_PERIOD("IMPORT_014", HttpStatus.UNPROCESSABLE_ENTITY,
+            "This statement's own printed summary shows no transactions for the period it covers "
+                    + "-- there is nothing to import from this file.", true),
+
+    // Never thrown -- carried on the job by ImportJob.rejectAfterTrustReview so the user is shown a
+    // reason instead of a bare failure. holdForTrustReview clears the job's failure code on the way
+    // in (a trust hold is not a failure), so without this there would be nothing left to explain
+    // the outcome to somebody who had been told we were running additional checks.
+    //
+    // The message says what happened on our side and claims nothing about the document. The
+    // extraction was not trustworthy; that is a statement about our parse, not about their bank or
+    // their statement, and this copy must not let the two blur.
+    //
+    // userActionRequired=true for the same reason IMPORT_014 chose it -- see that code's comment.
+    // There is nothing for the user to correct, and it is the only lever that keeps this off the
+    // red danger treatment IMPORT_FAILURE_MESSAGES gives every other IMPORT_* code.
+    //
+    // Both halves of this -- the calm treatment and this wording -- are a product decision taken by
+    // the repository owner on 2026-09-04, not an implementer's default. The alternatives considered
+    // and rejected were the standard red failure banner (consistent with other import failures, but
+    // reads as "something is wrong with your account" when the fault is our parser), naming the
+    // human reviewer in the copy (more transparent, but tells a customer staff opened their
+    // statement), and inviting them to contact support (a next step instead of a dead end, but
+    // support load nobody wants pre-launch). Changing either half is a product call, not a tidy-up.
+    IMPORT_TRUST_REVIEW_REJECTED("IMPORT_015", HttpStatus.UNPROCESSABLE_ENTITY,
+            "We checked this statement and could not read it accurately enough to import it. "
+                    + "Nothing was added to your accounts.", true),
+
+    // Thrown by ImportSessionService.claimForConfirmation when the session's job is
+    // HELD_FOR_TRUST_REVIEW -- TrustPredicate found a reason not to trust the extraction, and the
+    // whole point of that hold is that it is withheld from this exact step until an operator
+    // decides (see HoldDecision's own doc comment). Without this check, confirmSession/
+    // confirmMultiSection had no awareness of the hold at all and would write the staged rows to
+    // the ledger anyway -- confirmed against a real held session in manual end-to-end testing.
+    // CONFLICT rather than UNPROCESSABLE_ENTITY: the statement itself is not the problem (unlike
+    // IMPORT_TRUST_REVIEW_REJECTED), the request is just premature -- the same distinction
+    // IMPORT_SESSION_ALREADY_CONFIRMED draws for "already confirmed".
+    IMPORT_SESSION_HELD_FOR_REVIEW("IMPORT_016", HttpStatus.CONFLICT,
+            "This statement is being reviewed for accuracy and can't be confirmed yet. "
+                    + "We'll let you know when it's ready.", true),
 
     // Accounts
     ACCOUNT_NOT_FOUND("ACC_001", HttpStatus.NOT_FOUND, "Account not found"),
@@ -171,6 +229,19 @@ public enum ErrorCode {
     AUTH_MFA_NOT_AVAILABLE("AUTH_010", HttpStatus.NOT_FOUND,
             "Admin MFA is not available yet."),
 
+    // Billing / entitlements (com.finora.service.EntitlementService)
+    //
+    // The first ErrorCode ever thrown from an EntitlementService.hasEntitlement() check --
+    // ADVANCED_REPORTS (AnalyticsController's self-service views) is the first FeatureEntitlement
+    // key any endpoint actually enforces; every other seeded key (BASIC_DASHBOARD, EXTENDED_HISTORY,
+    // INVESTMENT_INSIGHTS, FINO_AI, PRIORITY_SUPPORT) still has zero enforcing call sites. Carries
+    // its own code rather than a bare AUTH_FORBIDDEN for the same reason AUTH_MFA_REQUIRED does:
+    // the frontend has to TELL THEM APART -- a plan-gated 403 should open PremiumFeatureGate's
+    // upgrade prompt, not the generic "you don't have permission" dead end a real authorization
+    // failure gets.
+    ENTITLEMENT_REQUIRED("ENTITLEMENT_001", HttpStatus.FORBIDDEN,
+            "This feature isn't included in your current plan."),
+
     // Generic fallbacks — used by GlobalExceptionHandler when no more specific code applies
     VALIDATION_ERROR("VAL_001", HttpStatus.BAD_REQUEST, "Validation failed"),
     NOT_FOUND("GEN_001", HttpStatus.NOT_FOUND, "No such endpoint"),
@@ -234,7 +305,7 @@ public enum ErrorCode {
     }
 
     /**
-     * The five {@code IMPORT_*} codes below pass {@code true} here -- Premium Import Reliability
+     * The {@code IMPORT_*} codes below pass {@code true} here -- Premium Import Reliability
      * v1, §1's {@code ACTION_REQUIRED} refinement of {@code FAILED}. Everything else defaults to
      * {@code false} through the shorter overloads, matching {@link RetryPolicy}'s own
      * safe-default reasoning above: a code this enum has no opinion about is presented as plain

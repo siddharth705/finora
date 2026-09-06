@@ -56,6 +56,21 @@ class SyntheticGroundTruthTest {
                 .contains("\"accountNumberMasked\": \"••••4321\"");
     }
 
+    /**
+     * Phase 2, task 3: description joins the emitted value axis. {@link Row} already carried this
+     * field -- {@link GroundTruthDocument#of} silently dropped it until now, which meant the one
+     * axis actually able to catch "right count, right amount, corrupted description text" (the
+     * defect class the whole corpus regression suite exists for) had no way to reach the matcher.
+     */
+    @Test
+    void theGroundTruthDocumentEmitsEachRowsDescription() {
+        String truth = GroundTruthDocument.of(definition(AS_DECLARED, new BigDecimal("2000.00")));
+
+        assertThat(truth)
+                .contains("\"description\": \"SALARY CREDIT\"")
+                .contains("\"description\": \"GROCERY STORE\"");
+    }
+
     @Test
     void theExpectedTransactionCountComesFromTheDeclarationNotFromAnyReading() {
         var declared = definition(AS_DECLARED, new BigDecimal("2000.00"));

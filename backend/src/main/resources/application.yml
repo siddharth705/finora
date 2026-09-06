@@ -235,6 +235,13 @@ app:
     # Optional display name shown alongside from-address -- unset means every real mail client
     # just shows the bare address, exactly the previous behavior.
     from-name: ${EMAIL_FROM_NAME:}
+    # EmailMessage.Sender.SUPPORT resolves here -- see that enum's own doc comment for which
+    # emails use it (held-import/held-statement notices, where a reply should reach a person).
+    support-from-address: ${EMAIL_FROM_SUPPORT:support@fynora.net} # synthetic-ok: Fynora's own support mailbox
+    # EmailMessage.Sender.BILLING resolves here (Subscription Billing V3) -- billing/subscription
+    # emails send from this address instead of from-address above (product decision). Override via
+    # EMAIL_BILLING_FROM if a given environment's Resend account has a different domain verified.
+    billing-from-address: ${EMAIL_BILLING_FROM:billing@fynora.net} # synthetic-ok: Fynora's own billing mailbox, not customer PII
     app-base-url: ${APP_BASE_URL:http://localhost:5173}
     # Optional -- the user frontend and admin portal are two separate deployed apps at two
     # different origins, each with its own /reset-password page, but there's no separate admin
@@ -263,6 +270,18 @@ app:
     # (deployment config, a secret manager) instead of one being generated or written anywhere --
     # see RFC-BOOTSTRAP-01 in docs/bootstrap-setup-future-work.md for the full production story.
     key: ${FINORA_SETUP_KEY:}
+  bootstrap:
+    # On by default. Set FINORA_BOOTSTRAP_ENABLED=false for a boot that only needs to prove the
+    # jar starts (a classpath/runtime-dependency smoke check, not the environment real traffic or
+    # E2E tests will run against) -- see ci.yml's "Production classpath check" and "Runtime
+    # dependency verification" steps for why: they share a Postgres instance with the boot that
+    # follows them, and BootstrapService.run() commits the BOOTSTRAP_ADMIN row immediately
+    # (non-transactional, by design) before the installation-key file is written. A smoke-check
+    # step that gets killed the instant /actuator/health reports UP -- which is its whole job --
+    # can land between those two steps, leaving a row with no way to ever regenerate its key for
+    # the rest of that Postgres instance's lifetime, since BootstrapService correctly refuses to
+    # create a second bootstrap account once one already exists.
+    enabled: ${FINORA_BOOTSTRAP_ENABLED:true}
   account-lifecycle:
     # Off by default -- an unlimited self-service reactivation window is today's existing behavior
     # (AuthService.login()'s deactivated branch always minted a token). Set to true to make the
@@ -303,6 +322,51 @@ app:
       # user-facing deadline.
       interval-ms: ${ACCOUNT_PURGE_SWEEP_INTERVAL_MS:21600000}
       initial-delay-ms: ${ACCOUNT_PURGE_SWEEP_INITIAL_DELAY_MS:300000}
+  counterparty-backfill:
+    sweep:
+      # CounterpartyBackfillSweepService. Types the counterparty on rows that predate the
+      # counterparty layer (V142/V143), and thereafter on any row left behind by a bump of
+      # CounterpartyClassifier.VERSION. Off under test for the same reason every other sweep here
+      # is -- a background thread rewriting transaction rows mid-test is the cross-test pollution
+      # BH-058 was about. Tests call CounterpartyBackfillSweepService.sweep() directly, which does
+      # not consult this flag.
+      enabled: ${COUNTERPARTY_BACKFILL_SWEEP_ENABLED:true}
+      # Larger than account-purge's 200: the per-row work is one regex pass and one single-row
+      # UPDATE, not a cascade across thirty tables.
+      batch-size: ${COUNTERPARTY_BACKFILL_SWEEP_BATCH_SIZE:500}
+      # Five minutes. Frequent on purpose while there is a backlog -- this is the only thing
+      # standing between an existing user and a counterparty column that reads UNKNOWN for their
+      # whole history. Once drained the predicate matches nothing and a pass is an empty index
+      # probe (see V143), so the frequency costs essentially nothing in the steady state.
+      interval-ms: ${COUNTERPARTY_BACKFILL_SWEEP_INTERVAL_MS:300000}
+      # Two minutes, so a deploy's first pass lands after boot and any migration have settled
+      # rather than competing with them.
+      initial-delay-ms: ${COUNTERPARTY_BACKFILL_SWEEP_INITIAL_DELAY_MS:120000}
+  net-worth-snapshot:
+    sweep:
+      # NetWorthSnapshotSweepService (Track C/C8). NetWorthController's manual "Save today's
+      # snapshot" endpoint stays as a same-day override -- this just means a user's history no
+      # longer has a gap for the day nobody remembered to press it. Off under test for the same
+      # reason every other sweep here is: a background thread writing net_worth_snapshots mid-test
+      # is the cross-test pollution BH-058 was about. Tests call
+      # NetWorthSnapshotSweepService.sweep() directly, which does not consult this flag.
+      enabled: ${NET_WORTH_SNAPSHOT_SWEEP_ENABLED:true}
+      # Four hours: frequent enough that every user's own local midnight (see the per-user
+      # UserZone.of resolution in NetWorthService.saveSnapshotForToday) falls inside some run,
+      # without this class having to reason about timezones itself at all. The work itself is
+      # cheap -- one upsert per user with at least one account -- so there is no batch-size to tune
+      # the way account-purge/counterparty-backfill have.
+      interval-ms: ${NET_WORTH_SNAPSHOT_SWEEP_INTERVAL_MS:14400000}
+      initial-delay-ms: ${NET_WORTH_SNAPSHOT_SWEEP_INITIAL_DELAY_MS:300000}
+  # Subscription billing V1 -- safety net for a missed subscription.cancelled webhook (design spec
+  # §6.3). Nothing depends on this running promptly: a subscription sits CANCELLED-past-period-end
+  # for at most one sweep interval before downgrading, and the webhook path is expected to beat it
+  # to the downgrade in the overwhelming majority of cases.
+  subscription-reconciliation:
+    sweep:
+      enabled: ${SUBSCRIPTION_RECONCILIATION_SWEEP_ENABLED:true}
+      interval-ms: ${SUBSCRIPTION_RECONCILIATION_SWEEP_INTERVAL_MS:3600000}
+      initial-delay-ms: ${SUBSCRIPTION_RECONCILIATION_SWEEP_INITIAL_DELAY_MS:300000}
   security:
     # RateLimitFilter's own doc comment already flagged this: request.getRemoteAddr() only
     # returns the real client IP when nothing sits between the client and this app. Railway (like
@@ -434,6 +498,21 @@ app:
     mfa-verify:
       max: ${RATE_LIMIT_MFA_VERIFY_MAX:10}
       window-seconds: ${RATE_LIMIT_MFA_VERIFY_WINDOW_SECONDS:600}
+    # Fix wave, split into its own bucket in post-merge review -- see RateLimitFilter's own comment
+    # on deviceTokenRegisterLimiter for why. register() is called on every foreground transition
+    # (AuthContext.tsx, mobile) with no client-side dedupe, so this needs refresh's shape (called
+    # far more often per user than a one-shot flow, and several users behind one shared IP hitting
+    # it around the same time is ordinary use), not a rare-flow ceiling.
+    device-token-register:
+      max: ${RATE_LIMIT_DEVICE_TOKEN_REGISTER_MAX:15}
+      window-seconds: ${RATE_LIMIT_DEVICE_TOKEN_REGISTER_WINDOW_SECONDS:300}
+    # Split from device-token-register above so register's foreground-transition churn can never
+    # starve a logout's revoke call. Unchanged from the original shared ceiling -- revoke's own
+    # cost and call frequency (a rare, deliberate logout) never changed, only its bucket
+    # independence from register did.
+    device-token-revoke:
+      max: ${RATE_LIMIT_DEVICE_TOKEN_REVOKE_MAX:10}
+      window-seconds: ${RATE_LIMIT_DEVICE_TOKEN_REVOKE_WINDOW_SECONDS:600}
   import:
     # See ImportConcurrencyLimiter's own doc comment for the full reasoning. 6 is deliberately
     # conservative relative to DB_POOL_MAX_SIZE (10, see the datasource config above) -- leaves
@@ -633,6 +712,22 @@ app:
           enabled: ${GMAIL_PARSER_CRED_ENABLED:false}
         paytm:
           enabled: ${GMAIL_PARSER_PAYTM_ENABLED:false}
+
+    # Subscription billing V1 (docs/superpowers/specs/2026-09-05-subscription-billing-v1-design.md).
+    # Unset is a supported state, same posture as google above -- checkout/webhook endpoints answer
+    # 503 until a real Razorpay account exists (spec §10), nothing else in the application depends
+    # on this being present.
+    razorpay:
+      key-id: ${RAZORPAY_KEY_ID:}
+      key-secret: ${RAZORPAY_KEY_SECRET:}
+      webhook-secret: ${RAZORPAY_WEBHOOK_SECRET:}
+
+  # NotificationDispatcher's poller/nudge -- same enabled-flag shape as learning/import above.
+  notification:
+    queue:
+      enabled: ${NOTIFICATION_QUEUE_ENABLED:true}
+      poll-interval-ms: 30000
+      initial-delay-ms: 15000
 
 # Reversible encryption at rest for third-party credentials Finora must read back -- OAuth refresh
 # tokens first (ADR-007). NOT for passwords or Finora's own session tokens, which are hashed via

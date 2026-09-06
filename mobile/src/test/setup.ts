@@ -11,6 +11,22 @@
  * the env assignment below needs.
  */
 
+// Guard against running the suite as bare `npx jest`, skipping the "test" script's
+// NODE_OPTIONS=--experimental-vm-modules (see package.json's own "_test_comment"). Without it,
+// client.ts's dynamic `import('./endpoints')` throws ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING_FLAG
+// inside Jest's VM -- but only in the one branch that actually awaits a real refresh, so most
+// suites still pass while silently exercising the forced-sign-out path instead of the one they
+// claim to test. That surfaced as three failures in refreshRace.test.ts that looked like a genuine
+// auth-refresh regression and cost a full debugging session before the missing flag was found.
+// Failing here, immediately and for every suite, is cheaper than rediscovering that.
+if (!process.env.NODE_OPTIONS?.includes('--experimental-vm-modules')) {
+  throw new Error(
+    'Missing --experimental-vm-modules: this suite was invoked without it (bare `npx jest`?). ' +
+      'Run tests via `npm test`, which sets NODE_OPTIONS=--experimental-vm-modules -- ' +
+      'see mobile/package.json\'s "test" script and its "_test_comment" for why this is required.'
+  );
+}
+
 // src/api/client.ts throws at import time when this is missing -- intentional, since a native app
 // has no dev-server proxy to fall back on. Tests supply a value; nothing contacts it, because
 // everything that would touch the network mocks the endpoint layer.
@@ -71,6 +87,24 @@ jest.mock('@react-native-firebase/auth', () => ({
   signOut: jest.fn(async () => {}),
 }));
 
+// Task 14. Same posture as '@react-native-firebase/auth' just above -- needs a real native app
+// registered, which nothing under the runner has. Also sidesteps a real problem, not just a
+// missing native binding: the installed package's main entry (dist/module/index.js) is ESM
+// source, and a bare `jest.mock('@react-native-firebase/messaging')` (automock, no factory) has
+// to `require()` that real file to introspect its shape, which throws ("Must use import to load
+// ES Module") under this project's transform config -- see pushRegistration.test.ts's own comment
+// for how that was found. requestPermission/getToken default to a denied/empty result so any
+// unmocked call site (e.g. AuthContext's fire-and-forget registerDeviceToken()/revokeDeviceToken()
+// calls, exercised incidentally by AuthContext.test.tsx) resolves to "nothing to register" rather
+// than hanging or throwing. pushRegistration.ts is exercised for real via its own dependency-
+// injected `messaging` argument in pushRegistration.test.ts, which does not need this mock at all.
+jest.mock('@react-native-firebase/messaging', () => ({
+  getMessaging: jest.fn(() => ({})),
+  requestPermission: jest.fn(async () => 0),
+  getToken: jest.fn(async () => ''),
+  onTokenRefresh: jest.fn(() => () => {}),
+}));
+
 jest.mock('@react-native-community/netinfo', () => ({
   __esModule: true,
   default: { addEventListener: jest.fn(() => jest.fn()) },
@@ -90,6 +124,14 @@ jest.mock('@react-native-community/netinfo', () => ({
 // package (NavigationContainer, useNavigation, etc.) is provided here as a lightweight stand-in.
 jest.mock('@react-navigation/native', () => {
   const { useEffect } = require('react');
+  // Built inside the factory, not above it: Jest rejects a mock factory that closes over an outer
+  // variable unless its name is `mock`-prefixed, and this reads better than renaming it.
+  const navigationStub: Record<string, unknown> = {
+    navigate: jest.fn(),
+    goBack: jest.fn(),
+    setOptions: jest.fn(),
+  };
+  navigationStub.getParent = jest.fn(() => navigationStub);
   return {
     // `effect` is a passthrough argument from whatever hook calls useFocusEffect, not a value
     // this mock can statically analyze; the real useFocusEffect re-runs on every focus, so
@@ -99,6 +141,23 @@ jest.mock('@react-navigation/native', () => {
       // eslint-disable-next-line react-hooks/exhaustive-deps
       useEffect(effect, []);
     },
+    // Screens that only NAVIGATE (rather than assert on navigation) need this to exist but do not
+    // care what it does -- DashboardScreen's review-queue nudge and SettingsScreen's link into it
+    // are both that case, and without a stand-in here every such screen's whole suite dies at
+    // render with "useNavigation is not a function", which is what the comment above already
+    // promised this mock would prevent.
+    //
+    // One frozen object rather than a fresh one per call: a new identity each render would make
+    // `navigation` an unstable dependency for any useEffect/useMemo that closes over it. A test
+    // that wants to ASSERT a navigation still declares its own file-level jest.mock of this
+    // module, which overrides this one entirely (see StatementHistoryScreen.test.tsx).
+    useNavigation: () => navigationStub,
+    // No params by default -- a screen that only reads route.params to seed an OPTIONAL drill-
+    // through (Track C/C4's LedgerScreen, ImportScreen's re-import arrival) must still render
+    // correctly with none. A test that wants to ASSERT on a specific incoming param set declares
+    // its own file-level jest.mock of this module, same as useNavigation above (see
+    // ImportScreen.test.tsx / LedgerScreen.test.tsx).
+    useRoute: () => ({ params: undefined }),
   };
 });
 

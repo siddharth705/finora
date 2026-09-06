@@ -3,6 +3,7 @@ package com.finora.imports;
 import com.finora.dto.ImportDto;
 import com.finora.imports.pdf.PdfTableLocator;
 import com.finora.imports.pdf.fixtures.PdfTrace;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
@@ -56,7 +57,23 @@ import static org.assertj.core.api.Assertions.assertThat;
  * that matters is that a <em>stale</em> entry fails too: the day a trace covers one of these, this
  * test goes red until the entry is deleted, so the ratchet tightens by itself instead of waiting for
  * someone to remember.
+ *
+ * <p><b>{@code @Tag("nightly")}.</b> This is a coverage metric, not a correctness gate — the doc
+ * above already says a drop here means "add a trace", not "something broke". Excluded from the
+ * default backend suite (backend/pom.xml's {@code excludedGroups}) rather than run on every PR —
+ * the one candidate out of four slow corpus-driven tests investigated for this that was actually
+ * safe to defer; the other three (trace PII scanning, a silent-data-loss regression sweep, a
+ * targeted real-document defect test) stay on every run because deferring any of them risks a real
+ * correctness or security regression sitting on main for a day, not just a stale metric.
+ *
+ * <p>Run by {@code corpus-coverage-nightly.yml} on its own daily schedule, and — added 2026-09-05
+ * after PR #930 registered four new capabilities with no committed trace covering any of them, a
+ * gap the nightly-only cadence let sit on main for a day before catching (fixed in PR #957) — also
+ * on any pull request that touches {@link CapabilityCoverageService}, this class, or the committed
+ * trace corpus, so the next capability registered without coverage is caught at review time
+ * instead. See that workflow file's own comment for the exact path filter.
  */
+@Tag("nightly")
 class CapabilityCorpusCoverageTest {
 
     /**
@@ -138,6 +155,89 @@ class CapabilityCorpusCoverageTest {
                         + "makes against a committed trace. Covered instead by "
                         + "KotakCreditCardCategoryAndFooterRegressionTest, run directly against the same "
                         + "committed trace through TransactionTableDateRangeExtractor.extract.");
+        DECLARED_WITHOUT_A_TRACE.put("PRINTED_TITLE_ADJACENT_DATE_RANGE",
+                "no trace -- same scoping gap as PRINTED_TRANSACTION_TABLE_DATE_RANGE above: this "
+                        + "fires in StatementTitleDateRangeExtractor, called from PdfPreviewGenerator, "
+                        + "never from PdfTableLocator.locateAll. The one real evidencing document's "
+                        + "committed trace (kotak-savings-ledger-validation) has its date text redacted, "
+                        + "so it cannot exercise this capability's recording path either -- see "
+                        + "KotakSavingsTitleDateRangeRegressionTest, which asserts against that same trace "
+                        + "that the capability correctly does NOT fire on redacted text. Real date-value "
+                        + "recovery is covered by StatementTitleDateRangeExtractorTest using the real "
+                        + "unredacted date string at the trace's own coordinates.");
+        DECLARED_WITHOUT_A_TRACE.put("PRINTED_PAYMENT_DUE_DATE_GRID",
+                "no trace -- same scoping gap as PRINTED_TITLE_ADJACENT_DATE_RANGE above: this fires in "
+                        + "PaymentDueDateGridExtractor, called from PdfPreviewGenerator, never from "
+                        + "PdfTableLocator.locateAll. Two real evidencing documents have committed traces "
+                        + "(axis-credit-card-statement, sbi-credit-card-statement) and both are exercised "
+                        + "directly by PaymentDueDateGridRegressionTest -- Axis's trace keeps its dates "
+                        + "unredacted, so that test proves the real recovered VALUE end to end, not just "
+                        + "that the capability fires. SBI's trace has its date redacted, and that test "
+                        + "proves the extractor correctly declines rather than fabricating one.");
+        DECLARED_WITHOUT_A_TRACE.put("PRINTED_CREDIT_LIMIT_GRID",
+                "no trace -- same scoping gap as PRINTED_PAYMENT_DUE_DATE_GRID above: this fires in "
+                        + "CreditLimitGridExtractor, called from PdfPreviewGenerator, never from "
+                        + "PdfTableLocator.locateAll. Three real evidencing documents have committed traces "
+                        + "(axis-credit-card-statement, sbi-credit-card-statement, "
+                        + "indusland-credit-card-account-number-inheritance) and all three are exercised "
+                        + "directly by CreditLimitGridRegressionTest, which proves the real recovered VALUE "
+                        + "end to end for each -- none of the three redact their own credit limit value, so "
+                        + "unlike PRINTED_PAYMENT_DUE_DATE_GRID's SBI case this needs no separate "
+                        + "value-withheld test.");
+        DECLARED_WITHOUT_A_TRACE.put("HEADERLESS_LAYOUT_BEFORE_LATER_HEADER",
+                "no trace -- the one real evidencing document's committed trace "
+                        + "(hsbc-credit-card-yearless-dates) has its closing-balance label redacted "
+                        + "(\"NET OUTSTANDING BALANCE\" -> \"XXX OUTSTANDING BALANCE\", same allowlist "
+                        + "artifact as PRINTED_PAYMENT_DUE_DATE_GRID's SBI case), which "
+                        + "HEADERLESS_BALANCE_RECONCILIATION_CORROBORATED below needs an exact match on to "
+                        + "admit the one real transaction below the row-count floor -- so calling "
+                        + "PdfTableLocator.locateAll against this trace as-is exercises neither capability. "
+                        + "Both are proven directly by HeaderlessBalanceReconciliationTest and "
+                        + "HeaderlessLayoutBeforeLaterHeaderTest, end to end through locateAll itself, on "
+                        + "fixtures whose row/column GEOMETRY is motivated by the real documents but whose "
+                        + "every text value is hand-synthesized per the Synthetic Fixture Policy. Both "
+                        + "suites also carry differential guards that were confirmed to FAIL against the "
+                        + "pre-fix behaviour, so they pin the mechanism rather than merely covering it.");
+        DECLARED_WITHOUT_A_TRACE.put("HEADERLESS_BALANCE_RECONCILIATION_CORROBORATED",
+                "no trace -- same reason as HEADERLESS_LAYOUT_BEFORE_LATER_HEADER immediately above; both "
+                        + "fire together on the same real document and are blocked by the same trace "
+                        + "redaction. See that entry.");
+        DECLARED_WITHOUT_A_TRACE.put("PRINTED_ACCOUNT_NUMBER_GRID",
+                "no trace -- same scoping gap as PRINTED_PAYMENT_DUE_DATE_GRID above: this fires in "
+                        + "AccountNumberGridExtractor, called from PdfPreviewGenerator, never from "
+                        + "PdfTableLocator.locateAll. The one real evidencing document's committed trace "
+                        + "(axis-credit-card-statement) redacts its card-number value cells with "
+                        + "width=0.0 (breaking the GRID strategy's x-overlap match) and, independently, "
+                        + "redacts the cardholder name on the same row into an all-X string "
+                        + "indistinguishable in shape from a masked card number (correctly triggering the "
+                        + "SAME_ROW strategy's own ambiguity refusal) -- see "
+                        + "AccountNumberGridRegressionTest, which asserts against that same trace that the "
+                        + "capability correctly does NOT fire on this doubly-redacted text. Real recovery "
+                        + "against real geometry is covered by AccountNumberGridExtractorTest using the "
+                        + "real coordinates from both of the document's own layouts (grid and same-row), "
+                        + "and independently confirmed against the actual un-redacted PDF via "
+                        + "scripts/corpus-run.py.");
+        DECLARED_WITHOUT_A_TRACE.put("PRINTED_STATEMENT_PERIOD_GRID",
+                "no trace -- same scoping gap as PRINTED_ACCOUNT_NUMBER_GRID above: this fires in "
+                        + "StatementPeriodGridExtractor, called from PdfPreviewGenerator, never from "
+                        + "PdfTableLocator.locateAll. The one real evidencing document's committed trace "
+                        + "(axis-credit-card-statement) keeps its statement-period dates unredacted -- see "
+                        + "StatementPeriodGridRegressionTest, which asserts against that same trace that "
+                        + "the capability fires and recovers the real range end to end, not just that the "
+                        + "label is present.");
+        DECLARED_WITHOUT_A_TRACE.put("PRINTED_ACCOUNT_NUMBER_ABOVE_TRANSACTIONS",
+                "no trace -- same scoping gap as PRINTED_ACCOUNT_NUMBER_GRID above: this fires in "
+                        + "AccountNumberTransactionHeaderExtractor, called from PdfPreviewGenerator, never "
+                        + "from PdfTableLocator.locateAll. The one real evidencing document's committed "
+                        + "trace (icici-credit-card-account-number-above-transactions) redacts the value "
+                        + "cell with width=0.0, the same redaction limitation already documented for "
+                        + "PRINTED_ACCOUNT_NUMBER_GRID/PRINTED_PAYMENT_DUE_DATE_GRID above, breaking the "
+                        + "x-overlap match against the Date header cell -- see "
+                        + "AccountNumberTransactionHeaderRegressionTest, which asserts against that trace "
+                        + "that the capability correctly does NOT fire on the redacted text. Real recovery "
+                        + "against real geometry is covered by AccountNumberTransactionHeaderExtractorTest "
+                        + "using the real header/value coordinates, and independently confirmed against the "
+                        + "actual un-redacted PDF via scripts/corpus-run.py.");
         DECLARED_WITHOUT_A_TRACE.put("CREDIT_CARD_SUMMARY_TOTALS",
                 "no trace yet -- CreditCardSummaryExtractorTest exercises the GRID strategy on "
                         + "synthetic fixtures reproducing real observed shapes (a clean stacked grid, "
@@ -172,6 +272,46 @@ class CapabilityCorpusCoverageTest {
                         + "it would be cited for is not real coverage. Covered by a synthetic fixture in "
                         + "StatementClosingMarkerPdfPreviewGeneratorTest instead, mutation-checked "
                         + "against the pre-fix code.");
+        // Four entries below are PR #930's new capabilities. Verified directly (dumped every
+        // committed trace's own fired-capability set with PdfTableLocator.locateAll, per this
+        // test's own capabilitiesTheCorpusExercises) rather than assumed from the PR description.
+        DECLARED_WITHOUT_A_TRACE.put("LOAN_SUMMARY_TABLE_CLOSED",
+                "no trace yet -- evidenced from two real HSBC credit-card statements (HSBC CC.pdf, "
+                        + "HSBC CC new.pdf), neither of which has a committed trace in this corpus; the "
+                        + "two committed HSBC traces (hsbc-credit-card-yearless-dates, "
+                        + "hsbc-savings-ledger-validation) are captured from different real documents "
+                        + "and confirmed directly not to exercise this capability. Real-corpus behavior "
+                        + "verified via the ground-truth gate (scripts/run-corpus-ground-truth.py) "
+                        + "against the original files. Covered instead by "
+                        + "LoanSummaryTableClosedPdfTableLocatorTest's fully hand-synthesized fixture.");
+        DECLARED_WITHOUT_A_TRACE.put("RECONCILED_HEADER_SECTIONS_REMERGED",
+                "no trace yet -- evidenced from the real sbi-credit-card-statement and "
+                        + "indusland-credit-card-account-number-inheritance documents, which HAVE "
+                        + "committed traces, but both traces (captured 2026-08-12 and 2026-09-01) "
+                        + "predate this trigger, the same reason already documented for "
+                        + "SAVINGS_AND_BENEFITS_SECTION_CLOSED and CHEQUE_PAYABLE_FOOTER_CLOSED above -- "
+                        + "confirmed directly, neither trace exercises this capability as committed. "
+                        + "Real-corpus behavior verified via the ground-truth gate "
+                        + "(scripts/run-corpus-ground-truth.py) against the original files. Covered "
+                        + "instead by ReconciledHeaderSectionsRemergedPdfTableLocatorTest's fully "
+                        + "hand-synthesized fixture.");
+        DECLARED_WITHOUT_A_TRACE.put("EMPTY_SECTION_DROPPED",
+                "no trace yet -- evidenced from a real Shivani_HDFC.pdf statement with no committed "
+                        + "trace in this corpus. Real-corpus behavior verified via the ground-truth gate "
+                        + "(scripts/run-corpus-ground-truth.py) against the original file. Covered "
+                        + "instead by EmptySectionDroppedPdfTableLocatorTest's fully hand-synthesized "
+                        + "fixture.");
+        DECLARED_WITHOUT_A_TRACE.put("INVESTMENT_FRAGMENT_REMERGED",
+                "no trace CAN cover it here, for the same scoping reason as "
+                        + "PRINTED_TRANSACTION_TABLE_DATE_RANGE above: this fires in "
+                        + "PdfPreviewGenerator's orphaned-fragment merge pass, never from "
+                        + "PdfTableLocator.locateAll -- the one call this test ever makes against a "
+                        + "committed trace. Evidenced from a real Shivani_HDFC.pdf statement with no "
+                        + "committed trace in this corpus; real-corpus behavior verified via the "
+                        + "ground-truth gate (scripts/run-corpus-ground-truth.py) against the original "
+                        + "file. Covered instead by "
+                        + "InvestmentFragmentRemergedPdfPreviewGeneratorTest's fully hand-synthesized "
+                        + "fixture.");
         // RIGHT_ALIGNED_AMOUNTS was here, with the note "either the three traces genuinely avoid
         // right-aligned amount columns, or the recording sits on a path they do not take. Measure
         // before capturing." It was measured, and the answer was a third thing: the two HDFC
@@ -245,6 +385,29 @@ class CapabilityCorpusCoverageTest {
                 "no trace, and none is planned -- same reasoning as BLANK_COLUMN_NAME_QUALIFIED, "
                         + "same real document. Covered instead by HeaderColumnRecoveryTest's fully "
                         + "hand-synthesized fixtures.");
+        DECLARED_WITHOUT_A_TRACE.put("STATEMENT_PERIOD_FROM_TO_FIELDS",
+                "no trace yet -- evidenced from real HDFC savings-account statements and a real "
+                        + "Sanjay HDFC statement, none of which have a committed trace in this "
+                        + "corpus. Real-corpus behavior verified directly via CorpusProbe against "
+                        + "the original files instead.");
+        DECLARED_WITHOUT_A_TRACE.put("STATEMENT_PERIOD_STATEMENT_FROM_LABEL",
+                "no trace yet -- evidenced from real Manas_HDFC, Shivani_HDFC, and Sanjay SBI "
+                        + "statements, none of which have a committed trace in this corpus. "
+                        + "Real-corpus behavior verified directly via CorpusProbe against the "
+                        + "original files instead.");
+        DECLARED_WITHOUT_A_TRACE.put("STATEMENT_PERIOD_STATEMENT_OF_ACCOUNT_LABEL",
+                "no trace yet -- evidenced from a real Central Bank of India statement with no "
+                        + "committed trace in this corpus. Real-corpus behavior verified directly "
+                        + "via CorpusProbe against the original file instead.");
+        DECLARED_WITHOUT_A_TRACE.put("STATEMENT_PERIOD_PROSE",
+                "no trace yet -- evidenced from real canara.pdf and ICICI saving.pdf statements, "
+                        + "neither of which has a committed trace in this corpus. Real-corpus "
+                        + "behavior verified directly via CorpusProbe against the original files "
+                        + "instead.");
+        DECLARED_WITHOUT_A_TRACE.put("STATEMENT_PERIOD_FOR_PERIOD_LABEL",
+                "no trace yet -- evidenced from a real PNB ONE savings statement with no "
+                        + "committed trace in this corpus. Real-corpus behavior verified directly "
+                        + "via CorpusProbe against the original file instead.");
         // PAGE_LEGEND_BLOCK_SUPPRESSED was DECLARED_WITHOUT_A_TRACE here -- the real SBI Credit
         // Card.PDF it was originally evidenced from has no committed trace in this corpus. Entry
         // deleted per this test's own ratchet: kotak-credit-card-category-sections-and-page-footer

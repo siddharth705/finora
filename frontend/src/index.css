@@ -19,6 +19,13 @@
   --color-bg: #F8FAFC;
   --color-card: #ffffff;
   --color-border: #E6EAF2;
+  /* Bug fix: `bg-surface`/`hover:bg-surface` were already used in three places (DuplicateReview's
+     comparison panels, and PR #682's CategoryCreateEditPanel/ReviewCardSkeleton skeletons) with no
+     matching Tailwind color ever defined — every one of those classes silently resolved to nothing,
+     so the skeletons rendered with no visible pulse and DuplicateReview's cards had no fill. A
+     step between `bg` and `card`: for an inset panel sitting *inside* a card (comparison rows,
+     skeleton placeholder blocks), `card` itself would have no contrast against its own background. */
+  --color-surface: #F1F4F9;
 
   --color-ink: 15 23 42;
   --color-muted: #64748B;
@@ -49,6 +56,7 @@
   --color-bg: #0B1220;
   --color-card: #151C2C;
   --color-border: #253044;
+  --color-surface: #1B2436;
 
   --color-ink: 226 232 240;
   --color-muted: #94A3B8;
@@ -159,10 +167,19 @@ input, textarea, select {
   animation: journeyReveal 0.4s ease both;
 }
 
+/* Auth redesign Phase 3. Same fadeInUp keyframe the landing page's .reveal already uses, but
+   fired on mount like .journey-reveal-item above rather than on scroll-into-view -- AuthEntry's
+   card and marketing panel are both above the fold, so there's nothing to wait for. A per-element
+   inline `animationDelay` (set at the call site) staggers the two rather than a second class. */
+.auth-reveal {
+  animation: fadeInUp 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
 /* Respect reduced-motion preferences — the reveal/float/gradient animations are decoration,
    not information, so it's safe to just skip them entirely rather than degrade gracefully. */
 @media (prefers-reduced-motion: reduce) {
-  .reveal, .reveal.reveal-visible, .float-slow, .float-slower, .animated-gradient-text, .journey-reveal-item {
+  .reveal, .reveal.reveal-visible, .float-slow, .float-slower, .animated-gradient-text,
+  .journey-reveal-item, .auth-reveal {
     animation: none !important;
     opacity: 1 !important;
     transform: none !important;

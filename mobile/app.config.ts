@@ -130,6 +130,15 @@ const config: ExpoConfig = {
       monochromeImage: './assets/android-icon-monochrome.png',
     },
     predictiveBackGestureEnabled: false,
+    // Task 14. Android 13 (API 33) made this a runtime permission (src/lib/pushRegistration.ts
+    // requests it at the moment push registration actually needs it, via PermissionsAndroid --
+    // below API 33 the OS grants it implicitly and that call is skipped entirely) -- but a runtime
+    // permission can only be requested if it's declared in the manifest first. Neither
+    // @react-native-firebase/messaging's own config plugin nor the underlying Android SDK adds
+    // this permission on its own (checked: no occurrence of POST_NOTIFICATIONS anywhere under
+    // node_modules/@react-native-firebase/messaging), so it has to be listed explicitly here --
+    // Expo merges `android.permissions` into the generated AndroidManifest.xml at prebuild time.
+    permissions: ['android.permission.POST_NOTIFICATIONS'],
   },
   web: {
     favicon: './assets/favicon.png',
@@ -155,9 +164,17 @@ const config: ExpoConfig = {
     // SplashScreen.preventAutoHideAsync()/hideAsync() at runtime -- see App.tsx's own comment --
     // and Expo's installer requires the plugin registered for that runtime API to be present.
     'expo-splash-screen',
+    // Same reasoning as expo-splash-screen just above: no build-time options, listed only because
+    // App.tsx calls useFonts() (from expo-font) at runtime and Expo's installer requires the
+    // plugin registered for that.
+    'expo-font',
     '@react-native-community/datetimepicker',
     '@react-native-firebase/app',
     '@react-native-firebase/auth',
+    // Task 14. Same family, same major version (26.x, pinned exactly to match whatever
+    // @react-native-firebase/app resolves to -- see package.json) so it shares the app/auth
+    // pair's already-initialised FirebaseApp instance rather than standing up a second one.
+    '@react-native-firebase/messaging',
     './plugins/withRNFirebaseDisableSPM',
     // D-23 Phase 2. Called with NO options, deliberately: given options, this plugin wants a raw
     // `iosUrlScheme` (Google's "reversed client id" for a NON-Firebase-registered OAuth client) --
@@ -187,9 +204,9 @@ const config: ExpoConfig = {
       {
         ios: {
           useFrameworks: 'static',
-          // Required so RNFBApp/RNFBAuth link correctly under static frameworks — see
-          // rnfirebase.io's Expo config-plugin install guide.
-          forceStaticLinking: ['RNFBApp', 'RNFBAuth'],
+          // Required so RNFBApp/RNFBAuth/RNFBMessaging link correctly under static frameworks —
+          // see rnfirebase.io's Expo config-plugin install guide. RNFBMessaging added for Task 14.
+          forceStaticLinking: ['RNFBApp', 'RNFBAuth', 'RNFBMessaging'],
         },
         android: {
           // Android blocks cleartext (plain HTTP) traffic by default for any app targeting API 28+,

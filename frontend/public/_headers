@@ -43,6 +43,19 @@
   #     (developers.google.com/identity/gsi/web/guides/get-google-api-clientid), not the bare
   #     origin, to avoid trusting all of accounts.google.com's script surface for what only needs
   #     this one file.
+  #   - script-src also adds https://appleid.cdn-apple.com -- D-26 (web) Sign In with Apple
+  #     (src/lib/appleIdentity.ts) loads appleid.auth.js from this exact origin. Same failure shape
+  #     as the Google Sign-In gap above and found the same way: reproduced live in a real browser
+  #     console against production, showing "Loading the script 'https://appleid.cdn-apple.com/
+  #     appleauth/static/jsapi/appleid/1/en_US/appleid.auth.js' violates... script-src... The action
+  #     has been blocked." -- the button rendered and the click handler ran, but the script load
+  #     never resolved or rejected, so it hung on "Signing in..." forever rather than erroring.
+  #     Unlike GIS, Apple's flow is a popup (window.open) rather than an embedded iframe, so this
+  #     does NOT need a frame-src entry -- the popup navigates to Apple's own origin, which has its
+  #     own CSP, not this page's. Not yet verified whether a connect-src entry is also needed (Apple
+  #     Sign In JS may make its own background calls the way GIS's credential-state calls did) --
+  #     no real Apple Services ID existed to test that against until now, so this is the one thing
+  #     to watch the console for on the next real sign-in attempt rather than a settled fact.
   #   - style-src adds https://fonts.googleapis.com (index.html's Google Fonts <link>) and
   #     'unsafe-inline' -- this app sets style={{...}} inline styles throughout (28 files). Also
   #     https://accounts.google.com/gsi/style -- GIS's own rendered button loads a stylesheet from
@@ -51,7 +64,13 @@
   #     wrangler pages dev and watching the console, not by trusting the docs alone.
   #   - font-src adds https://fonts.gstatic.com, where fonts.googleapis.com's stylesheet actually
   #     points its @font-face src at.
-  #   - img-src adds https://cdn.brandfetch.io -- BankLogo.tsx's Brandfetch Logo API.
+  #   - img-src adds https://img.logo.dev -- BankLogo.tsx/MerchantLogo.tsx's Logo.dev API. Was
+  #     https://cdn.brandfetch.io until the Brandfetch->Logo.dev migration (BankLogo.tsx's own
+  #     comment history) swapped the provider in code but never updated this allowlist, so every
+  #     deployed environment (production and PR previews; the Vite dev server sends no CSP at all)
+  #     silently CSP-blocked every Logo.dev image request -- no network entry, no 403, just a
+  #     block before the request was even sent, which BankLogo.tsx's circuit breaker then read as
+  #     a rejection and used to disable Logo.dev for the rest of that page load.
   #   - connect-src adds api.fynora.net (the deployed backend origin VITE_API_BASE_URL points at --
   #     see src/api/client.ts). api.finoratech.info used to be listed alongside it during the
   #     Fynora domain migration; finoratech.info was sold and is no longer under this project's
@@ -85,7 +104,24 @@
   #     loads).
   #   - frame-ancestors 'none' takes over X-Frame-Options' job (both do the same thing; setting
   #     both would just be two places to keep in sync).
-  Content-Security-Policy: default-src 'self'; script-src 'self' https://www.gstatic.com https://www.google.com https://accounts.google.com/gsi/client https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://accounts.google.com/gsi/style; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: https://cdn.brandfetch.io; connect-src 'self' https://api.fynora.net https://dev-api.fynora.net https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://accounts.google.com/gsi/ https://www.google.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io; frame-src https://www.google.com https://accounts.google.com/gsi/; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'
+  #   - Bug fix (production): script-src also adds https://checkout.razorpay.com -- Subscription
+  #     Billing V3's self-service checkout (src/lib/razorpayCheckout.ts) loads Razorpay's Checkout
+  #     widget from this exact origin, the same pattern as the Google/Apple sign-in scripts above.
+  #     Missed when that feature shipped (#1031) -- reproduced live via a real user's browser
+  #     console showing "Loading the script 'https://checkout.razorpay.com/v1/checkout.js'
+  #     violates... script-src... The action has been blocked.", which meant no user could ever
+  #     complete a paid-plan checkout. frame-src adds the same origin: Razorpay's widget renders
+  #     its payment form as an iframe from checkout.razorpay.com (checkout-frame.js, served from
+  #     the same domain as checkout.js, not a separate one), not just a script. connect-src adds
+  #     https://api.razorpay.com (the widget's own payment-submission calls) and
+  #     https://lumberjack.razorpay.com (Razorpay's own client-side analytics beacon -- missing it
+  #     wouldn't break checkout, just add a blocked-request console error, but it's Razorpay's own
+  #     traffic, not this app's, so there's no reason to block it). Not yet verified against a real
+  #     completed payment (no live checkout has succeeded past the script-src block yet) -- these
+  #     three domains are Razorpay's own documented script/frame paths and a corroborated
+  #     third-party CSP report for the same widget, not a confirmed-by-production-traffic list the
+  #     way the entries above are, so watch the console on the next real checkout attempt.
+  Content-Security-Policy: default-src 'self'; script-src 'self' https://www.gstatic.com https://www.google.com https://accounts.google.com/gsi/client https://appleid.cdn-apple.com https://static.cloudflareinsights.com https://checkout.razorpay.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://accounts.google.com/gsi/style; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: https://img.logo.dev; connect-src 'self' https://api.fynora.net https://dev-api.fynora.net https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://accounts.google.com/gsi/ https://www.google.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io https://api.razorpay.com https://lumberjack.razorpay.com; frame-src https://www.google.com https://accounts.google.com/gsi/ https://checkout.razorpay.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'
   Strict-Transport-Security: max-age=31536000; includeSubDomains
   Referrer-Policy: strict-origin-when-cross-origin
 

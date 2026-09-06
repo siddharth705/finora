@@ -1,4 +1,6 @@
 import type { ReactNode } from 'react';
+import { useDelayedLoading } from '../hooks/useDelayedLoading';
+import { Skeleton } from './Skeleton';
 
 /**
  * Dashboard and Investments each hand-built an independent Chart.js `options` object -- same
@@ -15,16 +17,29 @@ export const baseChartOptions = {
 };
 
 /** Fixed-height wrapper around a chart, with a shared loading/empty treatment so neither has to be
- *  reinvented per page. Pass the real chart (already spreading `baseChartOptions`) as children. */
+ *  reinvented per page. Pass the real chart (already spreading `baseChartOptions`) as children.
+ *
+ *  `loading` renders `Skeleton.Chart` rather than centered text, but only past
+ *  `useDelayedLoading`'s show-after window -- a chart whose data resolves quickly renders nothing
+ *  during that window rather than flashing a skeleton in and out. Applied here, once, so every
+ *  `ChartContainer` consumer gets it automatically instead of each page re-deriving its own
+ *  delayed-skeleton timing. */
 export function ChartContainer({
   height = 256, loading, isEmpty, emptyState, loadingLabel = 'Loading…', children,
 }: {
   height?: number; loading?: boolean; isEmpty?: boolean; emptyState?: ReactNode; loadingLabel?: string; children: ReactNode;
 }) {
+  const showSkeleton = useDelayedLoading(!!loading);
   if (loading) {
+    // The accessible label (Skeleton.Region's sr-only span) renders immediately -- only the
+    // visual skeleton shape is delayed. A screen-reader user shouldn't wait out the same
+    // flash-prevention window a sighted user benefits from; that window exists to avoid a visual
+    // flicker, which doesn't apply to an announcement.
     return (
-      <div className="flex items-center justify-center" style={{ height }}>
-        <p className="text-sm text-muted">{loadingLabel}</p>
+      <div style={{ height }}>
+        <Skeleton.Region label={loadingLabel} className="h-full">
+          {showSkeleton && <Skeleton.Chart className="h-full" />}
+        </Skeleton.Region>
       </div>
     );
   }

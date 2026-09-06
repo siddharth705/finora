@@ -44,7 +44,7 @@ public class ImportDto {
             BigDecimal amount,
             String type,
             String suggestedCategory,
-            String categorySource,   // "learned" | "rule" | "user_rule" | "global_rule" | "default" | "file"
+            String categorySource,   // "learned" | "rule" | "user_rule" | "global_rule" | "structural_p2p" | "default" | "file"
             UUID ruleId,             // set only when categorySource is "user_rule" or "global_rule"
             boolean likelyDuplicate,
             String referenceNumber,  // best-effort, null when the source had no recognizable reference/cheque column
@@ -638,7 +638,15 @@ public class ImportDto {
             // every call site that never showed the warning (name matched, no holder extracted, or
             // an older client that predates this field) -- persistSection stores null as null,
             // genuinely meaning "there was nothing to confirm past", not "unknown".
-            Boolean userConfirmedContinue
+            Boolean userConfirmedContinue,
+            // Track B/B1. Only meaningful to confirmReimport -- the same "reimport-only field on a
+            // shared DTO" shape `password` above already has. A UUID the client mints once per
+            // logical confirm ATTEMPT and resends unchanged on any retry of that attempt; it
+            // identifies the request, never the document (re-importing the same stored bytes again
+            // later is legitimate and must keep working -- see V133's own comment). Null from an
+            // older client and on every first-time-import confirm, both of which are unaffected:
+            // that path is already protected by ImportSession.claimForConfirmation.
+            String idempotencyKey
     ) {
         /** Pre-existing arity. Kept so the many call sites that construct a request with no printed
          *  statement period to echo -- reimport's internal re-scoping, tests, Gmail's receipt-derived
@@ -649,7 +657,7 @@ public class ImportDto {
                                NewAccountRequest newAccount, BigDecimal statementOpeningBalance,
                                BigDecimal statementClosingBalance, String password) {
             this(sessionId, rows, existingAccountId, newAccount, statementOpeningBalance,
-                    statementClosingBalance, password, null, null, null, null, null);
+                    statementClosingBalance, password, null, null, null, null, null, null);
         }
 
         /** Same arity as the pre-existing period-echoing constructor above, for call sites that
@@ -659,7 +667,7 @@ public class ImportDto {
                                BigDecimal statementClosingBalance, String password,
                                LocalDate statementPeriodStart, LocalDate statementPeriodEnd) {
             this(sessionId, rows, existingAccountId, newAccount, statementOpeningBalance,
-                    statementClosingBalance, password, statementPeriodStart, statementPeriodEnd, null, null, null);
+                    statementClosingBalance, password, statementPeriodStart, statementPeriodEnd, null, null, null, null);
         }
 
         /** Same arity as the pre-existing credit-card-fields constructor above, for call sites that
@@ -671,7 +679,21 @@ public class ImportDto {
                                BigDecimal totalAmountDue, LocalDate paymentDueDate) {
             this(sessionId, rows, existingAccountId, newAccount, statementOpeningBalance,
                     statementClosingBalance, password, statementPeriodStart, statementPeriodEnd,
-                    totalAmountDue, paymentDueDate, null);
+                    totalAmountDue, paymentDueDate, null, null);
+        }
+
+        /** Same arity as the pre-existing ownership-warning constructor above, for the call sites
+         *  that predate the re-import idempotency key (every first-time-import path, which does not
+         *  need one). */
+        public ConfirmRequest(UUID sessionId, List<ConfirmedRow> rows, UUID existingAccountId,
+                               NewAccountRequest newAccount, BigDecimal statementOpeningBalance,
+                               BigDecimal statementClosingBalance, String password,
+                               LocalDate statementPeriodStart, LocalDate statementPeriodEnd,
+                               BigDecimal totalAmountDue, LocalDate paymentDueDate,
+                               Boolean userConfirmedContinue) {
+            this(sessionId, rows, existingAccountId, newAccount, statementOpeningBalance,
+                    statementClosingBalance, password, statementPeriodStart, statementPeriodEnd,
+                    totalAmountDue, paymentDueDate, userConfirmedContinue, null);
         }
     }
 
@@ -742,7 +764,7 @@ public class ImportDto {
     public record ConfirmedRow(
             LocalDate date, String description, BigDecimal amount, String type,
             String category, boolean include,
-            String categorySource,   // "learned" | "rule" | "user_rule" | "global_rule" | "default" | "file" — carried from staging
+            String categorySource,   // "learned" | "rule" | "user_rule" | "global_rule" | "structural_p2p" | "default" | "file" — carried from staging
             UUID ruleId,             // carried from staging — see StagedRow.ruleId
             boolean likelyDuplicate, // carried from staging, so the summary can report it honestly
             @Size(max = 64) String referenceNumber,  // carried from staging — see StagedRow.referenceNumber

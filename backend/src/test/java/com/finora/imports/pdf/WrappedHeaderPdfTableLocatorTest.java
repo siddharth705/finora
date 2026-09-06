@@ -333,31 +333,29 @@ class WrappedHeaderPdfTableLocatorTest {
     }
 
     /**
-     * ACKNOWLEDGED LIMITATION, pinned so it is visible and so the fix has somewhere to land. This
-     * test asserts what the engine currently DOES, not what it should do.
+     * FORMERLY an acknowledged limitation (see git history for the original pinned test this one
+     * replaces), now resolved as a side effect of {@code dropCompletelyEmptySections} -- a general,
+     * structural cleanup pass ("a section that collected literally nothing can never represent real
+     * content"), not a fix specific to this shape.
      *
      * <p>A two-line block of pure labels — a summary panel reading "Opening Balance | Debit Amount
      * | Credit Amount | Closing Balance" over "as on Date | Total | Net | Carried" — satisfies every
      * signal a wrapped heading has: dateless, numberless, tightly spaced, and column-aligned. Merged,
      * it scores as a header, closes the transaction table above it, and opens a section that never
-     * receives a row. The import then carries a phantom account with nothing in it.
+     * receives a row -- exactly as it always did. What changed is what happens to that phantom
+     * section afterward: since it collects zero rows AND zero auxiliary text, the final cleanup pass
+     * now drops it rather than surfacing it as an empty account for review.
      *
-     * <p>Two things bound how much this matters. The same outcome is already reachable WITHOUT this
-     * capability — a single label line that scores as a header on its own does it too, and did
-     * before any of this — so this widens an existing path rather than opening a new kind of one.
-     * And an empty section is surfaced with {@code mayCreateAutomatically=false}, so it is offered
-     * for review rather than created.
-     *
-     * <p>Not fixed here, and the attempt is worth recording. Requiring a merged heading to be
-     * followed by a row that reads as data under it — the obvious guard — was implemented and
-     * measured: it rejects this block correctly and ALSO rejects the real fixed-deposit schedule,
-     * because that table's amounts mis-bucket into its date column, so no row within any sane
-     * lookahead yields a parseable date. The guard removes the capability's only real win. Deciding
-     * this correctly needs the semantic relationship between a heading and the data beneath it,
-     * which is the Financial Document Intelligence layer's question, not the locator's.
+     * <p>The originally-recorded, ABANDONED attempt at a narrower fix is still worth keeping in mind
+     * for anyone touching this area again: requiring a merged heading to be followed by a row that
+     * reads as data under it rejects this block correctly but ALSO rejects the real fixed-deposit
+     * schedule, because that table's amounts mis-bucket into its date column, so no row within any
+     * sane lookahead yields a parseable date. {@code dropCompletelyEmptySections} sidesteps that
+     * trap entirely by not asking the semantic question at all -- it only asks whether anything was
+     * collected, which is a fact, not an inference.
      */
     @Test
-    void doesNotYetRejectATwoLineLabelBlockThatScoresAsAHeading() {
+    void emptyTwoLineLabelBlockSectionIsDroppedRatherThanSurfacedAsAPhantomAccount() {
         List<PositionedText> runs = new java.util.ArrayList<>(List.of(
                 run("Txn Date", 50f, 33f, 100f), run("Narration", 150f, 36f, 100f),
                 run("Withdrawals", 300f, 47f, 100f), run("Closing Balance", 430f, 62f, 100f),
@@ -373,18 +371,17 @@ class WrappedHeaderPdfTableLocatorTest {
                 run("as on Date", 52f, 42f, 209f), run("Total", 152f, 22f, 209f),
                 run("Net", 302f, 16f, 209f), run("Carried", 432f, 30f, 209f)));
 
-        PdfTableLocator.LocatedDocument doc = new PdfTableLocator().locateAll(runs, null);
+        DocumentContext ctx = new DocumentContext("PDF", "WrappedHeaderPdfTableLocatorTest");
+        PdfTableLocator.LocatedDocument doc = new PdfTableLocator().locateAll(runs, ctx);
 
+        assertThat(ctx.capabilities()).extracting(c -> c.capability())
+                .contains("EMPTY_SECTION_DROPPED");
         assertThat(doc.sections())
-                .as("CURRENT behaviour: the label block opens a second section")
-                .hasSize(2);
+                .as("the empty phantom section is dropped -- only the real table remains")
+                .hasSize(1);
         assertThat(doc.sections().get(0).rows())
-                .as("the real table keeps every one of its transactions -- the loss is the phantom, "
-                        + "not the data")
+                .as("the real table keeps every one of its transactions")
                 .hasSize(2);
-        assertThat(doc.sections().get(1).rows())
-                .as("and the phantom is empty, which is what makes it a phantom")
-                .isEmpty();
     }
 
     @Test

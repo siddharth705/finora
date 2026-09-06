@@ -2,8 +2,7 @@ import { useState, type FormEvent } from 'react';
 import { User } from 'lucide-react';
 import { authApi } from '../../api/endpoints';
 import { useAuth } from '../../context/AuthContext';
-import { GoogleSignInButton } from '../../components/GoogleSignInButton';
-import { AppleSignInButton } from '../../components/AppleSignInButton';
+import { SocialSignInButtons } from '../../components/SocialSignInButtons';
 import { ReactivateAccountPrompt } from '../../components/ReactivateAccountPrompt';
 import { AuthDivider } from './AuthDivider';
 import { AUTH_ACCOUNT_DEACTIVATED } from '../../api/errorCodes';
@@ -30,6 +29,12 @@ export function IdentifyStep({ onExists, onContinue, onSuccess }: IdentifyStepPr
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [reactivationToken, setReactivationToken] = useState<string | null>(null);
+  // Seeded at 420 -- Google's own real rendered button width, measured live on production (see
+  // SocialSignInButtons.tsx) -- rather than the form's natural full width, so the form narrows to
+  // match Google/Apple from the first paint instead of flashing full-width and then snapping
+  // narrower once Google's script actually reports back. onWidthKnown corrects this if Google
+  // ever renders differently.
+  const [formWidth, setFormWidth] = useState(420);
 
   const identifierValid = identifier.trim().length > 0;
 
@@ -104,11 +109,21 @@ export function IdentifyStep({ onExists, onContinue, onSuccess }: IdentifyStepPr
   }
 
   return (
-    <form onSubmit={handleSubmit} noValidate>
-      <h2 className="text-2xl font-extrabold text-ink mb-1">Sign in or create an account</h2>
+    <form onSubmit={handleSubmit} noValidate style={{ maxWidth: formWidth, marginInline: 'auto' }}>
+      <h2 className="font-display text-2xl font-extrabold text-ink mb-1">Sign in or create an account</h2>
       <p className="text-sm text-muted mb-6">Enter your email or mobile number to continue</p>
 
       {error && <p className="text-danger text-sm mb-4">{error}</p>}
+
+      <SocialSignInButtons
+        googleText="signin_with"
+        onGoogleCredential={handleGoogleCredential}
+        onAppleCredential={handleAppleCredential}
+        onError={setError}
+        onWidthKnown={setFormWidth}
+      />
+
+      <AuthDivider />
 
       <label htmlFor="auth-entry-identifier" className="block text-xs font-medium text-muted mb-1">Email or mobile number</label>
       <div className="relative mb-6">
@@ -128,17 +143,10 @@ export function IdentifyStep({ onExists, onContinue, onSuccess }: IdentifyStepPr
       <button
         type="submit"
         disabled={loading}
-        className="w-full bg-primary hover:bg-primary-dark text-on-primary rounded-lg py-2.5 text-sm font-semibold disabled:opacity-50"
+        className="w-full bg-primary hover:bg-primary-dark active:scale-[0.98] transition-transform text-on-primary rounded-lg py-2.5 text-sm font-semibold disabled:opacity-50"
       >
         {loading ? 'Continuing…' : 'Continue'}
       </button>
-
-      <AuthDivider />
-
-      <GoogleSignInButton text="signin_with" onCredential={handleGoogleCredential} onError={setError} />
-      <div className="mt-3">
-        <AppleSignInButton onCredential={handleAppleCredential} onError={setError} />
-      </div>
     </form>
   );
 }

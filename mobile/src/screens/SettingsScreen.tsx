@@ -2,6 +2,8 @@ import { useState } from 'react';
 import {
   ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View,
 } from 'react-native';
+import { useNavigation } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useQueries, useQueryClient } from '@tanstack/react-query';
 import { MetricTile, SaveStatus, SectionCard, VerifiedBadge } from '../components/AccountUI';
 import { Button } from '../components/Button';
@@ -11,6 +13,7 @@ import { AppLockSection } from './settings/AppLockSection';
 import { ChangeEmailSheet } from './settings/ChangeEmailSheet';
 import { ChangePasswordSheet } from './settings/ChangePasswordSheet';
 import { DeviceSessionsSection } from './settings/DeviceSessionsSection';
+import { FeedbackSheet } from './support/FeedbackSheet';
 import { analyticsApi, userApi, workspaceApi } from '../api/endpoints';
 import { toUserMessage } from '../lib/apiError';
 import { fmtDate, fmtRelativeTime } from '../lib/format';
@@ -19,6 +22,7 @@ import { useSingleFlight } from '../lib/useSingleFlight';
 import { useTransientFlag } from '../lib/useTransientFlag';
 import { parsePositiveAmount } from '../lib/validation';
 import { radius, spacing, THEME_SETTINGS, useTheme, useThemeSetting, type ThemeSetting } from '../theme';
+import type { MoreStackParamList } from '../navigation/types';
 
 /**
  * Port of frontend/src/pages/Settings.tsx -- "how Fynora behaves for you", as opposed to
@@ -61,6 +65,9 @@ function availableTimezones(): string[] {
 
 export function SettingsScreen() {
   const c = useTheme();
+  // Settings is registered on the More stack, so CategoryReview is a sibling route -- no
+  // getParent() hop needed, unlike the cross-tab jumps StatementHistoryScreen makes.
+  const navigation = useNavigation<NativeStackNavigationProp<MoreStackParamList>>();
   const { setting: themeSetting, setSetting: setThemeSetting } = useThemeSetting();
   const queryClient = useQueryClient();
   const singleFlight = useSingleFlight();
@@ -83,6 +90,7 @@ export function SettingsScreen() {
 
   const [changePasswordOpen, setChangePasswordOpen] = useState(false);
   const [changeEmailOpen, setChangeEmailOpen] = useState(false);
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
 
   const [userQ, workspaceQ, statsQ] = useQueries({
     queries: [
@@ -339,6 +347,22 @@ export function SettingsScreen() {
               Suggestions at or above this confidence are applied automatically. Anything below it
               is left for you to confirm.
             </Text>
+            {/* The other half of that sentence. This setting decides how much lands in the review
+                queue, and until now the app had no queue to send anyone to -- the promise that
+                low-confidence suggestions were "left for you to confirm" was unbacked, because
+                there was nowhere to confirm them. */}
+            <Pressable
+              onPress={() => navigation.navigate('CategoryReview')}
+              style={styles.reviewLink}
+              hitSlop={8}
+              accessibilityRole="button"
+              accessibilityLabel="Review categories"
+              accessibilityHint="Opens the transactions waiting for a category"
+            >
+              <Text style={[styles.reviewLinkText, { color: c.primary }]}>
+                Review transactions waiting for a category →
+              </Text>
+            </Pressable>
 
             {intelError ? <Text style={[styles.error, { color: c.danger }]}>{intelError}</Text> : null}
             <View style={styles.saveRow}>
@@ -352,6 +376,31 @@ export function SettingsScreen() {
             />
           </>
         )}
+      </SectionCard>
+
+      <SectionCard title="Help & Support" subtitle="File a ticket, check on one, or tell us what's on your mind">
+        <Pressable
+          onPress={() => navigation.navigate('SupportTickets')}
+          style={[styles.row, { borderBottomColor: c.border }]}
+          accessibilityRole="button"
+        >
+          <View style={styles.rowMain}>
+            <Text style={[styles.rowTitle, { color: c.ink }]}>My Tickets</Text>
+            <Text style={[styles.rowMeta, { color: c.mutedInk }]}>File a new one, or check on an existing one</Text>
+          </View>
+          <Text style={[styles.chevron, { color: c.muted }]} accessibilityElementsHidden importantForAccessibility="no">›</Text>
+        </Pressable>
+        <Pressable
+          onPress={() => setFeedbackOpen(true)}
+          style={[styles.row, { borderBottomColor: c.border }]}
+          accessibilityRole="button"
+        >
+          <View style={styles.rowMain}>
+            <Text style={[styles.rowTitle, { color: c.ink }]}>Send Feedback</Text>
+            <Text style={[styles.rowMeta, { color: c.mutedInk }]}>A bug, an idea, or anything else on your mind</Text>
+          </View>
+          <Text style={[styles.chevron, { color: c.muted }]} accessibilityElementsHidden importantForAccessibility="no">›</Text>
+        </Pressable>
       </SectionCard>
 
       <SectionCard title="Data" subtitle="Your imported statements and transaction history">
@@ -397,6 +446,8 @@ export function SettingsScreen() {
       ) : null}
 
       {changeEmailOpen ? <ChangeEmailSheet onClose={() => setChangeEmailOpen(false)} /> : null}
+
+      {feedbackOpen ? <FeedbackSheet onClose={() => setFeedbackOpen(false)} /> : null}
     </ScrollView>
   );
 }
@@ -421,6 +472,8 @@ const styles = StyleSheet.create({
   segment: { flex: 1, minHeight: 44, alignItems: 'center', justifyContent: 'center' },
   segmentText: { fontSize: 13, fontWeight: '600' },
   hint: { fontSize: 11, lineHeight: 16, marginTop: spacing.sm },
+  reviewLink: { marginTop: spacing.sm },
+  reviewLinkText: { fontSize: 13, fontWeight: '600' },
   error: { fontSize: 13, marginTop: spacing.sm },
   saveRow: { alignItems: 'flex-end', marginVertical: spacing.sm, minHeight: 16 },
   row: {

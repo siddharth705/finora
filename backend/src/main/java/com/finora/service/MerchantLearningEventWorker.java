@@ -11,6 +11,8 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Duration;
@@ -49,6 +51,24 @@ import java.util.UUID;
  * because Spring does not proxy self-invocation — the annotations would be silently ignored and
  * everything would run in one transaction, which is precisely the bug. Explicit boundaries also
  * make the three-phase structure visible to the next reader instead of implied.
+ *
+ * <p><b>Own {@code PROPAGATION_REQUIRES_NEW} template, not the shared {@code REQUIRED} one from
+ * {@code BackgroundWorkConfig}.</b> Production incident, 2026-09-03: {@link #nudge} runs
+ * {@code @Async} on a two-thread pool with {@code CallerRunsPolicy}, and it is invoked from an
+ * {@code afterCommit} synchronization on the very transaction a confirmed import just ran in. A
+ * large enough burst of learning events (one {@code afterCommit} registration per event) saturates
+ * that tiny pool, and {@code CallerRunsPolicy} then runs {@code nudge()} <em>synchronously on the
+ * committing thread</em> — still inside {@code afterCommit()}, before Spring's
+ * {@code cleanupAfterCompletion()} has unbound that transaction's resources. A {@code REQUIRED}
+ * template sees those still-bound-but-already-committed resources and "joins" them instead of
+ * starting a real transaction: {@code repository.save(...)} calls silently never flush (nothing
+ * will ever commit that phantom participation again), and {@code ensurePairExists}'s native
+ * {@code @Modifying} query fails loudly with {@code TransactionRequiredException}. Silent no-op and
+ * loud exception are the same bug wearing two faces. {@code REQUIRES_NEW} closes both: it always
+ * suspends whatever is on the thread — real or stale — and opens a genuinely fresh transaction, so
+ * this worker is a clean transaction regardless of what thread or synchronization callback
+ * {@link #nudge} happens to run on. See {@code MerchantLearningNudgeIT
+ * #applyingInsideAfterCommitOnTheSameThreadStillSucceeds}, which reproduces the exact failure.
  */
 @Component
 public class MerchantLearningEventWorker {
@@ -57,7 +77,18 @@ public class MerchantLearningEventWorker {
 
     /** How many events one pass claims. Bounded so a backlog drains steadily instead of holding a
      *  connection from a pool capped at 10 for an unbounded stretch. */
-    private static final int BATCH_SIZE = 50;
+    static final int BATCH_SIZE = 50;
+
+    /**
+     * How many batches one nudge will drain before leaving the rest to the poller.
+     *
+     * <p>Bounds the work a single caller's nudge can do on the shared executor thread. Twenty
+     * passes is {@code 20 * BATCH_SIZE} events — twice
+     * {@code AdminLearningQueueService.MAX_RETRY_ALL}, the largest requeue any single nudge has to
+     * answer for — so in practice the loop stops because the queue ran dry rather than because it
+     * hit this.
+     */
+    private static final int MAX_NUDGE_PASSES = 20;
 
     /** How many stuck rows one pass recovers. Same reasoning as the batch size. */
     private static final int RECOVERY_BATCH_SIZE = 50;
@@ -86,11 +117,12 @@ public class MerchantLearningEventWorker {
 
     public MerchantLearningEventWorker(MerchantLearningEventRepository repository,
                                         MerchantLearningService learningService,
-                                        TransactionTemplate transactionTemplate,
+                                        PlatformTransactionManager transactionManager,
                                         WorkerObservability observability) {
         this.repository = repository;
         this.learningService = learningService;
-        this.transactionTemplate = transactionTemplate;
+        this.transactionTemplate = new TransactionTemplate(transactionManager);
+        this.transactionTemplate.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
         this.observability = observability;
 
         // Queue depth is a level, not an event, so it is a gauge polled by the registry rather
@@ -128,11 +160,35 @@ public class MerchantLearningEventWorker {
      * <p>Runs on a separate thread deliberately: the caller is a request thread that has just
      * committed a user's import, and it must not wait for learning to be applied. Concurrent runs
      * with the poller are safe — {@code SKIP LOCKED} is what makes that true.
+     *
+     * <p><b>Drains until a pass comes back short, rather than exactly once.</b> A pass that claims
+     * a full {@link #BATCH_SIZE} is itself evidence more work is waiting, and stopping there left
+     * the remainder for the next poll despite a worker having just been woken.
+     *
+     * <p>The path where that actually bites is a <em>bulk</em> requeue, not an ordinary import:
+     * {@code AdminLearningQueueService.retryAll} returns up to five hundred FAILED events to the
+     * queue and nudges exactly <b>once</b>, so a single batch of fifty left the other four hundred
+     * and fifty draining fifty per poll — minutes, after an operator action that looked immediate.
+     * An import confirming many merchants was never this problem: {@code enqueue} registers an
+     * afterCommit nudge per event, so a burst of them already drains itself. {@link
+     * #MAX_NUDGE_PASSES} is sized against the bulk path for that reason.
+     *
+     * <p>Never a correctness bug either way — the rows are durable and the poller collects them —
+     * but the delay was invisible and served no purpose.
+     *
+     * <p>Still bounded, for the reason {@link #BATCH_SIZE} is: this occupies a thread in a small
+     * pool, and an unbounded loop would let one caller hold it for as long as the queue keeps
+     * refilling. Past {@link #MAX_NUDGE_PASSES} the poller takes over, which is exactly the
+     * backstop it exists to be. Note the bound is on passes, not connections — each pass opens and
+     * releases its own transactions rather than holding one across the loop.
      */
     @Async("learningQueueExecutor")
     public void nudge() {
         if (!enabled) return;
-        drainOnce();
+        int passes = 1;
+        while (drainOnce() == BATCH_SIZE && passes++ < MAX_NUDGE_PASSES) {
+            // A full batch means the queue had at least one more event than this pass could take.
+        }
     }
 
     /**

@@ -19,12 +19,13 @@ import java.util.UUID;
  * StatementImport rows exist), not permanent financial data that needs to be queried in its own
  * right the way transactions do.
  *
- * No @Scheduled cleanup job -- this codebase has no background job infrastructure yet (see
- * SystemHealth's own doc comments on why). Expired sessions are opportunistically deleted the
- * next time that same user starts a new import (ImportSessionService.createSession) rather than
- * via a platform-wide sweep; a user who uploads once and never returns leaves one row (with file
- * bytes) sitting until they use import again. Acceptable for a v1, called out explicitly rather
- * than silently left as unbounded growth -- see ADR-0002.
+ * Bug fix: this comment used to say there was no {@code @Scheduled} cleanup job, and that expired
+ * sessions were only opportunistically deleted the next time that same user started a new import
+ * -- true when it was written, and wrong now. BH-047 replaced that with a real scheduled sweep
+ * ({@code ImportSessionService.scheduledSweep}, every 15 minutes by default) that hard-deletes any
+ * user's rows once past their 48-hour TTL, in bounded batches -- see that method's own doc comment
+ * for why the opportunistic, per-user-scoped placement was wrong. A user who uploads once and
+ * never returns is exactly who this sweep is for: no second visit is needed to clean up the first.
  */
 @Entity
 @Table(name = "import_sessions")
@@ -156,6 +157,15 @@ public class ImportSession implements com.finora.imports.storage.StoredStatement
     @Column(name = "source_domain", length = 253)
     private String sourceDomain;
 
+    /** The short commit id ({@code BuildVersionResolver.currentCommit()}) of the backend build
+     *  that staged this session -- null for any session staged before this column existed. Read
+     *  by {@code ImportSessionService.findLiveSessionByContentHash} to decide whether a session is
+     *  safe to replay automatically: a mismatch against the CURRENT build's commit means the
+     *  parser may have changed since this session was staged, regardless of how little time has
+     *  passed. */
+    @Column(name = "parser_version", length = 40)
+    private String parserVersion;
+
     @Column(nullable = false)
     private String status = STATUS_STAGED;
 
@@ -211,6 +221,8 @@ public class ImportSession implements com.finora.imports.storage.StoredStatement
     public void setSource(String source) { this.source = source; }
     public String getSourceDomain() { return sourceDomain; }
     public void setSourceDomain(String sourceDomain) { this.sourceDomain = sourceDomain; }
+    public String getParserVersion() { return parserVersion; }
+    public void setParserVersion(String parserVersion) { this.parserVersion = parserVersion; }
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
     public Instant getCreatedAt() { return createdAt; }

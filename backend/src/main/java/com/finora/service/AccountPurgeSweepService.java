@@ -8,12 +8,14 @@ import com.finora.goals.GoalRepository;
 import com.finora.imports.analysis.StatementAnalysisSessionRepository;
 import com.finora.integrations.google.GmailConnectionRepository;
 import com.finora.integrations.google.GmailConnectionService;
+import com.finora.notification.repository.NotificationRepository;
 import com.finora.repository.AccountReactivationTokenRepository;
 import com.finora.repository.EmailVerificationTokenRepository;
 import com.finora.repository.AccountRepository;
 import com.finora.repository.BudgetRepository;
 import com.finora.repository.CategoryRepository;
 import com.finora.repository.CategoryRuleRepository;
+import com.finora.repository.FeedbackEntryRepository;
 import com.finora.repository.ImportJobRepository;
 import com.finora.repository.ImportSessionRepository;
 import com.finora.repository.MerchantAliasRepository;
@@ -34,7 +36,9 @@ import com.finora.repository.RelationshipIdentifierRepository;
 import com.finora.repository.RelationshipRepository;
 import com.finora.repository.StatementImportRepository;
 import com.finora.repository.StatementImportRepository.StatementMetadata;
+import com.finora.repository.SubscriptionOrderRepository;
 import com.finora.repository.SubscriptionRepository;
+import com.finora.repository.SupportTicketRepository;
 import com.finora.repository.TransactionRepository;
 import com.finora.repository.UserRepository;
 import com.finora.repository.UserSettingsRepository;
@@ -144,6 +148,7 @@ public class AccountPurgeSweepService {
     private final GoalRepository goalRepository;
     private final SubscriptionRepository subscriptionRepository;
     private final PaymentRepository paymentRepository;
+    private final SubscriptionOrderRepository subscriptionOrderRepository;
     private final ReferralCodeRepository referralCodeRepository;
     private final ReferralRepository referralRepository;
     private final WalletLedgerRepository walletLedgerRepository;
@@ -165,6 +170,9 @@ public class AccountPurgeSweepService {
     private final StatementImportRepository statementImportRepository;
     private final StatementImportService statementImportService;
     private final StatementAnalysisSessionRepository statementAnalysisSessionRepository;
+    private final NotificationRepository notificationRepository;
+    private final SupportTicketRepository supportTicketRepository;
+    private final FeedbackEntryRepository feedbackEntryRepository;
     private final AuditService auditService;
     private final PasswordEncoder passwordEncoder;
     private final TransactionTemplate transactionTemplate;
@@ -183,6 +191,7 @@ public class AccountPurgeSweepService {
                                      GoalRepository goalRepository,
                                      SubscriptionRepository subscriptionRepository,
                                      PaymentRepository paymentRepository,
+                                     SubscriptionOrderRepository subscriptionOrderRepository,
                                      ReferralCodeRepository referralCodeRepository,
                                      ReferralRepository referralRepository,
                                      WalletLedgerRepository walletLedgerRepository,
@@ -204,6 +213,9 @@ public class AccountPurgeSweepService {
                                      StatementImportRepository statementImportRepository,
                                      StatementImportService statementImportService,
                                      StatementAnalysisSessionRepository statementAnalysisSessionRepository,
+                                     NotificationRepository notificationRepository,
+                                     SupportTicketRepository supportTicketRepository,
+                                     FeedbackEntryRepository feedbackEntryRepository,
                                      AuditService auditService,
                                      PasswordEncoder passwordEncoder,
                                      TransactionTemplate transactionTemplate) {
@@ -221,6 +233,7 @@ public class AccountPurgeSweepService {
         this.goalRepository = goalRepository;
         this.subscriptionRepository = subscriptionRepository;
         this.paymentRepository = paymentRepository;
+        this.subscriptionOrderRepository = subscriptionOrderRepository;
         this.referralCodeRepository = referralCodeRepository;
         this.referralRepository = referralRepository;
         this.walletLedgerRepository = walletLedgerRepository;
@@ -242,6 +255,9 @@ public class AccountPurgeSweepService {
         this.statementImportRepository = statementImportRepository;
         this.statementImportService = statementImportService;
         this.statementAnalysisSessionRepository = statementAnalysisSessionRepository;
+        this.notificationRepository = notificationRepository;
+        this.supportTicketRepository = supportTicketRepository;
+        this.feedbackEntryRepository = feedbackEntryRepository;
         this.auditService = auditService;
         this.passwordEncoder = passwordEncoder;
         this.transactionTemplate = transactionTemplate;
@@ -353,6 +369,12 @@ public class AccountPurgeSweepService {
             // SubscriptionRepository.hardDeleteByUserId's own comment for why the two child tables
             // need no separate call here.
             subscriptionRepository.hardDeleteByUserId(userId);
+            // subscription_orders (V154, Subscription Billing V1) is another user-linked table this
+            // sweep didn't know about yet -- same trap as V125/notifications above: V157 gives it
+            // its own ON DELETE CASCADE, but that never fires here, so it needs the same explicit
+            // hard-delete call as payments/subscriptions. No ordering dependency on either of those
+            // two calls -- razorpay_subscription_id is a plain correlation string, not an FK.
+            subscriptionOrderRepository.hardDeleteByUserId(userId);
             // D-28 PR4-C: referral_codes/wallet_ledger have their own user_id column, deleted
             // directly. referrals needs BOTH directions -- a purged user may appear as either
             // referrer_user_id or referred_user_id, on two entirely different rows -- see
@@ -385,6 +407,19 @@ public class AccountPurgeSweepService {
             emailVerificationTokenRepository.deleteByUserId(userId);
             refreshTokenRepository.deleteByUserId(userId);
             userSettingsRepository.deleteByUserId(userId);
+            // V125 is a new user-linked table this sweep didn't know about yet, same as D-28's
+            // subscriptions/payments/wallet_ledger before it -- V137 gives it its own ON DELETE
+            // CASCADE too, but that alone never fires: this method anonymizes users, it never
+            // issues a raw DELETE FROM users for the CASCADE to trigger off of.
+            notificationRepository.deleteByUserId(userId);
+
+            // Same trap, same fix: V145/V148 each carry their own ON DELETE CASCADE on user_id, and
+            // each one's migration comment says explicitly that it never fires here, for the reason
+            // stated above -- this method anonymizes users, it never issues DELETE FROM users.
+            // Deleting the ticket also cascades support_ticket_attachments and
+            // support_ticket_internal_notes off ticket_id, so neither child table needs its own call.
+            supportTicketRepository.deleteByUserId(userId);
+            feedbackEntryRepository.deleteByUserId(userId);
 
             // Evidence outlives the account (no FK, by design -- see this class's own doc on why),
             // but two of its columns aren't evidence, they're personal. See

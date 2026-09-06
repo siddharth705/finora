@@ -1,5 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { useNavigation } from '@react-navigation/native';
+import { usePreventScreenCapture } from 'expo-screen-capture';
 import { ReportsScreen } from './ReportsScreen';
 import { reportsApi, type ReportData } from '../api/endpoints';
 import { shareCsv, sharePdf } from '../lib/reportExport';
@@ -80,6 +82,24 @@ describe('ReportsScreen', () => {
     expect(await screen.findByLabelText(/Month: May 26/)).toBeTruthy();
   });
 
+  // The category row's spoken label used to hardcode "this month's spending" regardless of which
+  // month was on screen -- so picking a past month like May still had VoiceOver announce May's
+  // figures as "this month's spending", flatly wrong once the picker is used for anything but the
+  // default.
+  it('names the picked month in the category row label instead of hardcoding "this month"', async () => {
+    renderScreen();
+    await screen.findByLabelText(/Month: Jul 26/);
+
+    fireEvent.press(screen.getByLabelText(/Month: Jul 26/));
+    await settle();
+    fireEvent.press(screen.getByText('2026-05'));
+    await settle();
+
+    expect(
+      await screen.findByLabelText(/Groceries: ₹12,000, 100 percent of May 2026's spending/)
+    ).toBeTruthy();
+  });
+
   // There is nothing to export until the report itself has arrived, so the button stays disabled
   // rather than producing an empty file.
   it('does not offer an export before the report has loaded', async () => {
@@ -140,7 +160,7 @@ describe('ReportsScreen', () => {
     api.forMonth.mockReset().mockRejectedValue(new Error('boom'));
     renderScreen();
 
-    expect(await screen.findByText(/Couldn't load this month's report/)).toBeTruthy();
+    expect(await screen.findByText(/Couldn't load July 2026's report/)).toBeTruthy();
   });
 
   describe('skeleton loading', () => {
@@ -166,5 +186,73 @@ describe('ReportsScreen', () => {
       // month's report is still in flight.
       expect(screen.getByLabelText(/Month: May 26/)).toBeTruthy();
     });
+  });
+});
+
+/**
+ * The backend builds report.expense and report.categories from different transaction sets on
+ * purpose: ReportService narrows to excludingInvestmentTransfers(txns) for the income/expense
+ * totals, while byCategory keeps the wider list "so an Investments line still shows up in the
+ * report's own category table". Dividing a category by report.expense therefore divided some rows
+ * by a total they were excluded from -- yielding shares over 100% which ProgressBar then clamped,
+ * so two rows of very different size both rendered as full-width bars.
+ */
+describe('category shares', () => {
+  it('keeps shares within 100% when the month contains an investment transfer', async () => {
+    api.availableMonths.mockReset().mockResolvedValue(['2026-07']);
+    api.forMonth.mockReset().mockResolvedValue({
+      month: '2026-07',
+      income: 100000,
+      // Deliberately LESS than the categories below sum to -- the SIP is excluded from the total
+      // but still listed as a category, exactly as the backend produces it.
+      expense: 2000,
+      categories: [
+        { category: 'Investments', amount: 3000 },
+        { category: 'Groceries', amount: 2000 },
+      ],
+    } as never);
+
+    renderScreen();
+
+    // 3000 / 5000 and 2000 / 5000 -- shares of the breakdown they actually belong to, not of a
+    // total one of them was excluded from (which gave 150% and 100%).
+    expect(
+      await screen.findByLabelText(/Investments: ₹3,000, 60 percent of July 2026's spending/)
+    ).toBeTruthy();
+    expect(
+      screen.getByLabelText(/Groceries: ₹2,000, 40 percent of July 2026's spending/)
+    ).toBeTruthy();
+  });
+});
+
+describe('drill-through into the ledger (Track C/C4)', () => {
+  beforeEach(() => {
+    api.availableMonths.mockReset().mockResolvedValue(MONTHS);
+    api.forMonth.mockReset().mockImplementation(async (m: string) => reportFor(m));
+  });
+
+  it('opens Transactions filtered to this category and the whole month currently on screen', async () => {
+    renderScreen();
+    await loadedReport();
+    const { navigate } = useNavigation<never>() as unknown as { navigate: jest.Mock };
+    navigate.mockClear();
+
+    fireEvent.press(screen.getByLabelText(/Groceries: ₹12,000/));
+
+    expect(navigate).toHaveBeenCalledWith('Transactions', {
+      filters: expect.objectContaining({
+        categoryName: 'Groceries', dateFrom: '2026-07-01', dateTo: '2026-07-31', label: 'Groceries · Jul 26',
+      }),
+    });
+  });
+});
+
+// D3 (Track D security cleanup). Category breakdowns/totals are as screenshot-attractive as
+// anything on the Dashboard or Accounts screen, which already guard against this.
+describe('screen capture protection (Track D/D3)', () => {
+  it('calls usePreventScreenCapture on mount', () => {
+    renderScreen();
+
+    expect(usePreventScreenCapture).toHaveBeenCalled();
   });
 });

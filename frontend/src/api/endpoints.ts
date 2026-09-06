@@ -2,7 +2,7 @@ import { api, rawApi, type ApiEnvelope } from './client';
 import { downloadBlob } from '../lib/download';
 import type {
 
-  Account, AccountStatementGroup, BankInfo, Budget, DashboardSummary, DetectedAccountInfo, FinancialJourney, Goal,
+  Account, AccountStatementGroup, BankInfo, Budget, CounterpartyGroup, DashboardSummary, DetectedAccountInfo, FinancialJourney, Goal,
   ImportSummary, MerchantGroup, ReimportResult, StagedAccountSection, StagedRow, StatementSummary, SupersedeResult, Transaction,
   WorkspaceSettings, UnparseableRow, VerificationReport,
 } from '../types';
@@ -159,6 +159,10 @@ export interface TransactionFilters {
   accountId?: string;
   categoryId?: string;
   type?: string;
+  // One of Transaction['reconciliationStatus'] (types/index.ts) -- kept as a plain string here,
+  // like `type` above, since this interface is a thin mirror of the backend's query params, not
+  // a place that re-derives the DTO's own typed unions.
+  status?: string;
   dateFrom?: string;
   dateTo?: string;
   amountMin?: number;
@@ -195,6 +199,12 @@ export interface CreateTransactionPayload {
   amount: number;
   type: 'INCOME' | 'EXPENSE';
   tags?: string[];
+  // Identifies one logical create ATTEMPT so a double-click or a retried request cannot post the
+  // same transaction twice -- and, more importantly, cannot move the account balance twice, which
+  // TransactionService.create does on every call regardless of duplicate flagging. The server side
+  // of this shipped in V97 and has been inert ever since, because no client sent a key.
+  // See lib/idempotencyKey.ts.
+  idempotencyKey?: string;
 }
 
 // Full-edit payload for the Transactions page's Edit action. All fields optional/nullable —
@@ -227,7 +237,10 @@ export interface TransactionExplanation {
 }
 
 export interface TransactionReconciliationExplanation {
-  status: 'DUPLICATE' | 'TRANSFER' | 'REFUND' | 'REVERSAL';
+  // Mirrors TransactionExplanationService.reconciliationExplanationFor's switch exactly -- was
+  // missing INVESTMENT_TRANSFER and SUPERSEDED, both real statuses that DTO can return (see that
+  // method's own case for each).
+  status: 'DUPLICATE' | 'TRANSFER' | 'REFUND' | 'REVERSAL' | 'INVESTMENT_TRANSFER' | 'SUPERSEDED';
   matchedTransactionId: string | null;
   summary: string;
   evidence: string[];
@@ -239,6 +252,8 @@ export const transactionsApi = {
   needsReview: () => api.get<Transaction[]>('/transactions/needs-review').then((r) => r.data),
   groupsNeedsReview: () =>
     api.get<MerchantGroup[]>('/transactions/groups/needs-review').then((r) => r.data),
+  groupsNeedsReviewByCounterparty: () =>
+    api.get<CounterpartyGroup[]>('/transactions/groups/needs-review/by-counterparty').then((r) => r.data),
   explanation: (id: string) =>
     api.get<TransactionExplanation>(`/transactions/${id}/explanation`).then((r) => r.data),
   create: (body: CreateTransactionPayload) => api.post<Transaction>('/transactions', body).then((r) => r.data),
@@ -355,6 +370,11 @@ export interface ConfirmPayload {
   // "Continue Import" after the client-side ownership warning fired -- see ConfirmRequest's own
   // doc comment on the backend. Omitted (not just false) when the warning never fired.
   userConfirmedContinue?: boolean;
+  // Also reimport-only: identifies one logical confirm ATTEMPT so the server can refuse a replay
+  // rather than posting the statement's transactions a second time (V133). A first-time import
+  // needs no key -- its ImportSession is claimed atomically server-side and cannot be confirmed
+  // twice. See lib/idempotencyKey.ts.
+  idempotencyKey?: string;
 }
 
 // One account's worth of reviewed rows within a MultiAccountConfirmPayload -- same shape as
@@ -512,12 +532,21 @@ export interface ImportJobProgress {
   // Premium Import Reliability v1, §3.2 -- the import detail page's only source for what was
   // uploaded; nothing else in this response names it.
   fileName: string;
+  // HELD_FOR_TRUST_REVIEW is the one status here that does NOT mean something went wrong: the
+  // statement parsed and rows were staged, but the extraction's own evidence contradicts them, so
+  // the import is withheld from the confirm step until a person decides. It collapses into the
+  // same `userStatus` as HELD_FOR_REVIEW below, because the user is in the same situation either
+  // way -- the difference is entirely ours.
   status: 'QUEUED' | 'PARSING' | 'ANALYZING' | 'DEDUPING' | 'IMPORTING' | 'LEARNING'
-    | 'COMPLETED' | 'FAILED' | 'CANCELLED';
+    | 'COMPLETED' | 'FAILED' | 'HELD_FOR_REVIEW' | 'HELD_FOR_TRUST_REVIEW' | 'CANCELLED';
   // Sprint 4 item 20a's five-state mapping, additive alongside `status` (unchanged, still needed
   // for the timeline UI's per-stage granularity) -- for a caller that wants the collapsed
   // "processing / completed / action required / failed / cancelled" view without re-deriving it.
-  userStatus: 'PROCESSING' | 'COMPLETED' | 'ACTION_REQUIRED' | 'FAILED' | 'CANCELLED';
+  // HELD_FOR_REVIEW: the import failed for a reason nothing recognised, and a human is
+  // looking at it. Deliberately neither FAILED nor ACTION_REQUIRED -- there is nothing the
+  // user can do, and nothing for them to fix.
+  userStatus: 'PROCESSING' | 'COMPLETED' | 'ACTION_REQUIRED' | 'FAILED'
+    | 'HELD_FOR_REVIEW' | 'CANCELLED';
   // Null while the statement is still being read — deliberately not 0, which would be
   // indistinguishable from an empty file and would render as a stuck "0 of 0".
   rowsTotal: number | null;
@@ -901,10 +930,11 @@ export const deviceApi = {
 
 // --- Import statistics ---
 //
-// The only analytics view still exposed to end users -- merchant/rule/relationship/learning
-// management and the rest of the analytics views are admin-only now (see the admin portal's
-// UserDetail page and the backend's AdminUser*Controller family). This one stays because
-// Settings.tsx's Account section shows the signed-in user their own import totals.
+// importStatistics stays open to every plan -- Settings.tsx's Account section shows the
+// signed-in user their own import totals regardless of entitlement. The five views below it
+// (topMerchants/trend/categoryConfidence/topCategories/learningGrowth) are the ones that were
+// admin-only until AnalyticsController restored them as the first real ADVANCED_REPORTS gate --
+// see AdvancedReports.tsx, the customer-facing page built around them.
 
 export interface ImportStatistics {
   totalStatements: number;
@@ -912,9 +942,28 @@ export interface ImportStatistics {
   totalTransactionsSkipped: number;
   lastImportedAt: string | null;
 }
+
+// Mirrors backend AnalyticsDto exactly.
+export interface TopMerchant { merchantId: string; merchantName: string; totalSpend: number; transactionCount: number; }
+export interface TrendPoint { month: string; totalSpend: number; }
+export interface CategoryConfidencePoint { category: string; avgConfidence: number; merchantCount: number; }
+export interface TopCategory { categoryId: string; categoryName: string; totalSpend: number; transactionCount: number; }
+export interface LearningGrowthPoint { month: string; learnedCount: number; correctedCount: number; }
+
 export const analyticsApi = {
   importStatistics: () =>
     api.get<ImportStatistics>('/analytics/merchants', { params: { view: 'importStatistics' } }).then((r) => r.data),
+  // month is "YYYY-MM"; omitted means all-time for topMerchants/topCategories, and the trailing
+  // 6-month window ending this month for trend -- see AnalyticsService's own doc comments.
+  topMerchants: (month?: string) =>
+    api.get<TopMerchant[]>('/analytics/top-merchants', { params: month ? { month } : {} }).then((r) => r.data),
+  trend: () => api.get<TrendPoint[]>('/analytics/trend').then((r) => r.data),
+  categoryConfidence: () =>
+    api.get<CategoryConfidencePoint[]>('/analytics/category-confidence').then((r) => r.data),
+  topCategories: (month?: string) =>
+    api.get<TopCategory[]>('/analytics/top-categories', { params: month ? { month } : {} }).then((r) => r.data),
+  learningGrowth: () =>
+    api.get<LearningGrowthPoint[]>('/analytics/learning-growth').then((r) => r.data),
 };
 
 // --- Financial Intelligence Workspace: Dashboard ---
@@ -986,8 +1035,9 @@ export const entitlementsApi = {
   mine: () => api.get<EntitlementsDto>('/entitlements').then((r) => r.data),
 };
 
-// D-28 PR4-B. The user's own billing history (proposal §3.4) -- empty for everyone today, since
-// no payment gateway exists yet (§10). Mirrors backend BillingDtos.BillingHistoryEntryDto exactly.
+// D-28 PR4-B, extended by subscription billing V1/V2/V3. The user's own billing surface: history
+// (Plan 1, always existed), and now the active subscription plus the actions that change it.
+// Mirrors backend BillingDtos.BillingHistoryEntryDto exactly.
 export interface BillingHistoryEntry {
   id: string;
   amount: number;
@@ -997,25 +1047,145 @@ export interface BillingHistoryEntry {
   createdAt: string;
 }
 
-export const billingApi = {
-  history: () => api.get<BillingHistoryEntry[]>('/billing/history').then((r) => r.data),
-};
-
-// D-28 PR4-C. The referral program (proposal §4) -- mirrors backend ReferralDtos exactly.
-export interface MyReferralEntry {
-  referralId: string;
-  referredUserFullName: string | null;
+// Mirrors backend BillingDtos.MySubscriptionDto exactly.
+export interface PendingPlanChange {
+  toPlanCode: string;
+  toPlanName: string;
+  effectiveAt: string;
+}
+// A stuck or in-flight checkout the Billing Portal can offer to resume or cancel (Plan 3 review) --
+// razorpaySubscriptionId/keyId are the SAME values a fresh checkout() call would return, safe to
+// hand straight to openRazorpayCheckout with no other change.
+export interface PendingOrder {
+  planCode: string;
+  planName: string;
+  billingCycle: string;
+  razorpaySubscriptionId: string;
+  keyId: string;
+}
+export interface MySubscription {
+  planCode: string;
+  planName: string;
+  billingCycle: string | null;
   status: string;
-  reward: number | null;
-  createdAt: string;
+  renewalDate: string | null;
+  autoRenew: boolean;
+  hasBillingSubscription: boolean;
+  pendingChange: PendingPlanChange | null;
+  pendingOrder: PendingOrder | null;
 }
 
+// Mirrors backend BillingDtos.CheckoutResponseDto exactly. `null` from changePlan() means the
+// requested change (a downgrade, or a same-plan no-op) needed no further client action -- see
+// that endpoint's own doc comment on the backend.
+export interface CheckoutResponse {
+  razorpaySubscriptionId: string;
+  keyId: string;
+}
+
+export const billingApi = {
+  history: () => api.get<BillingHistoryEntry[]>('/billing/history').then((r) => r.data),
+  mySubscription: () => api.get<MySubscription>('/billing/subscription').then((r) => r.data),
+  checkout: (planCode: string, billingCycle: string) =>
+    api.post<CheckoutResponse>('/billing/checkout', { planCode, billingCycle }).then((r) => r.data),
+  cancel: () => api.post<{ message: string }>('/billing/cancel').then((r) => r.data),
+  changePlan: (planCode: string, billingCycle: string) =>
+    api.post<CheckoutResponse | null>('/billing/change-plan', { planCode, billingCycle }).then((r) => r.data),
+  // Plan 3 review. Clears a stuck PENDING order so a different plan/cycle can be checked out.
+  // Never calls Razorpay itself; see the backend's cancelPendingOrder for why that's correct.
+  cancelPendingOrder: () => api.post<{ message: string }>('/billing/pending-order/cancel').then((r) => r.data),
+};
+
+// Refer & Earn MVP -- mirrors backend ReferralDtos exactly. Just a code and a count.
 export interface MyReferralsDto {
-  referrals: MyReferralEntry[];
-  walletBalance: number;
+  code: string;
+  referralCount: number;
 }
 
 export const referralsApi = {
   myCode: () => api.get<{ code: string }>('/referrals/my-code').then((r) => r.data),
   mine: () => api.get<MyReferralsDto>('/referrals/mine').then((r) => r.data),
+};
+
+// Support, Help & Feedback v1 (Phase 8). Mirrors com.finora.entity.SupportTicket.Category/Status
+// and com.finora.entity.FeedbackEntry.Type/Context exactly -- a value added on one side with
+// nothing here to render it is the failure mode PICK ONE_OF-style unions exist to catch at
+// compile time rather than as a blank row in production.
+export type SupportTicketCategory =
+  | 'STATEMENT_IMPORT' | 'CATEGORIZATION' | 'ACCOUNT_LINKING' | 'DATA_ACCURACY' | 'TECHNICAL_ISSUE' | 'OTHER';
+export type SupportTicketStatus = 'OPEN' | 'IN_PROGRESS' | 'RESOLVED' | 'CLOSED';
+export type ClientPlatform = 'WEB' | 'MOBILE_ANDROID' | 'MOBILE_IOS';
+
+export interface SupportTicketAttachmentSummary {
+  id: string;
+  filename: string;
+  contentType: string;
+  sizeBytes: number;
+}
+
+export interface SupportTicketSummary {
+  id: string;
+  ticketNumber: string;
+  userId: string;
+  category: SupportTicketCategory;
+  subject: string;
+  status: SupportTicketStatus;
+  claimedByAdminId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SupportTicketDetail extends SupportTicketSummary {
+  description: string;
+  source: ClientPlatform;
+  appVersion: string | null;
+  resolvedAt: string | null;
+  closedAt: string | null;
+  attachments: SupportTicketAttachmentSummary[];
+}
+
+export const supportApi = {
+  create: (payload: { category: SupportTicketCategory; subject: string; description: string; file?: File | null }) => {
+    const form = new FormData();
+    form.append('category', payload.category);
+    form.append('subject', payload.subject);
+    form.append('description', payload.description);
+    if (payload.file) form.append('file', payload.file);
+    return api
+      .post<SupportTicketDetail>('/support/tickets', form, { headers: { 'Content-Type': 'multipart/form-data' } })
+      .then((r) => r.data);
+  },
+  list: (page = 0, size = 25) =>
+    api.get<PagedResponse<SupportTicketSummary>>('/support/tickets', { params: { page, size } }).then((r) => r.data),
+  detail: (id: string) => api.get<SupportTicketDetail>(`/support/tickets/${id}`).then((r) => r.data),
+  // Same pattern as statementImportsApi.downloadFile -- a plain <a href> can't carry the Bearer
+  // token, so this rides the authenticated axios instance and triggers the browser download
+  // client-side.
+  downloadAttachment: async (ticketId: string, attachmentId: string, filename: string) => {
+    try {
+      const res = await api.get(`/support/tickets/${ticketId}/attachments/${attachmentId}`, { responseType: 'blob' });
+      downloadBlob(res.data as Blob, filename);
+    } catch (err) {
+      throw await withBlobErrorMessage(err);
+    }
+  },
+};
+
+export type FeedbackType = 'BUG' | 'FEATURE_REQUEST' | 'IMPROVEMENT' | 'GENERAL';
+export type FeedbackContext =
+  | 'DASHBOARD' | 'TRANSACTIONS' | 'REPORTS' | 'BUDGETS' | 'GOALS' | 'IMPORT_FLOW' | 'ACCOUNTS' | 'SETTINGS' | 'HELP' | 'OTHER';
+
+export interface FeedbackSummary {
+  id: string;
+  userId: string;
+  type: FeedbackType;
+  context: FeedbackContext;
+  source: ClientPlatform;
+  message: string;
+  createdAt: string;
+}
+
+export const feedbackApi = {
+  submit: (payload: { type: FeedbackType; context: FeedbackContext; message: string }) =>
+    api.post<FeedbackSummary>('/feedback', payload).then((r) => r.data),
 };

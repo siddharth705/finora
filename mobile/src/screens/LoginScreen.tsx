@@ -150,7 +150,7 @@ export function LoginScreen({ navigation, route }: Props) {
           retained and nothing was lost.
         </Text>
 
-        <Button label="Reactivate my account" onPress={handleReactivate} loading={loading} />
+        <Button label="Reactivate my account" onPress={handleReactivate} loading={loading} pressScale />
         <View style={styles.cancelRow}>
           <Button
             label="Not you? Go back"
@@ -188,6 +188,20 @@ export function LoginScreen({ navigation, route }: Props) {
         </View>
       }
     >
+      {showSocialSignIn ? (
+        <>
+          <View style={styles.socialStack}>
+            <GoogleSignInButton onCredential={handleGoogleCredential} onError={setError} />
+            <AppleSignInButton onCredential={handleAppleCredential} onError={setError} />
+          </View>
+          <View style={styles.dividerRow}>
+            <View style={[styles.dividerLine, { backgroundColor: c.border }]} />
+            <Text style={[styles.dividerText, { color: c.muted }]}>Or continue below</Text>
+            <View style={[styles.dividerLine, { backgroundColor: c.border }]} />
+          </View>
+        </>
+      ) : null}
+
       <TextField
         label="Email or mobile number"
         value={identifier}
@@ -219,21 +233,7 @@ export function LoginScreen({ navigation, route }: Props) {
         />
       </View>
 
-      <Button label="Sign in" onPress={handleSubmit} loading={loading} testID="login-submit" />
-
-      {showSocialSignIn ? (
-        <>
-          <View style={styles.dividerRow}>
-            <View style={[styles.dividerLine, { backgroundColor: c.border }]} />
-            <Text style={[styles.dividerText, { color: c.muted }]}>OR</Text>
-            <View style={[styles.dividerLine, { backgroundColor: c.border }]} />
-          </View>
-          <View style={styles.socialStack}>
-            <GoogleSignInButton onCredential={handleGoogleCredential} onError={setError} />
-            <AppleSignInButton onCredential={handleAppleCredential} onError={setError} />
-          </View>
-        </>
-      ) : null}
+      <Button label="Sign in" onPress={handleSubmit} loading={loading} testID="login-submit" pressScale />
 
       <View style={[styles.notice, { backgroundColor: c.primaryLight }]}>
         <Text style={[styles.noticeText, { color: c.ink }]}>
@@ -268,6 +268,11 @@ const styles = StyleSheet.create({
   dividerText: {
     fontSize: 11,
     fontWeight: '600',
+    // Applied here rather than typed in caps: VoiceOver/TalkBack often spell out a long
+    // hardcoded-caps phrase letter by letter, mistaking it for an acronym -- this keeps the
+    // underlying text natural-case (readable as words) while still rendering all-caps visually,
+    // same split the web AuthDivider already gets from CSS text-transform.
+    textTransform: 'uppercase',
   },
   socialStack: {
     gap: spacing.sm,

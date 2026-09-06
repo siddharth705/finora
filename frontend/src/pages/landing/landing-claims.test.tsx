@@ -81,7 +81,7 @@ describe('landing page — marketing claims', () => {
         ).toBe('available');
       }
     }
-    expect(PLANS.filter((p) => p.availability === 'available').map((p) => p.id)).toEqual(['free']);
+    expect(PLANS.filter((p) => p.availability === 'available').map((p) => p.id)).toEqual(['free', 'plus', 'premium']);
   });
 
   it('renders no rupee price for an unreleased tier', () => {
@@ -95,7 +95,14 @@ describe('landing page — marketing claims', () => {
     expect(pricing, 'The pricing section should have id="pricing"').not.toBeNull();
 
     const rendered = (pricing?.textContent ?? '').match(/₹[\d,]+/g) ?? [];
-    const allowed = PLANS.filter((p) => p.price).map((p) => p.price as string);
+    // A plan's own price, plus any rupee amount inside its secondaryPriceNote (e.g. "or
+    // ₹3,500/year") -- both trace back to this same plans.ts source of truth, so both are
+    // legitimate here; the invariant this test guards is "every rendered price is backed by
+    // plans.ts," not "only the primary price may ever appear."
+    const allowed = PLANS.flatMap((p) => [
+      ...(p.price ? [p.price] : []),
+      ...((p.secondaryPriceNote?.match(/₹[\d,]+/g)) ?? []),
+    ]);
 
     // ₹149 and ₹249 shipped here on tiers with no billing behind them.
     expect(

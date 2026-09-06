@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import Svg, { Circle, G } from 'react-native-svg';
 import { fmtCurrency } from '../../lib/format';
 import {
@@ -13,6 +13,9 @@ export interface Slice {
   label: string;
   value: number;
   color: string;
+  /** Track C/C4. Optional so InvestmentsScreen's holdings donut (never drilled into) can keep
+   *  passing plain {label,value,color} slices unchanged -- undefined behaves as not drillable. */
+  drillable?: boolean;
 }
 
 /**
@@ -23,7 +26,18 @@ export interface Slice {
  * The geometry lives in lib/chartGeometry.ts so its edge cases are covered by tests -- bad chart
  * math still renders, just wrongly, which neither a type-check nor a bundle would catch.
  */
-export function DonutChart({ slices, centerLabel }: { slices: Slice[]; centerLabel?: string }) {
+export function DonutChart({
+  slices,
+  centerLabel,
+  onSlicePress,
+}: {
+  slices: Slice[];
+  centerLabel?: string;
+  /** Track C/C4. Called with the tapped slice's own `label` -- only for a `drillable` slice;
+   *  a non-drillable row (the synthetic "Other" overflow bucket) renders as plain, untappable
+   *  text instead, since there is no single category a tap on it could honestly mean. */
+  onSlicePress?: (label: string) => void;
+}) {
   const c = useTheme();
   const largeText = useLargeFontScale();
   // Both callers already memoize `slices` specifically so a re-render doesn't redo this work --
@@ -32,6 +46,9 @@ export function DonutChart({ slices, centerLabel }: { slices: Slice[]; centerLab
   // By position, not by label -- see ArcSlice.index. Looking the colour up by label gave two
   // same-named holdings the same colour and one shared React key.
   const colorFor = (arcIndex: number) => slices[arcIndex]?.color ?? c.primary;
+  // buildArcs's own return shape doesn't carry `drillable` through -- looked up the same way as
+  // colorFor, by the caller's original array position.
+  const drillableFor = (arcIndex: number) => Boolean(onSlicePress) && Boolean(slices[arcIndex]?.drillable);
 
   if (arcs.length === 0) {
     return (
@@ -83,15 +100,38 @@ export function DonutChart({ slices, centerLabel }: { slices: Slice[]; centerLab
       {/* The SVG itself is invisible to a screen reader, so this legend is the accessible
           representation of the chart, not just a colour key. */}
       <View style={styles.legend}>
-        {arcs.map((a) => (
-          <View key={a.index} style={styles.legendRow} accessible accessibilityLabel={`${a.label}: ${fmtCurrency(a.value)}`}>
-            <View style={[styles.swatch, { backgroundColor: colorFor(a.index) }]} />
-            <Text style={[styles.legendLabel, { color: c.ink }]} numberOfLines={largeText ? 2 : 1}>
-              {a.label}
-            </Text>
-            <Text style={[styles.legendValue, { color: c.mutedInk }]}>{fmtCurrency(a.value)}</Text>
-          </View>
-        ))}
+        {arcs.map((a) => {
+          const canDrill = drillableFor(a.index);
+          const row = (
+            <>
+              <View style={[styles.swatch, { backgroundColor: colorFor(a.index) }]} />
+              <Text style={[styles.legendLabel, { color: c.ink }]} numberOfLines={largeText ? 2 : 1}>
+                {a.label}
+              </Text>
+              <Text style={[styles.legendValue, { color: c.mutedInk }]}>{fmtCurrency(a.value)}</Text>
+            </>
+          );
+          // Track C/C4: a drillable row is a real navigation target, so it gets the accessible
+          // role and hint a button needs -- not just a label, the same distinction StagedRowCard's
+          // category chip and Dashboard's review nudge already draw for a tappable row.
+          return canDrill ? (
+            <Pressable
+              key={a.index}
+              onPress={() => onSlicePress!(a.label)}
+              style={styles.legendRow}
+              android_ripple={{ color: c.border }}
+              accessibilityRole="button"
+              accessibilityLabel={`${a.label}: ${fmtCurrency(a.value)}`}
+              accessibilityHint="Opens these transactions"
+            >
+              {row}
+            </Pressable>
+          ) : (
+            <View key={a.index} style={styles.legendRow} accessible accessibilityLabel={`${a.label}: ${fmtCurrency(a.value)}`}>
+              {row}
+            </View>
+          );
+        })}
       </View>
     </View>
   );

@@ -632,6 +632,36 @@ public final class PdfFixtureBuilder {
         return render(List.of(page));
     }
 
+    /**
+     * A single Recurring Deposit account whose own summary table (rate, principal-equivalent
+     * installment amount, maturity date) is immediately followed -- no identity banner, no blank
+     * line -- by its own separate installment schedule (a different column set entirely, no
+     * maturity/interest columns of its own). Modeled on a real HDFC composite statement's own RD
+     * block, which prints exactly this shape and forces {@code
+     * PdfPreviewGenerator#mergeOrphanedInvestmentFragments} to exist: the schedule alone never
+     * carries enough of RD's own expected signals to classify above threshold, so without the
+     * merge it falls to UNKNOWN and its real installment rows never stage, even though {@link
+     * PdfTableLocator} correctly extracts every one of them.
+     */
+    public static byte[] buildOrphanedInvestmentScheduleSample() throws IOException {
+        // Anchors spaced wider than each header LABEL's own rendered width at FONT_SIZE (see this
+        // method's sibling buildCompositeMultiProductStatementSample's own comment on why -- a
+        // narrower gap here previously let "Installment Amount" and "Sequence Number" render into
+        // their own neighbour, garbling both into one unreadable run).
+        float[] summaryCol = {LEFT_MARGIN, 170f, 290f, 400f};
+        float[] scheduleCol = {LEFT_MARGIN, 180f, 290f, 400f};
+
+        PageBuilder page = new PageBuilder();
+        page.line("RD ACCOUNT SUMMARY")
+                .row(summaryCol, "Account No", "Installment Amount", "Maturity Date", "Rate Of Interest")
+                .row(summaryCol, "555123456", "1000.00", "20/03/2030", "6.75")
+                .row(scheduleCol, "Sequence Number", "Due Date", "Amount Paid", "Installment Frequency")
+                .row(scheduleCol, "1", "01/04/2026", "1000.00", "Monthly")
+                .row(scheduleCol, "2", "01/05/2026", "1000.00", "Monthly");
+
+        return render(List.of(page));
+    }
+
     // ==================== OFFSET_COLUMN_ANCHORS ====================
 
     /**
@@ -1604,6 +1634,78 @@ public final class PdfFixtureBuilder {
         page.line("Some Financial Institution")
                 .line("This statement uses a layout the engine does not recognize yet.")
                 .line("Account summary: nothing here matches a known column header.");
+
+        return render(List.of(page));
+    }
+
+    /**
+     * A savings ledger whose only rows are its own opening/closing balance markers plus a printed
+     * "Transaction Count" line reading zero on both the deposit and withdrawal side -- the shape
+     * {@link com.finora.imports.ExplicitZeroActivityDetector} exists to recognise. Modeled on a
+     * real HSBC composite statement in the corpus; every value here is invented.
+     *
+     * <p>Every row carries its own date, unlike the real document (where only the first row does
+     * and the rest rely on row-continuation to inherit it) -- deliberately, so this fixture proves
+     * the detector and its wiring without depending on {@code PdfTableLocator}'s continuation
+     * heuristics, which are a separate, already independently-tested concern.
+     *
+     * <p>The Turnover and Count rows carry the SAME Balance value as the two rows above them, and
+     * that is not incidental. {@code TransactionNormalizer}'s {@code RowKind} rule is: an
+     * explicitly-zeroed transactional column (Deposits=Withdrawals=0) still classifies as an
+     * ordinary {@code TRANSACTION} unless the row ALSO carries a Balance-style column -- a Balance
+     * value is what tips it to {@code BALANCE_MARKER} instead, keeping it out of the staged rows
+     * this fixture must produce zero of. The real evidencing document prints its Turnover row this
+     * way; verified by first building this fixture WITHOUT a Balance value on these two rows and
+     * watching them wrongly stage as two zero-amount transactions instead of triggering the
+     * detector.
+     */
+    public static byte[] buildExplicitZeroTransactionCountSample() throws IOException {
+        float[] col = {LEFT_MARGIN, 150f, 320f, 400f, 480f};
+
+        PageBuilder page = new PageBuilder();
+        page.line("Composite Statement")
+                .blankLine()
+                .row(col, "Date", "Transaction Details", "Deposits", "Withdrawals", "Balance")
+                .row(col, "01 Jul 2026", "BALANCE BROUGHT FORWARD", null, null, "500.00")
+                .row(col, "01 Jul 2026", "CLOSING BALANCE", null, null, "500.00")
+                .row(col, "01 Jul 2026", "Transaction Turnover", "0.00", "0.00", "500.00")
+                .row(col, "01 Jul 2026", "Transaction Count", "0", "0", "500.00");
+
+        return render(List.of(page));
+    }
+
+    /**
+     * The same explicit-zero savings ledger as {@link #buildExplicitZeroTransactionCountSample},
+     * bundled into a two-section composite statement alongside a SECOND, unrelated section whose
+     * one row fails to stage for a genuine, unrelated reason -- its amount column resolves but
+     * does not parse as a number, the shape {@code TransactionNormalizer.hasUnparseableRecognizedAmount}
+     * exists for.
+     *
+     * <p>Built specifically to prove the cross-section guard in {@code PdfPreviewGenerator}
+     * ({@code sectionCount <= 1}) actually does something: without it, this document's savings
+     * section legitimately declaring zero activity would make {@code ExtractionCheck} report the
+     * WHOLE document as "nothing to import" -- masking the credit-card section's real, unrelated
+     * extraction failure behind a message that says nothing is wrong with the file.
+     */
+    public static byte[] buildExplicitZeroTransactionCountInACompositeStatementSample() throws IOException {
+        float[] savingsCol = {LEFT_MARGIN, 150f, 320f, 400f, 480f};
+        float[] ccCol = {LEFT_MARGIN, 150f, 470f};
+
+        PageBuilder page = new PageBuilder();
+        page.line("Composite Statement")
+                .blankLine()
+                .line("SAVINGS ACCOUNT-RES  100-111111-002")
+                .row(savingsCol, "Date", "Transaction Details", "Deposits", "Withdrawals", "Balance")
+                .row(savingsCol, "01 Jul 2026", "BALANCE BROUGHT FORWARD", null, null, "500.00")
+                .row(savingsCol, "01 Jul 2026", "CLOSING BALANCE", null, null, "500.00")
+                .row(savingsCol, "01 Jul 2026", "Transaction Turnover", "0.00", "0.00", "500.00")
+                .row(savingsCol, "01 Jul 2026", "Transaction Count", "0", "0", "500.00")
+                .blankLine()
+                .line("CREDIT CARD ACCOUNT  4000 1111 2222 3333")
+                .row(ccCol, "DATE", "TRANSACTION DETAILS", "AMOUNT (Rs.)")
+                // A recognized amount column present and non-blank, but unparseable as a number --
+                // a genuine, unrelated extraction defect, nothing to do with a printed zero claim.
+                .row(ccCol, "15/07/2026", "UPI-Retailer One", "ERR");
 
         return render(List.of(page));
     }

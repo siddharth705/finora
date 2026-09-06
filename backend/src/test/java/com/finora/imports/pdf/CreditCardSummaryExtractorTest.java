@@ -405,4 +405,214 @@ class CreditCardSummaryExtractorTest {
                         + "field resolved on the real summary's own page")
                 .isNull();
     }
+
+    // ------------------------------------------------- gate loosening (Phase 5, task 1)
+
+    @Test
+    void totalAmountDueSurfacesAlone_whenOnlyOneStrategyFoundIt_evenWithoutFullReconciliation() {
+        // GRID finds ONLY totalAmountDue on this page (no previous balance, purchases, or payments
+        // printed alongside it) -- a real shape: some statements' top summary prints just the
+        // headline total next to a due date, with no component breakdown anywhere.
+        List<PositionedText> runs = new ArrayList<>(List.of(
+                run("Total Amount Due", 50f, 100f, 200f),
+                run("13,100.00", 55f, 60f, 230f)));
+
+        var summary = CreditCardSummaryExtractor.extract(runs);
+
+        assertThat(summary.totalAmountDue()).isEqualByComparingTo("13100.00");
+        assertThat(summary.hasReconcilableFields())
+                .as("the other three fields are genuinely absent -- reconciliation must still refuse")
+                .isFalse();
+    }
+
+    @Test
+    void totalAmountDueStaysNull_whenTheTwoStrategiesDisagree() {
+        // GRID resolves a value from a clean stacked grid on page 0; INLINE_LABEL_VALUE separately
+        // resolves a DIFFERENT value from an unrelated same-row match on page 1 (the shape of a real
+        // illustrative worked-example section elsewhere in a statement). Genuine disagreement --
+        // per the explicit scope decision, this stays unresolved rather than guessing a winner.
+        List<PositionedText> runs = new ArrayList<>(List.of(
+                run("Total Amount Due", 50f, 100f, 200f),
+                run("13,100.00", 55f, 60f, 230f),
+                runOnPage("Total Amount Due", 50f, 100f, 500f, 1),
+                runOnPage("9,999.00", 160f, 60f, 500f, 1)));
+
+        var summary = CreditCardSummaryExtractor.extract(runs);
+
+        assertThat(summary.totalAmountDue()).isNull();
+        assertThat(summary.conflictingFields()).contains("totalAmountDue");
+    }
+
+    @Test
+    void totalAmountDueSurfaces_whenTheTwoStrategiesAgree() {
+        // A genuinely different shape per page, each strategy resolving the SAME amount from its own
+        // page independently: page 0 is a stacked grid (label y=200, value row y=230 -- GRID's
+        // shape, too far apart in y for SAME_ROW's 3pt tolerance); page 1 is a same-row layout
+        // (label and value both y=200 -- SAME_ROW's shape; GRID finds nothing there, since there is
+        // no second row on that page for rowBelow to pair it with). Both land on the identical
+        // figure, so this exercises the TRUE agreement branch, not just "one strategy silent."
+        List<PositionedText> runs = new ArrayList<>(List.of(
+                run("Total Amount Due", 50f, 100f, 200f),
+                run("13,100.00", 55f, 60f, 230f),
+                runOnPage("Total Amount Due", 50f, 100f, 200f, 1),
+                runOnPage("13,100.00", 160f, 60f, 200f, 1)));
+
+        var summary = CreditCardSummaryExtractor.extract(runs);
+
+        assertThat(summary.totalAmountDue()).isEqualByComparingTo("13100.00");
+        assertThat(summary.conflictingFields())
+                .as("equal values across strategies must never register as a conflict")
+                .doesNotContain("totalAmountDue");
+    }
+
+    @Test
+    void aFullyReconciledDocumentIsUnaffected() {
+        // Guards against Task 1 accidentally changing AU's already-passing, already-tested shape.
+        var summary = CreditCardSummaryExtractor.extract(cleanSummaryBlock());
+
+        assertThat(summary.totalAmountDue()).isEqualByComparingTo("13100.00");
+        assertThat(summary.hasReconcilableFields()).isTrue();
+    }
+
+    // ------------------------------------------------- duplicate-label agreement (Phase 5, task 2)
+
+    @Test
+    void aDuplicateLabelIsAcceptedWhenEveryOccurrenceAgrees() {
+        // Two occurrences of the same label on one page, same value both times -- a bank printing
+        // its own total under two different footnote markers/wordings for the identical figure.
+        List<PositionedText> runs = new ArrayList<>(List.of(
+                run("Previous Balance", 50f, 90f, 300f),
+                run("Purchases", 150f, 60f, 300f),
+                run("Payments / Credits", 340f, 90f, 300f),
+                run("Total Amount Due", 440f, 90f, 300f),
+                run("10,000.00", 55f, 40f, 330f),
+                run("5,000.00", 155f, 40f, 330f),
+                run("2,000.00", 345f, 40f, 330f),
+                run("13,000.00", 445f, 40f, 330f),
+                run("Total Amount Due", 440f, 90f, 400f),
+                run("13,000.00", 445f, 40f, 430f)));
+
+        var summary = CreditCardSummaryExtractor.extract(runs);
+
+        assertThat(summary.totalAmountDue()).isEqualByComparingTo("13000.00");
+        assertThat(summary.hasReconcilableFields()).isTrue();
+    }
+
+    @Test
+    void aDuplicateLabelStillRefusesWhenOccurrencesDisagree() {
+        // Same shape as above, but the second occurrence's value differs -- must remain refused,
+        // unchanged from today's behaviour (this is the existing test this task must not break,
+        // made explicit).
+        List<PositionedText> runs = new ArrayList<>(List.of(
+                run("Previous Balance", 50f, 90f, 300f),
+                run("Purchases", 150f, 60f, 300f),
+                run("Payments / Credits", 340f, 90f, 300f),
+                run("Total Amount Due", 440f, 90f, 300f),
+                run("10,000.00", 55f, 40f, 330f),
+                run("5,000.00", 155f, 40f, 330f),
+                run("2,000.00", 345f, 40f, 330f),
+                run("13,000.00", 445f, 40f, 330f),
+                run("Total Amount Due", 440f, 90f, 400f),
+                run("999.00", 445f, 40f, 430f)));
+
+        var summary = CreditCardSummaryExtractor.extract(runs);
+
+        assertThat(summary.totalAmountDue()).isNull();
+        assertThat(summary.hasReconcilableFields()).isFalse();
+    }
+
+    // ------------------------------------------------- label decoration (Phase 5, task 3)
+
+    @Test
+    void aFootnoteMarkedTotalDueLabelStillMatches() {
+        // A real shape: some statements print an asterisk before "Total Amount Due" pointing to a
+        // footnote, and/or a currency-symbol placeholder in parens after it.
+        List<PositionedText> runs = new ArrayList<>(List.of(
+                run("*Total Amount Due ( `)", 50f, 130f, 200f),
+                run("13,100.00", 55f, 60f, 230f)));
+
+        var summary = CreditCardSummaryExtractor.extract(runs);
+
+        assertThat(summary.totalAmountDue()).isEqualByComparingTo("13100.00");
+    }
+
+    @Test
+    void decorationStrippingDoesNotCreateAFalseMatchForAnUnrelatedLabel() {
+        // Guards against over-generalising the strip: an unrelated label that happens to end in a
+        // parenthetical must still not match anything.
+        List<PositionedText> runs = new ArrayList<>(List.of(
+                run("Total Outstanding (Principal)", 50f, 140f, 200f),
+                run("13,100.00", 55f, 60f, 230f)));
+
+        var summary = CreditCardSummaryExtractor.extract(runs);
+
+        assertThat(summary.totalAmountDue()).isNull();
+    }
+
+    // ------------------------------------------------- row-search past an intervening row (Phase 5, task 4)
+
+    @Test
+    void findsTheValueRowPastAnUnrelatedInterveningRow() {
+        // A real shape: an unrelated marketing/notice column running down the left side of the page
+        // (x=30) has text at a y-position BETWEEN the summary label and its own value, in the right
+        // column (x=440+). The immediate next row by y is the unrelated column's text -- not
+        // numeric, not recoverable -- so the value one row further down must still be reachable.
+        List<PositionedText> runs = new ArrayList<>(List.of(
+                run("Total Amount Due", 440f, 90f, 200f),
+                run("Please note our updated fee schedule", 30f, 200f, 206f),   // unrelated column
+                run("13,100.00", 445f, 60f, 214f)));
+
+        var summary = CreditCardSummaryExtractor.extract(runs);
+
+        assertThat(summary.totalAmountDue()).isEqualByComparingTo("13100.00");
+    }
+
+    // ------------------------------------------------- multi-run label joining (Phase 5, task 5)
+
+    @Test
+    void joinsAdjacentSameRowRunsIntoOneLabel() {
+        // A real shape: "Total", "Amount", "Due" printed as three separate positioned-text runs
+        // (individually differently styled/spaced) rather than one contiguous string, immediately
+        // followed on the same row by the value.
+        List<PositionedText> runs = new ArrayList<>(List.of(
+                run("Total", 280f, 18f, 132f),
+                run("Amount", 300.7f, 28f, 132f),
+                run("Due", 331.5f, 15f, 132f),
+                run("13,100.00", 435f, 60f, 132f)));
+
+        var summary = CreditCardSummaryExtractor.extract(runs);
+
+        assertThat(summary.totalAmountDue()).isEqualByComparingTo("13100.00");
+    }
+
+    @Test
+    void doesNotJoinRunsAcrossALargeXGap() {
+        // Guards against over-generalising the join: two runs far enough apart to plausibly belong
+        // to different columns must not be joined even if their concatenation would happen to match.
+        List<PositionedText> runs = new ArrayList<>(List.of(
+                run("Total", 30f, 18f, 132f),
+                run("Amount", 500f, 28f, 132f),      // implausibly far from "Total" to be one label
+                run("Due", 531f, 15f, 132f),
+                run("13,100.00", 600f, 60f, 132f)));
+
+        var summary = CreditCardSummaryExtractor.extract(runs);
+
+        assertThat(summary.totalAmountDue()).isNull();
+    }
+
+    @Test
+    void aJoinedLabelStillRequiresExactlyOneUnambiguousCandidate() {
+        // The existing "refuse on competing candidates" rule must still apply to a joined label,
+        // not just a single-run one.
+        List<PositionedText> runs = new ArrayList<>(List.of(
+                run("Total", 280f, 18f, 132f),
+                run("Amount", 300.7f, 28f, 132f),
+                run("Due", 331.5f, 15f, 132f),
+                run("13,100.00", 435f, 60f, 132f),
+                run("14,200.00", 500f, 60f, 132f)));
+
+        var summary = CreditCardSummaryExtractor.extract(runs);
+
+        assertThat(summary.totalAmountDue()).isNull();
+    }
 }

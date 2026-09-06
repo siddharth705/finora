@@ -65,4 +65,40 @@ class PageLegendBlockSuppressionTest {
         assertThat(ctx.capabilities().stream().map(c -> c.capability()))
                 .contains("PAGE_LEGEND_BLOCK_SUPPRESSED");
     }
+
+    @Test
+    void legendBlockWithNoRepeatedHeaderOnTheNextPage_stillResumesOnceARealTransactionRowIsSeen() {
+        // A real HDFC savings statement (24 pages) prints its header exactly once, on page 1, and
+        // never again -- every later page's transactions resume directly with no header row at all.
+        // pageLegendBlockActive's only resume signal used to be a newly recognized header row, so
+        // once this page-1 footer set the flag, there was no "next header" ever again to clear it --
+        // 231 of 243 real transactions were silently dropped for the rest of the document.
+        List<PositionedText> positioned = new ArrayList<>();
+        positioned.add(run("Date", 40f, 30f, 100f, 0));
+        positioned.add(run("Description", 100f, 80f, 100f, 0));
+        positioned.add(run("Amount", 300f, 45f, 100f, 0));
+        positioned.add(run("11 Jul 26", 40f, 45f, 120f, 0));
+        positioned.add(run("UPI-VMPL DEL 24", 100f, 80f, 120f, 0));
+        positioned.add(run("390.00", 300f, 40f, 120f, 0));
+        positioned.add(run("Closing balance includes funds earmarked for hold and uncleared funds",
+                20f, 400f, 140f, 0));
+        positioned.add(run("Address correctness is the customer's own responsibility", 20f, 400f, 150f, 0));
+        // Page 1: NO repeated header -- a real transaction resumes directly.
+        positioned.add(run("12 Jul 26", 40f, 45f, 50f, 1));
+        positioned.add(run("UPI-ZOMATO", 100f, 80f, 50f, 1));
+        positioned.add(run("25.00", 300f, 40f, 50f, 1));
+
+        DocumentContext ctx = new DocumentContext("PDF", "test");
+        PdfTableLocator.LocatedDocument doc = new PdfTableLocator().locateAll(positioned, ctx);
+
+        assertThat(doc.sections()).hasSize(1);
+        List<Map<String, String>> rows = doc.sections().get(0).rows();
+        assertThat(rows)
+                .as("the real transaction on page 1 must be recovered even with no repeated header to "
+                        + "reset the legend-block suppression")
+                .hasSize(2);
+        assertThat(rows.get(1))
+                .containsEntry("Description", "UPI-ZOMATO")
+                .containsEntry("Amount", "25.00");
+    }
 }

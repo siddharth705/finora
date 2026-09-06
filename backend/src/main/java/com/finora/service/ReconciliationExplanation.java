@@ -43,10 +43,18 @@ final class ReconciliationExplanation {
     /**
      * Why this transaction was flagged as a duplicate of {@code originalId}.
      *
-     * <p>The duplicate pass groups on an exact composite key, so its signals are all necessarily
-     * true — they are recorded anyway rather than left implied, because "which fields had to match"
+     * <p>The duplicate pass groups on a composite key, so its signals are all necessarily true —
+     * they are recorded anyway rather than left implied, because "which fields had to match"
      * is exactly what someone disputing a duplicate needs to see, and because the key's definition
      * has changed before (see {@code duplicateKey}'s own comment on scale and null handling).
+     *
+     * <p>"Necessarily true" is not the same as "identical", and {@code sameDescription} is the one
+     * signal where that now shows. A2 (2026-09-01) folded case and surrounding spaces out of the
+     * key, so the grouped rows' descriptions match under that folding and may still differ
+     * visibly — which matters here specifically, because this evidence is surfaced to a human
+     * comparing the two rows side by side in the admin Reconciliation Explorer. Reported as
+     * {@code "case-insensitive"} rather than a bare {@code true} when that is what actually
+     * happened, so the evidence never overstates what was checked.
      *
      * @param sameBalance         whether this row's running balance also matched the original's --
      *                            only true when {@code ReconciliationService.splitByDiscriminator}
@@ -57,13 +65,18 @@ final class ReconciliationExplanation {
      *                            checked" and "checked and different" are not the same fact and a
      *                            reviewer should not read the absence of one signal as the other
      * @param sameReferenceNumber same reasoning, for the reference-number fallback discriminator
+     * @param descriptionsIdenticalVerbatim whether the two descriptions match byte-for-byte, as
+     *                            opposed to only after the key's case/space folding — decides
+     *                            whether {@code sameDescription} reads {@code true} or
+     *                            {@code "case-insensitive"}
      */
-    static Map<String, Object> duplicate(UUID originalId, boolean sameBalance, boolean sameReferenceNumber) {
+    static Map<String, Object> duplicate(UUID originalId, boolean sameBalance, boolean sameReferenceNumber,
+                                          boolean descriptionsIdenticalVerbatim) {
         Map<String, Object> reason = new LinkedHashMap<>();
         reason.put("sameAccount", true);
         reason.put("sameDate", true);
         reason.put("sameAmount", true);
-        reason.put("sameDescription", true);
+        reason.put("sameDescription", descriptionsIdenticalVerbatim ? true : "case-insensitive");
         if (sameBalance) reason.put("sameBalance", true);
         if (sameReferenceNumber) reason.put("sameReferenceNumber", true);
         return envelope("DUPLICATE", originalId, reason);

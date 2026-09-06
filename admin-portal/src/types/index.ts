@@ -145,21 +145,6 @@ export interface ActivityTrendPointDto {
 
 /** D-28 PR4-A. Mirrors backend BillingDtos.SubscriptionSummaryDto exactly -- one row per user's
  *  current subscription, joined with their plan and account details for the admin list. */
-/** D-28 PR4-C. Mirrors backend ReferralDtos.AdminReferralSummaryDto exactly -- one row per
- *  referral, both parties identified for abuse review. */
-export interface AdminReferralSummaryDto {
-  referralId: string;
-  referrerUserId: string;
-  referrerEmail: string | null;
-  referrerFullName: string | null;
-  referredUserId: string;
-  referredEmail: string | null;
-  referredFullName: string | null;
-  status: string;
-  reward: number | null;
-  createdAt: string;
-}
-
 export interface SubscriptionSummaryDto {
   subscriptionId: string;
   userId: string;
@@ -168,9 +153,22 @@ export interface SubscriptionSummaryDto {
   planCode: string | null;
   planName: string | null;
   status: string;
+  // Plan 3. "RAZORPAY" means a live Razorpay mandate exists -- the plain plan dropdown must not
+  // fire directly; "ADMIN_GRANT" or null means it's safe to.
+  paymentProvider: string | null;
   startDate: string;
   endDate: string | null;
   renewalDate: string | null;
+}
+
+/** Plan 3 review. Mirrors backend BillingDtos.SubscriptionHealthDto exactly -- see that record's
+ *  own doc comment for why these five counts and not more. */
+export interface SubscriptionHealthDto {
+  activeCount: number;
+  pastDueCount: number;
+  paymentFailedCount: number;
+  cancelledCount: number;
+  pendingOrderCount: number;
 }
 
 export interface SystemHealthDto {
@@ -694,6 +692,9 @@ export interface ReconciliationStatsDto {
   duplicateCount: number;
   transferCount: number;
   refundCount: number;
+  reversalCount: number;
+  investmentTransferCount: number;
+  supersededCount: number;
   recurringCount: number;
   totalTransactions: number;
 }
@@ -1088,6 +1089,195 @@ export interface LearningQueueSummary {
   resolved: number;
 }
 
+/**
+ * One row of the admin notification dashboard (Task 12). Mirrors the backend's
+ * NotificationAdminDto.
+ *
+ * Deliberately has no email/phone field, unlike LearningQueueEvent's userEmail -- userId is a
+ * bare UUID with no join back to the user's contact details, matching
+ * AdminNotificationController's own no-PII-exposure requirement. There is also no `retryable` or
+ * any action flag: this dashboard is read-only, there is nothing here for the UI to offer.
+ */
+export interface NotificationAdminRow {
+  id: string;
+  userId: string;
+  type: string;
+  category: string;
+  channel: 'EMAIL' | 'SMS' | 'PUSH';
+  priority: string;
+  status: 'CREATED' | 'QUEUED' | 'PROCESSING' | 'SENT' | 'RETRYING' | 'DEAD_LETTER';
+  title: string;
+  attemptCount: number;
+  nextAttemptAt: string | null;
+  lastError: string | null;
+  sentAt: string | null;
+  createdAt: string;
+}
+
+/**
+ * One row of the held-imports triage queue.
+ *
+ * Carries no `lastError`, deliberately -- see HeldImportDto's own doc on the backend. That field is
+ * a raw parser message, and a parser message routinely quotes the statement content that defeated
+ * it. The list view is a page an operator leaves open; it gets the curated `failureCode` only.
+ * `userId` is a bare id for the same reason NotificationAdminRow's is: the controller never joins
+ * to a user's contact details, so no email or phone can reach this screen.
+ */
+export interface HeldImportRow {
+  id: string;
+  userId: string;
+  fileName: string;
+  sourceFormat: string | null;
+  failureCode: string | null;
+  attemptCount: number;
+  recoveryCount: number;
+  createdAt: string;
+  heldAt: string | null;
+}
+
+/** A held import plus the diagnostics an engineer needs. Every fetch of this is audited. */
+export interface HeldImportDetail {
+  job: HeldImportRow;
+  lastError: string | null;
+  correlationId: string | null;
+  objectKey: string | null;
+}
+
+/** `reprocessing` counts jobs already sent back to the queue, not every queued import. */
+export interface HeldImportSummary {
+  held: number;
+  reprocessing: number;
+}
+
+/** The trust-review lifecycle, mirroring `HeldStatement.Status` on the backend. */
+export type HeldStatementStatus =
+  | 'HELD' | 'ASSIGNED' | 'INVESTIGATING' | 'READY_FOR_IMPORT' | 'IMPORTED' | 'REJECTED';
+
+/**
+ * One row of the held-statement (trust-review) queue.
+ *
+ * Carries no statement content and no object key -- opening the document is a separate, audited
+ * endpoint. `userId` is a bare id, same reason `HeldImportRow.userId` is: no email or phone can
+ * reach this screen even indirectly. `bankName` is a snapshot from hold time and can be null when
+ * the parser could not name a bank.
+ */
+export interface HeldStatementRow {
+  id: string;
+  heldId: string;
+  importJobId: string;
+  userId: string;
+  bankName: string | null;
+  status: HeldStatementStatus;
+  triggerSummary: string | null;
+  reliabilityStatus: string | null;
+  textSource: string | null;
+  headerReconstructionUncertain: boolean | null;
+  parserVersion: string | null;
+  assignedEngineerId: string | null;
+  engineerNotes: string | null;
+  rootCause: string | null;
+  fixReference: string | null;
+  falsePositive: boolean | null;
+  createdAt: string;
+  assignedAt: string | null;
+  readyAt: string | null;
+  resolvedAt: string | null;
+}
+
+/** Mirrors the backend's `HeldStatementTelemetryDto` exactly, field for field. `falsePositives`
+ *  is a count of `approved`, not `resolved` -- see that field's own backend doc for why dividing
+ *  by `resolved` would understate the true proportion. */
+export interface HeldStatementTelemetrySummary {
+  totalHolds: number;
+  resolved: number;
+  approved: number;
+  rejected: number;
+  falsePositives: number;
+  byCategory: Record<string, number>;
+  medianResolutionHours: number | null;
+}
+
+/** Every filter is optional; `status` narrows within the open queue and can never surface a
+ *  resolved hold -- see the backend's `HeldStatementFilter` for why. */
+export interface HeldStatementQuery {
+  page?: number;
+  size?: number;
+  status?: HeldStatementStatus;
+  bank?: string;
+  olderThanHours?: number;
+  engineerId?: string;
+}
+
+/** One verification rule's outcome for one section -- the printed-versus-parsed numbers behind
+ *  the trigger, not a sentence summarising them. */
+export interface HeldStatementFinding {
+  sectionIndex: number;
+  rule: string;
+  outcome: string;
+  details: Record<string, unknown>;
+  createdAt: string;
+}
+
+/** One entry in a hold's audit history. `actorId` null means the system acted. */
+export interface HeldStatementEvent {
+  eventType: string;
+  fromStatus: string | null;
+  toStatus: string | null;
+  notes: string | null;
+  actorId: string | null;
+  createdAt: string;
+}
+
+/** The summary plus the evidence behind `triggerSummary` and the hold's own history. Still no
+ *  statement content -- opening the document is `/document`, gated and audited separately.
+ *  `fileName` is the original upload's real name (with its real extension), for the download
+ *  button to save under -- null in the rare case the underlying ImportJob no longer exists. */
+export interface HeldStatementDetail {
+  summary: HeldStatementRow;
+  fileName: string | null;
+  findings: HeldStatementFinding[];
+  timeline: HeldStatementEvent[];
+}
+
+/** What one parser re-run found -- mirrors the backend's `HeldStatementRerunResultDto` exactly. */
+export interface HeldStatementRerunResult {
+  previousParserVersion: string | null;
+  currentParserVersion: string | null;
+  parserVersionChanged: boolean;
+  stillHeld: boolean;
+  reasons: string[];
+  summary: HeldStatementRow;
+}
+
+/** NotificationAdminRow plus the message body and the provider attempt log, newest first. */
+export interface NotificationAdminDetail extends NotificationAdminRow {
+  message: string;
+  attempts: NotificationAttempt[];
+}
+
+export interface NotificationAttempt {
+  id: string;
+  provider: string;
+  response: string | null;
+  success: boolean;
+  attempt: number;
+  timestamp: string;
+}
+
+export interface NotificationAdminChannelSummary {
+  channel: string;
+  sent: number;
+  failed: number;
+}
+
+/** The dashboard's stat tiles: sent/failed counts, overall and by channel. Deliberately just
+ *  counts -- no trend charts, no engagement scoring (proposal section 2.5/4). */
+export interface NotificationAdminSummary {
+  sent: number;
+  failed: number;
+  byChannel: NotificationAdminChannelSummary[];
+}
+
 
 /**
  * A merchant the normalization engine invented, awaiting a human decision (WI4).
@@ -1181,4 +1371,111 @@ export interface LayoutEvidenceReport {
   /** Plain-language statement of what the numbers do and do not support — including, and most
    *  often, "no evidence for reuse", which is a successful outcome rather than a gap. */
   verdict: string;
+}
+
+// Support, Help & Feedback v1, Phase 9 (admin portal). Mirrors the same
+// SupportTicket.Category/Status and FeedbackEntry.Type/Context unions the user-facing frontend and
+// mobile apps already carry their own copies of (com.finora.entity.SupportTicket,
+// com.finora.entity.FeedbackEntry) -- a value added on one side with nothing here to render it is
+// the failure mode a compile-time union exists to catch.
+export type SupportTicketCategory =
+  | 'STATEMENT_IMPORT' | 'CATEGORIZATION' | 'ACCOUNT_LINKING' | 'DATA_ACCURACY' | 'TECHNICAL_ISSUE' | 'OTHER';
+export type SupportTicketStatus = 'OPEN' | 'IN_PROGRESS' | 'RESOLVED' | 'CLOSED';
+export type ClientPlatform = 'WEB' | 'MOBILE_ANDROID' | 'MOBILE_IOS';
+
+/** One row of the ticket queue -- mirrors SupportTicketDto.Summary. */
+export interface SupportTicketRow {
+  id: string;
+  ticketNumber: string;
+  userId: string;
+  category: SupportTicketCategory;
+  subject: string;
+  status: SupportTicketStatus;
+  claimedByAdminId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Every filter is optional -- same shape as HeldStatementQuery. `q` searches ticket number and
+ *  subject -- see the backend's SupportTicketRepository.findForAdmin for exactly what it matches. */
+export interface SupportTicketQuery {
+  page?: number;
+  size?: number;
+  status?: SupportTicketStatus;
+  category?: SupportTicketCategory;
+  q?: string;
+}
+
+export interface SupportTicketAttachment {
+  id: string;
+  filename: string;
+  contentType: string;
+  sizeBytes: number;
+}
+
+/** Mirrors SupportTicketDto.Detail -- the SAME shape the ticket's own owner sees, served by the
+ *  same non-admin-rooted endpoint (SupportTicketController.detail's own doc explains why there is
+ *  no separate admin detail route). Structurally excludes internal-note content -- there is no
+ *  such field here at all, matching the backend DTO, not merely an admin-portal choice to hide it. */
+export interface SupportTicketDetail {
+  id: string;
+  ticketNumber: string;
+  userId: string;
+  category: SupportTicketCategory;
+  subject: string;
+  description: string;
+  status: SupportTicketStatus;
+  source: ClientPlatform;
+  appVersion: string | null;
+  claimedByAdminId: string | null;
+  resolvedAt: string | null;
+  closedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  attachments: SupportTicketAttachment[];
+}
+
+/** Mirrors SupportTicketDto.NoteDto -- admin-only, never reachable from the user-facing endpoint. */
+export interface SupportTicketNote {
+  id: string;
+  adminId: string;
+  note: string;
+  createdAt: string;
+}
+
+export type FeedbackType = 'BUG' | 'FEATURE_REQUEST' | 'IMPROVEMENT' | 'GENERAL';
+export type FeedbackContext =
+  | 'DASHBOARD' | 'TRANSACTIONS' | 'REPORTS' | 'BUDGETS' | 'GOALS' | 'IMPORT_FLOW' | 'ACCOUNTS' | 'SETTINGS' | 'HELP' | 'OTHER';
+
+/** One row of the feedback list -- mirrors FeedbackDto.Summary. */
+export interface FeedbackRow {
+  id: string;
+  userId: string;
+  type: FeedbackType;
+  context: FeedbackContext;
+  source: ClientPlatform;
+  message: string;
+  createdAt: string;
+}
+
+export interface FeedbackQuery {
+  page?: number;
+  size?: number;
+  type?: FeedbackType;
+  context?: FeedbackContext;
+}
+
+/** Mirrors FeedbackDto.Breakdown -- always unfiltered across the whole table (see the backend
+ *  service method's own doc comment for why), independent of whatever FeedbackQuery filter the
+ *  list view has active. */
+export interface FeedbackBreakdownCount {
+  label: string;
+  total: number;
+}
+
+export interface FeedbackBreakdown {
+  total: number;
+  byType: FeedbackBreakdownCount[];
+  byContext: FeedbackBreakdownCount[];
+  bySource: FeedbackBreakdownCount[];
 }

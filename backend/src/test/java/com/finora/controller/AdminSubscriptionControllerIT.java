@@ -4,7 +4,9 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.finora.AbstractIntegrationTest;
 import com.finora.entity.User;
+import com.finora.integrations.razorpay.RazorpaySubscriptionGateway;
 import com.finora.repository.RefreshTokenRepository;
+import com.finora.repository.SubscriptionRepository;
 import com.finora.repository.UserRepository;
 import com.finora.security.JwtService;
 import com.finora.service.SubscriptionService;
@@ -13,6 +15,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.http.*;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 import java.util.Map;
 import java.util.UUID;
@@ -28,6 +31,8 @@ class AdminSubscriptionControllerIT extends AbstractIntegrationTest {
     @Autowired private JwtService jwtService;
     @Autowired private RefreshTokenRepository refreshTokens;
     @Autowired private SubscriptionService subscriptionService;
+    @Autowired private SubscriptionRepository subscriptionRepository;
+    @MockitoBean private RazorpaySubscriptionGateway gateway;
     private final ObjectMapper mapper = new ObjectMapper();
 
     private User createUser(String role) {
@@ -114,5 +119,79 @@ class AdminSubscriptionControllerIT extends AbstractIntegrationTest {
             }
         }
         assertThat(confirmed).isTrue();
+    }
+
+    @Test
+    void admin_isBlockedFromChangingPlan_whileAUserHasAnActiveRazorpaySubscription() {
+        User admin = createUser("ADMIN");
+        User target = createUser("USER");
+        subscriptionService.provisionFreeSubscription(target.getId());
+        var subscription = subscriptionRepository.findActiveOrTrial(target.getId()).orElseThrow();
+        subscription.setPaymentProvider("RAZORPAY");
+        subscription.setRazorpaySubscriptionId("sub_test_" + UUID.randomUUID());
+        subscriptionRepository.save(subscription);
+
+        ResponseEntity<String> response = restTemplate.exchange(
+                "/api/v1/admin/subscriptions/" + target.getId() + "/plan", HttpMethod.PUT,
+                new HttpEntity<>(Map.of("planCode", "PLUS", "reason", "test"), bearerFor(admin)), String.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+    }
+
+    @Test
+    void admin_cancelsThePaidSubscription_thenChangePlanSucceeds() {
+        User admin = createUser("ADMIN");
+        User target = createUser("USER");
+        subscriptionService.provisionFreeSubscription(target.getId());
+        var subscription = subscriptionRepository.findActiveOrTrial(target.getId()).orElseThrow();
+        subscription.setPaymentProvider("RAZORPAY");
+        subscription.setRazorpaySubscriptionId("sub_test_" + UUID.randomUUID());
+        subscriptionRepository.save(subscription);
+
+        ResponseEntity<String> cancelResponse = restTemplate.postForEntity(
+                "/api/v1/admin/subscriptions/" + target.getId() + "/cancel-paid-subscription",
+                new HttpEntity<>(bearerFor(admin)), String.class);
+        assertThat(cancelResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
+
+        ResponseEntity<String> changePlanResponse = restTemplate.exchange(
+                "/api/v1/admin/subscriptions/" + target.getId() + "/plan", HttpMethod.PUT,
+                new HttpEntity<>(Map.of("planCode", "PLUS", "reason", "beta tester"), bearerFor(admin)), String.class);
+        assertThat(changePlanResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
+    }
+
+    @Test
+    void plainUser_isForbiddenFromViewingSubscriptionHealth() {
+        User user = createUser("USER");
+        ResponseEntity<String> response = restTemplate.exchange(
+                "/api/v1/admin/subscriptions/health", HttpMethod.GET, new HttpEntity<>(bearerFor(user)), String.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+    }
+
+    /** This IT suite shares one Postgres database across every test class (see other subscription
+     *  ITs' own fixtures), so a fresh PAST_DUE row here is never the only one in the table --
+     *  asserting a before/after DELTA, not an absolute count, is what makes this test correct
+     *  regardless of what other tests have already inserted. */
+    @Test
+    void admin_seesSubscriptionHealthCountsIncreaseAfterANewPastDueSubscription() throws Exception {
+        User admin = createUser("ADMIN");
+
+        JsonNode before = mapper.readTree(restTemplate.exchange(
+                "/api/v1/admin/subscriptions/health", HttpMethod.GET, new HttpEntity<>(bearerFor(admin)), String.class
+        ).getBody()).get("data");
+        long pastDueBefore = before.get("pastDueCount").asLong();
+
+        User target = createUser("USER");
+        subscriptionService.provisionFreeSubscription(target.getId());
+        var subscription = subscriptionRepository.findActiveOrTrial(target.getId()).orElseThrow();
+        subscription.setStatus(com.finora.entity.Subscription.STATUS_PAST_DUE);
+        subscriptionRepository.save(subscription);
+
+        ResponseEntity<String> response = restTemplate.exchange(
+                "/api/v1/admin/subscriptions/health", HttpMethod.GET, new HttpEntity<>(bearerFor(admin)), String.class);
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        JsonNode after = mapper.readTree(response.getBody()).get("data");
+
+        assertThat(after.get("pastDueCount").asLong()).isEqualTo(pastDueBefore + 1);
     }
 }

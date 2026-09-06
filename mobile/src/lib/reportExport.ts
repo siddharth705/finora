@@ -1,8 +1,8 @@
 import { File, Paths } from 'expo-file-system';
 import * as Print from 'expo-print';
-import * as Sharing from 'expo-sharing';
 import type { ReportData } from '../api/endpoints';
 import { fmtCurrency } from './format';
+import { shareFileAndCleanUp } from './shareFile';
 
 /**
  * Turning a month's report into something the user can keep.
@@ -27,7 +27,7 @@ import { fmtCurrency } from './format';
 
 function csvCell(value: string): string {
   const isPlainNumber = value.trim() !== '' && Number.isFinite(Number(value));
-  const needsFormulaGuard = !isPlainNumber && /^[=+\-@\t\r]/.test(value);
+  const needsFormulaGuard = !isPlainNumber && /^[=+\-@\t\r]/.test(value.replace(/^ +/, ''));
   const guarded = needsFormulaGuard ? `'${value}` : value;
   // RFC 4180: wrap in quotes, and double any quote inside.
   return `"${guarded.replace(/"/g, '""')}"`;
@@ -98,13 +98,6 @@ export function toPrintableHtml(report: ReportData): string {
 </html>`;
 }
 
-async function share(uri: string, mimeType: string, utiType: string, dialogTitle: string) {
-  if (!(await Sharing.isAvailableAsync())) {
-    throw new Error('Sharing is not available on this device.');
-  }
-  await Sharing.shareAsync(uri, { mimeType, UTI: utiType, dialogTitle });
-}
-
 export async function shareCsv(report: ReportData): Promise<void> {
   const name = `fynora-report-${report.month}.csv`;
   const file = new File(Paths.cache, name);
@@ -112,10 +105,13 @@ export async function shareCsv(report: ReportData): Promise<void> {
   if (file.exists) file.delete();
   file.create();
   file.write(toCsv(report));
-  await share(file.uri, 'text/csv', 'public.comma-separated-values-text', name);
+  await shareFileAndCleanUp(file, {
+    mimeType: 'text/csv', UTI: 'public.comma-separated-values-text', dialogTitle: name,
+  });
 }
 
 export async function sharePdf(report: ReportData): Promise<void> {
   const { uri } = await Print.printToFileAsync({ html: toPrintableHtml(report) });
-  await share(uri, 'application/pdf', 'com.adobe.pdf', `fynora-report-${report.month}.pdf`);
+  const name = `fynora-report-${report.month}.pdf`;
+  await shareFileAndCleanUp(new File(uri), { mimeType: 'application/pdf', UTI: 'com.adobe.pdf', dialogTitle: name });
 }

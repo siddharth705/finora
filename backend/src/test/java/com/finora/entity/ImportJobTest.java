@@ -458,4 +458,348 @@ class ImportJobTest {
                 .as("terminal state must not change what the async path's read-back decodes by")
                 .isEqualTo(com.finora.imports.storage.CompressionType.NONE);
     }
+
+    // ------------------------------------------------------------------ held for review
+
+    /** Drives a job to the state Task 2's routing puts a held one in: dead-lettered, then held. */
+    private ImportJob deadLetteredUnclassifiedJob() {
+        ImportJob job = job();
+        job.markClaimed("worker", Instant.now());
+        job.markClaimed("worker", Instant.now());
+        ImportJob.FailureOutcome outcome = job.recordFailure(
+                "IllegalStateException: no header row found", "IllegalStateException",
+                ErrorCode.RetryPolicy.RETRY_ONCE_THEN_ALERT, Instant.now());
+        assertThat(outcome)
+                .as("fixture must actually reach the dead-letter branch, or these tests prove nothing")
+                .isEqualTo(ImportJob.FailureOutcome.DEAD_LETTERED);
+        job.holdForReview("IllegalStateException", Instant.now());
+        return job;
+    }
+
+    @Test
+    void holdForReview_isTerminalForTheWorkerButDistinctFromFailed() {
+        ImportJob job = deadLetteredUnclassifiedJob();
+
+        assertThat(job.getStatus()).isEqualTo(ImportJob.Status.HELD_FOR_REVIEW);
+        assertThat(job.getStatus()).isNotEqualTo(ImportJob.Status.FAILED);
+        assertThat(ImportJob.Status.TERMINAL).contains(ImportJob.Status.HELD_FOR_REVIEW);
+        assertThat(ImportJob.Status.IN_FLIGHT).doesNotContain(ImportJob.Status.HELD_FOR_REVIEW);
+    }
+
+    @Test
+    void holdForReview_recordsTheUnrecognizedFailureCode() {
+        assertThat(deadLetteredUnclassifiedJob().getFailureCode()).isEqualTo("IllegalStateException");
+    }
+
+    /**
+     * The hold has to survive a later stray failure, or it is not a hold.
+     *
+     * <p>{@code recordFailure} declines to move a terminal job -- being in TERMINAL is exactly what
+     * buys that. Without it, a double-fault on the way out of a pass would quietly downgrade a held
+     * job to FAILED and the user would see the dead end this feature exists to avoid.
+     */
+    @Test
+    void aHeldJobIsNotMovedByAFurtherFailure() {
+        ImportJob job = deadLetteredUnclassifiedJob();
+
+        ImportJob.FailureOutcome outcome = job.recordFailure(
+                "something else went wrong", "RuntimeException",
+                ErrorCode.RetryPolicy.FAIL_FAST, Instant.now());
+
+        assertThat(outcome).isEqualTo(ImportJob.FailureOutcome.ALREADY_FINISHED);
+        assertThat(job.getStatus()).isEqualTo(ImportJob.Status.HELD_FOR_REVIEW);
+    }
+
+    /** Only the explicit transition may enter the hold -- advanceTo refuses every terminal state. */
+    @Test
+    void advanceToCannotEnterTheHold() {
+        assertThatThrownBy(() -> job().advanceTo(ImportJob.Status.HELD_FOR_REVIEW))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void returnToQueueForReprocess_clearsAttemptsSoAFixedParserGetsAFullBudget() {
+        ImportJob job = deadLetteredUnclassifiedJob();
+
+        job.returnToQueueForReprocess(Instant.now());
+
+        assertThat(job.getStatus()).isEqualTo(ImportJob.Status.QUEUED);
+        assertThat(job.getAttemptCount()).isZero();
+        assertThat(job.getRecoveryCount()).isZero();
+        assertThat(job.getFinishedAt()).isNull();
+        assertThat(job.getStartedAt()).isNull();
+    }
+
+    /**
+     * A stale code from the attempt that failed against the OLD parser must not survive into the
+     * new run -- the same defect {@code returnToQueue} documents at length, where it reached the
+     * customer timeline describing a failure that did not happen.
+     */
+    @Test
+    void returnToQueueForReprocess_clearsTheFailureOfThePreviousParser() {
+        ImportJob job = deadLetteredUnclassifiedJob();
+
+        job.returnToQueueForReprocess(Instant.now());
+
+        assertThat(job.getFailureCode()).isNull();
+        assertThat(job.getLastError()).isNull();
+    }
+
+    /**
+     * The marker is what tells the success path this user was asked to wait. Clearing it on the
+     * reprocess -- the obvious "reset everything" simplification -- would silence the notification
+     * on exactly the jobs the whole feature exists to notify about.
+     */
+    @Test
+    void wasHeldForReview_survivesTheReprocessAndTheCompletionThatFollows() {
+        ImportJob job = deadLetteredUnclassifiedJob();
+        assertThat(job.wasHeldForReview()).isTrue();
+
+        job.returnToQueueForReprocess(Instant.now());
+        assertThat(job.wasHeldForReview()).isTrue();
+
+        job.markClaimed("worker", Instant.now());
+        job.advanceTo(ImportJob.Status.ANALYZING);
+        job.complete(UUID.randomUUID(), Instant.now());
+
+        assertThat(job.wasHeldForReview())
+                .as("the completed job still has to know it was held, or nobody is notified")
+                .isTrue();
+    }
+
+    @Test
+    void anOrdinaryJobWasNeverHeld() {
+        ImportJob job = job();
+        job.markClaimed("worker", Instant.now());
+        job.complete(UUID.randomUUID(), Instant.now());
+
+        assertThat(job.wasHeldForReview()).isFalse();
+    }
+
+    @Test
+    void returnToQueueForReprocess_isRejectedForAJobThatIsNotHeld() {
+        assertThatThrownBy(() -> job().returnToQueueForReprocess(Instant.now()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("QUEUED");
+    }
+
+    @Test
+    void resolveWithoutFix_landsTheJobWhereItWouldHaveLandedAnyway() {
+        ImportJob job = deadLetteredUnclassifiedJob();
+
+        job.resolveWithoutFix(Instant.now());
+
+        assertThat(job.getStatus()).isEqualTo(ImportJob.Status.FAILED);
+    }
+
+    @Test
+    void resolveWithoutFix_isRejectedForAJobThatIsNotHeld() {
+        assertThatThrownBy(() -> job().resolveWithoutFix(Instant.now()))
+                .isInstanceOf(IllegalStateException.class);
+    }
+
+    // ------------------------------------------------------------------ trust telemetry
+
+    /** Telemetry is evidence, not a decision -- it must not touch anything the worker branches on. */
+    @Test
+    void verificationTelemetry_doesNotChangeTheJobsOwnLifecycle() {
+        ImportJob job = job();
+        job.markClaimed("worker", Instant.now());
+
+        job.recordVerificationTelemetry(
+                com.finora.imports.ImportReliabilityStatus.NEEDS_ATTENTION, "OCR", true, 3, 1, 2, "sha");
+
+        assertThat(job.getStatus()).isEqualTo(ImportJob.Status.PARSING);
+        assertThat(job.wasHeldForReview()).isFalse();
+        assertThat(job.getFailureCode()).isNull();
+        assertThat(job.getReliabilityStatus())
+                .isEqualTo(com.finora.imports.ImportReliabilityStatus.NEEDS_ATTENTION);
+        assertThat(job.getParserVersion()).isEqualTo("sha");
+    }
+
+    /**
+     * Null means "predates telemetry" and must stay distinguishable from a recorded clean result --
+     * otherwise every historical row silently claims to have been verified.
+     */
+    @Test
+    void verificationTelemetry_keepsUnobservedDistinctFromClean() {
+        ImportJob job = job();
+
+        job.recordVerificationTelemetry(null, null, null, null, null, null, "sha");
+
+        assertThat(job.getReliabilityStatus()).isNull();
+        assertThat(job.getVerificationFindingsCount()).isNull();
+        assertThat(job.getParserVersion())
+                .as("the parser version is known even when nothing was verified")
+                .isEqualTo("sha");
+    }
+
+    // -------------------------------------------------------------------------------------------
+    // HELD_FOR_TRUST_REVIEW -- the second kind of hold. HELD_FOR_REVIEW means "the parse failed in
+    // a way nothing recognised"; this means "the parse SUCCEEDED, and its own evidence says it may
+    // be wrong". The rows exist and are staged; what is withheld is the user's confirm step.
+    // -------------------------------------------------------------------------------------------
+
+    @Test
+    void holdForTrustReview_isTerminalAndKeepsTheStagedSession() {
+        ImportJob job = job();
+        job.markClaimed("worker", Instant.now());
+        UUID sessionId = UUID.randomUUID();
+        UUID heldId = UUID.randomUUID();
+
+        job.holdForTrustReview(sessionId, heldId, Instant.now());
+
+        assertThat(job.getStatus()).isEqualTo(ImportJob.Status.HELD_FOR_TRUST_REVIEW);
+        assertThat(job.getStatus().isTerminal()).isTrue();
+        assertThat(job.getImportSessionId())
+                .as("staging succeeded -- the rows are real and must stay reachable for review")
+                .isEqualTo(sessionId);
+        assertThat(job.getHeldStatementId()).isEqualTo(heldId);
+        assertThat(ImportJob.Status.IN_FLIGHT)
+                .doesNotContain(ImportJob.Status.HELD_FOR_TRUST_REVIEW);
+    }
+
+    /** A trust hold is not a failure, so it must not carry the wreckage of one. */
+    @Test
+    void holdForTrustReview_isNotAFailure() {
+        ImportJob job = job();
+        job.markClaimed("worker", Instant.now());
+
+        job.holdForTrustReview(UUID.randomUUID(), UUID.randomUUID(), Instant.now());
+
+        assertThat(job.getStatus()).isNotEqualTo(ImportJob.Status.FAILED);
+        assertThat(job.getFailureCode()).isNull();
+        assertThat(job.getLastError()).isNull();
+    }
+
+    /**
+     * The hold has to stick, for the same reason {@code holdForReview}'s does: a stray later
+     * failure must not quietly downgrade a held job to FAILED and hand the user a dead end for an
+     * import that actually staged fine.
+     */
+    @Test
+    void aTrustHeldJobIsNotMovedByAFurtherFailure() {
+        ImportJob job = job();
+        job.markClaimed("worker", Instant.now());
+        job.holdForTrustReview(UUID.randomUUID(), UUID.randomUUID(), Instant.now());
+
+        ImportJob.FailureOutcome outcome = job.recordFailure(
+                "something else went wrong", "RuntimeException",
+                ErrorCode.RetryPolicy.FAIL_FAST, Instant.now());
+
+        assertThat(outcome).isEqualTo(ImportJob.FailureOutcome.ALREADY_FINISHED);
+        assertThat(job.getStatus()).isEqualTo(ImportJob.Status.HELD_FOR_TRUST_REVIEW);
+    }
+
+    /** Only the explicit transition may enter the hold -- advanceTo refuses every terminal state. */
+    @Test
+    void advanceToCannotEnterTheTrustHold() {
+        assertThatThrownBy(() -> job().advanceTo(ImportJob.Status.HELD_FOR_TRUST_REVIEW))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    /**
+     * Mirrors {@link ImportJob#complete}'s own guard, for the identical reason: holding a cancelled
+     * job would resurrect an import the user asked to stop, as a review-queue item they never see
+     * and cannot cancel again.
+     */
+    @Test
+    void holdForTrustReview_refusesACancelledJob() {
+        ImportJob job = job();
+        job.cancel(Instant.now());
+
+        assertThatThrownBy(() ->
+                job.holdForTrustReview(UUID.randomUUID(), UUID.randomUUID(), Instant.now()))
+                .isInstanceOf(IllegalStateException.class);
+        assertThat(job.getStatus()).isEqualTo(ImportJob.Status.CANCELLED);
+    }
+
+    /**
+     * The enum's ordinal ordering is load-bearing -- {@code Status.isBefore} compares ordinals and
+     * {@link ImportJob#isCancellable} asks whether the job sits before IMPORTING. Inserting a
+     * constant shifts every later ordinal, so this pins the consequence rather than the position:
+     * a trust-held job has a staged session behind it and must not be cancellable.
+     */
+    @Test
+    void aTrustHeldJobIsNotCancellable() {
+        ImportJob job = job();
+        job.markClaimed("worker", Instant.now());
+        job.holdForTrustReview(UUID.randomUUID(), UUID.randomUUID(), Instant.now());
+
+        assertThat(job.isCancellable()).isFalse();
+    }
+
+    // ---------------------------------------------------- leaving the hold, in both directions
+
+    private ImportJob trustHeldJob() {
+        ImportJob job = job();
+        job.markClaimed("worker", Instant.now());
+        job.holdForTrustReview(SESSION, UUID.randomUUID(), Instant.now());
+        return job;
+    }
+
+    private static final UUID SESSION = UUID.randomUUID();
+
+    /**
+     * The release, and why it is its own transition rather than a call to {@link
+     * ImportJob#complete}.
+     *
+     * <p>{@code complete} guards only CANCELLED, so it would happily complete a job in any other
+     * state -- including one still being worked on. Naming the source status here means the only
+     * way out of a trust hold is a decision about that hold, which is the same shape {@code
+     * resolveWithoutFix} uses for the other hold.
+     */
+    @Test
+    void releaseAfterTrustReview_completesAndKeepsTheSession() {
+        ImportJob job = trustHeldJob();
+
+        job.releaseAfterTrustReview(Instant.now());
+
+        assertThat(job.getStatus()).isEqualTo(ImportJob.Status.COMPLETED);
+        assertThat(job.getImportSessionId())
+                .as("the staged rows the reviewer approved are the ones the user gets")
+                .isEqualTo(SESSION);
+    }
+
+    /**
+     * The refusal, and the bug it prevents.
+     *
+     * <p>{@code recordFailure} returns ALREADY_FINISHED without touching a terminal job, and
+     * HELD_FOR_TRUST_REVIEW is terminal -- so failing a rejected hold that way would silently do
+     * nothing, leaving the job held forever while the review said REJECTED and the user's progress
+     * screen said "running additional checks" indefinitely.
+     */
+    @Test
+    void rejectAfterTrustReview_reachesFailedWhereRecordFailureCannot() {
+        ImportJob viaRecordFailure = trustHeldJob();
+        assertThat(viaRecordFailure.recordFailure("no", "X", ErrorCode.RetryPolicy.FAIL_FAST,
+                Instant.now()))
+                .isEqualTo(ImportJob.FailureOutcome.ALREADY_FINISHED);
+        assertThat(viaRecordFailure.getStatus())
+                .as("this is exactly why the explicit transition exists")
+                .isEqualTo(ImportJob.Status.HELD_FOR_TRUST_REVIEW);
+
+        ImportJob job = trustHeldJob();
+        job.rejectAfterTrustReview(ErrorCode.IMPORT_TRUST_REVIEW_REJECTED.name(), Instant.now());
+
+        assertThat(job.getStatus()).isEqualTo(ImportJob.Status.FAILED);
+        assertThat(job.getFailureCode())
+                .as("without a code the user sees a bare failure and no reason for it")
+                .isEqualTo(ErrorCode.IMPORT_TRUST_REVIEW_REJECTED.name());
+    }
+
+    /** Both transitions name their source status, so neither can be used on anything else. */
+    @Test
+    void neitherTransitionAppliesOutsideTheTrustHold() {
+        assertThatThrownBy(() -> job().releaseAfterTrustReview(Instant.now()))
+                .isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> job().rejectAfterTrustReview("X", Instant.now()))
+                .isInstanceOf(IllegalStateException.class);
+
+        ImportJob released = trustHeldJob();
+        released.releaseAfterTrustReview(Instant.now());
+        assertThatThrownBy(() -> released.rejectAfterTrustReview("X", Instant.now()))
+                .as("a released hold cannot then be rejected")
+                .isInstanceOf(IllegalStateException.class);
+    }
 }

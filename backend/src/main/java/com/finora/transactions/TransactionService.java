@@ -21,7 +21,9 @@ import com.finora.service.ReconciliationService;
 import com.finora.service.RecurringService;
 import com.finora.service.SmsProvider;
 import com.finora.service.SmsResult;
+import com.finora.service.TransactionGroupingService;
 import com.finora.util.CategoryRules;
+import com.finora.util.CounterpartyType;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
@@ -29,8 +31,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -48,6 +52,7 @@ public class TransactionService {
     private final BankManagementService bankManagementService;
     private final UserRepository userRepository;
     private final SmsProvider smsProvider;
+    private final TransactionGroupingService transactionGroupingService;
 
     public TransactionService(TransactionRepository transactionRepository, CategoryRepository categoryRepository,
                                AccountRepository accountRepository,
@@ -58,7 +63,8 @@ public class TransactionService {
                                AuditService auditService,
                                BankManagementService bankManagementService,
                                UserRepository userRepository,
-                               SmsProvider smsProvider) {
+                               SmsProvider smsProvider,
+                               TransactionGroupingService transactionGroupingService) {
         this.transactionRepository = transactionRepository;
         this.categoryRepository = categoryRepository;
         this.accountRepository = accountRepository;
@@ -70,6 +76,7 @@ public class TransactionService {
         this.bankManagementService = bankManagementService;
         this.userRepository = userRepository;
         this.smsProvider = smsProvider;
+        this.transactionGroupingService = transactionGroupingService;
     }
 
     // Never a real bank id (BankRegistry ids are short uppercase codes like "PNB"/"OTHER") --
@@ -77,6 +84,12 @@ public class TransactionService {
     // `a.bankId IN :bankIds` always binds a real, non-empty collection rather than an empty one,
     // sidestepping any JPA-provider-specific edge cases around empty IN(...) lists entirely.
     private static final String NO_BANK_MATCH_SENTINEL = "__NO_BANK_MATCH__";
+
+    // Same reasoning as NO_BANK_MATCH_SENTINEL just above, for the category-name half of the same
+    // search: a nil UUID a real Category row can never carry (categoryRepository.save relies on
+    // the entity's @GeneratedValue, never this all-zero literal), so `t.categoryId IN :categoryIds`
+    // always binds a real, non-empty collection.
+    private static final UUID NO_CATEGORY_MATCH_SENTINEL = UUID.fromString("00000000-0000-0000-0000-000000000000");
 
     @Transactional(readOnly = true)
     // Bug fix: the repository call below already returns a Spring Data Page<Transaction>, which
@@ -108,6 +121,24 @@ public class TransactionService {
                 ? bankManagementService.search(f.keyword()).stream().map(com.finora.accounts.AccountDto.BankDto::id).toList()
                 : List.of();
         List<String> bankIdsParam = matchingBankIds.isEmpty() ? List.of(NO_BANK_MATCH_SENTINEL) : matchingBankIds;
+        // Same "Improve Search" gap, the category half: a keyword like "Groceries" is how someone
+        // actually thinks of a transaction they're looking for, and this search bar sits directly
+        // above a table with a Category column -- but category, like bank, has no column on
+        // Transaction itself (categoryId is a plain UUID reference, not a JPQL-joinable path from
+        // this query the way description/merchant already are), so it needs the identical
+        // resolve-ids-first treatment. categoryRepository.findByUserId is already an in-memory
+        // list this small (a user's own category set, not the whole table) -- same cost class as
+        // BankRegistry's own linear scan above.
+        List<UUID> matchingCategoryIds = f.keyword() != null && !f.keyword().isBlank()
+                ? categoryRepository.findByUserId(userId).stream()
+                        .filter(c -> c.getName() != null
+                                && c.getName().toLowerCase(java.util.Locale.ROOT)
+                                        .contains(f.keyword().trim().toLowerCase(java.util.Locale.ROOT)))
+                        .map(Category::getId)
+                        .toList()
+                : List.of();
+        List<UUID> categoryIdsParam = matchingCategoryIds.isEmpty()
+                ? List.of(NO_CATEGORY_MATCH_SENTINEL) : matchingCategoryIds;
         // Bug fix: an unclamped negative page or oversized size reached PageRequest.of directly,
         // which throws IllegalArgumentException -- unhandled in GlobalExceptionHandler, so the
         // Ledger's own search endpoint 500'd on a malformed page param instead of just clamping it
@@ -124,12 +155,13 @@ public class TransactionService {
         var page = transactionRepository.search(
                 userId, f.accountId(), f.categoryId(),
                 com.finora.util.EnumParsing.parseIfPresent(Transaction.Type.class, f.type(), "type"),
+                com.finora.util.EnumParsing.parseIfPresent(Transaction.ReconciliationStatus.class, f.status(), "status"),
                 f.dateFrom(), f.dateTo(), f.amountMin(), f.amountMax(),
                 // Escaped for LIKE (see LikePatterns) -- transaction descriptions are full of
                 // literal percent signs ("2.5% CASHBACK"), and an unescaped one turned an exact
                 // search into a prefix search silently. Only the repository term is escaped:
                 // bankManagementService.search() above matches in memory with contains().
-                com.finora.util.LikePatterns.escape(f.keyword()), bankIdsParam, liveAccountIds,
+                com.finora.util.LikePatterns.escape(f.keyword()), bankIdsParam, categoryIdsParam, liveAccountIds,
                 PageRequest.of(safePage, safeSize, sort)
         );
         Map<UUID, String> namesById = categoryNamesById(userId);
@@ -227,7 +259,15 @@ public class TransactionService {
         t.setAccountId(account.getId());
         t.setTxnDate(req.date());
         t.setDescription(req.description());
-        t.setMerchant(CategoryRules.extractMerchant(req.description()));
+        t.setMerchant(CategoryRules.extractMerchantLabel(req.description()));
+        // Who was on the other side -- a separate question from what the money was for, and one
+        // the narration answers far more often (79.2% of the real corpus, against ~47% for
+        // category). Deliberately ABOVE and outside the category decision further down: this is
+        // derived from the narration alone and is equally true whether the category came from the
+        // engine or from the user typing one in, and the manual branch is the one a careful user
+        // exercises most. Shares one derivation with the import path and the backfill sweep --
+        // see CounterpartyTyping; CounterpartyWiringTest pins that agreement rather than trusting it.
+        t.applyCounterpartyTyping(req.description());
         requireAmountWithinBounds(req.amount());
         t.setAmount(req.amount());
         t.setTxnType(com.finora.util.EnumParsing.parse(Transaction.Type.class, req.type(), "type"));
@@ -255,7 +295,9 @@ public class TransactionService {
             t.setMerchantId(suggestion.merchantId()); // already resolved as part of suggest() — no need to resolve twice
             category = categorizationService.resolveOrCreateCategory(userId, suggestion.category());
             t.setNeedsCategoryReview(categorizationService.needsCategoryReview(
-                    userId, suggestion.source().equals("default"), suggestion.confidence()));
+                    userId,
+                    CategorizationService.isUnconfirmedGuess(suggestion.source(), suggestion.category()),
+                    suggestion.confidence()));
             t.setDecisionSource(suggestion.decisionSource());
             t.setDecisionRuleId(suggestion.ruleId());
             t.setDecisionConfidence(suggestion.confidence());
@@ -353,7 +395,11 @@ public class TransactionService {
         if (user == null || !user.isPhoneVerified() || user.getPhoneNumber() == null) return;
         SmsResult result = smsProvider.sendTransactionAlert(
                 user.getPhoneNumber(), t.getDescription(), t.getAmount(), t.getTxnType().name());
-        auditService.record(userId, "SMS_SENT", "User", userId, Map.of(
+        // recordEvenOnRollback, not record: this runs inside afterCommit(), on the thread that
+        // just committed create()'s transaction -- see AuthService.register()'s welcome-email
+        // block and AuditService#recordEvenOnRollback's own doc comment for why a plain record()
+        // silently loses the write there.
+        auditService.recordEvenOnRollback(userId, "SMS_SENT", "User", userId, Map.of(
                 "type", "transaction_alert", "provider", result.provider().name(), "success", result.success()));
     }
 
@@ -410,7 +456,16 @@ public class TransactionService {
         BigDecimal oldDelta = balanceOf(t);
 
         if (req.date() != null) t.setTxnDate(req.date());
-        if (req.description() != null) t.setDescription(req.description());
+        if (req.description() != null) {
+            t.setDescription(req.description());
+            // The counterparty is DERIVED from the narration, so editing the narration has to
+            // re-derive it. Without this the row keeps whoever the old description named, and --
+            // because it already carries the current classifier version -- the backfill sweep will
+            // never revisit it either, so the stale answer becomes permanent. Corrected here rather
+            // than left to the sweep, since a user who has just retyped a description is the person
+            // most likely to look at the result immediately.
+            t.applyCounterpartyTyping(req.description());
+        }
         if (req.merchant() != null) t.setMerchant(req.merchant());
         if (req.amount() != null) {
             requireAmountWithinBounds(req.amount());
@@ -502,10 +557,34 @@ public class TransactionService {
      * <p>Reconciliation re-runs afterwards for the same reason every other write path re-runs it:
      * a row returning to OK can complete or break a pattern elsewhere, and a third genuinely
      * accidental copy must still be flagged against this one.
+     *
+     * <h2>Refused when the owning statement has since been superseded</h2>
+     *
+     * <p>{@code StatementImportService.supersede} only ever touches {@code OK}-status rows (see
+     * its own doc comment) -- a row already sitting at {@code DUPLICATE} is invisible to that
+     * filter, so it survives untouched when its statement is marked replaced, still reachable from
+     * the Dashboard's "detected duplicates" widget with no indication its statement is stale.
+     * Un-duplicating it here would resurrect a row from data Finora has already recorded as
+     * replaced -- into every report, and (see below) potentially into the balance a second time.
+     * {@code supersede} itself already refuses to act on an already-superseded statement; this is
+     * the same refusal from the other side.
      */
     @Transactional
     public TransactionDto confirmNotDuplicate(UUID userId, UUID txnId) {
         Transaction t = getOwned(userId, txnId);
+
+        if (t.getStatementImportId() != null) {
+            statementImportRepository.findById(t.getStatementImportId())
+                    .filter(si -> si.getSupersededBy() != null)
+                    .ifPresent(si -> {
+                        throw new ApiException(HttpStatus.BAD_REQUEST,
+                                "This transaction's statement has since been replaced by a later "
+                                        + "re-upload of the same period, so it cannot be confirmed as "
+                                        + "not a duplicate -- doing so would resurrect a row from "
+                                        + "data that has already been superseded. Check the "
+                                        + "replacement statement instead.");
+                    });
+        }
 
         t.setNotDuplicateConfirmedAt(java.time.Instant.now());
         t.setIsDuplicateOf(null);
@@ -597,7 +676,15 @@ public class TransactionService {
     }
 
     /** Backs the "Ask Once, Learn Forever" review queue — every transaction the engine wasn't
-     *  confident about, waiting on exactly one user decision each. */
+     *  confident about, waiting on exactly one user decision each.
+     *
+     *  <p>Deliberately excludes any transaction that {@link TransactionGroupingService} already
+     *  offers as part of a same-merchant bulk group (2+ needs-review transactions for one
+     *  merchant): without this, a grouped transaction was asked about twice — once row-by-row
+     *  here, once again via the bulk "Categorize a whole merchant at once" card — since both
+     *  queries drew from the same unfiltered needs-review set with nothing making them disjoint.
+     *  Also excludes {@code DUPLICATE}-status transactions, matching the grouping query, since
+     *  those are resolved through the duplicate-review flow instead. */
     @Transactional(readOnly = true)
     public List<TransactionDto> needsReview(UUID userId) {
         Map<UUID, String> namesById = categoryNamesById(userId);
@@ -610,7 +697,16 @@ public class TransactionService {
         List<Transaction> needsReview = liveAccountIds.isEmpty() ? List.of()
                 : transactionRepository.findByUserIdAndNeedsCategoryReviewTrueAndAccountIdInOrderByTxnDateDesc(
                         userId, liveAccountIds);
+        if (needsReview.isEmpty()) return List.of();
+
+        Set<UUID> groupedTransactionIds = new HashSet<>();
+        for (TransactionGroupingService.MerchantGroup group : transactionGroupingService.groupNeedsReviewByMerchant(userId)) {
+            groupedTransactionIds.addAll(group.transactionIds());
+        }
+
         return needsReview.stream()
+                .filter(t -> t.getReconciliationStatus() != Transaction.ReconciliationStatus.DUPLICATE)
+                .filter(t -> !groupedTransactionIds.contains(t.getId()))
                 .map(t -> TransactionDto.from(t, namesById.getOrDefault(t.getCategoryId(), "Uncategorized")))
                 .toList();
     }
@@ -742,7 +838,30 @@ public class TransactionService {
             t.setDecisionSource(Transaction.DecisionSource.MANUAL);
             t.setDecisionRuleId(null);
             t.setDecisionConfidence(null);
-            categorizationService.queueLearning(userId, t.getDescription(), category.getId());
+            // Bug fix: queueLearning -> MerchantNormalizationEngine.resolve() CREATES a merchant on
+            // a miss (see that method's own doc). Every row CounterpartyGroupReviewCard's "Apply to
+            // N transactions" targets was chosen BECAUSE it had no merchant match -- so calling this
+            // unconditionally meant every bulk-apply from that card silently created a new Merchant
+            // row for a PERSON. Verified concretely, not assumed: extractMerchant("UPI-SUNIL VERMA-
+            // sampleuser@ybl-REF61") normalizes to "upi sunil verma sampleuser", which
+            // resolve()/createMerchantAndAlias would persist as a real canonical_name -- a person's
+            // name and UPI handle fragment, stored and later surfaced as if it were a business.
+            // Nothing here sets t.setMerchantId(...), so the ghost merchant is never attached to
+            // THIS row -- but a LATER transaction from the same person, sharing the same first-token
+            // alias, would resolve to it and inherit a learned category "suggestion" from a
+            // "merchant" that is really just one person's name. That is the exact who/what-for
+            // conflation the counterparty layer (CounterpartyClassifier, CounterpartyIdentity) was
+            // built to keep apart -- see MerchantIdentityLookup's own doc on why that layer reads
+            // CategoryRules rather than the reverse.
+            //
+            // A BUSINESS counterparty is excluded from this guard on purpose: a business with no
+            // merchant record yet legitimately deserves one created here, the same onboarding this
+            // bulk action already provides for FINANCIAL_INSTITUTION/GOVERNMENT rows and for every
+            // other bulk-recategorize caller. Scoped to PERSON specifically because that is the only
+            // type this codebase's own counterparty layer can assert is never a merchant.
+            if (t.getCounterpartyType() != CounterpartyType.PERSON) {
+                categorizationService.queueLearning(userId, t.getDescription(), category.getId());
+            }
             transactionRepository.save(t);
         }
         auditService.record(userId, "TRANSACTION_BULK_RECATEGORIZED", "Transaction", null,

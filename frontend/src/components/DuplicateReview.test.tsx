@@ -24,7 +24,7 @@ const match: DuplicateMatch = {
   existingImportedAt: '2026-07-11T09:00:00Z',
   matchCount: 1,
   confidence: 'EXACT',
-  reason: 'Same date, amount and description as a transaction already in your ledger.',
+  reason: 'Same date and amount, and a matching description, as a transaction already in your ledger.',
 };
 
 function row(overrides: Partial<StagedRow> = {}): StagedRow {
@@ -65,7 +65,7 @@ describe('DuplicateReview', () => {
 
     expect(screen.getByText('In this statement')).toBeInTheDocument();
     expect(screen.getByText('Already in your ledger')).toBeInTheDocument();
-    expect(screen.getByText(/Same date, amount and description/)).toBeInTheDocument();
+    expect(screen.getByText(/Same date and amount, and a matching description/)).toBeInTheDocument();
     // When the existing one was imported: the strongest signal for "did I already load this
     // statement?", which is the question the user is actually trying to answer.
     expect(screen.getByText(/· imported/)).toBeInTheDocument();
@@ -150,6 +150,56 @@ describe('DuplicateReview', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Apply to 1 similar' }));
     expect(onApplyToSimilar).toHaveBeenCalledWith(0);
+  });
+
+  /** A long duplicate list should not force clicking "Skip this row" one at a time -- but with
+   *  only one outstanding row, a bulk button would be a second way to do the exact same click. */
+  describe('bulk resolve (onDecideAll)', () => {
+    it('is not offered when onDecideAll is omitted', () => {
+      render(
+        <DuplicateReview
+          rows={[row(), row({ description: 'UBER TRIP 8891' })]}
+          decisions={['unresolved', 'unresolved']}
+          onDecide={vi.fn()}
+          onApplyToSimilar={vi.fn()}
+        />
+      );
+
+      expect(screen.queryByRole('button', { name: /remaining/ })).not.toBeInTheDocument();
+    });
+
+    it('is not offered when at most one row is outstanding', () => {
+      render(
+        <DuplicateReview
+          rows={[row(), row({ description: 'UBER TRIP 8891' })]}
+          decisions={['import', 'unresolved']}
+          onDecide={vi.fn()}
+          onApplyToSimilar={vi.fn()}
+          onDecideAll={vi.fn()}
+        />
+      );
+
+      expect(screen.queryByRole('button', { name: /remaining/ })).not.toBeInTheDocument();
+    });
+
+    it('skips or imports everything still outstanding, in one click', async () => {
+      const onDecideAll = vi.fn();
+      render(
+        <DuplicateReview
+          rows={[row(), row({ description: 'UBER TRIP 8891' }), row({ description: 'ZOMATO 221' })]}
+          decisions={['unresolved', 'unresolved', 'unresolved']}
+          onDecide={vi.fn()}
+          onApplyToSimilar={vi.fn()}
+          onDecideAll={onDecideAll}
+        />
+      );
+
+      await userEvent.click(screen.getByRole('button', { name: 'Skip all remaining' }));
+      expect(onDecideAll).toHaveBeenCalledWith('skip');
+
+      await userEvent.click(screen.getByRole('button', { name: 'Import all remaining' }));
+      expect(onDecideAll).toHaveBeenCalledWith('import');
+    });
   });
 
   /** The safety message is part of the contract, not decoration: the user needs to know that

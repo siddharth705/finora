@@ -1,13 +1,24 @@
 package com.finora.imports.jobs;
 
 import com.finora.entity.ImportJob;
+import com.finora.exception.ApiException;
 import com.finora.exception.ErrorCode;
 import com.finora.imports.ImportService;
+import com.finora.imports.analysis.ImportVerificationRecorder;
 import com.finora.imports.StatementUpload;
 import com.finora.imports.storage.StatementContentService;
+import com.finora.imports.storage.StatementIntegrityException;
 import com.finora.observability.AlertSeverity;
 import com.finora.observability.WorkerExecution;
 import com.finora.observability.WorkerObservability;
+import com.finora.notification.api.NotificationRequest;
+import com.finora.notification.api.NotificationService;
+import com.finora.notification.domain.NotificationCategory;
+import com.finora.notification.domain.NotificationChannel;
+import com.finora.notification.domain.NotificationPriority;
+import com.finora.notification.domain.NotificationType;
+import com.finora.service.HeldItemAdminAlertService;
+import com.finora.util.AfterCommit;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -15,8 +26,15 @@ import org.springframework.scheduling.annotation.Async;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
+import com.finora.imports.trust.HoldDecision;
+import com.finora.imports.trust.TrustPredicate;
+
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -81,6 +99,17 @@ public class ImportJobWorker {
     private static final String WORKER = "import";
     private static final String JOB_KIND = "import-job";
 
+    /**
+     * How many batches one nudge drains before leaving the rest to the poller.
+     *
+     * <p>{@code MAX_NUDGE_PASSES * ImportJobStore.BATCH_SIZE} is exactly
+     * {@link ImportJobStore#RECOVERY_BATCH_SIZE} -- one nudge clears a full recovery batch and
+     * stops. Deliberately not larger: each pass is up to ten statement parses on a pool with one
+     * core thread, so an unbounded loop would let one caller hold that thread for minutes while
+     * other users' uploads waited behind it.
+     */
+    private static final int MAX_NUDGE_PASSES = 5;
+
     /** The furthest this worker takes a job. Everything after staging is still the user's review. */
     private static final ImportJob.Status LAST_STAGE_THIS_WORKER_RUNS = ImportJob.Status.ANALYZING;
 
@@ -107,6 +136,11 @@ public class ImportJobWorker {
     private final WorkerObservability observability;
     private final ImportStageRecorder stageRecorder;
     private final ExceptionClassifier exceptionClassifier;
+    private final NotificationService notificationService;
+    private final ImportVerificationRecorder verificationRecorder;
+    private final com.finora.service.HeldStatementService heldStatementService;
+    private final ParserVersionProvider parserVersionProvider;
+    private final HeldItemAdminAlertService heldItemAdminAlertService;
 
     @Value("${app.import.queue.enabled:false}")
     private boolean enabled;
@@ -116,13 +150,23 @@ public class ImportJobWorker {
                             StatementContentService statementContentService,
                             WorkerObservability observability,
                             ImportStageRecorder stageRecorder,
-                            ExceptionClassifier exceptionClassifier) {
+                            ExceptionClassifier exceptionClassifier,
+                            NotificationService notificationService,
+                            ImportVerificationRecorder verificationRecorder,
+                            com.finora.service.HeldStatementService heldStatementService,
+                            ParserVersionProvider parserVersionProvider,
+                            HeldItemAdminAlertService heldItemAdminAlertService) {
         this.jobStore = jobStore;
         this.importService = importService;
         this.statementContentService = statementContentService;
         this.observability = observability;
         this.stageRecorder = stageRecorder;
         this.exceptionClassifier = exceptionClassifier;
+        this.notificationService = notificationService;
+        this.verificationRecorder = verificationRecorder;
+        this.heldStatementService = heldStatementService;
+        this.parserVersionProvider = parserVersionProvider;
+        this.heldItemAdminAlertService = heldItemAdminAlertService;
 
         observability.publishQueueDepth(WORKER, JOB_KIND, jobStore::queueDepth);
         observability.publishOldestPendingAge(WORKER, JOB_KIND, jobStore::oldestQueuedAt);
@@ -143,13 +187,33 @@ public class ImportJobWorker {
         drainOnce();
     }
 
-    /** Fire-and-forget trigger for the upload path, so an import usually starts within milliseconds
-     *  rather than waiting for the next poll. Concurrent runs with the poller are safe -- that is
-     *  what SKIP LOCKED is for. */
+    /**
+     * Fire-and-forget trigger for the upload path, so an import usually starts within milliseconds
+     * rather than waiting for the next poll. Concurrent runs with the poller are safe -- that is
+     * what SKIP LOCKED is for.
+     *
+     * <p><b>Drains until a pass comes back short, rather than exactly once.</b> A pass that claims
+     * a full {@link ImportJobStore#BATCH_SIZE} is evidence more work is waiting, and stopping there
+     * left the remainder for the next poll even though a worker had just been woken and the queue
+     * was demonstrably not empty. The path that makes this matter is
+     * {@link ImportJobStore#recoverAbandoned()}: it returns up to
+     * {@link ImportJobStore#RECOVERY_BATCH_SIZE} jobs to QUEUED at once, and a single drain of ten
+     * left the rest waiting out a poll interval each. Ordinary uploads were never the problem --
+     * each one registers its own nudge, so a burst of them already drains itself.
+     *
+     * <p>Bounded far more tightly than {@code MerchantLearningEventWorker}'s equivalent, and for a
+     * concrete reason: a pass there is fifty small writes, whereas a pass here is up to ten whole
+     * statement parses on a pool with one core thread. {@link #MAX_NUDGE_PASSES} is sized to clear
+     * exactly one full recovery batch and no more; a genuine backlog beyond that is the poller's
+     * job, which is what it is for.
+     */
     @Async("importQueueExecutor")
     public void nudge() {
         if (!enabled) return;
-        drainOnce();
+        int passes = 1;
+        while (drainOnce() == ImportJobStore.BATCH_SIZE && passes++ < MAX_NUDGE_PASSES) {
+            // A full batch means the queue had at least one more job than this pass could take.
+        }
     }
 
     /** Claims and runs one batch. Public and synchronous so tests can drive the queue
@@ -227,13 +291,67 @@ public class ImportJobWorker {
             // would otherwise overwrite a cancel that arrived while the parse was running.
             abortIfCancelled(jobId);
 
+            VerificationTelemetry telemetry =
+                    VerificationTelemetry.from(staged.verificationReports());
+
+            // The trust gate. Everything above this line was about extraction failing; this is
+            // about extraction succeeding and being distrusted anyway, on evidence the pipeline
+            // already computed. UTC rather than the server's zone so the future-period rule cannot
+            // depend on where this runs.
+            HoldDecision decision = TrustPredicate.evaluate(
+                    staged.verificationReports(), staged.statementPeriods(),
+                    LocalDate.now(ZoneOffset.UTC));
+
+            // Created before the job transition so the job row can carry the hold's id.
+            //
+            // Failure here must not fail the import -- the same rule V62 states for merchant
+            // learning -- but it must fail CLOSED: a failed hold still holds, with no review
+            // record, rather than completing. The database being unavailable is not evidence the
+            // extraction was fine, and completing would silently release exactly the import this
+            // exists to stop. createHold is idempotent on the job id, so a retried pass reuses the
+            // review that already exists instead of colliding with it.
+            UUID heldStatementId = null;
+            if (decision.hold()) {
+                try {
+                    heldStatementId = heldStatementService
+                            .createHold(job, staged, decision, parserVersionProvider.current()).getId();
+                } catch (RuntimeException e) {
+                    log.error("Could not create the hold record for import job {}; holding the "
+                            + "import anyway, with no review record to work from", jobId, e);
+                }
+            }
+            final UUID heldId = heldStatementId;
+
             jobStore.update(jobId, j -> {
                 // totalParsed rather than the staged row count: the latter is what staged
                 // successfully, and reporting it as the total would make a statement with
                 // unparseable rows look like it had fewer rows than it did.
                 j.recordProgress(staged.totalParsed(), staged.stagedRows());
-                j.complete(staged.sessionId(), Instant.now());
+                if (decision.hold()) {
+                    // Keeps the session: the rows are real, and comparing them against the
+                    // document is the entire review.
+                    j.holdForTrustReview(staged.sessionId(), heldId, Instant.now());
+                } else {
+                    j.complete(staged.sessionId(), Instant.now());
+                }
+                // Evidence only, and recorded either way -- it is what a reviewer works from, and
+                // the telemetry readout's denominator would otherwise quietly exclude exactly the
+                // imports worth looking at.
+                j.recordVerificationTelemetry(
+                        telemetry.reliabilityStatus(), telemetry.textSource(),
+                        telemetry.isEmpty() ? null : telemetry.headerReconstructionUncertain(),
+                        telemetry.isEmpty() ? null : telemetry.findingsCount(),
+                        telemetry.isEmpty() ? null : telemetry.failedCount(),
+                        telemetry.isEmpty() ? null : telemetry.warningCount(),
+                        parserVersionProvider.current());
+                if (!decision.hold()) {
+                    // A held import is not finished, so it announces nothing -- the same rule the
+                    // other hold follows. Telling someone their statement is ready and then
+                    // withholding it would be worse than saying nothing.
+                    notifyIfPreviouslyHeld(j, staged.bankName());
+                }
             });
+            recordVerificationFindings(jobId, staged);
             // Only on the success path. A job that failed in PARSING did not skip IMPORTING, it
             // never reached it, and recording that as SKIPPED would turn an honest absence into a
             // false claim.
@@ -319,6 +437,213 @@ public class ImportJobWorker {
         return statementContentService.read(job);
     }
 
+    /**
+     * Whether a dead-lettered failure belongs in the admin triage queue.
+     *
+     * <p>The queue exists for one thing: a parser gap on a statement layout this codebase has not
+     * seen. Fix the parser, reprocess, done. Two conditions establish that for an exception nothing
+     * recognised at all -- the classification was RETRY_ONCE_THEN_ALERT and the attempt budget is
+     * spent. {@link #carriesRecoveredEvidence} establishes the same thing a second way, for a
+     * curated {@code ErrorCode} exception that recognised SOMETHING (a "no transaction table
+     * found") but whose own recovered-lines evidence says that verdict is plausibly wrong -- see
+     * its own doc comment.
+     *
+     * <p><b>StatementIntegrityException is excluded, despite satisfying both.</b> Those two
+     * conditions quietly encode a third one -- that a human can fix something and reprocess -- and
+     * this exception is the counterexample. It means storage returned bytes that do not hash to
+     * what the row claims: a wrong object for a key, bit-rot, a bad restore.
+     *
+     * <p>Every other part of the system already treats that as a storage correctness incident
+     * rather than remediable import work: the classifier refuses to give it the five-attempt RETRY
+     * budget a plain outage gets, the exception's own doc says to investigate the provider, and the
+     * alert fires at ERROR. This routing was the one place still treating it as parser triage.
+     *
+     * <ul>
+     *   <li><b>Its only action cannot work.</b> Reprocess re-reads the same key and gets the same
+     *       wrong bytes. The exception's own message says "investigate the storage provider before
+     *       retrying" -- the queue would render a button doing precisely that.</li>
+     *   <li><b>The user message would be a promise we cannot keep.</b> "We'll notify you once it's
+     *       ready" is true of a parser gap. Here the stored document may be gone for good, and the
+     *       honest outcome is the ordinary failure, which is what FAILED already gives them.</li>
+     *   <li><b>It is usually not one statement.</b> A bad migration corrupts objects in bulk. Five
+     *       thousand rows in a parser-remediation queue disguise one storage incident as a backlog
+     *       of unrelated tickets.</li>
+     *   <li><b>Excluding it costs no visibility.</b> The DEAD_LETTERED branch below still alerts at
+     *       {@link AlertSeverity#ERROR} either way -- that path does not depend on the hold.</li>
+     * </ul>
+     *
+     * <p>Nothing here can self-heal, which is what makes exclusion safe rather than merely tidier.
+     * Encryption is AES-256-GCM, so a wrong key throws rather than yielding wrong plaintext;
+     * async job objects are never compressed, so no decode step can corrupt them; and keys are
+     * content-addressed, so a stale or missing replica raises NoSuchKeyException (a plain RETRY),
+     * never a different document under the same key. The one speculative retry this policy allows
+     * has also already been spent by the time this is asked.
+     *
+     * <p>The exclusion itself is expressed as {@link #isOperatorRemediable}, not as an inline
+     * {@code instanceof}: the rule is "only operator-remediable failures enter triage", and a
+     * negated type check states the exception rather than the rule. The next counterexample of
+     * this class then has an obvious home.
+     */
+    private static boolean holdsForTriage(ErrorCode.RetryPolicy policy,
+                                          ImportJob.FailureOutcome outcome, Exception cause) {
+        if (outcome != ImportJob.FailureOutcome.DEAD_LETTERED || !isOperatorRemediable(cause)) {
+            return false;
+        }
+        return policy == ErrorCode.RetryPolicy.RETRY_ONCE_THEN_ALERT || carriesRecoveredEvidence(cause);
+    }
+
+    /**
+     * A curated "nothing was extracted" failure ({@code IMPORT_NO_HEADER_DETECTED} /
+     * {@code IMPORT_NO_TRANSACTIONS_FOUND}) is {@code FAIL_FAST} -- retrying the exact same bytes
+     * against the exact same parser build cannot succeed, so the {@code RETRY_ONCE_THEN_ALERT}
+     * branch above never fires for it, and by default it dead-letters straight to FAILED with no
+     * triage visibility. That default is right for the common case behind those two codes: a
+     * summary, a T&C page, or some other non-statement upload, where there was genuinely nothing to
+     * find and a human reviewing it would learn nothing an engineer could act on.
+     *
+     * <p>But {@code ExtractionCheck}'s own recovered-lines count (see its class doc, "never lose
+     * information") already distinguishes that from a document where the engine found date/amount-
+     * shaped text it could not anchor into a table -- real evidence a transaction table exists, not
+     * proof that it doesn't. That is exactly the "fix the parser, reprocess, done" situation
+     * {@link #holdsForTriage} exists for; the only reason it dead-ends on the user instead is that
+     * it happens to be thrown as a curated {@link ErrorCode} rather than an unrecognised exception.
+     *
+     * <p>Not hypothetical: confirmed against a real statement, a Paytm passbook export whose date
+     * column is split across two lines ("Date &" / "Time"), which the table locator did not
+     * recognise. It had a genuine "Passbook Payments History" table with two real transactions --
+     * recoveredLines was non-zero -- and IMPORT_NO_HEADER_DETECTED sent it straight to FAILED with
+     * no admin visibility at all, for exactly the class of layout gap this queue exists to catch.
+     */
+    private static boolean carriesRecoveredEvidence(Throwable cause) {
+        if (!(cause instanceof ApiException api)) return false;
+        ErrorCode code = api.getCode();
+        if (code != ErrorCode.IMPORT_NO_HEADER_DETECTED && code != ErrorCode.IMPORT_NO_TRANSACTIONS_FOUND) {
+            return false;
+        }
+        Object recoveredLines = api.getDetails().get("recoveredLines");
+        return recoveredLines instanceof Integer lines && lines > 0;
+    }
+
+    /**
+     * Whether a human could plausibly fix the cause and have a reprocess succeed.
+     *
+     * <p>This is the invariant the triage queue actually depends on, stated once instead of being
+     * implied by a list of exclusions. Hold-for-review assumes an operator can take corrective
+     * action and then reprocess the import successfully. A parser gap satisfies that: fix the
+     * parser, reprocess, done.
+     *
+     * <p>{@link StatementIntegrityException} does not. It is a storage correctness incident --
+     * storage returned bytes that do not hash to what the row claims -- and reprocessing the same
+     * object cannot succeed until the underlying storage problem is corrected, which is not
+     * something the queue's Reprocess button does. Its own message says so: "investigate the
+     * storage provider before retrying".
+     *
+     * <p><b>Asks {@link ExceptionClassifier#isIntegrityFailure} rather than testing the type
+     * here.</b> That method is the codebase's single definition of an integrity failure, cause
+     * chain and all; this one used to keep its own, and two independent answers to the same
+     * question agree only by luck. The failure that discipline prevents is not hypothetical --
+     * wrapping is idiomatic in this pipeline, and an integrity failure wrapped in its own parent
+     * type would otherwise read as a plain storage outage to the classifier while still reading as
+     * non-remediable here.
+     */
+    private static boolean isOperatorRemediable(Throwable cause) {
+        return !ExceptionClassifier.isIntegrityFailure(cause);
+    }
+
+    /**
+     * Persists the per-rule findings this import produced, so a trust rule can be measured before
+     * it is ever enforced.
+     *
+     * <p>{@code recordForJob} has existed unused since the observability work: only
+     * {@code recordForAnalysis} was ever wired, which keys on an analysis session, so the admin
+     * analysis path accumulated history and the real user import path accumulated none. That is why
+     * "how often would this gate fire?" is currently unanswerable.
+     *
+     * <p><b>Outside the job's own transaction, and swallowing its own failures.</b> Recording
+     * telemetry must never be able to fail an import -- the same rule V62 states for merchant
+     * learning, that "failure can never roll back an import". A statement that parsed correctly
+     * being rejected because a diagnostic write failed would be a strictly worse outcome than the
+     * blindness this fixes.
+     */
+    private void recordVerificationFindings(UUID jobId, StagedForJob staged) {
+        if (staged.verificationReports().isEmpty()) {
+            return;
+        }
+        try {
+            verificationRecorder.recordForJob(jobId, staged.verificationReports());
+        } catch (RuntimeException e) {
+            log.warn("Could not record verification findings for import job {}; the import itself "
+                    + "is unaffected", jobId, e);
+        }
+    }
+
+    /**
+     * Closes the loop with a user who was told we were running additional checks.
+     *
+     * <p>Only a job that was previously held notifies. An ordinary import that succeeds first time
+     * sends nothing -- we never asked that user to wait, so there is nothing to follow up on, and a
+     * notification per successful import would be noise on the one path that already shows its own
+     * result on screen.
+     *
+     * <p>Called inside {@code jobStore.update}'s transaction on purpose. {@code
+     * NotificationService.request} is a transactional-outbox write, so sharing the transaction that
+     * marks the job COMPLETED is what makes "the import landed" and "the user gets told" atomic:
+     * neither can happen without the other. The dispatcher sends it afterwards, off this thread.
+     *
+     * <p>The notification key is derived from the job id, so a redelivery -- a retried pass, a
+     * recovered worker -- collides on the outbox's idempotency key rather than sending twice.
+     *
+     * <p>NORMAL rather than HIGH or CRITICAL: those are reserved for security events per the
+     * notification platform's frozen design, and an import finishing is not one.
+     */
+    private void notifyIfPreviouslyHeld(ImportJob job, String bankName) {
+        if (!job.wasHeldForReview()) {
+            return;
+        }
+        notificationService.request(NotificationRequest.of(
+                job.getUserId(),
+                NotificationType.IMPORT_STATEMENT_READY,
+                NotificationCategory.FINANCIAL,
+                NotificationPriority.NORMAL,
+                "IMPORT_READY_" + job.getId(),
+                Set.of(NotificationChannel.PUSH, NotificationChannel.EMAIL),
+                // The template reads "Your {{bank}} statement is ready", so this is the parser's
+                // own detected bank name -- the only moment it is in hand, since the job itself
+                // never learns it. "bank" is the fallback when the parser could not name one,
+                // giving "Your bank statement is ready"; the fallback lives here rather than in
+                // StagedForJob because it is a property of this template, not of staging. A
+                // missing param would render "{{bank}}" literally to the customer.
+                Map.of("bank", bankName == null || bankName.isBlank() ? "bank" : bankName)));
+    }
+
+    /**
+     * Tells a user their statement is being held for review -- previously the pipeline announced
+     * nothing at this moment at all (see {@code notifyIfPreviouslyHeld}'s own doc: "A held import
+     * is not finished, so it announces nothing" describes the READY side of this, but the same
+     * silence applied here too, on the way IN).
+     *
+     * <p>Same transactional-outbox reasoning {@code notifyIfPreviouslyHeld} gives: called inside
+     * {@code jobStore.update}'s {@code REQUIRES_NEW} transaction, the same one that persists {@code
+     * holdForReview}, so the hold and the outbox write are atomic -- not a real network call, so
+     * there is no reason to defer it past commit the way the admin alert has to be.
+     *
+     * <p>Keyed on the job id alone, not the attempt: a job that gets reprocessed, fails the same
+     * way, and re-holds reuses this exact key, so {@code NotificationService.request}'s {@code ON
+     * CONFLICT DO NOTHING} idempotency silently absorbs the second attempt. One "we're checking"
+     * is what the user is owed, not a re-notification per internal retry -- the reprocess story is
+     * for the admin alert (which deliberately DOES re-fire per attempt) to carry, not this one.
+     */
+    private void notifyHeldForReview(ImportJob job) {
+        notificationService.request(NotificationRequest.of(
+                job.getUserId(),
+                NotificationType.IMPORT_STATEMENT_HELD,
+                NotificationCategory.FINANCIAL,
+                NotificationPriority.NORMAL,
+                "IMPORT_HELD_" + job.getId(),
+                Set.of(NotificationChannel.PUSH, NotificationChannel.EMAIL),
+                Map.of()));
+    }
+
     private void recordFailure(WorkerExecution execution, UUID jobId, Exception cause) {
         try {
             // Classified once, outside the update lambda: classification reads nothing from the
@@ -335,7 +660,42 @@ public class ImportJobWorker {
             jobStore.update(jobId, job -> {
                 outcome[0] = job.recordFailure(describe(cause), failureCode, policy, Instant.now());
                 attempts[0] = job.getAttemptCount();
+                // A dead-lettered unclassified failure is the one case that is plausibly a genuine
+                // parser gap rather than a user error or an infrastructure blip. Hold it for triage
+                // instead of handing the user a bare FAILED they can do nothing about.
+                //
+                // Inside the update lambda, deliberately: this is where the managed entity is, and
+                // the surrounding REQUIRES_NEW transaction is what persists it. Mutating the job
+                // after this block returns would change a detached object and write nothing.
+                //
+                // outcome[0] keeps its DEAD_LETTERED value, so the switch below still fires the
+                // alert. Holding for triage adds a destination; it does not replace engineering
+                // visibility.
+                if (holdsForTriage(policy, outcome[0], cause)) {
+                    job.holdForReview(failureCode, Instant.now());
+                    notifyHeldForReview(job);
+                }
             });
+            // jobStore.update is @Transactional(REQUIRES_NEW), so by this line its transaction has
+            // already committed (or, if the consumer threw, this line is never reached at all --
+            // the exception propagates straight to this method's own catch block below, and no
+            // alert fires for a hold that never happened). AfterCommit.run therefore takes its
+            // "no ambient transaction" branch here and runs immediately rather than deferring --
+            // registered anyway, both for the logging/never-throws discipline every other call site
+            // in this pipeline gets from going through it, and so a future change that moves this
+            // call inside an active transaction gets the deferral for free rather than silently
+            // needing this comment rewritten. holdsForTriage is recomputed rather than tracked in a
+            // third mutable box alongside outcome[0]/attempts[0]: it is a pure function of policy,
+            // outcome[0] and cause, all still in scope, so there is nothing a separate boolean could
+            // record that this call doesn't already answer identically.
+            if (holdsForTriage(policy, outcome[0], cause)) {
+                // Re-reads the job fresh (see HeldItemAdminAlertService.alertParserGapHeld's own
+                // doc comment) rather than passing the entity through -- the same reason
+                // notifyIfPreviouslyHeld's notification key is derived from the job id, not the
+                // object.
+                AfterCommit.run("held-item admin alert (parser gap)",
+                        () -> heldItemAdminAlertService.alertParserGapHeld(jobId));
+            }
             switch (outcome[0]) {
                 case DEAD_LETTERED -> {
                     log.error("Import job {} failed {} times and will not be retried automatically",

@@ -1,0 +1,148 @@
+#!/usr/bin/env python3
+"""Mechanism test for corpus-run.py's in-repo refusal. Run: python3 scripts/test-corpus-run.py
+
+Only the refusal logic is unit-tested here -- everything else in corpus-run.py needs a real corpus
+and cannot reach CI, same split every other test-*.py in this directory already uses.
+"""
+
+import importlib.util
+import shutil
+import tempfile
+import unittest
+from pathlib import Path
+
+_s = importlib.util.spec_from_file_location(
+    "cr", Path(__file__).resolve().parent / "corpus-run.py")
+cr = importlib.util.module_from_spec(_s)
+_s.loader.exec_module(cr)
+
+_rgt = importlib.util.spec_from_file_location(
+    "rgt", Path(__file__).resolve().parent / "run-corpus-ground-truth.py")
+rgt = importlib.util.module_from_spec(_rgt)
+_rgt.loader.exec_module(rgt)
+
+
+class RefuseIfInsideRepoIsSkippedOnlyWithTheExplicitFlag(unittest.TestCase):
+
+    def test_a_path_inside_the_repo_is_refused_by_default(self):
+        # This script's own directory stands in for "inside the repo" -- never the real corpus
+        # location, which this test must not reference even as a string.
+        inside_repo_path = Path(__file__).parent
+        with self.assertRaises(SystemExit):
+            cr._refuse_if_inside_repo(inside_repo_path, "corpus")
+
+    def test_the_explicit_flag_skips_the_refusal(self):
+        inside_repo_path = Path(__file__).parent
+        cr._refuse_if_inside_repo(inside_repo_path, "corpus",
+                                   allow_in_repo_synthetic_corpus=True)   # does not raise
+
+    def test_a_path_outside_the_repo_is_never_refused(self):
+        outside_repo_path = Path("/tmp")
+        cr._refuse_if_inside_repo(outside_repo_path, "corpus")           # does not raise
+
+    def test_a_sibling_directory_sharing_a_path_prefix_is_not_refused(self):
+        """A naive string-prefix check would wrongly refuse '/x/repo-backup' as inside '/x/repo' --
+        a real shape this project's own worktree layout has (e.g. a 'finora' repo alongside a
+        'finora-dev' sibling directory). Containment must be a real path relationship, not a
+        substring match."""
+        sibling = cr.REPO_ROOT.parent / (cr.REPO_ROOT.name + "-sibling")
+        cr._refuse_if_inside_repo(sibling, "corpus")                     # does not raise
+
+
+class RunCorpusGroundTruthAppliesTheSameOptIn(unittest.TestCase):
+    """run-corpus-ground-truth.py's _refuse_if_inside_repo is a separate copy ("reused verbatim",
+    per its own doc comment) rather than an import of corpus-run.py's -- so it needs the identical
+    behaviour proven again here, not assumed from the sibling test class above."""
+
+    def test_a_path_inside_the_repo_is_refused_by_default(self):
+        inside_repo_path = Path(__file__).parent
+        with self.assertRaises(SystemExit):
+            rgt._refuse_if_inside_repo(inside_repo_path, "corpus")
+
+    def test_the_explicit_flag_skips_the_refusal(self):
+        inside_repo_path = Path(__file__).parent
+        rgt._refuse_if_inside_repo(inside_repo_path, "corpus",
+                                    allow_in_repo_synthetic_corpus=True)   # does not raise
+
+    def test_a_sibling_directory_sharing_a_path_prefix_is_not_refused(self):
+        sibling = rgt.REPO_ROOT.parent / (rgt.REPO_ROOT.name + "-sibling")
+        rgt._refuse_if_inside_repo(sibling, "corpus")                     # does not raise
+
+
+class CorpusDiscoveryIsCaseInsensitiveOnTheExtension(unittest.TestCase):
+    """A real statement in the corpus is named with an uppercase ".PDF".
+
+    run-corpus-ground-truth.py used Path.glob("*.pdf"), which is case-sensitive regardless of the
+    filesystem, so that document was silently skipped by the correctness gate while the run still
+    summarised as a clean pass. These use a temporary directory -- never the real corpus, which
+    lives outside this repository and must not be reachable from a test.
+    """
+
+    def _dir_with(self, *names):
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, True)
+        for n in names:
+            (tmp / n).write_bytes(b"%PDF-1.4\n")
+        return tmp
+
+    def test_an_uppercase_extension_is_discovered(self):
+        corpus = self._dir_with("Upper.PDF")
+        self.assertEqual([p.name for p in rgt.discover_pdfs(corpus)], ["Upper.PDF"])
+
+    def test_mixed_case_extensions_are_all_discovered_and_sorted_by_name(self):
+        corpus = self._dir_with("b.pdf", "A.PDF", "c.Pdf")
+        self.assertEqual([p.name for p in rgt.discover_pdfs(corpus)], ["A.PDF", "b.pdf", "c.Pdf"])
+
+    def test_non_pdf_files_are_ignored(self):
+        corpus = self._dir_with("keep.pdf", "notes.txt", "sheet.csv")
+        self.assertEqual([p.name for p in rgt.discover_pdfs(corpus)], ["keep.pdf"])
+
+    def test_the_measuring_tool_and_the_judging_tool_see_the_same_documents(self):
+        # The specific failure this guards: corpus-run.py reporting N documents while
+        # run-corpus-ground-truth.py judges fewer, with nothing in either output saying so.
+        corpus = self._dir_with("a.pdf", "B.PDF")
+        self.assertEqual([p.name for p in rgt.discover_pdfs(corpus)],
+                         [p.name for p in cr.discover_pdfs(corpus)])
+
+
+class CorpusDiscoveryRecursesIntoSubdirectories(unittest.TestCase):
+    """The corpus is a human-maintained directory, and it has already been reorganised once into
+    per-product subdirectories. A flat listing sees nothing at all after such a move, so both tools
+    exit with "no .pdf files" and the correctness gate silently covers zero documents until someone
+    notices -- the same class of gap as the case-sensitive glob covered by the sibling test class
+    above. These use a temporary directory; never the real corpus.
+    """
+
+    def _tree(self, *relative_names):
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, True)
+        for n in relative_names:
+            target = tmp / n
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(b"%PDF-1.4\n")
+        return tmp
+
+    def test_pdfs_nested_one_level_deep_are_discovered(self):
+        corpus = self._tree("Credit cards/a.pdf", "Savings accounts/b.PDF")
+        self.assertEqual([p.name for p in rgt.discover_pdfs(corpus)], ["a.pdf", "b.PDF"])
+
+    def test_top_level_and_nested_pdfs_are_discovered_together(self):
+        corpus = self._tree("loose.pdf", "sub/nested.pdf")
+        self.assertEqual([p.name for p in rgt.discover_pdfs(corpus)], ["loose.pdf", "nested.pdf"])
+
+    def test_a_ground_truth_subdirectory_of_json_files_contributes_nothing(self):
+        # The ground-truth directory conventionally lives inside the corpus directory. Recursing
+        # must not start treating it as a source of documents.
+        corpus = self._tree("Credit cards/a.pdf")
+        (corpus / "ground-truth").mkdir()
+        (corpus / "ground-truth" / "a.json").write_text("{}")
+        self.assertEqual([p.name for p in rgt.discover_pdfs(corpus)], ["a.pdf"])
+
+    def test_the_measuring_tool_and_the_judging_tool_agree_on_a_nested_corpus(self):
+        corpus = self._tree("Credit cards/a.pdf", "Savings accounts/B.PDF", "loose.pdf")
+        self.assertEqual([str(p) for p in rgt.discover_pdfs(corpus)],
+                         [str(p) for p in cr.discover_pdfs(corpus)])
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)

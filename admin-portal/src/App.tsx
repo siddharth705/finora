@@ -28,13 +28,20 @@ const MerchantTemplates = lazy(() => import('./pages/MerchantTemplates'));
 const GlobalRules = lazy(() => import('./pages/GlobalRules'));
 const LearningEngine = lazy(() => import('./pages/LearningEngine'));
 const LearningQueue = lazy(() => import('./pages/LearningQueue'));
+const Notifications = lazy(() => import('./pages/Notifications'));
+const HeldImports = lazy(() => import('./pages/HeldImports'));
+const HeldStatements = lazy(() => import('./pages/HeldStatements'));
+const HeldStatementDetail = lazy(() => import('./pages/HeldStatementDetail'));
+const TrustReviewMetrics = lazy(() => import('./pages/TrustReviewMetrics'));
+const SupportTickets = lazy(() => import('./pages/SupportTickets'));
+const SupportTicketDetail = lazy(() => import('./pages/SupportTicketDetail'));
+const Feedback = lazy(() => import('./pages/Feedback'));
 const MerchantReview = lazy(() => import('./pages/MerchantReview'));
 const ReconciliationMonitor = lazy(() => import('./pages/ReconciliationMonitor'));
 const ReconciliationExplorer = lazy(() => import('./pages/ReconciliationExplorer'));
 const InsightsExplorer = lazy(() => import('./pages/InsightsExplorer'));
 const PlatformAnalytics = lazy(() => import('./pages/PlatformAnalytics'));
 const Subscriptions = lazy(() => import('./pages/Subscriptions'));
-const Referrals = lazy(() => import('./pages/Referrals'));
 const AuditLog = lazy(() => import('./pages/AuditLog'));
 const SystemHealth = lazy(() => import('./pages/SystemHealth'));
 const Integrations = lazy(() => import('./pages/Integrations'));
@@ -91,12 +98,19 @@ export default function App() {
               <Route path="/learning" element={<ProtectedRoute><LearningEngine /></ProtectedRoute>} />
               <Route path="/merchant-review" element={<ProtectedRoute><MerchantReview /></ProtectedRoute>} />
               <Route path="/learning-queue" element={<ProtectedRoute><LearningQueue /></ProtectedRoute>} />
+              <Route path="/notifications" element={<ProtectedRoute><Notifications /></ProtectedRoute>} />
+              <Route path="/held-imports" element={<ProtectedRoute><HeldImports /></ProtectedRoute>} />
+              <Route path="/held-statements" element={<ProtectedRoute><HeldStatements /></ProtectedRoute>} />
+              <Route path="/held-statements/:heldId" element={<ProtectedRoute><HeldStatementDetail /></ProtectedRoute>} />
+              <Route path="/trust-review-metrics" element={<ProtectedRoute><TrustReviewMetrics /></ProtectedRoute>} />
+              <Route path="/support-tickets" element={<ProtectedRoute><SupportTickets /></ProtectedRoute>} />
+              <Route path="/support-tickets/:id" element={<ProtectedRoute><SupportTicketDetail /></ProtectedRoute>} />
+              <Route path="/feedback" element={<ProtectedRoute><Feedback /></ProtectedRoute>} />
               <Route path="/reconciliation" element={<ProtectedRoute><ReconciliationMonitor /></ProtectedRoute>} />
               <Route path="/reconciliation-explorer" element={<ProtectedRoute><ReconciliationExplorer /></ProtectedRoute>} />
               <Route path="/insights-explorer" element={<ProtectedRoute><InsightsExplorer /></ProtectedRoute>} />
               <Route path="/analytics" element={<ProtectedRoute><PlatformAnalytics /></ProtectedRoute>} />
               <Route path="/subscriptions" element={<ProtectedRoute><Subscriptions /></ProtectedRoute>} />
-              <Route path="/referrals" element={<ProtectedRoute><Referrals /></ProtectedRoute>} />
               <Route path="/audit" element={<ProtectedRoute><AuditLog /></ProtectedRoute>} />
               <Route path="/health" element={<ProtectedRoute><SystemHealth /></ProtectedRoute>} />
               <Route path="/integrations" element={<ProtectedRoute><Integrations /></ProtectedRoute>} />

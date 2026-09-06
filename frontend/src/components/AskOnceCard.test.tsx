@@ -16,7 +16,7 @@ function txn(id: string, description: string): Transaction {
     id, accountId: 'acc-1', categoryId: '', categoryName: 'Uncategorized', date: '2026-07-01',
     description, merchant: '', paymentMethod: '', amount: 100, type: 'EXPENSE', tags: [],
     notes: null, reconciliationStatus: 'OK', recurring: false, needsCategoryReview: true,
-    categoryManuallySet: false,
+    categoryManuallySet: false, counterpartyType: 'UNKNOWN',
   };
 }
 

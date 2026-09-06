@@ -85,17 +85,43 @@ public class PdfTextExtractor {
                 @Override
                 protected void writeString(String string, List<TextPosition> textPositions) throws IOException {
                     if (string == null || string.isBlank() || textPositions.isEmpty()) return;
-                    TextPosition first = textPositions.get(0);
+                    // PDFBox's own line-grouping (which decides what one writeString call covers)
+                    // is tuned for reading prose, not a table header row -- re-split via
+                    // GlyphRunSplitter, whose own doc comment carries the real-document evidence
+                    // and the threshold's reasoning. Each TextPosition maps to one Glyph up front,
+                    // so the splitting decision itself is testable independent of PDFBox.
+                    List<GlyphRunSplitter.Glyph> glyphs = new ArrayList<>(textPositions.size());
+                    for (TextPosition tp : textPositions) {
+                        glyphs.add(new GlyphRunSplitter.Glyph(tp.getUnicode(), tp.getXDirAdj(),
+                                tp.getXDirAdj() + tp.getWidthDirAdj(), tp.getYDirAdj(), tp.getFontSizeInPt()));
+                    }
+                    for (List<GlyphRunSplitter.Glyph> segment : GlyphRunSplitter.split(glyphs)) {
+                        emit(segment);
+                    }
+                }
+
+                private void emit(List<GlyphRunSplitter.Glyph> segment) {
+                    if (segment.isEmpty()) return;
+                    // Built from each glyph's OWN character rather than slicing the original
+                    // writeString string -- PDFBox's textPositions list can be shorter than that
+                    // string (it sometimes inserts a space character with no backing TextPosition
+                    // at all), so any index correlation between the two is unreliable. Reading each
+                    // TextPosition's own getUnicode() has no such gap.
+                    StringBuilder text = new StringBuilder();
+                    for (GlyphRunSplitter.Glyph g : segment) text.append(g.text());
+                    String value = text.toString();
+                    if (value.isBlank()) return;
+                    GlyphRunSplitter.Glyph first = segment.get(0);
                     // The run's right edge, from its LAST glyph rather than a sum of widths --
                     // glyph advances include kerning and inter-character spacing that summing
                     // would drop, and the whole point of this measurement is that it be exact
                     // enough to separate two adjacent right-aligned amount columns.
-                    TextPosition last = textPositions.get(textPositions.size() - 1);
-                    float width = Math.max(0f, (last.getXDirAdj() + last.getWidthDirAdj()) - first.getXDirAdj());
+                    GlyphRunSplitter.Glyph last = segment.get(segment.size() - 1);
+                    float width = Math.max(0f, last.endX() - first.x());
                     // getCurrentPageNo() is 1-based and reflects whichever page the stripper is
                     // currently walking -- correct even for a multi-page statement, since this
-                    // override fires once per text run as PDFBox processes pages in order.
-                    result.add(new PositionedText(string, first.getXDirAdj(), first.getYDirAdj(),
+                    // fires once per emitted run as PDFBox processes pages in order.
+                    result.add(new PositionedText(value, first.x(), first.y(),
                             getCurrentPageNo() - 1, width));
                 }
             };

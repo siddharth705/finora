@@ -27,7 +27,7 @@ vi.mock('../context/NotificationContext', () => ({
   useNotify: () => ({ success: notifySuccess, error: notifyError }),
 }));
 vi.mock('../api/endpoints', () => ({
-  adminSubscriptionsApi: { list: vi.fn(), changePlan: vi.fn() },
+  adminSubscriptionsApi: { list: vi.fn(), changePlan: vi.fn(), cancelPaidSubscription: vi.fn(), health: vi.fn() },
 }));
 
 function renderPage() {
@@ -53,7 +53,7 @@ function mockAuth(permissions: string[]) {
 function subscription(overrides: Partial<SubscriptionSummaryDto> = {}): SubscriptionSummaryDto {
   return {
     subscriptionId: 'sub-1', userId: 'user-1', userEmail: 'jane@example.com', userFullName: 'Jane Doe',
-    planCode: 'FREE', planName: 'Free', status: 'ACTIVE', startDate: '2026-08-01',
+    planCode: 'FREE', planName: 'Free', paymentProvider: null, status: 'ACTIVE', startDate: '2026-08-01',
     endDate: null, renewalDate: null, ...overrides,
   };
 }
@@ -67,6 +67,10 @@ describe('Subscriptions', () => {
     vi.mocked(useAdminAuth).mockReset();
     vi.mocked(adminSubscriptionsApi.list).mockReset();
     vi.mocked(adminSubscriptionsApi.changePlan).mockReset();
+    vi.mocked(adminSubscriptionsApi.cancelPaidSubscription).mockReset();
+    vi.mocked(adminSubscriptionsApi.health).mockReset().mockResolvedValue({
+      activeCount: 0, pastDueCount: 0, paymentFailedCount: 0, cancelledCount: 0, pendingOrderCount: 0,
+    });
   });
 
   it('shows an access-denied message when the account lacks SUBSCRIPTION_MANAGEMENT_VIEW', () => {
@@ -123,5 +127,56 @@ describe('Subscriptions', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Next page' }));
 
     await waitFor(() => expect(adminSubscriptionsApi.list).toHaveBeenCalledWith(1, 20));
+  });
+
+  it('shows a confirm dialog instead of changing the plan directly for a Razorpay-backed subscription', async () => {
+    mockAuth(['SUBSCRIPTION_MANAGEMENT_VIEW']);
+    vi.mocked(adminSubscriptionsApi.list).mockResolvedValue(
+      pageOf(subscription({ paymentProvider: 'RAZORPAY', planCode: 'PLUS', planName: 'Plus' }))
+    );
+    const user = userEvent.setup();
+    renderPage();
+    await waitFor(() => expect(screen.getByText('Jane Doe')).toBeInTheDocument());
+
+    // A Razorpay-backed row renders a "Cancel paid subscription" action instead of the plain
+    // plan dropdown a non-Razorpay row still gets.
+    expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /cancel paid subscription/i }));
+    await user.click(screen.getByRole('button', { name: /confirm/i }));
+
+    await waitFor(() => expect(adminSubscriptionsApi.cancelPaidSubscription).toHaveBeenCalledWith('user-1'));
+  });
+
+  it('still shows the plain dropdown for a non-Razorpay subscription', async () => {
+    mockAuth(['SUBSCRIPTION_MANAGEMENT_VIEW']);
+    vi.mocked(adminSubscriptionsApi.list).mockResolvedValue(pageOf(subscription()));
+    renderPage();
+    await waitFor(() => expect(screen.getByText('Jane Doe')).toBeInTheDocument());
+
+    expect(screen.getByRole('combobox')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /cancel paid subscription/i })).not.toBeInTheDocument();
+  });
+
+  it('shows the Subscription Health stat cards', async () => {
+    mockAuth(['SUBSCRIPTION_MANAGEMENT_VIEW']);
+    vi.mocked(adminSubscriptionsApi.list).mockResolvedValue(pageOf());
+    vi.mocked(adminSubscriptionsApi.health).mockResolvedValue({
+      activeCount: 120, pastDueCount: 5, paymentFailedCount: 3, cancelledCount: 8, pendingOrderCount: 2,
+    });
+
+    renderPage();
+
+    expect(await screen.findByText('120')).toBeInTheDocument();
+    expect(screen.getByText('5')).toBeInTheDocument();
+    expect(screen.getByText('3')).toBeInTheDocument();
+    expect(screen.getByText('8')).toBeInTheDocument();
+    expect(screen.getByText('2')).toBeInTheDocument();
+    expect(screen.getByText(/active/i)).toBeInTheDocument();
+    expect(screen.getByText(/past due/i)).toBeInTheDocument();
+    expect(screen.getByText(/payment failed/i)).toBeInTheDocument();
+    // { selector: 'span' } disambiguates from the page's own descriptive paragraph, which also
+    // contains the word "cancelled".
+    expect(screen.getByText(/cancelled/i, { selector: 'span' })).toBeInTheDocument();
+    expect(screen.getByText(/pending orders/i)).toBeInTheDocument();
   });
 });

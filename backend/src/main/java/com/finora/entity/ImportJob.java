@@ -59,14 +59,35 @@ public class ImportJob implements com.finora.imports.storage.StoredStatement {
      * nothing compares against them positionally.
      */
     public enum Status {
-        QUEUED, PARSING, ANALYZING, DEDUPING, IMPORTING, LEARNING, COMPLETED, FAILED, CANCELLED;
+        QUEUED, PARSING, ANALYZING, DEDUPING, IMPORTING, LEARNING, COMPLETED, FAILED,
+        HELD_FOR_REVIEW, HELD_FOR_TRUST_REVIEW, CANCELLED;
 
         /** The states a worker holds a job in. A row sitting in one of these with no live worker is
          *  abandoned, and recovery returns it to the queue -- see the in-flight index in V66. */
         public static final Set<Status> IN_FLIGHT =
                 EnumSet.of(PARSING, ANALYZING, DEDUPING, IMPORTING, LEARNING);
 
-        public static final Set<Status> TERMINAL = EnumSet.of(COMPLETED, FAILED, CANCELLED);
+        /**
+         * States the worker will not act on again.
+         *
+         * <p>HELD_FOR_REVIEW is terminal in exactly this sense and no other: no automatic attempt
+         * follows it. It is emphatically not "finished" -- a held job is waiting on a human fixing
+         * a parser, after which {@link #returnToQueueForReprocess} puts it back to QUEUED. Being
+         * terminal here is what makes the hold stick: {@link #recordFailure} refuses to move a
+         * terminal job, so a later stray failure cannot silently downgrade a held job to FAILED,
+         * and {@link #advanceTo} refuses to enter it, so only the explicit transition can.
+         *
+         * <p>HELD_FOR_TRUST_REVIEW is terminal for all the same reasons and one more. The other
+         * hold got here by failing; this one got here by succeeding -- the parse worked and rows
+         * are staged -- and is held because the extraction's own evidence contradicts it. That
+         * makes "terminal" the load-bearing word: the natural alternative was to COMPLETE the job
+         * and record the doubt beside it, and COMPLETED is one of the two statuses that stop
+         * protecting the stored object from
+         * {@code StatementStorageSweepService}. Completing a held job would make the reviewer's
+         * only copy of the statement eligible for reclaim while they were still reading it.
+         */
+        public static final Set<Status> TERMINAL =
+                EnumSet.of(COMPLETED, FAILED, HELD_FOR_REVIEW, HELD_FOR_TRUST_REVIEW, CANCELLED);
 
         public boolean isTerminal() { return TERMINAL.contains(this); }
         public boolean isInFlight() { return IN_FLIGHT.contains(this); }
@@ -155,6 +176,12 @@ public class ImportJob implements com.finora.imports.storage.StoredStatement {
     @Column(name = "import_session_id")
     private UUID importSessionId;
 
+    /** The {@code held_statements} row opened for this job, or null if it was never held for trust
+     *  review. Set once, by {@link #holdForTrustReview}, and never cleared -- the hold is part of
+     *  this import's history even after it is released. */
+    @Column(name = "held_statement_id")
+    private UUID heldStatementId;
+
     @Column(name = "created_at", nullable = false)
     private Instant createdAt = Instant.now();
 
@@ -163,6 +190,58 @@ public class ImportJob implements com.finora.imports.storage.StoredStatement {
 
     @Column(name = "finished_at")
     private Instant finishedAt;
+
+    /**
+     * Extraction evidence this import already computed, kept so it can be measured later.
+     *
+     * <p>Every one of these is calculated during staging and shown to the user today, then
+     * discarded. Nothing gates on them and this does not change that -- the point is that "how
+     * often would a trust rule have fired?" is currently unanswerable, so any threshold chosen for
+     * one would be a guess. See V141.
+     *
+     * <p>All nullable with no default: NULL means "predates telemetry", which has to stay
+     * distinguishable from a recorded clean result.
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "reliability_status", length = 24)
+    private com.finora.imports.ImportReliabilityStatus reliabilityStatus;
+
+    /** NATIVE / OCR / NATIVE_PLUS_OCR -- provenance, not a defect. Held as the reported string
+     *  rather than the parser's own enum so this entity does not depend on the pdf package. */
+    @Column(name = "text_source", length = 24)
+    private String textSource;
+
+    /** The one NEEDS_ATTENTION input that produces no VerificationFinding, so the only trust signal
+     *  that would otherwise be unmeasurable after the fact. */
+    @Column(name = "header_reconstruction_uncertain")
+    private Boolean headerReconstructionUncertain;
+
+    /** The deploy that parsed this statement. Loop prevention on reprocess, not fix attribution --
+     *  and unrecoverable unless recorded at the time. */
+    @Column(name = "parser_version", length = 40)
+    private String parserVersion;
+
+    @Column(name = "verification_findings_count")
+    private Integer verificationFindingsCount;
+
+    @Column(name = "verification_failed_count")
+    private Integer verificationFailedCount;
+
+    @Column(name = "verification_warning_count")
+    private Integer verificationWarningCount;
+
+    /**
+     * Whether this job was ever held for admin review.
+     *
+     * <p>Set by {@link #holdForReview} and never cleared -- deliberately, including by {@link
+     * #returnToQueueForReprocess}. {@link #status} cannot answer this question: by the time a
+     * reprocessed job completes, its status is COMPLETED and the hold it went through is gone. The
+     * completion notification depends on knowing it, because only a user who was told "we're
+     * running additional checks" is owed a follow-up. A first-time success notifies nobody -- we
+     * never asked them to wait.
+     */
+    @Column(name = "was_held_for_review", nullable = false)
+    private boolean wasHeldForReview;
 
     /**
      * Which parser this job runs. BH-029.
@@ -457,6 +536,199 @@ public class ImportJob implements com.finora.imports.storage.StoredStatement {
         return false;
     }
 
+    /**
+     * Holds a job whose failure nothing recognized, instead of dead-lettering it to FAILED.
+     *
+     * <p>Entered only for a {@code RETRY_ONCE_THEN_ALERT} classification that already exhausted its
+     * attempts -- that is, a genuinely unclassified exception, which in practice means a parser gap
+     * on a statement layout this codebase has not seen. A known {@code ErrorCode} failure (wrong
+     * password, unsupported file) still goes to FAILED with its own specific message; there is
+     * nothing for an admin to troubleshoot there, and the user can act on it themselves.
+     *
+     * <p>Called immediately after {@link #recordFailure} has already dead-lettered the job to
+     * FAILED, so this overwrites that status rather than racing it. The caller keeps the
+     * {@link FailureOutcome#DEAD_LETTERED} it was handed and still alerts on it: holding for triage
+     * adds a destination, it does not replace engineering visibility.
+     *
+     * <p>The stored statement object is retained for a held job exactly as it is for a FAILED one
+     * -- {@code StatementStorageSweepService.IMPORT_JOB_EXCLUDED_STATUSES} names the two statuses
+     * that do NOT protect an object, and this is not one of them -- which is what makes
+     * reprocess-without-reupload possible once the parser is fixed.
+     */
+    public void holdForReview(String failureCode, Instant now) {
+        this.status = Status.HELD_FOR_REVIEW;
+        this.failureCode = failureCode;
+        this.finishedAt = now;
+        this.wasHeldForReview = true;
+    }
+
+    /**
+     * Staging succeeded -- the rows are real and sitting in {@code importSessionId} -- but the
+     * extraction's own evidence says they may be wrong, so the import is withheld from the user's
+     * confirm step until a human decides.
+     *
+     * <p>The distinction from {@link #holdForReview} is the whole design. That one is a parser
+     * that fell over and produced nothing; this one produced a complete, plausible-looking import
+     * that we do not trust. Nothing here is a failure, so no {@code failureCode} and no {@code
+     * lastError} are recorded -- writing one would make this indistinguishable from a parse that
+     * broke, both to the user-facing status mapping and to anyone reading the row later.
+     *
+     * <p>Deliberately not {@link #complete}. COMPLETED is what
+     * {@code StatementStorageSweepService.IMPORT_JOB_EXCLUDED_STATUSES} reads as "this job no
+     * longer references its object", and the object is precisely what the reviewer needs to open.
+     * It would also make {@code isReviewable} true on the client and hand the user the confirm
+     * button this state exists to withhold.
+     *
+     * <p>The session is kept rather than discarded so the review can compare what we extracted
+     * against the document, and so releasing the hold is a decision rather than a re-parse under
+     * a build that may since have changed.
+     *
+     * @throws IllegalStateException if the job was cancelled -- same guard, and same reason, as
+     *                               {@link #complete}: holding a cancelled import would revive it
+     *                               as a queue item the user never asked for and cannot stop.
+     */
+    public void holdForTrustReview(UUID importSessionId, UUID heldStatementId, Instant now) {
+        if (this.status == Status.CANCELLED) {
+            throw new IllegalStateException(
+                    "Import job " + id + " was cancelled; holding it for trust review would revive "
+                            + "an import the user asked to stop.");
+        }
+        this.status = Status.HELD_FOR_TRUST_REVIEW;
+        this.importSessionId = importSessionId;
+        this.heldStatementId = heldStatementId;
+        this.finishedAt = now;
+        this.lastError = null;
+        this.failureCode = null;
+    }
+
+    /**
+     * Returns a held job to the queue after the parser bug behind it was fixed.
+     *
+     * <p>Resets {@code attemptCount} and {@code recoveryCount}: both were spent against a parser
+     * that could not have succeeded, so charging them against the fixed one would dead-letter the
+     * retry before it had a fair run. {@code recoveryCount} matters as much as {@code attemptCount}
+     * here -- a parser gap that killed its worker (an OOM on a large PDF) burns recoveries, and
+     * {@link #MAX_RECOVERIES} is only three.
+     *
+     * <p>Clears {@code lastError} and {@code failureCode} for the reason {@link #returnToQueue}
+     * gives at length: a stale code from the attempt that failed against the OLD parser would
+     * survive into this run and, if something unrelated goes wrong, describe the wrong failure
+     * entirely on the customer timeline. The original code is not lost -- it is recorded on the
+     * audit entry the admin action writes.
+     *
+     * <p>{@link #wasHeldForReview} is deliberately NOT cleared; it is what tells the success path
+     * this user is owed a notification.
+     */
+    public void returnToQueueForReprocess(Instant now) {
+        if (status != Status.HELD_FOR_REVIEW) {
+            throw new IllegalStateException(
+                    "Import job " + id + " is at " + status + "; only a HELD_FOR_REVIEW job can be "
+                            + "reprocessed.");
+        }
+        this.status = Status.QUEUED;
+        this.attemptCount = 0;
+        this.recoveryCount = 0;
+        this.nextAttemptAt = now;
+        this.startedAt = null;
+        this.finishedAt = null;
+        this.lastError = null;
+        this.failureCode = null;
+    }
+
+    /**
+     * Gives up on a held job without a parser fix, landing it where it would have landed today.
+     *
+     * <p>The reason is recorded on the admin's audit entry, not here: the entity records what the
+     * import did, and "an admin decided this bank's format is not supportable" is not something the
+     * import did. Same split the learning queue's own resolve already makes.
+     */
+    /**
+     * A reviewer approved the held extraction: the staged rows may reach the user's confirm step.
+     *
+     * <p>Its own transition rather than a call to {@link #complete}, which guards only CANCELLED
+     * and would therefore complete a job in any other state -- including one a worker is still
+     * holding. Naming the source status means the only way out of a trust hold is a decision about
+     * that hold. Same shape as {@link #resolveWithoutFix} for the other kind of hold.
+     *
+     * <p>{@code importSessionId} is deliberately left alone: it already points at the rows the
+     * reviewer just approved, and those are exactly the rows the user should get.
+     */
+    public void releaseAfterTrustReview(Instant now) {
+        if (status != Status.HELD_FOR_TRUST_REVIEW) {
+            throw new IllegalStateException(
+                    "Import job " + id + " is at " + status + "; only a HELD_FOR_TRUST_REVIEW job "
+                            + "can be released.");
+        }
+        this.status = Status.COMPLETED;
+        this.finishedAt = now;
+    }
+
+    /**
+     * A reviewer rejected the held extraction: these rows never reach the ledger.
+     *
+     * <p>Must be its own transition, because {@link #recordFailure} returns
+     * {@link FailureOutcome#ALREADY_FINISHED} without touching a terminal job and
+     * HELD_FOR_TRUST_REVIEW is terminal. Failing a rejected hold that way would silently do
+     * nothing -- the job would stay held forever while the review said REJECTED and the user's
+     * progress screen said "running additional checks" indefinitely.
+     *
+     * <p>Takes a failure code, unlike {@link #resolveWithoutFix}, because
+     * {@link #holdForTrustReview} cleared the job's code on the way in -- a trust hold is not a
+     * failure and must not carry one. Without a code here the user would be shown a bare failure
+     * with no reason after having been told we were checking something. The operator's own
+     * reason goes on the audit entry, not on the entity: what an admin decided is not something
+     * the import did.
+     */
+    public void rejectAfterTrustReview(String failureCode, Instant now) {
+        if (status != Status.HELD_FOR_TRUST_REVIEW) {
+            throw new IllegalStateException(
+                    "Import job " + id + " is at " + status + "; only a HELD_FOR_TRUST_REVIEW job "
+                            + "can be rejected.");
+        }
+        this.status = Status.FAILED;
+        this.failureCode = failureCode;
+        this.finishedAt = now;
+    }
+
+    public void resolveWithoutFix(Instant now) {
+        if (status != Status.HELD_FOR_REVIEW) {
+            throw new IllegalStateException(
+                    "Import job " + id + " is at " + status + "; only a HELD_FOR_REVIEW job can be "
+                            + "resolved.");
+        }
+        this.status = Status.FAILED;
+        this.finishedAt = now;
+    }
+
+    /**
+     * Records what verification saw, without acting on any of it.
+     *
+     * <p>Takes finished values rather than the reports themselves: walking a list of DTOs is a
+     * business rule, and an entity that can reach {@code com.finora.dto} stops being the bottom of
+     * the dependency graph -- {@code LayerDependencyDirectionTest} enforces exactly that. The
+     * aggregation lives in {@link com.finora.imports.jobs.VerificationTelemetry}, which is also
+     * what makes it testable without constructing a job.
+     *
+     * <p>Deliberately has no effect on {@link #status} or anything else the worker branches on.
+     * Telemetry that could change an import's outcome would be a gate wearing a different name, and
+     * the whole reason this exists is that nothing is yet calibrated well enough to gate.
+     *
+     * <p>When nothing was observed the evidence columns stay null, so "predates telemetry" and
+     * "verified, found nothing" remain different rows rather than both reading as zero.
+     */
+    public void recordVerificationTelemetry(
+            com.finora.imports.ImportReliabilityStatus reliabilityStatus, String textSource,
+            Boolean headerReconstructionUncertain, Integer findingsCount, Integer failedCount,
+            Integer warningCount, String parserVersion) {
+        this.parserVersion = parserVersion;
+        this.reliabilityStatus = reliabilityStatus;
+        this.textSource = textSource;
+        this.headerReconstructionUncertain = headerReconstructionUncertain;
+        this.verificationFindingsCount = findingsCount;
+        this.verificationFailedCount = failedCount;
+        this.verificationWarningCount = warningCount;
+    }
+
     /** Cancellable only before user-visible data exists -- see the class comment. */
     public boolean isCancellable() {
         return status == Status.QUEUED || status.isBefore(Status.IMPORTING);
@@ -475,9 +747,17 @@ public class ImportJob implements com.finora.imports.storage.StoredStatement {
     // ------------------------------------------------------------------ accessors
 
     public UUID getId() { return id; }
+    public boolean wasHeldForReview() { return wasHeldForReview; }
+    public com.finora.imports.ImportReliabilityStatus getReliabilityStatus() { return reliabilityStatus; }
+    public String getTextSource() { return textSource; }
+    public Boolean getHeaderReconstructionUncertain() { return headerReconstructionUncertain; }
+    public String getParserVersion() { return parserVersion; }
+    public Integer getVerificationFindingsCount() { return verificationFindingsCount; }
+    public Integer getVerificationFailedCount() { return verificationFailedCount; }
+    public Integer getVerificationWarningCount() { return verificationWarningCount; }
     public UUID getUserId() { return userId; }
-    public String getContentHash() { return contentHash; }
-    public String getObjectKey() { return objectKey; }
+    @Override public String getContentHash() { return contentHash; }
+    @Override public String getObjectKey() { return objectKey; }
     @Override public String getEncryptionKeyId() { return encryptionKeyId; }
     public String getFileName() { return fileName; }
     public String getSourceFormat() { return sourceFormat; }
@@ -491,6 +771,7 @@ public class ImportJob implements com.finora.imports.storage.StoredStatement {
     public String getFailureCode() { return failureCode; }
     public String getCorrelationId() { return correlationId; }
     public UUID getImportSessionId() { return importSessionId; }
+    public UUID getHeldStatementId() { return heldStatementId; }
     public Instant getCreatedAt() { return createdAt; }
     public Instant getStartedAt() { return startedAt; }
     public Instant getFinishedAt() { return finishedAt; }

@@ -10,6 +10,30 @@ import {
 } from '../api/endpoints';
 import type { DashboardSummary } from '../types';
 
+// jsdom implements no canvas, so HTMLCanvasElement.getContext() returns null and Chart.js's
+// constructor bails early -- but only AFTER assigning `this.canvas = null` and registering the
+// half-built instance. react-chartjs-2 keeps that instance in its ref, so the very next render
+// that changes `data.labels`/`data.datasets`/`options` runs its update effect and calls
+// chart.update() on it: _checkEventBindings -> bindEvents -> bindResponsiveEvents sees
+// isAttached(null) === false, calls detached() -> _resize(0, 0) -> getMaximumSize(null) ->
+// `null.ownerDocument`. That TypeError is thrown from a passive effect with no error boundary
+// above it, so React tears down the entire root -- the DOM goes to a bare <div /> mid-test and
+// whichever findBy* is pending then polls an empty body until asyncUtilTimeout (5s) and fails.
+//
+// It presents as an intermittent failure in an unrelated-looking test because the Line chart only
+// mounts once the independent reportsApi chain resolves: whether the crashing update() lands
+// inside a still-asserting test is a matter of load-dependent timing. It is not cross-file
+// pollution -- each test file runs in its own child process, so nothing can leak between them.
+// (The "Not implemented: navigation" noise that shows up next to these failures comes from a
+// different worker entirely and is printed unattributed; see src/test/setup.ts.)
+//
+// Mocking the chart components is what Investments.test.tsx already does, for the same reason:
+// the charts are not under test here, the page's loading and empty-state behaviour is.
+vi.mock('react-chartjs-2', () => ({
+  Line: () => <div data-testid="cash-flow-chart" />,
+  Doughnut: () => <div data-testid="spending-breakdown-chart" />,
+}));
+
 // Dashboard had no prior test file -- this covers only what each change added (the Financial
 // Health Score card, D-19 Step 1; the Subscriptions & Recurring Payments card, C6.5; the D-21
 // empty-state welcome screen), not the whole page. Every card renders data
@@ -214,9 +238,9 @@ describe('Dashboard — Financial Health Score', () => {
   });
 
   it('shows a "Why?" toggle next to a breakdown row that has a detail explanation, revealing it on click', async () => {
-    // Real chart data + a userEvent interaction together crash jsdom's Chart.js mock (a known,
-    // unrelated limitation -- see the category-movers/detected-duplicates describe blocks for the
-    // same workaround): nulling the chart data here avoids mounting a second live canvas.
+    // Kept from when real chart data here crashed the run: react-chartjs-2 is mocked at the top
+    // of this file now, so no canvas is ever mounted and this is only about keeping the Cash Flow
+    // card out of a test that is about the Health Score card.
     vi.mocked(reportsApi.availableMonths).mockResolvedValue([]);
     vi.mocked(dashboardApi.summary).mockResolvedValue(summary({
       healthBreakdownDetail: { 'Savings Rate': 'Your savings rate was 18.5%.' },
@@ -269,11 +293,10 @@ describe('Dashboard — Spending Breakdown category review warning', () => {
     vi.mocked(dashboardApi.summary).mockReset().mockResolvedValue(summary());
     vi.mocked(dashboardApi.journey).mockReset().mockResolvedValue({ milestones: [] });
     vi.mocked(accountsApi.list).mockReset().mockResolvedValue([]);
-    // totalElements: 0 (isEmpty) -- these tests don't care about Financial Health Score, and
-    // rendering it alongside a populated Doughnut chart mounts two Chart.js instances at once,
-    // which crashes in jsdom ("can't acquire context from the given item", no error boundary to
-    // catch it). The existing "0%, not NaN%" test below proves a populated Doughnut renders fine
-    // on its own with isEmpty -- matching that pattern rather than the Health Score block's.
+    // totalElements: 0 (isEmpty) -- these tests don't care about Financial Health Score. This
+    // originally also avoided mounting two live Chart.js instances at once; react-chartjs-2 is
+    // mocked at the top of this file now, so that hazard is gone and this is purely about scoping
+    // these tests to the Spending Breakdown card.
     vi.mocked(transactionsApi.search).mockReset().mockResolvedValue({
       content: [], page: 0, size: 4, totalElements: 0, totalPages: 0,
     });
@@ -291,12 +314,10 @@ describe('Dashboard — Spending Breakdown category review warning', () => {
     });
     vi.mocked(budgetsApi.list).mockReset().mockResolvedValue([]);
     // Empty (not a real month) -- CashFlowChart isn't gated by the page-level isEmpty at all;
-    // it's driven independently by these two APIs. Real data here mounts a SECOND live Chart.js
-    // canvas (a Line chart) alongside the Doughnut these tests actually care about, and jsdom
-    // can't survive two real chart.js instances mounting at once ("Failed to create chart:
-    // can't acquire context from the given item", uncaught, unmounts the whole tree). Matches
-    // the existing "0%, not NaN%" test's own pattern below, which proves a populated Doughnut
-    // alone renders fine.
+    // it's driven independently by these two APIs. This used to be load-bearing: real data here
+    // mounted a live Line chart whose first update() threw uncaught and unmounted the whole tree.
+    // react-chartjs-2 is mocked at the top of this file now, so it only keeps the Cash Flow card
+    // out of tests that are about Spending Breakdown.
     vi.mocked(reportsApi.availableMonths).mockReset().mockResolvedValue([]);
     vi.mocked(reportsApi.forMonth).mockReset();
     vi.mocked(recurringApi.list).mockReset().mockResolvedValue([]);
@@ -358,7 +379,7 @@ describe('Dashboard — Recent Transactions icon/color', () => {
           date: '2026-08-20', description: 'Vet visit', merchant: 'Local Vet Clinic',
           paymentMethod: 'UPI', amount: 1200, type: 'EXPENSE', tags: [], notes: null,
           reconciliationStatus: 'OK', recurring: false, needsCategoryReview: false,
-          categoryManuallySet: false,
+          categoryManuallySet: false, counterpartyType: 'UNKNOWN',
         },
       ],
       page: 0, size: 4, totalElements: 1, totalPages: 1,
@@ -1170,5 +1191,134 @@ describe('Dashboard — Your Financial Journey', () => {
     expect(await screen.findByText('Your Financial Journey')).toBeInTheDocument();
     expect(screen.getByText('1 of 5 complete')).toBeInTheDocument();
     expect(screen.queryByText('Financial Health Score')).not.toBeInTheDocument();
+  });
+});
+
+// Animation-polish roadmap Phase 2 (§3 priority 1): the old page-level gate ANDed four queries
+// together. These tests cover the two things that fix had to get right: `isEmpty` (which several
+// isEmpty-gated sections depend on, not just Recent Transactions' own card) must never be computed
+// from an unresolved recentTxnsQ, and accounts/goals/budgets -- genuinely independent of anything
+// outside their own cards -- must be able to render their own section while still loading, without
+// blocking the rest of the page.
+describe('Dashboard — Phase 2 section-scoped loading', () => {
+  function pending<T>() {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>((r) => {
+      resolve = r;
+    });
+    return { promise, resolve };
+  }
+
+  beforeEach(() => {
+    vi.mocked(dashboardApi.summary).mockReset().mockResolvedValue(summary());
+    vi.mocked(dashboardApi.journey).mockReset().mockResolvedValue({ milestones: [] });
+    vi.mocked(categoriesApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(insightsApi.get).mockReset().mockResolvedValue({ sentences: [], movers: [] });
+    vi.mocked(userApi.get).mockReset().mockResolvedValue({
+      email: 'amy@example.test', fullName: 'Amy Santiago', lowBalanceThreshold: 2000,
+      theme: 'system', timezone: 'Asia/Kolkata', phoneNumber: '+919876500000',
+      phoneVerified: true, createdAt: '2026-01-01T00:00:00Z', passwordChangedAt: null, signInMethod: 'PASSWORD',
+    });
+    vi.mocked(reportsApi.availableMonths).mockReset().mockResolvedValue(['2026-08']);
+    vi.mocked(reportsApi.forMonth).mockReset().mockResolvedValue({
+      month: '2026-08', income: 80000, expense: 45000, categories: [],
+    });
+    vi.mocked(recurringApi.list).mockReset().mockResolvedValue([]);
+  });
+
+  it('never computes isEmpty (which several sections key off) from an unresolved recentTxnsQ', async () => {
+    // summary resolves immediately; recentTxnsQ deliberately never resolves during this test. If
+    // isEmpty were computed from recentTxnsQ.data defaulting to undefined, the page would render
+    // past the (would-be) gate and wrongly hide Financial Health Score for an account that
+    // actually has plenty of history -- recentTxnsQ staying blocking is what prevents that.
+    const recentTxns = pending<any>();
+    vi.mocked(accountsApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(transactionsApi.search).mockReset().mockReturnValue(recentTxns.promise);
+    vi.mocked(goalsApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(budgetsApi.list).mockReset().mockResolvedValue([]);
+
+    renderDashboard();
+
+    // Give summary's own resolution a tick to land -- Financial Health Score must still not
+    // appear, because the page itself hasn't rendered past the blocking gate yet.
+    await new Promise((r) => setTimeout(r, 0));
+    expect(screen.queryByText('Financial Health Score')).not.toBeInTheDocument();
+    // The assertion above alone doesn't discriminate this fix from the exact bug it guards
+    // against: a broken implementation that decoupled recentTxnsQ would ALSO render past the gate
+    // with isEmpty wrongly defaulting to true, which hides Financial Health Score for a different
+    // (wrong) reason -- that assertion would pass either way. What actually proves the page
+    // hasn't rendered at all is a page-shell element that ISN'T gated by isEmpty, like Accounts
+    // Overview's header -- present the moment the page passes the blocking gate, regardless of
+    // isEmpty. If summaryQ.isLoading alone (not summaryQ || recentTxnsQ) were the real gate, this
+    // header would already be here even though recentTxnsQ hasn't resolved.
+    expect(screen.queryByText('Accounts Overview')).not.toBeInTheDocument();
+
+    recentTxns.resolve({ content: [], page: 0, size: 4, totalElements: 12, totalPages: 3 });
+    expect(await screen.findByText('Financial Health Score')).toBeInTheDocument();
+    expect(screen.getByText('Accounts Overview')).toBeInTheDocument();
+  });
+
+  it('shows Accounts Overview once loaded without waiting on Budgets/Goals, and vice versa', async () => {
+    // Everything else resolves immediately except accountsQ, which resolves after the rest of the
+    // page is already up -- proving accounts/goals/budgets no longer share one blocking gate.
+    const accounts = pending<any>();
+    vi.mocked(accountsApi.list).mockReset().mockReturnValue(accounts.promise);
+    vi.mocked(transactionsApi.search).mockReset().mockResolvedValue({
+      content: [], page: 0, size: 4, totalElements: 12, totalPages: 3,
+    });
+    vi.mocked(goalsApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(budgetsApi.list).mockReset().mockResolvedValue([]);
+
+    renderDashboard();
+
+    // The page itself (gated only on summary+recentTxns, both resolved) is already up, including
+    // the Accounts Overview section header -- it just hasn't gotten its data yet.
+    expect(await screen.findByText('Accounts Overview')).toBeInTheDocument();
+    expect(screen.queryByText('No accounts yet')).not.toBeInTheDocument();
+
+    accounts.resolve([]);
+    expect(await screen.findByText('No accounts yet')).toBeInTheDocument();
+  });
+
+  it('shows real budget rows once budgetsQ resolves, without having claimed "No budgets set" first', async () => {
+    const budgets = pending<any>();
+    vi.mocked(accountsApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(transactionsApi.search).mockReset().mockResolvedValue({
+      content: [], page: 0, size: 4, totalElements: 12, totalPages: 3,
+    });
+    vi.mocked(goalsApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(budgetsApi.list).mockReset().mockReturnValue(budgets.promise);
+
+    renderDashboard();
+
+    expect(await screen.findByText('Budget Progress')).toBeInTheDocument();
+    expect(screen.queryByText('No budgets set')).not.toBeInTheDocument();
+
+    budgets.resolve([{ id: 'b1', categoryName: 'Groceries', monthlyLimit: 8000, spentThisMonth: 2000 }]);
+    expect(await screen.findByText('Groceries')).toBeInTheDocument();
+    expect(screen.queryByText('No budgets set')).not.toBeInTheDocument();
+  });
+
+  it('shows a real goal once goalsQ resolves, without having claimed "No goals yet" first', async () => {
+    // Same pattern as the accounts/budgets tests above, for the third independently-loading
+    // section -- flagged by the Phase 2 adversarial review as a real coverage gap (accounts and
+    // budgets each got a dedicated race test, goals didn't, even though all three follow the
+    // identical isLoading-gated pattern).
+    const goals = pending<any>();
+    vi.mocked(accountsApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(transactionsApi.search).mockReset().mockResolvedValue({
+      content: [], page: 0, size: 4, totalElements: 12, totalPages: 3,
+    });
+    vi.mocked(goalsApi.list).mockReset().mockReturnValue(goals.promise);
+    vi.mocked(budgetsApi.list).mockReset().mockResolvedValue([]);
+
+    renderDashboard();
+
+    expect(await screen.findByText('Goals')).toBeInTheDocument();
+    expect(screen.queryByText('No goals yet')).not.toBeInTheDocument();
+
+    goals.resolve([{ id: 'g1', name: 'Emergency Fund', targetAmount: 100000, currentAmount: 25000 }]);
+    expect(await screen.findByText('Emergency Fund')).toBeInTheDocument();
+    expect(screen.queryByText('No goals yet')).not.toBeInTheDocument();
   });
 });

@@ -7,12 +7,14 @@ import com.finora.goals.GoalRepository;
 import com.finora.imports.analysis.StatementAnalysisSessionRepository;
 import com.finora.integrations.google.GmailConnectionRepository;
 import com.finora.integrations.google.GmailConnectionService;
+import com.finora.notification.repository.NotificationRepository;
 import com.finora.repository.AccountReactivationTokenRepository;
 import com.finora.repository.EmailVerificationTokenRepository;
 import com.finora.repository.AccountRepository;
 import com.finora.repository.BudgetRepository;
 import com.finora.repository.CategoryRepository;
 import com.finora.repository.CategoryRuleRepository;
+import com.finora.repository.FeedbackEntryRepository;
 import com.finora.repository.ImportJobRepository;
 import com.finora.repository.ImportSessionRepository;
 import com.finora.repository.MerchantAliasRepository;
@@ -32,7 +34,9 @@ import com.finora.repository.RefreshTokenRepository;
 import com.finora.repository.RelationshipIdentifierRepository;
 import com.finora.repository.RelationshipRepository;
 import com.finora.repository.StatementImportRepository;
+import com.finora.repository.SubscriptionOrderRepository;
 import com.finora.repository.SubscriptionRepository;
+import com.finora.repository.SupportTicketRepository;
 import com.finora.repository.TransactionRepository;
 import com.finora.repository.UserRepository;
 import com.finora.repository.UserSettingsRepository;
@@ -73,6 +77,7 @@ class AccountPurgeSweepServiceTest {
     private GmailConnectionRepository gmailConnectionRepository;
     private TransactionRepository transactionRepository;
     private PaymentRepository paymentRepository;
+    private SubscriptionOrderRepository subscriptionOrderRepository;
     private ReferralCodeRepository referralCodeRepository;
     private ReferralRepository referralRepository;
     private WalletLedgerRepository walletLedgerRepository;
@@ -81,6 +86,8 @@ class AccountPurgeSweepServiceTest {
     private StatementAnalysisSessionRepository statementAnalysisSessionRepository;
     private RelationshipRepository relationshipRepository;
     private AccountRepository accountRepository;
+    private SupportTicketRepository supportTicketRepository;
+    private FeedbackEntryRepository feedbackEntryRepository;
     private AuditService auditService;
     private PasswordEncoder passwordEncoder;
     private TransactionTemplate transactionTemplate;
@@ -94,6 +101,7 @@ class AccountPurgeSweepServiceTest {
         gmailConnectionRepository = mock(GmailConnectionRepository.class);
         transactionRepository = mock(TransactionRepository.class);
         paymentRepository = mock(PaymentRepository.class);
+        subscriptionOrderRepository = mock(SubscriptionOrderRepository.class);
         referralCodeRepository = mock(ReferralCodeRepository.class);
         referralRepository = mock(ReferralRepository.class);
         walletLedgerRepository = mock(WalletLedgerRepository.class);
@@ -102,6 +110,8 @@ class AccountPurgeSweepServiceTest {
         statementAnalysisSessionRepository = mock(StatementAnalysisSessionRepository.class);
         relationshipRepository = mock(RelationshipRepository.class);
         accountRepository = mock(AccountRepository.class);
+        supportTicketRepository = mock(SupportTicketRepository.class);
+        feedbackEntryRepository = mock(FeedbackEntryRepository.class);
         auditService = mock(AuditService.class);
         passwordEncoder = mock(PasswordEncoder.class);
         when(passwordEncoder.encode(anyString())).thenReturn("unusable-random-hash");
@@ -128,7 +138,8 @@ class AccountPurgeSweepServiceTest {
                 mock(MerchantCategoryLearningRepository.class), mock(MerchantAliasRepository.class),
                 mock(MerchantCategoryMapRepository.class), mock(MerchantRepository.class),
                 mock(BudgetRepository.class), mock(GoalRepository.class), mock(SubscriptionRepository.class),
-                paymentRepository, referralCodeRepository, referralRepository, walletLedgerRepository,
+                paymentRepository, subscriptionOrderRepository,
+                referralCodeRepository, referralRepository, walletLedgerRepository,
                 mock(CategoryRuleRepository.class), mock(CategoryRepository.class),
                 relationshipRepository, mock(RelationshipIdentifierRepository.class),
                 mock(NetWorthSnapshotRepository.class), mock(ImportJobRepository.class),
@@ -138,6 +149,8 @@ class AccountPurgeSweepServiceTest {
                 mock(RefreshTokenRepository.class),
                 mock(UserSettingsRepository.class), accountRepository,
                 statementImportRepository, statementImportService, statementAnalysisSessionRepository,
+                mock(NotificationRepository.class),
+                supportTicketRepository, feedbackEntryRepository,
                 auditService, passwordEncoder, transactionTemplate);
         ReflectionTestUtils.setField(service, "sweepEnabled", true);
         ReflectionTestUtils.setField(service, "retentionHours", 48);
@@ -199,12 +212,23 @@ class AccountPurgeSweepServiceTest {
         inOrder.verify(paymentRepository).hardDeleteByUserId(userId);
         inOrder.verify(statementImportService).delete(userId, statementId);
         inOrder.verify(userRepository).save(argThat(u -> User.STATUS_DELETED.equals(u.getStatus())));
+        // Follow-up to PR #1039's V157 cascade: subscription_orders needs the same explicit call
+        // as payments, since that cascade alone never fires here (see this call site's own comment
+        // in AccountPurgeSweepService) -- regression evidence the call actually exists, same reason
+        // as the supportTicketRepository/feedbackEntryRepository verifications below.
+        verify(subscriptionOrderRepository).hardDeleteByUserId(userId);
         // D-28 PR4-C: every referral-program table gets a call, both directions for referrals
         // (the purged user could be either party).
         verify(referralCodeRepository).deleteByUserId(userId);
         verify(referralRepository).deleteByReferrerUserId(userId);
         verify(referralRepository).deleteByReferredUserId(userId);
         verify(walletLedgerRepository).deleteByUserId(userId);
+        // Phase 6 (support module): regression evidence that these two calls actually exist -- the
+        // same reason this class's user_roles assertion exists (see
+        // sweep_anonymizesTheUserRow_keepingDeactivationReasonAndClearingTheNote's own comment): a
+        // table with its own user_id FK is easy to add and forget to wire into the purge.
+        verify(supportTicketRepository).deleteByUserId(userId);
+        verify(feedbackEntryRepository).deleteByUserId(userId);
 
         assertThat(user.getStatus()).isEqualTo(User.STATUS_DELETED);
         assertThat(user.getDeletedAt()).isNotNull();

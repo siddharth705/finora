@@ -3,6 +3,7 @@ import {
   applyDecisionToSimilar,
   beginReview,
   decide,
+  decideAllUnresolved,
   setIncluded,
   toConfirmedRows,
   unresolvedCount,
@@ -30,7 +31,7 @@ const match: DuplicateMatch = {
   existingImportedAt: '2026-07-11T09:00:00Z',
   matchCount: 1,
   confidence: 'EXACT',
-  reason: 'Same date, amount and description as a transaction already in your ledger.',
+  reason: 'Same date and amount, and a matching description, as a transaction already in your ledger.',
 };
 
 function row(description: string, flagged: boolean, overrides: Partial<StagedRow> = {}): StagedRow {
@@ -159,6 +160,38 @@ describe('applyDecisionToSimilar', () => {
     const review = beginReview(rows);
 
     expect(applyDecisionToSimilar(rows, review, 0)).toEqual(review);
+  });
+});
+
+describe('decideAllUnresolved', () => {
+  it('resolves every unresolved row under review, regardless of description', () => {
+    const rows = [row('METRO FARE', true), row('SWIGGY 4471', true), row('ZOMATO', true)];
+    const review = beginReview(rows);
+
+    const after = decideAllUnresolved(rows, review, 'skip');
+
+    expect(after.decisions).toEqual(['skip', 'skip', 'skip']);
+    expect(after.included).toEqual([false, false, false]);
+  });
+
+  it('never overwrites a choice already made by hand', () => {
+    const rows = [row('METRO FARE', true), row('SWIGGY 4471', true), row('ZOMATO', true)];
+    const review = decide(rows, beginReview(rows), 1, 'import');
+
+    const after = decideAllUnresolved(rows, review, 'skip');
+
+    expect(after.decisions).toEqual(['skip', 'import', 'skip']);
+    expect(after.included).toEqual([false, true, false]);
+  });
+
+  it('leaves rows that were never under review untouched', () => {
+    const rows = [row('METRO FARE', true), row('NOT FLAGGED', false)];
+    const review = beginReview(rows);
+
+    const after = decideAllUnresolved(rows, review, 'import');
+
+    expect(after.decisions).toEqual(['import', 'import']);
+    expect(after.included).toEqual([true, true]);
   });
 });
 
