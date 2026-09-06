@@ -94,6 +94,9 @@ export default function Budgets() {
       // also gets invalidated since budget overspend feeds its notifications/health score.
       void queryClient.invalidateQueries({ queryKey: ['budgets'] });
       void queryClient.invalidateQueries({ queryKey: ['dashboard-summary'] });
+      // Getting-started checklist's "Create a budget" item is derived directly from Budget
+      // existence -- same reasoning as the two invalidations just above.
+      void queryClient.invalidateQueries({ queryKey: ['onboarding'] });
     } catch (e: any) {
       setError(e.response?.data?.message ?? 'Could not save this budget. Try again.');
     } finally {

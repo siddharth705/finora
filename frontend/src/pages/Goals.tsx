@@ -42,6 +42,9 @@ export default function Goals() {
   function invalidateSharedCaches() {
     void queryClient.invalidateQueries({ queryKey: ['goals'] });
     void queryClient.invalidateQueries({ queryKey: ['dashboard-summary'] });
+    // Getting-started checklist's "Create a goal" item is derived directly from Goal
+    // existence -- same reasoning as the two invalidations just above.
+    void queryClient.invalidateQueries({ queryKey: ['onboarding'] });
   }
 
   async function addGoal() {
