@@ -1124,9 +1124,24 @@ public class ReconciliationService {
      * whenever either side merely lacks the value (rather than when the two sides actively
      * disagree) would leave that genuine duplicate unmatched -- silently double-counting it in
      * income/expense totals and the account balance, a worse failure than the false-positive
-     * grouping this method exists to fix. A group with incomplete discriminator data is left
-     * exactly as it was before this method existed: one cluster, matching everything else this
-     * pass already did.
+     * grouping this method exists to fix.
+     *
+     * <p><b>Reconciliation benchmark finding (docs/proposals/reconciliation-benchmark/
+     * remaining-failures-classification.md): a group with NEITHER discriminator is not always
+     * safe to leave as one cluster either.</b> Two genuinely separate recurring-mandate debits --
+     * a SIP to one fund and a SIP to another, or two different loans' EMIs -- routinely share the
+     * same round amount, the same day (both auto-debit on the 5th), and the same generic
+     * bank-template narration, with no balance or reference column at all on a minimal-column
+     * import. Merging them is silent DATA LOSS: the second row's amount vanishes from every total
+     * with no signal anything happened, which this project treats as strictly worse than the
+     * failure this whole method already accepts elsewhere (a genuine duplicate staying
+     * unmatched -- see the paragraph above). {@link #looksLikeRecurringMandate} refuses to guess
+     * for exactly this narrow, evidenced shape: when nothing else exists to tell two same-day,
+     * same-amount rows apart AND the shared narration itself signals a recurring mandate, leave
+     * every member of the group on its own rather than pick a canonical one and discard the rest.
+     * Every other undiscriminated group (an ordinary same-day coincidence with no mandate marker)
+     * is left exactly as it was before this guard existed: one cluster, matching everything else
+     * this pass already did.
      */
     private static List<List<Transaction>> splitByDiscriminator(List<Transaction> group) {
         if (group.stream().allMatch(t -> t.getBalanceAfter() != null)) {
@@ -1135,7 +1150,31 @@ public class ReconciliationService {
         if (group.stream().allMatch(t -> t.getReferenceNumber() != null && !t.getReferenceNumber().isBlank())) {
             return groupBy(group, t -> "ref:" + t.getReferenceNumber());
         }
+        if (looksLikeRecurringMandate(group.get(0).getDescription())) {
+            return group.stream().map(List::of).toList();
+        }
         return List.of(group);
+    }
+
+    // Deliberately a small, purpose-built set here rather than a reuse of CategoryRules.RULES --
+    // that table is tuned for a different job (a user-facing category label, where "emi" alone is
+    // excluded as a bare keyword specifically because it's a substring of "premium", see its own
+    // comment) with a different cost of a false trigger. Here, a false trigger on an unrelated word
+    // only means this pass declines to merge a group it otherwise would have -- the SAME accepted,
+    // safer-direction failure (a genuine duplicate slips through) this method's own doc comment
+    // already names for the balance/reference case above, not a new risk class. "ecs"/"nach" (the
+    // clearing-system names Indian standing-instruction debits are routinely narrated with) and
+    // "mandate"/"installment" are included alongside "sip"/"emi" for the same reason -- a real bank
+    // template narration is as likely to say "ECS EMI AUTO DEBIT" as "EMI PAYMENT".
+    private static final Set<String> RECURRING_MANDATE_MARKERS =
+            Set.of("sip", "emi", "ecs", "nach", "mandate", "installment");
+
+    private static boolean looksLikeRecurringMandate(String description) {
+        if (description == null) return false;
+        for (String token : CategoryRules.normalize(description).split(" ")) {
+            if (RECURRING_MANDATE_MARKERS.contains(token)) return true;
+        }
+        return false;
     }
 
     private static List<List<Transaction>> groupBy(List<Transaction> group, java.util.function.Function<Transaction, String> keyFn) {

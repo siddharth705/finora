@@ -53,9 +53,34 @@ the user — but it does not change the ranking below, because #1/#2 (data loss)
 which most users don't. Both gaps are real; this is additional context for whoever prioritizes the
 *next* one after this recommendation, not a reason to reorder this one.
 
-## 3. Recommendation: exactly one next implementation target
+## 3. Recommendation: exactly one next implementation target — ✅ IMPLEMENTED
 
 **SIP/EMI duplicate-merge guard (#1/#2 in the table above).**
+
+**Implementation:** `ReconciliationService.splitByDiscriminator` gets a third branch, after the
+existing balance and reference-number discriminators: when a same-day/same-amount/same-description
+group has neither, and the shared description contains a recurring-mandate marker (`sip`, `emi`,
+`ecs`, `nach`, `mandate`, `installment` — a small, purpose-built set, deliberately not a reuse of
+`CategoryRules`' category vocabulary, which is tuned for a different job with a different
+false-trigger cost), every member of the group is left on its own instead of being collapsed into
+one canonical row. A false trigger here only means a genuine duplicate slips through uncaught — the
+same accepted, safer-direction failure this method's balance/reference logic already carries.
+
+**Re-measured result:**
+
+```
+Before this change:  78.0% overall (46/59), duplicate detection 56% (5/9)
+After this change:   81.4% overall (48/59), duplicate detection 78% (7/9)
+```
+
+`sipInstallments_...` and `emiPayments_...` both now pass — the two scenarios this fix targeted.
+Full regression check (`ReconciliationServiceTest`, `ReconciliationEndToEndTest`, and the whole
+`com.finora.service`/`transactions`/`util`/`imports`/`rules` test surface) is unaffected — in
+particular, every existing balance-discriminator and reference-number-discriminator test (the real
+PNB/HDFC corpus cases this method was originally built for) still passes unchanged, since those
+groups resolve in the first two branches before ever reaching the new guard.
+
+**11 failures remain** (down from 13, 14, 16, and the original 18).
 
 Reasoning, weighing all four axes together:
 

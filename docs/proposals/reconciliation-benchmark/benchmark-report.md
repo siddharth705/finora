@@ -12,11 +12,12 @@ before any other reconciliation logic changed.
 **Benchmark:** 59 scenarios across 6 categories, executed against the real
 `ReconciliationService` code path (mocked persistence only — see `README.md`).
 **Implemented, in order:** roadmap item #1 (transfer keyword-gate widening, §7); item 1a from
-`post-fix-failure-analysis.md` (`"rtgs"`/`"self transfer"` added to `CategoryRules`' `"Transfer"`
-list, 76.3% / 65% transfers); and item #2 (investment keyword word-boundary fusion fix — a small,
-explicit fusion-tolerant exemption set for `groww`/`zerodha`/`upstox` only, not a blanket loosening
-— now at **78.0% overall, 100% investment transfers**). See `post-fix-failure-analysis.md` for the
-full, current before/after trail. Nothing else in this report has been implemented.
+`post-fix-failure-analysis.md` (`"rtgs"`/`"self transfer"`, 76.3% / 65% transfers); item #2
+(investment keyword word-boundary fusion fix, 78.0% / 100% investment transfers); and the SIP/EMI
+duplicate-merge guard from `remaining-failures-classification.md` (a recurring-mandate marker check
+in `splitByDiscriminator`'s undiscriminated fallback — now at **81.4% overall, 78% duplicate
+detection**). See `remaining-failures-classification.md` for the full, current before/after trail
+and the 11 failures still open. Nothing else in this report has been implemented.
 
 ---
 
