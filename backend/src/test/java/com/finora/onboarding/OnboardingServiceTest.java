@@ -70,6 +70,27 @@ class OnboardingServiceTest {
         verify(focusRepository, never()).save(any());
     }
 
+    // Bug fix: a null focusKeys (an omitted field in the request body) used to run straight into
+    // `for (String key : focusKeys)` with no null check, throwing an unhandled NullPointerException
+    // that fell through to the generic 500 handler instead of a proper 400.
+    @Test
+    void setFinancialFocusRejectsANullList() {
+        assertThatThrownBy(() -> service.setFinancialFocus(userId, null))
+                .isInstanceOf(ApiException.class);
+
+        verify(focusRepository, never()).deleteByUserId(any());
+    }
+
+    // Bug fix: the same key appearing twice in one request used to insert two rows with the same
+    // (user_id, focus_key), hitting the table's UNIQUE constraint and surfacing as a generic 409
+    // "conflicts with an existing record" instead of being silently deduplicated.
+    @Test
+    void setFinancialFocusDeduplicatesRepeatedKeysInOneRequest() {
+        service.setFinancialFocus(userId, List.of("TRACK_SPENDING", "TRACK_SPENDING", "REDUCE_DEBT"));
+
+        verify(focusRepository, times(2)).save(any(UserFinancialFocus.class));
+    }
+
     @Test
     void getStatusReportsOnboardingIncompleteAndTheStoredFocusSet() {
         User user = new User();

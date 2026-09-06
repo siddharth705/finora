@@ -14,6 +14,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.EnumMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -58,11 +59,26 @@ public class OnboardingService {
     @Transactional
     public OnboardingDto.StatusResponse setFinancialFocus(UUID userId, List<String> focusKeys) {
         requireUser(userId);
+        // Bug fix: an omitted/null "focusKeys" field (e.g. a body of `{}`) deserializes the record
+        // component to null, and the loop below ran straight off that null with no handler for
+        // NullPointerException in GlobalExceptionHandler -- an opaque 500 instead of the same 400
+        // every other missing-required-field case gets. Same bug class EnumParsing's own doc
+        // comment describes for unchecked IllegalArgumentException.
+        if (focusKeys == null) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "focusKeys is required");
+        }
         for (String key : focusKeys) {
             EnumParsing.parse(FinancialFocus.class, key, "focusKey");
         }
         focusRepository.deleteByUserId(userId);
-        for (String key : focusKeys) {
+        // Deduplicated (not just validated) before inserting: user_financial_focus has a
+        // UNIQUE(user_id, focus_key) constraint (V161), so the same key appearing twice in one
+        // request would otherwise hit that constraint mid-transaction and surface as a generic 409
+        // "conflicts with an existing record" -- misleading for what's actually just a redundant
+        // selection, not a real conflict. The frontend's own toggle-based multi-select can't
+        // produce this today, but the API itself shouldn't depend on that.
+        Set<String> distinctKeys = new LinkedHashSet<>(focusKeys);
+        for (String key : distinctKeys) {
             focusRepository.save(new UserFinancialFocus(userId, key));
         }
         return getStatus(userId);
