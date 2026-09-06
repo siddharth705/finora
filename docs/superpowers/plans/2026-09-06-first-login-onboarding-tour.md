@@ -270,7 +270,7 @@ existing row.
 git add backend/src/main/resources/db/migration/V161__onboarding_flow.sql \
         backend/src/main/java/com/finora/entity/User.java \
         backend/src/test/java/com/finora/onboarding/OnboardingMigrationIT.java
-git commit -m "feat(onboarding): add onboarding_completed_at and its two support tables"
+git commit -m "feat(backend): add onboarding_completed_at and its two support tables"
 ```
 
 ---
@@ -659,7 +659,7 @@ Expected: all PASS.
 
 ```bash
 git add backend/src/main/java/com/finora/onboarding/ backend/src/test/java/com/finora/onboarding/
-git commit -m "feat(onboarding): add Financial Focus set/get API"
+git commit -m "feat(backend): add Financial Focus set/get API"
 ```
 
 ---
@@ -773,7 +773,7 @@ Expected: all PASS.
 
 ```bash
 git add backend/src/main/java/com/finora/onboarding/ backend/src/test/java/com/finora/onboarding/
-git commit -m "feat(onboarding): add complete/reset endpoints for the tour flag"
+git commit -m "feat(backend): add complete/reset endpoints for the tour flag"
 ```
 
 ---
@@ -964,7 +964,7 @@ Expected: PASS.
 
 ```bash
 git add backend/src/main/java/com/finora/onboarding/ backend/src/test/java/com/finora/onboarding/
-git commit -m "feat(onboarding): compute the 4 derived checklist items"
+git commit -m "feat(backend): compute the 4 derived checklist items"
 ```
 
 ---
@@ -1144,7 +1144,7 @@ Expected: all PASS.
 
 ```bash
 git add backend/src/main/java/com/finora/onboarding/ backend/src/test/java/com/finora/onboarding/
-git commit -m "feat(onboarding): add explicit checklist-item completion endpoint"
+git commit -m "feat(backend): add explicit checklist-item completion endpoint"
 ```
 
 ---
@@ -1218,7 +1218,7 @@ git add backend/src/main/java/com/finora/dto/AuthDtos.java \
         backend/src/main/java/com/finora/service/AuthService.java \
         backend/src/main/java/com/finora/service/UserSettingsService.java \
         backend/src/test/java
-git commit -m "feat(onboarding): expose onboardingCompleted on auth and profile responses"
+git commit -m "feat(backend): expose onboardingCompleted on auth and profile responses"
 ```
 
 **Phase 1 checkpoint:** the entire backend API for this feature now exists and is fully tested in
@@ -1366,7 +1366,7 @@ Expected: PASS.
 
 ```bash
 git add frontend/src/api/endpoints.ts frontend/src/context/AuthContext.tsx frontend/src/context/AuthContext.test.tsx
-git commit -m "feat(onboarding): wire onboardingCompleted into AuthContext"
+git commit -m "feat(web): wire onboardingCompleted into AuthContext"
 ```
 
 ---
@@ -1597,7 +1597,7 @@ Expected: PASS.
 git add frontend/src/onboarding/OnboardingUIContext.tsx frontend/src/onboarding/OnboardingUIContext.test.tsx \
         frontend/src/App.tsx frontend/src/components/ProtectedRoute.tsx frontend/src/components/ProtectedRoute.test.tsx \
         frontend/src/onboarding/OnboardingFlow.tsx
-git commit -m "feat(onboarding): gate protected routes on onboarding, overlay tour on the real app"
+git commit -m "feat(web): gate protected routes on onboarding, overlay tour on the real app"
 ```
 
 ---
@@ -1829,7 +1829,7 @@ Expected: all PASS.
 
 ```bash
 git add frontend/src/onboarding/
-git commit -m "feat(onboarding): add Welcome and Financial Focus screens"
+git commit -m "feat(web): add Welcome and Financial Focus screens"
 ```
 
 ---
@@ -2106,7 +2106,7 @@ Expected: all PASS.
 ```bash
 git add frontend/src/onboarding/ frontend/src/components/Sidebar.tsx frontend/src/components/ProtectedRoute.tsx \
         frontend/src/components/ProtectedRoute.test.tsx
-git commit -m "feat(onboarding): add TourOverlay, spotlighting the real app via ProtectedRoute"
+git commit -m "feat(web): add TourOverlay, spotlighting the real app via ProtectedRoute"
 ```
 
 ---
@@ -2351,7 +2351,7 @@ change, not new tests, so update their expectations rather than deleting coverag
 
 ```bash
 git add frontend/src/onboarding/ frontend/src/pages/Dashboard.tsx frontend/src/pages/Settings.tsx
-git commit -m "feat(onboarding): add Success screen, checklist widget, and Retake Tour"
+git commit -m "feat(web): add Success screen, checklist widget, and Retake Tour"
 ```
 
 ---
@@ -2451,7 +2451,7 @@ Expected: all PASS.
 ```bash
 git add frontend/src/pages/Ledger.tsx frontend/src/pages/Insights.tsx \
         frontend/src/pages/Ledger.test.tsx frontend/src/pages/Insights.test.tsx
-git commit -m "feat(onboarding): mark checklist items complete on a dwell timer"
+git commit -m "feat(web): mark checklist items complete on a dwell timer"
 ```
 
 **Phase 2 checkpoint:** the web flow is fully built and tested. Before moving to Phase 3, run the
@@ -2506,7 +2506,7 @@ Expected: PASS.
 
 ```bash
 git add mobile/src/api/endpoints.ts mobile/src/context/AuthContext.tsx mobile/src/context/AuthContext.test.tsx
-git commit -m "feat(onboarding): wire onboardingCompleted into mobile AuthContext"
+git commit -m "feat(mobile): wire onboardingCompleted into mobile AuthContext"
 ```
 
 ---
@@ -2687,7 +2687,7 @@ Expected: PASS.
 
 ```bash
 git add mobile/src/onboarding/ mobile/src/navigation/RootNavigator.tsx mobile/src/navigation/RootNavigator.test.tsx
-git commit -m "feat(onboarding): add TourTargetRegistry and gate RootNavigator on onboarding"
+git commit -m "feat(mobile): add TourTargetRegistry and gate RootNavigator on onboarding"
 ```
 
 ---
@@ -2930,7 +2930,7 @@ Expected: all PASS.
 
 ```bash
 git add mobile/src/onboarding/
-git commit -m "feat(onboarding): add mobile Welcome, Financial Focus, and Success screens"
+git commit -m "feat(mobile): add mobile Welcome, Financial Focus, and Success screens"
 ```
 
 ---
@@ -3251,7 +3251,7 @@ Expected: all PASS.
 git add mobile/src/onboarding/ mobile/src/navigation/AppTabs.tsx mobile/src/screens/MoreScreen.tsx \
         mobile/src/screens/DashboardScreen.tsx mobile/src/screens/SettingsScreen.tsx \
         mobile/src/screens/LedgerScreen.tsx mobile/src/screens/InsightsScreen.tsx
-git commit -m "feat(onboarding): add mobile TourOverlay, checklist widget, and Retake Tour"
+git commit -m "feat(mobile): add mobile TourOverlay, checklist widget, and Retake Tour"
 ```
 
 **Phase 3 checkpoint:** run this repo's iOS/Android simulator verification (per this session's
