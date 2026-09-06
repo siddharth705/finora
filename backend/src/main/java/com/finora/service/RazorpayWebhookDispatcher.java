@@ -108,7 +108,16 @@ public class RazorpayWebhookDispatcher {
             return;
         }
         SubscriptionOrder order = maybeOrder.get();
-        if (SubscriptionOrder.STATUS_COMPLETED.equals(order.getStatus())) {
+        // Plan 3 review: was `if (STATUS_COMPLETED.equals(...)) return;`, which only guarded
+        // against re-processing an already-activated order (idempotency). Once Plan 3 gave
+        // STATUS_ABANDONED a real writer (BillingCheckoutService.cancelPendingOrder -- a user
+        // explicitly cancelling a stuck checkout in the Billing Portal), that same narrow guard
+        // meant an abandoned order could still be silently activated here if the Razorpay payment
+        // completed anyway after the user cancelled (a still-open tab, a delayed webhook) --
+        // reactivating a paid plan the user believed they'd backed out of. Requiring PENDING
+        // specifically closes that: COMPLETED (idempotency) and ABANDONED (explicit cancel) both
+        // now correctly stop this from running again.
+        if (!SubscriptionOrder.STATUS_PENDING.equals(order.getStatus())) {
             return;
         }
         order.setStatus(SubscriptionOrder.STATUS_COMPLETED);

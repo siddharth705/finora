@@ -315,6 +315,38 @@ class RazorpayWebhookDispatcherIT extends AbstractIntegrationTest {
     }
 
     @Test
+    void activatedDoesNotReactivateAnOrderTheUserAlreadyCancelled() {
+        // Plan 3 review: cancelPendingOrder (BillingCheckoutService) marks a stuck order
+        // STATUS_ABANDONED. If the Razorpay payment completes anyway after that -- a still-open
+        // tab, a delayed webhook -- handleActivated must NOT reactivate it; the user explicitly
+        // backed out of this checkout in the Billing Portal.
+        User user = createUser();
+        subscriptionService.provisionFreeSubscription(user.getId());
+        Plan premium = planRepository.findByCode("PREMIUM").orElseThrow();
+        String razorpaySubscriptionId = "sub_test_" + UUID.randomUUID();
+
+        SubscriptionOrder order = new SubscriptionOrder();
+        order.setUserId(user.getId());
+        order.setPlanId(premium.getId());
+        order.setBillingCycle("MONTHLY");
+        order.setRazorpaySubscriptionId(razorpaySubscriptionId);
+        order.setStatus(SubscriptionOrder.STATUS_ABANDONED);
+        order.setAmount(new BigDecimal("799.00"));
+        subscriptionOrderRepository.save(order);
+
+        Map<String, Object> payload = Map.of(
+                "subscription", Map.of("entity", Map.of("id", razorpaySubscriptionId, "current_end", 1893456000L))); // synthetic-ok: fixture epoch second
+
+        dispatcher.dispatch("subscription.activated", payload);
+
+        Subscription subscription = subscriptionRepository.findActiveOrTrial(user.getId()).orElseThrow();
+        assertThat(subscription.getPlanId()).isEqualTo(planRepository.findByCode("FREE").orElseThrow().getId());
+        assertThat(subscription.getRazorpaySubscriptionId()).isNull();
+        SubscriptionOrder reloaded = subscriptionOrderRepository.findByRazorpaySubscriptionId(razorpaySubscriptionId).orElseThrow();
+        assertThat(reloaded.getStatus()).isEqualTo(SubscriptionOrder.STATUS_ABANDONED);
+    }
+
+    @Test
     void activatingAnUpgradeCancelsTheOldRazorpaySubscriptionImmediately() {
         User user = createUser();
         subscriptionService.provisionFreeSubscription(user.getId());
