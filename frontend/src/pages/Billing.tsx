@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Receipt, CreditCard } from 'lucide-react';
 import { billingApi } from '../api/endpoints';
@@ -40,20 +40,29 @@ const TIER_RANK: Record<string, number> = { FREE: 0, PLUS: 1, PREMIUM: 2 };
  *  backend's verified webhook, never from Checkout's own success callback, so this page cannot
  *  just trust that callback and must wait to see the real state change. */
 function useActivationPoll(expectedPlanCode: string | null, onSettled: () => void) {
+  // Read through a ref rather than listing onSettled as an effect dependency: the caller passes a
+  // fresh closure every render (it calls setState), so depending on it directly would restart the
+  // poll (and its 30-second deadline) on every render instead of once per checkout attempt. The
+  // ref always calls the LATEST onSettled without that restart.
+  const onSettledRef = useRef(onSettled);
+  onSettledRef.current = onSettled;
+
   useEffect(() => {
     if (!expectedPlanCode) return;
     const deadline = Date.now() + 30_000;
-    const interval = setInterval(async () => {
-      const current = await billingApi.mySubscription();
-      if (current.planCode === expectedPlanCode || Date.now() > deadline) {
-        clearInterval(interval);
-        onSettled();
-      }
+    const interval = setInterval(() => {
+      // setInterval's callback must return void, not a Promise -- wrapped in an immediately
+      // invoked async function (fired-and-forgotten via `void`) rather than making the callback
+      // itself `async`.
+      void (async () => {
+        const current = await billingApi.mySubscription();
+        if (current.planCode === expectedPlanCode || Date.now() > deadline) {
+          clearInterval(interval);
+          onSettledRef.current();
+        }
+      })();
     }, 2000);
     return () => clearInterval(interval);
-     
-    // closure from the caller; including it would re-run this effect (and restart the poll) every
-    // render, which the caller's re-render-per-tick already causes without help from this list.
   }, [expectedPlanCode]);
 }
 
