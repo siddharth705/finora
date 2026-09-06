@@ -180,6 +180,46 @@ describe('ImportScreen — re-import confirm attempt key', () => {
     expect(secondCall[1].idempotencyKey).not.toBe(firstCall[1].idempotencyKey);
     expect(await screen.findByText('Import complete')).toBeTruthy();
   });
+
+  /**
+   * Bug fix: this screen never sent the detected statement period at all, even though it already
+   * fetches it and shows it on screen ("detected.statementPeriodStart to ...End" a few lines
+   * below the review table). ImportController's Free-tier 31-day statement-period cap reads this
+   * field off the confirm request -- a missing period is treated as "never block" (same "carried,
+   * not dropped" rule a statement with nothing printed gets) -- so this client could never be
+   * gated at all, only the web one, for the identical statement.
+   */
+  it('sends the detected statement period on confirm, not just the balances', async () => {
+    api.statements.confirmReimport.mockResolvedValue({
+      imported: 1, skipped: 0, duplicatesDetected: 0, transfersIdentified: 0, newMerchantsLearned: 0,
+      accountsCreated: [], productsCreated: {}, categoriesAssigned: {}, warnings: [],
+      account: null, totalCredits: 0, totalDebits: 45, statementOpeningBalance: null,
+      statementClosingBalance: null, statementPeriodStart: null, statementPeriodEnd: null,
+      importDurationMs: 1, source: 'reimport',
+    } as never);
+    mockRouteParams = {
+      reimport: {
+        statementImportId: 'stmt-period',
+        accountId: 'acct-1',
+        accountName: 'HDFC Savings',
+        staging: {
+          rows: [stagedRow('row for stmt-period')],
+          totalParsed: 1,
+          flaggedDuplicates: 0,
+          detectedAccount: { statementPeriodStart: '2026-01-01', statementPeriodEnd: '2026-03-31' } as DetectedAccountInfo,
+          unparseableRows: [],
+        },
+        nonce: 1,
+      },
+    };
+    render(tree());
+
+    await pressImport();
+
+    expect(api.statements.confirmReimport).toHaveBeenCalledTimes(1);
+    const [, payload] = api.statements.confirmReimport.mock.calls[0];
+    expect(payload).toMatchObject({ statementPeriodStart: '2026-01-01', statementPeriodEnd: '2026-03-31' });
+  });
 });
 
 /**
