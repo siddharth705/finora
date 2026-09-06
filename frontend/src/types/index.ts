@@ -539,6 +539,11 @@ export interface StatementSummary {
   // transactions are currently flagged ReconciliationStatus.DUPLICATE. Computed on read
   // (StatementImportDto.Summary), not new storage.
   duplicateCount: number;
+  // Bytes actually written to the object store (post-compression) -- null for a legacy row, or
+  // any row confirmed while no storage provider was configured (see StatementImport.storedSize's
+  // own doc comment on the backend). Not currently rendered anywhere; exposed so a future
+  // storage-usage feature can be sized from real numbers instead of a guess.
+  storedSize: number | null;
 }
 
 export interface AccountStatementGroup {
