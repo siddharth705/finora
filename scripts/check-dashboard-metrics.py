@@ -17,9 +17,11 @@ never the string the Java code contains, and nothing else checks that the transl
 
 WHAT IT CHECKS
 --------------
-Every `finora_worker_*` token appearing in ops/monitoring (alert expressions, dashboard queries)
+Every `finora_<domain>_*` token appearing in ops/monitoring (alert expressions, dashboard queries)
 resolves to a meter the framework actually registers, after applying Micrometer's Prometheus naming
-rules.
+rules. This covers every domain under the observability package -- currently `worker` (see
+`WorkerObservability.java`) and `reconciliation` (see `ReconciliationMetrics.java`) -- by deriving
+domain and name from the source rather than hard-coding one domain's prefix.
 
 It deliberately does NOT check non-Finora metrics (`jvm_*`, `hikaricp_*`, `up`). Those come from
 Micrometer's own binders rather than from this codebase, so their names cannot be derived from our
@@ -28,55 +30,75 @@ source -- asserting them here would mean hard-coding a second list that could dr
 
 import json
 import re
+import shutil
 import sys
+import tempfile
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 OPS_DIR = REPO_ROOT / "ops" / "monitoring"
 FRAMEWORK = REPO_ROOT / "backend" / "src" / "main" / "java" / "com" / "finora" / "observability"
 
-PREFIX = "finora_worker_"
-
-# Counters registered via the private counter(name, ...) helper, plus the ones built inline.
-COUNTER_NAME = re.compile(r'counter\("([a-z_]+)"')
-# Timers and gauges are built with a full metric name.
-FULL_NAME = re.compile(r'"(finora\.worker\.[a-z_]+)"')
+# WorkerObservability registers counters through a private counter(name, ...) helper that builds
+# "finora.worker." + name inline, so no single quoted literal names the full metric -- this regex
+# recovers those. Every other domain (e.g. ReconciliationMetrics) writes the full dotted name
+# directly into Counter.builder(...)/Timer.builder(...)/Gauge.builder(...), which FULL_NAME below
+# already catches; WORKER_HELPER_COUNTER exists only for this one legacy pattern.
+WORKER_HELPER_COUNTER = re.compile(r'counter\("([a-z_]+)"')
+# A full "finora.<domain>.<name>" literal, however it is built (Counter/Timer/Gauge.builder, or a
+# literal argument to WorkerObservability's helper's Counter.builder call).
+FULL_NAME = re.compile(r'"(finora\.[a-z]+\.[a-z_]+)"')
 
 
 def emitted_series():
-    """The Prometheus series names the framework can produce.
+    """The Prometheus series names the framework can produce, across every observability domain.
 
     Mirrors Micrometer's Prometheus naming: dots to underscores, counters suffixed `_total`, timers
     expanded to the three histogram series, and a declared baseUnit appended to a gauge's name.
     """
     source = "\n".join(p.read_text(encoding="utf-8") for p in FRAMEWORK.glob("*.java"))
 
-    counters = set(COUNTER_NAME.findall(source))
-    full = {n.replace("finora.worker.", "") for n in FULL_NAME.findall(source)}
+    full_names = set(FULL_NAME.findall(source))
+    full_names |= {f"finora.worker.{c}" for c in WORKER_HELPER_COUNTER.findall(source)}
 
-    # Timers and gauges are declared with their full name; separate them by how they are built.
-    timers = {n for n in full if f'Timer.builder("finora.worker.{n}"' in source}
-    gauges = {n for n in full if f'Gauge.builder("finora.worker.{n}"' in source}
+    # Every full name is declared however it is built; classify by which builder call carries it.
+    timers = {n for n in full_names if f'Timer.builder("{n}"' in source}
+    gauges = {n for n in full_names if f'Gauge.builder("{n}"' in source}
+    counters = full_names - timers - gauges
 
     series = set()
     for c in counters:
-        series.add(f"{PREFIX}{c}_total")
-        series.add(f"{PREFIX}{c}")            # Prometheus also exposes the un-suffixed form
+        prefix = c.replace(".", "_")
+        series.add(f"{prefix}_total")
+        series.add(prefix)            # Prometheus also exposes the un-suffixed form
     for t in timers:
+        prefix = t.replace(".", "_")
         for suffix in ("_seconds_bucket", "_seconds_count", "_seconds_sum", "_seconds_max", "_seconds"):
-            series.add(f"{PREFIX}{t}{suffix}")
-        series.add(f"{PREFIX}{t}")
+            series.add(f"{prefix}{suffix}")
+        series.add(prefix)
     for g in gauges:
-        series.add(f"{PREFIX}{g}")
+        prefix = g.replace(".", "_")
+        series.add(prefix)
         # A declared baseUnit becomes part of the exported name.
-        if f'.baseUnit("seconds")' in source:
-            series.add(f"{PREFIX}{g}_seconds")
+        if '.baseUnit("seconds")' in source:
+            series.add(f"{prefix}_seconds")
     return series, counters, timers, gauges
 
 
+def _display_path(path: Path) -> str:
+    """path relative to the repo root when possible, else its plain string -- the self-test points
+    OPS_DIR at a temp directory that isn't under REPO_ROOT at all."""
+    try:
+        return path.relative_to(REPO_ROOT).as_posix()
+    except ValueError:
+        return str(path)
+
+
 def referenced():
-    """Every finora_worker_* token used anywhere under ops/monitoring, with its source file."""
-    token = re.compile(r"finora_worker_[a-z_]+")
+    """Every finora_<domain>_* token used anywhere under ops/monitoring, with its source file."""
+    # Must end on a letter, not an underscore -- excludes prose like "finora_worker_*" in a comment,
+    # which is a wildcard illustration, not a real series name.
+    token = re.compile(r"finora_[a-z_]*[a-z]")
     found = {}
     for path in sorted(OPS_DIR.rglob("*")):
         if path.suffix not in {".yml", ".yaml", ".json"} or not path.is_file():
@@ -85,7 +107,7 @@ def referenced():
         # JSON is read as text on purpose: queries live in nested string fields and walking the
         # structure would mean tracking Grafana's schema, which changes between versions.
         for name in token.findall(text):
-            found.setdefault(name, set()).add(path.relative_to(REPO_ROOT).as_posix())
+            found.setdefault(name, set()).add(_display_path(path))
     return found
 
 
@@ -150,9 +172,115 @@ def check_runbooks():
     return problems
 
 
+def _write_framework(content: str) -> None:
+    FRAMEWORK.mkdir(parents=True, exist_ok=True)
+    for old in FRAMEWORK.glob("*.java"):
+        old.unlink()
+    (FRAMEWORK / "Synthetic.java").write_text(content, encoding="utf-8")
+
+
+def self_test() -> int:
+    """Run against a synthetic framework/ops tree instead of this repo's real one.
+
+    Asserts the check still catches an unknown-metric reference, still refuses to pass vacuously
+    when either side has nothing to check, and still catches a runbook/alert mismatch in both
+    directions -- a check nobody has falsified is a check nobody knows is running.
+    """
+    global OPS_DIR, FRAMEWORK, RUNBOOK
+    original_ops, original_framework, original_runbook = OPS_DIR, FRAMEWORK, RUNBOOK
+    tmp = Path(tempfile.mkdtemp(prefix="dashboard-metrics-selftest-"))
+    try:
+        FRAMEWORK = tmp / "observability"
+        OPS_DIR = tmp / "ops"
+        RUNBOOK = tmp / "observability.md"
+        OPS_DIR.mkdir(parents=True, exist_ok=True)
+
+        clean_framework = """
+package com.finora.observability;
+
+class Synthetic {
+    void register() {
+        Counter.builder("finora.demo.things_done").register(registry).increment();
+        Timer.builder("finora.demo.duration").register(registry);
+        Gauge.builder("finora.demo.queue_depth", this, x -> 1.0)
+                .baseUnit("seconds")
+                .register(registry);
+    }
+}
+"""
+
+        def write_dashboard(exprs):
+            (OPS_DIR / "dashboard.json").write_text(json.dumps({
+                "panels": [{"targets": [{"expr": e} for e in exprs]}]
+            }), encoding="utf-8")
+
+        def write_alerts(rules_yaml):
+            rules = f"\n{rules_yaml}" if rules_yaml else " []"
+            (OPS_DIR / "alerts.yml").write_text(f"groups:\n  - name: demo\n    rules:{rules}\n",
+                                                 encoding="utf-8")
+
+        # Case 1: every referenced series is one the fixture framework emits -- must pass clean.
+        _write_framework(clean_framework)
+        write_alerts("")
+        write_dashboard([
+            "rate(finora_demo_things_done_total[5m])",
+            "histogram_quantile(0.95, finora_demo_duration_seconds_bucket)",
+            "finora_demo_queue_depth",
+        ])
+        RUNBOOK.write_text("# Observability\n", encoding="utf-8")
+        assert run_check() == 0, "case 1 (every referenced series is emitted) should pass clean"
+
+        # Case 2: a dashboard references a metric the framework never emits -- must block.
+        write_dashboard(["finora_demo_typo_total"])
+        assert run_check() == 1, "case 2 (unknown metric referenced) must block"
+
+        # Case 3: the framework emits nothing derivable -- must refuse to pass vacuously.
+        _write_framework("package com.finora.observability;\nclass Empty {}\n")
+        assert run_check() == 1, "case 3 (no metrics derivable from source) must block, not pass vacuously"
+
+        # Case 4: framework is fine again, but nothing in ops/monitoring references it -- also vacuous.
+        _write_framework(clean_framework)
+        write_dashboard([])
+        assert run_check() == 1, "case 4 (no finora_* metric referenced anywhere) must block"
+
+        # Case 5: an alert with no matching runbook section -- must block.
+        write_dashboard(["finora_demo_queue_depth"])
+        write_alerts(
+            "      - alert: DemoQueueStuck\n"
+            "        annotations:\n"
+            "          runbook_url: https://example/observability.md#demoqueuestuck\n"
+        )
+        assert run_check() == 1, "case 5 (alert with no runbook section) must block"
+
+        # Case 6: the runbook section exists and matches the alert -- must pass again.
+        RUNBOOK.write_text("# Observability\n\n### DemoQueueStuck\n", encoding="utf-8")
+        assert run_check() == 0, "case 6 (alert and runbook section match) should pass clean"
+
+        # Case 7: a runbook section names no alert (renamed or removed) -- the other drift direction.
+        RUNBOOK.write_text("# Observability\n\n### DemoQueueStuck\n\n### GhostAlert\n", encoding="utf-8")
+        assert run_check() == 1, "case 7 (orphan runbook section) must block"
+
+        print("self-test: all 7 cases passed (clean match, unknown metric blocked, vacuous framework "
+              "blocked, vacuous references blocked, orphan alert blocked, matched runbook passes, "
+              "orphan runbook section blocked)")
+        return 0
+    except AssertionError as exc:
+        print(f"SELF-TEST FAILED: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        OPS_DIR, FRAMEWORK, RUNBOOK = original_ops, original_framework, original_runbook
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def main():
+    if "--self-test" in sys.argv[1:]:
+        return self_test()
+    return run_check()
+
+
+def run_check():
     if not OPS_DIR.is_dir():
-        print(f"No {OPS_DIR.relative_to(REPO_ROOT)} directory -- nothing to check.")
+        print(f"No {_display_path(OPS_DIR)} directory -- nothing to check.")
         return 0
 
     series, counters, timers, gauges = emitted_series()
@@ -164,14 +292,14 @@ def main():
 
     used = referenced()
     if not used:
-        print("BLOCKED: no finora_worker_* metrics referenced anywhere in ops/monitoring.")
+        print("BLOCKED: no finora_* metrics referenced anywhere in ops/monitoring.")
         print("The dashboards and alerts are not actually querying this application.")
         return 1
 
     unknown = {name: files for name, files in used.items() if name not in series}
 
     print(f"Framework emits {len(counters)} counters, {len(timers)} timers, {len(gauges)} gauges.")
-    print(f"ops/monitoring references {len(used)} distinct finora_worker_* series.")
+    print(f"ops/monitoring references {len(used)} distinct finora_* series.")
 
     if unknown:
         print("\nBLOCKED: a dashboard or alert references a metric that is never emitted.\n")

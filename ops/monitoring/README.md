@@ -15,6 +15,7 @@ This file is how to run it.
 | `prometheus.yml` | Scrape config. Reads a bearer token from a gitignored file. |
 | `alerts.yml` | 10 alert rules, every one on a sustained condition. |
 | `grafana/dashboards/worker-health.json` | Worker + queue + infrastructure dashboard. |
+| `grafana/dashboards/reconciliation.json` | Reconciliation transfer-matching and duplicate-override counters (measurement only, no alerts yet). |
 | `grafana/provisioning/` | Datasource and dashboard provisioning, so the stack works on first run. |
 | `docker-compose.yml` | Local Prometheus + Grafana for validating the above. |
 

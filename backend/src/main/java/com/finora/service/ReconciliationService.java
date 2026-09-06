@@ -1001,7 +1001,7 @@ public class ReconciliationService {
             // ConfidenceScorer's own date_decay, deliberately: this project already treats "closer
             // to the anchor" as more plausible everywhere else a date window exists, and there is
             // no reason this pass's own candidate selection should reason about it differently.
-            score += Math.round(20.0 * (dayWindow - daysApart) / dayWindow);
+            score += (int) Math.round(20.0 * (dayWindow - daysApart) / dayWindow);
         }
         return score;
     }
