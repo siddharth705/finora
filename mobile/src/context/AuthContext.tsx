@@ -9,6 +9,7 @@ import { clearPersistedQueryCache, pauseQueryPersistence } from '../api/queryCli
 import { sweepFileCache } from '../lib/fileCacheSweep';
 import { signOutOfGoogle } from '../lib/googleSession';
 import { registerDeviceToken, revokeDeviceToken } from '../lib/pushRegistration';
+import { configureRevenueCat } from '../lib/revenueCat';
 
 /**
  * Ported from frontend/src/context/AuthContext.tsx -- same state shape, same method contracts.
@@ -54,6 +55,7 @@ const REFRESH_TOKEN_KEY = 'finora_refresh_token';
 const EMAIL_KEY = 'finora_email';
 const NAME_KEY = 'finora_name';
 const PHONE_VERIFIED_KEY = 'finora_phone_verified';
+const USER_ID_KEY = 'finora_user_id';
 
 const AuthContext = createContext<AuthState | null>(null);
 
@@ -83,11 +85,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const [storedToken, storedEmail, storedName, storedVerified] = await Promise.all([
+      const [storedToken, storedEmail, storedName, storedVerified, storedUserId] = await Promise.all([
         safeStorage.getItem(TOKEN_KEY),
         safeStorage.getItem(EMAIL_KEY),
         safeStorage.getItem(NAME_KEY),
         safeStorage.getItem(PHONE_VERIFIED_KEY),
+        safeStorage.getItem(USER_ID_KEY),
       ]);
       if (cancelled) return;
       setToken(storedToken);
@@ -95,6 +98,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setFullName(storedName);
       setPhoneVerifiedState(storedVerified === 'true');
       setBootstrapping(false);
+      // Subscription billing V4 (design spec §2/§6.1 step 1): RevenueCat must be configured with
+      // the real, authenticated user id before the Paywall/My Subscription screens can be reached
+      // -- including a cold start restoring an already-signed-in session, not just a fresh
+      // login/register (the persist()-based paths below cover those). Without this, an already
+      // signed-in user reopening the app would still hit an unconfigured Purchases SDK.
+      if (storedToken && storedUserId) {
+        configureRevenueCat(storedUserId);
+      }
     })();
     return () => {
       cancelled = true;
@@ -218,6 +229,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     email: string;
     fullName: string;
     phoneVerified: boolean;
+    id: string;
   }) {
     await Promise.all([
       safeStorage.setItem(TOKEN_KEY, data.token),
@@ -225,11 +237,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       safeStorage.setItem(EMAIL_KEY, data.email),
       safeStorage.setItem(NAME_KEY, data.fullName),
       safeStorage.setItem(PHONE_VERIFIED_KEY, String(data.phoneVerified)),
+      safeStorage.setItem(USER_ID_KEY, data.id),
     ]);
     setToken(data.token);
     setEmail(data.email);
     setFullName(data.fullName);
     setPhoneVerifiedState(data.phoneVerified);
+    // Subscription billing V4 (design spec §2/§6.1 step 1) -- see the bootstrap effect's own
+    // comment above for why this same call also has to happen there, not only here.
+    configureRevenueCat(data.id);
 
     // Task 14. A RETURNING, already-verified user signing back in (login/reactivate/Google/Apple)
     // has already earned this prompt in an earlier session -- register (or re-register, if
@@ -333,6 +349,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         safeStorage.removeItem(EMAIL_KEY),
         safeStorage.removeItem(NAME_KEY),
         safeStorage.removeItem(PHONE_VERIFIED_KEY),
+        safeStorage.removeItem(USER_ID_KEY),
       ]);
     })();
   }
