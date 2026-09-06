@@ -319,6 +319,21 @@ describe('Dashboard — Financial Health Score', () => {
     expect(screen.queryByText(/Financial Health:/)).not.toBeInTheDocument();
     expect(screen.getByText('Savings rate 44%')).toBeInTheDocument();
   });
+
+  it('omits the Financial Health chip for a zero-transaction account even if healthScoreAvailable is stale-true', async () => {
+    // healthScoreAvailable comes from a separate backend computation than recentTxnsQ's
+    // totalElements -- this fixture combo (isEmpty true, healthScoreAvailable true) shouldn't
+    // occur in practice, but the chip must not trust healthScoreAvailable alone, the same reason
+    // the full Financial Health Score card below it gates on !isEmpty rather than that flag.
+    vi.mocked(transactionsApi.search).mockReset().mockResolvedValue({
+      content: [], page: 0, size: 4, totalElements: 0, totalPages: 0,
+    });
+    renderDashboard();
+
+    await screen.findByRole('heading', { level: 1 });
+    expect(screen.queryByText(/Financial Health:/)).not.toBeInTheDocument();
+    expect(screen.getByText('Savings rate 44%')).toBeInTheDocument();
+  });
 });
 
 describe('Dashboard — Spending Breakdown category review warning', () => {

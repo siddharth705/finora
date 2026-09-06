@@ -295,6 +295,10 @@ export default function Dashboard() {
     return `${m.category}: ${fmt(m.currentAmount)} vs ${fmt(m.priorAmount)} (${pctText})`;
   });
 
+  // iconBg/iconColor below are dead under the KPI grid's variant="elevated" (it always renders a
+  // uniform graphite/cream medallion, see MetricCard.tsx) -- kept anyway because MetricCard's
+  // default variant (Reports/Investments/Budgets) still requires them, and duplicating this array
+  // with/without color per variant would be its own bug risk.
   const kpis = [
     { label: 'Total Balance', value: fmt(summary.currentBalance), delta: null as number | null, icon: Wallet, iconBg: 'bg-blue-100', iconColor: 'text-blue-600' },
     { label: 'Total Income', value: fmt(summary.monthlyIncome), delta: summary.incomeDeltaPct, icon: ArrowDownCircle, iconBg: 'bg-green-100', iconColor: 'text-green-600', gateReasonText: comparisonGateReasonText },
@@ -317,7 +321,13 @@ export default function Dashboard() {
             )}
           </p>
           <div className="flex flex-wrap gap-2">
-            {summary.healthScoreAvailable && (
+            {/* !isEmpty here too, not just healthScoreAvailable: the full Financial Health Score
+                card below gates on !isEmpty (see its own comment), and healthScoreAvailable comes
+                from a separately-computed backend transaction count that isn't guaranteed to
+                agree with recentTxnsQ's totalElements -- without this, a zero-transaction account
+                could show a score in this preview chip while the section it summarizes stays
+                hidden. */}
+            {!isEmpty && summary.healthScoreAvailable && (
               <span className={`inline-flex items-center gap-1.5 rounded-full border border-border bg-bg px-3 py-1.5 text-xs font-semibold ${healthColor(summary.healthLabel!)}`}>
                 <ShieldCheck size={13} /> Financial Health: {summary.healthLabel} · {summary.healthScore}/100
               </span>

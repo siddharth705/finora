@@ -162,6 +162,17 @@ describe('MetricCard', () => {
     expect(screen.getByText(/Dining: ₹8,000/)).toBeInTheDocument();
   });
 
+  it('variant="elevated" never renders a "Why?" toggle on a real delta with no movers, even with a stale gate reason', () => {
+    render(
+      <MetricCard
+        label="Total Income" value="₹500" icon={Wallet} iconBg="bg-green-100" iconColor="text-green-600"
+        delta={12.3} deltaLabel="vs last month" variant="elevated"
+        gateReasonText="Last month has fewer than 3 transactions, too few to compare reliably."
+      />
+    );
+    expect(screen.queryByRole('button', { name: /why/i })).not.toBeInTheDocument();
+  });
+
   it('variant="elevated" renders a muted placeholder (no pill) when there is no delta value yet', () => {
     render(
       <MetricCard
@@ -170,6 +181,24 @@ describe('MetricCard', () => {
       />
     );
     expect(screen.getByText('— vs last month')).toBeInTheDocument();
+  });
+
+  it('variant="elevated" reveals a gate reason on the muted placeholder, and hides it again on a second click', async () => {
+    const user = userEvent.setup();
+    render(
+      <MetricCard
+        label="Total Income" value="₹500" icon={Wallet} iconBg="bg-green-100" iconColor="text-green-600"
+        deltaLabel="vs last month" variant="elevated"
+        gateReasonText="Last month has fewer than 3 transactions, too few to compare reliably."
+      />
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Why?' }));
+    expect(screen.getByText(/fewer than 3 transactions/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Hide' })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Hide' }));
+    expect(screen.queryByText(/fewer than 3 transactions/)).not.toBeInTheDocument();
   });
 
   it('defaults to the original plain-text delta line when no variant is given', () => {
