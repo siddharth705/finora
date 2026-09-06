@@ -344,4 +344,17 @@ class SubscriptionServiceTest {
         assertThat(health.cancelledCount()).isEqualTo(8L);
         assertThat(health.pendingOrderCount()).isEqualTo(2L);
     }
+
+    @Test
+    void changePlanRefusesAdminOverrideWhileARevenueCatSubscriptionIsActive() {
+        Subscription active = new Subscription();
+        active.setUserId(userId);
+        active.setPlanId(UUID.randomUUID());
+        active.setPaymentProvider("REVENUECAT");
+        when(subscriptionRepository.findActiveOrTrial(userId)).thenReturn(Optional.of(active));
+
+        assertThatThrownBy(() -> service.changePlan(userId, "PREMIUM", "support override", adminId))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("active Apple/Google subscription");
+    }
 }
