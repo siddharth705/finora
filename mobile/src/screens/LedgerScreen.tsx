@@ -74,10 +74,17 @@ export function LedgerScreen() {
     const item = checklistQuery.data?.items.find((i) => i.key === 'REVIEW_TRANSACTIONS');
     if (!item || item.completed) return;
     const timer = setTimeout(() => {
-      onboardingApi.completeChecklistItem('REVIEW_TRANSACTIONS').catch(() => {});
+      // Bug fix: this used to leave the ['onboarding'] cache untouched after a successful
+      // completion, unlike every other checklist-affecting write (Import/Budgets/Goals via
+      // invalidateFinancialData) which invalidates it. DashboardScreen's ChecklistWidget holds its
+      // own `useQuery` on the same key with the default staleTime, so without this it could keep
+      // showing "Review transactions" as unchecked well after it was actually completed here.
+      onboardingApi.completeChecklistItem('REVIEW_TRANSACTIONS')
+        .then(() => queryClient.invalidateQueries({ queryKey: ['onboarding'] }))
+        .catch(() => {});
     }, 1500);
     return () => clearTimeout(timer);
-  }, [checklistQuery.data]);
+  }, [checklistQuery.data, queryClient]);
 
   // Track C/C4. The active drill-through, if any -- a donut legend row, a budget card, an
   // insight/mover row, or a report's category breakdown. Local state, not read from route.params

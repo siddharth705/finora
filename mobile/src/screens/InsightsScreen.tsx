@@ -44,10 +44,15 @@ export function InsightsScreen() {
     const item = checklistQuery.data?.items.find((i) => i.key === 'VIEW_INSIGHTS');
     if (!item || item.completed) return;
     const timer = setTimeout(() => {
-      onboardingApi.completeChecklistItem('VIEW_INSIGHTS').catch(() => {});
+      // Bug fix: same gap and same fix as LedgerScreen.tsx's REVIEW_TRANSACTIONS dwell timer --
+      // without invalidating ['onboarding'], DashboardScreen's ChecklistWidget could keep showing
+      // "View insights" as unchecked after it was actually completed here.
+      onboardingApi.completeChecklistItem('VIEW_INSIGHTS')
+        .then(() => queryClient.invalidateQueries({ queryKey: ['onboarding'] }))
+        .catch(() => {});
     }, 1500);
     return () => clearTimeout(timer);
-  }, [checklistQuery.data]);
+  }, [checklistQuery.data, queryClient]);
 
   const refreshing = deriveRefreshing([insightsQ, recurringQ], insightsQ.isLoading || recurringQ.isLoading);
   const sentences = insightsQ.data?.sentences ?? [];
