@@ -94,7 +94,7 @@ public class SubscriptionService {
      *  to only the userIds on this one page. */
     @Transactional(readOnly = true)
     public PagedResponse<SubscriptionSummaryDto> listAll(int page, int size) {
-        Page<Subscription> subscriptions = subscriptionRepository.findAllByOrderByCreatedAtDesc(
+        Page<Subscription> subscriptions = subscriptionRepository.findForCustomerAccountsOrderByCreatedAtDesc(
                 PageRequest.of(PageBounds.safePage(page), PageBounds.safeSize(size)));
         Map<UUID, Plan> plansById = planRepository.findAll().stream()
                 .collect(Collectors.toMap(Plan::getId, p -> p));
@@ -185,10 +185,10 @@ public class SubscriptionService {
     @Transactional(readOnly = true)
     public SubscriptionHealthDto health() {
         return new SubscriptionHealthDto(
-                subscriptionRepository.countByStatus(Subscription.STATUS_ACTIVE),
-                subscriptionRepository.countByStatus(Subscription.STATUS_PAST_DUE),
-                subscriptionRepository.countByStatus(Subscription.STATUS_PAYMENT_FAILED),
-                subscriptionRepository.countByStatus(Subscription.STATUS_CANCELLED),
+                subscriptionRepository.countForCustomerAccountsByStatus(Subscription.STATUS_ACTIVE),
+                subscriptionRepository.countForCustomerAccountsByStatus(Subscription.STATUS_PAST_DUE),
+                subscriptionRepository.countForCustomerAccountsByStatus(Subscription.STATUS_PAYMENT_FAILED),
+                subscriptionRepository.countForCustomerAccountsByStatus(Subscription.STATUS_CANCELLED),
                 subscriptionOrderRepository.countByStatus(SubscriptionOrder.STATUS_PENDING));
     }
 }

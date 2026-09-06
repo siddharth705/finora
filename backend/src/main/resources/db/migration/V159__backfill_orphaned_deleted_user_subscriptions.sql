@@ -1,0 +1,23 @@
+-- One-time backfill: a subscriptions row surviving for a user whose status is already DELETED
+-- means AccountPurgeSweepService.purgeOne's own hard-delete of that row
+-- (SubscriptionRepository.hardDeleteByUserId) never actually ran for this user -- current
+-- purgeOne always deletes it in the same transaction as anonymizing the user (see that class's
+-- own ordering doc), so under today's code this state cannot be produced going forward; it can
+-- only be pre-existing data.
+--
+-- Root cause not fully established (no guessing): the subscriptions table, its
+-- provisionFreeSubscription signup wiring, and this same hardDeleteByUserId purge call all landed
+-- in the same commit (d0690a1c, 2026-08-21) -- so the obvious "the purge fix shipped after the
+-- table did" timing-gap story doesn't actually hold up once checked. Confirming the real
+-- mechanism for these specific orphaned rows would need the live audit_log's ACCOUNT_PURGED event
+-- timestamps, which this migration has no way to see. What IS certain: the app's own invariant is
+-- that a DELETED user has zero subscriptions rows, and any row violating that is stale data that
+-- should never have survived, regardless of how it got here -- found because the Admin Portal's
+-- Subscriptions page was showing two already-deleted accounts as "ACTIVE"
+-- (SubscriptionRepository.findForCustomerAccountsOrderByCreatedAtDesc, added alongside this
+-- migration, also excludes these at the query level going forward as a display-layer safety net,
+-- independent of this one-time cleanup).
+--
+-- subscription_events/plan_changes need no separate cleanup here: both cascade automatically off
+-- subscription_id (ON DELETE CASCADE, V99) when their parent subscriptions row is deleted below.
+DELETE FROM subscriptions WHERE user_id IN (SELECT id FROM users WHERE status = 'DELETED');
