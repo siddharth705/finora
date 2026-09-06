@@ -491,6 +491,9 @@ class ReconciliationServiceTest {
 
         assertThat(debit.isTransfer()).isFalse();
         assertThat(credit.isTransfer()).isFalse();
+        // The companion case to reconcileForUser_reportsAMatchedTransferPairToReconciliationMetrics
+        // above: a run that matches nothing must report nothing, not a spurious zero-value call.
+        org.mockito.Mockito.verifyNoInteractions(reconciliationMetrics);
     }
 
     @Test

@@ -594,7 +594,6 @@ public class TransactionService {
         t.setReconciliationStatus(Transaction.ReconciliationStatus.OK);
         t.setReconciliationExplanation(null);
         Transaction saved = transactionRepository.save(t);
-        reconciliationMetrics.duplicateOverridden(saved.getSource());
 
         // Usually the balance is NOT touched: a manually-entered duplicate-flagged row was always
         // counted in Account.balance (the flag only ever governed what the reports exclude), so
@@ -622,6 +621,17 @@ public class TransactionService {
 
         auditService.record(userId, "TRANSACTION_CONFIRMED_NOT_DUPLICATE", "Transaction", txnId,
                 Map.of("amount", saved.getAmount(), "date", String.valueOf(saved.getTxnDate())));
+
+        // Deliberately last, not right after save(t) above: everything between here and there
+        // (the balance adjustment, a full reconciliation re-run, recurring detection, the audit
+        // write) still runs inside this same @Transactional method and can still throw. A
+        // Micrometer counter is not transactional -- nothing rolls it back -- so incrementing it
+        // any earlier would count an override that a later failure in THIS method then undoes.
+        // This placement can't close the outer window (Spring's proxy commits after this method
+        // returns, so a commit-time failure is still possible), but it removes the much larger,
+        // entirely-avoidable one: this method's own later steps failing before this line is ever
+        // reached.
+        reconciliationMetrics.duplicateOverridden(saved.getSource());
 
         return TransactionDto.from(saved,
                 categoryNamesById(userId).getOrDefault(saved.getCategoryId(), "Uncategorized"));
