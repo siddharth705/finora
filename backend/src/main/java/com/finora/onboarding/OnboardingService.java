@@ -111,4 +111,21 @@ public class OnboardingService {
 
         return new OnboardingDto.ChecklistResponse(items, completedCount, items.size());
     }
+
+    @Transactional
+    public void completeChecklistItem(UUID userId, String itemKey) {
+        ChecklistItemKey key = EnumParsing.parse(ChecklistItemKey.class, itemKey, "itemKey");
+        if (!key.isExplicit()) {
+            throw new ApiException(HttpStatus.BAD_REQUEST,
+                    key + " is derived automatically and can't be marked complete directly");
+        }
+        // key.name() rather than the raw itemKey: EnumParsing accepts case-insensitive/untrimmed
+        // input, but getChecklist()'s explicitDone lookup compares against the canonical enum
+        // name -- storing the raw input would silently break that match for any caller that
+        // doesn't send exact-uppercase.
+        String canonicalKey = key.name();
+        if (!checklistEventRepository.existsByUserIdAndItemKey(userId, canonicalKey)) {
+            checklistEventRepository.save(new UserChecklistEvent(userId, canonicalKey));
+        }
+    }
 }

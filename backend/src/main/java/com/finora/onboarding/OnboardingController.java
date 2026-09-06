@@ -44,4 +44,10 @@ public class OnboardingController {
     public ApiResponse<OnboardingDto.ChecklistResponse> checklist() {
         return ApiResponse.ok(onboardingService.getChecklist(currentUser.id()));
     }
+
+    @PostMapping("/checklist/{itemKey}/complete")
+    public ApiResponse<Void> completeChecklistItem(@PathVariable String itemKey) {
+        onboardingService.completeChecklistItem(currentUser.id(), itemKey);
+        return ApiResponse.ok(null, "Checklist item completed");
+    }
 }

@@ -192,4 +192,27 @@ class OnboardingServiceTest {
         assertThat(reviewDone).isFalse();
         assertThat(insightsDone).isTrue();
     }
+
+    @Test
+    void completeChecklistItemRejectsADerivedItem() {
+        assertThatThrownBy(() -> service.completeChecklistItem(userId, "CREATE_BUDGET"))
+                .isInstanceOf(ApiException.class);
+    }
+
+    @Test
+    void completeChecklistItemRejectsAnUnknownKey() {
+        assertThatThrownBy(() -> service.completeChecklistItem(userId, "NOT_A_REAL_KEY"))
+                .isInstanceOf(ApiException.class);
+    }
+
+    @Test
+    void completeChecklistItemIsIdempotent() {
+        when(checklistEventRepository.existsByUserIdAndItemKey(userId, "VIEW_INSIGHTS"))
+                .thenReturn(false).thenReturn(true);
+
+        service.completeChecklistItem(userId, "VIEW_INSIGHTS");
+        service.completeChecklistItem(userId, "VIEW_INSIGHTS");
+
+        verify(checklistEventRepository, times(1)).save(any(UserChecklistEvent.class));
+    }
 }

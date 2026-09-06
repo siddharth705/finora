@@ -111,4 +111,31 @@ class OnboardingControllerIT extends AbstractIntegrationTest {
         assertThat(data.get("totalCount").asInt()).isEqualTo(6);
         assertThat(data.get("items")).hasSize(6);
     }
+
+    @Test
+    void checklistItemCompletionRoundTrips() throws Exception {
+        User user = createUser();
+
+        ResponseEntity<String> before = restTemplate.exchange(
+                "/api/v1/onboarding/checklist", HttpMethod.GET, new HttpEntity<>(bearerFor(user)), String.class);
+        assertThat(mapper.readTree(before.getBody()).get("data").get("completedCount").asInt()).isZero();
+
+        restTemplate.exchange("/api/v1/onboarding/checklist/VIEW_INSIGHTS/complete", HttpMethod.POST,
+                new HttpEntity<>(Map.of(), bearerFor(user)), String.class);
+        ResponseEntity<String> after = restTemplate.exchange(
+                "/api/v1/onboarding/checklist", HttpMethod.GET, new HttpEntity<>(bearerFor(user)), String.class);
+
+        assertThat(mapper.readTree(after.getBody()).get("data").get("completedCount").asInt()).isEqualTo(1);
+    }
+
+    @Test
+    void checklistItemCompletionRejectsADerivedItem() {
+        User user = createUser();
+
+        ResponseEntity<String> response = restTemplate.exchange(
+                "/api/v1/onboarding/checklist/CREATE_BUDGET/complete", HttpMethod.POST,
+                new HttpEntity<>(Map.of(), bearerFor(user)), String.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+    }
 }
