@@ -28,9 +28,11 @@ for entitlements — the same model web already uses, extended to a second payme
 | Existing web (Razorpay) subscriber opens mobile | Read-only: mobile shows their current plan and a note that it's managed on web. The purchase flow is not offered. Prevents ever charging the same user through two payment rails for the same entitlement. |
 | Existing mobile (RevenueCat) subscriber opens web | Symmetric to the above: Billing Portal shows plan controls disabled, with "This subscription is managed through the App Store/Play Store" and a deep link to the relevant store's subscription-management page — not hidden entirely, so the user isn't confused about why they don't see their real plan. |
 | Cross-store/cross-device | Entitlements are account-scoped, not device- or platform-scoped — a purchase on iPhone is visible on Android and web the moment they're signed into the same Fynora account, because all three read the same `subscriptions` row keyed by `user_id`. No new mechanism needed; stated here so it isn't assumed to require one. |
-| `subscription_source` | New column, separate from `payment_provider`: `WEB` \| `IOS` \| `ANDROID` \| `ADMIN_GRANT`. `payment_provider=REVENUECAT` alone can't distinguish iOS from Android; RevenueCat's webhook `store` field (`APP_STORE`/`PLAY_STORE`) already carries this for free. |
-| Webhook ledger | Reuses the existing `webhook_events` table (`WebhookEventService.claim(eventId, provider, eventType, payload)` already takes `provider` as a parameter for exactly this). No new `revenuecat_webhook_events` table. |
+| `store_platform` | New column, nullable, meaningful **only** when `payment_provider=REVENUECAT`: `IOS` \| `ANDROID`, taken from RevenueCat's webhook `store` field. Deliberately *not* a parallel `WEB`/`ADMIN_GRANT`-inclusive enum (an earlier draft called this `subscription_source` with those extra values) — that would create two columns both claiming to represent "origin" for the same Razorpay/admin-grant rows, exactly the drift risk a reviewer flagged. `payment_provider` alone already answers "web vs. mobile vs. admin"; this column only answers the one question it can't: which store. |
+| Webhook ledger | Reuses the existing `webhook_events` table (`WebhookEventService.claim(eventId, provider, eventType, payload)` already takes `provider` as a parameter for exactly this) — with its primary key widened from `event_id` alone to `(provider, event_id)`. Today it's `event_id`-only, which has only ever avoided collision by accident (a single provider using it); adding a second provider means this needs to be correct by design, not by luck of two different id formats. |
 | Cancellation/plan changes on mobile | Not built as app-side controls — both App Store and Play Store policy require subscription cancellation to go through their own native subscription-management UI, not a button inside the app. Mobile's "My Subscription" screen deep-links out to it (`itms-apps://apps.apple.com/account/subscriptions` on iOS, the Play Store subscriptions center on Android) rather than implementing a custom cancel flow. |
+| Purchase requires authentication | The mobile purchase flow (Paywall, `purchasePackage()`) is unreachable until the user is signed in — `Purchases.configure()` only ever runs with the real Fynora user id already known (§2's `appUserID` decision), never RevenueCat's own anonymous `$RCAnonymousID`. This is what makes §9's "TRANSFER out of scope" claim actually true rather than merely hoped for — nothing in the mobile app's existing navigation exposes billing screens pre-auth today, so this needs verifying, not building. |
+| Ownership-source rule (named) | **A user has at most one active paid subscription, owned by exactly one provider at a time.** Moving from one provider to the other requires the existing one to end first (expire or be cancelled through its own store/portal) — there is no in-place transfer. §6.3/§6.4's read-only views and the guard in §6.4 are both direct consequences of this one rule, not independent decisions. |
 
 ## 3. Verified RevenueCat behavior this design relies on
 
@@ -49,9 +51,15 @@ Pulled from RevenueCat's own docs (`context7:/websites/revenuecat`), not assumed
 - **`UNCANCELLATION`** fires if the user turns auto-renew back on before expiry — reverses a prior
   `CANCELLATION`.
 - **`EXPIRATION`** (with `expiration_reason`, e.g. `"UNSUBSCRIBE"`) is the actual point access should
-  drop to Free — the mobile equivalent of Razorpay's `subscription.halted`.
-- **`BILLING_ISSUE`** signals a failed renewal charge — maps to `Subscription.STATUS_PAYMENT_FAILED`,
-  same status Razorpay already uses for this.
+  drop to Free — the mobile equivalent of Razorpay's `subscription.halted`, which (checked against
+  the real code, `RazorpayWebhookDispatcher.handleHalted`) resets the plan to FREE, clears the
+  provider-specific fields, and sets `status=ACTIVE` on FREE **directly** — no intermediate status.
+- **`BILLING_ISSUE`** signals a failed renewal charge the store may still retry — maps to
+  `Subscription.STATUS_PAST_DUE`, mirroring `handlePending`'s handling of Razorpay's own
+  `subscription.pending` (retry in progress, access untouched) exactly. Not
+  `STATUS_PAYMENT_FAILED`: that status is declared and counted on the admin health dashboard but has
+  no live writer anywhere in the current Razorpay flow — mirroring it here would be inventing a new
+  first user of a status the precedent this design follows doesn't actually reach.
 - **`PRODUCT_CHANGE`** fires when the user changes plan tier/cycle through the store's own native
   "Change Plan" UI — something Razorpay has no equivalent for, since web's plan changes are
   Fynora-initiated. `entitlement_ids`/`product_id` on this event carry the new plan.
@@ -71,21 +79,49 @@ Pulled from RevenueCat's own docs (`context7:/websites/revenuecat`), not assumed
 
 ```
 payment_provider   VARCHAR   gains 'REVENUECAT' as a value (already free-text; no migration needed for the column itself)
-subscription_source        VARCHAR(10)   NEW: 'WEB' | 'IOS' | 'ANDROID' | 'ADMIN_GRANT'. Existing rows backfilled to 'WEB' (RAZORPAY) or 'ADMIN_GRANT' (ADMIN_GRANT) in the same migration.
+store_platform      VARCHAR(10)   NEW, nullable. 'IOS' | 'ANDROID', set only for REVENUECAT rows (see §2 — not a general-purpose origin field).
 revenuecat_original_transaction_id  VARCHAR(50)   NEW, nullable. RevenueCat/store analog of razorpay_subscription_id — the stable id, not the per-renewal transaction_id.
 ```
 
-Same single-row-per-user model as V1/V3 — no second table for IAP subscriptions. The existing
+Same single-row-per-user model as V1/V3 — no second table for IAP *subscriptions*. The existing
 `idx_subscriptions_one_active_per_user` constraint and `payment_provider`-based ownership check
 (§6.4) both extend naturally.
 
-### 4.2 New: `RevenueCatProperties`
+### 4.2 New: `iap_products` — product-to-plan mapping table
+
+Resolving a RevenueCat `product_id` to a Fynora plan/cycle belongs in data, not a `switch` statement
+in the dispatcher — exactly the reasoning `billing_prices` already embodies for Razorpay's
+`plan_id`+`billing_cycle` → `razorpay_plan_id` mapping. A dedicated table rather than extending
+`billing_prices` itself, since the two providers' product identifiers are genuinely different shapes
+(one Razorpay Plan object per plan/cycle vs. one App-Store-Connect-*and*-Play-Console product per
+plan/cycle/platform — twice as many rows, keyed by platform too):
+
+```
+iap_products
+------------
+id                    UUID PK
+provider_product_id   VARCHAR(100)  NOT NULL   -- e.g. "plus_monthly_ios", "plus_monthly_android"
+plan_id               UUID NOT NULL REFERENCES plans(id)
+billing_cycle         VARCHAR(10)   NOT NULL   -- MONTHLY | YEARLY
+platform              VARCHAR(10)   NOT NULL   -- IOS | ANDROID
+active                BOOLEAN NOT NULL DEFAULT true
+```
+
+`RevenueCatWebhookDispatcher` looks up this table by `provider_product_id` (from the webhook's
+`product_id`) to resolve plan/cycle deterministically — the same lookup-not-branch pattern
+`BillingCheckoutService` already uses via `billingPriceRepository.findByPlanIdAndBillingCycleAndActiveTrue`.
+
+### 4.3 `webhook_events` — primary key widened
+
+`(event_id)` → `(provider, event_id)`. See §2's "Webhook ledger" row for why.
+
+### 4.4 New: `RevenueCatProperties`
 
 Mirrors `RazorpayProperties`: `webhookSigningSecret` (server-side only), plus the RevenueCat public
 API keys (one per platform — these are meant to be embedded client-side, same posture as Razorpay's
 `keyId` already returned to the frontend today).
 
-### 4.3 No `subscription_orders` equivalent
+### 4.5 No `subscription_orders` equivalent
 
 Unlike Razorpay checkout, there is no server-initiated "create order, wait for activation" phase:
 the purchase happens entirely client-side through the OS's own purchase sheet before the backend
@@ -99,13 +135,13 @@ Identical `Subscription.status` vocabulary as V1 (`ACTIVE`/`PAST_DUE`/`PAYMENT_F
 
 | RevenueCat event | Effect |
 |---|---|
-| `INITIAL_PURCHASE` | `payment_provider=REVENUECAT`, `subscription_source` from `store`, `status=ACTIVE`, `auto_renew=true`, plan/cycle resolved from `product_id`/`entitlement_ids`, `revenuecat_original_transaction_id` set |
+| `INITIAL_PURCHASE` | `payment_provider=REVENUECAT`, `store_platform` from `store`, `status=ACTIVE`, `auto_renew=true`, plan/cycle resolved via `iap_products` (§4.2) from `product_id`, `revenuecat_original_transaction_id` set |
 | `RENEWAL` | `status=ACTIVE` (idempotent if already), `renewal_date` updated from `expiration_at_ms` |
 | `CANCELLATION` | `auto_renew=false` only — status/plan/renewal_date untouched, exactly Razorpay's `cancel()` |
 | `UNCANCELLATION` | `auto_renew=true` |
-| `EXPIRATION` | Downgrade to Free (mirrors `subscription.halted`'s handling) |
-| `BILLING_ISSUE` | `status=PAYMENT_FAILED` |
-| `PRODUCT_CHANGE` | Plan/cycle reconciled to the new `product_id`/`entitlement_ids`, mirroring `handleCharged`'s existing plan-id reconciliation |
+| `EXPIRATION` | Downgrade to Free, directly (mirrors `handleHalted` exactly — see §3) |
+| `BILLING_ISSUE` | `status=PAST_DUE` (mirrors `handlePending` exactly — see §3) |
+| `PRODUCT_CHANGE` | **Both** plan tier and billing cycle reconciled via `iap_products` from the new `product_id` — a Premium Monthly → Premium Yearly change is not a tier change but still needs the same reconciliation, mirroring `handleCharged`'s existing plan-id reconciliation |
 | `SUBSCRIPTION_PAUSED`, `TRANSFER`, `NON_RENEWING_PURCHASE`, `SUBSCRIBER_ALIAS` | Logged, not acted on — explicitly out of scope (§9), same posture as the Razorpay dispatcher's `default -> log.info` for unhandled types |
 
 ## 6. Flows
@@ -157,6 +193,26 @@ they're paying should always see what they're paying for, even when they can't c
 Because `appUserID` is the real Fynora user id on both platforms (§2), RevenueCat's own
 cross-platform subscriber-identity resolution recognizes both as the same subscriber without any
 Fynora-side reconciliation — this is the concrete benefit of not using a separate synthetic id.
+
+### 6.6 Restore Purchases
+
+1. User taps "Restore Purchases" (My Subscription screen, §8) → `react-native-purchases`'
+   `restorePurchases()`.
+2. RevenueCat re-associates any purchase history for the signed-in Apple/Google account with the
+   current `appUserID` and may itself emit a `TRANSFER` or `SUBSCRIBER_ALIAS` event server-side —
+   these still land on the same webhook and are still logged-not-acted-on per §5/§9; the backend's
+   `subscriptions` row remains authoritative regardless of what RevenueCat's own bookkeeping does
+   internally.
+3. Client does not trust the SDK call's own return value as "entitlement restored" — it re-fetches
+   `GET /api/v1/entitlements/mine`/`mySubscription()` afterward, same "backend webhook is the only
+   source of truth" rule as every other flow in this spec (§6.1 step 5).
+
+### 6.7 User deletes the app, reinstalls months later
+
+No special handling needed: the `subscriptions` row is server-side and keyed by `user_id`, not
+anything device-local. Logging back in fetches the same entitlement it always would — there is no
+"restore" step required unless the *reinstall* is also a *different Apple/Google account* than the
+one that made the original purchase, which §6.6 already covers.
 
 ## 7. API surface (new/changed)
 
@@ -233,7 +289,8 @@ change — not just a 200 response.
 
 ## 12. Suggested build sequence (for the implementation plan)
 
-1. Data model migration (`subscription_source`, `revenuecat_original_transaction_id`, backfill).
+1. Data model migration: `store_platform`/`revenuecat_original_transaction_id` on `subscriptions`,
+   the new `iap_products` table, and widening `webhook_events`' primary key to `(provider, event_id)`.
 2. `RevenueCatWebhookController` + dispatcher + `RevenueCatProperties`, with the signature+timestamp
    verification from §3 — backend-only, testable without any mobile client changes yet.
 3. Generalize `BillingCheckoutService.checkout()`'s duplicate-subscription guard (§6.4) — a small,
