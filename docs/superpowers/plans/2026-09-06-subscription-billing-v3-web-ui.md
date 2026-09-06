@@ -9,9 +9,11 @@ history), and an admin portal that handles the "user has a live Razorpay subscri
 Plan 2 already enforces server-side.
 
 **Architecture:** Two small backend tasks (Tasks 1-2) close gaps this UI cannot work without (§0
-below), then four frontend/admin-portal tasks (Tasks 3-6) build the actual screens against the
-now-complete API surface. No new backend domain concepts — every screen is a thin client over
-`BillingCheckoutService`/`SubscriptionService`, matching the existing app's "components call
+below), four frontend/admin-portal tasks (Tasks 3-6) build the actual screens against the
+now-complete API surface, and a seventh task (Task 7, added mid-implementation per explicit
+request) adds an admin Subscription Health dashboard. No new backend domain concepts — every
+screen is a thin client over `BillingCheckoutService`/`SubscriptionService`, matching the existing
+app's "components call
 `api/endpoints.ts`, endpoints call the backend 1:1" convention.
 
 **Tech Stack:** React + TypeScript + Vite (`frontend`, `admin-portal`), TanStack Query, Razorpay
@@ -76,9 +78,9 @@ exactly what Task 2 builds; one point (distinguishing a retryable payment failur
 one) was checked against `RazorpayWebhookDispatcher.handlePending`/`handleHalted` and found to
 already be correct — `subscription.pending` writes `Payment.STATUS_PENDING`, only
 `subscription.halted` ever writes `STATUS_FAILED`, for the reasons design spec §4.6 already gives.
-No change needed there. The review's admin "Subscription Health" dashboard suggestion is a good
-idea deferred to its own later plan (new aggregate-count queries and a new admin view — real scope,
-not a Plan 3 blocker, and more useful once real subscribers exist to measure).
+No change needed there. The review's admin "Subscription Health" dashboard suggestion was
+initially scoped as deferred to a later plan (real new scope — aggregate-count queries and a new
+admin view), then completed here instead as Task 7, per an explicit request not to defer it.
 
 ## Global Constraints
 
@@ -2950,6 +2952,364 @@ git commit -m "feat(admin-portal): add confirm flow for cancelling a Razorpay-ba
 
 ---
 
+## Task 7: Admin Subscription Health dashboard
+
+Added mid-implementation, per explicit request not to defer the external review's #5 suggestion
+(§0.5 references this review). Originally scoped as a future fast-follow plan; completed here
+instead.
+
+**Files:**
+- Modify: `backend/src/main/java/com/finora/dto/BillingDtos.java`
+- Modify: `backend/src/main/java/com/finora/repository/SubscriptionRepository.java`
+- Modify: `backend/src/main/java/com/finora/repository/SubscriptionOrderRepository.java`
+- Modify: `backend/src/main/java/com/finora/service/SubscriptionService.java`
+- Modify: `backend/src/main/java/com/finora/controller/AdminSubscriptionController.java`
+- Modify: `admin-portal/src/types/index.ts`
+- Modify: `admin-portal/src/api/endpoints.ts`
+- Modify: `admin-portal/src/pages/Subscriptions.tsx`
+- Test: `backend/src/test/java/com/finora/service/SubscriptionServiceTest.java` (extend)
+- Test: `backend/src/test/java/com/finora/controller/AdminSubscriptionControllerIT.java` (extend)
+- Test: `admin-portal/src/pages/Subscriptions.test.tsx` (extend)
+
+**What shipped:** exactly the five counts the review named -- Active, Past Due, Payment Failed,
+Cancelled, Pending Orders -- and nothing beyond them (no revenue/MRR, no growth trend, matching
+the review's own closing "I would not expand scope beyond this").
+
+- `BillingDtos.SubscriptionHealthDto(long activeCount, long pastDueCount, long paymentFailedCount, long cancelledCount, long pendingOrderCount)`.
+- `SubscriptionRepository.countByStatus(String status)` (derived query) for the four subscription
+  counts; `SubscriptionOrderRepository.countByStatus(String status)` for the pending-order count.
+- `SubscriptionService.health()` — five plain `COUNT` queries, `@Transactional(readOnly = true)`.
+  `SubscriptionService`'s constructor gained an 8th parameter, `SubscriptionOrderRepository`.
+- `GET /api/v1/admin/subscriptions/health` on the existing `AdminSubscriptionController`, gated
+  behind `SUBSCRIPTION_MANAGEMENT_VIEW` (the same permission `list` already uses — this is a read,
+  not a mutation).
+- `adminSubscriptionsApi.health()` (admin-portal), `SubscriptionHealthDto` TS mirror.
+- Five `StatCard` tiles (the same shared component `ReconciliationMonitor.tsx` already uses,
+  confirmed by reading it first rather than building a new stat-tile component) above the
+  Subscriptions table in `Subscriptions.tsx`, each backed by its own `useQuery`
+  (`['admin-subscriptions-health']`) separate from the paginated list query.
+
+**A real IT-suite gotcha this task had to account for**: this backend test suite shares one
+Postgres database across every test class. A naive
+`assertThat(health.pastDueCount()).isEqualTo(1)` would be flaky/wrong the moment any other test in
+the suite has ever put a subscription into `PAST_DUE`. `AdminSubscriptionControllerIT`'s new test
+reads the count BEFORE creating a fixture and asserts the count increased by exactly 1 AFTER,
+which is correct regardless of what other tests have already inserted.
+
+**A real test-ambiguity bug caught while writing `Subscriptions.test.tsx`'s own test**: the page's
+existing descriptive paragraph ("...must be cancelled here before its plan...") contains the word
+"cancelled," which collided with `screen.getByText(/cancelled/i)` also matching the new stat
+card's own "Cancelled" label. Fixed by scoping that one assertion to `{ selector: 'span' }`.
+
+- [ ] **Step 1: Write the failing backend unit test**
+
+Add to `SubscriptionServiceTest.java`. First add the field, mock, and constructor argument:
+
+```java
+    private SubscriptionOrderRepository subscriptionOrderRepository;
+```
+
+```java
+        subscriptionOrderRepository = mock(SubscriptionOrderRepository.class);
+        service = new SubscriptionService(subscriptionRepository, subscriptionEventRepository,
+                planChangeRepository, planRepository, userRepository, auditService, gateway,
+                subscriptionOrderRepository);
+```
+
+(replacing the existing `service = new SubscriptionService(...)` line, which currently ends at
+`gateway)` with 7 arguments). Add `import com.finora.repository.SubscriptionOrderRepository;`.
+
+Then add the test itself:
+
+```java
+    @Test
+    void healthReportsCountsForEachSubscriptionStatusAndPendingOrders() {
+        when(subscriptionRepository.countByStatus(Subscription.STATUS_ACTIVE)).thenReturn(120L);
+        when(subscriptionRepository.countByStatus(Subscription.STATUS_PAST_DUE)).thenReturn(5L);
+        when(subscriptionRepository.countByStatus(Subscription.STATUS_PAYMENT_FAILED)).thenReturn(3L);
+        when(subscriptionRepository.countByStatus(Subscription.STATUS_CANCELLED)).thenReturn(8L);
+        when(subscriptionOrderRepository.countByStatus(com.finora.entity.SubscriptionOrder.STATUS_PENDING))
+                .thenReturn(2L);
+
+        var health = service.health();
+
+        assertThat(health.activeCount()).isEqualTo(120L);
+        assertThat(health.pastDueCount()).isEqualTo(5L);
+        assertThat(health.paymentFailedCount()).isEqualTo(3L);
+        assertThat(health.cancelledCount()).isEqualTo(8L);
+        assertThat(health.pendingOrderCount()).isEqualTo(2L);
+    }
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+```bash
+cd backend && ./mvnw test-compile
+```
+Expected: FAIL to compile — `SubscriptionService`'s constructor doesn't take 8 arguments yet, and
+`countByStatus`/`health()` don't exist.
+
+- [ ] **Step 3: Add the repository methods**
+
+In `SubscriptionRepository.java`:
+
+```java
+    /** Admin Portal, Subscription Health (Plan 3 review). One call per status shown on that
+     *  dashboard -- five small COUNT queries rather than one grouped query, matching this
+     *  interface's existing style of a plain derived method per need over a single do-everything
+     *  query. */
+    long countByStatus(String status);
+```
+
+In `SubscriptionOrderRepository.java`:
+
+```java
+    /** Admin Portal, Subscription Health (Plan 3 review) -- how many checkouts are currently
+     *  in-flight platform-wide, not per user. */
+    long countByStatus(String status);
+```
+
+- [ ] **Step 4: Add `SubscriptionHealthDto` to `BillingDtos.java`**
+
+```java
+    /** GET /api/v1/admin/subscriptions/health -- platform-wide subscription-state counts for the
+     *  admin Subscription Health dashboard (Plan 3 review). Deliberately just these five: Active
+     *  (paying/complimentary and current), Past Due (Razorpay mid-retry, access still on),
+     *  Payment Failed (retries exhausted, already downgraded), Cancelled (in the grace window
+     *  before the reconciliation sweep moves them to Free), and Pending Orders (checkouts started
+     *  but not yet activated or abandoned) -- the exact five the review asked for, no revenue or
+     *  growth metrics added on top. */
+    public record SubscriptionHealthDto(
+            long activeCount, long pastDueCount, long paymentFailedCount, long cancelledCount,
+            long pendingOrderCount
+    ) {}
+```
+
+- [ ] **Step 5: Add `health()` to `SubscriptionService.java`**
+
+Add the field, constructor parameter (8th), and import as shown in Step 1, then:
+
+```java
+    /** Admin Portal, Subscription Health (Plan 3 review) -- five platform-wide counts, one plain
+     *  COUNT query each. See {@link SubscriptionHealthDto}'s own doc comment for why these five
+     *  and not more. */
+    @Transactional(readOnly = true)
+    public SubscriptionHealthDto health() {
+        return new SubscriptionHealthDto(
+                subscriptionRepository.countByStatus(Subscription.STATUS_ACTIVE),
+                subscriptionRepository.countByStatus(Subscription.STATUS_PAST_DUE),
+                subscriptionRepository.countByStatus(Subscription.STATUS_PAYMENT_FAILED),
+                subscriptionRepository.countByStatus(Subscription.STATUS_CANCELLED),
+                subscriptionOrderRepository.countByStatus(SubscriptionOrder.STATUS_PENDING));
+    }
+```
+
+Add `import com.finora.dto.BillingDtos.SubscriptionHealthDto;` and
+`import com.finora.entity.SubscriptionOrder;` and
+`import com.finora.repository.SubscriptionOrderRepository;` to that file's imports.
+
+- [ ] **Step 6: Run the unit test to verify it passes**
+
+```bash
+cd backend && ./mvnw test -Dtest=SubscriptionServiceTest
+```
+Expected: PASS.
+
+- [ ] **Step 7: Add the endpoint to `AdminSubscriptionController.java`**
+
+```java
+    @GetMapping("/health")
+    @PreAuthorize("hasAuthority('SUBSCRIPTION_MANAGEMENT_VIEW')")
+    public ApiResponse<SubscriptionHealthDto> health() {
+        return ApiResponse.ok(subscriptionService.health());
+    }
+```
+
+Add `import com.finora.dto.BillingDtos.SubscriptionHealthDto;` to that file's imports.
+
+- [ ] **Step 8: Write the failing integration tests**
+
+Add to `AdminSubscriptionControllerIT.java`:
+
+```java
+    @Test
+    void plainUser_isForbiddenFromViewingSubscriptionHealth() {
+        User user = createUser("USER");
+        ResponseEntity<String> response = restTemplate.exchange(
+                "/api/v1/admin/subscriptions/health", HttpMethod.GET, new HttpEntity<>(bearerFor(user)), String.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+    }
+
+    /** This IT suite shares one Postgres database across every test class (see other subscription
+     *  ITs' own fixtures), so a fresh PAST_DUE row here is never the only one in the table --
+     *  asserting a before/after DELTA, not an absolute count, is what makes this test correct
+     *  regardless of what other tests have already inserted. */
+    @Test
+    void admin_seesSubscriptionHealthCountsIncreaseAfterANewPastDueSubscription() throws Exception {
+        User admin = createUser("ADMIN");
+
+        JsonNode before = mapper.readTree(restTemplate.exchange(
+                "/api/v1/admin/subscriptions/health", HttpMethod.GET, new HttpEntity<>(bearerFor(admin)), String.class
+        ).getBody()).get("data");
+        long pastDueBefore = before.get("pastDueCount").asLong();
+
+        User target = createUser("USER");
+        subscriptionService.provisionFreeSubscription(target.getId());
+        var subscription = subscriptionRepository.findActiveOrTrial(target.getId()).orElseThrow();
+        subscription.setStatus(com.finora.entity.Subscription.STATUS_PAST_DUE);
+        subscriptionRepository.save(subscription);
+
+        ResponseEntity<String> response = restTemplate.exchange(
+                "/api/v1/admin/subscriptions/health", HttpMethod.GET, new HttpEntity<>(bearerFor(admin)), String.class);
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        JsonNode after = mapper.readTree(response.getBody()).get("data");
+
+        assertThat(after.get("pastDueCount").asLong()).isEqualTo(pastDueBefore + 1);
+    }
+```
+
+- [ ] **Step 9: Run tests to verify they pass**
+
+```bash
+cd backend && ./mvnw test -Dtest=AdminSubscriptionControllerIT
+```
+Expected: PASS.
+
+- [ ] **Step 10: Run the full backend suite**
+
+```bash
+cd backend && ./mvnw test
+```
+Expected: PASS, no regressions.
+
+- [ ] **Step 11: Add the frontend type and API method**
+
+In `admin-portal/src/types/index.ts`:
+
+```typescript
+/** Plan 3 review. Mirrors backend BillingDtos.SubscriptionHealthDto exactly -- see that record's
+ *  own doc comment for why these five counts and not more. */
+export interface SubscriptionHealthDto {
+  activeCount: number;
+  pastDueCount: number;
+  paymentFailedCount: number;
+  cancelledCount: number;
+  pendingOrderCount: number;
+}
+```
+
+In `admin-portal/src/api/endpoints.ts`, add `SubscriptionHealthDto` to the existing multi-line
+type import, then add to `adminSubscriptionsApi`:
+
+```typescript
+  // Plan 3 review -- platform-wide counts for the Subscription Health stat row.
+  health: () => api.get<SubscriptionHealthDto>('/admin/subscriptions/health').then((r) => r.data),
+```
+
+- [ ] **Step 12: Write the failing frontend test**
+
+In `Subscriptions.test.tsx`, add `health: vi.fn()` to the `adminSubscriptionsApi` mock, add a
+default resolved value to `beforeEach` (`health: vi.fn().mockResolvedValue({ activeCount: 0,
+pastDueCount: 0, paymentFailedCount: 0, cancelledCount: 0, pendingOrderCount: 0 })`), then add:
+
+```typescript
+  it('shows the Subscription Health stat cards', async () => {
+    mockAuth(['SUBSCRIPTION_MANAGEMENT_VIEW']);
+    vi.mocked(adminSubscriptionsApi.list).mockResolvedValue(pageOf());
+    vi.mocked(adminSubscriptionsApi.health).mockResolvedValue({
+      activeCount: 120, pastDueCount: 5, paymentFailedCount: 3, cancelledCount: 8, pendingOrderCount: 2,
+    });
+
+    renderPage();
+
+    expect(await screen.findByText('120')).toBeInTheDocument();
+    expect(screen.getByText('5')).toBeInTheDocument();
+    expect(screen.getByText('3')).toBeInTheDocument();
+    expect(screen.getByText('8')).toBeInTheDocument();
+    expect(screen.getByText('2')).toBeInTheDocument();
+    expect(screen.getByText(/active/i)).toBeInTheDocument();
+    expect(screen.getByText(/past due/i)).toBeInTheDocument();
+    expect(screen.getByText(/payment failed/i)).toBeInTheDocument();
+    // { selector: 'span' } disambiguates from the page's own descriptive paragraph, which also
+    // contains the word "cancelled".
+    expect(screen.getByText(/cancelled/i, { selector: 'span' })).toBeInTheDocument();
+    expect(screen.getByText(/pending orders/i)).toBeInTheDocument();
+  });
+```
+
+- [ ] **Step 13: Run test to verify it fails**
+
+```bash
+cd admin-portal && npx vitest run src/pages/Subscriptions.test.tsx
+```
+Expected: FAIL — no stat cards rendered yet.
+
+- [ ] **Step 14: Add the stat card row to `Subscriptions.tsx`**
+
+Add to the imports:
+
+```tsx
+import { Users as UsersIcon, CheckCircle2, Clock, XCircle, Ban, Hourglass } from 'lucide-react';
+import { StatCard } from '../components/StatCard';
+```
+
+(replacing the existing `import { Users as UsersIcon } from 'lucide-react';` line). Add the query,
+alongside the existing `data`/`isLoading` query in `SubscriptionsContent`:
+
+```tsx
+  // Plan 3 review -- Subscription Health. A small stat row above the table, not folded into
+  // `data` above: it's a platform-wide summary, unrelated to which page of the list is showing.
+  const { data: health, isLoading: healthLoading } = useQuery({
+    queryKey: ['admin-subscriptions-health'],
+    queryFn: () => adminSubscriptionsApi.health(),
+  });
+```
+
+Add the stat row to the JSX, immediately before the existing descriptive `<p>`:
+
+```tsx
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+        <StatCard icon={CheckCircle2} label="Active" value={healthLoading ? '…' : health?.activeCount ?? 0} tone="success" />
+        <StatCard icon={Clock} label="Past due" value={healthLoading ? '…' : health?.pastDueCount ?? 0} tone="warning" />
+        <StatCard icon={XCircle} label="Payment failed" value={healthLoading ? '…' : health?.paymentFailedCount ?? 0} tone="warning" />
+        <StatCard icon={Ban} label="Cancelled" value={healthLoading ? '…' : health?.cancelledCount ?? 0} />
+        <StatCard icon={Hourglass} label="Pending orders" value={healthLoading ? '…' : health?.pendingOrderCount ?? 0} tone="warning" />
+      </div>
+```
+
+- [ ] **Step 15: Run test to verify it passes**
+
+```bash
+cd admin-portal && npx vitest run src/pages/Subscriptions.test.tsx
+```
+Expected: PASS.
+
+- [ ] **Step 16: Run the full admin-portal suite and typecheck**
+
+```bash
+cd admin-portal && npx vitest run
+npx tsc --noEmit
+```
+Expected: PASS, no errors.
+
+- [ ] **Step 17: Commit**
+
+```bash
+git add backend/src/main/java/com/finora/dto/BillingDtos.java \
+        backend/src/main/java/com/finora/repository/SubscriptionRepository.java \
+        backend/src/main/java/com/finora/repository/SubscriptionOrderRepository.java \
+        backend/src/main/java/com/finora/service/SubscriptionService.java \
+        backend/src/main/java/com/finora/controller/AdminSubscriptionController.java \
+        backend/src/test/java/com/finora/service/SubscriptionServiceTest.java \
+        backend/src/test/java/com/finora/controller/AdminSubscriptionControllerIT.java \
+        admin-portal/src/types/index.ts admin-portal/src/api/endpoints.ts \
+        admin-portal/src/pages/Subscriptions.tsx admin-portal/src/pages/Subscriptions.test.tsx
+git commit -m "feat: add admin Subscription Health dashboard"
+```
+
+---
+
 ## Final verification
 
 - [ ] **Run the full backend suite**
@@ -2993,10 +3353,10 @@ cd ../admin-portal && npx vitest run && npx tsc --noEmit
   1-2's own "Web"/backend split).
 - **Coupons/proration/refunds/free trial** remain out of scope, unchanged from the design spec's
   own §9 — this plan adds no UI surface for any of them.
-- **A consolidated "admin Subscription Health" view was considered and deliberately deferred**
-  (also raised by the same external review) — real new scope (aggregate-count queries, a new admin
-  page) that's more useful as its own plan once real subscribers exist to measure, not a Plan 3
-  blocker.
+- **The admin "Subscription Health" view (also raised by the same external review) was completed
+  as Task 7**, not deferred — real new scope (aggregate-count queries, a new admin stat row), added
+  to this plan mid-implementation per an explicit request. Kept to exactly the five counts the
+  review named, no revenue/growth metrics added on top.
 - **One reviewed claim was checked and found already correct, not fixed**: the review suggested
   distinguishing a retryable payment failure from a terminal one. `RazorpayWebhookDispatcher`
   already does exactly this — `handlePending` writes `Payment.STATUS_PENDING`, only `handleHalted`
