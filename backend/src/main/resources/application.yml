@@ -235,6 +235,9 @@ app:
     # Optional display name shown alongside from-address -- unset means every real mail client
     # just shows the bare address, exactly the previous behavior.
     from-name: ${EMAIL_FROM_NAME:}
+    # EmailMessage.Sender.SUPPORT resolves here -- see that enum's own doc comment for which
+    # emails use it (held-import/held-statement notices, where a reply should reach a person).
+    support-from-address: ${EMAIL_FROM_SUPPORT:support@fynora.net} # synthetic-ok: Fynora's own support mailbox
     app-base-url: ${APP_BASE_URL:http://localhost:5173}
     # Optional -- the user frontend and admin portal are two separate deployed apps at two
     # different origins, each with its own /reset-password page, but there's no separate admin

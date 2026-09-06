@@ -82,7 +82,7 @@ public class ResendEmailProvider implements EmailProvider {
         String text = applyTemplateVariables(message.text(), message.templateVariables());
 
         Map<String, Object> body = new LinkedHashMap<>();
-        body.put("from", fromHeader());
+        body.put("from", fromHeader(message.sender()));
         body.put("to", List.of(message.to()));
         body.put("subject", message.subject());
         if (html != null) body.put("html", html);
@@ -113,12 +113,17 @@ public class ResendEmailProvider implements EmailProvider {
     }
 
     /** "Name <email>" when EMAIL_FROM_NAME is set, matching how every real mail client renders
-     *  a display name -- otherwise just the bare address, exactly today's existing behavior. */
-    private String fromHeader() {
+     *  a display name -- otherwise just the bare address, exactly today's existing behavior.
+     *  {@code sender} picks which of the two configured addresses this particular message goes
+     *  out under -- see {@link EmailMessage.Sender}'s own doc for which emails ask for SUPPORT. */
+    private String fromHeader(EmailMessage.Sender sender) {
+        String address = sender == EmailMessage.Sender.SUPPORT
+                ? emailProperties.getSupportFromAddress()
+                : emailProperties.getFromAddress();
         String fromName = emailProperties.getFromName();
         return (fromName != null && !fromName.isBlank())
-                ? fromName + " <" + emailProperties.getFromAddress() + ">"
-                : emailProperties.getFromAddress();
+                ? fromName + " <" + address + ">"
+                : address;
     }
 
     private static String applyTemplateVariables(String content, Map<String, String> variables) {
@@ -130,13 +135,24 @@ public class ResendEmailProvider implements EmailProvider {
         return result;
     }
 
+    /** Every noreply@ email ends with this -- a real, clickable support address rather than the
+     *  vague "contact support" several of these used to say with nothing to click. These emails
+     *  stay on noreply@ deliberately (product decision, 2026-09-06): a security/account-lifecycle
+     *  notice is not a conversation, so replying to it should not silently go nowhere -- this line
+     *  is the actual way to reach a person, not a decoration. */
+    // synthetic-ok: Fynora's own published support mailbox, not a customer address
+    private static final String SUPPORT_LINE =
+            "<p style=\"color:#6b7280;\">Need help? Email <a href=\"mailto:support@fynora.net\">" // synthetic-ok
+                    + "support@fynora.net</a>.</p>"; // synthetic-ok
+
     @Override
     public EmailResult sendPasswordResetEmail(String toEmail, String resetLink) {
         String html = """
                 <p>We received a request to reset your Fynora password.</p>
                 <p><a href="%s">Click here to set a new password</a> — this link expires in 30 minutes.</p>
                 <p>If you didn't request this, you can safely ignore this email.</p>
-                """.formatted(resetLink);
+                %s
+                """.formatted(resetLink, SUPPORT_LINE);
         return send(EmailMessage.html(toEmail, "Reset your Fynora password", html));
     }
 
@@ -146,7 +162,8 @@ public class ResendEmailProvider implements EmailProvider {
                 <p>Please verify your email address to finish setting up your Fynora account.</p>
                 <p><a href="%s">Click here to verify your email</a> — this link expires in 24 hours.</p>
                 <p>If you didn't create a Fynora account, you can safely ignore this email.</p>
-                """.formatted(verifyLink);
+                %s
+                """.formatted(verifyLink, SUPPORT_LINE);
         return send(EmailMessage.html(toEmail, "Verify your Fynora email address", html));
     }
 
@@ -157,7 +174,8 @@ public class ResendEmailProvider implements EmailProvider {
                 <p><a href="%s">Click here to confirm</a> — this link expires in 15 minutes.</p>
                 <p>If you didn't request this change, you can safely ignore this email — your account's
                 email address will not change unless you click the link above.</p>
-                """.formatted(verifyLink);
+                %s
+                """.formatted(verifyLink, SUPPORT_LINE);
         return send(EmailMessage.html(toEmail, "Confirm your new Fynora email address", html));
     }
 
@@ -166,7 +184,8 @@ public class ResendEmailProvider implements EmailProvider {
         String html = """
                 <p>Welcome to Fynora, %s!</p>
                 <p>Your account is ready — import a bank statement or connect an account to get started.</p>
-                """.formatted(fullName);
+                %s
+                """.formatted(fullName, SUPPORT_LINE);
         return send(EmailMessage.html(toEmail, "Welcome to Fynora", html));
     }
 
@@ -174,8 +193,9 @@ public class ResendEmailProvider implements EmailProvider {
     public EmailResult sendPasswordChangedEmail(String toEmail) {
         String html = """
                 <p>Your Fynora password was just changed.</p>
-                <p>If this wasn't you, contact support immediately and change your password again.</p>
-                """;
+                <p>If this wasn't you, change your password again immediately.</p>
+                %s
+                """.formatted(SUPPORT_LINE);
         return send(EmailMessage.html(toEmail, "Your Fynora password was changed", html));
     }
 
@@ -195,8 +215,9 @@ public class ResendEmailProvider implements EmailProvider {
                 <p>Your Fynora account was deactivated on %s (UTC).</p>
                 %s%s
                 <p>Your data is retained securely. Sign in again any time to reactivate your account.</p>
-                <p>If you didn't do this, contact support immediately.</p>
-                """.formatted(when, deviceLine, ipLine);
+                <p>If you didn't do this, act now:</p>
+                %s
+                """.formatted(when, deviceLine, ipLine, SUPPORT_LINE);
         return send(EmailMessage.html(toEmail, "Your Fynora account was deactivated", html));
     }
 
@@ -204,8 +225,9 @@ public class ResendEmailProvider implements EmailProvider {
     public EmailResult sendAccountReactivatedEmail(String toEmail) {
         String html = """
                 <p>Welcome back — your Fynora account has been reactivated.</p>
-                <p>If you didn't do this, contact support immediately.</p>
-                """;
+                <p>If you didn't do this, act now:</p>
+                %s
+                """.formatted(SUPPORT_LINE);
         return send(EmailMessage.html(toEmail, "Your Fynora account was reactivated", html));
     }
 
@@ -215,8 +237,9 @@ public class ResendEmailProvider implements EmailProvider {
         String html = """
                 <p>Your Fynora account and all your data were permanently deleted on %s (UTC).</p>
                 <p>This cannot be undone.</p>
-                <p>If you didn't do this, contact support immediately.</p>
-                """.formatted(when);
+                <p>If you didn't do this:</p>
+                %s
+                """.formatted(when, SUPPORT_LINE);
         return send(EmailMessage.html(toEmail, "Your Fynora account has been deleted", html));
     }
 }
