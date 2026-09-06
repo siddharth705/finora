@@ -229,6 +229,19 @@ public enum ErrorCode {
     AUTH_MFA_NOT_AVAILABLE("AUTH_010", HttpStatus.NOT_FOUND,
             "Admin MFA is not available yet."),
 
+    // Billing / entitlements (com.finora.service.EntitlementService)
+    //
+    // The first ErrorCode ever thrown from an EntitlementService.hasEntitlement() check --
+    // ADVANCED_REPORTS (AnalyticsController's self-service views) is the first FeatureEntitlement
+    // key any endpoint actually enforces; every other seeded key (BASIC_DASHBOARD, EXTENDED_HISTORY,
+    // INVESTMENT_INSIGHTS, FINO_AI, PRIORITY_SUPPORT) still has zero enforcing call sites. Carries
+    // its own code rather than a bare AUTH_FORBIDDEN for the same reason AUTH_MFA_REQUIRED does:
+    // the frontend has to TELL THEM APART -- a plan-gated 403 should open PremiumFeatureGate's
+    // upgrade prompt, not the generic "you don't have permission" dead end a real authorization
+    // failure gets.
+    ENTITLEMENT_REQUIRED("ENTITLEMENT_001", HttpStatus.FORBIDDEN,
+            "This feature isn't included in your current plan."),
+
     // Generic fallbacks — used by GlobalExceptionHandler when no more specific code applies
     VALIDATION_ERROR("VAL_001", HttpStatus.BAD_REQUEST, "Validation failed"),
     NOT_FOUND("GEN_001", HttpStatus.NOT_FOUND, "No such endpoint"),
